@@ -103,7 +103,7 @@ func TestRunSetupDryRun(t *testing.T) {
 func TestWriteLiteConfig(t *testing.T) {
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/ws", Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
-	if err := writeLiteConfig(home, "env PYTHONPATH=/p python -m leoflow_parser", lc, "$2a$12$abcHASH", "deadbeef-jwt-secret"); err != nil {
+	if err := writeLiteConfig(home, "env PYTHONPATH=/p python -m leoflow_parser", lc, "$2a$12$abcHASH", "deadbeef-jwt-secret", "deadbeef-secret-key"); err != nil {
 		t.Fatalf("writeLiteConfig err = %v", err)
 	}
 	data, rerr := os.ReadFile(filepath.Join(home, "config.yaml"))

@@ -310,7 +310,7 @@ func liteEditorFS(cfg *config.ServerConfig, logger *slog.Logger) api.WorkspaceFS
 // configureSecretCipher wires the AES-256-GCM cipher for connection secrets
 // (ADR 0019). Without a key the connection store stays plaintext-incapable:
 // writes are refused, never silently stored in the clear.
-func configureSecretCipher(repo *storage.Repository, secretKey string, logger *slog.Logger) error {
+func configureSecretCipher(repo *storage.Repository, secretKey, fallbackKey string, logger *slog.Logger) error {
 	key, kerr := secrets.ParseKey(secretKey)
 	if kerr != nil {
 		logger.Warn("no LEOFLOW_SECRET_KEY set; connection management disabled (Variables still work)")
@@ -320,7 +320,24 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 	if cerr != nil {
 		return fmt.Errorf("building secret cipher: %w", cerr)
 	}
-	repo.SetCipher(cipher)
+	// A read-only previous key, when one is configured, so a rotation reads what
+	// the old key wrote instead of orphaning it (#486). Writes always use the
+	// primary; an unusable fallback is ignored rather than fatal, since refusing
+	// to boot over an optional legacy key would be worse than not having it.
+	var fallback secrets.Cipher
+	if fallbackKey != "" && fallbackKey != secretKey {
+		if fk, ferr := secrets.ParseKey(fallbackKey); ferr == nil {
+			if fc, fcerr := secrets.NewAESGCM(fk); fcerr == nil {
+				fallback = fc
+				logger.Info("a fallback secret key is configured: values written under it are read and re-encrypted under the primary key")
+			} else {
+				logger.Warn("LEOFLOW_SECRET_KEY_FALLBACK could not build a cipher; ignoring it", "error", fcerr)
+			}
+		} else {
+			logger.Warn("LEOFLOW_SECRET_KEY_FALLBACK is not a usable key; ignoring it", "error", ferr)
+		}
+	}
+	repo.SetCipher(secrets.WithFallback(cipher, fallback))
 	// A 32-character all-hex key is what `openssl rand -hex 16` produces, which
 	// this project's own docs recommended until they were corrected. ParseKey
 	// takes those 32 characters as 32 raw bytes, so the cipher is AES-256 over

@@ -65,9 +65,15 @@ func runResetPassword(cmd *cobra.Command, userEmail string) error {
 	// Preserve the per-install JWT secret (#121) — reset-password rotates the
 	// password, not the signing secret, so existing browser sessions are not
 	// invalidated by a password reset.
+	//
+	// The secret key is preserved for a harder reason (#486): it decrypts every
+	// stored connection password. Dropping it here would rewrite config.yaml
+	// without a key, the next boot would fall back to the published constant,
+	// and every credential encrypted under the real key would stop opening. A
+	// password reset must not be able to do that.
 	if cfg != nil && home != "" {
 		_ = writeLiteConfig(filepath.Join(home, ".leoflow"), cfg.ParserCmd, //nolint:errcheck // best-effort sync; the DB is the source of truth
-			liteSettings{Workspace: cfg.Workspace, Executor: cfg.LiteExecutor, AdminEmail: email, Port: cfg.LitePort}, hash, cfg.JWTSecret)
+			liteSettings{Workspace: cfg.Workspace, Executor: cfg.LiteExecutor, AdminEmail: email, Port: cfg.LitePort}, hash, cfg.JWTSecret, cfg.SecretKey)
 	}
 
 	_, _ = fmt.Fprintf(out, "\n  password reset for %s\n  new password: %s\n  (shown once — save it)\n", email, pw) //nolint:errcheck // best-effort terminal output

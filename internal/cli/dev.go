@@ -140,6 +140,10 @@ type devOptions struct {
 	// ~/.leoflow/config.yaml; empty on a legacy install (resolveLiteJWTSecret
 	// then falls back to devJWTSecret with a one-shot warning).
 	jwtSecret string
+	// secretKey is the per-install connection-encryption key from
+	// ~/.leoflow/config.yaml; empty on a legacy install, which
+	// resolveLiteSecretKey maps to the published constant (#486).
+	secretKey string
 }
 
 // prepareWorkspace resolves the workspace, scaffolds a starter subdir when it
@@ -366,6 +370,46 @@ func resolveLiteJWTSecret(secret string) string {
 		slog.Warn("config jwt_secret is empty; falling back to the dev-only constant — run `leoflow setup` to rotate the per-install secret (#121)")
 	})
 	return devJWTSecret
+}
+
+// liteEnv gathers the run's identity and secrets for the server env. One place
+// builds it, so a new field cannot reach one executor and miss the other.
+func (o *devOptions) liteEnv() liteEnvParams {
+	return liteEnvParams{
+		host:       o.host,
+		port:       o.port,
+		adminHash:  o.adminHash,
+		adminEmail: o.adminEmail,
+		jwtSecret:  o.jwtSecret,
+		secretKey:  o.secretKey,
+	}
+}
+
+// liteSecretKeyFallbackOnce keeps the legacy-key warning to once per process.
+var liteSecretKeyFallbackOnce sync.Once
+
+// resolveLiteSecretKey returns the per-install connection-encryption key.
+//
+// Lite used to encrypt every connection password with devSecretKey, a constant
+// compiled into this repository and therefore identical on every install on
+// earth: anyone holding a Lite database file read every credential in it
+// without work, while the docs said "encrypted at rest" (#486). `leoflow setup`
+// now writes a random per-install key.
+//
+// An install predating that has no key in config.yaml, and falls back to the
+// constant with a warning rather than refusing: its existing connections are
+// encrypted under it, and refusing to boot would break an upgrade for someone
+// who did nothing wrong. The constant also goes to the server as a read-only
+// fallback, so those rows are re-encrypted under the new key rather than
+// orphaned by the rotation.
+func resolveLiteSecretKey(key string) string {
+	if key != "" {
+		return key
+	}
+	liteSecretKeyFallbackOnce.Do(func() {
+		slog.Warn("config secret_key is empty; falling back to the key published in this repository, which every Lite install shares — run `leoflow setup` to generate a per-install key (#486)")
+	})
+	return devSecretKey
 }
 
 // bringUpDependencies starts Lite's datastore and returns a cleanup func the
@@ -615,7 +659,8 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 
 	// The admin login is provisioned by `leoflow setup` (hash-only in config).
 	// With it, Lite enforces real auth; without it, fall back to no-auth + warn.
-	o.adminHash, o.adminEmail, o.jwtSecret = resolveLiteAdmin(cmd, out)
+	id := resolveLiteAdmin(cmd, out)
+	o.adminHash, o.adminEmail, o.jwtSecret, o.secretKey = id.adminHash, id.adminEmail, id.jwtSecret, id.secretKey
 
 	ctx, stop := signal.NotifyContext(cmdContext(cmd), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -757,7 +802,7 @@ func devSubprocessSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSp
 		return nil, nil, verr
 	}
 	venvsRoot := filepath.Join(home, "venvs")
-	env = subprocessServerEnv(o.host, o.port, agentBin, ws.Path, bootPy, venvsRoot, o.adminHash, o.adminEmail, o.jwtSecret)
+	env = subprocessServerEnv(o.liteEnv(), agentBin, ws.Path, bootPy, venvsRoot)
 	env = append(env, liteEditorEnv(ws.Path, filepath.Dir(home))...)
 	makeReload = func(mintToken func() string) func() error {
 		return func() error {
@@ -878,7 +923,7 @@ func devClusterSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec,
 			return devReportingReload(ctx, base, devURL(o.port), token, dagSourcePath(dir, cfg))()
 		}
 	}
-	env = clusterServerEnv(o.host, o.port, kubeconfig, o.adminHash, o.adminEmail, o.jwtSecret)
+	env = clusterServerEnv(o.liteEnv(), kubeconfig)
 	if wd, aerr := filepath.Abs(dir); aerr == nil {
 		env = append(env, liteEditorEnv(wd, filepath.Dir(home))...)
 	}
@@ -1536,7 +1581,25 @@ func isExecutableFile(path string) bool {
 // host is the bind address. It is honored only with real auth; a no-auth
 // fallback is ALWAYS forced to loopback so an unauthenticated control plane can
 // never be exposed to the network (resolveBindHost enforces this).
-func sharedServerEnv(host string, port int, adminHash, adminEmail, jwtSecret string) []string {
+// liteEnvParams carries what the Lite server env needs. A struct rather than
+// positional arguments because jwtSecret and secretKey are adjacent strings
+// with entirely different jobs: swapping them compiles, boots, and silently
+// encrypts every connection password with the token-signing secret. Naming the
+// fields makes that swap impossible to write.
+type liteEnvParams struct {
+	host       string
+	port       int
+	adminHash  string
+	adminEmail string
+	jwtSecret  string
+	// secretKey is the per-install connection-encryption key from config.yaml;
+	// empty on a legacy install, which resolveLiteSecretKey maps to the
+	// published constant.
+	secretKey string
+}
+
+func sharedServerEnv(p liteEnvParams) []string {
+	host, port, adminHash, adminEmail, jwtSecret := p.host, p.port, p.adminHash, p.adminEmail, p.jwtSecret
 	env := []string{
 		fmt.Sprintf("LEOFLOW_SERVER_HTTP_ADDR=%s:%d", resolveBindHost(host, adminHash), port),
 		"LEOFLOW_SERVER_GRPC_ADDR=" + devGRPCBindAddr(port),
@@ -1571,7 +1634,11 @@ func sharedServerEnv(host string, port int, adminHash, adminEmail, jwtSecret str
 		// password a few times (only failures count, but the production default of
 		// 5/min is still tight here). Be generous.
 		fmt.Sprintf("LEOFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE=%d", liteLoginRateLimit),
-		"LEOFLOW_SECRET_KEY=" + devSecretKey,
+		// The per-install key (#486). The published constant follows as a
+		// read-only FALLBACK so connections written by an earlier install stay
+		// readable and get re-encrypted under the new key on first read.
+		"LEOFLOW_SECRET_KEY=" + resolveLiteSecretKey(p.secretKey),
+		"LEOFLOW_SECRET_KEY_FALLBACK=" + devSecretKey,
 		"LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true",
 	}
 	if adminHash != "" {
@@ -1634,30 +1701,37 @@ func mergeLiteDefaults(o *devOptions, c *config.Config, executorSet, portSet boo
 	}
 }
 
-// resolveLiteAdmin loads the configured admin credential + per-install JWT
-// secret, warning when no admin is set (Lite then falls back to no-auth).
-func resolveLiteAdmin(cmd *cobra.Command, out io.Writer) (hash, email, jwtSecret string) {
-	hash, email, jwtSecret = loadLiteAdmin(cmd)
-	if hash == "" {
+// resolveLiteAdmin loads the configured admin credential and the two
+// per-install secrets, warning when no admin is set (Lite then falls back to
+// no-auth). It returns a struct rather than four strings because two of them
+// are secrets with different jobs, and a swapped pair would compile.
+func resolveLiteAdmin(cmd *cobra.Command, out io.Writer) liteEnvParams {
+	p := loadLiteAdmin(cmd)
+	if p.adminHash == "" {
 		devPrintln(out, "  WARNING: no admin configured — run `leoflow setup`. Falling back to no-auth (local only, insecure).")
 	}
-	return hash, email, jwtSecret
+	return p
 }
 
 // loadLiteAdmin reads the Lite admin credential the setup wizard persisted (hash
 // only) and the per-install JWT secret (rotated by `leoflow setup` so a reinstall
 // invalidates the prior install's tokens — #121) from ~/.leoflow/config.yaml.
 // Returns an empty hash when no admin is configured.
-func loadLiteAdmin(cmd *cobra.Command) (hash, email, jwtSecret string) {
+func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
 	c, err := config.Load(configFilePath(cmd), nil)
 	if err != nil || c == nil {
-		return "", "", ""
+		return liteEnvParams{}
 	}
-	email = c.AdminEmail
+	email := c.AdminEmail
 	if email == "" {
 		email = "admin@leoflow.local"
 	}
-	return c.AdminPasswordHash, email, c.JWTSecret
+	return liteEnvParams{
+		adminHash:  c.AdminPasswordHash,
+		adminEmail: email,
+		jwtSecret:  c.JWTSecret,
+		secretKey:  c.SecretKey,
+	}
 }
 
 // subprocessServerEnv adds the subprocess-executor settings: the agent binary,
@@ -1666,11 +1740,11 @@ func loadLiteAdmin(cmd *cobra.Command) (hash, email, jwtSecret string) {
 // — the subprocess executor consults <root>/<dag_id>/bin/python to override the
 // fallback per task), and a dialable control-plane address (the server binds
 // 0.0.0.0, which is not a dial target).
-func subprocessServerEnv(host string, port int, agentBin, workDir, venvPython, venvsRoot, adminHash, adminEmail, jwtSecret string) []string {
-	return append(sharedServerEnv(host, port, adminHash, adminEmail, jwtSecret),
+func subprocessServerEnv(p liteEnvParams, agentBin, workDir, venvPython, venvsRoot string) []string {
+	return append(sharedServerEnv(p),
 		"LEOFLOW_EXECUTOR_TYPE=subprocess",
 		"LEOFLOW_EXECUTOR_AGENT_PATH="+agentBin,
-		"LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR=127.0.0.1"+devGRPCBindAddr(port),
+		"LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR=127.0.0.1"+devGRPCBindAddr(p.port),
 		"LEOFLOW_EXECUTOR_SUBPROCESS_WORKDIR="+workDir,
 		"LEOFLOW_PYTHON="+venvPython,
 		"LEOFLOW_LITE_VENVS_ROOT="+venvsRoot,
@@ -1680,11 +1754,11 @@ func subprocessServerEnv(host string, port int, agentBin, workDir, venvPython, v
 // clusterServerEnv adds the Kubernetes-executor settings: the isolated dev
 // cluster's kubeconfig (so the control plane targets leoflow-dev, never the
 // product cluster) and the host address task pods dial back for gRPC.
-func clusterServerEnv(host string, port int, kubeconfig, adminHash, adminEmail, jwtSecret string) []string {
-	return append(sharedServerEnv(host, port, adminHash, adminEmail, jwtSecret),
+func clusterServerEnv(p liteEnvParams, kubeconfig string) []string {
+	return append(sharedServerEnv(p),
 		"LEOFLOW_EXECUTOR_TYPE=kubernetes",
 		"KUBECONFIG="+kubeconfig,
-		"LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR="+devHostGRPCAddr(port),
+		"LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR="+devHostGRPCAddr(p.port),
 		// The dev k3d cluster's local-path provisioner rejects RWX; it is
 		// single-node, so RWO is sufficient for a run's sequential pods (ADR 0022).
 		"LEOFLOW_EXECUTOR_DEFAULTS_STAGING_ACCESS_MODE=ReadWriteOnce",

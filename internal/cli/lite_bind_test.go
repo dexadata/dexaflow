@@ -28,11 +28,11 @@ func TestResolveBindHost(t *testing.T) {
 
 // TestSharedServerEnvBindsRequestedHost ties it together at the env level.
 func TestSharedServerEnvBindsRequestedHost(t *testing.T) {
-	withAuth := strings.Join(sharedServerEnv("0.0.0.0", 8088, "$2a$hash", "admin@x", ""), "\n")
+	withAuth := strings.Join(sharedServerEnv(liteEnvParams{host: "0.0.0.0", port: 8088, adminHash: "$2a$hash", adminEmail: "admin@x", jwtSecret: ""}), "\n")
 	if !strings.Contains(withAuth, "LEOFLOW_SERVER_HTTP_ADDR=0.0.0.0:8088") {
 		t.Errorf("real auth should bind the requested host:\n%s", withAuth)
 	}
-	noAuth := strings.Join(sharedServerEnv("0.0.0.0", 8088, "", "", ""), "\n")
+	noAuth := strings.Join(sharedServerEnv(liteEnvParams{host: "0.0.0.0", port: 8088, adminHash: "", adminEmail: "", jwtSecret: ""}), "\n")
 	if !strings.Contains(noAuth, "LEOFLOW_SERVER_HTTP_ADDR=127.0.0.1:8088") {
 		t.Errorf("no-auth must be forced to loopback regardless of --host:\n%s", noAuth)
 	}

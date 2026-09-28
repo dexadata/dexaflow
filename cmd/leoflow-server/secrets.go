@@ -12,7 +12,7 @@ import (
 // configureSecrets wires connection-secret encryption (the AES-256-GCM cipher)
 // and the external-secrets D6 registration relaxation (ADR 0060) onto the repo.
 func configureSecrets(repo *storage.Repository, cfg *config.ServerConfig, logger *slog.Logger) error {
-	if err := configureSecretCipher(repo, cfg.SecretKey, logger); err != nil {
+	if err := configureSecretCipher(repo, cfg.SecretKey, cfg.SecretKeyFallback, logger); err != nil {
 		return err
 	}
 	return configureSecretsCoverage(cfg.Secrets, repo)
