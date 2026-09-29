@@ -71,7 +71,21 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 		devPrintln(out, "  (keeping your datastore — the managed pgdata and the Docker volume — and your DAG workspace; pass --purge to remove them)")
 	}
 
-	if !yes && !confirmUninstall(cmd) {
+	// The datastore survives a plain uninstall; the key that decrypts its
+	// connection secrets does not, because it lives in the config.yaml this
+	// command deletes (#486). Say so before the confirmation, not after: the
+	// user is about to make their preserved data unreadable while this command's
+	// own help says a reinstall keeps it.
+	if strandsDatastoreKey(configFileSecrets(filepath.Join(root, "config.yaml")).secretKey != "", !purge) {
+		devPrintln(out, "")
+		devPrintln(out, "  WARNING: your datastore is kept, but the key that decrypts its connection")
+		devPrintln(out, "           secrets is in the config being removed. A reinstall generates a NEW")
+		devPrintln(out, "           key, and the stored passwords will not be readable.")
+		devPrintf(out, "           Copy `secret_key` out of %s first if you want them back.\n",
+			filepath.Join(root, "config.yaml"))
+	}
+
+	if !yes && !confirmDestructive(cmd) {
 		devPrintln(out, "aborted.")
 		return nil
 	}
@@ -129,10 +143,10 @@ func removeBinariesIn(out io.Writer, dir string) {
 	}
 }
 
-// confirmUninstall reads a yes/no from stdin; anything but yes/y (and any EOF on
-// a non-interactive stdin) aborts, so the destructive action is never taken by
-// accident.
-func confirmUninstall(cmd *cobra.Command) bool {
+// confirmDestructive reads a yes/no from stdin; anything but yes/y (and any EOF
+// on a non-interactive stdin) aborts, so a destructive action is never taken by
+// accident. Shared by every command that cannot be undone.
+func confirmDestructive(cmd *cobra.Command) bool {
 	devPrintf(cmd.OutOrStdout(), "Type 'yes' to confirm (or re-run with --yes): ")
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && line == "" {
@@ -207,4 +221,17 @@ func composeDownVolumes(cmd *cobra.Command, composeFile string) {
 		// Best-effort: a missing/already-down stack is fine; the files are removed next.
 		devPrintf(cmd.OutOrStdout(), "  ! docker compose down (datastores may already be gone): %v\n", err)
 	}
+}
+
+// strandsDatastoreKey reports whether this uninstall leaves a datastore behind
+// that nothing can decrypt: a per-install key exists, and the data outlives the
+// config holding it.
+//
+// Copying the key next to the datastore was tried and rejected. It put the only
+// copy of the key inside the very artifact the threat model names, a file that
+// travels in backups and synced directories, which re-opens what the key change
+// exists to close. Warning and letting the user take the copy keeps the decision
+// where the context is.
+func strandsDatastoreKey(hasPerInstallKey, keepsDatastore bool) bool {
+	return hasPerInstallKey && keepsDatastore
 }

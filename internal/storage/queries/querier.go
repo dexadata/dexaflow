@@ -241,6 +241,10 @@ type Querier interface {
 	// version" only when they differ, so leaving it null either hides the control or
 	// shows it unconditionally — neither of which tells the operator the truth.
 	ListDagsWithVersion(ctx context.Context, arg ListDagsWithVersionParams) ([]ListDagsWithVersionRow, error)
+	// Every connection's ciphertext, across every tenant, for the key-rotation
+	// pass. The id is returned because the rewrite targets a row, not a
+	// (tenant, conn_id) pair, and nothing here decrypts: the caller holds the keys.
+	ListEncryptedConnectionSecrets(ctx context.Context) ([]ListEncryptedConnectionSecretsRow, error)
 	ListFavoriteDagIDs(ctx context.Context, arg ListFavoriteDagIDsParams) ([]string, error)
 	ListImportErrors(ctx context.Context, tenant string) ([]ListImportErrorsRow, error)
 	// Lists dag_runs currently in 'running' whose task instances are ALL terminal
@@ -551,6 +555,16 @@ type Querier interface {
 	// value and the sensor honors its cumulative timeout across pokes (#380).
 	TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
+	// Rewrite one row's ciphertext in place during a key rotation. It touches only
+	// the two encrypted columns, so a re-encryption can never alter a connection's
+	// identity, host, or any field a user set.
+	//
+	// The WHERE carries the ciphertext we read, so a row a user changed between our
+	// read and our write is NOT overwritten. Without it the rotation re-seals stale
+	// plaintext over a password the user just set, and bumps updated_at so the row
+	// looks freshly written. Reachable whenever more than one replica serves, which
+	// the chart calls the recommended production posture.
+	UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) (int64, error)
 	UpdateDagRunState(ctx context.Context, arg UpdateDagRunStateParams) (DagRun, error)
 	UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskInstanceStateParams) (TaskInstance, error)
 	// Stamps the per-state entry timestamps the UI shows (scheduled_when /

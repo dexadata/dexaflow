@@ -30,9 +30,18 @@ type ServerConfig struct {
 	Observability ObservabilitySection `mapstructure:"observability"`
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
-	// SecretKey (LEOFLOW_SECRET_KEY) is the 32-byte key encrypting connection
-	// secrets at rest (ADR 0019). Raw 32 chars, 64-char hex, or base64. Empty
-	// disables connection writes.
+	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
+	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
+	// writes.
+	//
+	// A COMMA-SEPARATED LIST rotates the key: the first entry encrypts and
+	// decrypts, every later entry only decrypts. Nothing is ever written under a
+	// later entry. This is the shape Airflow's `fernet_key` uses, so an operator
+	// coming from Airflow already knows to put the new key first and the old
+	// ones after (#486).
+	//
+	// Trying keys in order is safe only because AES-GCM is authenticated: a
+	// wrong key fails to open rather than returning plausible garbage.
 	SecretKey string `mapstructure:"secret_key"`
 }
 

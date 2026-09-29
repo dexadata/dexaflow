@@ -295,7 +295,16 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 		if jerr != nil {
 			return "", jerr
 		}
-		if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, jwtSecret); wErr != nil {
+		// Per-install connection-encryption key. Lite shipped a constant
+		// compiled into this repository, so every install shared it and a
+		// database file gave up every credential in it (#486).
+		//
+		key, kerr := generateSecretKey()
+		if kerr != nil {
+			return "", kerr
+		}
+		sec := liteFileSecrets{jwtSecret: jwtSecret, secretKey: key}
+		if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, sec); wErr != nil {
 			return "", fmt.Errorf("writing config: %w", wErr)
 		}
 		generated = pw
@@ -396,7 +405,12 @@ func loadManifestSettings(leoflowHome string, def liteSettings) liteSettings {
 // the bcrypt hash of the admin password is stored — never the plaintext. The
 // per-install JWT secret rotates here (#121): a reinstall invalidates the prior
 // install's tokens, so the SPA stops auto-accepting a stale browser token.
-func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash, jwtSecret string) error {
+// writeLiteConfig rewrites ~/.leoflow/config.yaml.
+//
+// The secrets travel as one struct because they must move together: every one
+// of them is the only copy of something, and a rewrite that carries two of the
+// three forward silently destroys the third.
+func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash string, sec liteFileSecrets) error {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "# Written by `leoflow setup` (Leoflow Lite).\n")
 	_, _ = fmt.Fprintf(&b, "parser_cmd: %q\n", parserCmd)
@@ -405,8 +419,30 @@ func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash, 
 	_, _ = fmt.Fprintf(&b, "lite_port: %d\n", lc.Port)
 	_, _ = fmt.Fprintf(&b, "admin_email: %q\n", lc.AdminEmail)
 	_, _ = fmt.Fprintf(&b, "admin_password_hash: %q\n", adminHash)
-	_, _ = fmt.Fprintf(&b, "jwt_secret: %q\n", jwtSecret)
-	return os.WriteFile(filepath.Join(leoflowHome, "config.yaml"), []byte(b.String()), 0o600)
+	_, _ = fmt.Fprintf(&b, "jwt_secret: %q\n", sec.jwtSecret)
+	// A secret is written only when there is one. Writing `secret_key: ""` would
+	// record an empty key as the install's key, which reads back as "configured
+	// and empty" rather than "absent", and the only copy of the real one is gone.
+	if sec.secretKey != "" {
+		_, _ = fmt.Fprintf(&b, "secret_key: %q\n", sec.secretKey)
+	}
+	if sec.secretKeyPrevious != "" {
+		_, _ = fmt.Fprintf(&b, "secret_key_previous: %q\n", sec.secretKeyPrevious)
+	}
+	return writeFileAtomic(filepath.Join(leoflowHome, "config.yaml"), []byte(b.String()))
+}
+
+// generateSecretKey returns a fresh per-install connection-encryption key (32
+// random bytes, hex-encoded). Same shape and lifecycle as the JWT secret: a
+// reinstall rotates it, and the previous install's rows are re-encrypted rather
+// than orphaned because the old key travels to the server as a read-only
+// fallback (#486).
+func generateSecretKey() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generating secret key: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // generateJWTSecret returns a fresh per-install JWT signing secret (32 random

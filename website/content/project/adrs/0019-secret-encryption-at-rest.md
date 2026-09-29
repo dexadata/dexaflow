@@ -45,8 +45,23 @@ Encrypt sensitive connection fields at rest with **AES-256-GCM**, using a
   in the clear so it remains queryable.
 - API: `password` is **never returned** (write-only); responses mask it. `extra`
   is returned but secret-looking keys within it may be masked.
-- Rotation: changing the key invalidates existing ciphertexts; connections are
-  re-entered. (Envelope encryption / key versioning is a future evolution.)
+- Rotation: `LEOFLOW_SECRET_KEY` takes a comma-separated list where the first
+  entry encrypts and the rest only decrypt, the same rule as Airflow's
+  `fernet_key`. The control plane re-encrypts stored secrets onto the first key
+  at startup, so a rotation finishes and the old key can be removed.
+
+  **This supersedes the original decision**, which read: "changing the key
+  invalidates existing ciphertexts; connections are re-entered". That was
+  acceptable while the key was set once by an operator who chose it. It stopped
+  being acceptable when Leoflow Lite had to move every install off a key
+  compiled into this repository (#486): a rotation that orphans existing
+  credentials is worse than the published key it replaces, so nobody would take
+  it.
+
+  Trying keys in order is safe only because AES-GCM is authenticated: a wrong
+  key fails to open rather than returning plausible garbage. Envelope
+  encryption and per-row key versioning remain a future evolution; this is key
+  rotation, not a key hierarchy.
 
 ## Consequences
 

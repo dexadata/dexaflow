@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -11,11 +12,35 @@ import (
 
 // configureSecrets wires connection-secret encryption (the AES-256-GCM cipher)
 // and the external-secrets D6 registration relaxation (ADR 0060) onto the repo.
-func configureSecrets(repo *storage.Repository, cfg *config.ServerConfig, logger *slog.Logger) error {
+func configureSecrets(ctx context.Context, repo *storage.Repository, cfg *config.ServerConfig, logger *slog.Logger) error {
 	if err := configureSecretCipher(repo, cfg.SecretKey, logger); err != nil {
 		return err
 	}
+	finishKeyRotation(ctx, repo, logger)
 	return configureSecretsCoverage(cfg.Secrets, repo)
+}
+
+// finishKeyRotation moves stored secrets onto the current key when
+// LEOFLOW_SECRET_KEY carries a predecessor, so the rotation ends instead of
+// living forever as a second key in the read set (#486).
+//
+// Never fatal. The rows are readable either way, since a predecessor that opens
+// them is configured; failing to boot over a migration would take a working
+// control plane down to finish a housekeeping task. A row no configured key can
+// open is reported and left untouched, because its ciphertext is the only copy
+// of that credential.
+func finishKeyRotation(ctx context.Context, repo *storage.Repository, logger *slog.Logger) {
+	n, err := repo.ReencryptSecrets(ctx)
+	if err != nil {
+		logger.Error("could not finish the secret key rotation; the previous key is still required",
+			"re_encrypted", n, "error", err)
+		return
+	}
+	if n > 0 {
+		logger.Info("secret key rotation complete for the stored connections",
+			"re_encrypted", n,
+			"next", "remove the previous key from LEOFLOW_SECRET_KEY once no other replica needs it")
+	}
 }
 
 // secretsKwargsJSON is the operator's backend kwargs as a JSON string, delivered

@@ -65,3 +65,28 @@ ON CONFLICT (tenant_id, conn_id) DO UPDATE SET
 
 -- name: DeleteConnection :execrows
 DELETE FROM connections WHERE tenant_id = $1 AND conn_id = $2;
+
+-- name: ListEncryptedConnectionSecrets :many
+-- Every connection's ciphertext, across every tenant, for the key-rotation
+-- pass. The id is returned because the rewrite targets a row, not a
+-- (tenant, conn_id) pair, and nothing here decrypts: the caller holds the keys.
+SELECT id, tenant_id, conn_id, password, extra
+FROM connections
+WHERE password IS NOT NULL OR extra IS NOT NULL
+ORDER BY id;
+
+-- name: UpdateConnectionCiphertext :execrows
+-- Rewrite one row's ciphertext in place during a key rotation. It touches only
+-- the two encrypted columns, so a re-encryption can never alter a connection's
+-- identity, host, or any field a user set.
+--
+-- The WHERE carries the ciphertext we read, so a row a user changed between our
+-- read and our write is NOT overwritten. Without it the rotation re-seals stale
+-- plaintext over a password the user just set, and bumps updated_at so the row
+-- looks freshly written. Reachable whenever more than one replica serves, which
+-- the chart calls the recommended production posture.
+UPDATE connections
+SET password = $2, extra = $3, updated_at = now()
+WHERE id = $1
+  AND password IS NOT DISTINCT FROM sqlc.arg(expect_password)
+  AND extra IS NOT DISTINCT FROM sqlc.arg(expect_extra);

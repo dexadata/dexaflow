@@ -203,7 +203,7 @@ func TestLiteVenvsRootEnvWiringFromSubprocessServerEnv(t *testing.T) {
 	// finds — a silent regression that would only surface as
 	// ModuleNotFoundError on the first task. Pin the wire so the
 	// regression is impossible.
-	env := strings.Join(subprocessServerEnv("127.0.0.1", 8088, "/bin/agent", "/proj", "/venv/py", "/h/venvs", "", "", ""), "\n")
+	env := strings.Join(subprocessServerEnv(liteEnvParams{host: "127.0.0.1", port: 8088, adminHash: "", adminEmail: "", jwtSecret: ""}, "/bin/agent", "/proj", "/venv/py", "/h/venvs"), "\n")
 	for _, must := range []string{
 		"LEOFLOW_LITE_VENVS_ROOT=/h/venvs",
 		// And the legacy LEOFLOW_PYTHON remains as the boot/fallback.
