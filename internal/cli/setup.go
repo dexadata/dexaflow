@@ -299,19 +299,11 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 		// compiled into this repository, so every install shared it and a
 		// database file gave up every credential in it (#486).
 		//
-		// A datastore preserved by `leoflow uninstall` carries the key that
-		// opens it; adopt that rather than generating a new one, or the
-		// documented uninstall-then-reinstall path leaves every stored
-		// credential unreadable.
-		sec := adoptPreservedKey(leoflowHome)
-		sec.jwtSecret = jwtSecret
-		if sec.secretKey == "" {
-			key, kerr := generateSecretKey()
-			if kerr != nil {
-				return "", kerr
-			}
-			sec.secretKey = key
+		key, kerr := generateSecretKey()
+		if kerr != nil {
+			return "", kerr
 		}
+		sec := liteFileSecrets{jwtSecret: jwtSecret, secretKey: key}
 		if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, sec); wErr != nil {
 			return "", fmt.Errorf("writing config: %w", wErr)
 		}
@@ -428,13 +420,16 @@ func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash s
 	_, _ = fmt.Fprintf(&b, "admin_email: %q\n", lc.AdminEmail)
 	_, _ = fmt.Fprintf(&b, "admin_password_hash: %q\n", adminHash)
 	_, _ = fmt.Fprintf(&b, "jwt_secret: %q\n", sec.jwtSecret)
-	_, _ = fmt.Fprintf(&b, "secret_key: %q\n", sec.secretKey)
-	// Only when one exists: an install with nothing left under a predecessor
-	// must not carry the published constant forward forever.
+	// A secret is written only when there is one. Writing `secret_key: ""` would
+	// record an empty key as the install's key, which reads back as "configured
+	// and empty" rather than "absent", and the only copy of the real one is gone.
+	if sec.secretKey != "" {
+		_, _ = fmt.Fprintf(&b, "secret_key: %q\n", sec.secretKey)
+	}
 	if sec.secretKeyPrevious != "" {
 		_, _ = fmt.Fprintf(&b, "secret_key_previous: %q\n", sec.secretKeyPrevious)
 	}
-	return os.WriteFile(filepath.Join(leoflowHome, "config.yaml"), []byte(b.String()), 0o600)
+	return writeFileAtomic(filepath.Join(leoflowHome, "config.yaml"), []byte(b.String()))
 }
 
 // generateSecretKey returns a fresh per-install connection-encryption key (32
@@ -477,16 +472,4 @@ func libcSuffix(libc string) string {
 		return ""
 	}
 	return " (" + libc + ")"
-}
-
-// adoptPreservedKey reads the encryption secrets that `leoflow uninstall` left
-// beside a datastore it preserved, so a reinstall opens what that datastore
-// holds.
-//
-// Empty when there is nothing to adopt, which is the normal case on a fresh
-// machine. The file is left in place: it is the recovery copy, and deleting it
-// during setup would remove the safety net at the exact moment it proved
-// useful.
-func adoptPreservedKey(leoflowHome string) liteFileSecrets {
-	return configFileSecrets(filepath.Join(leoflowHome, "pgdata", "keys.yaml"))
 }

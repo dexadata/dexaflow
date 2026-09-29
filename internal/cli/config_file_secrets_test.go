@@ -77,3 +77,27 @@ func TestWriteLiteConfigOmitsAnAbsentPredecessor(t *testing.T) {
 		t.Errorf("wrote a predecessor line for an install that has none:\n%s", raw)
 	}
 }
+
+// Every one of these is valid YAML that the config loader accepts. A
+// line-matching reader returned empty for all but the first, and a rewrite then
+// persisted the emptiness, destroying the only copy of the key.
+func TestConfigFileSecretsParsesEveryValidYAMLSpelling(t *testing.T) {
+	for _, tc := range []struct{ name, line string }{
+		{"double quoted", `secret_key: "abc123"`},
+		{"unquoted", `secret_key: abc123`},
+		{"single quoted", `secret_key: 'abc123'`},
+		{"trailing comment", `secret_key: "abc123" # the key`},
+		{"extra spacing", `secret_key:    "abc123"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(p, []byte(tc.line+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := configFileSecrets(p).secretKey; got != "abc123" {
+				t.Errorf("read %q, want \"abc123\": a rewrite would now persist the empty value and lose the key", got)
+			}
+		})
+	}
+}

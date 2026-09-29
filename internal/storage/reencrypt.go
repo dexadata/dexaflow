@@ -18,9 +18,9 @@ import (
 // (#486). "Set the new key and keep the old one" is not a rotation, it is a
 // second key.
 //
-// It is a no-op unless the cipher can report which key opened a value, and a
-// no-op when nothing is stale, so it is safe to run on every boot. It returns
-// the number of rows rewritten.
+// A no-op when nothing is stale, so it is safe to run on every boot: with a
+// single key every row reports fresh and nothing is written. It returns the
+// number of rows rewritten.
 //
 // A row no configured key can open is LEFT ALONE and reported as an error. Its
 // ciphertext is the only copy of a credential, the operator may still find the
@@ -37,24 +37,45 @@ func (r *Repository) ReencryptSecrets(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("listing encrypted connections: %w", err)
 	}
 
-	var migrated int
+	var migrated, skipped int
 	var unreadable []error
 	for _, row := range rows {
 		pw, pwStale, pwErr := reencryptOne(stale, row.Password)
 		ex, exStale, exErr := reencryptOne(stale, row.Extra)
-		if pwErr != nil || exErr != nil {
-			unreadable = append(unreadable, fmt.Errorf("connection %q: %w", row.ConnID, errors.Join(pwErr, exErr)))
-			continue
+		// The two columns are independent ciphertexts. A password that can be
+		// migrated is migrated even when `extra` cannot be opened, and the other
+		// way round: coupling them means one unreadable column pins the whole
+		// row, and the predecessor key can never be retired.
+		if pwErr != nil {
+			unreadable = append(unreadable, fmt.Errorf("connection %q password: %w", row.ConnID, pwErr))
+			pw, pwStale = row.Password, false
+		}
+		if exErr != nil {
+			unreadable = append(unreadable, fmt.Errorf("connection %q extra: %w", row.ConnID, exErr))
+			ex, exStale = row.Extra, false
 		}
 		if !pwStale && !exStale {
 			continue
 		}
-		if uerr := r.q.UpdateConnectionCiphertext(ctx, queries.UpdateConnectionCiphertextParams{
+		n, uerr := r.q.UpdateConnectionCiphertext(ctx, queries.UpdateConnectionCiphertextParams{
 			ID: row.ID, Password: pw, Extra: ex,
-		}); uerr != nil {
+			ExpectPassword: row.Password, ExpectExtra: row.Extra,
+		})
+		if uerr != nil {
 			return migrated, fmt.Errorf("rewriting connection %q: %w", row.ConnID, uerr)
 		}
+		if n == 0 {
+			// Someone rewrote the row between our read and our write. Their value
+			// is the current one and is already under the current key; leaving it
+			// is the whole point of the guard.
+			skipped++
+			continue
+		}
 		migrated++
+	}
+	if skipped > 0 {
+		slog.Info("left connections that changed during the rotation to the writer that changed them",
+			"skipped", skipped)
 	}
 
 	if len(unreadable) > 0 {

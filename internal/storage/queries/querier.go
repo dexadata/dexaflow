@@ -558,7 +558,13 @@ type Querier interface {
 	// Rewrite one row's ciphertext in place during a key rotation. It touches only
 	// the two encrypted columns, so a re-encryption can never alter a connection's
 	// identity, host, or any field a user set.
-	UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) error
+	//
+	// The WHERE carries the ciphertext we read, so a row a user changed between our
+	// read and our write is NOT overwritten. Without it the rotation re-seals stale
+	// plaintext over a password the user just set, and bumps updated_at so the row
+	// looks freshly written. Reachable whenever more than one replica serves, which
+	// the chart calls the recommended production posture.
+	UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) (int64, error)
 	UpdateDagRunState(ctx context.Context, arg UpdateDagRunStateParams) (DagRun, error)
 	UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskInstanceStateParams) (TaskInstance, error)
 	// Stamps the per-state entry timestamps the UI shows (scheduled_when /

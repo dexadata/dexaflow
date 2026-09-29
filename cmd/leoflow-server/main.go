@@ -313,7 +313,13 @@ func liteEditorFS(cfg *config.ServerConfig, logger *slog.Logger) api.WorkspaceFS
 func configureSecretCipher(repo *storage.Repository, secretKey string, logger *slog.Logger) error {
 	keys, kerr := secrets.ParseKeys(secretKey)
 	if kerr != nil {
-		logger.Warn("no usable LEOFLOW_SECRET_KEY set; connection management disabled (Variables still work)")
+		// The reason, not just the outcome. ParseKeys says WHICH entry of the
+		// list is malformed, and an operator told only "no usable key set" after
+		// setting one will go looking at the wrong thing. One bad entry disables
+		// encryption even when the first key is perfect, so naming it matters
+		// more here than it did with a single key.
+		logger.Warn("no usable LEOFLOW_SECRET_KEY; connection management disabled (Variables still work)",
+			"error", kerr)
 		return nil //nolint:nilerr // a missing/unusable key is non-fatal: run without connection encryption
 	}
 	ciphers := make([]secrets.Cipher, 0, len(keys))
@@ -330,9 +336,8 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 	// cosmetic.
 	repo.SetCipher(secrets.WithFallback(ciphers[0], ciphers[1:]...))
 	if len(ciphers) > 1 {
-		logger.Info("secret key rotation in progress: the first key encrypts, the rest only decrypt",
-			"decrypt_only_keys", len(ciphers)-1,
-			"note", "run the re-encryption before removing them; they are still needed to read older rows")
+		logger.Info("secret key rotation: the first key encrypts, the rest only decrypt",
+			"decrypt_only_keys", len(ciphers)-1)
 	}
 	// A 32-character all-hex key is what `openssl rand -hex 16` produces, which
 	// this project's own docs recommended until they were corrected. ParseKey

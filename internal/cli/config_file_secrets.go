@@ -2,7 +2,8 @@ package cli
 
 import (
 	"os"
-	"regexp"
+
+	"gopkg.in/yaml.v3"
 )
 
 // liteFileSecrets are the secrets as ~/.leoflow/config.yaml holds them, with no
@@ -24,29 +25,30 @@ type liteFileSecrets struct {
 // every stored connection. This repository's own end-to-end scripts export that
 // variable, so it is not a hypothetical shell.
 //
-// Empty fields for a missing or unreadable file: the caller is a best-effort
-// sync and an absent config is not a failure.
+// It parses YAML rather than matching lines. A line-matching version of this
+// read `secret_key: abc` (unquoted), `secret_key: 'abc'` (single-quoted) and
+// `secret_key: "abc" # note` as EMPTY, all of which are valid YAML that the
+// loader accepts. A rewrite then persisted an empty key, and the install lost
+// the only copy of it.
+//
+// Empty fields for a missing or unparseable file: the caller is a best-effort
+// sync, and refusing there would block a password reset over a comment.
 func configFileSecrets(path string) liteFileSecrets {
 	raw, err := os.ReadFile(path) //nolint:gosec // operator-owned path under the user's home
 	if err != nil {
 		return liteFileSecrets{}
 	}
-	body := string(raw)
+	var doc struct {
+		JWTSecret         string `yaml:"jwt_secret"`
+		SecretKey         string `yaml:"secret_key"`
+		SecretKeyPrevious string `yaml:"secret_key_previous"`
+	}
+	if uerr := yaml.Unmarshal(raw, &doc); uerr != nil {
+		return liteFileSecrets{}
+	}
 	return liteFileSecrets{
-		jwtSecret:         quotedScalar(body, "jwt_secret"),
-		secretKey:         quotedScalar(body, "secret_key"),
-		secretKeyPrevious: quotedScalar(body, "secret_key_previous"),
+		jwtSecret:         doc.JWTSecret,
+		secretKey:         doc.SecretKey,
+		secretKeyPrevious: doc.SecretKeyPrevious,
 	}
-}
-
-// quotedScalar returns the value of a top-level `name: "value"` line. Anchored
-// per line and to the start of the line so `secret_key_previous` is never read
-// as `secret_key`, and a mention inside a comment is never read at all.
-func quotedScalar(body, name string) string {
-	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `:\s+"([^"]*)"\s*$`)
-	m := re.FindStringSubmatch(body)
-	if len(m) != 2 {
-		return ""
-	}
-	return m[1]
 }

@@ -388,33 +388,22 @@ func (o *devOptions) liteEnv() liteEnvParams {
 	}
 }
 
-// ensureLiteSecretKey gives an install that predates per-install keys one, in
-// place, at boot.
+// warnIfSharedSecretKey tells a user still on the key published in this
+// repository what that costs them, and how to leave it.
 //
-// It does not wait for the user to act on a warning, because the advice we
-// could print would not work: `leoflow setup` skips a configured install
-// entirely (liteConfigExists is a plain stat of config.yaml, and every install
-// has had that file since #121), so "run leoflow setup" is a no-op for exactly
-// the population that needs it.
-//
-// Best effort. A read-only home, or a config file this tool cannot parse, keeps
-// the install running on the published key with a warning rather than refusing
-// to boot.
-func ensureLiteSecretKey(cmd *cobra.Command, out io.Writer, o *devOptions) {
-	if o.secretKey != "" {
+// It does not migrate them silently. Rotating an encryption key rewrites every
+// stored credential, and doing that as a side effect of starting the server,
+// against a config file the tool would have to mutate underneath a running
+// install, is how a boot turns into data loss. `leoflow lite rotate-key` does
+// it when the user asks, in one place that can be tested end to end (#486).
+func warnIfSharedSecretKey(out io.Writer, key string) {
+	if key != "" {
 		return
 	}
-	key, err := backfillSecretKey(configFilePath(cmd))
-	if err != nil {
-		slog.Warn("could not write a per-install secret key; continuing on the key published in this repository", "error", err)
-		return
-	}
-	o.secretKey, o.secretKeyPrevious = key, devSecretKey
-	devPrintln(out, "  generated a per-install encryption key for your connections (they were encrypted with a key shared by every Lite install)")
+	devPrintln(out, "  WARNING: your connection passwords are encrypted with a key published in this repository,")
+	devPrintln(out, "           which every Lite install shares. Anyone who obtains your datastore file can read")
+	devPrintln(out, "           them. Run `leoflow lite rotate-key` to move to a key only this install has.")
 }
-
-// liteSecretKeyFallbackOnce keeps the legacy-key warning to once per process.
-var liteSecretKeyFallbackOnce sync.Once
 
 // liteSecretKeyList builds LEOFLOW_SECRET_KEY: the encrypting key first, then
 // any decrypt-only predecessor, comma separated. Same rule as Airflow's
@@ -436,9 +425,9 @@ var liteSecretKeyFallbackOnce sync.Once
 // that says what is at stake.
 func liteSecretKeyList(key, previous string) string {
 	if key == "" {
-		liteSecretKeyFallbackOnce.Do(func() {
-			slog.Warn("no per-install secret_key in ~/.leoflow/config.yaml, using the key published in this repository: anyone who obtains your datastore file can read every stored connection password. Fix the config file so Leoflow can write a key into it (#486)")
-		})
+		// An install that predates per-install keys. Its rows are under the
+		// published constant, so that is the only key that can read them;
+		// warnIfSharedSecretKey has already said what that costs.
 		return devSecretKey
 	}
 	if previous == "" {
@@ -551,6 +540,7 @@ func newLiteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.leoflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
 	cmd.AddCommand(newLiteProvisionCommand())
 	cmd.AddCommand(newResetPasswordCommand())
+	cmd.AddCommand(newRotateKeyCommand())
 	cmd.AddCommand(newForgetCommand())
 	cmd.AddCommand(newBackupCommand())
 	cmd.AddCommand(newRestoreCommand())
@@ -697,7 +687,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	id := resolveLiteAdmin(cmd, out)
 	o.adminHash, o.adminEmail, o.jwtSecret = id.adminHash, id.adminEmail, id.jwtSecret
 	o.secretKey, o.secretKeyPrevious = id.secretKey, id.secretKeyPrevious
-	ensureLiteSecretKey(cmd, out, &o)
+	warnIfSharedSecretKey(out, o.secretKey)
 
 	ctx, stop := signal.NotifyContext(cmdContext(cmd), os.Interrupt, syscall.SIGTERM)
 	defer stop()

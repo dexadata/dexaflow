@@ -318,24 +318,43 @@ func (q *Queries) ListEncryptedConnectionSecrets(ctx context.Context) ([]ListEnc
 	return items, nil
 }
 
-const updateConnectionCiphertext = `-- name: UpdateConnectionCiphertext :exec
+const updateConnectionCiphertext = `-- name: UpdateConnectionCiphertext :execrows
 UPDATE connections
 SET password = $2, extra = $3, updated_at = now()
 WHERE id = $1
+  AND password IS NOT DISTINCT FROM $4
+  AND extra IS NOT DISTINCT FROM $5
 `
 
 type UpdateConnectionCiphertextParams struct {
-	ID       pgtype.UUID `json:"id"`
-	Password *string     `json:"password"`
-	Extra    *string     `json:"extra"`
+	ID             pgtype.UUID `json:"id"`
+	Password       *string     `json:"password"`
+	Extra          *string     `json:"extra"`
+	ExpectPassword *string     `json:"expect_password"`
+	ExpectExtra    *string     `json:"expect_extra"`
 }
 
 // Rewrite one row's ciphertext in place during a key rotation. It touches only
 // the two encrypted columns, so a re-encryption can never alter a connection's
 // identity, host, or any field a user set.
-func (q *Queries) UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) error {
-	_, err := q.db.Exec(ctx, updateConnectionCiphertext, arg.ID, arg.Password, arg.Extra)
-	return err
+//
+// The WHERE carries the ciphertext we read, so a row a user changed between our
+// read and our write is NOT overwritten. Without it the rotation re-seals stale
+// plaintext over a password the user just set, and bumps updated_at so the row
+// looks freshly written. Reachable whenever more than one replica serves, which
+// the chart calls the recommended production posture.
+func (q *Queries) UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateConnectionCiphertext,
+		arg.ID,
+		arg.Password,
+		arg.Extra,
+		arg.ExpectPassword,
+		arg.ExpectExtra,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertConnection = `-- name: UpsertConnection :exec
