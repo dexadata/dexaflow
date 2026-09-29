@@ -32,9 +32,12 @@ type fallbackCipher struct {
 }
 
 // WithFallback returns a Cipher that writes with primary and reads with primary
-// then fallbacks, skipping nil entries. With no usable fallback it returns the
-// primary unchanged, so a deployment that never had a legacy key (Pro, whose
-// key has always been the operator's) carries no extra machinery.
+// then fallbacks, skipping nil entries.
+//
+// It always wraps, including when no fallback survives: the result is a
+// StaleReader either way, which callers rely on. With an empty fallback list
+// every read reports fresh, so a single-key deployment behaves exactly as the
+// bare primary does.
 func WithFallback(primary Cipher, fallbacks ...Cipher) StaleReader {
 	kept := make([]Cipher, 0, len(fallbacks))
 	for _, f := range fallbacks {

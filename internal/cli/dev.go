@@ -141,10 +141,11 @@ type devOptions struct {
 	// then falls back to devJWTSecret with a one-shot warning).
 	jwtSecret string
 	// secretKey is the per-install connection-encryption key from
-	// ~/.leoflow/config.yaml, backfilled at boot when absent (#486).
+	// ~/.leoflow/config.yaml (#486).
 	secretKey string
-	// secretKeyPrevious is a decrypt-only predecessor, set while rows written
-	// under the published constant still exist.
+	// secretKeyPrevious is a decrypt-only predecessor. Nothing writes it: it is
+	// a hand-set escape hatch for an install whose key was changed by hand and
+	// still has rows under the old one.
 	secretKeyPrevious string
 }
 
@@ -389,20 +390,24 @@ func (o *devOptions) liteEnv() liteEnvParams {
 }
 
 // warnIfSharedSecretKey tells a user still on the key published in this
-// repository what that costs them, and how to leave it.
+// repository what that costs them.
 //
-// It does not migrate them silently. Rotating an encryption key rewrites every
-// stored credential, and doing that as a side effect of starting the server,
-// against a config file the tool would have to mutate underneath a running
-// install, is how a boot turns into data loss. `leoflow lite rotate-key` does
-// it when the user asks, in one place that can be tested end to end (#486).
+// It does not offer a fix, because there is not one yet, and a warning that
+// names a command which does not exist is worse than one that admits the gap.
+// Migrating an existing install means re-encrypting every stored credential;
+// three security reviews of an attempt at it found ordering, interruption and
+// privilege defects that each destroyed credentials, so it was pulled out and
+// is tracked separately rather than shipped half-right (#486).
 func warnIfSharedSecretKey(out io.Writer, key string) {
 	if key != "" {
 		return
 	}
-	devPrintln(out, "  WARNING: your connection passwords are encrypted with a key published in this repository,")
-	devPrintln(out, "           which every Lite install shares. Anyone who obtains your datastore file can read")
-	devPrintln(out, "           them. Run `leoflow lite rotate-key` to move to a key only this install has.")
+	devPrintln(out, "  WARNING: your connection passwords are encrypted with a key published in this")
+	devPrintln(out, "           repository, which every Lite install shares. Anyone who obtains your")
+	devPrintln(out, "           datastore file can read them.")
+	devPrintln(out, "           Moving an existing install to its own key means re-encrypting every stored")
+	devPrintln(out, "           secret; that migration is tracked and not available yet. Until it ships,")
+	devPrintln(out, "           treat this datastore as holding readable credentials.")
 }
 
 // liteSecretKeyList builds LEOFLOW_SECRET_KEY: the encrypting key first, then
@@ -540,7 +545,6 @@ func newLiteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.leoflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
 	cmd.AddCommand(newLiteProvisionCommand())
 	cmd.AddCommand(newResetPasswordCommand())
-	cmd.AddCommand(newRotateKeyCommand())
 	cmd.AddCommand(newForgetCommand())
 	cmd.AddCommand(newBackupCommand())
 	cmd.AddCommand(newRestoreCommand())

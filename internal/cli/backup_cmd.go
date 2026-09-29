@@ -19,7 +19,7 @@ import (
 
 // newBackupCommand wires `leoflow lite backup`. The whole Lite install ships
 // inside one tarball: workspace DAGs, a logical pg_dump of the managed
-// datastore, the config.yaml (admin hash + JWT secret), and a small
+// datastore, the config.yaml (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small
 // MANIFEST.json that lets restore decide whether the bundle is compatible
 // (#137).
 func newBackupCommand() *cobra.Command {
@@ -28,7 +28,7 @@ func newBackupCommand() *cobra.Command {
 		Use:   "backup",
 		Short: "Snapshot the Lite install (workspace + datastore + config) into a portable archive.",
 		Long: "backup writes a tar.gz containing your workspace DAGs, a logical pg_dump " +
-			"of the managed Postgres, the config (admin hash + JWT secret), and a small " +
+			"of the managed Postgres, the config (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small " +
 			"MANIFEST.json. Pair with `leoflow lite restore` to migrate to another machine, " +
 			"survive an OS reinstall, or roll back a botched pre-alpha upgrade.\n\n" +
 			"Backup only covers the managed Postgres path (the default Lite shape). " +

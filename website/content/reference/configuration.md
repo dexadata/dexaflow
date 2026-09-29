@@ -144,15 +144,21 @@ If yours has one, re-key with `openssl rand -hex 32` and rotate using the list
 above, which is the safe way to change it.
 {{% /alert %}}
 
-{{% alert title="Leoflow Lite does this for you" color="info" %}}
-Lite generates a per-install key on first start and keeps it in
-`~/.leoflow/config.yaml`. An install created before per-install keys existed is
-migrated automatically off the key that used to be compiled into this
-repository.
+{{% alert title="Leoflow Lite: new installs only, for now" color="warning" %}}
+`leoflow setup` generates a per-install key and keeps it in
+`~/.leoflow/config.yaml`.
 
-**That file now holds the only copy of the key that decrypts your stored
-connections.** `leoflow lite backup` includes it. If you roll your own backup of
-the datastore, back up `config.yaml` with it.
+**An install created before per-install keys existed is not migrated.** Its
+connection secrets stay encrypted with the key that used to be compiled into
+this repository, which every Lite install shares, so anyone who obtains that
+datastore file can read them. Moving an existing install means re-encrypting
+every stored secret, and that migration is tracked separately.
+
+**`config.yaml` holds the only copy of the key that decrypts your stored
+connections.** `leoflow lite backup` includes it, which also means the backup
+archive holds the key and the ciphertext together. If you roll your own backup
+of the datastore, back up `config.yaml` with it, and `leoflow uninstall` warns
+before it removes the only copy.
 {{% /alert %}}
 
 ### Defaults

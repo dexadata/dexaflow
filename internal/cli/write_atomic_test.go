@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -72,5 +73,43 @@ func TestWriteLiteConfigNeverWritesAnEmptyKey(t *testing.T) {
 	raw, _ := os.ReadFile(filepath.Join(home, "config.yaml"))
 	if strings.Contains(string(raw), "secret_key:") {
 		t.Errorf("wrote an empty secret_key, which blocks a later rotation from ever running:\n%s", raw)
+	}
+}
+
+// A temp file plus rename creates a NEW inode, owned by whoever runs the
+// command, where os.WriteFile rewrote the same inode and kept its owner. The
+// installer prints `sudo leoflow lite reset-password`, so a root-run rewrite of
+// a user's config is a documented path: leaving it root-owned locks the user
+// out of their own install and orphans every connection.
+//
+// Running as root is not available here, so this asserts the property that is
+// testable: the owner does not change across the rewrite.
+func TestWriteFileAtomicKeepsTheOwner(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeStat, ok := before.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("no syscall.Stat_t on this platform")
+	}
+
+	if werr := writeFileAtomic(path, []byte("new\n")); werr != nil {
+		t.Fatalf("writeFileAtomic: %v", werr)
+	}
+
+	after, serr := os.Stat(path)
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	afterStat, _ := after.Sys().(*syscall.Stat_t)
+	if afterStat.Uid != beforeStat.Uid || afterStat.Gid != beforeStat.Gid {
+		t.Errorf("owner changed across the rewrite: %d:%d -> %d:%d",
+			beforeStat.Uid, beforeStat.Gid, afterStat.Uid, afterStat.Gid)
 	}
 }
