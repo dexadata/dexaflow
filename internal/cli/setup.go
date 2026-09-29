@@ -298,11 +298,21 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 		// Per-install connection-encryption key. Lite shipped a constant
 		// compiled into this repository, so every install shared it and a
 		// database file gave up every credential in it (#486).
-		secretKey, kerr := generateSecretKey()
-		if kerr != nil {
-			return "", kerr
+		//
+		// A datastore preserved by `leoflow uninstall` carries the key that
+		// opens it; adopt that rather than generating a new one, or the
+		// documented uninstall-then-reinstall path leaves every stored
+		// credential unreadable.
+		sec := adoptPreservedKey(leoflowHome)
+		sec.jwtSecret = jwtSecret
+		if sec.secretKey == "" {
+			key, kerr := generateSecretKey()
+			if kerr != nil {
+				return "", kerr
+			}
+			sec.secretKey = key
 		}
-		if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, jwtSecret, secretKey); wErr != nil {
+		if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, sec); wErr != nil {
 			return "", fmt.Errorf("writing config: %w", wErr)
 		}
 		generated = pw
@@ -403,7 +413,12 @@ func loadManifestSettings(leoflowHome string, def liteSettings) liteSettings {
 // the bcrypt hash of the admin password is stored — never the plaintext. The
 // per-install JWT secret rotates here (#121): a reinstall invalidates the prior
 // install's tokens, so the SPA stops auto-accepting a stale browser token.
-func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash, jwtSecret, secretKey string) error {
+// writeLiteConfig rewrites ~/.leoflow/config.yaml.
+//
+// The secrets travel as one struct because they must move together: every one
+// of them is the only copy of something, and a rewrite that carries two of the
+// three forward silently destroys the third.
+func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash string, sec liteFileSecrets) error {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "# Written by `leoflow setup` (Leoflow Lite).\n")
 	_, _ = fmt.Fprintf(&b, "parser_cmd: %q\n", parserCmd)
@@ -412,8 +427,13 @@ func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash, 
 	_, _ = fmt.Fprintf(&b, "lite_port: %d\n", lc.Port)
 	_, _ = fmt.Fprintf(&b, "admin_email: %q\n", lc.AdminEmail)
 	_, _ = fmt.Fprintf(&b, "admin_password_hash: %q\n", adminHash)
-	_, _ = fmt.Fprintf(&b, "jwt_secret: %q\n", jwtSecret)
-	_, _ = fmt.Fprintf(&b, "secret_key: %q\n", secretKey)
+	_, _ = fmt.Fprintf(&b, "jwt_secret: %q\n", sec.jwtSecret)
+	_, _ = fmt.Fprintf(&b, "secret_key: %q\n", sec.secretKey)
+	// Only when one exists: an install with nothing left under a predecessor
+	// must not carry the published constant forward forever.
+	if sec.secretKeyPrevious != "" {
+		_, _ = fmt.Fprintf(&b, "secret_key_previous: %q\n", sec.secretKeyPrevious)
+	}
 	return os.WriteFile(filepath.Join(leoflowHome, "config.yaml"), []byte(b.String()), 0o600)
 }
 
@@ -457,4 +477,16 @@ func libcSuffix(libc string) string {
 		return ""
 	}
 	return " (" + libc + ")"
+}
+
+// adoptPreservedKey reads the encryption secrets that `leoflow uninstall` left
+// beside a datastore it preserved, so a reinstall opens what that datastore
+// holds.
+//
+// Empty when there is nothing to adopt, which is the normal case on a fresh
+// machine. The file is left in place: it is the recovery copy, and deleting it
+// during setup would remove the safety net at the exact moment it proved
+// useful.
+func adoptPreservedKey(leoflowHome string) liteFileSecrets {
+	return configFileSecrets(filepath.Join(leoflowHome, "pgdata", "keys.yaml"))
 }

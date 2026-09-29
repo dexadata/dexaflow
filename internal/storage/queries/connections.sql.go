@@ -274,6 +274,70 @@ func (q *Queries) ListConnections(ctx context.Context, arg ListConnectionsParams
 	return items, nil
 }
 
+const listEncryptedConnectionSecrets = `-- name: ListEncryptedConnectionSecrets :many
+SELECT id, tenant_id, conn_id, password, extra
+FROM connections
+WHERE password IS NOT NULL OR extra IS NOT NULL
+ORDER BY id
+`
+
+type ListEncryptedConnectionSecretsRow struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	ConnID   string      `json:"conn_id"`
+	Password *string     `json:"password"`
+	Extra    *string     `json:"extra"`
+}
+
+// Every connection's ciphertext, across every tenant, for the key-rotation
+// pass. The id is returned because the rewrite targets a row, not a
+// (tenant, conn_id) pair, and nothing here decrypts: the caller holds the keys.
+func (q *Queries) ListEncryptedConnectionSecrets(ctx context.Context) ([]ListEncryptedConnectionSecretsRow, error) {
+	rows, err := q.db.Query(ctx, listEncryptedConnectionSecrets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEncryptedConnectionSecretsRow{}
+	for rows.Next() {
+		var i ListEncryptedConnectionSecretsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConnID,
+			&i.Password,
+			&i.Extra,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateConnectionCiphertext = `-- name: UpdateConnectionCiphertext :exec
+UPDATE connections
+SET password = $2, extra = $3, updated_at = now()
+WHERE id = $1
+`
+
+type UpdateConnectionCiphertextParams struct {
+	ID       pgtype.UUID `json:"id"`
+	Password *string     `json:"password"`
+	Extra    *string     `json:"extra"`
+}
+
+// Rewrite one row's ciphertext in place during a key rotation. It touches only
+// the two encrypted columns, so a re-encryption can never alter a connection's
+// identity, host, or any field a user set.
+func (q *Queries) UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) error {
+	_, err := q.db.Exec(ctx, updateConnectionCiphertext, arg.ID, arg.Password, arg.Extra)
+	return err
+}
+
 const upsertConnection = `-- name: UpsertConnection :exec
 INSERT INTO connections (tenant_id, conn_id, conn_type, host, conn_schema, login, password, port, extra, description)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)

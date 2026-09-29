@@ -141,9 +141,11 @@ type devOptions struct {
 	// then falls back to devJWTSecret with a one-shot warning).
 	jwtSecret string
 	// secretKey is the per-install connection-encryption key from
-	// ~/.leoflow/config.yaml; empty on a legacy install, which
-	// resolveLiteSecretKey maps to the published constant (#486).
+	// ~/.leoflow/config.yaml, backfilled at boot when absent (#486).
 	secretKey string
+	// secretKeyPrevious is a decrypt-only predecessor, set while rows written
+	// under the published constant still exist.
+	secretKeyPrevious string
 }
 
 // prepareWorkspace resolves the workspace, scaffolds a starter subdir when it
@@ -376,40 +378,73 @@ func resolveLiteJWTSecret(secret string) string {
 // builds it, so a new field cannot reach one executor and miss the other.
 func (o *devOptions) liteEnv() liteEnvParams {
 	return liteEnvParams{
-		host:       o.host,
-		port:       o.port,
-		adminHash:  o.adminHash,
-		adminEmail: o.adminEmail,
-		jwtSecret:  o.jwtSecret,
-		secretKey:  o.secretKey,
+		host:              o.host,
+		port:              o.port,
+		adminHash:         o.adminHash,
+		adminEmail:        o.adminEmail,
+		jwtSecret:         o.jwtSecret,
+		secretKey:         o.secretKey,
+		secretKeyPrevious: o.secretKeyPrevious,
 	}
+}
+
+// ensureLiteSecretKey gives an install that predates per-install keys one, in
+// place, at boot.
+//
+// It does not wait for the user to act on a warning, because the advice we
+// could print would not work: `leoflow setup` skips a configured install
+// entirely (liteConfigExists is a plain stat of config.yaml, and every install
+// has had that file since #121), so "run leoflow setup" is a no-op for exactly
+// the population that needs it.
+//
+// Best effort. A read-only home, or a config file this tool cannot parse, keeps
+// the install running on the published key with a warning rather than refusing
+// to boot.
+func ensureLiteSecretKey(cmd *cobra.Command, out io.Writer, o *devOptions) {
+	if o.secretKey != "" {
+		return
+	}
+	key, err := backfillSecretKey(configFilePath(cmd))
+	if err != nil {
+		slog.Warn("could not write a per-install secret key; continuing on the key published in this repository", "error", err)
+		return
+	}
+	o.secretKey, o.secretKeyPrevious = key, devSecretKey
+	devPrintln(out, "  generated a per-install encryption key for your connections (they were encrypted with a key shared by every Lite install)")
 }
 
 // liteSecretKeyFallbackOnce keeps the legacy-key warning to once per process.
 var liteSecretKeyFallbackOnce sync.Once
 
-// resolveLiteSecretKey returns the per-install connection-encryption key.
+// liteSecretKeyList builds LEOFLOW_SECRET_KEY: the encrypting key first, then
+// any decrypt-only predecessor, comma separated. Same rule as Airflow's
+// fernet_key.
 //
 // Lite used to encrypt every connection password with devSecretKey, a constant
 // compiled into this repository and therefore identical on every install on
-// earth: anyone holding a Lite database file read every credential in it
-// without work, while the docs said "encrypted at rest" (#486). `leoflow setup`
-// now writes a random per-install key.
+// earth: anyone holding a Lite database file read every credential in it, while
+// the docs said "encrypted at rest" (#486).
 //
-// An install predating that has no key in config.yaml, and falls back to the
-// constant with a warning rather than refusing: its existing connections are
-// encrypted under it, and refusing to boot would break an upgrade for someone
-// who did nothing wrong. The constant also goes to the server as a read-only
-// fallback, so those rows are re-encrypted under the new key rather than
-// orphaned by the rotation.
-func resolveLiteSecretKey(key string) string {
-	if key != "" {
+// The predecessor is included ONLY when the install recorded one. A fresh
+// install never wrote anything under the constant, so accepting it would
+// downgrade that install from "ciphertext needs my key" to "ciphertext needs a
+// key published on GitHub", for no benefit.
+//
+// An empty key means the backfill could not run (a read-only home, a config
+// this tool could not parse). Falling back to the constant keeps such an
+// install working rather than making its credentials unreadable, with a warning
+// that says what is at stake.
+func liteSecretKeyList(key, previous string) string {
+	if key == "" {
+		liteSecretKeyFallbackOnce.Do(func() {
+			slog.Warn("no per-install secret_key in ~/.leoflow/config.yaml, using the key published in this repository: anyone who obtains your datastore file can read every stored connection password. Fix the config file so Leoflow can write a key into it (#486)")
+		})
+		return devSecretKey
+	}
+	if previous == "" {
 		return key
 	}
-	liteSecretKeyFallbackOnce.Do(func() {
-		slog.Warn("config secret_key is empty; falling back to the key published in this repository, which every Lite install shares — run `leoflow setup` to generate a per-install key (#486)")
-	})
-	return devSecretKey
+	return key + "," + previous
 }
 
 // bringUpDependencies starts Lite's datastore and returns a cleanup func the
@@ -660,7 +695,9 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	// The admin login is provisioned by `leoflow setup` (hash-only in config).
 	// With it, Lite enforces real auth; without it, fall back to no-auth + warn.
 	id := resolveLiteAdmin(cmd, out)
-	o.adminHash, o.adminEmail, o.jwtSecret, o.secretKey = id.adminHash, id.adminEmail, id.jwtSecret, id.secretKey
+	o.adminHash, o.adminEmail, o.jwtSecret = id.adminHash, id.adminEmail, id.jwtSecret
+	o.secretKey, o.secretKeyPrevious = id.secretKey, id.secretKeyPrevious
+	ensureLiteSecretKey(cmd, out, &o)
 
 	ctx, stop := signal.NotifyContext(cmdContext(cmd), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -1596,6 +1633,9 @@ type liteEnvParams struct {
 	// empty on a legacy install, which resolveLiteSecretKey maps to the
 	// published constant.
 	secretKey string
+	// secretKeyPrevious is a decrypt-only predecessor recorded when the install
+	// was migrated off the published constant; empty once nothing needs it.
+	secretKeyPrevious string
 }
 
 func sharedServerEnv(p liteEnvParams) []string {
@@ -1634,11 +1674,11 @@ func sharedServerEnv(p liteEnvParams) []string {
 		// password a few times (only failures count, but the production default of
 		// 5/min is still tight here). Be generous.
 		fmt.Sprintf("LEOFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE=%d", liteLoginRateLimit),
-		// The per-install key (#486). The published constant follows as a
-		// read-only FALLBACK so connections written by an earlier install stay
-		// readable and get re-encrypted under the new key on first read.
-		"LEOFLOW_SECRET_KEY=" + resolveLiteSecretKey(p.secretKey),
-		"LEOFLOW_SECRET_KEY_FALLBACK=" + devSecretKey,
+		// The per-install key, plus any decrypt-only predecessor, as one
+		// comma-separated list (#486). The published constant appears ONLY for an
+		// install that still has rows under it: a fresh install never wrote a
+		// byte with it and must not accept it as a valid key.
+		"LEOFLOW_SECRET_KEY=" + liteSecretKeyList(p.secretKey, p.secretKeyPrevious),
 		"LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true",
 	}
 	if adminHash != "" {
@@ -1731,6 +1771,8 @@ func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
 		adminEmail: email,
 		jwtSecret:  c.JWTSecret,
 		secretKey:  c.SecretKey,
+
+		secretKeyPrevious: c.SecretKeyPrevious,
 	}
 }
 

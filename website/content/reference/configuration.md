@@ -106,6 +106,45 @@ runs a released CLI and the other runs one built from source. Setting
 scheme for every published image is in
 [Published images](/reference/published-images/).
 
+### Rotating the encryption key
+
+`LEOFLOW_SECRET_KEY` takes a comma-separated list. **The first entry encrypts
+and decrypts; every later entry only decrypts**, and nothing is ever written
+under one. It is the same rule as Airflow's `fernet_key`.
+
+```bash
+LEOFLOW_SECRET_KEY="<new key>,<old key>"
+```
+
+The control plane re-encrypts the stored connection secrets onto the first key
+at startup, logs how many it moved, and then the old key is no longer needed:
+
+```
+secret key rotation complete for the stored connections re_encrypted=7
+```
+
+Remove the old entry once every replica has started with the list. Until then
+it is still required, because a replica that has not restarted is still reading
+rows only the old key opens.
+
+A row that **no** configured key can open is left untouched and reported at
+`ERROR`. Its ciphertext is the only copy of that credential, so the rotation
+never overwrites or deletes it; put the missing key in the list and restart.
+
+Trying keys in order is safe because AES-256-GCM is authenticated: a wrong key
+fails to open rather than returning plausible garbage.
+
+{{% alert title="Leoflow Lite does this for you" color="info" %}}
+Lite generates a per-install key on first start and keeps it in
+`~/.leoflow/config.yaml`. An install created before per-install keys existed is
+migrated automatically off the key that used to be compiled into this
+repository.
+
+**That file now holds the only copy of the key that decrypts your stored
+connections.** `leoflow lite backup` includes it. If you roll your own backup of
+the datastore, back up `config.yaml` with it.
+{{% /alert %}}
+
 ### Defaults
 
 Every field in `leoflow.yaml` is optional. Zero-valued fields are filled by
@@ -220,8 +259,8 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS` | `3600` | both | Lifetime, in seconds, of an issued API token. |
 | `LEOFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS` | `86400` | both | Ceiling, in seconds, on the **total** age of a transparently renewed session, measured from first login and preserved across every renewal. Past it, `POST /api/v2/auth/token/renew` refuses and the user must log in again; the short `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long a live session may keep refreshing. A non-positive value disables the ceiling. Renewal also re-checks that the account is still active, so a deactivated user stops being issued tokens as well as being refused on use. The chart has no value for this yet — set it through `extraEnv`. |
 | `LEOFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | both | Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force). A successful login consumes no budget. `leoflow lite` raises this well above the default (local single-user tool). |
-| `LEOFLOW_SECRET_KEY` | — | both | 32-byte key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)). Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. |
-| `LEOFLOW_SECRET_KEY_FALLBACK` | — | both | A **read-only** key tried when `LEOFLOW_SECRET_KEY` cannot open a stored value; nothing is ever written under it. Set it to the previous key when rotating, so existing connections stay readable and are re-encrypted under the new key on first read instead of being orphaned. Leoflow Lite sets it automatically to the key it used before per-install keys existed. |
+| `LEOFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)). Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
+
 | `LEOFLOW_AUTH_SECRET_SCOPING` | `permissive` | both | Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `permissive` (delivers the whole tenant vault; warns when a DAG declares a narrower set), `enforce` (delivers only the declared subset — empty declaration ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable. Helm: `auth.secretScoping`. |
 | `LEOFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `LEOFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |

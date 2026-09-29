@@ -30,25 +30,19 @@ type ServerConfig struct {
 	Observability ObservabilitySection `mapstructure:"observability"`
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
-	// SecretKey (LEOFLOW_SECRET_KEY) is the 32-byte key encrypting connection
-	// secrets at rest (ADR 0019). Raw 32 chars, 64-char hex, or base64. Empty
-	// disables connection writes.
+	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
+	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
+	// writes.
+	//
+	// A COMMA-SEPARATED LIST rotates the key: the first entry encrypts and
+	// decrypts, every later entry only decrypts. Nothing is ever written under a
+	// later entry. This is the shape Airflow's `fernet_key` uses, so an operator
+	// coming from Airflow already knows to put the new key first and the old
+	// ones after (#486).
+	//
+	// Trying keys in order is safe only because AES-GCM is authenticated: a
+	// wrong key fails to open rather than returning plausible garbage.
 	SecretKey string `mapstructure:"secret_key"`
-	// SecretKeyFallback (LEOFLOW_SECRET_KEY_FALLBACK) is a READ-ONLY key tried
-	// when SecretKey cannot open a stored value. Nothing is ever written under
-	// it.
-	//
-	// It exists so a key rotation does not orphan what the previous key
-	// encrypted. Leoflow Lite is the case that forced it: every install shared a
-	// key compiled into this repository (#486), and moving to a per-install key
-	// would have made existing connection passwords undecryptable, which is
-	// worse than the published key it replaces. Lite sets this to the old
-	// constant; on first read a value opened by the fallback is re-encrypted
-	// under SecretKey.
-	//
-	// Trying two keys is safe only because AES-GCM is authenticated: a wrong key
-	// fails to open rather than returning plausible garbage.
-	SecretKeyFallback string `mapstructure:"secret_key_fallback"`
 }
 
 // SecretsSection configures the external secrets backend (ADR 0060). When Backend
@@ -776,7 +770,6 @@ var serverDefaults = map[string]any{
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
 	"secret_key":                   "",
-	"secret_key_fallback":          "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
 }

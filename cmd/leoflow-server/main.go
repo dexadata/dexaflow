@@ -156,7 +156,7 @@ func run() error {
 	defer dsCleanup()
 
 	repo := storage.NewRepository(pg)
-	if serr := configureSecrets(repo, cfg, tel.Logger); serr != nil {
+	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
 	authn := auth.NewJWTAuthenticator(repo, cfg.Auth.JWT.Secret, time.Duration(cfg.Auth.JWT.TokenTTLSeconds)*time.Second)
@@ -310,45 +310,49 @@ func liteEditorFS(cfg *config.ServerConfig, logger *slog.Logger) api.WorkspaceFS
 // configureSecretCipher wires the AES-256-GCM cipher for connection secrets
 // (ADR 0019). Without a key the connection store stays plaintext-incapable:
 // writes are refused, never silently stored in the clear.
-func configureSecretCipher(repo *storage.Repository, secretKey, fallbackKey string, logger *slog.Logger) error {
-	key, kerr := secrets.ParseKey(secretKey)
+func configureSecretCipher(repo *storage.Repository, secretKey string, logger *slog.Logger) error {
+	keys, kerr := secrets.ParseKeys(secretKey)
 	if kerr != nil {
-		logger.Warn("no LEOFLOW_SECRET_KEY set; connection management disabled (Variables still work)")
+		logger.Warn("no usable LEOFLOW_SECRET_KEY set; connection management disabled (Variables still work)")
 		return nil //nolint:nilerr // a missing/unusable key is non-fatal: run without connection encryption
 	}
-	cipher, cerr := secrets.NewAESGCM(key)
-	if cerr != nil {
-		return fmt.Errorf("building secret cipher: %w", cerr)
-	}
-	// A read-only previous key, when one is configured, so a rotation reads what
-	// the old key wrote instead of orphaning it (#486). Writes always use the
-	// primary; an unusable fallback is ignored rather than fatal, since refusing
-	// to boot over an optional legacy key would be worse than not having it.
-	var fallback secrets.Cipher
-	if fallbackKey != "" && fallbackKey != secretKey {
-		if fk, ferr := secrets.ParseKey(fallbackKey); ferr == nil {
-			if fc, fcerr := secrets.NewAESGCM(fk); fcerr == nil {
-				fallback = fc
-				logger.Info("a fallback secret key is configured: values written under it are read and re-encrypted under the primary key")
-			} else {
-				logger.Warn("LEOFLOW_SECRET_KEY_FALLBACK could not build a cipher; ignoring it", "error", fcerr)
-			}
-		} else {
-			logger.Warn("LEOFLOW_SECRET_KEY_FALLBACK is not a usable key; ignoring it", "error", ferr)
+	ciphers := make([]secrets.Cipher, 0, len(keys))
+	for i, k := range keys {
+		c, cerr := secrets.NewAESGCM(k)
+		if cerr != nil {
+			return fmt.Errorf("building secret cipher from key %d: %w", i+1, cerr)
 		}
+		ciphers = append(ciphers, c)
 	}
-	repo.SetCipher(secrets.WithFallback(cipher, fallback))
+	// The first key encrypts; the rest only decrypt, so a rotation reads what a
+	// previous key wrote instead of orphaning it (#486). Nothing is ever written
+	// under a later key, which is what makes the rotation real rather than
+	// cosmetic.
+	repo.SetCipher(secrets.WithFallback(ciphers[0], ciphers[1:]...))
+	if len(ciphers) > 1 {
+		logger.Info("secret key rotation in progress: the first key encrypts, the rest only decrypt",
+			"decrypt_only_keys", len(ciphers)-1,
+			"note", "run the re-encryption before removing them; they are still needed to read older rows")
+	}
 	// A 32-character all-hex key is what `openssl rand -hex 16` produces, which
 	// this project's own docs recommended until they were corrected. ParseKey
 	// takes those 32 characters as 32 raw bytes, so the cipher is AES-256 over
 	// 128 bits of entropy and nothing else would ever mention it. Warn rather
 	// than refuse: the shape is indistinguishable from a legitimate 32-character
 	// passphrase, and breaking an operator who did nothing wrong is worse.
-	if secrets.LooksLikeHalfEntropyHexKey(secretKey) {
-		logger.Warn("LEOFLOW_SECRET_KEY looks like `openssl rand -hex 16` output: "+
+	//
+	// Checked on EVERY key in the list, not just the first: an operator rotating
+	// AWAY from a half-entropy key puts it in the tail, which is exactly the
+	// case the warning's own advice ("re-encrypt existing connections") is for.
+	for i, raw := range strings.Split(secretKey, ",") {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || !secrets.LooksLikeHalfEntropyHexKey(trimmed) {
+			continue
+		}
+		logger.Warn("a LEOFLOW_SECRET_KEY entry looks like `openssl rand -hex 16` output: "+
 			"32 hex characters are consumed as 32 raw bytes, giving 128 bits of entropy where AES-256 expects 256. "+
 			"Generate a replacement with `openssl rand -hex 32` (64 characters) and re-encrypt existing connections",
-			"key_length", len(secretKey))
+			"key_position", i+1, "key_length", len(trimmed))
 	}
 	logger.Info("connection secret encryption enabled (AES-256-GCM)")
 	return nil

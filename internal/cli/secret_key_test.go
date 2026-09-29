@@ -34,64 +34,72 @@ func TestGenerateSecretKeyIsRandomAndWellFormed(t *testing.T) {
 	}
 }
 
-// A configured per-install key is returned verbatim: that is the whole point.
-func TestResolveLiteSecretKeyPrefersConfig(t *testing.T) {
-	if got := resolveLiteSecretKey("install-X-key"); got != "install-X-key" {
-		t.Errorf("resolveLiteSecretKey with a configured key must return it, got %q", got)
+// A configured per-install key is used alone: an install that generated its own
+// key never wrote anything under the published constant, so accepting that
+// constant would downgrade it from "needs my key" to "needs a key on GitHub".
+func TestSecretKeyListOmitsTheConstantForAFreshInstall(t *testing.T) {
+	if got := liteSecretKeyList("install-X-key", ""); got != "install-X-key" {
+		t.Errorf("a fresh install must use its key alone, got %q", got)
 	}
 }
 
-// A legacy install has no secret_key in config.yaml. Falling back to the
-// constant keeps its existing connections readable; refusing would break an
-// upgrade for someone who did nothing wrong.
-func TestResolveLiteSecretKeyFallsBackForLegacyInstalls(t *testing.T) {
-	if got := resolveLiteSecretKey(""); got != devSecretKey {
-		t.Errorf("an empty key must fall back to the legacy constant so an existing install keeps working, got %q", got)
+// A migrated install carries its predecessor so older rows stay readable, with
+// the encrypting key FIRST.
+func TestSecretKeyListPutsTheEncryptingKeyFirst(t *testing.T) {
+	got := liteSecretKeyList("new-key", devSecretKey)
+	if got != "new-key,"+devSecretKey {
+		t.Errorf("list = %q; the encrypting key must lead and the predecessor follow", got)
 	}
 }
 
-// The env handed to the server must carry the RESOLVED key, and must name the
-// legacy constant separately so the server can still read rows written under
-// it. Without the fallback var, rotating the key orphans every existing
-// credential, which is worse than the published key it replaces.
-func TestLiteServerEnvCarriesResolvedKeyAndLegacyFallback(t *testing.T) {
+// If the backfill could not run, keep the install working rather than making
+// every credential unreadable.
+func TestSecretKeyListFallsBackWhenNothingCouldBeWritten(t *testing.T) {
+	if got := liteSecretKeyList("", ""); got != devSecretKey {
+		t.Errorf("with no key at all the install must still boot on the old constant, got %q", got)
+	}
+}
+
+// The env must carry the key LIST, not a separate variable, and must never
+// hand the server the published constant as its encrypting key.
+func TestLiteServerEnvCarriesTheKeyList(t *testing.T) {
 	env := sharedServerEnv(liteEnvParams{
-		jwtSecret: "jwt-x",
-		secretKey: "per-install-key",
+		jwtSecret:         "jwt-x",
+		secretKey:         "per-install-key",
+		secretKeyPrevious: devSecretKey,
 	})
 	joined := strings.Join(env, "\n")
 
-	if !strings.Contains(joined, "LEOFLOW_SECRET_KEY=per-install-key") {
-		t.Errorf("the server must receive the per-install key; env was:\n%s", joined)
+	if !strings.Contains(joined, "LEOFLOW_SECRET_KEY=per-install-key,"+devSecretKey) {
+		t.Errorf("the server must receive the key list with the new key first; env was:\n%s", joined)
 	}
-	if strings.Contains(joined, "LEOFLOW_SECRET_KEY="+devSecretKey) {
-		t.Error("the server must not receive the published constant as its PRIMARY key; the rotation would be cosmetic")
+	if strings.Contains(joined, "LEOFLOW_SECRET_KEY="+devSecretKey+",") || strings.Contains(joined, "LEOFLOW_SECRET_KEY="+devSecretKey+"\n") {
+		t.Error("the published constant must never lead the list; it would keep encrypting")
 	}
-	if !strings.Contains(joined, "LEOFLOW_SECRET_KEY_FALLBACK="+devSecretKey) {
-		t.Errorf("without the legacy key as a fallback, existing connections become undecryptable; env was:\n%s", joined)
+	if strings.Contains(joined, "LEOFLOW_SECRET_KEY_FALLBACK") {
+		t.Error("the separate fallback variable is gone; a *_FALLBACK name reads as 'used when the primary is absent', which is the opposite of a decrypt-only predecessor")
 	}
 }
 
-// A legacy install, with no key configured, must still boot: primary and
-// fallback both resolve to the constant, so nothing is orphaned and nothing
-// pretends to be rotated.
-func TestLiteServerEnvOnALegacyInstall(t *testing.T) {
-	env := sharedServerEnv(liteEnvParams{jwtSecret: "jwt-x", secretKey: ""})
+// A fresh install must not be handed the published constant at all.
+func TestLiteServerEnvOnAFreshInstall(t *testing.T) {
+	env := sharedServerEnv(liteEnvParams{jwtSecret: "jwt-x", secretKey: "only-mine"})
 	joined := strings.Join(env, "\n")
-	if !strings.Contains(joined, "LEOFLOW_SECRET_KEY="+devSecretKey) {
-		t.Errorf("a legacy install must still get a usable key; env was:\n%s", joined)
+	if !strings.Contains(joined, "LEOFLOW_SECRET_KEY=only-mine\n") && !strings.HasSuffix(joined, "LEOFLOW_SECRET_KEY=only-mine") {
+		t.Errorf("a fresh install must get its key alone; env was:\n%s", joined)
+	}
+	if strings.Contains(joined, devSecretKey) {
+		t.Error("the published constant reached a fresh install, which never wrote anything under it")
 	}
 }
 
 // A password reset rewrites config.yaml. It must carry BOTH per-install secrets
 // forward: dropping the JWT secret logs everyone out (#121), and dropping the
-// secret key makes every stored connection password undecryptable, because the
-// next boot falls back to the published constant while the rows are encrypted
-// under the real key (#486).
+// secret key makes every stored connection password undecryptable (#486).
 func TestWriteLiteConfigRoundTripsBothSecrets(t *testing.T) {
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/w", Executor: "subprocess", AdminEmail: "a@b.c", Port: 8088}
-	if err := writeLiteConfig(home, "parser", lc, "$2a$12$hash", "the-jwt-secret", "the-secret-key"); err != nil {
+	if err := writeLiteConfig(home, "parser", lc, "$2a$12$hash", liteFileSecrets{jwtSecret: "the-jwt-secret", secretKey: "the-secret-key"}); err != nil {
 		t.Fatalf("writeLiteConfig: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(home, "config.yaml"))

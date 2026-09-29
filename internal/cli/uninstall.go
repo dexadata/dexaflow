@@ -169,6 +169,15 @@ func removeLeoflowHome(cmd *cobra.Command, root string, purge bool) error {
 // uninstall also leaves intact). If keep is absent (e.g. a Docker-only install),
 // root is emptied and removed entirely.
 func removeHomeExcept(root, keep string) error {
+	// The datastore's encryption key goes with the datastore. This command
+	// promises, in its own help text, that a reinstall keeps your data, and that
+	// used to be free: the key was a constant compiled into the binary, so it
+	// came back with the reinstall. Per-install keys (#486) made config.yaml the
+	// only copy, and this function deletes config.yaml while keeping pgdata.
+	// Without this, the documented path of uninstall then reinstall leaves every
+	// connection password in the preserved datastore permanently unreadable.
+	preserveDatastoreKey(root, keep)
+
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return err
@@ -207,4 +216,35 @@ func composeDownVolumes(cmd *cobra.Command, composeFile string) {
 		// Best-effort: a missing/already-down stack is fine; the files are removed next.
 		devPrintf(cmd.OutOrStdout(), "  ! docker compose down (datastores may already be gone): %v\n", err)
 	}
+}
+
+// preserveDatastoreKey copies the encryption secrets next to the datastore that
+// is about to survive this uninstall, so a reinstall can still read it.
+//
+// Best effort and silent on absence: an install with no key, or with no
+// datastore to keep, has nothing to preserve, and an uninstall must not fail
+// over housekeeping. Nothing is written when the datastore is not being kept,
+// since a stray key file left in a deleted tree helps nobody.
+func preserveDatastoreKey(root, keep string) {
+	if keep == "" {
+		return
+	}
+	dst := filepath.Join(root, keep)
+	if fi, err := os.Stat(dst); err != nil || !fi.IsDir() {
+		return
+	}
+	sec := configFileSecrets(filepath.Join(root, "config.yaml"))
+	if sec.secretKey == "" {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("# Written by `leoflow uninstall`. These are the keys that decrypt the\n")
+	b.WriteString("# connection secrets in this datastore. A reinstall reads them back; without\n")
+	b.WriteString("# them the stored credentials cannot be recovered. Keep this file with the\n")
+	b.WriteString("# data directory it sits in.\n")
+	fmt.Fprintf(&b, "secret_key: %q\n", sec.secretKey)
+	if sec.secretKeyPrevious != "" {
+		fmt.Fprintf(&b, "secret_key_previous: %q\n", sec.secretKeyPrevious)
+	}
+	_ = os.WriteFile(filepath.Join(dst, "keys.yaml"), []byte(b.String()), 0o600) //nolint:errcheck,gosec // best-effort; an uninstall must not fail over this
 }

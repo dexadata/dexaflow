@@ -70,6 +70,13 @@ type Config struct {
 	// constant with a warning, and hands it to the server as a read-only
 	// fallback so existing rows are re-encrypted rather than orphaned.
 	SecretKey string `mapstructure:"secret_key"`
+	// SecretKeyPrevious is a decrypt-only predecessor, written when an install
+	// that predates per-install keys is given one. It says "rows encrypted under
+	// this still exist"; the re-encryption pass removes it when none do. Without
+	// it, a fresh install could not be told apart from a migrating one, and the
+	// published constant would have to stay in every install's read set forever
+	// (#486).
+	SecretKeyPrevious string `mapstructure:"secret_key_previous"`
 }
 
 // DefaultConfigFile returns the default configuration file path,
