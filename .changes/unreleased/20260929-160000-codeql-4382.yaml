@@ -1,0 +1,7 @@
+kind: Changed
+body: |-
+  Bumped `github/codeql-action` to v4.38.2 across all eleven steps in one
+  change. Dependabot opens one pull request per sub-action and CodeQL requires
+  them to match, so each of those pull requests fails its own CodeQL jobs;
+  `scripts/check-codeql-action-pins.sh` refuses the mixed state.
+time: 2026-09-29T16:00:00.000000000-03:00
