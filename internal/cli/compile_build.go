@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -153,7 +154,7 @@ const dockerfileSeparators = "\n\r\v\f"
 // So these are REFUSED rather than quoted. Quoting them was the first version of
 // this guard and it was wrong: it moved `"` and `\` to a form that does not help
 // while leaving `'` and `$` to silently copy a different path.
-const dockerfileLexMeta = "'\"\\$"
+const dockerfileLexMeta = "'\"\\$<"
 
 // dockerfileWord refuses a value the Dockerfile format, or the lexer that runs
 // over its operands, would give a meaning the author did not write.
@@ -224,16 +225,13 @@ func copyInstruction(field, src, dst string) (string, error) {
 	if !strings.ContainsAny(src, " \t") && !strings.HasPrefix(src, "[") {
 		return fmt.Sprintf("COPY %s %s\n", src, dst), nil
 	}
-	// Built by hand rather than with json.Marshal, whose error is unreachable
-	// for a []string and so is a branch no test can reach. This is only safe
-	// because `"` and `\` were refused above: what reaches here can contain a
-	// space, a tab or a leading `[`, none of which need escaping inside a JSON
-	// string.
-	quoted := make([]string, 0, 2)
-	for _, v := range []string{src, dst} {
-		quoted = append(quoted, `"`+v+`"`)
-	}
-	return "COPY [" + strings.Join(quoted, ", ") + "]\n", nil
+	// json.Marshal, not a hand-built literal. A raw tab is invalid inside a JSON
+	// string (control characters below U+0020 must be escaped), so emitting the
+	// operands by hand produced a line Docker could not parse as JSON, fell back
+	// to the shell form, and then split on the very tab the quoting was for. The
+	// error is unreachable for a []string, which is what the nolint says.
+	enc, _ := json.Marshal([]string{src, dst}) //nolint:errcheck // a []string cannot fail to marshal, and a dead branch is worse than this line
+	return "COPY " + string(enc) + "\n", nil
 }
 
 // writeCopy appends one COPY of a context-relative path to its matching place
@@ -256,8 +254,22 @@ func writeCopy(b *strings.Builder, field, path string) error {
 // Lite run, because Lite's subprocess executor reads from disk and never needs
 // the image (#20).
 func writeDagSourceCopies(b *strings.Builder, cfg *domain.LeoflowConfig, dagSource string) error {
+	// Before filepath.Base, which eats everything up to the last slash: a
+	// poisoned dag_source then injected nothing but was never refused either,
+	// and the author got no word about what was wrong with their yaml.
+	if err := dockerfileWord("dag_source", dagSource); err != nil {
+		return err
+	}
 	base := filepath.Base(dagSource)
 	groups := dbtGroupProjectDirs(cfg)
+	// Every group is checked before the short-circuit below: a `.` group made
+	// this return before any other group was looked at, which is how a poisoned
+	// one reached the generated .dockerignore.
+	for _, project := range groups {
+		if err := dockerfileWord("dbt_groups.*.project", project); err != nil {
+			return err
+		}
+	}
 	if slices.Contains(groups, ".") {
 		// project: "." means the dbt project IS the DAG directory. render.go
 		// omits --project-dir for that value, so dbt runs from WORKDIR and the
@@ -356,6 +368,12 @@ func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, e
 		// The project is read-only to the task because COPY lands it root-owned, not
 		// because of where it sits relative to the USER drop: dbt writes target/,
 		// logs/, and profiles.yml to /tmp (base ENV), never the project (#852).
+		// Before filepath.Clean, which collapses "evil\nstuff/.." to ".": the
+		// value then renders `COPY . /home/leoflow/.` and quietly copies the
+		// whole build context instead of being refused.
+		if err := dockerfileWord("dbt.project", cfg.Dbt.Project); err != nil {
+			return "", err
+		}
 		project := filepath.Clean(cfg.Dbt.Project)
 		line, cerr := copyInstruction("dbt.project", project, "/home/leoflow/"+project)
 		if cerr != nil {
@@ -445,10 +463,14 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 
 	// Concatenated into a fresh slice: append onto cfg.ExcludePaths would write
 	// through to the caller's config whenever that slice has spare capacity.
-	if err := checkExcludePaths(cfg.ExcludePaths); err != nil {
+	patterns := slices.Concat(cfg.ExcludePaths, dbtBuildArtifacts(cfg))
+	// After the concat, not before: dbtBuildArtifacts interpolates every dbt
+	// project path into this same list, so guarding only cfg.ExcludePaths left
+	// the whole class reachable through dbt_groups and dbt.project. Guard what
+	// is emitted, not the one field someone remembered.
+	if err := checkExcludePaths(patterns); err != nil {
 		return noop, nil, err
 	}
-	patterns := slices.Concat(cfg.ExcludePaths, dbtBuildArtifacts(cfg))
 	warnDroppedNegations(w, cfg.ExcludePaths)
 	merged, changed := mergeDockerignore(original, patterns)
 	baked = warnUnexcludedSecrets(w, dir, cfg, merged, ownDockerfile)

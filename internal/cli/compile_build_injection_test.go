@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -294,4 +295,118 @@ func TestALeadingBracketPathIsQuoted(t *testing.T) {
 	if !strings.Contains(df, `COPY ["[archive].py"`) {
 		t.Errorf("a path starting with `[` must use the JSON form, or Docker reads the line as one:\n%s", df)
 	}
+}
+
+// The .dockerignore guard has to cover what is EMITTED, not one input field.
+// checkExcludePaths guarded cfg.ExcludePaths, and one line later
+// dbtBuildArtifacts interpolated every dbt project path into the same pattern
+// list, so a poisoned dbt group reached the file unvalidated.
+//
+// The `.` group is what makes it reachable: writeDagSourceCopies short-circuits
+// on it and returns after `COPY . /home/leoflow/`, so no group is validated
+// there either. And `COPY .` is what then bakes the resurrected file into the
+// image.
+func TestNewlineInADbtProjectCannotReachTheDockerignore(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.DbtGroups = map[string]*domain.DbtConfig{
+		"a": {Project: "."},
+		"b": {Project: "p\n!secrets.env\nq"},
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".dockerignore"), []byte("secrets.env\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup, _, err := ensureDockerignore(io.Discard, dir, cfg, false)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		got, _ := os.ReadFile(filepath.Join(dir, ".dockerignore"))
+		t.Fatalf("a dbt project path injected .dockerignore lines:\n%s", got)
+	}
+}
+
+// A project that ships its own Dockerfile never reaches generatedDockerfile at
+// all, so the COPY guards never run, but the .dockerignore is still generated
+// from the same config.
+func TestTheDockerignoreIsGuardedEvenWithAProjectDockerfile(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.Dbt = &domain.DbtConfig{Project: "p\n!secrets.env\nq"}
+	dir := t.TempDir()
+	cleanup, _, err := ensureDockerignore(io.Discard, dir, cfg, true)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatal("with a project-shipped Dockerfile the .dockerignore was generated unvalidated")
+	}
+}
+
+// A tab is a legal character in a JSON string only when ESCAPED. Building the
+// literal by hand emitted a raw one, which is invalid JSON, so Docker falls
+// back to the shell form and then splits the line on the tab it was quoting.
+// The trigger set said a tab needs the JSON form and the emitter then produced
+// a JSON form that does not parse.
+func TestATabbedPathSurvivesAsValidJSON(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	df, err := generatedDockerfile(cfg, "a\tb.py")
+	if err != nil {
+		t.Fatalf("a tab is quotable, not a refusal: %v", err)
+	}
+	line := ""
+	for _, l := range strings.Split(df, "\n") {
+		if strings.HasPrefix(l, "COPY") {
+			line = l
+			break
+		}
+	}
+	operands := strings.TrimPrefix(line, "COPY ")
+	var got []string
+	if jerr := json.Unmarshal([]byte(operands), &got); jerr != nil {
+		t.Fatalf("the emitted COPY is not valid JSON, so Docker falls back to the shell form and splits on the tab: %v\nline: %q", jerr, line)
+	}
+	if got[0] != "a\tb.py" {
+		t.Errorf("the path did not round-trip: %q", got[0])
+	}
+}
+
+// `<<` makes COPY a heredoc at the parser level, and `<` is the fourth entry in
+// the operand lexer's character table, which the refusal set missed. An
+// unterminated heredoc swallows every generated line after it, including the
+// non-root USER drop, and then fails the parse.
+func TestAHeredocLookalikePathIsRefused(t *testing.T) {
+	for _, bad := range []string{"<<EOF", "1<<EOF"} {
+		cfg := &domain.LeoflowConfig{DagID: "d"}
+		cfg.ApplyDefaults()
+		cfg.IncludePaths = []string{".", bad}
+		if df, err := generatedDockerfile(cfg, "dag.py"); err == nil {
+			t.Errorf("include_paths %q was accepted; COPY reads it as a heredoc:\n%s", bad, df)
+		}
+	}
+}
+
+// dag_source and dbt.project were guarded AFTER the transform that hides the
+// bad character: filepath.Base eats everything before the last slash and
+// filepath.Clean turns "evil\nstuff/.." into ".". Neither injects, but neither
+// is a named refusal either, and `COPY . /home/leoflow/.` quietly copies the
+// whole context instead.
+func TestTheGuardRunsBeforeTheTransformThatHidesIt(t *testing.T) {
+	t.Run("dag_source", func(t *testing.T) {
+		cfg := &domain.LeoflowConfig{DagID: "d"}
+		cfg.ApplyDefaults()
+		if df, err := generatedDockerfile(cfg, "x\nRUN evil/dag.py"); err == nil {
+			t.Errorf("filepath.Base hid the newline instead of it being refused:\n%s", df)
+		}
+	})
+	t.Run("dbt.project", func(t *testing.T) {
+		cfg := &domain.LeoflowConfig{DagID: "d"}
+		cfg.ApplyDefaults()
+		cfg.Dbt = &domain.DbtConfig{Project: "evil\nstuff/.."}
+		if df, err := generatedDockerfile(cfg, "dag.py"); err == nil {
+			t.Errorf("filepath.Clean collapsed the value to `.` instead of it being refused:\n%s", df)
+		}
+	})
 }

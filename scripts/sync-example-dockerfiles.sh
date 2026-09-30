@@ -6,6 +6,11 @@
 # in-process (internal/cli/dev.go devDockerfile): FROM the matching task base,
 # pip install declared dependencies, COPY the DAG source, set PYTHONPATH.
 #
+# "Same template" includes the pip line's SHAPE, not just its instructions: the
+# specifiers are single-quoted and the option list is terminated with `--`, the
+# same as shellArgs does. This drifted once already, and a drift gate that pins
+# the old shape is a gate certifying the bug.
+#
 # These examples FROM the LOCAL base `leoflow-base:py<ver>` on purpose: they are
 # the Lite learning track — `leoflow lite examples/<x>` builds that base locally,
 # so the examples build and run offline, no registry needed. The real Pro pipeline
@@ -36,7 +41,11 @@ gen_dockerfile() {
   if awk '/^dependencies:/ {found=1; next} found && /^[^ ]/ {exit} found && /- / {sub(/^[ ]*-[ ]*/, "", $0); print}' "$yaml" \
        | grep -q .; then
     while IFS= read -r dep; do
-      deps_args+=" \"$dep\""
+      # Single quotes and a `--` terminator, matching devDockerfile's shellArgs
+      # (#1064): an entry beginning with a dash is a package name, not an option
+      # to pip, and `--dry-run` slipping through builds green with the package
+      # absent.
+      deps_args+=" '$dep'"
     done < <(awk '/^dependencies:/ {found=1; next} found && /^[^ ]/ {exit} found && /- / {sub(/^[ ]*-[ ]*/, "", $0); print}' "$yaml")
   fi
 
@@ -49,7 +58,7 @@ gen_dockerfile() {
 FROM leoflow-base:py${py}
 EOF
   if [ -n "$deps_args" ]; then
-    printf 'RUN pip install --no-cache-dir%s\n' "$deps_args"
+    printf 'RUN pip install --no-cache-dir --%s\n' "$deps_args"
   fi
   cat <<EOF
 COPY dag.py /home/leoflow/dag.py

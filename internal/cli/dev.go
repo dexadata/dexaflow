@@ -614,6 +614,9 @@ func kubectlNamespaceArgs(kubeconfig string) []string {
 // Dockerfile verbatim, so one `leoflow lite` run would persist a poisoned file
 // that every later `compile --build` then used.
 func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []string) (string, error) {
+	if err := dockerfileWord("dag_source", dagSource); err != nil {
+		return "", err
+	}
 	base := filepath.Base(dagSource)
 	from, ferr := fromOperand("base_image", baseImage)
 	if ferr != nil {
@@ -629,6 +632,13 @@ func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []strin
 			return "", aerr
 		}
 		b.WriteString("RUN pip install --no-cache-dir -- " + args + "\n")
+	}
+	// Every group is checked before the short-circuit: a `.` group made the
+	// function return before any other group was looked at.
+	for _, project := range dbtGroups {
+		if err := dockerfileWord("dbt_groups.*.project", project); err != nil {
+			return "", err
+		}
 	}
 	if slices.Contains(dbtGroups, ".") {
 		// project: "." means the project is the DAG directory; one COPY covers both.

@@ -64,3 +64,26 @@ func TestDevDockerfileQuotesDependenciesLikeCompileDoes(t *testing.T) {
 		t.Errorf("the specifier is not quoted:\n%s", line)
 	}
 }
+
+// The `.` group short-circuit in the dev generator had no test: neutering it
+// left the whole package green, while the compile-side equivalent was covered.
+// It matters twice over, because `COPY . /home/leoflow/` copies the entire
+// build context, and because returning early is what let a poisoned sibling
+// group skip validation.
+func TestDevDockerfileHandlesTheDotGroup(t *testing.T) {
+	df, err := devDockerfile("img", "dag.py", nil, []string{".", "transform"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(df, "COPY . /home/leoflow/\n") {
+		t.Errorf("a `.` group must collapse to one whole-context COPY:\n%s", df)
+	}
+	if strings.Contains(df, "COPY dag.py") || strings.Contains(df, "COPY transform") {
+		t.Errorf("the whole-context COPY already carries these; they must not be repeated:\n%s", df)
+	}
+	// And a poisoned sibling is still refused, rather than skipped because the
+	// `.` entry returned first.
+	if _, derr := devDockerfile("img", "dag.py", nil, []string{".", "p\nRUN evil"}); derr == nil {
+		t.Error("a `.` group let a poisoned sibling group through unvalidated")
+	}
+}
