@@ -4,6 +4,6 @@
 # not hand-edit — re-run the script after changing python_version or
 # dependencies, or CI's drift check fails.
 FROM leoflow-base:py3.11
-RUN pip install --no-cache-dir "pymssql==2.3.2"
+RUN pip install --no-cache-dir -- 'pymssql==2.3.2'
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow

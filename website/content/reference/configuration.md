@@ -148,6 +148,61 @@ Three things follow from this that are worth knowing:
   inert because you chose the `FROM` by hand, and a deprecated version warns
   rather than demanding you install an interpreter we are asking you to leave.
 
+#### Values that reach the generated Dockerfile
+
+Every value the generated Dockerfile interpolates is checked, because the
+Dockerfile format and Docker's own operand lexer give some characters a meaning
+no quoting can take away. The refusal always names the field and the value, since
+a stray control character in YAML is invisible in the source.
+
+**Refused everywhere: a line break, a vertical tab or a form feed.** These end a
+Dockerfile instruction or split it into new words, so a value carrying one closes
+the instruction it sits in and whatever follows becomes an instruction of its own.
+Docker splits a line on `[\t\v\f\r ]+`, which is why the vertical tab and form
+feed count alongside the newline. This covers `base_image` in the `FROM`;
+`dbt.project`, `dbt_groups.*.project`, `dag_source` and `include_paths` in their
+`COPY` lines; `exclude_paths` in the generated `.dockerignore`; and the
+`dependencies` and `system_packages` entries that already had the guard.
+
+**Refused in a `COPY` path: `'`, `"`, `\`, `$` and `<`.** After a Dockerfile is
+parsed, every `COPY` operand goes through a second pass that strips quotes, eats
+backslashes and expands `$VAR`. That pass runs whatever quoting the line used, so
+`COPY ["d'a't.py", "..."]` copies `dat.py`, not the file you named. None of these can be quoted into safety, so they are refused
+rather than silently copying the wrong path.
+
+**Refused in a `COPY` path: `<`.** A different mechanism, not the operand lexer:
+`COPY` is heredoc-capable, so `COPY <<EOF` opens a heredoc that swallows the rest
+of the generated Dockerfile and then fails on the missing terminator.
+
+**This is a breaking change if one of those characters is already in your
+`dag_source`, `dbt.project`, `dbt_groups.*.project` or `include_paths`.** An
+apostrophe in a directory name is not exotic. Such a project used to build, but
+it was copying the wrong path into the image the whole time: `raw/$schema`
+expanded to whatever the base image set, and `sql\queries` copied `sqlqueries`.
+The build fails now and names the field, which is the point.
+
+**Refused in `base_image`: any whitespace.** An image reference cannot contain
+one, `FROM` has no quoting, and the rest of the line would be read as the
+`FROM <image> AS <stage>` form.
+
+**Refused in a `COPY` path: a leading `--`,** which Docker reads as one of
+`COPY`'s own flags rather than as a path.
+
+A path containing a space or a tab, or starting with `[`, is legal and is
+**quoted** rather than refused. Paths without any of those keep rendering
+exactly as before, so a project's generated Dockerfile does not change because
+this guard exists.
+
+`exclude_paths` is checked on the patterns that are actually emitted, not on the
+field alone: a dbt project path reaches the same `.dockerignore` through the
+build-artifact exclusions leoflow adds for it, so checking only the field left
+the class reachable through `dbt.project` and `dbt_groups`.
+
+The same guards apply to the Dockerfile `leoflow lite --executor=k8s` generates
+when a project ships none. That one writes `<project>/Dockerfile` and leaves it
+there, and a project-supplied Dockerfile is afterwards used verbatim, so a
+value that slipped through there would outlive the command that wrote it.
+
 ### Rotating the encryption key
 
 `LEOFLOW_SECRET_KEY` takes a comma-separated list. **The first entry encrypts

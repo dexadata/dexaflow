@@ -1,0 +1,36 @@
+kind: Security
+body: |-
+  **Config values could add their own instructions to a generated Dockerfile.**
+  #1066 gave `dependencies` and `system_packages` a line-break guard because a
+  newline ends the `RUN` instruction. The same class lived in every other value
+  the generator interpolates, and those reach `FROM` and `COPY`, where no shell
+  is involved and no quoting helps: the newline IS the instruction separator.
+  `base_image: "python:3.11-slim\nRUN <cmd>"` rendered as two instructions, and
+  `dbt.project`, `dbt_groups.*.project`, `dag_source` and `include_paths` did the
+  same in their `COPY` lines. So did `exclude_paths` in the generated
+  `.dockerignore`, where an injected `!secrets.env` defeats the author's own
+  exclusion of a credentials file.
+
+  Whoever writes `leoflow.yaml` is usually whoever runs the build, so locally no
+  boundary is crossed. What it means is that merge rights become arbitrary
+  instruction injection into a published image, on a runner holding the deploy
+  credentials.
+
+  A line break, a vertical tab and a form feed are now refused in every
+  interpolated value, naming the field and the value. Vertical tab and form feed
+  are included because Docker splits a line on `[\t\v\f\r ]+`, so they are word
+  separators exactly like a space. A `COPY` path additionally refuses `'`, `"`,
+  `\` and `$`: after parsing, every `COPY` operand goes through a lexer that
+  strips quotes, eats backslashes and expands `$VAR` whatever quoting the line
+  used, so `COPY ["d'a't.py", ...]` would copy `dat.py`. A leading `--`, which
+  Docker reads as a `COPY` flag, is refused too, and `base_image` refuses any
+  whitespace, which `FROM` would read as a stage name. A path containing a space
+  or starting with `[` is quoted rather than refused, so an existing project's
+  generated Dockerfile is unchanged unless it held one of the refused characters.
+
+  `leoflow lite --executor=k8s` has its own Dockerfile generator, which had the
+  whole class untouched plus the unquoted `pip install` of #1064. It now shares
+  the same guards. It was the worse of the two places to have them: it writes
+  `<project>/Dockerfile` and never removes it, and a project-supplied Dockerfile
+  is afterwards honoured verbatim, so one run would have persisted a poisoned
+  file that every later `compile --build` used (#1070).

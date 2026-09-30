@@ -4,6 +4,6 @@
 # not hand-edit — re-run the script after changing python_version or
 # dependencies, or CI's drift check fails.
 FROM leoflow-base:py3.11
-RUN pip install --no-cache-dir "psycopg2-binary==2.9.10"
+RUN pip install --no-cache-dir -- 'psycopg2-binary==2.9.10'
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
