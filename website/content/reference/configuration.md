@@ -148,6 +148,26 @@ Three things follow from this that are worth knowing:
   inert because you chose the `FROM` by hand, and a deprecated version warns
   rather than demanding you install an interpreter we are asking you to leave.
 
+#### Values that reach the generated Dockerfile
+
+Every value the generated Dockerfile interpolates is refused if it contains a
+line break. A newline (or carriage return) is what ends a Dockerfile
+instruction, so a value carrying one does not get quoted into safety: it closes
+the instruction it sits in and whatever follows becomes an instruction of its
+own. That applies to `base_image` in the `FROM`, and to `dbt.project`,
+`dbt_groups.*.project`, `dag_source` and `include_paths` in their `COPY` lines,
+alongside the `dependencies` and `system_packages` entries that already had the
+guard. The refusal names the field and the value, because a stray newline in
+YAML is invisible in the source.
+
+`base_image` additionally refuses any whitespace: an image reference cannot
+contain one, `FROM` has no quoting, and the rest of the line would be read as
+the `FROM <image> AS <stage>` form.
+
+A `COPY` path containing a space is legal and is quoted rather than refused.
+Paths without whitespace keep rendering exactly as before, so a project's
+generated Dockerfile does not change because this guard exists.
+
 ### Rotating the encryption key
 
 `LEOFLOW_SECRET_KEY` takes a comma-separated list. **The first entry encrypts

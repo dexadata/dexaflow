@@ -1,0 +1,22 @@
+kind: Security
+body: |-
+  **A newline in a config value could add its own instruction to the generated
+  Dockerfile.** #1066 gave `dependencies` and `system_packages` a line-break
+  guard because a newline ends the `RUN` instruction. The same class lived in
+  every other value the generator interpolates, and those reach `FROM` and
+  `COPY`, where no shell is involved and no quoting helps: the newline IS the
+  instruction separator. `base_image: "python:3.11-slim\nRUN <cmd>"` rendered as
+  two instructions. `dbt.project`, `dbt_groups.*.project`, `dag_source` and
+  `include_paths` did the same in their `COPY` lines.
+
+  Whoever writes `leoflow.yaml` is usually whoever runs the build, so locally no
+  boundary is crossed. What it means is that merge rights become arbitrary
+  instruction injection into a published image, on a runner holding the deploy
+  credentials.
+
+  Every interpolated value is now refused if it carries a line break, naming the
+  field and the value, since a stray newline in YAML is invisible in the source.
+  `base_image` also refuses whitespace, which an image reference cannot contain
+  and which `FROM` would read as a stage name. A `COPY` path containing a space
+  is quoted rather than refused, using the JSON form only when a path needs it,
+  so every existing project's generated Dockerfile is byte-identical (#1070).

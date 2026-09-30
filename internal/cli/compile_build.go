@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -143,13 +144,132 @@ func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion, 
 // For a dbt project (cfg.Dbt set, ADR 0042) the source is the dbt project
 // directory, not a dag.py: the final layer COPYs that directory to the workdir
 // and sets no PYTHONPATH, since dbt ships no importable Python module.
+// dockerfileWord refuses a value that the Dockerfile FORMAT, rather than a
+// shell, gives meaning to.
+//
+// #1066 gave `dependencies` and `system_packages` this guard because a newline
+// ends the RUN instruction. Every other value the generator interpolates has
+// the same defect and no shell in sight: a newline in `base_image` renders
+// `FROM python:3.11-slim` followed by an attacker's own instruction, and the
+// COPY operands behave identically. Quoting does not help, because the line
+// break is the instruction separator itself.
+//
+// The value is named in the error because a stray newline in YAML is invisible
+// in the source.
+func dockerfileWord(field, v string) error {
+	if strings.ContainsAny(v, "\n\r") {
+		return fmt.Errorf(
+			"%s %q contains a line break, which ends the Dockerfile instruction and turns the rest into a new one; remove it",
+			field, v)
+	}
+	return nil
+}
+
+// fromOperand guards a value going into FROM, which has no quoting at all. A
+// space there is read as the `FROM <image> AS <stage>` form, and an image
+// reference cannot contain whitespace anyway, so refusing it costs nothing.
+func fromOperand(field, v string) (string, error) {
+	if err := dockerfileWord(field, v); err != nil {
+		return "", err
+	}
+	if strings.ContainsAny(v, " \t") {
+		return "", fmt.Errorf(
+			"%s %q contains whitespace; an image reference cannot, and FROM has no quoting, so the rest would be read as a stage name",
+			field, v)
+	}
+	return v, nil
+}
+
+// copyInstruction renders one COPY, quoting only when it has to.
+//
+// COPY takes N sources and one destination, so an unquoted path containing a
+// space silently becomes a different copy than the author wrote. The JSON form
+// is the only quoting COPY understands. It is used ONLY when a path needs it,
+// because the ordinary form is what the committed example Dockerfiles carry
+// (drift-gated) and what eight e2e scripts grep for: switching wholesale would
+// be churn with a real chance of breaking them, for paths that never had the
+// problem.
+func copyInstruction(field, src, dst string) (string, error) {
+	for _, v := range []string{src, dst} {
+		if err := dockerfileWord(field, v); err != nil {
+			return "", err
+		}
+	}
+	// `[` too: a source starting with it would make the shell form look like
+	// the JSON form to Docker's parser.
+	if !strings.ContainsAny(src+dst, " \t\"\\[") {
+		return fmt.Sprintf("COPY %s %s\n", src, dst), nil
+	}
+	enc, err := json.Marshal([]string{src, dst})
+	if err != nil {
+		return "", fmt.Errorf("%s %q cannot be rendered as a COPY operand: %w", field, src, err)
+	}
+	return "COPY " + string(enc) + "\n", nil
+}
+
+// writeCopy appends one COPY of a context-relative path to its matching place
+// under the workdir, which is every COPY the generator emits except the
+// wholesale `COPY . /home/leoflow/`.
+func writeCopy(b *strings.Builder, field, path string) error {
+	line, err := copyInstruction(field, path, "/home/leoflow/"+path)
+	if err != nil {
+		return err
+	}
+	b.WriteString(line)
+	return nil
+}
+
+// writeDagSourceCopies emits the COPY layer for a dag.py DAG, with or without
+// dbt task groups (ADR 0043). Both the DAG source and every group's project
+// have to be in the image: a group's tasks run `dbt --project-dir <project>`
+// from WORKDIR /home/leoflow, so a project that was never COPYed makes every
+// dbt task exit within seconds of pod start, after a green compile and a green
+// Lite run, because Lite's subprocess executor reads from disk and never needs
+// the image (#20).
+func writeDagSourceCopies(b *strings.Builder, cfg *domain.LeoflowConfig, dagSource string) error {
+	base := filepath.Base(dagSource)
+	groups := dbtGroupProjectDirs(cfg)
+	if slices.Contains(groups, ".") {
+		// project: "." means the dbt project IS the DAG directory. render.go
+		// omits --project-dir for that value, so dbt runs from WORKDIR and the
+		// whole context must land at /home/leoflow: one COPY that already
+		// carries dag.py and subsumes every other group directory.
+		b.WriteString("COPY . /home/leoflow/\n")
+		return nil
+	}
+	if err := writeCopy(b, "dag_source", base); err != nil {
+		return err
+	}
+	copied := map[string]bool{base: true}
+	for _, project := range groups {
+		if err := writeCopy(b, "dbt_groups", project); err != nil {
+			return err
+		}
+		copied[project] = true
+	}
+	extra, ierr := extraIncludePaths(cfg, copied)
+	if ierr != nil {
+		return ierr
+	}
+	for _, p := range extra {
+		if err := writeCopy(b, "include_paths", p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, error) {
 	deps, err := cfg.EffectiveDependencies()
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "FROM %s\n", resolveBaseImage(cfg))
+	from, ferr := fromOperand("base_image", resolveBaseImage(cfg))
+	if ferr != nil {
+		return "", ferr
+	}
+	fmt.Fprintf(&b, "FROM %s\n", from)
 	// apt requires root, and pip as the base's non-root USER (65532) falls back to a
 	// `--user` install whose console scripts (e.g. `dbt`) land in ~/.local/bin, which
 	// is not on PATH — so a synthesized dbt image would fail `dbt: command not found`.
@@ -197,40 +317,18 @@ func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, e
 		// because of where it sits relative to the USER drop: dbt writes target/,
 		// logs/, and profiles.yml to /tmp (base ENV), never the project (#852).
 		project := filepath.Clean(cfg.Dbt.Project)
-		fmt.Fprintf(&b, "COPY %s /home/leoflow/%s\n", project, project)
+		line, cerr := copyInstruction("dbt.project", project, "/home/leoflow/"+project)
+		if cerr != nil {
+			return "", cerr
+		}
+		b.WriteString(line)
 		if rootForInstall {
 			b.WriteString("USER 65532:65532\n")
 		}
 		return b.String(), nil
 	}
-	// A dag.py DAG, with or without dbt task groups (ADR 0043). Both the DAG
-	// source and every group's project have to be in the image: a group's tasks
-	// run `dbt --project-dir <project>` from WORKDIR /home/leoflow, so a project
-	// that was never COPYed makes every dbt task exit within seconds of pod
-	// start — after a green compile and a green Lite run, because Lite's
-	// subprocess executor reads from disk and never needs the image (#20).
-	base := filepath.Base(dagSource)
-	groups := dbtGroupProjectDirs(cfg)
-	if slices.Contains(groups, ".") {
-		// project: "." means the dbt project IS the DAG directory. render.go
-		// omits --project-dir for that value, so dbt runs from WORKDIR and the
-		// whole context must land at /home/leoflow — one COPY that already
-		// carries dag.py and subsumes every other group directory.
-		b.WriteString("COPY . /home/leoflow/\n")
-	} else {
-		fmt.Fprintf(&b, "COPY %s /home/leoflow/%s\n", base, base)
-		copied := map[string]bool{base: true}
-		for _, project := range groups {
-			fmt.Fprintf(&b, "COPY %s /home/leoflow/%s\n", project, project)
-			copied[project] = true
-		}
-		extra, ierr := extraIncludePaths(cfg, copied)
-		if ierr != nil {
-			return "", ierr
-		}
-		for _, p := range extra {
-			fmt.Fprintf(&b, "COPY %s /home/leoflow/%s\n", p, p)
-		}
+	if err := writeDagSourceCopies(&b, cfg, dagSource); err != nil {
+		return "", err
 	}
 	b.WriteString("ENV PYTHONPATH=/home/leoflow\n")
 	if rootForInstall {
