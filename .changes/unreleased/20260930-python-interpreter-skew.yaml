@@ -1,0 +1,30 @@
+kind: Fixed
+body: |-
+  **Three ways the wrong Python interpreter judged your DAG.**
+
+  `leoflow validate` checked `dag.py` under whatever interpreter it found,
+  never consulting `python_version`. The failure was the annoying direction:
+  `type X[T]` is a `SyntaxError` on 3.11, so validate **rejected** a DAG that
+  compiles and runs correctly in the cluster, with a message that reads as a
+  complaint about the author's code. It now asks the same question `leoflow dev`
+  asks, with the same exemptions (a defaulted version, `base_image` set, a
+  deprecated version). When the declared interpreter is not installed it skips
+  the check and says so, rather than checking under a different one: a check
+  that cannot be trusted is worth less than no check (#1094).
+
+  The **parser** had the same skew for the same reason, and it matters more
+  because the parser EXECUTES `dag.py`, so it judges the author's syntax with
+  its own interpreter's grammar. `parser_cmd` is baked once at `leoflow setup`
+  and was never re-evaluated per project, so a project declaring 3.13 had its
+  DAG parsed by a 3.11 parser. It now runs on the declared interpreter. When the
+  configured command's interpreter cannot be identified, or the declared version
+  is not installed, the command is left exactly as it is and a warning says a
+  syntax error below may be the parser's Python rather than your code (#1095).
+
+  A per-DAG venv whose **interpreter went missing while its directory stayed**,
+  from a partial delete or a `python` symlink into a build that was upgraded
+  away, was recreated over the existing directory. The freshness markers live
+  inside the venv and survived, so `.leoflow-deps` asserted that a brand-new
+  interpreter already had the project's dependencies, and it never got them: a
+  venv that looks provisioned and fails at import time. The markers are now
+  dropped whenever the interpreter had to be created (#1096).

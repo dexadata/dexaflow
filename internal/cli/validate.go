@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/neochaotic/leoflow/internal/domain"
 )
 
 func newValidateCommand() *cobra.Command {
@@ -56,7 +58,7 @@ func newValidateCommand() *cobra.Command {
 				if _, serr := os.Stat(dagSrc); serr != nil {
 					return fmt.Errorf("DAG source not found: %w", serr)
 				}
-				if perr := checkDagPythonSyntax(cmd, dagSrc); perr != nil {
+				if perr := checkDagPythonSyntax(cmd, dagSrc, cfg); perr != nil {
 					return perr
 				}
 			}
@@ -73,7 +75,37 @@ func newValidateCommand() *cobra.Command {
 // dag.py). The check is best-effort: when no Python interpreter is reachable
 // (managed or system), we warn instead of failing — a fresh install that has
 // not yet run `leoflow setup` should still be able to lint its leoflow.yaml.
-func checkDagPythonSyntax(cmd *cobra.Command, dagPath string) error {
+// validateEnforcedPythonVersion returns the interpreter minor `validate` must
+// lint under, or empty when any supported one will do.
+//
+// Same rule and same three exemptions as `leoflow dev` (#1092): a version the
+// author did not write is not a statement, `base_image` makes the field inert
+// because the FROM is chosen by hand, and a deprecated version is one we are
+// asking them to leave rather than one we should demand an interpreter for.
+//
+// It is a separate function from devEnforcedPythonVersion only because that one
+// prints to the dev banner; the decision is deliberately identical, and a test
+// covers each exemption so the two cannot drift silently.
+func validateEnforcedPythonVersion(cfg *domain.LeoflowConfig) string {
+	if cfg == nil || cfg.PythonVersionDefaulted || cfg.BaseImage != "" {
+		return ""
+	}
+	if _, deprecated := domain.DeprecatedPythonVersion(cfg.PythonVersion); deprecated {
+		return ""
+	}
+	return cfg.PythonVersion
+}
+
+func checkDagPythonSyntax(cmd *cobra.Command, dagPath string, cfg *domain.LeoflowConfig) error {
+	// A declared python_version is the author's statement about the interpreter
+	// their DAG runs on, and the cluster honors it through the task base image.
+	// Linting under a different minor produces the WRONG answer in the more
+	// annoying direction: `type X[T]` is a SyntaxError on 3.11, so validate
+	// rejected a DAG that compiles and runs correctly, with a message that reads
+	// as a complaint about the author's code (#1094).
+	if want := validateEnforcedPythonVersion(cfg); want != "" {
+		return checkDagSyntaxUnder(cmd, dagPath, want)
+	}
 	// Unified precedence with `leoflow dev` (#742): managed pinned build, then a
 	// host python3.11/python3 that reports >= 3.11. A present-but-unsupported
 	// interpreter is a hard error (validate must not lint under 3.9 a DAG that
@@ -90,6 +122,12 @@ func checkDagPythonSyntax(cmd *cobra.Command, dagPath string) error {
 		}
 		return nil
 	}
+	return runPyCompile(cmd, py, dagPath)
+}
+
+// runPyCompile reports a syntax error from `python -m py_compile`, with the
+// interpreter's own message rather than a summary of it.
+func runPyCompile(cmd *cobra.Command, py, dagPath string) error {
 	out, err := exec.CommandContext(cmd.Context(), py, "-m", "py_compile", dagPath).CombinedOutput() //nolint:gosec // py + dagPath are both validated inputs from this CLI's own setup/user-arg path
 	if err == nil {
 		return nil
@@ -99,4 +137,29 @@ func checkDagPythonSyntax(cmd *cobra.Command, dagPath string) error {
 		msg = err.Error()
 	}
 	return fmt.Errorf("dag.py has a syntax error: %s", msg)
+}
+
+// checkDagSyntaxUnder lints the DAG under one specific interpreter minor.
+//
+// When that minor is not installed it SKIPS with a warning rather than linting
+// under another one or refusing outright. Linting under another minor is the
+// defect this exists to fix, and refusing would block someone from validating
+// their leoflow.yaml over an interpreter they do not need locally: the cluster
+// runs the DAG on the base image, not on their laptop. A check that cannot be
+// trusted is worth less than no check, and saying so is worth more than both.
+func checkDagSyntaxUnder(cmd *cobra.Command, dagPath, wantVersion string) error {
+	want, verr := parsePythonMinor(wantVersion)
+	if verr != nil {
+		return verr
+	}
+	py, rerr := resolvePythonFor(cmd.Context(), want, leoflowManagedPython(), exec.LookPath, pythonVersion)
+	if rerr != nil || py == "" {
+		_, werr := fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: skipping dag.py syntax check: this project declares python_version %s and no python3.%s is reachable here "+
+				"(run `leoflow setup`, or install python3.%s). Checking under a different interpreter would report %s syntax "+
+				"as an error in your code.\n",
+			wantVersion, wantVersion, wantVersion, wantVersion)
+		return werr
+	}
+	return runPyCompile(cmd, py, dagPath)
 }
