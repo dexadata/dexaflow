@@ -167,6 +167,14 @@ func ensureDagVenv(ctx context.Context, cmd *cobra.Command, home, dagID, runtime
 		if e := mk.Run(); e != nil {
 			return "", fmt.Errorf("creating dev venv for %q with %s (the managed CPython bundles venv; a system python3 may need its python3-venv package): %w", dagID, base, e)
 		}
+		// A marker says "THIS interpreter has X", so it cannot outlive the
+		// interpreter. The stale branch above removes the whole directory and
+		// takes the markers with it, but the interpreter-missing branch does not:
+		// a partial delete or a python symlink into an upgraded-away build leaves
+		// a valid-looking pyvenv.cfg, `venv` runs over the directory with no
+		// --clear, and the surviving marker asserts dependencies that the new
+		// interpreter has never been given (#1096).
+		discardDagVenvMarkers(home, dagID)
 	}
 
 	if err := ensureDagVenvRuntime(ctx, cmd, home, dagID, runtimeSrc, py, inst); err != nil {
@@ -281,4 +289,17 @@ func ensureDagVenvRuntime(ctx context.Context, cmd *cobra.Command, home, dagID, 
 		}
 	}
 	return nil
+}
+
+// discardDagVenvMarkers drops the per-DAG freshness markers after the venv's
+// interpreter has been created.
+//
+// Best effort and silent on absence: a fresh venv has no markers, and failing a
+// boot because a file that should not exist could not be removed would trade a
+// real problem for an imaginary one. What matters is that a marker never
+// survives the interpreter it describes; if the removal fails, the worst case is
+// exactly the behavior that exists today.
+func discardDagVenvMarkers(home, dagID string) {
+	_ = os.Remove(dagVenvDepsMarkerPath(home, dagID))    //nolint:errcheck // best effort; absence is the desired state
+	_ = os.Remove(dagVenvRuntimeMarkerPath(home, dagID)) //nolint:errcheck // best effort; absence is the desired state
 }

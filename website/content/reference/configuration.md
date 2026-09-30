@@ -106,6 +106,48 @@ runs a released CLI and the other runs one built from source. Setting
 scheme for every published image is in
 [Published images](/reference/published-images/).
 
+#### Which interpreter reads your DAG
+
+`python_version` is a statement about the interpreter your DAG runs on, and the
+cluster honours it through the task base image. Every local tool that reads your
+`dag.py` honours it too, because a tool that judges your code with a different
+minor gives the wrong answer in the most confusing direction: `type Alias[T]` is
+valid from 3.12 and a `SyntaxError` on 3.11, so a 3.11 checker rejects a DAG the
+cluster runs correctly, and phrases it as a mistake in your code.
+
+| Tool | What it does with the declared version |
+|---|---|
+| `leoflow validate` | Lints `dag.py` under that minor. If it is not installed, it falls back to any interpreter **at least as new**, because a newer one accepts everything the declared minor accepts. If all that is installed is older, the lint is **skipped with a warning** naming the version rather than run under it. |
+| `leoflow dev` | Builds the project's venv on it, and stops rather than substituting a different minor. |
+
+Three things follow from this that are worth knowing:
+
+- **Only an older interpreter is refused, not every different one.** Python's
+  grammar grows, so a 3.11 checker rejects valid 3.13 code while a 3.13 checker
+  accepts valid 3.11 code. Refusing every mismatch would have been the larger
+  bug: `leoflow init` writes `python_version` explicitly, so every scaffolded
+  project takes this path, and most hosts carry a newer `python3` than the
+  `3.11` it writes.
+- **A skipped check is reported, never silent.** When only an older interpreter
+  is around, `validate` would rather tell you it could not check than hand you
+  an answer it does not trust. Install the named minor, or run `leoflow setup`,
+  to turn the check back on. Your `leoflow.yaml` is validated either way.
+- **The fallback is not as strict as the declared minor.** Checked under a newer
+  interpreter, syntax that only the newer one accepts passes here and then fails
+  on the task image. Installing the minor you declare is what makes the check
+  exact; the fallback only guarantees that what it rejects is genuinely wrong.
+- **`leoflow compile` does not honour it yet.** The parser *executes* your
+  `dag.py`, so its own interpreter decides which syntax is legal, and today that
+  is whichever interpreter `leoflow setup` baked into `parser_cmd`. A project
+  declaring a newer minor can still see a `SyntaxError` from `compile` for code
+  the cluster runs
+  ([#1095](https://github.com/neochaotic/leoflow/issues/1095)). Running
+  `leoflow setup` under the minor you declare is the workaround.
+- **The three exemptions are the same everywhere.** A version you never wrote is
+  not a statement (the default applies), a declared `base_image` makes the field
+  inert because you chose the `FROM` by hand, and a deprecated version warns
+  rather than demanding you install an interpreter we are asking you to leave.
+
 ### Rotating the encryption key
 
 `LEOFLOW_SECRET_KEY` takes a comma-separated list. **The first entry encrypts
@@ -173,7 +215,7 @@ roadmap item.
 |---|---|---|
 | `schema_version` | `"1.0"` | Stamps every artifact for forward-compat. |
 | `dag_id` | *subdir basename* | If `leoflow.yaml` is absent, the parent directory name is used. Two subdirs resolving to the same `dag_id` is a hard error — see [Discovery rules](/author-dags/dag-authoring/#discovery-rules). |
-| `python_version` | `"3.11"` | Pick `3.10`, `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter `leoflow dev` builds that project's venv on — so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `leoflow dev` stops and says so rather than substituting a different one; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
+| `python_version` | `"3.11"` | Pick `3.10`, `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `leoflow dev` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `leoflow dev` stops and says so rather than substituting a different one; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
 | `dag_source` | `"dag.py"` | DAG file relative to the project. |
 | `dependencies` | `[]` | pip specifiers baked into the image. Any [PEP 508](https://peps.python.org/pep-0508/) form works, including version floors (`"setuptools>=80.9.0"`) and environment markers (`'requests; python_version < "3.12"'`) — each entry is passed to pip as one literal argument, so shell characters in a specifier are never interpreted. A line break inside an entry is refused, since it would end the generated `RUN` instruction, and every entry is passed after a `--` so an entry beginning with a dash is treated as a package name rather than as an option to pip. |
 | `connectors` | `[]` | Short connector names expanded to provider packages at compile (ADR 0038). |
