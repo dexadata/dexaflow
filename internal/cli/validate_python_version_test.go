@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/neochaotic/leoflow/internal/domain"
@@ -62,5 +66,33 @@ func TestValidateDoesNotEnforceADeprecatedVersion(t *testing.T) {
 	}
 	if got := validateEnforcedPythonVersion(&domain.LeoflowConfig{PythonVersion: dep}); got != "" {
 		t.Errorf("a deprecated version (%s) must not be enforced, got %q", dep, got)
+	}
+}
+
+// The skip warning has to name an interpreter the reader can actually install.
+// The first version of it interpolated the full `python_version` where the
+// minor belonged and told people to `install python3.3.13`, which does not
+// exist. A message that sends someone looking for a package that was never
+// published is worse than no message, because it reads as authoritative.
+func TestValidateSkipWarningNamesAnInstallableInterpreter(t *testing.T) {
+	cmd := devTestCmd()
+	cmd.SetContext(context.Background())
+	// A minor nothing on any machine reports, so the unreachable branch is the
+	// one under test regardless of what the host has installed.
+	const unreachable = "3.99"
+	if err := checkDagSyntaxUnder(cmd, filepath.Join(t.TempDir(), "dag.py"), unreachable); err != nil {
+		t.Fatalf("an unreachable interpreter must warn, not fail: %v", err)
+	}
+	got := cmd.ErrOrStderr().(*bytes.Buffer).String()
+	if !strings.Contains(got, "python3.99") {
+		t.Errorf("warning must name the interpreter to install, got:\n%s", got)
+	}
+	if strings.Contains(got, "python3.3.99") {
+		t.Errorf("warning names a nonexistent interpreter (python3.<full version>), got:\n%s", got)
+	}
+	// It must still point at the declared version itself, so the reader can
+	// connect the warning to the line in their leoflow.yaml.
+	if !strings.Contains(got, "python_version 3.99") {
+		t.Errorf("warning must quote the declared python_version, got:\n%s", got)
 	}
 }

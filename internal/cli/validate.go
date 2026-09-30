@@ -154,11 +154,14 @@ func checkDagSyntaxUnder(cmd *cobra.Command, dagPath, wantVersion string) error 
 	}
 	py, rerr := resolvePythonFor(cmd.Context(), want, leoflowManagedPython(), exec.LookPath, pythonVersion)
 	if rerr != nil || py == "" {
+		// %d, not the full version: the package a reader installs is
+		// `python3.13`, and naming `python3.3.13` sends them after something
+		// that was never published.
 		_, werr := fmt.Fprintf(cmd.ErrOrStderr(),
-			"warning: skipping dag.py syntax check: this project declares python_version %s and no python3.%s is reachable here "+
-				"(run `leoflow setup`, or install python3.%s). Checking under a different interpreter would report %s syntax "+
+			"warning: skipping dag.py syntax check: this project declares python_version %s and no python3.%d is reachable here "+
+				"(run `leoflow setup`, or install python3.%d). Checking under a different interpreter would report %s syntax "+
 				"as an error in your code.\n",
-			wantVersion, wantVersion, wantVersion, wantVersion)
+			wantVersion, want, want, wantVersion)
 		return werr
 	}
 	return runPyCompile(cmd, py, dagPath)

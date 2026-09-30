@@ -11,8 +11,8 @@ import (
 
 // A per-DAG venv can be recreated WITHOUT its directory being removed: the
 // directory and its pyvenv.cfg are intact (so nothing looks stale) while the
-// interpreter itself is gone — a partial delete, an interrupted rebuild, a
-// python symlink into a Homebrew build that was upgraded away.
+// interpreter itself is gone (a partial delete, an interrupted rebuild, a
+// python symlink into a Homebrew build that was upgraded away).
 //
 // `python -m venv dir` then runs over the existing directory with no --clear,
 // and the markers, which live INSIDE the venv, survive. `.leoflow-deps` then
@@ -55,7 +55,8 @@ func TestRecreatedVenvDoesNotTrustTheOldDepsMarker(t *testing.T) {
 	}
 
 	// A managed base that reports 3.11 and, for `-m venv <dir>`, materializes an
-	// interpreter in it — what a real `python -m venv` does over an existing dir.
+	// interpreter in it, which is what a real `python -m venv` does over an
+	// existing dir.
 	managedBin := filepath.Join(filepath.Dir(home), "python", "bin")
 	if err := os.MkdirAll(managedBin, 0o750); err != nil {
 		t.Fatal(err)
