@@ -431,7 +431,7 @@ Compile it like any DAG:
 
 ```console
 $ leoflow compile ./sales --image registry.example.com/sales:v1
-Compiled ./sales -> dag.json (image registry.example.com/sales:v1, version 9f3a2c1)
+Compiled sales -> sales/dag.json (image registry.example.com/sales:v1, version 9f3a2c1)
 ```
 
 `leoflow compile` reads the dbt manifest and emits one task per node:
