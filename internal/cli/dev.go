@@ -1486,6 +1486,11 @@ func ensureProjectDockerfile(cmd *cobra.Command, dir string, cfg *domain.Leoflow
 	if derr != nil {
 		return fmt.Errorf("resolving dependencies: %w", derr)
 	}
+	// The raw dbt paths, under their own names: devDockerfile only ever sees the
+	// CLEANED list, and filepath.Clean hides the defect rather than refusing it.
+	if derr := checkDbtProjectPaths(cfg); derr != nil {
+		return derr
+	}
 	content, gerr := devDockerfile(devBaseImage, src, deps, dbtGroupProjectDirs(cfg))
 	if gerr != nil {
 		return gerr

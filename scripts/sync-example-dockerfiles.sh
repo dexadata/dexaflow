@@ -29,6 +29,12 @@ cd "$ROOT"
 mode="${1:-write}"
 [ "$mode" = "--check" ] && mode="check"
 
+# sq_escape renders a value for a single-quoted shell word, the same way
+# shellQuote does in-process: each embedded quote closes the string, escapes a
+# literal quote, and reopens it. Verified to produce exactly one argv element
+# for a PEP 508 marker and for a value engineered to break out.
+sq_escape() { printf '%s' "$1" | sed "s/'/'\\\\''/g"; }
+
 gen_dockerfile() {
   local yaml="$1"
   local py
@@ -45,7 +51,24 @@ gen_dockerfile() {
       # (#1064): an entry beginning with a dash is a package name, not an option
       # to pip, and `--dry-run` slipping through builds green with the package
       # absent.
-      deps_args+=" '$dep'"
+      #
+      # The embedded-quote escaping matters and a plain "'$dep'" does not have
+      # it. A PEP 508 marker legitimately carries single quotes
+      # (`requests; python_version < '3.9'`) and would re-concatenate into one
+      # malformed argv element, while an odd quote count escapes the quoting
+      # entirely: a dep of `a'; touch /pwned; '` renders `'a'; touch /pwned; ''`,
+      # which runs at docker build time. Only a committed example can reach this,
+      # so it is a PR-review concern rather than a user-facing one, but claiming
+      # parity with shellArgs while not having it is how it would stay unnoticed.
+      # A carriage return only: `read` hands us one line at a time, so a bare
+      # newline cannot arrive here, but a CRLF yaml leaves the CR on the end and
+      # Docker ends the instruction on it. Checking for the newline too would be
+      # a branch nothing can reach.
+      if [ "${dep#*$'\r'}" != "$dep" ]; then
+        echo "sync-example-dockerfiles: dependency in $yaml contains a carriage return, which ends the RUN instruction: $(printf %q "$dep")" >&2
+        return 1
+      fi
+      deps_args+=" '$(sq_escape "$dep")'"
     done < <(awk '/^dependencies:/ {found=1; next} found && /^[^ ]/ {exit} found && /- / {sub(/^[ ]*-[ ]*/, "", $0); print}' "$yaml")
   fi
 

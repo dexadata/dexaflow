@@ -427,3 +427,82 @@ func TestADotGroupDoesNotLetASiblingSkipValidation(t *testing.T) {
 		t.Fatalf("a `.` group returned before the poisoned sibling was looked at:\n%s", df)
 	}
 }
+
+// The twin I missed. dbt.project was moved in front of filepath.Clean and
+// dbt_groups.*.project was not, because the group loop iterates
+// dbtGroupProjectDirs, which has ALREADY cleaned every entry. Clean turns
+// "evil\nstuff/.." into ".", so the value was accepted and rendered
+// `COPY . /home/leoflow/`, which copies the whole build context. Not an
+// injection, since Clean can only remove the newline, but a garbage value
+// silently accepted where its sibling is named.
+func TestADbtGroupProjectIsGuardedBeforeCleanToo(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.DbtGroups = map[string]*domain.DbtConfig{"b": {Project: "evil\nstuff/.."}}
+	df, err := generatedDockerfile(cfg, "dag.py")
+	if err == nil {
+		t.Fatalf("filepath.Clean collapsed the group path instead of it being refused:\n%s", df)
+	}
+	if !strings.Contains(err.Error(), "dbt_groups") {
+		t.Errorf("the error does not name the field: %v", err)
+	}
+}
+
+// And the same value must not reach the .dockerignore, where dbtBuildArtifacts
+// composes it into "<dir>/logs".
+func TestACleanCollapsingGroupPathIsRefusedByTheDockerignoreToo(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.DbtGroups = map[string]*domain.DbtConfig{"b": {Project: "evil\nstuff/.."}}
+	cleanup, _, err := ensureDockerignore(io.Discard, t.TempDir(), cfg, false)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatal("a Clean-collapsing group path reached the .dockerignore unrefused")
+	}
+	if !strings.Contains(err.Error(), "dbt_groups") {
+		t.Errorf("the error must name the field the author actually set, got: %v", err)
+	}
+}
+
+// The error has to name the field the author wrote. Guarding the CONCATENATED
+// .dockerignore patterns meant a poisoned dbt group was reported as
+// `exclude_paths "p\n!secrets.env\nq/logs"`: a field they never set, and a value
+// with a /logs suffix that appears nowhere in their yaml.
+func TestADbtProjectErrorNamesTheDbtFieldNotExcludePaths(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.Dbt = &domain.DbtConfig{Project: "p\n!secrets.env\nq"}
+	_, _, err := ensureDockerignore(io.Discard, t.TempDir(), cfg, true)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "dbt.project") {
+		t.Errorf("the error must name dbt.project, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "/logs") {
+		t.Errorf("the error quotes a composed value the author never wrote: %v", err)
+	}
+}
+
+// `<` is not in the operand lexer's rewrite table; `<<` is a heredoc at the
+// PARSER level. Folding it into dockerfileLexMeta made the one user-visible
+// string say something untrue: an author with a directory named `a<b` was told
+// their file would be silently mis-copied, when in fact the build fails on an
+// unterminated heredoc.
+func TestTheHeredocRefusalExplainsAHeredoc(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.IncludePaths = []string{".", "<<EOF"}
+	_, err := generatedDockerfile(cfg, "dag.py")
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "heredoc") {
+		t.Errorf("the refusal must explain the actual mechanism, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "expands $VAR") {
+		t.Errorf("the refusal blames the operand lexer, which does not touch `<`: %v", err)
+	}
+}

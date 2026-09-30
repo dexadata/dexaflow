@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/neochaotic/leoflow/internal/domain"
 )
 
 // `leoflow lite --executor=k8s` has its own Dockerfile generator, and it had the
@@ -85,5 +89,33 @@ func TestDevDockerfileHandlesTheDotGroup(t *testing.T) {
 	// `.` entry returned first.
 	if _, derr := devDockerfile("img", "dag.py", nil, []string{".", "p\nRUN evil"}); derr == nil {
 		t.Error("a `.` group let a poisoned sibling group through unvalidated")
+	}
+}
+
+// The dev-side dag_source guard had no coverage: the existing case uses a value
+// with no slash, so filepath.Base is the identity and the downstream COPY guard
+// catches it anyway. Only a value WITH a slash tells guarded from unguarded, and
+// that is the value the compile side already uses.
+func TestDevDockerfileRefusesADagSourceWhoseNewlineBaseWouldHide(t *testing.T) {
+	if _, err := devDockerfile("img", "x\nRUN evil/dag.py", nil, nil); err == nil {
+		t.Error("filepath.Base hid the newline instead of it being refused")
+	}
+}
+
+// devDockerfile only ever receives the CLEANED group list, and filepath.Clean
+// turns "evil\nstuff/.." into ".", so the raw guard has to sit at the caller.
+// Removing it left the suite green: the loop inside devDockerfile looks like
+// coverage and is not, for exactly the value that needs it.
+func TestEnsureProjectDockerfileRefusesARawDbtGroupPath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.DbtGroups = map[string]*domain.DbtConfig{"b": {Project: "evil\nstuff/.."}}
+	if err := ensureProjectDockerfile(devTestCmd(), dir, cfg); err == nil {
+		got, _ := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+		t.Fatalf("a Clean-collapsing group path was written to the project Dockerfile:\n%s", got)
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "Dockerfile")); serr == nil {
+		t.Error("a refused generation still left a Dockerfile behind, and a project-shipped Dockerfile is afterwards honored verbatim")
 	}
 }

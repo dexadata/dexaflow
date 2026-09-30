@@ -154,7 +154,7 @@ const dockerfileSeparators = "\n\r\v\f"
 // So these are REFUSED rather than quoted. Quoting them was the first version of
 // this guard and it was wrong: it moved `"` and `\` to a form that does not help
 // while leaving `'` and `$` to silently copy a different path.
-const dockerfileLexMeta = "'\"\\$<"
+const dockerfileLexMeta = "'\"\\$"
 
 // dockerfileWord refuses a value the Dockerfile format, or the lexer that runs
 // over its operands, would give a meaning the author did not write.
@@ -211,6 +211,17 @@ func copyInstruction(field, src, dst string) (string, error) {
 			"%s %q contains %q, which Docker's COPY operand lexer rewrites (it strips quotes, eats backslashes and expands $VAR) in every form, so the file copied would not be the one named; remove it",
 			field, src, src[i:i+1])
 	}
+	// `<` is a SEPARATE mechanism from the operand lexer, and saying otherwise
+	// was worse than saying nothing: COPY is heredoc-capable at the parser
+	// level, so `COPY <<EOF` opens a heredoc that swallows every later line of
+	// the generated file, including the non-root USER drop, and then fails on
+	// the missing terminator. The file is not mis-copied; the build does not
+	// start.
+	if strings.Contains(src, "<") {
+		return "", fmt.Errorf(
+			"%s %q contains `<`, which COPY reads as the start of a heredoc rather than as a path, swallowing the rest of the generated Dockerfile; remove it",
+			field, src)
+	}
 	// A leading `--` is read as a COPY flag (`--from`, `--chown`, `--link`),
 	// which eats the operand and leaves Docker to complain that COPY needs two
 	// arguments. Naming the entry here is the whole point of validating it.
@@ -243,6 +254,32 @@ func writeCopy(b *strings.Builder, field, path string) error {
 		return err
 	}
 	b.WriteString(line)
+	return nil
+}
+
+// writeInstallLayers emits the apt and pip layers, in that order. Both go
+// through shellArgs, which quotes every element and terminates the option list
+// with `--` so an entry beginning with a dash is a package name rather than an
+// option to the tool (#1064).
+func writeInstallLayers(b *strings.Builder, cfg *domain.LeoflowConfig, deps []string) error {
+	if len(cfg.SystemPackages) > 0 {
+		args, aerr := shellArgs("system_packages", cfg.SystemPackages)
+		if aerr != nil {
+			return aerr
+		}
+		// Single RUN so the apt cache cleanup stays in the same layer as the install.
+		fmt.Fprintf(b, "RUN apt-get update && apt-get install -y --no-install-recommends -- %s "+
+			"&& rm -rf /var/lib/apt/lists/*\n", args)
+	}
+	if len(deps) > 0 {
+		args, aerr := shellArgs("dependencies", deps)
+		if aerr != nil {
+			return aerr
+		}
+		// Dependencies before COPY so the (rarely-changing) layer is cached across
+		// edits to the DAG source.
+		fmt.Fprintf(b, "RUN pip install --no-cache-dir -- %s\n", args)
+	}
 	return nil
 }
 
@@ -312,6 +349,9 @@ func writeDagSourceCopies(b *strings.Builder, cfg *domain.LeoflowConfig, dagSour
 // directory, not a dag.py: the final layer COPYs that directory to the workdir
 // and sets no PYTHONPATH, since dbt ships no importable Python module.
 func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, error) {
+	if err := checkDbtProjectPaths(cfg); err != nil {
+		return "", err
+	}
 	deps, err := cfg.EffectiveDependencies()
 	if err != nil {
 		return "", err
@@ -341,23 +381,8 @@ func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, e
 	if rootForInstall {
 		b.WriteString("USER root\n")
 	}
-	if len(cfg.SystemPackages) > 0 {
-		args, aerr := shellArgs("system_packages", cfg.SystemPackages)
-		if aerr != nil {
-			return "", aerr
-		}
-		// Single RUN so the apt cache cleanup stays in the same layer as the install.
-		fmt.Fprintf(&b, "RUN apt-get update && apt-get install -y --no-install-recommends -- %s "+
-			"&& rm -rf /var/lib/apt/lists/*\n", args)
-	}
-	if len(deps) > 0 {
-		args, aerr := shellArgs("dependencies", deps)
-		if aerr != nil {
-			return "", aerr
-		}
-		// Dependencies before COPY so the (rarely-changing) layer is cached across
-		// edits to the DAG source.
-		fmt.Fprintf(&b, "RUN pip install --no-cache-dir -- %s\n", args)
+	if err := writeInstallLayers(&b, cfg, deps); err != nil {
+		return "", err
 	}
 	if cfg.Dbt != nil {
 		// A dbt project is the DAG source (ADR 0042): there is no dag.py to COPY and
@@ -463,11 +488,19 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 
 	// Concatenated into a fresh slice: append onto cfg.ExcludePaths would write
 	// through to the caller's config whenever that slice has spare capacity.
+	// The dbt paths first and by their own name, because dbtBuildArtifacts
+	// composes them into "<dir>/logs" below and a refusal after that quotes a
+	// value the author never wrote.
+	if err := checkDbtProjectPaths(cfg); err != nil {
+		return noop, nil, err
+	}
+	if err := checkExcludePaths(cfg.ExcludePaths); err != nil {
+		return noop, nil, err
+	}
 	patterns := slices.Concat(cfg.ExcludePaths, dbtBuildArtifacts(cfg))
-	// After the concat, not before: dbtBuildArtifacts interpolates every dbt
-	// project path into this same list, so guarding only cfg.ExcludePaths left
-	// the whole class reachable through dbt_groups and dbt.project. Guard what
-	// is emitted, not the one field someone remembered.
+	// A backstop on the emitted set. The two guards above name their field
+	// precisely; this one catches anything a later contributor adds to the list
+	// without remembering to guard it.
 	if err := checkExcludePaths(patterns); err != nil {
 		return noop, nil, err
 	}
@@ -951,6 +984,38 @@ func extraIncludePaths(cfg *domain.LeoflowConfig, copied map[string]bool) ([]str
 	return out, nil
 }
 
+// checkDbtProjectPaths refuses a dbt project path the Dockerfile format would
+// reinterpret, on the RAW value and under the name the author actually wrote.
+//
+// Both callers of these values clean them first, and filepath.Clean hides the
+// problem rather than solving it: "evil\nstuff/.." becomes ".", which renders
+// `COPY . /home/leoflow/` and quietly copies the whole build context. And the
+// .dockerignore path composes them into "<dir>/logs" before any guard saw them,
+// so a refusal there quoted a value with a /logs suffix that appears nowhere in
+// the author's yaml and blamed exclude_paths, a field they never set.
+//
+// Guarding the raw value under its own name is what makes the error actionable,
+// and it closes both paths at once.
+func checkDbtProjectPaths(cfg *domain.LeoflowConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Dbt != nil && cfg.Dbt.Project != "" {
+		if err := dockerfileWord("dbt.project", cfg.Dbt.Project); err != nil {
+			return err
+		}
+	}
+	for _, group := range cfg.DbtGroups {
+		if group == nil || group.Project == "" {
+			continue
+		}
+		if err := dockerfileWord("dbt_groups.*.project", group.Project); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // checkExcludePaths refuses an exclude_paths entry carrying a line break.
 //
 // The generated .dockerignore is line-oriented, so a newline in an entry writes
@@ -966,6 +1031,16 @@ func checkExcludePaths(excludes []string) error {
 		}
 	}
 	return nil
+}
+
+// quoteAll renders a list of author-supplied values for a terminal message,
+// quoting each one so a control character in a yaml cannot drive the terminal.
+func quoteAll(vs []string) string {
+	out := make([]string, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, fmt.Sprintf("%q", v))
+	}
+	return strings.Join(out, ", ")
 }
 
 // warnDroppedNegations tells the author that a `!` entry in exclude_paths
@@ -987,8 +1062,12 @@ func warnDroppedNegations(w io.Writer, excludes []string) {
 		return
 	}
 	//nolint:errcheck // a warning that cannot be delivered must not fail the build
+	// %q, not %s: dockerfileWord refuses only the Dockerfile separators, so an
+	// ESC survives into a value we print, and every other message in this file
+	// already quotes. An operator's terminal is not a rendering target for
+	// whatever is in a yaml.
 	fmt.Fprintf(w, "warning: exclude_paths %s %s ignored — a negation is not emitted into the block leoflow appends, because that block lands AFTER your own lines and could resurrect a path you excluded. Put the negation in your own %s, which leoflow only ever appends to.\n",
-		strings.Join(dropped, ", "), plural(len(dropped), "was", "were"), dockerignoreName)
+		quoteAll(dropped), plural(len(dropped), "was", "were"), dockerignoreName)
 }
 
 // plural picks the verb form for a count, so a single dropped entry does not

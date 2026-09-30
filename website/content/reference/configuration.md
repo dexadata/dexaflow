@@ -167,12 +167,14 @@ feed count alongside the newline. This covers `base_image` in the `FROM`;
 **Refused in a `COPY` path: `'`, `"`, `\`, `$` and `<`.** After a Dockerfile is
 parsed, every `COPY` operand goes through a second pass that strips quotes, eats
 backslashes and expands `$VAR`. That pass runs whatever quoting the line used, so
-`COPY ["d'a't.py", "..."]` copies `dat.py`, not the file you named. `<` is in the
-same table, and `COPY <<EOF` is read as a heredoc, which swallows the rest of the
-generated file. None of these can be quoted into safety, so they are refused
+`COPY ["d'a't.py", "..."]` copies `dat.py`, not the file you named. None of these can be quoted into safety, so they are refused
 rather than silently copying the wrong path.
 
-**This is a breaking change if one of those five characters is already in your
+**Refused in a `COPY` path: `<`.** A different mechanism, not the operand lexer:
+`COPY` is heredoc-capable, so `COPY <<EOF` opens a heredoc that swallows the rest
+of the generated Dockerfile and then fails on the missing terminator.
+
+**This is a breaking change if one of those characters is already in your
 `dag_source`, `dbt.project`, `dbt_groups.*.project` or `include_paths`.** An
 apostrophe in a directory name is not exotic. Such a project used to build, but
 it was copying the wrong path into the image the whole time: `raw/$schema`
