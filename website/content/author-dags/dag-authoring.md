@@ -350,9 +350,14 @@ On `git push`, CI compiles + builds + pushes the artifact. The **same** parser,
 overlay, and guardrails run as a gate, so what you tested in Lite is what ships:
 
 ```bash
-leoflow compile dags/my_pipeline --image ghcr.io/org/my_pipeline:$GIT_SHA --build --push
+leoflow compile dags/my_pipeline --image ghcr.io/org/my_pipeline:$GIT_SHA --build --push -o dag.json
 leoflow push dag.json
 ```
+
+Without `-o` the artifact lands **next to the project**
+(`dags/my_pipeline/dag.json`), not in the directory you ran the command from.
+The pipelines below pass `-o` so the two lines agree wherever the job happens to
+run.
 
 Full, copy-pasteable pipelines for **GitHub Actions, GitLab CI, Google Cloud
 Build/Run, and generic runners** are in **[CI/CD & deploy examples](/operate/cicd-deploy/)**.

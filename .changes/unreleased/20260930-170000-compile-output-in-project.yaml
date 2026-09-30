@@ -1,0 +1,26 @@
+kind: Fixed
+body: |-
+  **`leoflow compile <dir>` wrote `dag.json` into the directory you ran it from,
+  silently clobbering one that was already there.** The `--output` flag defaulted
+  to the bare name `dag.json`, which resolves against the current directory
+  rather than the project the command was pointed at. So compiling a scratch
+  project from a checkout overwrote that checkout's own tracked artifact: the
+  compile succeeded, the path it printed was correct, and the damage was to a
+  file the command was never asked to touch. It is recoverable through git when
+  the target happened to be tracked, and not necessarily otherwise.
+
+  The default is now `<project>/dag.json`, which is what `compile <dir>` reads
+  like, what the success line already implied, and what `leoflow deploy` and
+  every e2e script had already been passing by hand. Compiling the directory you
+  are standing in still writes `./dag.json`, so the common interactive case and
+  every documented pipeline that reads the artifact back are unaffected; the
+  change is confined to the case that was broken. An explicit `-o` is used
+  verbatim, as before.
+
+  Two consequences of moving the write into the source tree are handled with it.
+  A project directory that is not writable, which used to succeed because the
+  artifact went to the current directory instead, now fails with a message
+  naming the directory and pointing at `-o`, rather than a `PermissionError`
+  traceback out of the Python parser. And `leoflow init` scaffolds a
+  `.gitignore` covering `dag.json`, so the first `git add .` after the first
+  compile does not stage a build artifact (#1084).

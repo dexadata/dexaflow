@@ -59,10 +59,17 @@ func newCompileCommand() *cobra.Command {
 			if len(args) == 1 {
 				dir = args[0]
 			}
+			// Cobra does not reset a flag-bound variable between Execute()
+			// calls on the same command object, and this one is written back
+			// to below. Clearing it when the flag was not set keeps the
+			// sentinel honest if a second Execute ever happens.
+			if !cmd.Flags().Changed("output") {
+				o.output = ""
+			}
 			return runCompile(cmd, dir, o)
 		},
 	}
-	cmd.Flags().StringVarP(&o.output, "output", "o", "dag.json", "path to write the compiled dag.json")
+	cmd.Flags().StringVarP(&o.output, "output", "o", "", "path to write the compiled dag.json (default <project>/dag.json)")
 	cmd.Flags().StringVar(&o.image, "image", "", "container image reference for the DAG")
 	cmd.Flags().StringVar(&o.parserCmd, "parser-cmd", "", "override the parser command (default from config)")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe, else dev)")
@@ -71,6 +78,67 @@ func newCompileCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	return cmd
+}
+
+// defaultOutputPath resolves where the compiled dag.json goes when --output was
+// not given.
+//
+// The flag used to default to the bare name `dag.json`, which resolves against
+// the CURRENT directory rather than the project the command was pointed at. So
+// `leoflow compile /tmp/probe` run from a checkout overwrote that checkout's own
+// tracked dag.json: the compile succeeded, the artifact it printed was correct,
+// and the damage was to a file the command was never asked to touch (#1084).
+//
+// The project directory is what `compile <dir>` reads like and what the success
+// line already implies. Compiling the directory you are standing in, which is
+// the common interactive case and what every documented pipeline does before
+// reading the artifact back, still writes ./dag.json: filepath.Join(".", x) is
+// x. So the change is confined to the case that was broken.
+func defaultOutputPath(dir, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return filepath.Join(dir, "dag.json")
+}
+
+// resolveCompileTarget loads the project config and confirms the artifact can
+// be written where it is going, which are the two things every compile needs
+// before it starts a parser.
+func resolveCompileTarget(dir, output string) (*domain.LeoflowConfig, error) {
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	if werr := checkOutputWritable(output); werr != nil {
+		return nil, werr
+	}
+	return cfg, nil
+}
+
+// checkOutputWritable refuses early, and by name, when the artifact cannot be
+// written where it is going.
+//
+// Moving the default into the project directory made a previously working case
+// fail: a source tree mounted read-only into a build container, a checkout owned
+// by another user, a read-only CI volume. Without this the failure surfaced as a
+// PermissionError traceback out of the Python parser, which names the parser's
+// internals and not the thing the user can change.
+func checkOutputWritable(output string) error {
+	dir := filepath.Dir(output)
+	probe, err := os.CreateTemp(dir, ".leoflow-write-probe-*")
+	if err != nil {
+		if os.IsPermission(err) {
+			return fmt.Errorf(
+				"cannot write the compiled artifact to %s: %s is not writable. Pass -o <path> to put it somewhere else",
+				output, dir)
+		}
+		// Anything else (a missing directory, a path that is a file) is
+		// reported by the checks that already own it, with their own wording.
+		return nil
+	}
+	name := probe.Name()
+	_ = probe.Close()      //nolint:errcheck // the probe's content is irrelevant
+	return os.Remove(name) //nolint:wrapcheck // a failure to clean up the probe is worth surfacing as-is
 }
 
 // checkProjectPreconditions runs the checks that apply to every project before
@@ -101,7 +169,12 @@ func checkProjectPreconditions(cmd *cobra.Command, dir string, cfg *domain.Leofl
 // runCompile resolves the project config, runs the parser, validates the output,
 // and optionally builds the DAG image.
 func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
-	cfg, err := loadProjectConfig(dir)
+	// Here rather than in the cobra RunE so every caller is covered by
+	// construction: deploy.go and workspace_build.go each hand-rolled the same
+	// filepath.Join, and a compileOptions literal that forgot it reached a write
+	// with an empty path.
+	o.output = defaultOutputPath(dir, o.output)
+	cfg, err := resolveCompileTarget(dir, o.output)
 	if err != nil {
 		return err
 	}
