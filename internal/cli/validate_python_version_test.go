@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -161,5 +162,85 @@ func TestSyntaxCheckSkipsRatherThanJudgeUnderAnOlderInterpreter(t *testing.T) {
 	}
 	if got := cmd.ErrOrStderr().(*bytes.Buffer).String(); !strings.Contains(got, "skipping dag.py syntax check") {
 		t.Errorf("expected a skip warning, got: %q", got)
+	}
+}
+
+// The WIRING, not the helper. An adversarial review no-oped the call site in
+// checkDagPythonSyntax and the whole package stayed green: every test drove the
+// new functions directly, so what they proved was that a pure function returns
+// the right string, not that validate consults python_version at all.
+//
+// This drives the real command against a stub interpreter that reports 3.12 and
+// rejects everything it is asked to compile, with the project declaring 3.13.
+// With the wiring, validate sees an interpreter older than the declared minor
+// and skips with a warning, so the command succeeds. Without it, validate falls
+// through to that same interpreter and the stub's refusal becomes a syntax
+// error. The two outcomes are opposite, which is what makes the test sensitive
+// to the wiring rather than to the helper.
+func TestValidateActuallyConsultsPythonVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh stub is POSIX-only")
+	}
+	dir := filepath.Join(t.TempDir(), "proj")
+	if _, _, err := run(t, "init", dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "leoflow.yaml")
+	b, rerr := os.ReadFile(cfg)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	out := strings.ReplaceAll(string(b), `python_version: "3.11"`, `python_version: "3.13"`)
+	if out == string(b) {
+		t.Fatalf("the scaffold no longer declares python_version 3.11; this test needs it to:\n%s", b)
+	}
+	if err := os.WriteFile(cfg, []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dag.py"), []byte("this is not valid python\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The only interpreter reachable is one minor behind what the project
+	// declares, and it refuses whatever it is asked to compile.
+	stubDir := t.TempDir()
+	stub := "#!/bin/sh\ncase \"$1\" in --version) echo 'Python 3.12.0'; exit 0;; esac\n" +
+		"echo 'SyntaxError: invalid syntax' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "python3"), []byte(stub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir)
+	t.Setenv("HOME", t.TempDir()) // no managed interpreter either
+
+	_, stderr, err := run(t, "validate", dir)
+	if err != nil {
+		t.Fatalf("validate must skip the lint rather than judge the DAG under an older interpreter: %v (%s)", err, stderr)
+	}
+	if !strings.Contains(stderr, "skipping dag.py syntax check") || !strings.Contains(stderr, "3.13") {
+		t.Errorf("expected a skip warning naming the declared version, got: %q", stderr)
+	}
+}
+
+// The comment on validateEnforcedPythonVersion claims the two functions cannot
+// drift silently. Nothing enforced that: every test drove one of them. Run both
+// over the same configs so the claim is true.
+func TestValidateAndDevAgreeOnTheEnforcedVersion(t *testing.T) {
+	cfgs := []*domain.LeoflowConfig{
+		{PythonVersion: "3.13"},
+		{PythonVersion: "3.12"},
+		{PythonVersion: "3.11", PythonVersionDefaulted: true},
+		{PythonVersion: "3.13", BaseImage: "ghcr.io/x/y:tag"},
+		{PythonVersion: "3.10"},
+		{PythonVersion: "3.10", PythonVersionDefaulted: true},
+		{PythonVersion: ""},
+		nil,
+	}
+	for _, cfg := range cfgs {
+		// devEnforcedPythonVersion also prints to the dev banner, which is the
+		// only difference between the two and is discarded here.
+		want := devEnforcedPythonVersion(devTestCmd(), cfg)
+		if got := validateEnforcedPythonVersion(cfg); got != want {
+			t.Errorf("validate and dev disagree for %+v: validate=%q dev=%q", cfg, got, want)
+		}
 	}
 }

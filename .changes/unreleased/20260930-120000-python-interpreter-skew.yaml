@@ -1,6 +1,6 @@
 kind: Fixed
 body: |-
-  **Three ways the wrong Python interpreter judged your DAG.**
+  **Two ways the wrong Python interpreter judged your DAG.**
 
   `leoflow validate` checked `dag.py` under whatever interpreter it found,
   never consulting `python_version`. The failure was the annoying direction:
@@ -14,15 +14,6 @@ body: |-
   and a syntax error from it is real; only an older one is refused, with a
   warning, since a check that cannot be trusted is worth less than no check
   (#1094).
-
-  The **parser** had the same skew for the same reason, and it matters more
-  because the parser EXECUTES `dag.py`, so it judges the author's syntax with
-  its own interpreter's grammar. `parser_cmd` is baked once at `leoflow setup`
-  and was never re-evaluated per project, so a project declaring 3.13 had its
-  DAG parsed by a 3.11 parser. It now runs on the declared interpreter. When the
-  configured command's interpreter cannot be identified, or the declared version
-  is not installed, the command is left exactly as it is and a warning says a
-  syntax error below may be the parser's Python rather than your code (#1095).
 
   A per-DAG venv whose **interpreter went missing while its directory stayed**,
   from a partial delete or a `python` symlink into a build that was upgraded

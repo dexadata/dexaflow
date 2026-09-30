@@ -70,11 +70,6 @@ func newValidateCommand() *cobra.Command {
 	}
 }
 
-// checkDagPythonSyntax runs `python -m py_compile` on the DAG source to catch
-// syntax errors before push (issue #D8 — validate used to lie about a broken
-// dag.py). The check is best-effort: when no Python interpreter is reachable
-// (managed or system), we warn instead of failing — a fresh install that has
-// not yet run `leoflow setup` should still be able to lint its leoflow.yaml.
 // validateEnforcedPythonVersion returns the interpreter minor `validate` must
 // lint under, or empty when any supported one will do.
 //
@@ -85,7 +80,7 @@ func newValidateCommand() *cobra.Command {
 //
 // It is a separate function from devEnforcedPythonVersion only because that one
 // prints to the dev banner; the decision is deliberately identical, and a test
-// covers each exemption so the two cannot drift silently.
+// runs both over the same configs so the two cannot drift silently.
 func validateEnforcedPythonVersion(cfg *domain.LeoflowConfig) string {
 	if cfg == nil || cfg.PythonVersionDefaulted || cfg.BaseImage != "" {
 		return ""
@@ -96,6 +91,11 @@ func validateEnforcedPythonVersion(cfg *domain.LeoflowConfig) string {
 	return cfg.PythonVersion
 }
 
+// checkDagPythonSyntax runs `python -m py_compile` on the DAG source to catch
+// syntax errors before push (issue #D8: validate used to lie about a broken
+// dag.py). The check is best-effort: when no Python interpreter is reachable
+// (managed or system), we warn instead of failing, because a fresh install that
+// has not yet run `leoflow setup` should still be able to lint its leoflow.yaml.
 func checkDagPythonSyntax(cmd *cobra.Command, dagPath string, cfg *domain.LeoflowConfig) error {
 	// A declared python_version is the author's statement about the interpreter
 	// their DAG runs on, and the cluster honors it through the task base image.

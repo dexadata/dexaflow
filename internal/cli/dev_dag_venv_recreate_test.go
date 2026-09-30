@@ -66,14 +66,24 @@ func TestRecreatedVenvDoesNotTrustTheOldDepsMarker(t *testing.T) {
 	// project's dependencies were actually installed into it.
 	installLog := filepath.Join(t.TempDir(), "install-argv")
 	venvPy := "#!/bin/sh\nprintf '%s ' \"$@\" >> " + installLog + "\nprintf '\\n' >> " + installLog + "\nexit 0\n"
+	// Absolute tool paths: the test empties PATH below to pin the installer, and
+	// a stub that shelled out to a bare `mkdir` would stop working with it.
 	script := "#!/bin/sh\n" +
 		"case \"$1\" in\n" +
 		"  --version) echo 'Python 3.11.9'; exit 0;;\n" +
-		"  -m) if [ \"$2\" = venv ]; then mkdir -p \"$3/bin\"; cat > \"$3/bin/python\" <<'VENVPY'\n" + venvPy + "VENVPY\n chmod +x \"$3/bin/python\"; exit 0; fi;;\n" +
+		"  -m) if [ \"$2\" = venv ]; then /bin/mkdir -p \"$3/bin\"; /bin/cat > \"$3/bin/python\" <<'VENVPY'\n" + venvPy + "VENVPY\n /bin/chmod +x \"$3/bin/python\"; exit 0; fi;;\n" +
 		"esac\nexit 0\n"
 	if err := os.WriteFile(base, []byte(script), 0o755); err != nil { //nolint:gosec // a test stub must be executable
 		t.Fatal(err)
 	}
+
+	// An empty PATH pins the installer to pip. detectInstaller prefers uv when
+	// it is on PATH, and leoflow itself recommends uv, so plenty of maintainer
+	// laptops have it: without this the real uv would be handed a shell stub as
+	// --python and try to resolve over the network. CI has no uv, which makes
+	// this the worst flake shape there is, green on the runner and red on the
+	// machine of whoever changes this next.
+	t.Setenv("PATH", t.TempDir())
 
 	if _, err := ensureDagVenv(context.Background(), devTestCmd(), home, dagID, runtimeRoot, "3.11", deps); err != nil {
 		t.Fatalf("ensureDagVenv: %v", err)

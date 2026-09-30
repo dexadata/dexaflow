@@ -118,7 +118,6 @@ cluster runs correctly, and phrases it as a mistake in your code.
 | Tool | What it does with the declared version |
 |---|---|
 | `leoflow validate` | Lints `dag.py` under that minor. If it is not installed, it falls back to any interpreter **at least as new**, because a newer one accepts everything the declared minor accepts. If all that is installed is older, the lint is **skipped with a warning** naming the version rather than run under it. |
-| `leoflow compile` | Points the parser at that minor. The parser *executes* your `dag.py` (it imports real Airflow to build the graph), so its interpreter decides which syntax is legal. |
 | `leoflow dev` | Builds the project's venv on it, and stops rather than substituting a different minor. |
 
 Three things follow from this that are worth knowing:
@@ -133,11 +132,13 @@ Three things follow from this that are worth knowing:
   is around, `validate` would rather tell you it could not check than hand you
   an answer it does not trust. Install the named minor, or run `leoflow setup`,
   to turn the check back on. Your `leoflow.yaml` is validated either way.
-- **The parser command is only rewritten when it is understood.** `parser_cmd` is
-  operator-configurable free-form text; leoflow substitutes the interpreter only
-  in the shape `leoflow setup` writes. Anything else is left exactly as it is and
-  the mismatch is named in a warning, because silently rewriting a command we do
-  not understand breaks a working setup.
+- **`leoflow compile` does not honour it yet.** The parser *executes* your
+  `dag.py`, so its own interpreter decides which syntax is legal, and today that
+  is whichever interpreter `leoflow setup` baked into `parser_cmd`. A project
+  declaring a newer minor can still see a `SyntaxError` from `compile` for code
+  the cluster runs
+  ([#1095](https://github.com/neochaotic/leoflow/issues/1095)). Running
+  `leoflow setup` under the minor you declare is the workaround.
 - **The three exemptions are the same everywhere.** A version you never wrote is
   not a statement (the default applies), a declared `base_image` makes the field
   inert because you chose the `FROM` by hand, and a deprecated version warns

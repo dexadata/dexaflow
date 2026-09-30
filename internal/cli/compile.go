@@ -119,7 +119,6 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if err != nil {
 		return err
 	}
-	command = parserCommandForProject(cmd, command, o.parserCmd, cfg)
 	if o.dagVersion == "" {
 		o.dagVersion = gitVersion(cmdContext(cmd))
 	}
@@ -968,28 +967,4 @@ func cmdContext(cmd *cobra.Command) context.Context {
 		return ctx
 	}
 	return context.Background()
-}
-
-// parserCommandForProject points the parser at the interpreter the project
-// declares.
-//
-// The parser EXECUTES dag.py, so it judges the author's syntax with its own
-// interpreter's grammar, and parser_cmd is baked once at setup. A project
-// declaring 3.13 had its DAG parsed by a 3.11 parser, and 3.12+ syntax came
-// back as a SyntaxError in the user's code (#1095). An explicit --parser-cmd is
-// never touched: the operator named that command on purpose.
-func parserCommandForProject(cmd *cobra.Command, command, explicit string, cfg *domain.LeoflowConfig) string {
-	if explicit != "" {
-		return command
-	}
-	out, warn := parserCommandFor(command, validateEnforcedPythonVersion(cfg),
-		func(minor int) (string, error) {
-			return resolvePythonFor(cmdContext(cmd), minor, leoflowManagedPython(), exec.LookPath, pythonVersion)
-		})
-	if warn != "" {
-		// Best effort, like every other advisory line here: a compile must not
-		// fail because a warning could not reach the terminal.
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn) //nolint:errcheck // advisory output
-	}
-	return out
 }
