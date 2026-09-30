@@ -410,3 +410,20 @@ func TestTheGuardRunsBeforeTheTransformThatHidesIt(t *testing.T) {
 		}
 	})
 }
+
+// The compile generator's own check before the `.` short-circuit. The
+// .dockerignore guard happens to catch this value too, which is why removing
+// this one left the suite green: the exploit path was covered, the defence in
+// depth was not. The dev generator has the same assertion, and the two must not
+// drift.
+func TestADotGroupDoesNotLetASiblingSkipValidation(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.DbtGroups = map[string]*domain.DbtConfig{
+		"a": {Project: "."},
+		"b": {Project: "p\nRUN evil"},
+	}
+	if df, err := generatedDockerfile(cfg, "dag.py"); err == nil {
+		t.Fatalf("a `.` group returned before the poisoned sibling was looked at:\n%s", df)
+	}
+}
