@@ -23,7 +23,7 @@ leoflow compile [path] [flags]
       --dockerfile string    Dockerfile path relative to the DAG directory (default "Dockerfile")
   -h, --help                 help for compile
       --image string         container image reference for the DAG
-  -o, --output string        path to write the compiled dag.json (default "dag.json")
+  -o, --output string        path to write the compiled dag.json (default <project>/dag.json)
       --parser-cmd string    override the parser command (default from config)
       --push                 push the built image to its registry (requires --build)
 ```

@@ -351,8 +351,12 @@ overlay, and guardrails run as a gate, so what you tested in Lite is what ships:
 
 ```bash
 leoflow compile dags/my_pipeline --image ghcr.io/org/my_pipeline:$GIT_SHA --build --push
-leoflow push dag.json
+leoflow push dags/my_pipeline/dag.json
 ```
+
+The artifact lands **next to the project**, not in the directory you ran the
+command from. Pass `-o` to put it somewhere else.
+
 
 Full, copy-pasteable pipelines for **GitHub Actions, GitLab CI, Google Cloud
 Build/Run, and generic runners** are in **[CI/CD & deploy examples](/operate/cicd-deploy/)**.
