@@ -139,30 +139,66 @@ func runPyCompile(cmd *cobra.Command, py, dagPath string) error {
 	return fmt.Errorf("dag.py has a syntax error: %s", msg)
 }
 
-// checkDagSyntaxUnder lints the DAG under one specific interpreter minor.
+// syntaxCheckIsTrustworthy says whether a syntax verdict from an interpreter
+// reporting minor `have` can be trusted for a project declaring minor `want`.
 //
-// When that minor is not installed it SKIPS with a warning rather than linting
-// under another one or refusing outright. Linting under another minor is the
-// defect this exists to fix, and refusing would block someone from validating
-// their leoflow.yaml over an interpreter they do not need locally: the cluster
-// runs the DAG on the base image, not on their laptop. A check that cannot be
-// trusted is worth less than no check, and saying so is worth more than both.
+// Python's grammar grows, so the two directions are not equally wrong. An
+// OLDER interpreter rejects syntax the declared one accepts (`type Alias[T]`
+// is valid from 3.12 and a SyntaxError on 3.11), which is exactly #1094: a
+// rejection of code the cluster runs correctly, phrased as the author's
+// mistake. A NEWER one accepts everything the declared minor accepts, so a
+// SyntaxError from it is the author's and worth failing on.
+func syntaxCheckIsTrustworthy(want, have int) bool { return have >= want }
+
+// warnSyntaxCheckSkipped explains a skip in terms of what the reader can fix.
+func warnSyntaxCheckSkipped(cmd *cobra.Command, wantVersion string, want int, found string) error {
+	// %d, not the full version: the package a reader installs is
+	// `python3.13`, and naming `python3.3.13` sends them after something
+	// that was never published.
+	_, werr := fmt.Fprintf(cmd.ErrOrStderr(),
+		"warning: skipping dag.py syntax check: this project declares python_version %s and no python3.%d is reachable here%s "+
+			"(run `leoflow setup`, or install python3.%d). Checking under an older interpreter would report %s syntax "+
+			"as an error in your code.\n",
+		wantVersion, want, found, want, wantVersion)
+	return werr
+}
+
+// checkDagSyntaxUnder lints the DAG under the interpreter the project declares,
+// and falls back deliberately when that exact minor is absent.
+//
+// The fallback is asymmetric, per syntaxCheckIsTrustworthy, and the reason it
+// exists at all is that skipping outright would have been a bigger bug than
+// #1094. `leoflow init` writes python_version explicitly, so EVERY scaffolded
+// project takes this path, and most hosts carry a python3 newer than the 3.11
+// it writes. Skipping whenever the exact minor is missing would have stopped
+// validate catching a broken dag.py for most users, which is the entire reason
+// the check exists. CI is one such host, and it caught this.
+//
+// A too-old interpreter is a skip with a warning rather than the hard error
+// resolvePython3 would return, because with a declared version the project is
+// not asking to run on that interpreter: failing here would reject a
+// well-formed leoflow.yaml over a Python the author never claimed to use.
 func checkDagSyntaxUnder(cmd *cobra.Command, dagPath, wantVersion string) error {
 	want, verr := parsePythonMinor(wantVersion)
 	if verr != nil {
 		return verr
 	}
-	py, rerr := resolvePythonFor(cmd.Context(), want, leoflowManagedPython(), exec.LookPath, pythonVersion)
+	ctx := cmd.Context()
+	if py, rerr := resolvePythonFor(ctx, want, leoflowManagedPython(), exec.LookPath, pythonVersion); rerr == nil && py != "" {
+		return runPyCompile(cmd, py, dagPath)
+	}
+	py, rerr := resolvePython3(ctx, leoflowManagedPython(), exec.LookPath, pythonVersion)
 	if rerr != nil || py == "" {
-		// %d, not the full version: the package a reader installs is
-		// `python3.13`, and naming `python3.3.13` sends them after something
-		// that was never published.
-		_, werr := fmt.Fprintf(cmd.ErrOrStderr(),
-			"warning: skipping dag.py syntax check: this project declares python_version %s and no python3.%d is reachable here "+
-				"(run `leoflow setup`, or install python3.%d). Checking under a different interpreter would report %s syntax "+
-				"as an error in your code.\n",
-			wantVersion, want, want, wantVersion)
-		return werr
+		return warnSyntaxCheckSkipped(cmd, wantVersion, want, "")
+	}
+	_, have, herr := pythonVersion(ctx, py)
+	if herr != nil {
+		// An interpreter that will not report its version cannot be weighed
+		// against the declared one, so it is not a second opinion either.
+		return warnSyntaxCheckSkipped(cmd, wantVersion, want, "")
+	}
+	if !syntaxCheckIsTrustworthy(want, have) {
+		return warnSyntaxCheckSkipped(cmd, wantVersion, want, fmt.Sprintf(", only python3.%d", have))
 	}
 	return runPyCompile(cmd, py, dagPath)
 }

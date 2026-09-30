@@ -8,9 +8,12 @@ body: |-
   compiles and runs correctly in the cluster, with a message that reads as a
   complaint about the author's code. It now asks the same question `leoflow dev`
   asks, with the same exemptions (a defaulted version, `base_image` set, a
-  deprecated version). When the declared interpreter is not installed it skips
-  the check and says so, rather than checking under a different one: a check
-  that cannot be trusted is worth less than no check (#1094).
+  deprecated version). When the declared interpreter is not installed the
+  fallback is asymmetric, because Python's grammar grows: an interpreter at
+  least as new accepts everything the declared minor accepts, so it is used
+  and a syntax error from it is real; only an older one is refused, with a
+  warning, since a check that cannot be trusted is worth less than no check
+  (#1094).
 
   The **parser** had the same skew for the same reason, and it matters more
   because the parser EXECUTES `dag.py`, so it judges the author's syntax with

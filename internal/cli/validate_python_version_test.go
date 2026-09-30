@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,5 +96,70 @@ func TestValidateSkipWarningNamesAnInstallableInterpreter(t *testing.T) {
 	// connect the warning to the line in their leoflow.yaml.
 	if !strings.Contains(got, "python_version 3.99") {
 		t.Errorf("warning must quote the declared python_version, got:\n%s", got)
+	}
+}
+
+// The asymmetry that keeps the fix from becoming a bigger bug than the one it
+// fixes. Python's grammar grows, so linting under an OLDER interpreter than the
+// project declares is what produced #1094; linting under a NEWER one accepts
+// everything the declared minor accepts, so a syntax error there is real.
+func TestSyntaxCheckTrustsAnInterpreterAtLeastAsNew(t *testing.T) {
+	cases := []struct {
+		want, have int
+		trust      bool
+		why        string
+	}{
+		{want: 11, have: 11, trust: true, why: "the declared minor itself"},
+		{want: 11, have: 13, trust: true, why: "newer accepts everything 3.11 accepts"},
+		{want: 13, have: 11, trust: false, why: "#1094: 3.11 rejects valid 3.13 syntax"},
+		{want: 13, have: 12, trust: false, why: "one minor behind is still behind"},
+		{want: 11, have: 9, trust: false, why: "an unsupported interpreter is not a second opinion"},
+	}
+	for _, c := range cases {
+		if got := syntaxCheckIsTrustworthy(c.want, c.have); got != c.trust {
+			t.Errorf("syntaxCheckIsTrustworthy(want=3.%d, have=3.%d) = %v, want %v (%s)",
+				c.want, c.have, got, c.trust, c.why)
+		}
+	}
+}
+
+// The regression this pair exists to stop: `leoflow init` writes python_version
+// explicitly, so EVERY scaffolded project takes the strict path. Skipping the
+// lint whenever that exact minor is missing would have stopped validate
+// catching a broken dag.py on any host that simply has a newer python3, which
+// is most of them. CI is one: it has no python3.11, and this is the shape that
+// failed there.
+func TestSyntaxCheckStillCatchesABrokenDagUnderANewerInterpreter(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH; this asserts the fallback, which needs one")
+	}
+	dag := filepath.Join(t.TempDir(), "dag.py")
+	if err := os.WriteFile(dag, []byte("this is not valid python\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := devTestCmd()
+	cmd.SetContext(context.Background())
+	// A minor far below anything installed, so the exact-match resolution is
+	// guaranteed to miss and the fallback is the path under test.
+	if err := checkDagSyntaxUnder(cmd, dag, "3.5"); err == nil {
+		t.Fatal("a broken dag.py must still be rejected when only a NEWER interpreter is installed")
+	}
+}
+
+// The other half: a declared minor NEWER than anything installed must not fail
+// the build on a syntax error that the older interpreter may simply not
+// understand. Warn and skip, which is #1094's fix.
+func TestSyntaxCheckSkipsRatherThanJudgeUnderAnOlderInterpreter(t *testing.T) {
+	dag := filepath.Join(t.TempDir(), "dag.py")
+	if err := os.WriteFile(dag, []byte("this is not valid python\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := devTestCmd()
+	cmd.SetContext(context.Background())
+	if err := checkDagSyntaxUnder(cmd, dag, "3.99"); err != nil {
+		t.Fatalf("an unreachable newer minor must warn, not fail: %v", err)
+	}
+	if got := cmd.ErrOrStderr().(*bytes.Buffer).String(); !strings.Contains(got, "skipping dag.py syntax check") {
+		t.Errorf("expected a skip warning, got: %q", got)
 	}
 }

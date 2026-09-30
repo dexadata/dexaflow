@@ -117,15 +117,22 @@ cluster runs correctly, and phrases it as a mistake in your code.
 
 | Tool | What it does with the declared version |
 |---|---|
-| `leoflow validate` | Lints `dag.py` under that minor. If it is not installed here, the lint is **skipped with a warning** naming the version, not run under a different one. |
+| `leoflow validate` | Lints `dag.py` under that minor. If it is not installed, it falls back to any interpreter **at least as new**, because a newer one accepts everything the declared minor accepts. If all that is installed is older, the lint is **skipped with a warning** naming the version rather than run under it. |
 | `leoflow compile` | Points the parser at that minor. The parser *executes* your `dag.py` (it imports real Airflow to build the graph), so its interpreter decides which syntax is legal. |
 | `leoflow dev` | Builds the project's venv on it, and stops rather than substituting a different minor. |
 
 Three things follow from this that are worth knowing:
 
-- **A skipped check is reported, never silent.** `validate` would rather tell you
-  it could not check than hand you an answer it does not trust. Install the
-  minor, or run `leoflow setup`, to turn the check back on.
+- **Only an older interpreter is refused, not every different one.** Python's
+  grammar grows, so a 3.11 checker rejects valid 3.13 code while a 3.13 checker
+  accepts valid 3.11 code. Refusing every mismatch would have been the larger
+  bug: `leoflow init` writes `python_version` explicitly, so every scaffolded
+  project takes this path, and most hosts carry a newer `python3` than the
+  `3.11` it writes.
+- **A skipped check is reported, never silent.** When only an older interpreter
+  is around, `validate` would rather tell you it could not check than hand you
+  an answer it does not trust. Install the named minor, or run `leoflow setup`,
+  to turn the check back on. Your `leoflow.yaml` is validated either way.
 - **The parser command is only rewritten when it is understood.** `parser_cmd` is
   operator-configurable free-form text; leoflow substitutes the interpreter only
   in the shape `leoflow setup` writes. Anything else is left exactly as it is and
