@@ -11,7 +11,7 @@ import (
 // second place.
 //
 // It is the worse of the two, because ensureProjectDockerfile WRITES the result
-// to <project>/Dockerfile and never removes it. ensureDockerfile then honours a
+// to <project>/Dockerfile and never removes it. ensureDockerfile then honors a
 // project-shipped Dockerfile verbatim, so one `leoflow lite` run would persist
 // the poisoned file and every later `compile --build` would use it, bypassing
 // every guard the generated path has.

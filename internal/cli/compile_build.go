@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -225,8 +224,16 @@ func copyInstruction(field, src, dst string) (string, error) {
 	if !strings.ContainsAny(src, " \t") && !strings.HasPrefix(src, "[") {
 		return fmt.Sprintf("COPY %s %s\n", src, dst), nil
 	}
-	enc, _ := json.Marshal([]string{src, dst}) //nolint:errchkjson // a []string always marshals
-	return "COPY " + string(enc) + "\n", nil
+	// Built by hand rather than with json.Marshal, whose error is unreachable
+	// for a []string and so is a branch no test can reach. This is only safe
+	// because `"` and `\` were refused above: what reaches here can contain a
+	// space, a tab or a leading `[`, none of which need escaping inside a JSON
+	// string.
+	quoted := make([]string, 0, 2)
+	for _, v := range []string{src, dst} {
+		quoted = append(quoted, `"`+v+`"`)
+	}
+	return "COPY [" + strings.Join(quoted, ", ") + "]\n", nil
 }
 
 // writeCopy appends one COPY of a context-relative path to its matching place

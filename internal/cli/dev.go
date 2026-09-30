@@ -610,7 +610,7 @@ func kubectlNamespaceArgs(kubeconfig string) []string {
 // It shares compile_build.go's guards deliberately. This generator had the whole
 // #1070 class and #1064 alongside it, and it is the worse of the two places to
 // have them: ensureProjectDockerfile WRITES the result to <project>/Dockerfile
-// and never removes it, and ensureDockerfile honours a project-shipped
+// and never removes it, and ensureDockerfile honors a project-shipped
 // Dockerfile verbatim, so one `leoflow lite` run would persist a poisoned file
 // that every later `compile --build` then used.
 func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []string) (string, error) {
