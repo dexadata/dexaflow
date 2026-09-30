@@ -132,6 +132,10 @@ Three things follow from this that are worth knowing:
   is around, `validate` would rather tell you it could not check than hand you
   an answer it does not trust. Install the named minor, or run `leoflow setup`,
   to turn the check back on. Your `leoflow.yaml` is validated either way.
+- **The fallback is not as strict as the declared minor.** Checked under a newer
+  interpreter, syntax that only the newer one accepts passes here and then fails
+  on the task image. Installing the minor you declare is what makes the check
+  exact; the fallback only guarantees that what it rejects is genuinely wrong.
 - **`leoflow compile` does not honour it yet.** The parser *executes* your
   `dag.py`, so its own interpreter decides which syntax is legal, and today that
   is whichever interpreter `leoflow setup` baked into `parser_cmd`. A project
