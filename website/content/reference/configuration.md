@@ -150,23 +150,42 @@ Three things follow from this that are worth knowing:
 
 #### Values that reach the generated Dockerfile
 
-Every value the generated Dockerfile interpolates is refused if it contains a
-line break. A newline (or carriage return) is what ends a Dockerfile
-instruction, so a value carrying one does not get quoted into safety: it closes
-the instruction it sits in and whatever follows becomes an instruction of its
-own. That applies to `base_image` in the `FROM`, and to `dbt.project`,
-`dbt_groups.*.project`, `dag_source` and `include_paths` in their `COPY` lines,
-alongside the `dependencies` and `system_packages` entries that already had the
-guard. The refusal names the field and the value, because a stray newline in
-YAML is invisible in the source.
+Every value the generated Dockerfile interpolates is checked, because the
+Dockerfile format and Docker's own operand lexer give some characters a meaning
+no quoting can take away. The refusal always names the field and the value, since
+a stray control character in YAML is invisible in the source.
 
-`base_image` additionally refuses any whitespace: an image reference cannot
-contain one, `FROM` has no quoting, and the rest of the line would be read as
-the `FROM <image> AS <stage>` form.
+**Refused everywhere: a line break, a vertical tab or a form feed.** These end a
+Dockerfile instruction or split it into new words, so a value carrying one closes
+the instruction it sits in and whatever follows becomes an instruction of its own.
+Docker splits a line on `[\t\v\f\r ]+`, which is why the vertical tab and form
+feed count alongside the newline. This covers `base_image` in the `FROM`;
+`dbt.project`, `dbt_groups.*.project`, `dag_source` and `include_paths` in their
+`COPY` lines; `exclude_paths` in the generated `.dockerignore`; and the
+`dependencies` and `system_packages` entries that already had the guard.
 
-A `COPY` path containing a space is legal and is quoted rather than refused.
-Paths without whitespace keep rendering exactly as before, so a project's
-generated Dockerfile does not change because this guard exists.
+**Refused in a `COPY` path: `'`, `"`, `\` and `$`.** After a Dockerfile is parsed,
+every `COPY` operand goes through a second pass that strips quotes, eats
+backslashes and expands `$VAR`. That pass runs whatever quoting the line used, so
+`COPY ["d'a't.py", "..."]` copies `dat.py`, not the file you named. Since these
+cannot be quoted into safety either, they are refused rather than silently
+copying the wrong path.
+
+**Refused in `base_image`: any whitespace.** An image reference cannot contain
+one, `FROM` has no quoting, and the rest of the line would be read as the
+`FROM <image> AS <stage>` form.
+
+**Refused in a `COPY` path: a leading `--`,** which Docker reads as one of
+`COPY`'s own flags rather than as a path.
+
+A path containing a space, or starting with `[`, is legal and is **quoted**
+rather than refused. Paths without either keep rendering exactly as before, so
+a project's generated Dockerfile does not change because this guard exists.
+
+The same guards apply to the Dockerfile `leoflow lite --executor=k8s` generates
+when a project ships none. That one writes `<project>/Dockerfile` and leaves it
+there, and a project-supplied Dockerfile is afterwards used verbatim, so a
+value that slipped through there would outlive the command that wrote it.
 
 ### Rotating the encryption key
 

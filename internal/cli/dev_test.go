@@ -282,7 +282,10 @@ func TestDevDagImageRef(t *testing.T) {
 }
 
 func TestDevDockerfile(t *testing.T) {
-	df := devDockerfile("leoflow-base:py3.11", "dag.py", nil, nil)
+	df, derr := devDockerfile("leoflow-base:py3.11", "dag.py", nil, nil)
+	if derr != nil {
+		t.Fatal(derr)
+	}
 	for _, must := range []string{"FROM leoflow-base:py3.11", "COPY dag.py", "PYTHONPATH"} {
 		if !strings.Contains(df, must) {
 			t.Errorf("generated Dockerfile missing %q:\n%s", must, df)
@@ -292,8 +295,14 @@ func TestDevDockerfile(t *testing.T) {
 		t.Errorf("no deps -> no pip install line:\n%s", df)
 	}
 	// Declared dependencies are pip-installed before COPY (cached layer).
-	withDeps := devDockerfile("leoflow-base:py3.11", "dag.py", []string{"duckdb==1.1.3", "pandas"}, nil)
-	if !strings.Contains(withDeps, "RUN pip install --no-cache-dir duckdb==1.1.3 pandas") {
+	withDeps, werr := devDockerfile("leoflow-base:py3.11", "dag.py", []string{"duckdb==1.1.3", "pandas"}, nil)
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	// The specifiers are quoted and the option list terminated, the same as the
+	// compile generator does. This assertion used to pin the RAW join, which is
+	// the #1064 shape: an entry beginning with a dash stayed an option to pip.
+	if !strings.Contains(withDeps, "RUN pip install --no-cache-dir -- 'duckdb==1.1.3' 'pandas'") {
 		t.Errorf("deps not installed in Dockerfile:\n%s", withDeps)
 	}
 	if strings.Index(withDeps, "pip install") > strings.Index(withDeps, "COPY") {
@@ -716,7 +725,10 @@ func TestDevDockerfileCopiesDbtGroupProjects(t *testing.T) {
 		"transform": {Project: "./transform"},
 		"marketing": {Project: "marketing"},
 	}}
-	df := devDockerfile("leoflow-base:py3.11", "dag.py", nil, dbtGroupProjectDirs(cfg))
+	df, derr := devDockerfile("leoflow-base:py3.11", "dag.py", nil, dbtGroupProjectDirs(cfg))
+	if derr != nil {
+		t.Fatal(derr)
+	}
 	for _, want := range []string{
 		"COPY dag.py /home/leoflow/dag.py",
 		"COPY marketing /home/leoflow/marketing",

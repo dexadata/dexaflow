@@ -607,25 +607,44 @@ func kubectlNamespaceArgs(kubeconfig string) []string {
 // dbt task groups — see dbtGroupProjectDirs. They belong in the image for the
 // same reason the DAG source does: a group's tasks run `dbt --project-dir
 // <project>` from WORKDIR /home/leoflow (#20).
-func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []string) string {
+// It shares compile_build.go's guards deliberately. This generator had the whole
+// #1070 class and #1064 alongside it, and it is the worse of the two places to
+// have them: ensureProjectDockerfile WRITES the result to <project>/Dockerfile
+// and never removes it, and ensureDockerfile honours a project-shipped
+// Dockerfile verbatim, so one `leoflow lite` run would persist a poisoned file
+// that every later `compile --build` then used.
+func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []string) (string, error) {
 	base := filepath.Base(dagSource)
-	df := "FROM " + baseImage + "\n"
+	from, ferr := fromOperand("base_image", baseImage)
+	if ferr != nil {
+		return "", ferr
+	}
+	var b strings.Builder
+	b.WriteString("FROM " + from + "\n")
 	// Install the DAG's declared dependencies before COPY so the (rarely-changing)
 	// dependency layer is cached across edits to dag.py.
 	if len(deps) > 0 {
-		df += "RUN pip install --no-cache-dir " + strings.Join(deps, " ") + "\n"
+		args, aerr := shellArgs("dependencies", deps)
+		if aerr != nil {
+			return "", aerr
+		}
+		b.WriteString("RUN pip install --no-cache-dir -- " + args + "\n")
 	}
 	if slices.Contains(dbtGroups, ".") {
-		// project: "." — the project is the DAG directory; one COPY covers both.
-		df += "COPY . /home/leoflow/\n"
+		// project: "." means the project is the DAG directory; one COPY covers both.
+		b.WriteString("COPY . /home/leoflow/\n")
 	} else {
-		df += fmt.Sprintf("COPY %s /home/leoflow/%s\n", base, base)
+		if err := writeCopy(&b, "dag_source", base); err != nil {
+			return "", err
+		}
 		for _, project := range dbtGroups {
-			df += fmt.Sprintf("COPY %s /home/leoflow/%s\n", project, project)
+			if err := writeCopy(&b, "dbt_groups.*.project", project); err != nil {
+				return "", err
+			}
 		}
 	}
-	df += "ENV PYTHONPATH=/home/leoflow\n"
-	return df
+	b.WriteString("ENV PYTHONPATH=/home/leoflow\n")
+	return b.String(), nil
 }
 
 // liteBanner renders a high-visibility Lite-environment banner so a developer
@@ -1457,8 +1476,12 @@ func ensureProjectDockerfile(cmd *cobra.Command, dir string, cfg *domain.Leoflow
 	if derr != nil {
 		return fmt.Errorf("resolving dependencies: %w", derr)
 	}
+	content, gerr := devDockerfile(devBaseImage, src, deps, dbtGroupProjectDirs(cfg))
+	if gerr != nil {
+		return gerr
+	}
 	devPrintln(cmd.OutOrStdout(), "▸ generating a default Dockerfile (none found) …")
-	if werr := os.WriteFile(df, []byte(devDockerfile(devBaseImage, src, deps, dbtGroupProjectDirs(cfg))), 0o600); werr != nil {
+	if werr := os.WriteFile(df, []byte(content), 0o600); werr != nil {
 		return fmt.Errorf("writing Dockerfile: %w", werr)
 	}
 	return nil

@@ -133,40 +133,51 @@ func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion, 
 	return composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, tag)
 }
 
-// generatedDockerfile renders the Dockerfile for a project that does not ship its
-// own, layering the DAG onto the task base image (ADR 0003). The layers are
-// ordered for cache efficiency and matched to leoflow.yaml: FROM the resolved
-// base, the apt system_packages, then the pip dependencies (connectors: expanded
-// to their provider packages, ADR 0038), and finally the DAG source COPY with the
-// agent's PYTHONPATH convention. An unknown connector name is a hard error
-// (surfaced from EffectiveDependencies) rather than a runtime ModuleNotFoundError.
+// dockerfileSeparators are the characters that end a Dockerfile line or split a
+// word, and that therefore cannot be quoted into safety. BuildKit splits words
+// on `[\t\v\f\r ]+` (frontend/dockerfile/parser: reWhitespace) and ends a line
+// on the newline, so vertical tab and form feed are separators exactly like a
+// space is. Space and tab are NOT in this set because a COPY can quote those;
+// the rest cannot appear in a path anyone meant to write.
+const dockerfileSeparators = "\n\r\v\f"
+
+// dockerfileLexMeta are the characters COPY's operand lexer rewrites, which the
+// JSON form does NOT protect against. After parsing, every COPY operand goes
+// through a second pass (instructions.SourcesAndDest.Expand -> shell.Lex
+// .ProcessWord) that strips quotes, eats backslashes and expands $VAR. Measured
+// against BuildKit v0.28.1, in the JSON form:
 //
-// For a dbt project (cfg.Dbt set, ADR 0042) the source is the dbt project
-// directory, not a dag.py: the final layer COPYs that directory to the workdir
-// and sets no PYTHONPATH, since dbt ships no importable Python module.
-// dockerfileWord refuses a value that the Dockerfile FORMAT, rather than a
-// shell, gives meaning to.
+//	COPY ["d'a't.py", "/home/leoflow/d'a't.py"]  ->  copies dat.py
+//	an\alytics -> analytics        $HOME -> the base image's value
+//	a"b -> a hard "matching double-quote" build error
 //
-// #1066 gave `dependencies` and `system_packages` this guard because a newline
-// ends the RUN instruction. Every other value the generator interpolates has
-// the same defect and no shell in sight: a newline in `base_image` renders
-// `FROM python:3.11-slim` followed by an attacker's own instruction, and the
-// COPY operands behave identically. Quoting does not help, because the line
-// break is the instruction separator itself.
+// So these are REFUSED rather than quoted. Quoting them was the first version of
+// this guard and it was wrong: it moved `"` and `\` to a form that does not help
+// while leaving `'` and `$` to silently copy a different path.
+const dockerfileLexMeta = "'\"\\$"
+
+// dockerfileWord refuses a value the Dockerfile format, or the lexer that runs
+// over its operands, would give a meaning the author did not write.
+//
+// #1066 gave `dependencies` and `system_packages` a line-break guard because a
+// newline ends the RUN instruction. Every other value the generator
+// interpolates has the same defect with no shell in sight: a newline in
+// `base_image` renders `FROM python:3.11-slim` followed by an attacker's own
+// instruction, and the COPY operands behave identically.
 //
 // The value is named in the error because a stray newline in YAML is invisible
 // in the source.
 func dockerfileWord(field, v string) error {
-	if strings.ContainsAny(v, "\n\r") {
+	if strings.ContainsAny(v, dockerfileSeparators) {
 		return fmt.Errorf(
-			"%s %q contains a line break, which ends the Dockerfile instruction and turns the rest into a new one; remove it",
+			"%s %q contains a line break or a vertical-tab/form-feed character, which ends the Dockerfile instruction or splits it into new words; remove it",
 			field, v)
 	}
 	return nil
 }
 
-// fromOperand guards a value going into FROM, which has no quoting at all. A
-// space there is read as the `FROM <image> AS <stage>` form, and an image
+// fromOperand guards a value going into FROM, which has no quoting at all. Any
+// whitespace there is read as the `FROM <image> AS <stage>` form, and an image
 // reference cannot contain whitespace anyway, so refusing it costs nothing.
 func fromOperand(field, v string) (string, error) {
 	if err := dockerfileWord(field, v); err != nil {
@@ -180,30 +191,41 @@ func fromOperand(field, v string) (string, error) {
 	return v, nil
 }
 
-// copyInstruction renders one COPY, quoting only when it has to.
+// copyInstruction renders one COPY, refusing what cannot be quoted and quoting
+// what can.
 //
-// COPY takes N sources and one destination, so an unquoted path containing a
-// space silently becomes a different copy than the author wrote. The JSON form
-// is the only quoting COPY understands. It is used ONLY when a path needs it,
-// because the ordinary form is what the committed example Dockerfiles carry
-// (drift-gated) and what eight e2e scripts grep for: switching wholesale would
-// be churn with a real chance of breaking them, for paths that never had the
-// problem.
+// Only a space or a tab is quotable, via the JSON form, and that form is used
+// ONLY when a path needs it: the ordinary form is what the committed example
+// Dockerfiles carry (drift-gated) and what eight e2e scripts grep for, so
+// switching wholesale would be churn with a real chance of breaking them, for
+// paths that never had the problem.
+//
+// dst is not checked: every caller derives it from src, so a separator in it
+// was already refused via src.
 func copyInstruction(field, src, dst string) (string, error) {
-	for _, v := range []string{src, dst} {
-		if err := dockerfileWord(field, v); err != nil {
-			return "", err
-		}
+	if err := dockerfileWord(field, src); err != nil {
+		return "", err
 	}
-	// `[` too: a source starting with it would make the shell form look like
-	// the JSON form to Docker's parser.
-	if !strings.ContainsAny(src+dst, " \t\"\\[") {
+	if i := strings.IndexAny(src, dockerfileLexMeta); i >= 0 {
+		return "", fmt.Errorf(
+			"%s %q contains %q, which Docker's COPY operand lexer rewrites (it strips quotes, eats backslashes and expands $VAR) in every form, so the file copied would not be the one named; remove it",
+			field, src, src[i:i+1])
+	}
+	// A leading `--` is read as a COPY flag (`--from`, `--chown`, `--link`),
+	// which eats the operand and leaves Docker to complain that COPY needs two
+	// arguments. Naming the entry here is the whole point of validating it.
+	if strings.HasPrefix(src, "--") {
+		return "", fmt.Errorf(
+			"%s %q starts with `--`, which COPY reads as one of its flags rather than as a path; remove it",
+			field, src)
+	}
+	// A source STARTING with `[` would make the shell form look like the JSON
+	// form to Docker's parser; one containing it (a glob character class) is
+	// fine.
+	if !strings.ContainsAny(src, " \t") && !strings.HasPrefix(src, "[") {
 		return fmt.Sprintf("COPY %s %s\n", src, dst), nil
 	}
-	enc, err := json.Marshal([]string{src, dst})
-	if err != nil {
-		return "", fmt.Errorf("%s %q cannot be rendered as a COPY operand: %w", field, src, err)
-	}
+	enc, _ := json.Marshal([]string{src, dst}) //nolint:errchkjson // a []string always marshals
 	return "COPY " + string(enc) + "\n", nil
 }
 
@@ -242,7 +264,7 @@ func writeDagSourceCopies(b *strings.Builder, cfg *domain.LeoflowConfig, dagSour
 	}
 	copied := map[string]bool{base: true}
 	for _, project := range groups {
-		if err := writeCopy(b, "dbt_groups", project); err != nil {
+		if err := writeCopy(b, "dbt_groups.*.project", project); err != nil {
 			return err
 		}
 		copied[project] = true
@@ -259,6 +281,17 @@ func writeDagSourceCopies(b *strings.Builder, cfg *domain.LeoflowConfig, dagSour
 	return nil
 }
 
+// generatedDockerfile renders the Dockerfile for a project that does not ship its
+// own, layering the DAG onto the task base image (ADR 0003). The layers are
+// ordered for cache efficiency and matched to leoflow.yaml: FROM the resolved
+// base, the apt system_packages, then the pip dependencies (connectors: expanded
+// to their provider packages, ADR 0038), and finally the DAG source COPY with the
+// agent's PYTHONPATH convention. An unknown connector name is a hard error
+// (surfaced from EffectiveDependencies) rather than a runtime ModuleNotFoundError.
+//
+// For a dbt project (cfg.Dbt set, ADR 0042) the source is the dbt project
+// directory, not a dag.py: the final layer COPYs that directory to the workdir
+// and sets no PYTHONPATH, since dbt ships no importable Python module.
 func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, error) {
 	deps, err := cfg.EffectiveDependencies()
 	if err != nil {
@@ -405,6 +438,9 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 
 	// Concatenated into a fresh slice: append onto cfg.ExcludePaths would write
 	// through to the caller's config whenever that slice has spare capacity.
+	if err := checkExcludePaths(cfg.ExcludePaths); err != nil {
+		return noop, nil, err
+	}
 	patterns := slices.Concat(cfg.ExcludePaths, dbtBuildArtifacts(cfg))
 	warnDroppedNegations(w, cfg.ExcludePaths)
 	merged, changed := mergeDockerignore(original, patterns)
@@ -856,6 +892,13 @@ func ensureDockerfile(dir, name string, cfg *domain.LeoflowConfig, dagSource str
 func extraIncludePaths(cfg *domain.LeoflowConfig, copied map[string]bool) ([]string, error) {
 	var out []string
 	for _, raw := range cfg.IncludePaths {
+		// Before TrimSpace, not after: a LEADING newline was stripped here, so
+		// the entry produced no injection but also no named refusal, and the
+		// author got a Docker "not found" instead of being told what was wrong
+		// with their yaml.
+		if err := dockerfileWord("include_paths", raw); err != nil {
+			return nil, err
+		}
 		p := strings.TrimSpace(raw)
 		if p == "" || p == "." {
 			continue
@@ -877,6 +920,23 @@ func extraIncludePaths(cfg *domain.LeoflowConfig, copied map[string]bool) ([]str
 		out = append(out, clean)
 	}
 	return out, nil
+}
+
+// checkExcludePaths refuses an exclude_paths entry carrying a line break.
+//
+// The generated .dockerignore is line-oriented, so a newline in an entry writes
+// lines of the author's choosing into it. The damaging shape is a negation:
+// expandPattern deliberately never emits one, because leoflow's block is
+// appended AFTER the author's own lines and a `!` there could resurrect a path
+// they excluded. An injected `!secrets.env` does exactly that, and
+// warnDroppedNegations cannot see it, since it only inspects the entry's prefix.
+func checkExcludePaths(excludes []string) error {
+	for _, p := range excludes {
+		if err := dockerfileWord("exclude_paths", p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // warnDroppedNegations tells the author that a `!` entry in exclude_paths

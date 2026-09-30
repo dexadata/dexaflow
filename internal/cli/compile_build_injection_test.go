@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -120,5 +123,175 @@ func TestOrdinaryCopyLinesKeepTheShellForm(t *testing.T) {
 	}
 	if !strings.Contains(df, "COPY dag.py /home/leoflow/dag.py\n") {
 		t.Errorf("the ordinary COPY form changed, which drifts the committed examples:\n%s", df)
+	}
+}
+
+// The first version of these tests passed with the whole line-break guard
+// deleted: every payload ended in "RUN echo surprise", which contains a SPACE,
+// so fromOperand's whitespace check caught the FROM cases before the line-break
+// check ever ran. The FROM path had no line-break coverage at all, and the
+// carriage return had none anywhere. Whitespace-free payloads fix that.
+func TestFromRefusesALineBreakIndependentlyOfWhitespace(t *testing.T) {
+	for _, bad := range []string{
+		"alpine\nVOLUME/x", // newline, no space anywhere
+		"alpine\rVOLUME/x", // carriage return
+		"alpine\vAS\vevil", // vertical tab: a BuildKit word separator
+		"alpine\fAS\fevil", // form feed: likewise
+	} {
+		cfg := &domain.LeoflowConfig{DagID: "d"}
+		cfg.ApplyDefaults()
+		cfg.BaseImage = bad
+		df, err := generatedDockerfile(cfg, "dag.py")
+		if err == nil {
+			t.Errorf("base_image %q was accepted:\n%s", bad, df)
+		}
+	}
+}
+
+// BuildKit splits a Dockerfile line on `[\t\v\f\r ]+`, so a vertical tab or a
+// form feed is a word separator exactly like a space. Measured: `COPY a<VT>b.py
+// /home/leoflow/a<VT>b.py` is read as three sources and the destination "b",
+// which hands an attacker an arbitrary destination inside the image.
+func TestCopyRefusesTheOtherWordSeparators(t *testing.T) {
+	for _, bad := range []string{"a\vb.py", "a\fb.py"} {
+		cfg := &domain.LeoflowConfig{DagID: "d"}
+		cfg.ApplyDefaults()
+		if df, err := generatedDockerfile(cfg, bad); err == nil {
+			t.Errorf("dag_source %q was accepted:\n%s", bad, df)
+		}
+	}
+}
+
+// The JSON form does NOT protect a COPY operand. After parsing, every operand
+// goes through shell.Lex.ProcessWord, which strips quotes, eats backslashes and
+// expands $VAR, in the JSON form as much as the shell form. Measured against
+// BuildKit v0.28.1:
+//
+//	COPY ["d'a't.py", "/home/leoflow/d'a't.py"]  ->  copies dat.py
+//
+// So these are refused. The first version of this guard quoted them, which
+// moved `"` and `\` to a form that does not help and left `'` and `$` to
+// silently copy a different path.
+func TestCopyRefusesWhatTheOperandLexerRewrites(t *testing.T) {
+	for _, bad := range []string{`d'a't.py`, `an\alytics.py`, `a"b.py`, `$HOME.py`} {
+		cfg := &domain.LeoflowConfig{DagID: "d"}
+		cfg.ApplyDefaults()
+		df, err := generatedDockerfile(cfg, bad)
+		if err == nil {
+			t.Errorf("dag_source %q was accepted; the lexer would rewrite it:\n%s", bad, df)
+			continue
+		}
+		if !strings.Contains(err.Error(), "dag_source") {
+			t.Errorf("the error for %q does not name the field: %v", bad, err)
+		}
+	}
+}
+
+// A leading `--` is read as a COPY flag (--from, --chown, --link), which eats
+// the operand and leaves Docker complaining that COPY needs two arguments.
+// Naming the entry is the whole point of validating it here.
+func TestCopyRefusesAFlagLookalikePath(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.IncludePaths = []string{".", "--from=alpine"}
+	df, err := generatedDockerfile(cfg, "dag.py")
+	if err == nil {
+		t.Fatalf("a `--` path was accepted:\n%s", df)
+	}
+	if !strings.Contains(err.Error(), "include_paths") {
+		t.Errorf("the error does not name the field: %v", err)
+	}
+}
+
+// fromOperand's whitespace rule is the only genuinely new RULE this change
+// adds, and nothing covered it: deleting the check entirely left the suite
+// green, because every other test's payload also carried a newline.
+func TestFromRefusesWhitespaceEvenWithoutALineBreak(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.BaseImage = "alpine AS builder"
+	if df, err := generatedDockerfile(cfg, "dag.py"); err == nil {
+		t.Fatalf("a FROM with whitespace was accepted, which names a build stage:\n%s", df)
+	}
+}
+
+// A leading `[` is what makes the shell form look like the JSON form to
+// Docker's parser. A `[` anywhere else is an ordinary glob character class and
+// must keep working: refusing it, or quoting it, would break a legitimate
+// include_paths entry.
+func TestGlobCharacterClassIsNotDisturbed(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.IncludePaths = []string{".", "data/[0-9]*.csv"}
+	df, err := generatedDockerfile(cfg, "dag.py")
+	if err != nil {
+		t.Fatalf("a glob character class is a legal path: %v", err)
+	}
+	if !strings.Contains(df, "COPY data/[0-9]*.csv /home/leoflow/data/[0-9]*.csv\n") {
+		t.Errorf("a glob path should keep the ordinary form:\n%s", df)
+	}
+}
+
+// exclude_paths reaches the generated .dockerignore, which is line-oriented, so
+// a newline there injects its own lines. The damaging shape is a negation:
+// expandPattern deliberately never emits one, because leoflow's block is
+// appended AFTER the author's own lines and a `!` could resurrect a path they
+// excluded. An injected `!secrets.env` does exactly that, and
+// warnDroppedNegations does not see it because it only checks the entry's
+// prefix.
+func TestNewlineInAnExcludePathIsRefused(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.ExcludePaths = []string{"foo\n!secrets.env"}
+
+	// Through the real entry point, not the helper. Calling checkExcludePaths
+	// directly proved only that a pure function returns an error: unwiring the
+	// call site in ensureDockerignore left the suite green.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".dockerignore"), []byte("secrets.env\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanup, _, err := ensureDockerignore(io.Discard, dir, cfg, false)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		got, _ := os.ReadFile(filepath.Join(dir, ".dockerignore"))
+		t.Fatalf("a newline in exclude_paths was accepted; the .dockerignore became:\n%s", got)
+	}
+	if !strings.Contains(err.Error(), "exclude_paths") {
+		t.Errorf("the error does not name the field: %v", err)
+	}
+}
+
+// The guard has to sit before the value is trimmed, not after. A LEADING
+// newline was stripped by TrimSpace on the way in, so the entry produced no
+// injection but also no named refusal: the author got a Docker "not found"
+// instead of being told what was wrong with their yaml.
+func TestALeadingNewlineIsRefusedRatherThanTrimmed(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	cfg.IncludePaths = []string{".", "\nhelpers"}
+	df, err := generatedDockerfile(cfg, "dag.py")
+	if err == nil {
+		t.Fatalf("a leading newline was trimmed instead of refused:\n%s", df)
+	}
+	if !strings.Contains(err.Error(), "include_paths") {
+		t.Errorf("the error does not name the field: %v", err)
+	}
+}
+
+// A source STARTING with `[` is what makes the shell form look like the JSON
+// form to Docker's parser, so it has to be quoted. Nothing covered the leading
+// case: dropping `[` from the trigger set left the suite green.
+func TestALeadingBracketPathIsQuoted(t *testing.T) {
+	cfg := &domain.LeoflowConfig{DagID: "d"}
+	cfg.ApplyDefaults()
+	df, err := generatedDockerfile(cfg, "[archive].py")
+	if err != nil {
+		t.Fatalf("a leading bracket is a legal filename: %v", err)
+	}
+	if !strings.Contains(df, `COPY ["[archive].py"`) {
+		t.Errorf("a path starting with `[` must use the JSON form, or Docker reads the line as one:\n%s", df)
 	}
 }
