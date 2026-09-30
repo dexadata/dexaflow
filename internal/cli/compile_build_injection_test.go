@@ -413,7 +413,7 @@ func TestTheGuardRunsBeforeTheTransformThatHidesIt(t *testing.T) {
 
 // The compile generator's own check before the `.` short-circuit. The
 // .dockerignore guard happens to catch this value too, which is why removing
-// this one left the suite green: the exploit path was covered, the defence in
+// this one left the suite green: the exploit path was covered, the defense in
 // depth was not. The dev generator has the same assertion, and the two must not
 // drift.
 func TestADotGroupDoesNotLetASiblingSkipValidation(t *testing.T) {
