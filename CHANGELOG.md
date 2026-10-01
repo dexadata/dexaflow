@@ -2215,7 +2215,7 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still suppresses the platform default wholesale rather than merging per field,
   and the same wholesale suppression is reachable without any `defaults` block at
   all: a task declaring only an `ephemeral_storage` limit (a standalone knob
-  [ADR 0054](https://neochaotic.github.io/leoflow/project/adrs/0054-shared-cluster-coexistence/)
+  [ADR 0054](https://dexaflow.dexadata.ai/project/adrs/0054-shared-cluster-coexistence/)
   promotes) makes the resources object non-nil and therefore drops the platform
   cpu and memory defaults entirely, leaving a pod with an ephemeral-storage limit
   and no cpu or memory request at all. Only cpu and memory are QoS compute
@@ -2238,7 +2238,7 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were wrong. Task pods are governed by a *different* value,
   `taskNetworkPolicy.enabled`, which defaults to `false` — so an operator who
   followed the section to the letter believed the network-layer containment
-  [ADR 0048](https://neochaotic.github.io/leoflow/project/adrs/0048-no-user-code-in-control-plane/)
+  [ADR 0048](https://dexaflow.dexadata.ai/project/adrs/0048-no-user-code-in-control-plane/)
   leans on was in place and had none. And the control-plane policy restricts
   **ingress only**: its `networkPolicy.egress` is empty by default and the
   chart then renders a single empty egress *rule* (`- {}`), which matches every

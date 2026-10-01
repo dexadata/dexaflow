@@ -9,7 +9,7 @@
 # fetch it with `hugo mod get github.com/google/docsy` before the first build.
 ####################################################################################
 
-baseURL = "https://neochaotic.github.io/leoflow/"
+baseURL = "https://dexaflow.dexadata.ai/"
 title = "Leoflow"
 
 # GitHub Pages serves this project site under the /leoflow/ SUBPATH. Every internal
@@ -20,7 +20,7 @@ title = "Leoflow"
 # the same. It pairs with disabling Goldmark's default link/image render hooks
 # (see [markup.goldmark.renderHooks] below): with the hooks OFF, markdown links stay
 # root-relative and canonify is the single, consistent thing that prefixes them —
-# turning the hooks ON would double-prefix (/leoflow/leoflow/…).
+# turning the hooks ON would double-prefix them.
 canonifyURLs = true
 
 # Single language today: content lives directly under content/ and the default
@@ -93,7 +93,7 @@ enableGitInfo = true
   version_menu = "Releases"
   version_menu_pagelinks = false
   archived_version = false
-  url_latest_version = "https://neochaotic.github.io/leoflow/"
+  url_latest_version = "https://dexaflow.dexadata.ai/"
 
   copyright = "@neoChaotic"
   # Full-text search parity with the live Material site (which ships MkDocs'
@@ -129,25 +129,25 @@ enableGitInfo = true
 
   [[params.versions]]
     version = "v0.4.8 (latest)"
-    url = "https://neochaotic.github.io/leoflow/"
+    url = "https://dexaflow.dexadata.ai/"
   [[params.versions]]
     version = "v0.4.7"
-    url = "https://neochaotic.github.io/leoflow/v0.4.7/"
+    url = "https://dexaflow.dexadata.ai/v0.4.7/"
   [[params.versions]]
     version = "v0.4.6"
-    url = "https://neochaotic.github.io/leoflow/v0.4.6/"
+    url = "https://dexaflow.dexadata.ai/v0.4.6/"
   [[params.versions]]
     version = "v0.4.5"
-    url = "https://neochaotic.github.io/leoflow/v0.4.5/"
+    url = "https://dexaflow.dexadata.ai/v0.4.5/"
   [[params.versions]]
     version = "v0.4.1"
-    url = "https://neochaotic.github.io/leoflow/v0.4.1/"
+    url = "https://dexaflow.dexadata.ai/v0.4.1/"
   [[params.versions]]
     version = "v0.4.0"
-    url = "https://neochaotic.github.io/leoflow/v0.4.0/"
+    url = "https://dexaflow.dexadata.ai/v0.4.0/"
   [[params.versions]]
     version = "dev (main, unreleased)"
-    url = "https://neochaotic.github.io/leoflow/dev/"
+    url = "https://dexaflow.dexadata.ai/dev/"
 
   [params.links]
     [[params.links.user]]

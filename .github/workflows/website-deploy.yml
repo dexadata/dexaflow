@@ -4,10 +4,10 @@
 # Publishes a combined tree to GitHub Pages with FOUR legs, each built from its
 # own git ref with its own baseURL:
 #
-#   https://neochaotic.github.io/leoflow/         <- latest GA  (ref: a tag)
-#   https://neochaotic.github.io/leoflow/dev/     <- main tip   (ref: the
+#   https://dexaflow.dexadata.ai/         <- latest GA  (ref: a tag)
+#   https://dexaflow.dexadata.ai/dev/     <- main tip   (ref: the
 #                                                    commit that triggered this run)
-#   https://neochaotic.github.io/leoflow/vX.Y.Z/  <- one archived tree per
+#   https://dexaflow.dexadata.ai/vX.Y.Z/  <- one archived tree per
 #                                                    released tag (frozen)
 #
 # The version list — which tag is "latest", which tags are archived, and their
