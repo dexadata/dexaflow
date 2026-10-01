@@ -4,11 +4,13 @@
 # The repository moved from neochaotic/leoflow to dexadata/leoflow, and GHCR
 # packages do not move with a repository. Release workflows publish under
 # `github.repository_owner`, so the next release lands in ghcr.io/dexadata on
-# its own. Until then, the defaults on main (Helm values, the published runtime
-# base used by `leoflow compile`, the helm-ci upgrade guard) point at
-# ghcr.io/dexadata, so the latest release has to exist there too.
+# its own. Before that, the defaults on main (Helm values, the published
+# runtime base used by `leoflow compile`, the helm-ci upgrade guard) move to
+# ghcr.io/dexadata, so the latest release has to exist there first. Run this
+# before merging the change that moves those defaults.
 #
-# Manual trigger only. Older tags stay in ghcr.io/neochaotic and keep working.
+# Manual trigger only, and safe to re-run: `--force` overwrites the same tags
+# with the same digests. Older tags stay in ghcr.io/neochaotic and keep working.
 name: Mirror images to org namespace
 on:
   workflow_dispatch:
@@ -33,6 +35,13 @@ jobs:
       DST: ghcr.io/dexadata
       VERSION: ${{ inputs.version }}
     steps:
+      - name: Validate the version input
+        run: |
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like 1.2.3 (got '${VERSION}')"
+            exit 1
+          fi
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
