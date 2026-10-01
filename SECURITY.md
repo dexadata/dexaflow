@@ -9,7 +9,7 @@ The Leoflow team takes security issues seriously. We appreciate your efforts to 
 ### How to Report
 
 **Use GitHub's private vulnerability reporting:**
-[**Report a vulnerability**](https://github.com/neochaotic/leoflow/security/advisories/new)
+[**Report a vulnerability**](https://github.com/dexadata/leoflow/security/advisories/new)
 
 The report is visible only to the maintainer until an advisory is published. No
 account beyond GitHub is needed, and it threads the discussion, the fix and the

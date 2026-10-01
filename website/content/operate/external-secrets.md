@@ -282,7 +282,7 @@ wider range that is **not** the metadata range, use
 - **Resolving a declared Connection/Variable directly from the external store**
   — so a secret in AWS Secrets Manager becomes a Leoflow Connection/Variable with
   no Kubernetes Secret in between — is **option 4 above** (the native resolver,
-  ADR 0060, [#811](https://github.com/neochaotic/leoflow/issues/811)). It ships
+  ADR 0060, [#811](https://github.com/dexadata/leoflow/issues/811)). It ships
   **off by default**; enable it with `secrets.backend` after validating keyless
   end-to-end on your cluster (see
   [Validate the native resolver on a real cluster]({{< relref "external-secrets-cluster-validation" >}})).

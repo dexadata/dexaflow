@@ -3,7 +3,7 @@
 # its checksum, installs the binaries into ~/.leoflow/bin, and runs
 # `leoflow setup` to bootstrap the managed runtime (Python, workspace).
 #
-#   curl -fsSL https://raw.githubusercontent.com/neochaotic/leoflow/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
 #
 # Environment overrides:
 #   LEOFLOW_VERSION=v0.1.0-alpha.1   pin a specific release (default: latest)
@@ -11,7 +11,7 @@
 #   LEOFLOW_INSTALL_DIR=~/.leoflow/bin
 set -eu
 
-REPO="neochaotic/leoflow"
+REPO="dexadata/leoflow"
 
 # Choose where to put the binaries. Prefer a directory ALREADY on PATH so the
 # user needs no `source`/new shell — the common "command not found" trap. Order:

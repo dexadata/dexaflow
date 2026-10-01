@@ -12,10 +12,10 @@ tag is the part people get wrong.
 
 | artifact | what it is | who pulls it |
 | --- | --- | --- |
-| `ghcr.io/neochaotic/leoflow-server` | the control plane: API, scheduler, UI | the Helm chart, and `docker compose` for the demo |
-| `ghcr.io/neochaotic/leoflow-migrate` | schema migrations, run as a Helm pre-install and pre-upgrade hook | the chart's migration Job |
-| `ghcr.io/neochaotic/leoflow-runtime` | the task base image, one per supported Python line | your DAG image's `FROM`, at `leoflow compile --build` |
-| `oci://ghcr.io/neochaotic/charts/leoflow` | the Helm chart | `helm install` / `helm upgrade` |
+| `ghcr.io/dexadata/leoflow-server` | the control plane: API, scheduler, UI | the Helm chart, and `docker compose` for the demo |
+| `ghcr.io/dexadata/leoflow-migrate` | schema migrations, run as a Helm pre-install and pre-upgrade hook | the chart's migration Job |
+| `ghcr.io/dexadata/leoflow-runtime` | the task base image, one per supported Python line | your DAG image's `FROM`, at `leoflow compile --build` |
+| `oci://ghcr.io/dexadata/charts/leoflow` | the Helm chart | `helm install` / `helm upgrade` |
 
 ## How each is tagged
 
@@ -32,7 +32,7 @@ both resolve to identical digests, so either spelling works.
 
 {{% alert title="py3.11 moves, py3.11-v0.4.8 does not" color="warning" %}}
 Every release republishes `leoflow-runtime:py<version>` pointing at its own
-build. A `FROM ghcr.io/neochaotic/leoflow-runtime:py3.11` rebuilt next month is
+build. A `FROM ghcr.io/dexadata/leoflow-runtime:py3.11` rebuilt next month is
 a different base than the same line built today. Pin the versioned tag when you
 want a build to reproduce.
 {{% /alert %}}
@@ -44,8 +44,8 @@ two tag shapes **based on the CLI you are running**:
 
 | your `leoflow` binary | the `FROM` it writes |
 | --- | --- |
-| a released build (`leoflow version` shows a clean `X.Y.Z`) | `ghcr.io/neochaotic/leoflow-runtime:py<ver>-v<X.Y.Z>`, immutable |
-| a development build (built from source, a dirty tree, or a `git describe` version) | `ghcr.io/neochaotic/leoflow-runtime:py<ver>`, the moving line |
+| a released build (`leoflow version` shows a clean `X.Y.Z`) | `ghcr.io/dexadata/leoflow-runtime:py<ver>-v<X.Y.Z>`, immutable |
+| a development build (built from source, a dirty tree, or a `git describe` version) | `ghcr.io/dexadata/leoflow-runtime:py<ver>`, the moving line |
 
 A release pins its own base so a compile from that release reproduces byte for
 byte (ADR 0003). A development build has no published versioned base to point
@@ -67,13 +67,15 @@ file is signed with cosign, keyless. The `leoflow-server` manifests are signed
 by digest, so both tag shapes are covered:
 
 ```bash
-cosign verify ghcr.io/neochaotic/leoflow-server:0.4.8 \
-  --certificate-identity-regexp 'https://github.com/neochaotic/leoflow/.*' \
+cosign verify ghcr.io/dexadata/leoflow-server:0.4.8 \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/leoflow/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 ## Older releases
 
 Every image above is published per release and nothing is deleted, so an older
-version stays pullable by its versioned tag. The exception is the moving
+version stays pullable by its versioned tag. Releases up to v0.4.8 were first published under
+`ghcr.io/neochaotic/...` (the repository's previous owner) and stay pullable
+there; v0.4.8 is also available under `ghcr.io/dexadata/...`. The exception is the moving
 `leoflow-runtime:py<ver>` line, which only ever names the newest release.

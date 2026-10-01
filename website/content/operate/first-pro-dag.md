@@ -92,7 +92,7 @@ registry:
 ```
 
 ```dockerfile title="Dockerfile"
-FROM ghcr.io/neochaotic/leoflow-runtime:py3.11
+FROM ghcr.io/dexadata/leoflow-runtime:py3.11
 RUN pip install --no-cache-dir requests==2.32.3
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
@@ -100,7 +100,7 @@ ENV PYTHONPATH=/home/leoflow
 
 {{% alert title="The base image is ours; you never build it" color="success" %}}
 Your image layers `FROM` the **published Leoflow task base**
-(`ghcr.io/neochaotic/leoflow-runtime:py3.11`) — it bundles the `leoflow-agent`
+(`ghcr.io/dexadata/leoflow-runtime:py3.11`) — it bundles the `leoflow-agent`
 (PID 1, talks gRPC to the control plane) and the `leoflow_runtime` helper, is
 multi-arch and signed, and is built by our CI. You only add your deps and copy
 your DAG in. (In [the complete path](#the-complete-path--your-own-dag-yaml-driven)

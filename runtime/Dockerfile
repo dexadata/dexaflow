@@ -77,7 +77,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # this line. That makes it a user-visible change, not an internal one.
 FROM python:${PYTHON_VERSION}-slim-trixie
 
-LABEL org.opencontainers.image.source="https://github.com/neochaotic/leoflow"
+LABEL org.opencontainers.image.source="https://github.com/dexadata/leoflow"
 LABEL org.opencontainers.image.description="Leoflow task base image (agent + Python runtime)"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 

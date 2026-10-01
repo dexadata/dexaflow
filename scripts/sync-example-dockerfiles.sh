@@ -14,7 +14,7 @@
 # These examples FROM the LOCAL base `leoflow-base:py<ver>` on purpose: they are
 # the Lite learning track — `leoflow lite examples/<x>` builds that base locally,
 # so the examples build and run offline, no registry needed. The real Pro pipeline
-# is yaml-driven and FROMs the PUBLISHED base ghcr.io/neochaotic/leoflow-runtime
+# is yaml-driven and FROMs the PUBLISHED base ghcr.io/dexadata/leoflow-runtime
 # (internal/cli/compile_build.go resolveBaseImage) so it builds anywhere — that is
 # the deliberate Lite/Pro split, documented in docs/deploy.md.
 #

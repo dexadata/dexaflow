@@ -31,7 +31,7 @@ run it on your machine or a trusted internal network — see [Editions](/concept
 ## 1 · Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/neochaotic/leoflow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
 ```
 
 This installs the binaries to a directory on your `PATH` (e.g. `/usr/local/bin`)

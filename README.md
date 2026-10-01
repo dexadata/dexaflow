@@ -16,9 +16,9 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Code quality: golangci-lint A+](https://img.shields.io/badge/golangci--lint-A%2B-00ADD8?logo=go&logoColor=white)](https://dexaflow.dexadata.ai/project/adrs/0012-code-quality-standards/)
-[![CI](https://github.com/neochaotic/leoflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/neochaotic/leoflow/actions/workflows/ci.yaml)
-[![Security](https://github.com/neochaotic/leoflow/actions/workflows/security.yaml/badge.svg)](https://github.com/neochaotic/leoflow/actions/workflows/security.yaml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/neochaotic/leoflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/neochaotic/leoflow)
+[![CI](https://github.com/dexadata/leoflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/dexadata/leoflow/actions/workflows/ci.yaml)
+[![Security](https://github.com/dexadata/leoflow/actions/workflows/security.yaml/badge.svg)](https://github.com/dexadata/leoflow/actions/workflows/security.yaml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/dexadata/leoflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/dexadata/leoflow)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13068/badge)](https://www.bestpractices.dev/projects/13068)
 
 [![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#leoflow-lite)
@@ -69,7 +69,7 @@ one host, carrying real workloads from local development to **light-to-medium
 production** on a laptop, a single VM, or an internal server (trusted network).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/neochaotic/leoflow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
 leoflow lite                # hot-reload at http://localhost:8088 (LITE badge)
 ```
 
@@ -85,9 +85,9 @@ coexist out of the box.
 
 ```bash
 kubectl create namespace leoflow
-helm install lf oci://ghcr.io/neochaotic/charts/leoflow --version 0.3.0 -n leoflow \
-  --set image.tag=v0.3.0 \
-  --set migrations.image.tag=v0.3.0 \
+helm install lf oci://ghcr.io/dexadata/charts/leoflow --version 0.4.8 -n leoflow \
+  --set image.tag=v0.4.8 \
+  --set migrations.image.tag=v0.4.8 \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
@@ -181,7 +181,7 @@ leoflow compile .              # generates Dockerfile, builds image, produces da
 leoflow push ./dag.json        # registers with the control plane
 ```
 
-That is the entire developer surface. The CLI builds the image on the published Leoflow task base (`ghcr.io/neochaotic/leoflow-runtime:py3.11`, selected by `python_version`), pushes to your registry, and registers a versioned DAG. The Airflow UI shows it at the next refresh.
+That is the entire developer surface. The CLI builds the image on the published Leoflow task base (`ghcr.io/dexadata/leoflow-runtime:py3.11`, selected by `python_version`), pushes to your registry, and registers a versioned DAG. The Airflow UI shows it at the next refresh.
 
 ## Native map-reduce for ML/AI
 
@@ -289,7 +289,7 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 - **dbt** — a dbt project runs as a DAG (pod-per-model or fused groups); managed warehouse connections generate `profiles.yml` in-pod, with modern service-account auth (Snowflake key-pair, BigQuery keyless / Workload Identity, Databricks OAuth M2M).
 - **MCP + typed client** — an experimental [`leoflow-mcp`](https://dexaflow.dexadata.ai/project/adrs/0050-mcp-server/) Model Context Protocol server (read tools + resources over stdio / Streamable HTTP) and a generated, typed Go client for `/api/v2` (`pkg/client`).
 
-**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/neochaotic/leoflow/issues).
+**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/leoflow/issues).
 
 ## Features
 
@@ -343,7 +343,7 @@ admin password any time with `leoflow lite reset-password`.
 ### Local development
 
 ```bash
-git clone https://github.com/neochaotic/leoflow
+git clone https://github.com/dexadata/leoflow
 cd leoflow
 make setup            # Go tools, Python parser, pre-commit hook
 make build            # builds bin/leoflow, bin/leoflow-server, bin/leoflow-agent

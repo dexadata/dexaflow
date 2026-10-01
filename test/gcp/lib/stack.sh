@@ -26,7 +26,7 @@
 
 STACK_NS="${STACK_NS:-leoflow-system}"      # control plane
 STACK_TASK_NS="${STACK_TASK_NS:-leoflow}"   # task pods (chart's taskNamespace)
-STACK_SERVER_IMAGE_REPO="${STACK_SERVER_IMAGE_REPO:-ghcr.io/neochaotic/leoflow-server}"
+STACK_SERVER_IMAGE_REPO="${STACK_SERVER_IMAGE_REPO:-ghcr.io/dexadata/leoflow-server}"
 STACK_SERVER_IMAGE_TAG="${STACK_SERVER_IMAGE_TAG:-0.4.7}"
 # The published Postgres/Redis the chart is normally pointed at. Pinned by tag
 # rather than `latest`: an experiment whose datastore version changes between

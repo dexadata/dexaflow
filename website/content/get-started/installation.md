@@ -29,7 +29,7 @@ One command installs Leoflow Lite and bootstraps everything it needs — **no
 sudo, no system Python, no package manager**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/neochaotic/leoflow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
 ```
 
 That script downloads the release archive for your OS/architecture, verifies
@@ -125,7 +125,7 @@ automatically. To verify the signature yourself:
 cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/neochaotic/leoflow' \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/leoflow' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 ```
@@ -166,7 +166,7 @@ $ leoflow-mcp --version      # MCP server (see the MCP guide)
 
 | Variable | Effect |
 |---|---|
-| `LEOFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/neochaotic/leoflow/releases) for the current tag. |
+| `LEOFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/leoflow/releases) for the current tag. |
 | `LEOFLOW_NO_SETUP=1` | install binaries only; run `leoflow setup` yourself later |
 | `LEOFLOW_INSTALL_DIR=~/.leoflow/bin` | where to put the binaries |
 
@@ -225,7 +225,7 @@ gRPC channel stays **mandatory**, the chart just mints a stable self-signed CA
 external Postgres and Redis and go:
 
 ```bash
-helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <VERSION> \
+helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
@@ -240,7 +240,7 @@ Using RDS or Cloud SQL? Their certificates are signed by a CA the system trust
 store does not carry, so read [private CA](#if-your-postgres-uses-a-private-ca-rds-cloud-sql)
 below before running this.
 `--version` takes the chart version — the
-[latest release](https://github.com/neochaotic/leoflow/releases) tag with the
+[latest release](https://github.com/dexadata/leoflow/releases) tag with the
 leading `v` stripped (per SemVer2).
 
 #### If your Postgres uses a private CA (RDS, Cloud SQL)
@@ -259,7 +259,7 @@ Publish the provider's CA bundle as a ConfigMap with the key `ca.crt`, point
 kubectl create namespace leoflow
 kubectl -n leoflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
 
-helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <VERSION> \
+helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.caConfigMap=rds-ca \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
@@ -303,7 +303,7 @@ this is only needed when you want `main`. Same required values, from the
 `helm/leoflow` directory in the repo:
 
 ```bash
-git clone --depth 1 https://github.com/neochaotic/leoflow   # current main
+git clone --depth 1 https://github.com/dexadata/leoflow   # current main
 cd leoflow
 
 helm install lf ./helm/leoflow -n leoflow --create-namespace \
@@ -319,7 +319,7 @@ helm install lf ./helm/leoflow -n leoflow --create-namespace \
 The chart auto-generates the agent TLS cert regardless of image version, so
 this works on `main` today. Pin `--set image.tag` / `--set migrations.image.tag`
 to a published release tag (`v0.4.0-rc.2` shown — see the
-[releases](https://github.com/neochaotic/leoflow/releases)); from a source
+[releases](https://github.com/dexadata/leoflow/releases)); from a source
 checkout the image tags are not baked in, so set them explicitly. Add
 `--branch <TAG>` to the clone to install the chart at a specific tag instead of
 `main`.
@@ -358,7 +358,7 @@ agent TLS, above).
 
 Managed services are first-class — RDS / Cloud SQL / Azure Database for
 Postgres on the SQL side; ElastiCache / Memorystore / Azure Cache for Redis.
-See the chart's [Datastore compatibility](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/README.md#datastore-compatibility)
+See the chart's [Datastore compatibility](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md#datastore-compatibility)
 table for tested versions; managed providers that present a per-instance or
 provider-specific CA expose a `caConfigMap` knob (Postgres and Redis sides
 respectively) for verified TLS.
@@ -381,7 +381,7 @@ For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job. The supported PoC path is to install plain Postgres + Redis
 manifests alongside the chart, then point Leoflow at the in-cluster
-Services. Recipe: [`helm/leoflow/examples/README.md`](https://github.com/neochaotic/leoflow/tree/main/helm/leoflow/examples/README.md).
+Services. Recipe: [`helm/leoflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/leoflow/examples/README.md).
 **Not for production.**
 {{% /alert %}}
 
@@ -486,7 +486,7 @@ then flip. Note what the observation period can and cannot tell you — the
 scope-warning trail covers only DAGs whose declarations still resolve, so it
 sees neither a DAG that declares nothing nor one whose declared names have since
 been deleted from the vault
-([#800](https://github.com/neochaotic/leoflow/issues/800)).
+([#800](https://github.com/dexadata/leoflow/issues/800)).
 {{% /alert %}}
 
 {{% alert title="The agent channel is server TLS, not mutual mTLS" color="info" %}}
@@ -521,8 +521,8 @@ plus `leoflow` and `leoflow-agent` binaries) are published by
 
 ```bash
 # Verify the server image at a release tag.
-cosign verify ghcr.io/neochaotic/leoflow-server:v0.4.0-rc.2 \
-  --certificate-identity-regexp 'https://github.com/neochaotic/leoflow' \
+cosign verify ghcr.io/dexadata/leoflow-server:v0.4.8 \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/leoflow' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

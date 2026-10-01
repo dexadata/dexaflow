@@ -239,8 +239,8 @@ value from an untrusted `conf` cannot inject shell — write interpolations unqu
 Capabilities that need scheduler/control-plane work are rejected loudly rather
 than half-running:
 
-- **Dynamic task mapping** — [#376](https://github.com/neochaotic/leoflow/issues/376).
-- **Branching** — [#377](https://github.com/neochaotic/leoflow/issues/377).
+- **Dynamic task mapping** — [#376](https://github.com/dexadata/leoflow/issues/376).
+- **Branching** — [#377](https://github.com/dexadata/leoflow/issues/377).
 
 **Reschedule-mode sensors *are* supported.** Set `mode="reschedule"` and the
 scheduler persists the next-poke time, frees the pod between pokes, and

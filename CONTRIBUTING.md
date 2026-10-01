@@ -12,7 +12,7 @@ Thank you for your interest in contributing to Leoflow! This document explains h
 
 ### Reporting Bugs
 
-1. Search [existing issues](https://github.com/neochaotic/leoflow/issues) to confirm the bug has not been reported.
+1. Search [existing issues](https://github.com/dexadata/leoflow/issues) to confirm the bug has not been reported.
 2. If not, open a new issue using the **Bug Report** template.
 3. Include reproduction steps, expected behavior, actual behavior, and environment details (OS, Go version, K8s version if applicable).
 
@@ -114,7 +114,7 @@ If you have a contribution in these areas, please open a discussion issue first.
 
 ```bash
 # Clone the repo
-git clone https://github.com/neochaotic/leoflow.git
+git clone https://github.com/dexadata/leoflow.git
 cd leoflow
 ```
 
@@ -157,6 +157,6 @@ By contributing, you agree that your contributions will be licensed under the [A
 
 ## Recognition
 
-All contributors are shown on the repository's [contributors page](https://github.com/neochaotic/leoflow/graphs/contributors). Significant contributions are also highlighted in release notes.
+All contributors are shown on the repository's [contributors page](https://github.com/dexadata/leoflow/graphs/contributors). Significant contributions are also highlighted in release notes.
 
 Thank you for helping make Leoflow better!

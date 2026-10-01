@@ -329,9 +329,9 @@ func TestWrapWords(t *testing.T) {
 			// a wrapped one cannot be copy-pasted, which is the only thing the
 			// reader wants to do with it.
 			"an over-long token is not cut",
-			"pull ghcr.io/neochaotic/leoflow-runtime:py3.10-v0.4.5 now",
+			"pull ghcr.io/dexadata/leoflow-runtime:py3.10-v0.4.5 now",
 			20,
-			[]string{"pull", "ghcr.io/neochaotic/leoflow-runtime:py3.10-v0.4.5", "now"},
+			[]string{"pull", "ghcr.io/dexadata/leoflow-runtime:py3.10-v0.4.5", "now"},
 		},
 	}
 	for _, tc := range cases {

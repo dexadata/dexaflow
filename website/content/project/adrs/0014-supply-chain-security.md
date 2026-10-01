@@ -82,7 +82,7 @@ Standard GitHub feature. Configured to:
 
 > **Note (2026-09, #1031).** `leoflow/python-runtime:*` below is the repository
 > name as decided in 2026-05 and it no longer exists. The task base images are
-> published as `ghcr.io/neochaotic/leoflow-runtime:py<version>`, one leg per
+> published as `ghcr.io/dexadata/leoflow-runtime:py<version>`, one leg per
 > entry in the `python_version` enum of
 > `internal/domain/schemas/leoflow-yaml-schema.json`, and rendered in the
 > [configuration reference](/reference/configuration/#python-version-support).

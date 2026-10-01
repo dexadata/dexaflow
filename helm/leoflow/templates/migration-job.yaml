@@ -1,7 +1,7 @@
 {{- if .Values.migrations.enabled -}}
 {{/*
 Runs golang-migrate before the server starts, as a pre-install/pre-upgrade hook.
-The default image (ghcr.io/neochaotic/leoflow-migrate, built from
+The default image (ghcr.io/dexadata/leoflow-migrate, built from
 deploy/Dockerfile.migrate via `make migrate-image`) bundles the Leoflow
 migrations at .Values.migrations.path. Override migrations.image to use your own,
 or set migrations.enabled=false to migrate out of band.

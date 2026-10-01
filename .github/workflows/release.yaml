@@ -113,7 +113,7 @@ jobs:
 
   # ── Build + push leoflow-migrate (golang-migrate + Leoflow migrations)
   # The Helm chart's migration Job (#34/#48) defaults to
-  # ghcr.io/neochaotic/leoflow-migrate:<tag>; this job publishes that image,
+  # ghcr.io/dexadata/leoflow-migrate:<tag>; this job publishes that image,
   # multi-arch, on every release tag in parallel with install-smoke.
   #
   # Dockerfile.migrate builds golang-migrate's own CLI from the version in our
@@ -196,7 +196,7 @@ jobs:
           done
 
   # ── Build + push the Leoflow task base image (runtime/Dockerfile)
-  # A DAG image is `FROM ghcr.io/neochaotic/leoflow-runtime:py<ver>` (ADR 0003):
+  # A DAG image is `FROM ghcr.io/dexadata/leoflow-runtime:py<ver>` (ADR 0003):
   # the base ships the leoflow-agent (PID 1) and the leoflow_runtime helper, so a
   # `leoflow compile --build` needs nothing but a registry. Before this job the
   # base only existed locally (built from a source checkout), which blocked

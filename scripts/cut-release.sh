@@ -29,7 +29,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$ROOT/helm/leoflow/Chart.yaml"
 CHANGELOG="$ROOT/CHANGELOG.md"
-REPO="neochaotic/leoflow"
+REPO="dexadata/leoflow"
 
 # Transient CI failures that are safe to rerun — never a code signal. Matches the
 # classes seen in practice: registry rate-limits and 5xx, Go module-proxy stream
