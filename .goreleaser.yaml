@@ -113,37 +113,37 @@ dockers:
     goarch: amd64
     dockerfile: deploy/Dockerfile.server.release
     image_templates:
-      - "ghcr.io/neochaotic/leoflow-server:{{ .Version }}-amd64"
-      - "ghcr.io/neochaotic/leoflow-server:v{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-amd64"
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.source=https://github.com/neochaotic/leoflow"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/leoflow"
   - id: server-arm64
     ids: [leoflow-server]
     goarch: arm64
     dockerfile: deploy/Dockerfile.server.release
     image_templates:
-      - "ghcr.io/neochaotic/leoflow-server:{{ .Version }}-arm64"
-      - "ghcr.io/neochaotic/leoflow-server:v{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-arm64"
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.source=https://github.com/neochaotic/leoflow"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/leoflow"
 
 docker_manifests:
-  - name_template: "ghcr.io/neochaotic/leoflow-server:{{ .Version }}"
+  - name_template: "ghcr.io/dexadata/leoflow-server:{{ .Version }}"
     image_templates:
-      - "ghcr.io/neochaotic/leoflow-server:{{ .Version }}-amd64"
-      - "ghcr.io/neochaotic/leoflow-server:{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-arm64"
   # `v`-prefixed manifest pointing at the same per-arch images. Pulls of
   # `:v0.0.1-prealpha.N` and `:0.0.1-prealpha.N` resolve to identical digests.
-  - name_template: "ghcr.io/neochaotic/leoflow-server:v{{ .Version }}"
+  - name_template: "ghcr.io/dexadata/leoflow-server:v{{ .Version }}"
     image_templates:
-      - "ghcr.io/neochaotic/leoflow-server:v{{ .Version }}-amd64"
-      - "ghcr.io/neochaotic/leoflow-server:v{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-arm64"
 
 # Cosign keyless signing of the control-plane image. `artifacts: manifests`
 # signs each multi-arch manifest (`:{{ .Version }}` and `:v{{ .Version }}`) by
@@ -169,7 +169,7 @@ docker_signs:
 
 release:
   github:
-    owner: neochaotic
+    owner: dexadata
     name: leoflow
   # Pre-alpha tags (v0.x.y-alpha.N) are pre-releases; GoReleaser auto-detects the
   # prerelease suffix, but make it explicit.

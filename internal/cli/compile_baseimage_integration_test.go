@@ -46,7 +46,7 @@ import (
 // publishedRuntimeRepo is spelled out rather than read from publishedBaseRepo so
 // this test pins the observable contract — the repository release.yaml actually
 // pushes tags to — instead of agreeing with the constant whatever it becomes.
-const publishedRuntimeRepo = "ghcr.io/neochaotic/leoflow-runtime"
+const publishedRuntimeRepo = "ghcr.io/dexadata/leoflow-runtime"
 
 // scaffoldPythonVersion is what `leoflow init` writes into leoflow.yaml, and
 // what release.yaml's runtime-image matrix publishes a base for.

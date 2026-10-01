@@ -91,7 +91,7 @@ verification failure is a hard `403` that never falls back to a default identity
 **Worker pod.** Each task runs in its own pod from the DAG's image. The
 **agent** (Go, PID 1) talks gRPC to the control plane: fetches the task spec,
 runs the user code, streams logs, pushes XCom, reports state. That channel is
-**TLS** ([#58](https://github.com/neochaotic/leoflow/issues/58)) — one-way
+**TLS** ([#58](https://github.com/dexadata/leoflow/issues/58)) — one-way
 (server) TLS: the agent verifies the control plane's certificate against a CA and
 authenticates itself with its bearer token, never a client cert. The Helm chart
 auto-generates a stable self-signed CA + server cert by default

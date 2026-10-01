@@ -66,9 +66,9 @@ percent-escaped.
 
 ## Example DAG
 
-[`examples/sqlite_load`](https://github.com/neochaotic/leoflow/tree/main/examples/sqlite_load) uses only Python's standard-library
+[`examples/sqlite_load`](https://github.com/dexadata/leoflow/tree/main/examples/sqlite_load) uses only Python's standard-library
 `sqlite3`. The example's
-[README](https://github.com/neochaotic/leoflow/tree/main/examples/sqlite_load/README.md)
+[README](https://github.com/dexadata/leoflow/tree/main/examples/sqlite_load/README.md)
 walks through Connection setup and verification.
 
 ## Lite vs Pro caveats
@@ -103,7 +103,7 @@ SQLCipher project.
 `TestSQLiteConnectionURIShapeIntegration` (in `internal/storage/`)
 covers this entry. It runs on every PR with no service container —
 sqlite is a library, not a service, so the Tier 1 cost is zero (see
-[#162](https://github.com/neochaotic/leoflow/issues/162)).
+[#162](https://github.com/dexadata/leoflow/issues/162)).
 
 ## Troubleshooting
 

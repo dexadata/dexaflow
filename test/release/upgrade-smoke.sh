@@ -17,7 +17,7 @@
 # `docker run --rm -it -e LEOFLOW_REPO=... ubuntu:24.04 bash`).
 set -eu
 
-: "${LEOFLOW_REPO:?LEOFLOW_REPO must be set (e.g. neochaotic/leoflow)}"
+: "${LEOFLOW_REPO:?LEOFLOW_REPO must be set (e.g. dexadata/leoflow)}"
 : "${LEOFLOW_VERSION:?LEOFLOW_VERSION must be set to the just-pushed tag}"
 
 fail() {

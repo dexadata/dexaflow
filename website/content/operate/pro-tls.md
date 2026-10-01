@@ -67,7 +67,7 @@ chart use them verbatim and skip auto-generation. The clean way to provision
 that cert is [cert-manager](https://cert-manager.io).
 
 An operator-ready values file is at
-[`helm/leoflow/examples/values-pro-tls.yaml`](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/examples/values-pro-tls.yaml)
+[`helm/leoflow/examples/values-pro-tls.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/examples/values-pro-tls.yaml)
 — `-f` it after the steps below. (The full chart value reference is the
 [Helm chart](/operate/helm-chart/) page.)
 
@@ -144,12 +144,12 @@ standard way, or copy the issuer's `ca.crt` into a ConfigMap keyed `ca.crt`. Set
 ## 5. Install
 
 ```console
-$ helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <VERSION> \
+$ helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
     -n leoflow --create-namespace \
     -f values-pro-tls.yaml
 ```
 
-(Use the chart version for the [latest release](https://github.com/neochaotic/leoflow/releases) —
+(Use the chart version for the [latest release](https://github.com/dexadata/leoflow/releases) —
 the tag with the leading `v` stripped. From a source checkout, swap the OCI
 reference for `./helm/leoflow`.)
 

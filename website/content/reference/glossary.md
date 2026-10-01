@@ -16,6 +16,6 @@ these pieces fit together at runtime, see [Core concepts](/concepts/core-concept
 | **DagRun** | One execution of a DAG, identified by `dag_id` + `logical_date`. |
 | **Logical date** | The "business" date of a run (Airflow 3's rename of `execution_date`). |
 | **Trigger rule** | When a task runs based on upstream states (`all_success`, `one_failed`, …). |
-| **XCom** | Small (≤256 KB) typed value passed between tasks. Stored in **Postgres** on Lite (no Redis, see [ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)) and in **Redis** on Pro. Writes are **last-write-wins** — two parallel tasks pushing the same key produce the later write with no conflict detection ([#198](https://github.com/neochaotic/leoflow/issues/198)). |
+| **XCom** | Small (≤256 KB) typed value passed between tasks. Stored in **Postgres** on Lite (no Redis, see [ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)) and in **Redis** on Pro. Writes are **last-write-wins** — two parallel tasks pushing the same key produce the later write with no conflict detection ([#198](https://github.com/dexadata/leoflow/issues/198)). |
 | **Executor** | Runs a task physically: Kubernetes (pod-per-task) or subprocess (dev). With warm pools on (Pro), one pod is reused across many attempts of the same DAG version (N:1) instead of one pod per attempt — ADR 0058. HTTP runs in a pod via the provider (ADR 0047, superseding the inline path). |
 | **Agent** | Small Go binary (PID 1) inside the task container that talks gRPC to the control plane. |

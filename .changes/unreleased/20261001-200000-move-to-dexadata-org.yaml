@@ -1,0 +1,18 @@
+kind: Changed
+body: |-
+  **The repository moved to the DexaData organization: `github.com/dexadata/leoflow`.**
+  Old `github.com/neochaotic/leoflow` links, clones and remotes keep working
+  through GitHub's redirect, but new links, the install script and the release
+  tooling now use the new path. The one-line installer is
+  `curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh`.
+
+  Images and the Helm chart are now published under `ghcr.io/dexadata`
+  (`leoflow-server`, `leoflow-migrate`, `leoflow-runtime`,
+  `oci://ghcr.io/dexadata/charts/leoflow`), and the defaults follow: the chart's
+  image repositories and the published runtime base that `leoflow compile` builds
+  DAG images `FROM`. The current release was copied there, so nothing has to be
+  rebuilt. Every earlier tag stays where it was, under `ghcr.io/neochaotic`, and
+  keeps pulling; a pinned `ghcr.io/neochaotic/...` reference in your own values or
+  Dockerfiles does not need to change until you upgrade.
+
+  The Go module path is unchanged in this release.

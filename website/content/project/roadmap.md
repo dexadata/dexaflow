@@ -14,7 +14,7 @@ shipped (v0.1 through v0.4 and beyond) and ADR 0037 removed the
 Alpha/Beta phase framing. It is kept for context; the Alpha/Beta/GA
 phases and the "must-do before release" list below are **superseded**.
 For what actually shipped and what is current, see the
-[GitHub Releases](https://github.com/neochaotic/leoflow/releases) and the
+[GitHub Releases](https://github.com/dexadata/leoflow/releases) and the
 [ADRs](/project/adrs/).
 {{% /alert %}}
 

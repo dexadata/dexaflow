@@ -211,6 +211,6 @@ return value.
 
 | Example | Map | Reduce |
 |---|---|---|
-| [`examples/ml_hparam_search/`](https://github.com/neochaotic/leoflow/tree/main/examples/ml_hparam_search) | toy training × 5 LRs | best score |
-| [`examples/fan_out_aggregate/`](https://github.com/neochaotic/leoflow/tree/main/examples/fan_out_aggregate) | sum a slice of integers × 4 shards | total |
-| [`examples/montecarlo_pi/`](https://github.com/neochaotic/leoflow/tree/main/examples/montecarlo_pi) | sample inside the unit circle × 4 workers | π estimate |
+| [`examples/ml_hparam_search/`](https://github.com/dexadata/leoflow/tree/main/examples/ml_hparam_search) | toy training × 5 LRs | best score |
+| [`examples/fan_out_aggregate/`](https://github.com/dexadata/leoflow/tree/main/examples/fan_out_aggregate) | sum a slice of integers × 4 shards | total |
+| [`examples/montecarlo_pi/`](https://github.com/dexadata/leoflow/tree/main/examples/montecarlo_pi) | sample inside the unit circle × 4 workers | π estimate |

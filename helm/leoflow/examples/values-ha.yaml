@@ -2,7 +2,7 @@
 # across nodes, task logs in object storage, a PodDisruptionBudget that renders
 # itself, and a drain grace sized for the shutdown work that can actually finish.
 #
-# Use with:  helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow -n leoflow \
+# Use with:  helm install leoflow oci://ghcr.io/dexadata/charts/leoflow -n leoflow \
 #              -f values-ha.yaml
 #
 # Why HA. A single control-plane replica is evicted as ROUTINE cluster housekeeping

@@ -123,7 +123,7 @@ In order of preference:
 
 ## Example DAG + test
 
-- Example: [examples/gcp_gcs_load](https://github.com/neochaotic/leoflow/tree/main/examples/gcp_gcs_load)
+- Example: [examples/gcp_gcs_load](https://github.com/dexadata/leoflow/tree/main/examples/gcp_gcs_load)
   — writes + reads a GCS object in both modes, with a clean `gcp_credentials()`
   helper.
 - Delivery (chain-of-custody) is covered by an automated test that round-trips a

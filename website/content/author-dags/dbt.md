@@ -326,7 +326,7 @@ Airflow's per-task retry. Choose per DAG:
   on the rare retry, save on pod startups.
 
 **Planned:** resumable fused retries — persisting `run_results.json` so `dbt retry`
-skips the already-built models ([#569](https://github.com/neochaotic/leoflow/issues/569)).
+skips the already-built models ([#569](https://github.com/dexadata/leoflow/issues/569)).
 
 ---
 
@@ -382,9 +382,9 @@ leaving it is a migration rather than an edit.
 operators, no Python or Bash. And because those live on the DAG object a
 `dag.py` builds, it also has nowhere to declare `start_date`, `catchup`,
 `max_active_runs` or DAG-level `params`. (`end_date` and `max_active_tasks` are
-not author-settable on *either* path yet — [#797](https://github.com/neochaotic/leoflow/issues/797).)
+not author-settable on *either* path yet — [#797](https://github.com/dexadata/leoflow/issues/797).)
 A top-level `connections:`/`variables:` is worse than rejected — the schema accepts
-it and the compiled DAG silently drops it ([#997](https://github.com/neochaotic/leoflow/issues/997)).
+it and the compiled DAG silently drops it ([#997](https://github.com/dexadata/leoflow/issues/997)).
 `retries` and `resources` can be scoped per task; `alerts` and `staging` are
 DAG-wide — all four come from `leoflow.yaml` and apply to both shapes.
 
@@ -394,7 +394,7 @@ DAG-wide — all four come from `leoflow.yaml` and apply to both shapes.
 a top-level `dbt:` block and a `dag.py` is refused by `compile` and `validate`,
 naming which block to remove — the two describe different DAGs and there is no
 reading of both at once
-([#1001](https://github.com/neochaotic/leoflow/issues/1001)).
+([#1001](https://github.com/dexadata/leoflow/issues/1001)).
 
 **Every `task_id` changes**: the shortcut emits bare node ids
 (`stg`), a group namespaces them (`transform__stg`). That breaks run-history

@@ -8,7 +8,7 @@ weight: 70
 description: Runnable example DAGs covering the common authoring patterns.
 ---
 
-A gallery of ready-to-run DAGs under [`examples/`](https://github.com/neochaotic/leoflow/tree/main/examples),
+A gallery of ready-to-run DAGs under [`examples/`](https://github.com/dexadata/leoflow/tree/main/examples),
 covering every Leoflow task type and the common patterns. Each is compile-valid
 (`leoflow compile`) and authored parser-safe (heavy imports live *inside* the
 tasks). Run any of them with:

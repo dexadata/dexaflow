@@ -76,7 +76,7 @@ accounts in that domain.
 {{% alert title="Not yet verified against a real Workspace tenant" color="info" %}}
 The `hd` parameter is covered by unit tests and by a browser test against a fake
 identity provider, but no release so far has exercised it against a real Google
-client ([#1177](https://github.com/neochaotic/leoflow/issues/1177)). If it does
+client ([#1177](https://github.com/dexadata/leoflow/issues/1177)). If it does
 not behave as described, what you will see is the account chooser still offering
 personal accounts, which the tenant pin then rejects. It cannot admit an account
 the pin would refuse: the pin reads the verified `hd` **claim** on the returned

@@ -74,9 +74,9 @@ Alternative drivers:
 
 ## Example DAG
 
-[`examples/mysql_load`](https://github.com/neochaotic/leoflow/tree/main/examples/mysql_load) reads `AIRFLOW_CONN_MY_DB`, parses it, opens
+[`examples/mysql_load`](https://github.com/dexadata/leoflow/tree/main/examples/mysql_load) reads `AIRFLOW_CONN_MY_DB`, parses it, opens
 a `pymysql` connection, and writes 20 rows. The example's
-[README](https://github.com/neochaotic/leoflow/tree/main/examples/mysql_load/README.md)
+[README](https://github.com/dexadata/leoflow/tree/main/examples/mysql_load/README.md)
 walks through Docker spin-up, Connection setup, and verification.
 
 ## Lite vs Pro caveats

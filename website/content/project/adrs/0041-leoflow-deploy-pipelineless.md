@@ -220,7 +220,7 @@ waiting for v0.1.0, the walkthrough is written in **two tiers**:
 
 - **Tier 1 — the simple happy path (true in rc.2).** Deploy a **shipped example**
   whose `Dockerfile` builds `FROM` the CI-published base
-  (`ghcr.io/neochaotic/leoflow-runtime`). The user authors nothing and writes no
+  (`ghcr.io/dexadata/leoflow-runtime`). The user authors nothing and writes no
   Dockerfile — it belongs to the example. `leoflow auth login` → `leoflow deploy
   examples/<dag>`. This runs today on `feat/deploy`. "A Dockerfile is for examples
   only" holds: the example carries it; the user never writes one.

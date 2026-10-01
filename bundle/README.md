@@ -10,7 +10,7 @@ bundle.
 ## Single command
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/neochaotic/leoflow/main/bundle/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/bundle/install.sh | bash
 ```
 
 The script will:

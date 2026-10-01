@@ -7,7 +7,7 @@ Leoflow control plane — a GitOps-first, container-native workflow orchestrator
 Deploys the Leoflow **control plane** (`leoflow-server`) into Kubernetes for a
 production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
-**Homepage:** <https://github.com/neochaotic/leoflow>
+**Homepage:** <https://github.com/dexadata/leoflow>
 
 ## What it installs
 
@@ -25,12 +25,12 @@ production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 ## Quick start
 
 Every release tag publishes this chart as a signed **OCI artifact** to
-`oci://ghcr.io/neochaotic/charts/leoflow` (ADR 0028), so you can install a
+`oci://ghcr.io/dexadata/charts/leoflow` (ADR 0028), so you can install a
 pinned version without cloning the repo:
 
 ```bash
 kubectl create namespace leoflow
-helm install lf oci://ghcr.io/neochaotic/charts/leoflow --version <x.y.z> -n leoflow \
+helm install lf oci://ghcr.io/dexadata/charts/leoflow --version <x.y.z> -n leoflow \
   --set database.url='postgres://user:pass@postgres:5432/leoflow?sslmode=disable' \
   --set redis.url='redis://redis:6379/0' \
   --set auth.jwtSecret='change-me' \
@@ -40,7 +40,7 @@ helm install lf oci://ghcr.io/neochaotic/charts/leoflow --version <x.y.z> -n leo
 Use the release tag **without** the leading `v` as `--version` (tag `v0.4.0` →
 `--version 0.4.0`); the chart `version`/`appVersion` move in lockstep with the
 tag. The chart is cosign-signed by digest — verify it with
-`cosign verify ghcr.io/neochaotic/charts/leoflow --certificate-identity-regexp '…' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
+`cosign verify ghcr.io/dexadata/charts/leoflow --certificate-identity-regexp '…' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 
 To install from a source checkout instead (e.g. an unreleased branch), point
 Helm at the chart directory:
@@ -106,14 +106,14 @@ of defaulting into it:
 | `podAnnotations: {karpenter.sh/do-not-disrupt: "true"}` | **EKS/Karpenter-only opt-in**, not set by default: exempts the node from voluntary disruption, trading maintenance friction for eviction protection |
 
 The one-switch HA profile is
-[`examples/values-ha.yaml`](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/examples/values-ha.yaml):
+[`examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/examples/values-ha.yaml):
 two replicas spread across nodes, task logs in object storage
 (`logs.persistence.enabled: false` + `logs.sink.provider: s3|gcs` — the
 recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
 memory sized for the object sink's per-attempt buffer, and the longer drain grace:
 
 ```bash
-helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <x.y.z> -n leoflow \
+helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <x.y.z> -n leoflow \
   -f helm/leoflow/examples/values-ha.yaml
 ```
 
@@ -168,7 +168,7 @@ is required.
 ## Migrations
 
 The pre-install/pre-upgrade Job runs `migrate -path <path> -database <url> up`
-using the default image **`ghcr.io/neochaotic/leoflow-migrate`** (built from
+using the default image **`ghcr.io/dexadata/leoflow-migrate`** (built from
 `deploy/Dockerfile.migrate`, published by `.github/workflows/release.yaml` on
 every tag), which bundles the Leoflow `migrations/` at `migrations.path`. The
 `migrate` binary in it is golang-migrate's own CLI, compiled from the version
@@ -270,7 +270,7 @@ Leoflow releases in one cluster never collide on them.
 
 ### `execution.warmPoolsEnabled`
 
-Warm worker pools ([ADR 0058](https://github.com/neochaotic/leoflow/blob/main/docs/adr/0058-warm-worker-pools.md))
+Warm worker pools ([ADR 0058](https://github.com/dexadata/leoflow/blob/main/docs/adr/0058-warm-worker-pools.md))
 reuse one pod across many attempts of the **same DAG version**, instead of one pod
 per attempt. Off by default: every attempt gets a dedicated pod, which is today's
 behavior.
@@ -300,7 +300,7 @@ a real cluster, and unit tests do not clear it.
 
 `extraEnv` appends raw env entries to the control-plane container, for any
 `LEOFLOW_*` setting without a first-class value (the full surface is in
-[`docs/configuration.md`](https://github.com/neochaotic/leoflow/blob/main/docs/configuration.md)):
+[`docs/configuration.md`](https://github.com/dexadata/leoflow/blob/main/docs/configuration.md)):
 
 ```yaml
 extraEnv:
@@ -360,7 +360,7 @@ auth:
 ```
 
 A full worked example is in
-[`examples/values-oidc-google.yaml`](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/examples/values-oidc-google.yaml).
+[`examples/values-oidc-google.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/examples/values-oidc-google.yaml).
 
 Three things the chart refuses at render time rather than letting them become a
 CrashLoopBackOff whose cause is visible only in container logs: the one channel a
@@ -410,8 +410,8 @@ chart deliberately won't fall back to embedded datastores — that's Lite's
 job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
 path is to install Bitnami's Postgres + Redis charts alongside Leoflow:
 
-- Recipe: [`helm/leoflow/examples/README.md`](https://github.com/neochaotic/leoflow/tree/main/helm/leoflow/examples/README.md)
-- Matching values file: [`helm/leoflow/examples/poc.yaml`](https://github.com/neochaotic/leoflow/tree/main/helm/leoflow/examples/poc.yaml)
+- Recipe: [`helm/leoflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/leoflow/examples/README.md)
+- Matching values file: [`helm/leoflow/examples/poc.yaml`](https://github.com/dexadata/leoflow/tree/main/helm/leoflow/examples/poc.yaml)
 
 Three `helm install`s in total. **Not for production** — see the recipe for
 the production-shaped command.
@@ -436,7 +436,7 @@ bash scripts/helm-template-checks.sh   # contract assertions (env wiring, Job ha
 
 ## Source Code
 
-* <https://github.com/neochaotic/leoflow>
+* <https://github.com/dexadata/leoflow>
 
 ## Values
 
@@ -512,7 +512,7 @@ differ from what's committed.
 | executor.defaults.staging.storageClass | string | `""` | Default staging PVC StorageClass (e.g. the cluster's RWX class). Empty = cluster default. |
 | extraEnv | list | `[]` | Extra environment variables appended to the control-plane container, for server settings this chart does not model as a first-class value (see `docs/configuration.md` for the full `LEOFLOW_*` surface). Standard K8s `env` entries, so `valueFrom` works, and a `value` is always rendered as a string (Kubernetes rejects a numeric one). Appended AFTER the chart-managed entries; do not use it to redefine one — the chart refuses to render an entry that shadows a variable whose value it guards (the warm-pool / agent-credential coupling). Example: `[{name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS, value: "4"}]`. |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/neochaotic/leoflow-server"` | Control-plane image. Published by GoReleaser on every tag, signed with cosign. |
+| image.repository | string | `"ghcr.io/dexadata/leoflow-server"` | Control-plane image. Published by GoReleaser on every tag, signed with cosign. |
 | image.tag | string | `""` | Image tag. Defaults to `.Chart.appVersion` when empty; to pin a specific release set `--set image.tag=v0.4.0-rc.2` (the `v`-prefix and no-`v` forms are both published and resolve to the same digest, so either works). |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` | Ingress annotations (controller-specific: rewrites, TLS, auth, etc.). |
@@ -538,7 +538,7 @@ differ from what's committed.
 | metrics.serviceMonitor.scrapeTimeout | string | `"10s"` | Prometheus scrape timeout (must be ≤ interval). |
 | migrations.enabled | bool | `true` |  |
 | migrations.image.pullPolicy | string | `"IfNotPresent"` |  |
-| migrations.image.repository | string | `"ghcr.io/neochaotic/leoflow-migrate"` | leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Leoflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64). |
+| migrations.image.repository | string | `"ghcr.io/dexadata/leoflow-migrate"` | leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Leoflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64). |
 | migrations.image.tag | string | `""` | Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms — use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=v0.4.0-rc.2`. |
 | migrations.path | string | `"/migrations"` | Path inside the migrate image where the SQL files live. Must match the COPY destination in `deploy/Dockerfile.migrate`. |
 | migrations.podSecurityContext.fsGroup | int | `65532` |  |
