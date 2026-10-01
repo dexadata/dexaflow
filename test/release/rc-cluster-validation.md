@@ -30,9 +30,9 @@ the issue they name closes.
 | Date / operator | `<date>` / `<who>` |
 
 Links: release <https://github.com/neochaotic/leoflow/releases/tag/TAG> ·
-Helm guide <https://neochaotic.github.io/leoflow/operate/helm-chart/> ·
+Helm guide <https://dexaflow.dexadata.ai/operate/helm-chart/> ·
 chart README (full values) <https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/README.md> ·
-install page <https://neochaotic.github.io/leoflow/get-started/installation/>.
+install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 
 ---
 
@@ -113,7 +113,7 @@ Record: does the control plane reach `Ready`? Is `/api/v2/` + the UI reachable
 
 1. `leoflow auth login` → JWT.
 2. Register + trigger a DAG (author per
-   <https://neochaotic.github.io/leoflow/author-dags/dag-authoring/>; `leoflow push` / `leoflow deploy`).
+   <https://dexaflow.dexadata.ai/author-dags/dag-authoring/>; `leoflow push` / `leoflow deploy`).
 3. **PASS:** every task instance reaches `success` — i.e. a real pod-per-task ran,
    its agent reported over gRPC, XCom chained. `kubectl get pods -n <taskNamespace>`
    shows one pod per task, completed.

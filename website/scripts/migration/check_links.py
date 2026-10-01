@@ -1,19 +1,20 @@
 """Scan built public/ for broken INTERNAL links (Phase F4 QA, not committed-critical).
-Resolves every /leoflow/-prefixed href/src to a file on disk under public/."""
+Resolves every site-internal href/src (absolute under BASE or root-relative)
+to a file on disk under public/."""
 import os, re, sys, html
 
 PUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "public")
 PUB = os.path.abspath(PUB)
-BASE = "https://neochaotic.github.io/leoflow/"
+BASE = "https://dexaflow.dexadata.ai/"
 ATTR = re.compile(r'(?:href|src)=("([^"]*)"|\'([^\']*)\'|([^ >]+))', re.I)
 
 def to_path(u):
     u = html.unescape(u)
     if u.startswith(BASE):
-        u = "/leoflow/" + u[len(BASE):]
-    if not u.startswith("/leoflow/"):
+        u = "/" + u[len(BASE):]
+    if not u.startswith("/") or u.startswith("//"):
         return None            # external / relative / anchor / mailto
-    u = u[len("/leoflow/"):]
+    u = u[1:]
     u = u.split("#")[0].split("?")[0]
     return u
 

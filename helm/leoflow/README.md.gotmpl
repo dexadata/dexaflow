@@ -123,7 +123,7 @@ posture that matters. Note that the api/scheduler **split** is not dispatch-HA:
 its scheduler is pinned to one replica with no standby and no PDB, so only
 non-split `replicaCount: 2` fails dispatch over today. The full reasoning,
 per-platform PDB behavior, and the upgrade path from a single replica are in the
-[Control-plane HA and disruption posture](https://neochaotic.github.io/leoflow/operate/control-plane-ha/)
+[Control-plane HA and disruption posture](https://dexaflow.dexadata.ai/operate/control-plane-ha/)
 page.
 
 ## Verified TLS to managed Postgres (#315)
