@@ -40,18 +40,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-
-      - name: Copy images (multi-arch manifests preserved)
+      # `cosign copy` moves the image or chart together with its signatures and
+      # attestations, so `cosign verify` keeps working on the copy. The copies keep
+      # the original signing identity (github.com/neochaotic/leoflow workflows);
+      # the docs accept both identities.
+      - name: Copy images and chart with signatures
         run: |
           set -euo pipefail
           copy() {
             echo "copy ${SRC}/$1 -> ${DST}/$1"
-            docker buildx imagetools create --tag "${DST}/$1" "${SRC}/$1"
+            cosign copy --force "${SRC}/$1" "${DST}/$1"
           }
           for tag in "${VERSION}" "v${VERSION}"; do
             copy "leoflow-server:${tag}"
@@ -62,20 +63,14 @@ jobs:
             copy "leoflow-runtime:py${py}"
             copy "leoflow-runtime:py${py}-v${VERSION}"
           done
-
-      - name: Copy Helm chart
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm pull "oci://${SRC}/charts/leoflow" --version "${VERSION}"
-          helm push "leoflow-${VERSION}.tgz" "oci://${DST}/charts"
+          copy "charts/leoflow:${VERSION}"
 
       - name: Verify anonymous pulls
         run: |
           set -euo pipefail
           docker logout ghcr.io
           for ref in "leoflow-server:v${VERSION}" "leoflow-migrate:v${VERSION}" "leoflow-runtime:py3.11"; do
-            docker buildx imagetools inspect "${DST}/${ref}" >/dev/null \
+            docker manifest inspect "${DST}/${ref}" >/dev/null \
               && echo "public: ${DST}/${ref}" \
               || echo "::warning::${DST}/${ref} is not anonymously pullable; set the package visibility to public"
           done
