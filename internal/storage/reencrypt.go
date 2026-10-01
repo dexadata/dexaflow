@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/neochaotic/leoflow/internal/secrets"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 // ReencryptSecrets rewrites every stored connection secret that a non-primary

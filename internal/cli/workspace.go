@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // WorkspaceSpec is the resolved view of a Lite workspace: the list of DAG

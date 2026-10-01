@@ -11,8 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/version"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/version"
 )
 
 // dbtGroupProjectDirs returns the distinct project directories the dbt_groups

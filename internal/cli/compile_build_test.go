@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestResolveBaseImageExplicitWins verifies an explicit base_image in the config

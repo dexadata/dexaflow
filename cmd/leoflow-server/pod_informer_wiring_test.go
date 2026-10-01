@@ -8,7 +8,7 @@ import (
 
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // TestPodInformer_NotConstructedInApiRole locks the split-role guard (ADR 0049):

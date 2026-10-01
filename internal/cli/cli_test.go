@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 	yaml "go.yaml.in/yaml/v3"
 )
 

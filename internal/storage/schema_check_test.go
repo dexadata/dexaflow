@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // checkSchemaCurrent is the pure boot-time gate: given the DB's schema state and

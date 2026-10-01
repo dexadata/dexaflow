@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // fakeTailReader serves no stored logs and tails a fixed set of live lines.

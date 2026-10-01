@@ -8,7 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
 // taskPod builds a minimal pod carrying the label scheme the dispatcher stamps

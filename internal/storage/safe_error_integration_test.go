@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestStorageProducesSafeErrorsForClientFacingMessages closes the hole review

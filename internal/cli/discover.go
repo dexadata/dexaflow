@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // MaxWorkspaceDepth caps the recursion DiscoverProjects performs from the

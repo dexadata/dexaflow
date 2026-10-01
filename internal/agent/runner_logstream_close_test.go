@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // serverClosedSink models the agent's gRPC log sink after the control plane

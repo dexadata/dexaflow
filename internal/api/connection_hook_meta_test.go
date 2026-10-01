@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // The connection-type catalog must render so the Add/Edit form is not empty: it

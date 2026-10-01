@@ -24,9 +24,9 @@ builds:
     goarch: [amd64, arm64]
     ldflags: &ldflags
       - -s -w
-      - -X github.com/neochaotic/leoflow/internal/version.version={{ .Version }}
-      - -X github.com/neochaotic/leoflow/internal/version.gitCommit={{ .Commit }}
-      - -X github.com/neochaotic/leoflow/internal/version.buildDate={{ .Date }}
+      - -X github.com/dexadata/dexaflow/internal/version.version={{ .Version }}
+      - -X github.com/dexadata/dexaflow/internal/version.gitCommit={{ .Commit }}
+      - -X github.com/dexadata/dexaflow/internal/version.buildDate={{ .Date }}
   - id: leoflow-server
     main: ./cmd/leoflow-server
     binary: leoflow-server

@@ -9,8 +9,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 // TestPlatformDefaultsEmitLimits locks the QoS half of #725: when the cluster

@@ -5,7 +5,7 @@ weight: 10
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/cli"
+import "github.com/dexadata/dexaflow/internal/cli"
 ```
 
 Package cli implements the leoflow command\-line interface.

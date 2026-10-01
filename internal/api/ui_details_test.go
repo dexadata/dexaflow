@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 func TestTimetableDescription(t *testing.T) {

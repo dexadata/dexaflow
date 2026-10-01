@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	"github.com/dexadata/dexaflow/internal/config"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 func newAuthCommand() *cobra.Command {

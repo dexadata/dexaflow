@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/workspace"
+	"github.com/dexadata/dexaflow/internal/workspace"
 )
 
 // idePageHTML is the self-contained editor page (a file tree + a Monaco editor

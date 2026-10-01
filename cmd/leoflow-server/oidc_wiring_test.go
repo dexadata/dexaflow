@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // TestDiscoverOIDCFlowDiscoveryFailureIsBootError locks that an unreachable

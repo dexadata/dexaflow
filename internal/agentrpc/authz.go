@@ -1,7 +1,7 @@
 package agentrpc
 
 import (
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

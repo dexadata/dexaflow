@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/agent/secretsource"
+	"github.com/dexadata/dexaflow/internal/agent/secretsource"
 )
 
 func TestSubprocessResolverBatch(t *testing.T) {

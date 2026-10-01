@@ -7,8 +7,8 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/migrations"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/migrations"
 )
 
 // SchemaVersion reads the applied migration version from golang-migrate's

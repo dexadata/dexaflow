@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
 // synthID derives a stable synthetic identifier from composite key parts, for UI

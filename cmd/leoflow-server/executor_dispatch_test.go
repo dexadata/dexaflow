@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // TestExecutorDispatchEnabledForRole pins F1 (ADR 0049 pre-RC review): in the

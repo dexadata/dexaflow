@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 const testFlowSecret = "oidc-flow-test-secret"

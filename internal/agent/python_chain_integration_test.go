@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // captureSink stores every LogLine the agent's logWriter sends.

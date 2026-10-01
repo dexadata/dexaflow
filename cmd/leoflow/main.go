@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/neochaotic/leoflow/internal/cli"
+	"github.com/dexadata/dexaflow/internal/cli"
 )
 
 func main() {

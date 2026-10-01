@@ -36,7 +36,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 // fakeWarmTargetsPG is a canned executor.WarmTargetSource for the full-seam test.

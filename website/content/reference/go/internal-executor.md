@@ -5,7 +5,7 @@ weight: 3
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/executor"
+import "github.com/dexadata/dexaflow/internal/executor"
 ```
 
 Package executor runs task instances via Kubernetes, Docker, or a subprocess.

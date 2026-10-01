@@ -5,7 +5,7 @@ weight: 12
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/pkg/client"
+import "github.com/dexadata/dexaflow/pkg/client"
 ```
 
 Package client provides primitives to interact with the openapi HTTP API.

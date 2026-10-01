@@ -217,8 +217,8 @@ jobs:
           mkdir -p dist/image-scan-context
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
             -ldflags="-s -w \
-              -X github.com/neochaotic/leoflow/internal/version.version=ci \
-              -X github.com/neochaotic/leoflow/internal/version.gitCommit=${GITHUB_SHA}" \
+              -X github.com/dexadata/dexaflow/internal/version.version=ci \
+              -X github.com/dexadata/dexaflow/internal/version.gitCommit=${GITHUB_SHA}" \
             -o dist/image-scan-context/leoflow-server ./cmd/leoflow-server
           go version -m dist/image-scan-context/leoflow-server | head -3
 

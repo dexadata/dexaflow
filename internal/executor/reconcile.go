@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
 // settleKind is what the reconciler must record for a terminal task pod.

@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // structuredLogEvent is one item in Airflow 3.2.1's structured log content: a

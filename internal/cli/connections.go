@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // newConnectionsCommand groups the Airflow-style Connection CRUD subcommands.

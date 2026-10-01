@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // exchangeClient overrides ExchangeToken to return a configured token or error;

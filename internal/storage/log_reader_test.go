@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // TestClassifyLogReadError pins the HIGH-3 fix: only a genuine absence maps to

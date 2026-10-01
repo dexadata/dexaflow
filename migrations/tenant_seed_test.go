@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/migrations"
+	"github.com/dexadata/dexaflow/migrations"
 )
 
 // TestDefaultIsTheOnlyTenantAnyMigrationCreates pins the sentence the boot-time

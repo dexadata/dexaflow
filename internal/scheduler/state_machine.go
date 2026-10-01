@@ -1,7 +1,7 @@
 // Package scheduler implements the Leoflow scheduling state machine and loop.
 package scheduler
 
-import "github.com/neochaotic/leoflow/internal/domain"
+import "github.com/dexadata/dexaflow/internal/domain"
 
 // TriggerDecision is the scheduler's decision for a task given its trigger rule
 // and the states of its upstream tasks.

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 func TestSetVariableReqSendsBodyAndReturnsVariable(t *testing.T) {

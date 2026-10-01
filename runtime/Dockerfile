@@ -53,7 +53,7 @@ ARG VERSION=dev
 ARG GIT_COMMIT=none
 ARG BUILD_DATE=unknown
 RUN CGO_ENABLED=0 go build -trimpath \
-	-ldflags="-s -w -X 'github.com/neochaotic/leoflow/internal/version.version=${VERSION}' -X 'github.com/neochaotic/leoflow/internal/version.gitCommit=${GIT_COMMIT}' -X 'github.com/neochaotic/leoflow/internal/version.buildDate=${BUILD_DATE}'" \
+	-ldflags="-s -w -X 'github.com/dexadata/dexaflow/internal/version.version=${VERSION}' -X 'github.com/dexadata/dexaflow/internal/version.gitCommit=${GIT_COMMIT}' -X 'github.com/dexadata/dexaflow/internal/version.buildDate=${BUILD_DATE}'" \
 	-o /out/leoflow-agent ./cmd/leoflow-agent
 
 # ── Stage 2: runtime base ─────────────────────────────────────────────────────

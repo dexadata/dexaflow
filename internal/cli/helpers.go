@@ -16,8 +16,8 @@ import (
 	"github.com/spf13/cobra"
 	yaml "go.yaml.in/yaml/v3"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // projectConfigPath returns the path to leoflow.yaml inside a project directory.

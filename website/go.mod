@@ -1,4 +1,4 @@
-module github.com/neochaotic/leoflow/website
+module github.com/dexadata/dexaflow/website
 
 go 1.26.6
 

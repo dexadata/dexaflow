@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/logs"
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
+	"github.com/dexadata/dexaflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
 // LogReader streams a task attempt's stored logs and, for running tasks, tails

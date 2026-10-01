@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/version"
-	"github.com/neochaotic/leoflow/migrations"
+	"github.com/dexadata/dexaflow/internal/version"
+	"github.com/dexadata/dexaflow/migrations"
 )
 
 // newBackupCommand wires `leoflow lite backup`. The whole Lite install ships

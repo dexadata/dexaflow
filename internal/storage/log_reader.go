@@ -7,9 +7,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/logs"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 // LogReader resolves a task attempt's log location from API-facing identifiers

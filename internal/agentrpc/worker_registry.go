@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // ReclaimReason names why an assignment was reclaimed (ADR 0058 N1b, H1).

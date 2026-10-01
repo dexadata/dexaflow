@@ -1,4 +1,4 @@
-module github.com/neochaotic/leoflow
+module github.com/dexadata/dexaflow
 
 go 1.26.0
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 )
 
 // TestPoolCRUDAndDefaultSeedIntegration proves the pools table round-trips

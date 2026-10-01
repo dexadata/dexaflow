@@ -5,7 +5,7 @@ weight: 7
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/storage"
+import "github.com/dexadata/dexaflow/internal/storage"
 ```
 
 Package storage wraps the Postgres and Redis connections used by the control plane, exposing the sqlc\-generated query set and health checks.

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/version"
+	"github.com/dexadata/dexaflow/internal/version"
 )
 
 func newVersionCommand() *cobra.Command {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // oidcWarnConfig is a Pro OIDC deployment that passes validateStartup: every key

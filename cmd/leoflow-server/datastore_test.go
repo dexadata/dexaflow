@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/logs"
-	"github.com/neochaotic/leoflow/internal/storage"
-	"github.com/neochaotic/leoflow/internal/xcom"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/xcom"
 )
 
 // TestSelectDatastoreEmbeddedWhenNoRedis pins the switch that broke the embedded

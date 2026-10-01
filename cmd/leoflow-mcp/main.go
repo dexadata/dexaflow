@@ -19,9 +19,9 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/neochaotic/leoflow/internal/mcp"
-	versioninfo "github.com/neochaotic/leoflow/internal/version"
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	"github.com/dexadata/dexaflow/internal/mcp"
+	versioninfo "github.com/dexadata/dexaflow/internal/version"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...". This

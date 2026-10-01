@@ -63,7 +63,7 @@ func seededControlPlane(t *testing.T) *httptest.Server {
 func buildMCPBinary(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "leoflow-mcp")
-	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "github.com/neochaotic/leoflow/cmd/leoflow-mcp").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "github.com/dexadata/dexaflow/cmd/leoflow-mcp").CombinedOutput()
 	if err != nil {
 		t.Fatalf("building leoflow-mcp: %v\n%s", err, out)
 	}

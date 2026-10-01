@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/agent/secretsource"
+	"github.com/dexadata/dexaflow/internal/agent/secretsource"
 )
 
 // resolverPython / resolverModule are the in-pod entrypoint the agent drives to

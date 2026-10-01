@@ -55,10 +55,10 @@ pass "binary extracted both parser and runtime sources for a binary-only install
 # carry it in internal/version; leoflow-mcp in package main.
 echo "==> building companion binaries and asserting they report a version"
 ( cd "$REPO" && go build \
-    -ldflags "-X github.com/neochaotic/leoflow/internal/version.version=e2e-ver -X main.version=e2e-ver" \
+    -ldflags "-X github.com/dexadata/dexaflow/internal/version.version=e2e-ver -X main.version=e2e-ver" \
     -o "$BINDIR/leoflow-server" ./cmd/leoflow-server )
 ( cd "$REPO" && go build \
-    -ldflags "-X github.com/neochaotic/leoflow/internal/version.version=e2e-ver" \
+    -ldflags "-X github.com/dexadata/dexaflow/internal/version.version=e2e-ver" \
     -o "$BINDIR/leoflow-agent" ./cmd/leoflow-agent )
 ( cd "$REPO" && go build -ldflags "-X main.version=e2e-ver" \
     -o "$BINDIR/leoflow-mcp" ./cmd/leoflow-mcp )

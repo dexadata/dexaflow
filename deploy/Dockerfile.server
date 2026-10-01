@@ -26,8 +26,8 @@ ARG VERSION=dev
 ARG GIT_COMMIT=none
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w \
-      -X 'github.com/neochaotic/leoflow/internal/version.version=${VERSION}' \
-      -X 'github.com/neochaotic/leoflow/internal/version.gitCommit=${GIT_COMMIT}'" \
+      -X 'github.com/dexadata/dexaflow/internal/version.version=${VERSION}' \
+      -X 'github.com/dexadata/dexaflow/internal/version.gitCommit=${GIT_COMMIT}'" \
     -o /out/leoflow-server ./cmd/leoflow-server
 
 # Minimal, non-root runtime.

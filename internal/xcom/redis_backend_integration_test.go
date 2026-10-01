@@ -10,7 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/neochaotic/leoflow/internal/xcom"
+	"github.com/dexadata/dexaflow/internal/xcom"
 )
 
 func testClient(t *testing.T) *redis.Client {

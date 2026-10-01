@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	leoflow "github.com/neochaotic/leoflow"
-	"github.com/neochaotic/leoflow/internal/setup"
+	leoflow "github.com/dexadata/dexaflow"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // pysrcMarker is the checksum sentinel written beside the extracted Python sources

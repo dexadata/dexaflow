@@ -5,7 +5,7 @@ weight: 8
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/auth"
+import "github.com/dexadata/dexaflow/internal/auth"
 ```
 
 Package auth provides JWT authentication, password hashing, the RBAC permission model, and login rate limiting for the control plane \(ADR 0008\).

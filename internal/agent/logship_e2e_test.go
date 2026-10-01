@@ -16,9 +16,9 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/neochaotic/leoflow/internal/agent"
-	"github.com/neochaotic/leoflow/internal/logs"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent"
+	"github.com/dexadata/dexaflow/internal/logs"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // logServer is a minimal StreamLogs server that persists received lines to a real

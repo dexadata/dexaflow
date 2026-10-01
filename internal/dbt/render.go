@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // Granularity controls how dbt nodes are partitioned into Leoflow tasks.

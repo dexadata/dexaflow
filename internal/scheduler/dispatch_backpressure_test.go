@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 // A retriable-forever dispatch failure (cluster backpressure) must back the task

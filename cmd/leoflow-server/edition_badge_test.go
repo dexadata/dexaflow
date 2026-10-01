@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // TestEditionBadgeSelection exercises the two edition-badge guards used at

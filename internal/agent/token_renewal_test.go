@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // TestTokenSourceSwap: the credential reads the live token, and a concurrent

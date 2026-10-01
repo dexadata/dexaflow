@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 // ErrAtCapacity is returned by BufferedDispatcher.Dispatch when the buffered

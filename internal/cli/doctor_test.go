@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/setup"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 func TestDoctorHelpers(t *testing.T) {

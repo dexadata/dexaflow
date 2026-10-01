@@ -5,7 +5,7 @@ weight: 1
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/domain"
+import "github.com/dexadata/dexaflow/internal/domain"
 ```
 
 Package domain defines the core Leoflow types \(DAG, Task, project config\) and validates them against the canonical JSON Schemas in docs/api.

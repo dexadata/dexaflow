@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/agent"
-	"github.com/neochaotic/leoflow/internal/version"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent"
+	"github.com/dexadata/dexaflow/internal/version"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // usage is printed for `--help`. leoflow-agent takes no positional args; it is

@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/neochaotic/leoflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 )
 
 func singleConnPool(t *testing.T, url string) *pgxpool.Pool {

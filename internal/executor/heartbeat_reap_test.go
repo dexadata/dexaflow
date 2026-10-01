@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // fakeLogSink captures the final markers a reaper appends to a task's log

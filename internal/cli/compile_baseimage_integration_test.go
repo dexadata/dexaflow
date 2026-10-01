@@ -161,7 +161,7 @@ func buildStampedCLI(t *testing.T, root, versionPkg, stamp string) string {
 	//nolint:gosec // G204: versionPkg comes from the repo's own Makefile and stamp from this test's table.
 	build := exec.CommandContext(t.Context(), "go", "build",
 		"-ldflags", "-X "+versionPkg+".version="+stamp,
-		"-o", bin, "github.com/neochaotic/leoflow/cmd/leoflow")
+		"-o", bin, "github.com/dexadata/dexaflow/cmd/leoflow")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building a CLI stamped %q: %v\n%s", stamp, err, out)

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/secrets"
 )
 
 // withTestCipher configures a deterministic AES-GCM cipher on the repo so

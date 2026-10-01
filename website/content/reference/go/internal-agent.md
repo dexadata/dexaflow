@@ -5,7 +5,7 @@ weight: 5
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/agent"
+import "github.com/dexadata/dexaflow/internal/agent"
 ```
 
 Package agent contains the worker\-side logic that runs inside the task container: building the user process command, injecting XCom inputs, reading the return value, and retry backoff. The gRPC client lives in cmd/leoflow\-agent.

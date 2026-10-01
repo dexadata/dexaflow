@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/api"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // pingOnlyChecker stands in for the decorator this test exists to catch — a

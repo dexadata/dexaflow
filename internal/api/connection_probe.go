@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/connectors"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/connectors"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // ConnectionTester checks whether a connection is well-formed. The default

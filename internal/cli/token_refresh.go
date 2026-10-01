@@ -8,8 +8,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	"github.com/dexadata/dexaflow/internal/config"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // absoluteRenewWindow is the fallback near-expiry window used when a token carries

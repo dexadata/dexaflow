@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/setup"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // newDoctorCommand reports the host platform, which dependencies are present,

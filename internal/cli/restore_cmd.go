@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/neochaotic/leoflow/migrations"
+	"github.com/dexadata/dexaflow/migrations"
 )
 
 // newRestoreCommand wires `leoflow lite restore`. The mirror of backup:

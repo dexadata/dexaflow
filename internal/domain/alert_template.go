@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/alerts"
+	"github.com/dexadata/dexaflow/internal/alerts"
 )
 
 // ErrUnknownAlertPlaceholder reports an alert message template referencing a

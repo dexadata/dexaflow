@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // deprecationWrapCols is the widest RENDERED line the warning emits, indent

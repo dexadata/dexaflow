@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 func oidcAuth(mut func(*config.AuthSection)) config.AuthSection {

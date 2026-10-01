@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // TestPasswordRecoveryLoginIntegration is the end-to-end recovery flow behind

@@ -5,7 +5,7 @@ weight: 4
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/dispatch"
+import "github.com/dexadata/dexaflow/internal/dispatch"
 ```
 
 Package dispatch launches pod\-path task instances: it resolves a task's execution context, mints the agent's identity token, and routes the request to the executor. It implements scheduler.Dispatcher.

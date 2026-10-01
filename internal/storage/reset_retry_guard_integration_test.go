@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestResetForRetryGuardsSourceState locks the audit-#13 fix: ResetForRetry

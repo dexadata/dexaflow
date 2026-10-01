@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 func TestLoginPersistsTokenAndServer(t *testing.T) {

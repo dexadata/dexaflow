@@ -5,7 +5,7 @@ weight: 9
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/config"
+import "github.com/dexadata/dexaflow/internal/config"
 ```
 
 Package config loads Leoflow configuration from defaults, an optional config file, and LEOFLOW\_\* environment variables, with flags taking precedence.

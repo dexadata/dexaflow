@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/connectors"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/connectors"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // validateOperatorProvidersFile reads a produced dag.json and validates that every

@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // grandchildScript is the canonical shape of the task that defeated

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // healthServer serves the three monitor endpoints health reads, with the

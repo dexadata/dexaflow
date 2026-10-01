@@ -175,9 +175,9 @@ $ leoflow-mcp --version      # MCP server (see the MCP guide)
 If you have a Go toolchain and prefer to build it yourself:
 
 ```bash
-go install github.com/neochaotic/leoflow/cmd/leoflow@latest
-go install github.com/neochaotic/leoflow/cmd/leoflow-server@latest
-go install github.com/neochaotic/leoflow/cmd/leoflow-agent@latest
+go install github.com/dexadata/dexaflow/cmd/leoflow@latest
+go install github.com/dexadata/dexaflow/cmd/leoflow-server@latest
+go install github.com/dexadata/dexaflow/cmd/leoflow-agent@latest
 # ensure $(go env GOPATH)/bin is on your PATH, then:
 leoflow setup
 ```

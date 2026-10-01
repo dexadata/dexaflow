@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // writeJSON encodes v as a JSON response body for the fake control planes used

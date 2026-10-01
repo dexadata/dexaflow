@@ -5,7 +5,7 @@ weight: 6
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/agentrpc"
+import "github.com/dexadata/dexaflow/internal/agentrpc"
 ```
 
 Package agentrpc implements the control\-plane side of the agent gRPC protocol: it authenticates each in\-pod agent by its per\-task\-instance token, serves the task specification, and records the state transitions the agent reports.

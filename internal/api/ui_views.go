@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/ui"
-	"github.com/neochaotic/leoflow/internal/version"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/ui"
+	"github.com/dexadata/dexaflow/internal/version"
 )
 
 // gridRunDTO is the Airflow 3.2.1 GridRunsResponse — a DAG run as a grid column.

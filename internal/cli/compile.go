@@ -17,9 +17,9 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/dbt"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/dbt"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // compileOptions holds the resolved flags for a compile run.

@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
 // TestClassifyBootstrapFailureNamesTheCause locks the operator-facing half of the

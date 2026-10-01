@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/connectors"
+	"github.com/dexadata/dexaflow/internal/connectors"
 )
 
 // LeoflowConfig is the developer-facing project configuration parsed from

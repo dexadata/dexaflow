@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	leoflow "github.com/neochaotic/leoflow"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/setup"
+	leoflow "github.com/dexadata/dexaflow"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // leoflowLogo is the wordmark shown atop `leoflow setup` on a terminal (figlet

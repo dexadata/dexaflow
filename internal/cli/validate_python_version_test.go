@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // `leoflow validate` checked dag.py's syntax under whatever interpreter it

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // deprecatedPythonLine returns a python_version the schema marks deprecated, or

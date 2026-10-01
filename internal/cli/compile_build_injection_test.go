@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // #1066 gave `dependencies` and `system_packages` a line-break guard because a

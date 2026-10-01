@@ -10,7 +10,7 @@ import (
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // Verification failures. Each is a fail-closed rejection the caller maps to a

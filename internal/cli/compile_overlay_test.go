@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // writeDagJSON writes a minimal two-task dag.json to a temp file and returns its

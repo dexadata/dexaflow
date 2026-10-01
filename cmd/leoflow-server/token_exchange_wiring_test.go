@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 	"k8s.io/client-go/kubernetes"
 )
 

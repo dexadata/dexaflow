@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 // ListPools returns a page of the tenant's named pools and the total count.

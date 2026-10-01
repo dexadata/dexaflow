@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/secrets"
 )
 
 // LEOFLOW_SECRET_KEY takes a comma-separated list: the first key encrypts and

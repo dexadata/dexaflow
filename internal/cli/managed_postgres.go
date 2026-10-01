@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/setup"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // Datastore backends for Lite's Postgres. The default is "auto": Docker Postgres

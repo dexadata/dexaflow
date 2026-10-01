@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 func TestPoolConfigAppliesPoolSizes(t *testing.T) {

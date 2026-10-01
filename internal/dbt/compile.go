@@ -3,7 +3,7 @@ package dbt
 import (
 	"fmt"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // Meta carries the DAG metadata a dbt manifest does not provide: identity,

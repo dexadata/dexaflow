@@ -6,9 +6,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/agent/secretsource"
-	"github.com/neochaotic/leoflow/internal/domain"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent/secretsource"
+	"github.com/dexadata/dexaflow/internal/domain"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	yaml "go.yaml.in/yaml/v3"
 )
 

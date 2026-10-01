@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/setup"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // devTool is a host dependency `leoflow dev` needs, with how to install it when

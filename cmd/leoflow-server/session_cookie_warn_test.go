@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // auth.session_cookie_insecure is the one setting in this PR that hands the

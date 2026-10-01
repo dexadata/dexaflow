@@ -1963,7 +1963,7 @@ const file_agent_proto_rawDesc = "" +
 	"\tHeartbeat\x12\".leoflow.agent.v1.HeartbeatRequest\x1a#.leoflow.agent.v1.HeartbeatResponse\x12]\n" +
 	"\fGetVariables\x12%.leoflow.agent.v1.GetVariablesRequest\x1a&.leoflow.agent.v1.GetVariablesResponse\x12c\n" +
 	"\x0eGetConnections\x12'.leoflow.agent.v1.GetConnectionsRequest\x1a(.leoflow.agent.v1.GetConnectionsResponse\x12X\n" +
-	"\x0fAwaitAssignment\x12\x1f.leoflow.agent.v1.WorkerMessage\x1a .leoflow.agent.v1.WorkAssignment(\x010\x01B6Z4github.com/neochaotic/leoflow/proto/agent/v1;agentv1b\x06proto3"
+	"\x0fAwaitAssignment\x12\x1f.leoflow.agent.v1.WorkerMessage\x1a .leoflow.agent.v1.WorkAssignment(\x010\x01B6Z4github.com/dexadata/dexaflow/proto/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_agent_proto_rawDescOnce sync.Once

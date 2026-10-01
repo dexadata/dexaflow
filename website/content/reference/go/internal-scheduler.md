@@ -5,7 +5,7 @@ weight: 2
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/scheduler"
+import "github.com/dexadata/dexaflow/internal/scheduler"
 ```
 
 Package scheduler implements the Leoflow scheduling state machine and loop.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestIncludePathsCopiesExtraPaths covers the first half of #1062:
