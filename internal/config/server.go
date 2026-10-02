@@ -294,6 +294,18 @@ type UISection struct {
 	// MonacoDir is where the pinned Monaco bundle was fetched by `leoflow setup`;
 	// the editor page is served Monaco from it. Empty shows a setup hint.
 	MonacoDir string `mapstructure:"monaco_dir"`
+	// HomeLink is an optional, persistent link from the UI back to the platform
+	// the operator serves Leoflow from (#1290). Empty shows no link.
+	HomeLink HomeLinkSection `mapstructure:"home_link"`
+}
+
+// HomeLinkSection is the operator's way back from the UI: a label and the
+// absolute http(s) URL it opens, in the same tab. Both are set or neither.
+type HomeLinkSection struct {
+	// Label is the link text, for example the operator's portal name.
+	Label string `mapstructure:"label"`
+	// URL is where the link goes. It must be an absolute http:// or https:// URL.
+	URL string `mapstructure:"url"`
 }
 
 // HTTPExecutorSection configures HTTP-related executor knobs.
@@ -757,6 +769,8 @@ var serverDefaults = map[string]any{
 	"ui.edition":                         "",
 	"ui.workspace":                       "",
 	"ui.monaco_dir":                      "",
+	"ui.home_link.label":                 "",
+	"ui.home_link.url":                   "",
 	// Must appear here even though the zero value is meaningful (the handler
 	// falls back to api.DefaultUIAutoRefreshIntervalSeconds when ≤ 0): viper's
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
@@ -901,6 +915,9 @@ func (c *ServerConfig) Validate() error {
 		return err
 	}
 	if err := c.validateExecution(); err != nil {
+		return err
+	}
+	if err := validateHomeLink(c.UI.HomeLink); err != nil {
 		return err
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
@@ -1154,6 +1171,32 @@ func tenantPinHint(c *ServerConfig) string {
 		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Leoflow tenant. " +
 		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by LEOFLOW_CONFIG; no LEOFLOW_AUTH_OIDC_* environment variable can carry it. " +
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
+}
+
+// validateHomeLink checks ui.home_link (#1290): both fields or neither, and an
+// absolute http(s) URL with a host, so a typo fails boot instead of rendering a
+// dead link and no other scheme (javascript:, data:) can reach the page.
+func validateHomeLink(l HomeLinkSection) error {
+	if l == (HomeLinkSection{}) {
+		return nil
+	}
+	if l.URL == "" {
+		return errors.New("ui.home_link.url is required when ui.home_link.label is set")
+	}
+	if strings.TrimSpace(l.Label) == "" {
+		return errors.New("ui.home_link.label is required when ui.home_link.url is set")
+	}
+	u, err := url.Parse(l.URL)
+	if err != nil {
+		return fmt.Errorf("ui.home_link.url must be a valid URL (got %q): %w", l.URL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("ui.home_link.url must start with http:// or https:// (got %q)", l.URL)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("ui.home_link.url must include a host (got %q)", l.URL)
+	}
+	return nil
 }
 
 // validateRedirectURL requires the OIDC callback URL to use https so the

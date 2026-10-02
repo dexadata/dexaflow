@@ -548,3 +548,66 @@ auth:
 		t.Errorf("role_mappings[app.admins] = %q, want admin (dotted group was split)", got)
 	}
 }
+
+// TestLoadServerReadsUIHomeLinkFromEnv locks that both home-link keys bind
+// from the environment. Viper's AutomaticEnv only binds keys it has a default
+// for, so a missing default would drop LEOFLOW_UI_HOME_LINK_* silently, the
+// failure TestLoadServerReadsUIAutoRefreshIntervalFromEnv already caught once.
+func TestLoadServerReadsUIHomeLinkFromEnv(t *testing.T) {
+	t.Setenv("LEOFLOW_UI_HOME_LINK_LABEL", "Back to portal")
+	t.Setenv("LEOFLOW_UI_HOME_LINK_URL", "https://portal.example.com/team")
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.UI.HomeLink.Label != "Back to portal" || c.UI.HomeLink.URL != "https://portal.example.com/team" {
+		t.Errorf("UI.HomeLink = %+v, want the values from the environment", c.UI.HomeLink)
+	}
+}
+
+// TestLoadServerHomeLinkIsOffByDefault locks the default: no link unless the
+// operator sets one.
+func TestLoadServerHomeLinkIsOffByDefault(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.UI.HomeLink != (HomeLinkSection{}) {
+		t.Errorf("UI.HomeLink = %+v, want empty by default", c.UI.HomeLink)
+	}
+}
+
+// TestValidateUIHomeLink covers the boot checks: the link needs both a label
+// and an absolute http(s) URL, so a typo fails boot instead of rendering a
+// dead or script-bearing link.
+func TestValidateUIHomeLink(t *testing.T) {
+	cases := []struct {
+		name    string
+		link    HomeLinkSection
+		wantErr string
+	}{
+		{"unset", HomeLinkSection{}, ""},
+		{"https", HomeLinkSection{Label: "Portal", URL: "https://portal.example.com"}, ""},
+		{"http", HomeLinkSection{Label: "Portal", URL: "http://portal.internal:8080/x"}, ""},
+		{"label without url", HomeLinkSection{Label: "Portal"}, "ui.home_link.url"},
+		{"url without label", HomeLinkSection{URL: "https://portal.example.com"}, "ui.home_link.label"},
+		{"blank label", HomeLinkSection{Label: "  ", URL: "https://portal.example.com"}, "ui.home_link.label"},
+		{"javascript scheme", HomeLinkSection{Label: "Portal", URL: "javascript:alert(1)"}, "http:// or https://"},
+		{"relative", HomeLinkSection{Label: "Portal", URL: "/portal"}, "http:// or https://"},
+		{"no host", HomeLinkSection{Label: "Portal", URL: "https:///path"}, "host"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.UI.HomeLink = tc.link
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
