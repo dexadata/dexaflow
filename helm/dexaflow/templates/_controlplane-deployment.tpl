@@ -270,6 +270,18 @@ spec:
               value: {{ .ctx.Values.config.scheduler.enabled | quote }}
             - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
               value: {{ .ctx.Values.config.scheduler.loopIntervalMs | quote }}
+            {{- with .ctx.Values.config.scheduler.dispatch }}
+            {{- if .bufferSize }}
+            # Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
+            # the pods. Unset keeps the server default, synchronous dispatch.
+            - name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+              value: {{ .bufferSize | quote }}
+            {{- end }}
+            {{- if .workers }}
+            - name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+              value: {{ .workers | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
               value: {{ .ctx.Values.database.maxOpenConns | quote }}
             - name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
