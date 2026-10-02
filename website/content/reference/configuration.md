@@ -666,8 +666,19 @@ It answers `201` for a new user and `200` for an existing one, whose roles it
 sets to the list given. It needs `auth.trusted_issuer` (`409` otherwise),
 answers `404` for an unknown tenant, `422` for a role the tenant does not have,
 and `409` for a subject already linked in another tenant or an email already
-used by another user of the tenant, such as a password account. The user signs in
-only through the trusted issuer's handoff.
+used by another user of the tenant, such as a password account. A tenant the
+trusted issuer may not sign in to (`auth.trusted_issuer.allowed_tenants`) is
+`403`. The user signs in only through the trusted issuer's handoff.
+
+Every call that reaches the database is recorded in the audit trail, as
+`service.tenant.ensure` (with whether the tenant was created) and
+`service.user.ensure` (with the subject, email, roles and whether the user was
+created), each with outcome `success` or `failure`.
+
+The service token is a root-level credential: whoever holds it can create
+tenants and grant any role, `admin` included, in every tenant the trusted
+issuer covers. Keep it in a Secret, give it only to the automation that
+provisions tenants, and rotate it by changing the Secret and restarting.
 
 ### Trusted proxies and the client IP
 

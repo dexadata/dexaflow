@@ -44,13 +44,22 @@ func (f *fakeServiceStore) EnsureIssuerUser(_ context.Context, tenant, email, pr
 
 func serviceServer(t *testing.T, store *fakeServiceStore, withIssuer bool) http.Handler {
 	t.Helper()
+	return serviceServerWith(t, store, withIssuer, []string{"*"}, nil)
+}
+
+// serviceServerWith is serviceServer with the issuer's allowed tenants and an
+// audit writer chosen by the test.
+func serviceServerWith(t *testing.T, store *fakeServiceStore, withIssuer bool, allowed []string, audit AuthAuditWriter) http.Handler {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	deps := Dependencies{
-		Logger:         discardLogger(),
-		Authenticator:  &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"viewer"}}},
-		RateLimiter:    auth.NewRateLimiter(100, time.Minute),
-		ServiceToken:   testServiceToken,
-		ServiceTenants: store,
+		ServiceAllowedTenants: allowed,
+		AuthAudit:             audit,
+		Logger:                discardLogger(),
+		Authenticator:         &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"viewer"}}},
+		RateLimiter:           auth.NewRateLimiter(100, time.Minute),
+		ServiceToken:          testServiceToken,
+		ServiceTenants:        store,
 	}
 	if withIssuer {
 		deps.TrustedIssuer = fakeTrustedIssuer{issuer.Identity{}}
@@ -189,5 +198,65 @@ func TestServiceEnsureUserErrors(t *testing.T) {
 				t.Errorf("status = %d (%s), want %d", rec.Code, rec.Body.String(), tc.want)
 			}
 		})
+	}
+}
+
+// TestServiceEnsureUserStaysInTheIssuersTenants: the service token cannot link
+// a user in a tenant the trusted issuer may not sign in to. Such a user could
+// never sign in, and the refusal keeps the token from minting accounts (an
+// admin in "default", say) outside the issuer's reach.
+func TestServiceEnsureUserStaysInTheIssuersTenants(t *testing.T) {
+	store := &fakeServiceStore{user: &auth.User{ID: "u-9", TenantID: "default"}, userCreated: true}
+	audit := &fakeAuthAudit{}
+	h := serviceServerWith(t, store, true, []string{"acme"}, audit)
+
+	rec := callService(h, http.MethodPut, "/api/v2/service/tenants/default/users/user-42", testServiceToken,
+		`{"email":"ana@acme.com","roles":["admin"]}`)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d (%s), want 403", rec.Code, rec.Body.String())
+	}
+	if store.gotUserTenant != "" {
+		t.Errorf("store was called for tenant %q, want no call", store.gotUserTenant)
+	}
+	if !audit.has(auditServiceUserEnsure, "failure") {
+		t.Errorf("audit = %+v, want a %s failure", audit.events, auditServiceUserEnsure)
+	}
+}
+
+// TestServiceAPIIsAudited: creating a tenant and linking a user with roles
+// both leave an audit event naming what was done.
+func TestServiceAPIIsAudited(t *testing.T) {
+	store := &fakeServiceStore{tenantCreated: true, user: &auth.User{ID: "u-9", TenantID: "acme"}, userCreated: true}
+	audit := &fakeAuthAudit{}
+	h := serviceServerWith(t, store, true, []string{"acme"}, audit)
+
+	callService(h, http.MethodPut, "/api/v2/service/tenants/acme", testServiceToken, `{}`)
+	callService(h, http.MethodPut, "/api/v2/service/tenants/acme/users/user-42", testServiceToken,
+		`{"email":"ana@acme.com","roles":["operator","viewer"]}`)
+
+	if len(audit.events) != 2 {
+		t.Fatalf("audit events = %+v, want 2", audit.events)
+	}
+	tenant, user := audit.events[0], audit.events[1]
+	if tenant.action != auditServiceTenantEnsure || tenant.outcome != "success" || tenant.tenant != "acme" || tenant.extra["created"] != "true" {
+		t.Errorf("tenant event = %+v", tenant)
+	}
+	if user.action != auditServiceUserEnsure || user.outcome != "success" || user.tenant != "acme" || user.userID != "u-9" ||
+		user.email != "ana@acme.com" || user.extra["subject"] != "user-42" || user.extra["roles"] != "operator,viewer" || user.extra["created"] != "true" {
+		t.Errorf("user event = %+v", user)
+	}
+}
+
+// TestServiceAPIAuditsFailures: a store failure is recorded as a failure.
+func TestServiceAPIAuditsFailures(t *testing.T) {
+	store := &fakeServiceStore{tenantErr: errors.New("db down")}
+	audit := &fakeAuthAudit{}
+	h := serviceServerWith(t, store, true, []string{"*"}, audit)
+
+	callService(h, http.MethodPut, "/api/v2/service/tenants/acme", testServiceToken, `{}`)
+
+	if !audit.has(auditServiceTenantEnsure, "failure") {
+		t.Errorf("audit = %+v, want a %s failure", audit.events, auditServiceTenantEnsure)
 	}
 }

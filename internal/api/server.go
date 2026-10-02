@@ -154,6 +154,9 @@ type Dependencies struct {
 	// user session. ServiceTenants is its storage (the repo).
 	ServiceToken   string
 	ServiceTenants ServiceTenantStore
+	// ServiceAllowedTenants are the tenants the service API may link issuer
+	// users in: auth.trusted_issuer.allowed_tenants, where "*" allows all.
+	ServiceAllowedTenants []string
 	// JWTSecret is the HS256 secret the OIDC callback mints the app's _token with.
 	JWTSecret string
 	// SessionCookieInsecure drops the Secure attribute from the session and OIDC

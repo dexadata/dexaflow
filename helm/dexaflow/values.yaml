@@ -276,7 +276,7 @@ auth:
   existingSecret: ""
   # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
   tokenTtlSeconds: 3600
-  # -- Bearer token for the operator service API under `/api/v2/service/` (#1283), which creates tenants (with the built-in roles and default pool) and links passwordless users to `trustedIssuer`. At least 32 characters; generate with `openssl rand -base64 48`. Stored in the chart Secret. Empty (the default) leaves the service API off.
+  # -- Bearer token for the operator service API under `/api/v2/service/` (#1283), which creates tenants (with the built-in roles and default pool) and links passwordless users to `trustedIssuer`. At least 32 characters; generate with `openssl rand -base64 48`. Stored in the chart Secret. It is a root-level credential: whoever holds it can create tenants and grant any role, admin included, in every tenant `trustedIssuer.allowedTenants` covers. Rotate it by changing the Secret and restarting. Empty (the default) leaves the service API off.
   serviceToken: ""
   # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.
   serviceTokenExistingSecret: ""

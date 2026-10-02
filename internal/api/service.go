@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +32,34 @@ type ServiceTenantStore interface {
 // serviceTenantName is a tenant name the service API accepts: lowercase
 // letters, digits and '-', so it can travel in a URL, a claim and a label.
 var serviceTenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// Audit actions for the operator service API (#1283). Both create or change
+// accounts and roles, so every call that reaches the store is recorded.
+const (
+	auditServiceTenantEnsure = "service.tenant.ensure"
+	auditServiceUserEnsure   = "service.user.ensure"
+)
+
+// recordService writes one service API audit event. A failed write is logged,
+// never returned: the operation itself already happened or already failed.
+func recordService(c *gin.Context, deps Dependencies, action, tenant, userID, email string, err error, extra map[string]string) {
+	if deps.AuthAudit == nil {
+		return
+	}
+	outcome := "success"
+	if err != nil {
+		outcome = "failure"
+	}
+	if aerr := deps.AuthAudit.RecordAuthEvent(c.Request.Context(), tenant, userID, action, email, outcome, extra); aerr != nil {
+		deps.Logger.Warn("auth audit write failed", "action", action, "error", aerr)
+	}
+}
+
+// issuerMaySignInTo reports whether the trusted issuer is allowed to sign in
+// to tenant, the same list its handoff tokens are checked against.
+func issuerMaySignInTo(allowed []string, tenant string) bool {
+	return slices.Contains(allowed, "*") || slices.Contains(allowed, tenant)
+}
 
 // registerService mounts the operator service API (#1283) under
 // /api/v2/service/, guarded by the service token instead of a user session.
@@ -75,6 +105,7 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		created, err := deps.ServiceTenants.EnsureTenant(c.Request.Context(), name, body.DisplayName)
+		recordService(c, deps, auditServiceTenantEnsure, name, "", "", err, map[string]string{"created": strconv.FormatBool(created)})
 		if err != nil {
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", "could not ensure the tenant", err)
 			return
@@ -90,7 +121,10 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 // to the trusted issuer's subject exists with exactly those roles, so the
 // issuer's handoff (#1284) can sign them in. It needs a trusted issuer. A
 // subject linked in another tenant and an email already used by another user
-// of the tenant (for example a password account) are both 409.
+// of the tenant (for example a password account) are both 409. A tenant the
+// trusted issuer may not sign in to (auth.trusted_issuer.allowed_tenants) is
+// 403: such a user could never sign in, and the service token must not mint
+// accounts outside the issuer's reach.
 func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if deps.TrustedIssuer == nil {
@@ -106,8 +140,21 @@ func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		tenant, subject := c.Param("tenant"), c.Param("subject")
+		extra := map[string]string{"subject": subject, "roles": strings.Join(body.Roles, ",")}
+		if !issuerMaySignInTo(deps.ServiceAllowedTenants, tenant) {
+			extra["reason"] = "tenant_not_allowed"
+			recordService(c, deps, auditServiceUserEnsure, tenant, "", body.Email, errTenantNotAllowed, extra)
+			AbortProblem(c, http.StatusForbidden, "forbidden", "the trusted issuer may not sign in to this tenant (auth.trusted_issuer.allowed_tenants)")
+			return
+		}
 		user, created, err := deps.ServiceTenants.EnsureIssuerUser(c.Request.Context(), tenant, body.Email,
 			deps.TrustedIssuer.Provider(), subject, body.Roles)
+		userID := ""
+		if err == nil {
+			userID = user.ID
+			extra["created"] = strconv.FormatBool(created)
+		}
+		recordService(c, deps, auditServiceUserEnsure, tenant, userID, body.Email, err, extra)
 		switch {
 		case err == nil:
 			deps.Logger.Info("service api: user ensured", "tenant", tenant, "user_id", user.ID, "created", created)
@@ -123,6 +170,9 @@ func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 		}
 	}
 }
+
+// errTenantNotAllowed marks the refused-tenant audit event as a failure.
+var errTenantNotAllowed = errors.New("tenant not allowed for the trusted issuer")
 
 func statusFor(created bool) int {
 	if created {

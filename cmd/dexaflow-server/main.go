@@ -1423,6 +1423,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		// Operator service API (#1283): off unless auth.service_token is set.
 		ServiceToken:   cfg.Auth.ServiceToken,
 		ServiceTenants: repo,
+		// The service API links users only in tenants the issuer may sign in to.
+		ServiceAllowedTenants: cfg.Auth.TrustedIssuer.AllowedTenants,
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 	})
