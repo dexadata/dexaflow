@@ -52,3 +52,42 @@ func TestRedisTailerPublishSubscribe(t *testing.T) {
 		t.Fatal("timed out waiting for the published line")
 	}
 }
+
+// TestRedisTailerHasSubscribers counts subscribers with PUBSUB NUMSUB, so the
+// agent-facing writer can skip publishing while nobody tails the attempt.
+func TestRedisTailerHasSubscribers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tailer := logs.NewRedisTailer(testRedis(t))
+	ref := logs.Ref{TenantID: "t", DagID: "d", RunID: "numsub", TaskID: "task", TryNumber: 1}
+
+	if has, err := tailer.HasSubscribers(ctx, ref); err != nil || has {
+		t.Fatalf("HasSubscribers() = %v, %v before subscribing, want false", has, err)
+	}
+	_, stop := tailer.Subscribe(ctx, ref)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		has, err := tailer.HasSubscribers(ctx, ref)
+		if err != nil {
+			t.Fatalf("HasSubscribers() error = %v", err)
+		}
+		if has {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("HasSubscribers() never saw the subscription")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stop()
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		if has, _ := tailer.HasSubscribers(ctx, ref); !has {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("HasSubscribers() still true after the subscription closed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
