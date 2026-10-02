@@ -59,18 +59,27 @@ jobs:
       - name: Copy images and chart with signatures
         run: |
           set -euo pipefail
+          # copy SRC_REF [DST_REF]: DST_REF defaults to SRC_REF.
           copy() {
-            echo "copy ${SRC}/$1 -> ${DST}/$1"
-            cosign copy --force "${SRC}/$1" "${DST}/$1"
+            echo "copy ${SRC}/$1 -> ${DST}/${2:-$1}"
+            cosign copy --force "${SRC}/$1" "${DST}/${2:-$1}"
           }
-          for tag in "${VERSION}" "v${VERSION}"; do
-            copy "leoflow-server:${tag}"
-            copy "leoflow-migrate:${tag}"
+          # Each image under its pre-rename name and its dexaflow-* name, so the
+          # defaults on main can move to dexaflow-* before the first release
+          # published under that name.
+          for name in server migrate; do
+            for tag in "${VERSION}" "v${VERSION}"; do
+              copy "leoflow-${name}:${tag}"
+              copy "leoflow-${name}:${tag}" "dexaflow-${name}:${tag}"
+            done
           done
           copy "leoflow-migrate:latest"
+          copy "leoflow-migrate:latest" "dexaflow-migrate:latest"
           for py in 3.10 3.11 3.12 3.13; do
-            copy "leoflow-runtime:py${py}"
-            copy "leoflow-runtime:py${py}-v${VERSION}"
+            for tag in "py${py}" "py${py}-v${VERSION}"; do
+              copy "leoflow-runtime:${tag}"
+              copy "leoflow-runtime:${tag}" "dexaflow-runtime:${tag}"
+            done
           done
           copy "charts/leoflow:${VERSION}"
 
@@ -78,7 +87,8 @@ jobs:
         run: |
           set -euo pipefail
           docker logout ghcr.io
-          for ref in "leoflow-server:v${VERSION}" "leoflow-migrate:v${VERSION}" "leoflow-runtime:py3.11"; do
+          for ref in "leoflow-server:v${VERSION}" "leoflow-migrate:v${VERSION}" "leoflow-runtime:py3.11" \
+                     "dexaflow-server:v${VERSION}" "dexaflow-migrate:v${VERSION}" "dexaflow-runtime:py3.11"; do
             docker manifest inspect "${DST}/${ref}" >/dev/null \
               && echo "public: ${DST}/${ref}" \
               || echo "::warning::${DST}/${ref} is not anonymously pullable; set the package visibility to public"
