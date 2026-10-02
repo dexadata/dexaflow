@@ -1,5 +1,5 @@
 // proto/agent.proto
-// Communication protocol between the Leoflow Control Plane and the worker Agent.
+// Communication protocol between the Dexaflow Control Plane and the worker Agent.
 // The Agent runs as PID 1 inside every task pod and connects back to the Control Plane on startup.
 
 syntax = "proto3";

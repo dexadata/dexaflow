@@ -281,7 +281,7 @@ jobs:
             exit 1
           fi
           # The control plane must be allowed to create task pods in its namespace.
-          kubectl -n dexaflow auth can-i create pods \
+          kubectl -n leoflow auth can-i create pods \
             --as=system:serviceaccount:leoflow:leoflow
 
       # Upgrade smoke: re-apply the same release with a bumped value (the loop

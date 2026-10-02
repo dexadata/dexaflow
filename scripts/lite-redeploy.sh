@@ -51,8 +51,8 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   kill "$(cat "$PID_FILE")" || true
   sleep 2
 fi
-# Also catch a manually-started one.
-pkill -f "dexaflow lite" 2>/dev/null || true
+# Also catch a manually-started one, under either name.
+pkill -f "(dexaflow|leoflow) lite" 2>/dev/null || true
 sleep 1
 
 echo "==> swapping binaries…"
