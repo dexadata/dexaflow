@@ -8,7 +8,7 @@ weight: 40
 description: Expose Variables and Connections to your task pods.
 ---
 
-Leoflow stores **Variables** and **Connections** in the control plane (connection
+Dexaflow stores **Variables** and **Connections** in the control plane (connection
 secrets encrypted at rest, AES-256-GCM — ADR 0019) and delivers them to task pods
 at runtime as environment variables, so your task reads them with the **native
 Airflow APIs** *and* as plain env (ADR 0021).
@@ -124,7 +124,7 @@ def use_secrets():
 
 Scope is global (per tenant). Delivery requires a secure agent channel (TLS, #58)
 or, in dev, the explicit `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (set by
-`leoflow lite`). Pro on Kubernetes (including GKE) **requires** TLS — the chart
+`dexaflow lite`). Pro on Kubernetes (including GKE) **requires** TLS — the chart
 ships `agentTLS.enabled: true` by default and the server refuses the insecure
 bypass; the plaintext escape hatch is Lite-only, for local iteration. See
 [ADR 0021](/project/adrs/0021-exposing-variables-connections-to-pods/).

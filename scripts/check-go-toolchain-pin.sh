@@ -5,7 +5,7 @@
 # (both its ARG default and its `golang:` literal), so the two overlap rather
 # than depend on each other — but if you change either, read the other.
 #
-# The Go toolchain Leoflow builds with is stated in eleven places. Until #1036 it
+# The Go toolchain Dexaflow builds with is stated in eleven places. Until #1036 it
 # said three different things: `toolchain go1.26.6` in go.mod, `1.26.3` in
 # runtime/Dockerfile's GO_VERSION default, `1.26.4` in the Makefile's chaos
 # pin, and `golang:1.27-bookworm` in deploy/Dockerfile.server after a Dependabot

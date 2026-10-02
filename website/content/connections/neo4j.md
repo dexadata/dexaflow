@@ -10,7 +10,7 @@ description: Neo4j connection
 ---
 
 Connect a task to a Neo4j graph database (the `Neo4jHook`) over a managed
-Leoflow Connection. The database name lives in the Schema field.
+Dexaflow Connection. The database name lives in the Schema field.
 
 ## Declare the provider
 

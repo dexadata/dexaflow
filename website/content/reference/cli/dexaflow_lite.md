@@ -7,12 +7,12 @@ linkTitle: "lite"
 weight: 37
 ---
 
-Run Leoflow Lite locally with hot reload.
+Run Dexaflow Lite locally with hot reload.
 
 ### Synopsis
 
-lite is the Leoflow Lite edition: it brings up local dependencies and runs the control plane against an isolated local database, registers the DAG, and hot-reloads on every save. The UI is served on a Lite port (default 8088, --port), marked with a LITE badge, and behind a login (the admin created by `leoflow setup`, which prints the
-generated password ONCE — `leoflow lite reset-password` sets a new one if it is gone).
+lite is the Dexaflow Lite edition: it brings up local dependencies and runs the control plane against an isolated local database, registers the DAG, and hot-reloads on every save. The UI is served on a Lite port (default 8088, --port), marked with a LITE badge, and behind a login (the admin created by `dexaflow setup`, which prints the
+generated password ONCE — `dexaflow lite reset-password` sets a new one if it is gone).
 
 Executor (--executor): 'subprocess' runs tasks unsandboxed on the host with no image build — the fast inner loop, best for local use. 'k8s' runs real pod-per-task on a dedicated, isolated k3d mini-cluster (leoflow-dev) — highest fidelity, best for development; it rebuilds the DAG image on each change.
 
@@ -52,7 +52,7 @@ dexaflow lite [path] [flags]
 * [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow lite backup](/reference/cli/dexaflow_lite_backup/)	 - Snapshot the Lite install (workspace + datastore + config) into a portable archive.
 * [dexaflow lite forget](/reference/cli/dexaflow_lite_forget/)	 - Remove a DAG (and all its history) from the Lite registry without touching the source files.
-* [dexaflow lite provision](/reference/cli/dexaflow_lite_provision/)	 - Check and provision the local deps the from-source `leoflow lite` loop needs.
-* [dexaflow lite reset-password](/reference/cli/dexaflow_lite_reset-password/)	 - Reset the Leoflow Lite admin password.
-* [dexaflow lite restore](/reference/cli/dexaflow_lite_restore/)	 - Restore a Lite install from an archive produced by `leoflow lite backup`.
+* [dexaflow lite provision](/reference/cli/dexaflow_lite_provision/)	 - Check and provision the local deps the from-source `dexaflow lite` loop needs.
+* [dexaflow lite reset-password](/reference/cli/dexaflow_lite_reset-password/)	 - Reset the Dexaflow Lite admin password.
+* [dexaflow lite restore](/reference/cli/dexaflow_lite_restore/)	 - Restore a Lite install from an archive produced by `dexaflow lite backup`.
 

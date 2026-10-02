@@ -5,7 +5,7 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Upgrades
 weight: 40
-description: "Upgrade a Leoflow control plane safely, edition by edition."
+description: "Upgrade a Dexaflow control plane safely, edition by edition."
 ---
 
 This page is the canonical answer to "I'm on `v0.x.y` and want to install a
@@ -29,7 +29,7 @@ default**:
 |---|---|---|
 | **Workspace** | The path under `workspace:` in `~/.dexaflow/config.yaml` (default `~/leoflow`) | Your `dag.py`, `dexaflow.yaml`, and any other project files. The installer does not touch this directory. |
 | **Datastore** | `~/.dexaflow/managed-postgres/data/` (managed Postgres) **or** the `leoflow-data-*` Docker volume (Docker Postgres) | Includes DAG history, runs, task instances, XCom, Variables, Connections. The new binary applies any pending SQL migrations on first start. |
-| **Admin login** | `~/.dexaflow/config.yaml` (`admin_email`, `admin_password_hash`) | Your password is not regenerated. Use `leoflow lite reset-password` if you forgot it. |
+| **Admin login** | `~/.dexaflow/config.yaml` (`admin_email`, `admin_password_hash`) | Your password is not regenerated. Use `dexaflow lite reset-password` if you forgot it. |
 | **JWT signing secret** | `~/.dexaflow/config.yaml` (`jwt_secret`) | Browser sessions survive the upgrade (no forced re-login). |
 | **Parser + runtime venv** | `~/.dexaflow/venv/` | Project dependencies are reinstalled lazily as needed (the marker at `~/.dexaflow/venv/.leoflow-deps` triggers a refresh when the project's deps change). |
 
@@ -49,7 +49,7 @@ binary has already migrated, the older binary refuses to start with:
 ```
 database is at schema version 18 but this binary only knows up to 15;
 an older `leoflow` is being run against a newer database.
-Upgrade the binary, or run `leoflow uninstall --purge` to start over
+Upgrade the binary, or run `dexaflow uninstall --purge` to start over
 (this WIPES your data)
 ```
 
@@ -61,7 +61,7 @@ rows the older binary does not understand. Upgrade, or wipe — never both.
 If you want a clean slate without the prior history:
 
 ```sh
-leoflow uninstall --purge
+dexaflow uninstall --purge
 ```
 
 `--purge` removes the binaries, `~/.dexaflow/` (config + datastore + parser
@@ -75,7 +75,7 @@ Before installing a newer tag on a Lite install you depend on:
 
 1. **Back up first.** See [Backup and restore](/operate/backup-restore/):
    ```sh
-   leoflow lite backup --output ~/snap-before-upgrade.tar.gz
+   dexaflow lite backup --output ~/snap-before-upgrade.tar.gz
    ```
 2. Install the new version. The drift detector protects you from the worst
    downgrade case.
@@ -161,5 +161,5 @@ Two consequences for your own tooling:
 ## Related issues
 
 - #136 — this contract.
-- #137 — `leoflow lite backup` / `restore` commands.
+- #137 — `dexaflow lite backup` / `restore` commands.
 - #60 / #61 — embed migrations + single binary (Lite distribution shape).

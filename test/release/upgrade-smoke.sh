@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Upgrade-in-place smoke for the release gate (#150 / ADR 0033).
 #
-# Installs the PREVIOUS non-draft prerelease, runs `leoflow version` to prove
+# Installs the PREVIOUS non-draft prerelease, runs `dexaflow version` to prove
 # the old binary is healthy, then installs the CURRENT tag and asserts the new
 # version is in place + the binary still runs. Catches the class of bug where
 # install.sh handles a fresh box but breaks on top of an existing ~/.leoflow/
@@ -60,19 +60,19 @@ LEOFLOW_VERSION="${LEOFLOW_VERSION_FOR_INSTALL}" \
 # rc files but we cannot rely on those in a sh-only smoke runner.
 export PATH="${HOME}/.local/bin:${HOME}/.leoflow/bin:${PATH}"
 
-# `leoflow version` prints a free-form line like:
+# `dexaflow version` prints a free-form line like:
 #   leoflow v0.0.1-prealpha.23 (commit abc, built ..., go1.26.3)
 # Earlier pipelines using `--output json | grep | head` silently returned
 # empty because `head -1` exits 0 even on empty input, so the `||` fallback
 # never fired (gate falsely failed against valid binaries). Capture the
 # whole line and let the case-match below assert the tag.
-INSTALLED="$(command -v leoflow >/dev/null 2>&1 && leoflow version 2>&1 | head -1 || true)"
+INSTALLED="$(command -v leoflow >/dev/null 2>&1 && dexaflow version 2>&1 | head -1 || true)"
 if [ -z "${INSTALLED}" ]; then
   echo "==> debug: PATH=${PATH}; which leoflow=$(command -v leoflow || echo missing)" >&2
-  fail "leoflow version reported nothing after installing ${PREVIOUS}"
+  fail "dexaflow version reported nothing after installing ${PREVIOUS}"
 fi
 # `gh release list` returns tag names with a leading `v` (e.g. v0.0.1-prealpha.23),
-# but `leoflow version` prints the tag without the v (e.g. "leoflow 0.0.1-prealpha.23").
+# but `dexaflow version` prints the tag without the v (e.g. "leoflow 0.0.1-prealpha.23").
 # Strip the v so the substring match against the version line actually fires.
 PREVIOUS_NUM="${PREVIOUS#v}"
 case "${INSTALLED}" in
@@ -84,7 +84,7 @@ echo "==> installing current version (${LEOFLOW_VERSION}) ON TOP of ${PREVIOUS}"
 # Same env-propagation guard as the previous install (see above).
 sh -c "curl -fsSL \"${INSTALL_URL}\" | LEOFLOW_VERSION=\"${LEOFLOW_VERSION}\" sh"
 
-UPGRADED="$(command -v leoflow >/dev/null 2>&1 && leoflow version 2>&1 | head -1 || true)"
+UPGRADED="$(command -v leoflow >/dev/null 2>&1 && dexaflow version 2>&1 | head -1 || true)"
 LEOFLOW_VERSION_NUM="${LEOFLOW_VERSION#v}"
 case "${UPGRADED}" in
   *${LEOFLOW_VERSION_NUM}*) pass "upgrade landed (${UPGRADED})" ;;

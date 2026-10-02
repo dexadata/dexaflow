@@ -4,7 +4,7 @@
 
 {{ template "chart.description" . }}
 
-Deploys the Leoflow **control plane** (`leoflow-server`) into Kubernetes for a
+Deploys the Dexaflow **control plane** (`leoflow-server`) into Kubernetes for a
 production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
 {{ template "chart.homepageLine" . }}
@@ -186,9 +186,9 @@ is required.
 The pre-install/pre-upgrade Job runs `migrate -path <path> -database <url> up`
 using the default image **`ghcr.io/dexadata/dexaflow-migrate`** (built from
 `deploy/Dockerfile.migrate`, published by `.github/workflows/release.yaml` on
-every tag), which bundles the Leoflow `migrations/` at `migrations.path`. The
+every tag), which bundles the Dexaflow `migrations/` at `migrations.path`. The
 `migrate` binary in it is golang-migrate's own CLI, compiled from the version
-pinned in Leoflow's `go.mod` onto distroless static and running as UID 65532,
+pinned in Dexaflow's `go.mod` onto distroless static and running as UID 65532,
 rather than a third-party image pulled at build time (#1039).
 Override `migrations.image` to use your own, or set `migrations.enabled=false`
 to migrate out of band.
@@ -282,7 +282,7 @@ sufficient on its own:
 > pod-per-task path included, not just warm pools.
 
 The cluster-scoped objects are named `<fullname>-<namespace>-tokenreview` so two
-Leoflow releases in one cluster never collide on them.
+Dexaflow releases in one cluster never collide on them.
 
 ### `execution.warmPoolsEnabled`
 
@@ -424,7 +424,7 @@ boot and would otherwise leave an edited tenant map sitting on disk unread.
 For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
-path is to install Bitnami's Postgres + Redis charts alongside Leoflow:
+path is to install Bitnami's Postgres + Redis charts alongside Dexaflow:
 
 - Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md)
 - Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/poc.yaml)

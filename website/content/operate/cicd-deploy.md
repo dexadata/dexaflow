@@ -11,22 +11,22 @@ description: "Build, push and register DAGs from CI — GitHub Actions, GitLab C
 
 {{% alert title="New to Pro? Start with the walkthrough" color="success" %}}
 [**Your first Pro DAG (≈10 min)**](/operate/first-pro-dag/) takes one DAG from source
-to a running pod with **one command** (`leoflow deploy`), so you see each
+to a running pod with **one command** (`dexaflow deploy`), so you see each
 artifact boundary before you automate it. This page is the CI recipes for the
 same pipeline.
 {{% /alert %}}
 
-Deploying a Leoflow DAG is the same everywhere because a DAG is an **immutable
+Deploying a Dexaflow DAG is the same everywhere because a DAG is an **immutable
 artifact** — a `dag.json` + a container image, versioned together (ADR 0003).
 
 **By hand or for a team without a pipeline,** one command does it all:
 
 ```bash
-leoflow auth login --server "$DEXAFLOW_SERVER"   # once; stores the token
-leoflow deploy --yes                            # compile → build → push → register
+dexaflow auth login --server "$DEXAFLOW_SERVER"   # once; stores the token
+dexaflow deploy --yes                            # compile → build → push → register
 ```
 
-`leoflow deploy` is the [pipeline-less promotion](/project/adrs/0041-leoflow-deploy-pipelineless/)
+`dexaflow deploy` is the [pipeline-less promotion](/project/adrs/0041-leoflow-deploy-pipelineless/)
 — it cross-builds for the cluster, pins the image by digest, and registers the
 artifact. `--yes` skips the confirmation prompt (use it in automation).
 
@@ -35,25 +35,25 @@ gated, and audited independently:
 
 ```mermaid
 flowchart LR
-  E[edit dag.py + dexaflow.yaml] --> C[leoflow compile --build]
+  E[edit dag.py + dexaflow.yaml] --> C[dexaflow compile --build]
   C --> P[push image → registry]
-  P --> R[leoflow push dag.json → control plane]
+  P --> R[dexaflow push dag.json → control plane]
 ```
 
-1. **`leoflow compile --build`** — parse `dag.py`, overlay `dexaflow.yaml`, run the
+1. **`dexaflow compile --build`** — parse `dag.py`, overlay `dexaflow.yaml`, run the
    **guardrails** (unknown `task_id`, unsupported operator, duplicate keys), and
    build the DAG image.
 2. **push the image** to your registry, tagged by git SHA (immutable).
-3. **`leoflow push dag.json`** — register the artifact with the control plane.
+3. **`dexaflow push dag.json`** — register the artifact with the control plane.
 
 {{% alert title="`deploy` vs. the three explicit steps" color="info" %}}
-They do the same thing. A pipeline can run the one-liner (`leoflow deploy
+They do the same thing. A pipeline can run the one-liner (`dexaflow deploy
 --yes`) just as well; the explicit steps are shown because most CI systems want
 the build and the register as separate, individually-cacheable stages.
 {{% /alert %}}
 
 {{% alert title="The guardrails are your CI gate" color="success" %}}
-The same checks that warn you locally in `leoflow lite` fail the CI build, so a
+The same checks that warn you locally in `dexaflow lite` fail the CI build, so a
 bad `dag_id`/`task_id` binding or an unsupported operator never reaches prod.
 {{% /alert %}}
 
@@ -67,7 +67,7 @@ the same steps into CI.
 Registry auth, RBAC scope, non-root images, private-registry pulls, and the
 `--dag-version`/`409` gotcha are exactly the errors CI hits first, since a
 runner has none of a laptop's ambient state (no `docker login`, no
-`leoflow auth login` session, no git history for `--dag-version` to resolve
+`dexaflow auth login` session, no git history for `--dag-version` to resolve
 against). **[Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/)**
 has the exact error and fix for each.
 {{% /alert %}}
@@ -92,15 +92,15 @@ my-dags/                      # your Git repo
         └── dexaflow.yaml
 ```
 
-`leoflow compile --build` **synthesizes the image from `dexaflow.yaml`** — `FROM`
-the published Leoflow base, your deps/connectors installed, your DAG copied in.
+`dexaflow compile --build` **synthesizes the image from `dexaflow.yaml`** — `FROM`
+the published Dexaflow base, your deps/connectors installed, your DAG copied in.
 No Dockerfile to maintain. (Ship your own `Dockerfile` only if you want full
 control; it is then used verbatim. Our [examples](/author-dags/examples/) ship one so you can
 `docker build` and inspect them by hand.)
 
 The built image is **your** artifact — push it wherever you like (Docker Hub, ECR,
 Artifact Registry, ACR, GHCR, a private registry), via the `registry:` block in
-`dexaflow.yaml` or `--image`. The only image Leoflow owns is the base your DAG
+`dexaflow.yaml` or `--image`. The only image Dexaflow owns is the base your DAG
 layers on.
 
 **The mental model:** a push that touches `dags/my_pipeline/**` triggers CI for
@@ -109,12 +109,12 @@ pushes the image to your registry → registers `dag.json`. The control plane ru
 the new version on the next trigger. One DAG per pipeline keeps blast radius
 small: a broken `another_pipeline` never blocks `my_pipeline`.
 
-{{% alert title="Building several DAGs at once: `leoflow build`" color="info" %}}
+{{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The per-DAG pipeline above stays the recommendation, and the `paths:` filter is
 the point of it — one DAG per pipeline is what keeps a broken DAG from blocking
 its neighbours.
 
-`leoflow build [workspace]` is for the times you are **not** in that pipeline:
+`dexaflow build [workspace]` is for the times you are **not** in that pipeline:
 after a base-image bump that every DAG must pick up, when you clone the repo onto
 a new machine, or when you want to see all the images a change produces before
 pushing anything. It walks the workspace and builds each project with the image
@@ -122,8 +122,8 @@ that project's own `registry:` block derives — the same derivation `deploy` us
 so nothing about naming is new:
 
 ```bash
-leoflow build my-dags/           # build every project under my-dags/
-leoflow build my-dags/ --push    # ...and push each to its registry
+dexaflow build my-dags/           # build every project under my-dags/
+dexaflow build my-dags/ --push    # ...and push each to its registry
 ```
 
 Two behaviours matter more than the loop itself:
@@ -153,7 +153,7 @@ older `dag.json`.
 
 ## Prerequisites
 - The `leoflow` CLI on the runner (download the release binary, or `go install`).
-- **Python 3.11+ on the runner** (`leoflow compile` invokes the stdlib-only
+- **Python 3.11+ on the runner** (`dexaflow compile` invokes the stdlib-only
   parser shim — [ADR 0024](/project/adrs/0024-dag-parsing-structural-shim/) — to turn `dag.py`
   into `dag.json`). See [Python on the runner](#python-on-the-runner) below.
 - A container registry your cluster can pull from.
@@ -161,8 +161,8 @@ older `dag.json`.
 
 ## Python on the runner
 
-The `leoflow compile` step needs Python 3.11, 3.12, or 3.13 to parse `dag.py`.
-**Bring your own Python** on the runner — do not rely on `leoflow setup` to
+The `dexaflow compile` step needs Python 3.11, 3.12, or 3.13 to parse `dag.py`.
+**Bring your own Python** on the runner — do not rely on `dexaflow setup` to
 download a managed CPython in CI (that path is designed for first-touch on a
 developer laptop, not for build pipelines, where it adds ~50 MB to every run
 and bypasses your runner's pin/caching).
@@ -177,22 +177,22 @@ The recommended path on each runner type:
 | **Self-hosted runners** | Pin Python via your image baseline (`apt install python3.12` or `pyenv`) and version-lock in your runner provisioning. |
 | **Generic Docker-in-Docker** | Base your build container on `python:3.12-slim` (gives you Python + a Debian userland for the `docker build` shell). |
 
-Older Python (≤3.10) fails the compile cleanly — `leoflow compile` errors out
+Older Python (≤3.10) fails the compile cleanly — `dexaflow compile` errors out
 with the version requirement, not a confusing traceback. Newer Python (3.14+)
 is accepted by the upper end of the detection range; the range is bumped per
 release once the parser shim is re-verified against it.
 
-### One more step: `leoflow setup` extracts the parser
+### One more step: `dexaflow setup` extracts the parser
 
 After the `leoflow` binary lands on the runner and Python is in scope, run
-`leoflow setup` ONCE per runner. The CLI ships the parser source embedded;
+`dexaflow setup` ONCE per runner. The CLI ships the parser source embedded;
 `setup` extracts it under `~/.dexaflow/pysrc/parser/` and writes a config
 file pointing the `compile` command at the chosen interpreter. Without this
 step `leoflow compile` fails with `No module named leoflow_parser` (the
 runner's Python has no idea where the parser lives).
 
-The snippets below all show `leoflow setup` as the step after the install,
-before `leoflow compile`. The follow-up to make this implicit (auto-bootstrap
+The snippets below all show `dexaflow setup` as the step after the install,
+before `dexaflow compile`. The follow-up to make this implicit (auto-bootstrap
 on first compile, or embed the parser execution inside the Go binary) is
 tracked separately; for now, calling it explicitly is the
 recommended path because it's the operation that decides whether managed
@@ -205,7 +205,7 @@ Cache the directory keyed by the leoflow binary version (or the leoflow
 release URL) to skip it on warm runs:
 `actions/cache` on GitHub Actions, `cache:` keys on GitLab CI, the
 workspace cache on Cloud Build. With Python on PATH, the cache hit makes
-`leoflow setup` a near-no-op. Skip the cache if your runner image
+`dexaflow setup` a near-no-op. Skip the cache if your runner image
 already bakes `~/.dexaflow/pysrc/` in (some self-hosted setups do).
 {{% /alert %}}
 
@@ -236,21 +236,21 @@ jobs:
       - name: Install leoflow
         run: curl -fsSL https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 -o /usr/local/bin/leoflow && chmod +x /usr/local/bin/leoflow
       - name: Bootstrap the parser (uses the BYO Python from above)
-        run: leoflow setup
+        run: dexaflow setup
       - name: Compile + build + push image
         run: |
           IMAGE=ghcr.io/${{ github.repository }}/my_pipeline:${{ github.sha }}
-          leoflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
+          dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
       - name: Register with the control plane
         env: { DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }} }
-        run: leoflow push dag.json --server ${{ secrets.DEXAFLOW_SERVER }}
+        run: dexaflow push dag.json --server ${{ secrets.DEXAFLOW_SERVER }}
 ```
 {{% /tab %}}
 {{% tab header="GitLab CI" %}}
 
 ```yaml title=".gitlab-ci.yml"
 deploy_dag:
-  # Default docker:27 is Alpine-based; install python3 before leoflow compile.
+  # Default docker:27 is Alpine-based; install python3 before dexaflow compile.
   # Alternative: a custom base image that bakes Python+Docker together.
   # See #python-on-the-runner for the rationale.
   image: docker:27
@@ -265,9 +265,9 @@ deploy_dag:
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - wget -qO /usr/local/bin/leoflow https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 && chmod +x /usr/local/bin/leoflow
-    - leoflow setup        # extracts the parser into ~/.dexaflow/ using the python3 from before_script
-    - leoflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
-    - leoflow push dag.json --server "$DEXAFLOW_SERVER"   # DEXAFLOW_TOKEN from CI vars
+    - dexaflow setup        # extracts the parser into ~/.dexaflow/ using the python3 from before_script
+    - dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
+    - dexaflow push dag.json --server "$DEXAFLOW_SERVER"   # DEXAFLOW_TOKEN from CI vars
 ```
 {{% /tab %}}
 {{% tab header="Google Cloud Build + Cloud Run" %}}
@@ -286,10 +286,10 @@ steps:
         # See #python-on-the-runner for the rationale.
         apt-get update -qq && apt-get install -y --no-install-recommends python3
         curl -fsSL https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 -o /usr/bin/leoflow && chmod +x /usr/bin/leoflow
-        leoflow setup    # extracts the parser into ~/.dexaflow/ using the python3 just installed
+        dexaflow setup    # extracts the parser into ~/.dexaflow/ using the python3 just installed
         IMAGE="$_REGION-docker.pkg.dev/$PROJECT_ID/dags/my_pipeline:$SHORT_SHA"
-        leoflow compile dags/my_pipeline --image "$$IMAGE" --build --push -o dag.json
-        leoflow push dag.json --server "$_DEXAFLOW_SERVER"
+        dexaflow compile dags/my_pipeline --image "$$IMAGE" --build --push -o dag.json
+        dexaflow push dag.json --server "$_DEXAFLOW_SERVER"
 substitutions:
   _REGION: us-central1
   _DEXAFLOW_SERVER: https://leoflow.run.app
@@ -302,7 +302,7 @@ options: { logging: CLOUD_LOGGING_ONLY }
 
 When the local Docker daemon can't reach Google's IPs — e.g. in Cloud
 Shell — don't build locally at all. The `cloudbuild.yaml` above runs
-`leoflow compile --build --push` **inside Cloud Build** (Google's network,
+`dexaflow compile --build --push` **inside Cloud Build** (Google's network,
 not your machine): serverless, still yaml-driven, no Dockerfile, no local
 egress. Trigger it from Cloud Shell with:
 
@@ -323,10 +323,10 @@ Any runner with Docker, **Python 3.11+**, and the `leoflow` CLI
 (see [Python on the runner](#python-on-the-runner)):
 
 ```bash
-leoflow setup    # one-shot per runner: extracts the parser into ~/.dexaflow/
+dexaflow setup    # one-shot per runner: extracts the parser into ~/.dexaflow/
 IMAGE="$REGISTRY/my_pipeline:$(git rev-parse --short HEAD)"
-leoflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
-leoflow push dag.json --server "$DEXAFLOW_SERVER" --token "$DEXAFLOW_TOKEN"
+dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
+dexaflow push dag.json --server "$DEXAFLOW_SERVER" --token "$DEXAFLOW_TOKEN"
 ```
 {{% /tab %}}
 {{< /tabpane >}}

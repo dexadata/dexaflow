@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Leoflow Public API
+  title: Dexaflow Public API
   description: |
     Airflow-3.2.x-compatible subset of the public API.
-    This is the surface consumed by the Airflow UI when configured to talk to a Leoflow Control Plane.
+    This is the surface consumed by the Airflow UI when configured to talk to a Dexaflow Control Plane.
   version: "1.0.0"
   license:
     name: Apache 2.0
@@ -776,7 +776,7 @@ components:
       type: object
       required: [id, email, roles, is_active, created_at]
       description: >-
-        One account in the user list. Leoflow accounts are email-keyed and carry
+        One account in the user list. Dexaflow accounts are email-keyed and carry
         a set of RBAC roles, so this diverges from the Airflow FAB users API
         (username-keyed with first_name/last_name).
       properties:
@@ -1039,7 +1039,7 @@ components:
           type: string
           nullable: true
           description: >-
-            Leoflow extension (not part of the Airflow API). A short,
+            Dexaflow extension (not part of the Airflow API). A short,
             human-readable cause for a terminal failure, recorded by whichever
             component observed it: the task's own report, the reconciler reading
             the pod (image pull, OOM, exit code), a reaper declaring the pod or

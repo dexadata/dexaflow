@@ -6,14 +6,14 @@ aliases:
 title: Reference
 linkTitle: Reference
 weight: 60
-description: References for every Leoflow surface — the HTTP API, CLI, Go packages, Python runtime, configuration, and MCP server.
+description: References for every Dexaflow surface — the HTTP API, CLI, Go packages, Python runtime, configuration, and MCP server.
 cascade: { type: docs }
 menu:
   main:
     weight: 60
 ---
 
-References for every Leoflow surface. The HTTP API, CLI, Go, and Python references
+References for every Dexaflow surface. The HTTP API, CLI, Go, and Python references
 are **generated from source on every push**, so they never drift from the code. The
 [Configuration](/reference/configuration/) page is hand-maintained against
 `internal/config` — treat the server source as the final authority.
@@ -52,7 +52,7 @@ are **generated from source on every push**, so they never drift from the code. 
   <a class="lf-card" href="/mcp/">
     <span class="lf-card__icon"><i class="fa-solid fa-robot"></i></span>
     <span class="lf-card__title">MCP server</span>
-    <span class="lf-card__desc">The Model Context Protocol server — read-only Tools and Resources that expose Leoflow to AI agents.</span>
+    <span class="lf-card__desc">The Model Context Protocol server — read-only Tools and Resources that expose Dexaflow to AI agents.</span>
     <span class="lf-card__more">MCP server →</span>
   </a>
 </div>

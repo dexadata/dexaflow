@@ -1,4 +1,4 @@
-# Releasing Leoflow
+# Releasing Dexaflow
 
 Cutting a release is one command: `scripts/cut-release.sh <version>`. The script
 owns the mechanical flow so it is not re-derived (and re-broken) by hand each time

@@ -1,9 +1,9 @@
 # leoflow-parser
 
-The Leoflow DAG parser compiles an Airflow DAG (Python source) into the
-canonical Leoflow `dag.json`, without executing user task code.
+The Dexaflow DAG parser compiles an Airflow DAG (Python source) into the
+canonical Dexaflow `dag.json`, without executing user task code.
 
-It is invoked by `leoflow compile` as a subprocess:
+It is invoked by `dexaflow compile` as a subprocess:
 
 ```bash
 python -m leoflow_parser compile \

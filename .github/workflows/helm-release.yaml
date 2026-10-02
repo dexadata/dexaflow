@@ -1,6 +1,6 @@
 name: Helm chart release
 
-# Publish the Leoflow Helm chart as an OCI artifact on every release tag AND
+# Publish the Dexaflow Helm chart as an OCI artifact on every release tag AND
 # every release-candidate tag. ADR 0028: the chart ships as an OCI artifact in
 # the same registry as the images (`oci://ghcr.io/dexadata/charts/leoflow`),
 # co-versioned with the release tag (chart `version` + `appVersion` move in

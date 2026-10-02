@@ -60,7 +60,7 @@ ui_smoke() {
   # a no-op python3.11 so `setup` skips the CPython download (the parser is unused here)
   mkdir -p "$home_dir/bin"; printf '#!/bin/sh\n' > "$home_dir/bin/python3.11"; chmod +x "$home_dir/bin/python3.11"
   LEOFLOW_DATABASE_URL="$db" PATH="$home_dir/bin:$PATH" ./bin/leoflow db reset --yes >/dev/null 2>&1
-  setup_out="$(HOME="$home_dir" PATH="$home_dir/bin:$PATH" ./bin/leoflow setup --workspace "$home_dir/ws" </dev/null 2>&1)"
+  setup_out="$(HOME="$home_dir" PATH="$home_dir/bin:$PATH" ./bin/dexaflow setup --workspace "$home_dir/ws" </dev/null 2>&1)"
   pw="$(printf '%s\n' "$setup_out" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
   hash="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$home_dir/.dexaflow/config.yaml" 2>/dev/null)"
   if [ -z "$pw" ] || [ -z "$hash" ]; then echo "ui-smoke: setup did not yield admin creds"; rm -rf "$home_dir"; return 1; fi
@@ -135,7 +135,7 @@ done
 
 printf '\n\033[1mStill required by hand (this script cannot do it):\033[0m\n'
 cat <<'MANUAL'
-  - Lite (all role): `leoflow lite` (or the server with no role) → open the UI,
+  - Lite (all role): `dexaflow lite` (or the server with no role) → open the UI,
     trigger a DAG, confirm it runs and the dashboard/logs render.
   - Pro (split): `helm install ... --set split.enabled=true
     --set logs.persistence.accessMode=ReadWriteMany` on a real cluster → confirm

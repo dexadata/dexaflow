@@ -11,7 +11,7 @@ Snapshot the Lite install (workspace + datastore + config) into a portable archi
 
 ### Synopsis
 
-backup writes a tar.gz containing your workspace DAGs, a logical pg_dump of the managed Postgres, the config (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small MANIFEST.json. Pair with `leoflow lite restore` to migrate to another machine, survive an OS reinstall, or roll back a botched pre-alpha upgrade.
+backup writes a tar.gz containing your workspace DAGs, a logical pg_dump of the managed Postgres, the config (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small MANIFEST.json. Pair with `dexaflow lite restore` to migrate to another machine, survive an OS reinstall, or roll back a botched pre-alpha upgrade.
 
 Backup only covers the managed Postgres path (the default Lite shape). For the Docker datastore path, capture the volume with `docker volume export` instead.
 
@@ -36,5 +36,5 @@ dexaflow lite backup [flags]
 
 ### SEE ALSO
 
-* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Leoflow Lite locally with hot reload.
+* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Dexaflow Lite locally with hot reload.
 

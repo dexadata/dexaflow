@@ -128,7 +128,7 @@ if [ -z "$body" ]; then
 fi
 
 cat <<HEADER
-## Leoflow ${tag}
+## Dexaflow ${tag}
 
 A \`0.x\` (pre-1.0) build — SemVer carries the maturity, there is no separate
 alpha/beta, and the pre-alpha series ended at \`v0.0.1\` (ADR 0037). APIs and

@@ -7,7 +7,7 @@ linkTitle: "lite provision"
 weight: 40
 ---
 
-Check and provision the local deps the from-source `leoflow lite` loop needs.
+Check and provision the local deps the from-source `dexaflow lite` loop needs.
 
 ### Synopsis
 
@@ -34,5 +34,5 @@ dexaflow lite provision [flags]
 
 ### SEE ALSO
 
-* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Leoflow Lite locally with hot reload.
+* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Dexaflow Lite locally with hot reload.
 

@@ -81,7 +81,7 @@ Rendered only on the exchange transport, deliberately. `create` on tokenreviews
 is an authentication oracle — the holder can ask the apiserver to validate any
 token it gets hold of and learn the identity behind it — and an install on the
 default env-var transport never issues the call. Granting it unconditionally
-would hand every Leoflow install a cluster-scoped permission that the vast
+would hand every Dexaflow install a cluster-scoped permission that the vast
 majority never use, which is the kind of standing over-grant a cluster admin has
 to justify at review time. Gating it on the value that makes the call means the
 permission and its only consumer are turned on by the same flip, in the same

@@ -1,6 +1,6 @@
 # gcp_bigquery_query — a single BigQuery operator
 
-The minimal "hello, BigQuery operator" for Leoflow's generic operator path (ADR 0040):
+The minimal "hello, BigQuery operator" for Dexaflow's generic operator path (ADR 0040):
 one `BigQueryInsertJobOperator` running a **metadata** query (`INFORMATION_SCHEMA` —
 lists the project's datasets), so it touches no real data table.
 
@@ -21,7 +21,7 @@ runs, at no cost**. Keep both guardrails when you adapt it.
 
 ```bash
 # Lite (local): host ADC via `gcloud auth application-default login`
-leoflow lite --executor=subprocess examples/gcp/bigquery_query
+dexaflow lite --executor=subprocess examples/gcp/bigquery_query
 ```
 
 For multi-step BigQuery (dataset + chained queries + cleanup), see

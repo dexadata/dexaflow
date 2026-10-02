@@ -10,7 +10,7 @@ description: GCP SSH connection
 ---
 
 Run commands on a Google Compute Engine VM over SSH from a task, via a managed
-Leoflow Connection. The host, port, and credentials are encrypted at rest and
+Dexaflow Connection. The host, port, and credentials are encrypted at rest and
 delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 
 ## Declare the provider

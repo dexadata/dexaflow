@@ -7,7 +7,7 @@ linkTitle: "setup"
 weight: 50
 ---
 
-Bootstrap the managed Leoflow runtime (Python, parser, workspace).
+Bootstrap the managed Dexaflow runtime (Python, parser, workspace).
 
 ### Synopsis
 

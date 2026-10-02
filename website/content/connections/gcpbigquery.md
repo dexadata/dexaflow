@@ -9,7 +9,7 @@ weight: 150
 description: Google BigQuery connection
 ---
 
-Run queries and load jobs against Google BigQuery from a managed Leoflow
+Run queries and load jobs against Google BigQuery from a managed Dexaflow
 Connection. BigQuery carries no host and no password — the project and dataset
 location live in **Extra**, and auth is keyless (Workload Identity / ADC).
 

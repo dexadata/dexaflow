@@ -1,6 +1,6 @@
 # The test suites, and when each one runs
 
-Leoflow has several test trees and they answer different questions. This page
+Dexaflow has several test trees and they answer different questions. This page
 says which is which, what each one proves, and when CI runs it, so a
 contributor can tell whether the suite that stayed silent was meant to speak.
 

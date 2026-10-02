@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Genuine binary-only install of Leoflow (#587): a built binary run from OUTSIDE
+# Genuine binary-only install of Dexaflow (#587): a built binary run from OUTSIDE
 # the repo, with a clean HOME and NO PYTHONPATH — the real "download the release
 # and run it" UX. Every other e2e job presets `PYTHONPATH: parser` (repo path),
 # which masks the exact parser-resolution path this exercises.
 #
 # Asserts:
-#   1. `leoflow compile` resolves the embedded parser with no PYTHONPATH and no
+#   1. `dexaflow compile` resolves the embedded parser with no PYTHONPATH and no
 #      repo on any path (the primary symptom: `No module named leoflow_parser`).
 #   2. the binary self-extracts BOTH the parser AND the runtime sources the Lite
 #      per-DAG venv is built from — the venv-before-extract ordering precondition
@@ -35,10 +35,10 @@ unset PYTHONPATH
 export HOME="$HOME_DIR"
 cd "$WORK"
 
-echo "==> leoflow init + compile (no PYTHONPATH, outside the repo)"
-"$BINDIR/leoflow" init proj >/dev/null || fail "leoflow init failed"
+echo "==> dexaflow init + compile (no PYTHONPATH, outside the repo)"
+"$BINDIR/leoflow" init proj >/dev/null || fail "dexaflow init failed"
 "$BINDIR/leoflow" compile proj --output proj/dag.json --image test:v1 \
-  >compile.log 2>&1 || fail "leoflow compile failed:\n$(cat compile.log)"
+  >compile.log 2>&1 || fail "dexaflow compile failed:\n$(cat compile.log)"
 grep -q '"dag_id"' proj/dag.json \
   || fail "compile produced no valid dag.json:\n$(cat compile.log)"
 pass "compile resolved the embedded parser without PYTHONPATH"

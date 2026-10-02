@@ -16,7 +16,7 @@ FAKE_PRIVATE_KEY = "test-private-key-material-xxxx-not-a-real-key"
 
 
 def _conn_uri(scheme, login="", password="", host="", port=None, schema="", extra=None):
-    """Build an Airflow connection URI the way Leoflow delivers it (conn_type with
+    """Build an Airflow connection URI the way Dexaflow delivers it (conn_type with
     _->-, extra as a single __extra__ JSON query param)."""
     netloc = ""
     if login or password:

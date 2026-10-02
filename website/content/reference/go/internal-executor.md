@@ -308,7 +308,7 @@ const (
     // the cluster has headroom again. The scheduler backs the task off and
     // re-offers it indefinitely, never counting it against the dispatch-attempt
     // budget and never driving the task to dispatch_failed: the cluster asking
-    // Leoflow to slow down is not the user's task failing.
+    // Dexaflow to slow down is not the user's task failing.
     Backpressure
     // Rejected is a permanent dispatch failure that will not clear on its own: an
     // invalid image, an RBAC denial, an admission-webhook rejection, a bad spec,
@@ -810,7 +810,7 @@ PodSecurity holds the task\-pod hardening knobs whose defaults are behavioral ra
 type PodSecurity struct {
     // RunAsNonRoot refuses to start a task container whose image resolves to
     // UID 0. It completes the `restricted` set and is on by default: the images
-    // Leoflow ships now satisfy it. runtime/Dockerfile runs as the numeric
+    // Dexaflow ships now satisfy it. runtime/Dockerfile runs as the numeric
     // non-root UID 65532 (`USER 65532:65532` — a name the kubelet cannot resolve
     // is what previously blocked this), and every examples/*/image inherits it.
     // When set, BuildPod also stamps a pod-level fsGroup (nonRootFSGroup) so the
@@ -1145,7 +1145,7 @@ type Request struct {
     // TaskSecretName, when set, is a Kubernetes Secret mounted read-only into the
     // task pod at TaskSecretMountPath. It carries a credential a task references by
     // path (e.g. a GCP service-account key via the connection's key_path), keeping
-    // the key in the cluster's secret store rather than in Leoflow (ADR 0035).
+    // the key in the cluster's secret store rather than in Dexaflow (ADR 0035).
     TaskSecretName      string
     TaskSecretMountPath string
 
@@ -1423,7 +1423,7 @@ type WarmPodSpec struct {
     AnchorUID  types.UID
 
     // Labels / Annotations are operator-declared metadata overlaid onto the pod;
-    // Leoflow's own warm-worker labels always win a collision (see mergeMetadata).
+    // Dexaflow's own warm-worker labels always win a collision (see mergeMetadata).
     Labels      map[string]string
     Annotations map[string]string
 }

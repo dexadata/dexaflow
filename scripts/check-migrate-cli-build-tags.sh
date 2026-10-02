@@ -243,9 +243,9 @@ fi
 
 # 3b. Consistency is not correctness. Dropping `postgres` from BOTH ends
 #     satisfies the comparison above and produces a binary with no driver for
-#     the only database Leoflow supports — `unknown driver postgres (forgotten
+#     the only database Dexaflow supports — `unknown driver postgres (forgotten
 #     import?)` at Job runtime. helm-ci's kind install would catch it, several
-#     minutes and one cluster later; this catches it in seconds. Leoflow is
+#     minutes and one cluster later; this catches it in seconds. Dexaflow is
 #     Postgres-only, so this is a fact about the product, not a preference.
 case ",$df_tags," in
 *,postgres,*) ;;

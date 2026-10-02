@@ -2,4 +2,4 @@ from airflow._core import BaseOperator
 
 
 class PythonOperator(BaseOperator):
-    """Name carries 'Python' -> Leoflow 'python'."""
+    """Name carries 'Python' -> Dexaflow 'python'."""

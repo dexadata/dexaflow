@@ -8,7 +8,7 @@ weight: 30
 description: Install the leoflow CLI and provision the managed Python runtime.
 ---
 
-Leoflow ships in **two editions** — pick the install path that matches the one
+Dexaflow ships in **two editions** — pick the install path that matches the one
 you want:
 
 | Edition | Where it runs | Who it's for | Install path |
@@ -25,7 +25,7 @@ expectations; Lite bundles everything in one host process.
 
 ## Install Lite
 
-One command installs Leoflow Lite and bootstraps everything it needs — **no
+One command installs Dexaflow Lite and bootstraps everything it needs — **no
 sudo, no system Python, no package manager**:
 
 ```bash
@@ -34,12 +34,12 @@ curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | 
 
 That script downloads the release archive for your OS/architecture, verifies
 its SHA-256 against the signed checksums, installs the binaries to
-`~/.dexaflow/bin`, and then runs [`leoflow setup`](#what-leoflow-setup-does).
+`~/.dexaflow/bin`, and then runs [`dexaflow setup`](#what-leoflow-setup-does).
 
 ### What you need
 
 Almost nothing. The control plane, CLI, and agent are **static Go binaries**,
-and `leoflow setup` provisions a Python 3.11 itself if you don't have one.
+and `dexaflow setup` provisions a Python 3.11 itself if you don't have one.
 
 There are **two execution paths** — and **no Docker executor**, on purpose
 ([ADR 0015](/project/adrs/0015-kubernetes-only-execution/)):
@@ -53,12 +53,12 @@ gate. So:
 | **kubernetes** | + Docker (to host a local **k3d** cluster; k3d/kubectl fetched on demand) | real pods | production parity, the staging volume, resource limits |
 
 Docker, when present, is only the engine that **hosts the local k3d cluster** —
-it is never an executor itself. `leoflow setup` **detects what's present and
+it is never an executor itself. `dexaflow setup` **detects what's present and
 picks the highest path available**; without Docker it uses subprocess. Run
-[`leoflow doctor`](#leoflow-doctor) anytime to see where you stand, and see
+[`dexaflow doctor`](#leoflow-doctor) anytime to see where you stand, and see
 [Choosing an executor](/contribute/local-dev-loop/#choosing-an-executor) for the trade-offs.
 
-### What `leoflow setup` does
+### What `dexaflow setup` does
 
 `setup` is idempotent — re-running is safe. It:
 
@@ -78,7 +78,7 @@ picks the highest path available**; without Docker it uses subprocess. Run
    and UI port. Run non-interactively (e.g. `curl | sh`) it uses sensible defaults.
 5. **Creates the Lite admin** (`admin@leoflow.local`) with a generated,
    human-friendly password, **shown once** at the end (only its hash is stored).
-   Recover it with `leoflow lite reset-password`.
+   Recover it with `dexaflow lite reset-password`.
 
 {{% alert title="Lite is for trusted networks" color="warning" %}}
 The admin password is short by design and there is no SSO/RBAC — run Lite
@@ -86,24 +86,24 @@ on **localhost, an internal network, or a VPN**, never exposed publicly.
 Production-grade deploys are Pro's job. See [Editions](/concepts/editions/).
 {{% /alert %}}
 
-Everything Leoflow manages lives under `~/.dexaflow`; your DAG source lives in
+Everything Dexaflow manages lives under `~/.dexaflow`; your DAG source lives in
 the workspace — the two are kept separate.
 
 ```bash
-leoflow setup                      # interactive on a terminal; defaults otherwise (safe to re-run)
-leoflow setup --dry-run            # show the plan, change nothing
-leoflow setup --workspace ~/work   # choose where your DAG projects live
+dexaflow setup                      # interactive on a terminal; defaults otherwise (safe to re-run)
+dexaflow setup --dry-run            # show the plan, change nothing
+dexaflow setup --workspace ~/work   # choose where your DAG projects live
 ```
 
 {{% alert title="There is no scanned `dags/` folder" color="info" %}}
-Unlike Airflow, Leoflow has no monolithic DAGs directory. Each DAG is its
-own project (`dag.py` + `dexaflow.yaml`); you point `leoflow lite <path>` at
+Unlike Airflow, Dexaflow has no monolithic DAGs directory. Each DAG is its
+own project (`dag.py` + `dexaflow.yaml`); you point `dexaflow lite <path>` at
 it. The workspace is just a convenient home for those projects.
 {{% /alert %}}
 
 ### Platforms
 
-Leoflow ships **Linux and macOS** binaries for **amd64 and arm64**. Because
+Dexaflow ships **Linux and macOS** binaries for **amd64 and arm64**. Because
 the install never touches your system package manager, the Linux
 **distribution does not matter** — only the C library and CPU architecture do:
 
@@ -111,9 +111,9 @@ the install never touches your system package manager, the Linux
   and **musl** (Alpine) are both supported; `setup` detects musl and fetches
   the matching CPython build.
 - **Windows:** use **WSL2** (it's a glibc Linux). Keep your project in the WSL
-  **native filesystem** (`~/...`), not under `/mnt/c` — `leoflow lite`'s
+  **native filesystem** (`~/...`), not under `/mnt/c` — `dexaflow lite`'s
   hot-reload uses inotify, which is unreliable on the Windows 9p mount.
-  `leoflow doctor` warns when your project is under `/mnt`.
+  `dexaflow doctor` warns when your project is under `/mnt`.
 
 ### Verifying the download
 
@@ -130,13 +130,13 @@ cosign verify-blob \
   checksums.txt
 ```
 
-### `leoflow doctor`
+### `dexaflow doctor`
 
 A read-only diagnostic — it changes nothing:
 
 ```console
-$ leoflow doctor
-leoflow doctor
+$ dexaflow doctor
+dexaflow doctor
 
   platform      linux/amd64 (glibc)
   python 3.11   found (/usr/bin/python3.11)
@@ -148,7 +148,7 @@ leoflow doctor
     subprocess  always available (dev-only, no isolation)
     kubernetes  available (Docker present; k3d/kubectl fetched on demand)
 
-  next: run `leoflow setup` to bootstrap the managed runtime.
+  next: run `dexaflow setup` to bootstrap the managed runtime.
 ```
 
 ### Confirming the installed version
@@ -156,7 +156,7 @@ leoflow doctor
 Each binary reports its own build, so you can confirm what landed on `PATH`:
 
 ```console
-$ leoflow --version          # root CLI (leoflow version also prints commit + build date)
+$ leoflow --version          # root CLI (dexaflow version also prints commit + build date)
 $ leoflow-server --version   # control plane
 $ leoflow-agent --version    # in-pod agent
 $ leoflow-mcp --version      # MCP server (see the MCP guide)
@@ -167,7 +167,7 @@ $ leoflow-mcp --version      # MCP server (see the MCP guide)
 | Variable | Effect |
 |---|---|
 | `DEXAFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/leoflow/releases) for the current tag. |
-| `DEXAFLOW_NO_SETUP=1` | install binaries only; run `leoflow setup` yourself later |
+| `DEXAFLOW_NO_SETUP=1` | install binaries only; run `dexaflow setup` yourself later |
 | `DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin` | where to put the binaries |
 
 ### Building Lite from source
@@ -179,10 +179,10 @@ go install github.com/dexadata/dexaflow/cmd/dexaflow@latest
 go install github.com/dexadata/dexaflow/cmd/dexaflow-server@latest
 go install github.com/dexadata/dexaflow/cmd/dexaflow-agent@latest
 # ensure $(go env GOPATH)/bin is on your PATH, then:
-leoflow setup
+dexaflow setup
 ```
 
-The subsequent `leoflow setup` provisions the same managed runtime the
+The subsequent `dexaflow setup` provisions the same managed runtime the
 install-script path uses (managed CPython under `~/.dexaflow/`).
 
 ### Uninstalling Lite
@@ -191,15 +191,15 @@ Use the built-in command — it removes the install directory and (with
 `--purge`) your workspace too:
 
 ```bash
-leoflow uninstall              # removes ~/.dexaflow (binaries, managed Python, parser, config)
-leoflow uninstall --purge      # also removes ~/leoflow (your DAGs!)
+dexaflow uninstall              # removes ~/.dexaflow (binaries, managed Python, parser, config)
+dexaflow uninstall --purge      # also removes ~/leoflow (your DAGs!)
 ```
 
 If the `leoflow` binary is gone or broken, fall back to the same paths by
 hand:
 
 ```bash
-rm -rf ~/.dexaflow              # what `leoflow uninstall` would have removed
+rm -rf ~/.dexaflow              # what `dexaflow uninstall` would have removed
 rm -rf ~/leoflow               # what `--purge` adds (your workspace)
 ```
 
@@ -207,7 +207,7 @@ rm -rf ~/leoflow               # what `--purge` adds (your workspace)
 
 ## Install Pro
 
-Pro installs the **control plane into Kubernetes** via the Leoflow Helm
+Pro installs the **control plane into Kubernetes** via the Dexaflow Helm
 chart. Task pods are scheduled into the cluster by the same control plane —
 no host-side process supervisor, no managed Python sidecar. DAGs ship as
 **container images** built in CI ([CI/CD & deploy examples](/operate/cicd-deploy/)).
@@ -380,7 +380,7 @@ starts. Two fixes:
 For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job. The supported PoC path is to install plain Postgres + Redis
-manifests alongside the chart, then point Leoflow at the in-cluster
+manifests alongside the chart, then point Dexaflow at the in-cluster
 Services. Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md).
 **Not for production.**
 {{% /alert %}}
@@ -548,7 +548,7 @@ data outlive the chart — drop them out of band when you're done.
 ## Next
 
 - [Quickstart](/get-started/quickstart/) — run your first DAG.
-- [The `leoflow lite` workflow](/contribute/local-dev-loop/) — the hot-reload inner loop
+- [The `dexaflow lite` workflow](/contribute/local-dev-loop/) — the hot-reload inner loop
   (Lite).
 - [Helm chart](/operate/helm-chart/) — full Pro values reference.
 - [CI/CD & deploy examples](/operate/cicd-deploy/) — packaging DAGs as images for Pro.

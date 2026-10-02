@@ -5,7 +5,7 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: MCP server
 weight: 80
-description: The Leoflow MCP server now has its own top-level section.
+description: The Dexaflow MCP server now has its own top-level section.
 ---
 
 The MCP server documentation has moved to its own top-level section — it is a

@@ -9,13 +9,13 @@ menu:
     weight: 80
 ---
 
-The record of how Leoflow got here and where it is going.
+The record of how Dexaflow got here and where it is going.
 
 <div class="lf-cards">
   <a class="lf-card" href="/project/adrs/">
     <span class="lf-card__icon"><i class="fa-solid fa-scroll"></i></span>
     <span class="lf-card__title">Architecture Decision Records</span>
-    <span class="lf-card__desc">The <em>why</em> behind Leoflow's design, ADR by ADR — immutable once accepted.</span>
+    <span class="lf-card__desc">The <em>why</em> behind Dexaflow's design, ADR by ADR — immutable once accepted.</span>
     <span class="lf-card__more">Read the ADRs →</span>
   </a>
   <a class="lf-card" href="/project/roadmap/">

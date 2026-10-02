@@ -22,7 +22,7 @@ make soak            # the default run
 make soak-selftest   # proves the assertions can fail: must exit exactly 1
 ```
 
-Everything runs locally: one Postgres container and one `leoflow lite` process.
+Everything runs locally: one Postgres container and one `dexaflow lite` process.
 No cluster, no cloud, no paid service. See [Cost budget](#cost-budget) for the
 numbers.
 
@@ -283,7 +283,7 @@ hand it a rendered Connection.
 | Task type | Where it runs in the battery | Why |
 |---|---|---|
 | `python` | every DAG; the bulk of `soak_ingest`, `soak_fanout`, `soak_flaky`, `soak_long` | the native baseline every other measurement is compared against |
-| `bash` | `soak_chain`, five `BashOperator` hops | Leoflow compiles `BashOperator` to its own native `bash` type and renders `{{ ds }}` with its own templater, not Airflow's. A different code path from `python`, and the one that would silently regress if the templater changed |
+| `bash` | `soak_chain`, five `BashOperator` hops | Dexaflow compiles `BashOperator` to its own native `bash` type and renders `{{ ds }}` with its own templater, not Airflow's. A different code path from `python`, and the one that would silently regress if the templater changed |
 | `airflow_operator` | `soak_operators`, four tasks | the non-native path, and the one with the most moving parts |
 | `dbt_group` | **not run.** See [What this does not cover](#8-what-this-deliberately-does-not-cover) | |
 
@@ -294,7 +294,7 @@ the machine:
 
 | Task | Class | Talks to | Why this one |
 |---|---|---|---|
-| `http_get` | `airflow.providers.http.operators.http.HttpOperator` | the soak's own fixture server on 127.0.0.1 | the simplest provider round trip, and the one whose Connection is resolved from Leoflow's encrypted store into `AIRFLOW_CONN_SOAK_HTTP` |
+| `http_get` | `airflow.providers.http.operators.http.HttpOperator` | the soak's own fixture server on 127.0.0.1 | the simplest provider round trip, and the one whose Connection is resolved from Dexaflow's encrypted store into `AIRFLOW_CONN_SOAK_HTTP` |
 | `sql_upsert` | `airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator` | the soak Postgres, `soak_warehouse` database | a real write through a provider hook, with `{{ run_id }}` rendered into the statement |
 | `sql_count` | same class | same | the read-back. A silently failing write cannot pass as a green run |
 | `wait_a_moment` | `airflow.providers.http.sensors.http.HttpSensor`, `mode="reschedule"` | the fixture's poke-counter endpoint | `up_for_reschedule` is a scheduler state with its own re-dispatch path; a battery that never enters it leaves that path uncovered for the whole run |
