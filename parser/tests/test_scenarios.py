@@ -118,12 +118,15 @@ def test_dag_id_selection_with_multiple_dags(monkeypatch, tmp_path):
     assert spec["dag_id"] == "second"
 
 
-def test_dbt_group_mixed_with_operators(monkeypatch, tmp_path):
+@pytest.mark.parametrize("package", ["dexaflow", "leoflow"])
+def test_dbt_group_mixed_with_operators(monkeypatch, tmp_path, package):
     # A dbt_group() placeholder coexists with real operators in one DAG (ADR 0043):
     # it registers like a task, participates in >> wiring, and compiles to a
     # `dbt_group` task the Go compiler later expands into one task per dbt node.
-    spec = _compile(monkeypatch, tmp_path, """
-        from leoflow import dbt_group
+    # The authoring package is `dexaflow`; DAGs written before the rename import
+    # it as `leoflow`, which must keep compiling identically.
+    spec = _compile(monkeypatch, tmp_path, f"""
+        from {package} import dbt_group
         from airflow.providers.standard.operators.python import PythonOperator
         from airflow.sdk import DAG
         def work(): ...

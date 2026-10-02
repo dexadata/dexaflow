@@ -1492,21 +1492,23 @@ jobs:
         run: |
           python -m pip install --quiet pytest ./runtime/python \
             "apache-airflow-task-sdk==${{ steps.sdk.outputs.version }}"
-      - name: Both imports must resolve, from the installed wheel
+      - name: The authoring imports must resolve, from the installed wheel
         run: |
           python - <<'PY'
-          import leoflow, airflow.sdk
-          print("leoflow:", leoflow.__file__)
-          assert "site-packages" in leoflow.__file__, \
-              f"leoflow resolved from the source tree, not the wheel: {leoflow.__file__}"
+          import dexaflow, leoflow, airflow.sdk
+          for mod in (dexaflow, leoflow):
+              print(mod.__name__ + ":", mod.__file__)
+              assert "site-packages" in mod.__file__, \
+                  f"{mod.__name__} resolved from the source tree, not the wheel: {mod.__file__}"
+          assert leoflow.dbt_group is dexaflow.dbt_group, "leoflow must re-export dexaflow"
           PY
-      - name: The installed wheel carries the two packages and nothing else
+      - name: The installed wheel carries the three packages and nothing else
         run: |
           python - <<'PY'
           import pathlib, sys, sysconfig
           site = pathlib.Path(sysconfig.get_paths()["purelib"])
           bad = []
-          for pkg in ("leoflow", "leoflow_runtime"):
+          for pkg in ("dexaflow", "leoflow", "leoflow_runtime"):
               d = site / pkg
               if not (d / "__init__.py").is_file():
                   sys.exit(f"{pkg} is not in the installed wheel — go:embed/hatchling dropped it")
@@ -1514,7 +1516,8 @@ jobs:
                       if f.is_file() and f.suffix != ".py" and "__pycache__" not in f.parts]
           if bad:
               sys.exit("the wheel carries non-source files: " + ", ".join(sorted(bad)))
-          print("wheel clean:", ", ".join(sorted(p.name for p in site.glob("leoflow*") if p.is_dir())))
+          names = ("dexaflow", "leoflow", "leoflow_runtime")
+          print("wheel clean:", ", ".join(n for n in names if (site / n).is_dir()))
           PY
       - name: Authoring contract
         run: python -m pytest runtime/python/tests/test_leoflow_authoring.py -q

@@ -33,7 +33,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 
-	leoflow "github.com/dexadata/dexaflow"
+	dexaflow "github.com/dexadata/dexaflow"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -501,7 +501,7 @@ func resolveComposeFile(flagValue string) (string, error) {
 	}
 	path := filepath.Join(dir, "docker-compose.yaml")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if wErr := os.WriteFile(path, leoflow.DevCompose(), 0o600); wErr != nil {
+		if wErr := os.WriteFile(path, dexaflow.DevCompose(), 0o600); wErr != nil {
 			return "", fmt.Errorf("writing managed compose %s: %w", path, wErr)
 		}
 	}

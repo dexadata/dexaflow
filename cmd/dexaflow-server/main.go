@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	leoflow "github.com/dexadata/dexaflow"
+	dexaflow "github.com/dexadata/dexaflow"
 	"github.com/dexadata/dexaflow/internal/agent"
 	"github.com/dexadata/dexaflow/internal/agentrpc"
 	"github.com/dexadata/dexaflow/internal/alerts"
@@ -1360,7 +1360,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		UI:              uiSrv,
 		Workspace:       editorFS,
 		MonacoDir:       cfg.UI.MonacoDir,
-		ExamplesFS:      leoflow.ExampleDAGs(),
+		ExamplesFS:      dexaflow.ExampleDAGs(),
 
 		// OIDC/SSO login flow (nil in JWT mode → routes not registered). The repo
 		// resolves/JIT-provisions identities and records auth-event audit.
