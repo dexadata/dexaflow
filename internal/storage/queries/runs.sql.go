@@ -1075,7 +1075,9 @@ FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
-ORDER BY ti.started_at NULLS LAST
+  AND ti.warm_worker_id IS NULL
+  AND ti.started_at <= now() - make_interval(secs => $1::float8)
+ORDER BY ti.started_at
 LIMIT 100
 `
 
@@ -1093,11 +1095,16 @@ type ListRunningTasksRow struct {
 // vanished before its first heartbeat is invisible to the agent-lost reaper
 // (its null-heartbeat zero-guard) and to the reconciler (which only sees pods
 // that still exist), so it would sit `running` until the 5-minute orphan reaper.
-// The reaper applies the grace period + a pod-liveness check per candidate in
-// Go, so the SQL stays simple. The LIMIT bounds a single tick's reap work even
-// after a large outage; the rest are picked up next tick.
-func (q *Queries) ListRunningTasks(ctx context.Context) ([]ListRunningTasksRow, error) {
-	rows, err := q.db.Query(ctx, listRunningTasks)
+// Warm-pool attempts (warm_worker_id set) are excluded: they run in a shared
+// warm pod with no per-task labels, so the reaper's presence check would always
+// read them as lost; the warm-worker-lost reaper owns them. The grace period is
+// applied here, before the LIMIT, so attempts still inside it never take the
+// slots of those past it; a NULL started_at is never listed (too poorly observed
+// to reap). The reaper re-checks grace and pod liveness per candidate in Go. The
+// LIMIT bounds a single tick's reap work even after a large outage; the rest
+// are picked up next tick.
+func (q *Queries) ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error) {
+	rows, err := q.db.Query(ctx, listRunningTasks, graceSeconds)
 	if err != nil {
 		return nil, err
 	}

@@ -1,12 +1,12 @@
-# CLAUDE.md — Leoflow Project Context
+# CLAUDE.md — Dexaflow Project Context
 
-This file provides essential context for AI coding agents working on the Leoflow codebase. Read this entirely before making any changes.
+This file provides essential context for AI coding agents working on the Dexaflow codebase. Read this entirely before making any changes.
 
-## What Leoflow Is
+## What Dexaflow Is
 
-Leoflow is a **GitOps-first, container-native workflow orchestrator** written in Go, designed to replace Apache Airflow's control plane while maintaining UI compatibility with Airflow 3.2.x.
+Dexaflow is a **GitOps-first, container-native workflow orchestrator** written in Go, designed to replace Apache Airflow's control plane while maintaining UI compatibility with Airflow 3.2.x.
 
-The core insight: the **pod-per-task** execution model is correct (Airflow proved this with KubernetesExecutor), but the **Python control plane** is what makes Airflow slow. Leoflow keeps the model, rewrites the control plane in Go, and eliminates dependency hell by making each DAG its own container image.
+The core insight: the **pod-per-task** execution model is correct (Airflow proved this with KubernetesExecutor), but the **Python control plane** is what makes Airflow slow. Dexaflow keeps the model, rewrites the control plane in Go, and eliminates dependency hell by making each DAG its own container image.
 
 ## Non-Negotiable Principles
 
@@ -36,8 +36,8 @@ The core insight: the **pod-per-task** execution model is correct (Airflow prove
 ```
 Dev / CI                Control Plane (Go)              Worker Pod
 ─────────               ──────────────────              ──────────
-dexaflow.yaml ─┐                                         ┌─ leoflow-agent (Go)
-dag.py        ├─► leoflow compile ─► dag.json ─► API ─► │   ↕ gRPC
+dexaflow.yaml ─┐                                         ┌─ dexaflow-agent (Go)
+dag.py        ├─► dexaflow compile ─► dag.json ─► API ─► │   ↕ gRPC
 Dockerfile    ┘                              │          └─ User Python code
                                              │
                                     ┌────────┴────────┐
@@ -79,7 +79,7 @@ Dockerfile    ┘                              │          └─ User Python c
 ## Repository Layout
 
 ```
-leoflow/
+dexaflow/
 ├── CLAUDE.md                  # This file
 ├── README.md
 ├── LICENSE                    # Apache 2.0
@@ -90,9 +90,9 @@ leoflow/
 │   ├── architecture.md
 │   └── api/                   # OpenAPI specs
 ├── cmd/
-│   ├── leoflow/               # Dev CLI binary
-│   ├── leoflow-server/        # Control plane binary
-│   └── leoflow-agent/         # Worker agent binary
+│   ├── dexaflow/              # Dev CLI binary
+│   ├── dexaflow-server/       # Control plane binary
+│   └── dexaflow-agent/        # Worker agent binary
 ├── internal/
 │   ├── api/                   # HTTP handlers (/api/v2/...)
 │   ├── auth/                  # JWT + RBAC
@@ -180,7 +180,7 @@ The MVP is broken into 6 phases. Always check which phase is active before start
 - **Phase 2:** Control Plane Core — API server, scheduler, auth
 - **Phase 3:** Executor + Agent — task execution end-to-end
 - **Phase 4:** XCom + Logs — data flow between tasks, log shipping
-- **Phase 5:** UI Integration — Airflow UI talking to Leoflow
+- **Phase 5:** UI Integration — Airflow UI talking to Dexaflow
 - **Phase 6:** Hardening — load tests, docs, Helm chart
 
 These phases were delivered through v0.1.0; they remain here as historical context

@@ -18,7 +18,7 @@ JOIN tenants t ON t.id = u.tenant_id
 WHERE t.name = $1 AND u.email = $2;
 
 -- name: GetUserByOIDCSubject :one
--- Resolve an OIDC identity to a Leoflow user by its immutable (provider,
+-- Resolve an OIDC identity to a Dexaflow user by its immutable (provider,
 -- subject) pair (the trusted link key). Returns the tenant name (not the uuid)
 -- so the reconstructed principal matches the login path's User.TenantID, plus
 -- the active flag the login gates on. Never selects password_hash.

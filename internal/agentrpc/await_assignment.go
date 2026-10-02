@@ -81,7 +81,7 @@ func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServ
 	// The registry key is the worker's AUTHENTICATED identity — its WorkerID (the
 	// token Subject), not the register payload — so a worker cannot claim an
 	// arbitrary identity through the message.
-	worker, err := s.registerFromStream(stream, id.WorkerID)
+	worker, err := s.registerFromStream(stream, id.WorkerID, id.DagVersionID)
 	if err != nil {
 		return err
 	}
@@ -125,9 +125,12 @@ func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServ
 
 // registerFromStream reads and validates the mandatory first WorkerMessage (a
 // WorkerRegister) and registers the worker under its authenticated identity. The
-// dag_version_id in the payload names the pool and must be non-empty; the
-// identity is NOT taken from the payload. The bearer token is never logged.
-func (s *Server) registerFromStream(stream agentv1.AgentService_AwaitAssignmentServer, identity string) (*registeredWorker, error) {
+// dag_version_id in the payload names the pool and must be non-empty and equal
+// to the pool the token was minted for (tokenPool): a worker credential is
+// issued for one tenant's DAG version, and registering anywhere else would hand
+// it another pool's assignments and their secrets. The identity is NOT taken
+// from the payload. The bearer token is never logged.
+func (s *Server) registerFromStream(stream agentv1.AgentService_AwaitAssignmentServer, identity, tokenPool string) (*registeredWorker, error) {
 	first, err := stream.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -142,6 +145,11 @@ func (s *Server) registerFromStream(stream agentv1.AgentService_AwaitAssignmentS
 	dagVersion := reg.GetDagVersionId()
 	if dagVersion == "" {
 		return nil, status.Error(codes.InvalidArgument, "worker register missing dag_version_id")
+	}
+	if dagVersion != tokenPool {
+		slog.Warn("warm worker refused: registered for a pool its token was not minted for",
+			"identity", identity, "token_dag_version", tokenPool, "register_dag_version", dagVersion)
+		return nil, status.Error(codes.PermissionDenied, "worker token is not valid for this dag_version")
 	}
 	// pod_name is the worker's own downward-API pod name, the durable key a started
 	// attempt is bound to (ADR 0058 N1d-a1). It is a locator, not a credential — the
