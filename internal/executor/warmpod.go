@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -116,6 +117,11 @@ type WarmPodSpec struct {
 	// PodSecurity carries the same container/pod hardening choices as a task pod.
 	PodSecurity PodSecurity
 
+	// Resources sizes the warm container (X4): the requests and limits a task
+	// without resources of its own would get on a dedicated pod, unless the
+	// operator sizes warm pods explicitly. Nil leaves the pod unsized.
+	Resources *domain.Resources
+
 	// AnchorName / AnchorUID identify the per-dag-version GC-anchor ConfigMap this
 	// warm pod is owned by (ADR 0058 D11). When BOTH are set, BuildWarmPod stamps an
 	// ownerReference to the anchor, so on control-plane loss / namespace teardown the
@@ -180,6 +186,9 @@ func BuildWarmPod(spec WarmPodSpec) *corev1.Pod {
 				SecurityContext: buildSecurityContext(spec.PodSecurity),
 			}},
 		},
+	}
+	if spec.Resources != nil {
+		pod.Spec.Containers[0].Resources = buildResources(*spec.Resources)
 	}
 	mergeMetadata(pod.Labels, spec.Labels)
 	mergeMetadata(pod.Annotations, spec.Annotations)

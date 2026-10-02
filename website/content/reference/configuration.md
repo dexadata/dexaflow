@@ -518,6 +518,8 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME` | `1h` | Pro | Wall-clock lifetime of a warm worker before it drains and recycles, independent of the attempt count (D9). A duration string. |
 | `DEXAFLOW_EXECUTION_WORKER_IDLE_TTL` | `5m` | Pro | How long an idle warm worker is kept before it is recycled (D6). A duration string. |
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
+| `DEXAFLOW_EXECUTION_WARM_POD_RESOURCES_CPU` | _(empty)_ | Pro | CPU request and limit of every warm worker pod. Empty inherits `executor.defaults.resources_cpu`, so a task without resources of its own gets on a warm worker what its dedicated pod would. A task that declares more, or a limit the warm pod would undercut, runs on a dedicated pod. Helm: `execution.warmPodResources.cpu`. |
+| `DEXAFLOW_EXECUTION_WARM_POD_RESOURCES_MEMORY` | _(empty)_ | Pro | Memory request and limit of every warm worker pod; same rules as the CPU value. Helm: `execution.warmPodResources.memory`. |
 
 ### Logs (`logs.*`)
 

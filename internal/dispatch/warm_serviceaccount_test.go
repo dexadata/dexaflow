@@ -57,7 +57,7 @@ func TestDispatchUsesWarmForDefaultSA(t *testing.T) {
 	d := newDispatcher(&fakeResolver{resolved: Resolved{TaskInstanceID: "ti", Image: "etl:v1"}}, &fakeIssuer{token: "t"}, &fakeExecutor{})
 	d.SetWarmPlacer(placer)
 	d.SetDefaultTaskServiceAccount("leoflow-task")
-	if _, err := d.Dispatch(context.Background(), "run", "etl", "ver-1", pythonTask()); err != nil {
+	if _, err := d.Dispatch(context.Background(), "run", "etl", "ver-1", warmEligibleTask()); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	if placer.calls != 1 {

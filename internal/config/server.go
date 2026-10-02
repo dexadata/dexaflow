@@ -242,6 +242,14 @@ type ExecutionSection struct {
 	// misconfiguration), and the cap is enforced only by refusing to CREATE new
 	// warm pods — never by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
+	// WarmPodResourcesCPU / WarmPodResourcesMemory size every warm worker pod,
+	// each applied as both request and limit (X4). Empty (the default) inherits
+	// executor.defaults.resources_cpu / resources_memory, so a task that declares
+	// no resources gets on a warm worker exactly what its dedicated pod would.
+	// Kubernetes quantities, e.g. "500m" / "512Mi". A task that declares resources
+	// other than these runs on a dedicated pod instead.
+	WarmPodResourcesCPU    string `mapstructure:"warm_pod_resources_cpu"`
+	WarmPodResourcesMemory string `mapstructure:"warm_pod_resources_memory"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -864,6 +872,11 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Warm pod sizing (X4, ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POD_RESOURCES_*; empty inherits
+	// executor.defaults.resources_*.
+	"execution.warm_pod_resources_cpu":    "",
+	"execution.warm_pod_resources_memory": "",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,

@@ -159,6 +159,41 @@ tests:
             name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
             value: "40"
 
+  # X4: warm pods inherit executor.defaults.resources unless sized explicitly, so
+  # the override is stamped only when set and an unset install keeps its env.
+  - it: passes warm pod resources through only when set
+    template: deployment.yaml
+    set:
+      execution.warmPoolsEnabled: true
+      execution.warmPodResources.cpu: 750m
+      execution.warmPodResources.memory: 1Gi
+      auth.agentTokenTransport: exchange
+      auth.secretLivenessMode: enforce
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_POD_RESOURCES_CPU
+            value: "750m"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_POD_RESOURCES_MEMORY
+            value: "1Gi"
+
+  - it: omits warm pod resources when unset
+    template: deployment.yaml
+    set:
+      execution.warmPoolsEnabled: true
+      auth.agentTokenTransport: exchange
+      auth.secretLivenessMode: enforce
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_POD_RESOURCES_CPU
+            value: ""
+
   # ADR 0058 D2 is a security coupling, not a preference: the server refuses to
   # boot on it, so rendering an install that cannot boot only turns a config
   # error into a CrashLoopBackOff. Refuse at render, in both directions.

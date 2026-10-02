@@ -35,7 +35,7 @@ func TestDispatchPlacesOnWarmWorkerWhenFree(t *testing.T) {
 	d := NewDispatcher(exec, res, iss, "cp:9091", time.Hour)
 	d.SetWarmPlacer(placer)
 
-	disp, err := d.Dispatch(context.Background(), "run-uuid", "etl", "ver-7", pythonTask())
+	disp, err := d.Dispatch(context.Background(), "run-uuid", "etl", "ver-7", warmEligibleTask())
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestDispatchAssignmentIDsAreUnique(t *testing.T) {
 
 	seen := map[string]bool{}
 	for i := 0; i < 3; i++ {
-		if _, err := d.Dispatch(context.Background(), "run", "etl", "ver", pythonTask()); err != nil {
+		if _, err := d.Dispatch(context.Background(), "run", "etl", "ver", warmEligibleTask()); err != nil {
 			t.Fatalf("Dispatch: %v", err)
 		}
 		id := placer.last.GetAssignmentId()
@@ -99,7 +99,7 @@ func TestDispatchFallsThroughToDedicatedOnWarmMiss(t *testing.T) {
 	d := NewDispatcher(exec, res, &fakeIssuer{token: "agent-token"}, "cp:9091", time.Hour)
 	d.SetWarmPlacer(placer)
 
-	if _, err := d.Dispatch(context.Background(), "run-uuid", "etl", "ver-7", pythonTask()); err != nil {
+	if _, err := d.Dispatch(context.Background(), "run-uuid", "etl", "ver-7", warmEligibleTask()); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	if placer.calls != 1 {
