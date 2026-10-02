@@ -257,3 +257,22 @@ func TestDataDirsAreSummedAcrossEveryTreeTheSoakWritesTo(t *testing.T) {
 		t.Errorf("dirsBytes of no directories = %d, want 0", got)
 	}
 }
+
+// A control plane since the rename publishes every family under both names.
+// The monitor must count it once, from the dexaflow_ series.
+func TestCountersDoNotDoubleCountTheLegacyTwins(t *testing.T) {
+	const body = `dexaflow_scheduler_step_downs_total{reason="lost_lock"} 2
+dexaflow_tasks_undispatchable_total 4
+leoflow_scheduler_step_downs_total{reason="lost_lock"} 2
+leoflow_tasks_undispatchable_total 4
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := &collector{o: options{metricsURL: srv.URL}, http: srv.Client()}
+	steps, undisp, atCap := c.counters(t.Context())
+	if steps != 2 || undisp != 4 || atCap != 0 {
+		t.Errorf("counters = %v/%v/%v, want 2/4/0 (each family once)", steps, undisp, atCap)
+	}
+}
