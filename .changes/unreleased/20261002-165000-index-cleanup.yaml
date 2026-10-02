@@ -12,5 +12,6 @@ body: |-
   interrupted while building `idx_dag_runs_version`, drop the INVALID index it
   leaves (`DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_version`), run
   `migrate force 26` and retry; the migration files describe the same steps
-  for the others.
+  for the others. The `fillfactor` change waits at most 5 s for its table
+  lock; if that wait times out, run `migrate force 30` and retry.
 time: 2026-10-02T16:50:00.000000000-03:00
