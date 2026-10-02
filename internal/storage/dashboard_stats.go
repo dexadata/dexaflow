@@ -41,7 +41,7 @@ func (r *Repository) DagStats(ctx context.Context, tenant string) (domain.DagSta
 }
 
 // HistoricalMetrics returns run- and task-instance state counts for runs whose
-// logical date falls within [since, until], keyed by Leoflow state name.
+// logical date falls within [since, until], keyed by Dexaflow state name.
 func (r *Repository) HistoricalMetrics(ctx context.Context, tenant string, since, until time.Time) (domain.HistoricalMetrics, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {

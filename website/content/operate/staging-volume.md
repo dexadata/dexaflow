@@ -13,7 +13,7 @@ companion to the ADR.
 
 ## What it is
 
-An opt-in, Leoflow-managed **ReadWriteMany (RWX) volume scoped to a single DAG
+An opt-in, Dexaflow-managed **ReadWriteMany (RWX) volume scoped to a single DAG
 run**, mounted at `/staging` in every task pod of that run. It is the place for
 **large intermediate data** between a run's tasks — the gap XCom (≤256KB) and
 object storage (durable, cross-run) don't fill.
@@ -126,7 +126,7 @@ because they mount the same per-run PVC.
 
 ```mermaid
 flowchart TD
-    A["dexaflow.yaml staging.enabled"] -->|leoflow compile| B["dag.json (immutable)"]
+    A["dexaflow.yaml staging.enabled"] -->|dexaflow compile| B["dag.json (immutable)"]
     B -->|push| C["Control plane"]
     C -->|run leaves 'queued'| D["Ensure PVC<br/>leoflow-staging-&lt;dag&gt;-&lt;run&gt;<br/>(RWX, idempotent)"]
     D --> E["Task pods of the run<br/>mount it at /staging<br/>(DEXAFLOW_STAGING_DIR)"]
@@ -172,5 +172,5 @@ for a re-run shortly after a failure.
 Airflow offers `airflow.io.ObjectStoragePath` (fsspec + a Connection) for object
 storage and a custom XCom backend for large values, but has **no first-class
 ephemeral shared volume** — PVCs are wired manually via pod templates with no
-managed lifecycle or isolation. The managed per-run volume here is a Leoflow
+managed lifecycle or isolation. The managed per-run volume here is a Dexaflow
 value-add.

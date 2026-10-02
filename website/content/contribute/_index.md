@@ -2,14 +2,14 @@
 title: Contribute
 linkTitle: Contribute
 weight: 70
-description: Contribute to Leoflow — the workflow, the local dev loops, and how to build these docs.
+description: Contribute to Dexaflow — the workflow, the local dev loops, and how to build these docs.
 cascade: { type: docs }
 menu:
   main:
     weight: 70
 ---
 
-How to work on Leoflow itself.
+How to work on Dexaflow itself.
 
 <div class="lf-cards">
   <a class="lf-card lf-card--hero" href="/contribute/contributing/">
@@ -22,7 +22,7 @@ How to work on Leoflow itself.
   <a class="lf-card" href="/contribute/local-dev-loop/">
     <span class="lf-card__icon"><i class="fa-solid fa-arrows-rotate"></i></span>
     <span class="lf-card__title">The local dev loop</span>
-    <span class="lf-card__desc">The <code>leoflow lite</code> hot-reload loop for DAGs, and <code>make lite-redeploy</code> for Go changes.</span>
+    <span class="lf-card__desc">The <code>dexaflow lite</code> hot-reload loop for DAGs, and <code>make lite-redeploy</code> for Go changes.</span>
     <span class="lf-card__more">Set up your loop →</span>
   </a>
   <a class="lf-card" href="/contribute/build-docs/">

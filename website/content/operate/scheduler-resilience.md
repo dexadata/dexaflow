@@ -8,7 +8,7 @@ weight: 70
 description: "How the scheduler survives restarts, leader loss and partial failure."
 ---
 
-How Leoflow keeps the scheduler honest when something goes wrong: a process
+How Dexaflow keeps the scheduler honest when something goes wrong: a process
 dies, an agent goes silent, a dispatch is lost in flight. The control plane
 ships **five reapers** — small, single-purpose backstops that turn stuck state
 back into observable terminal state, so the dashboard never lies about what's

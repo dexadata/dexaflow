@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Leoflow Lite starts a Postgres container from docker-compose.dev.yaml, and
+# Dexaflow Lite starts a Postgres container from docker-compose.dev.yaml, and
 # then TELLS the user which one, in prose, from four other places:
 #
-#   internal/cli/... `leoflow lite` flag help and the resolved-backend note
+#   internal/cli/... `dexaflow lite` flag help and the resolved-backend note
 #   website/content/get-started/quickstart.md
 #   website/content/concepts/editions.md
 #   website/content/contribute/local-dev-loop.md

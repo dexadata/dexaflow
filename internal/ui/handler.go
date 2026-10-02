@@ -15,7 +15,7 @@ import (
 )
 
 // baseHrefPlaceholder is the Jinja token Airflow leaves in index.html for the
-// server to fill with the deployment base path. Leoflow substitutes it at
+// server to fill with the deployment base path. Dexaflow substitutes it at
 // request time, mirroring Airflow's TemplateResponse.
 const baseHrefPlaceholder = "{{ backend_server_base_url }}"
 
@@ -75,7 +75,7 @@ const proBannerHTML = `<div id="leoflow-pro-banner">PRO</div>` +
 // crisply at any size regardless of the system font (a Unicode glyph rendered
 // faintly or not at all on some platforms). The accent has a hex fallback before
 // the oklch the app uses, for browsers without oklch support.
-const ideButtonHTML = `<a id="leoflow-ide-button" href="/ide" target="_blank" rel="noopener" title="Open the Leoflow editor">` +
+const ideButtonHTML = `<a id="leoflow-ide-button" href="/ide" target="_blank" rel="noopener" title="Open the Dexaflow editor">` +
 	`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
 	`stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
 	`<polyline points="8 7 3 12 8 17"></polyline><polyline points="16 7 21 12 16 17"></polyline></svg>` +
@@ -136,7 +136,7 @@ type Server struct {
 const stockFavicon = `<link rel="icon" type="image/png" href="./static/pin_32.png" />`
 
 // SetLiteBanner toggles injection of the LITE overlay into the served shell. It
-// is enabled by the Lite edition (`leoflow lite`); the demo and production never
+// is enabled by the Lite edition (`dexaflow lite`); the demo and production never
 // set it.
 func (s *Server) SetLiteBanner(on bool) { s.liteBanner = on }
 
@@ -151,7 +151,7 @@ func (s *Server) SetProBanner(on bool) { s.proBanner = on }
 func (s *Server) SetEditorButton(on bool) { s.editorButton = on }
 
 // SetInstanceName overrides the value used to rewrite the embedded SPA's
-// `<title>` tag (issue #D15). Empty falls back to "Leoflow" so the browser
+// `<title>` tag (issue #D15). Empty falls back to "Dexaflow" so the browser
 // tab never shows the upstream "Airflow" string from the bundled fork.
 func (s *Server) SetInstanceName(name string) { s.instanceName = name }
 
@@ -300,11 +300,11 @@ func (s *Server) Index(w http.ResponseWriter, basePath string) {
 	// SPA fallback (a text/html MIME type that breaks module preloading).
 	body = strings.ReplaceAll(body, `"./assets/`, `"./static/assets/`)
 	// Rewrite the bundled "<title>Airflow</title>" to the configured instance
-	// name (issue #D15) so the browser tab brands as Leoflow on first touch.
-	// Empty falls back to "Leoflow".
+	// name (issue #D15) so the browser tab brands as Dexaflow on first touch.
+	// Empty falls back to "Dexaflow".
 	title := s.instanceName
 	if title == "" {
-		title = "Leoflow"
+		title = "Dexaflow"
 	}
 	body = strings.ReplaceAll(body, "<title>Airflow</title>", "<title>"+title+"</title>")
 	body = s.brand(body)

@@ -148,7 +148,7 @@ type Querier interface {
 	// name (not the uuid) so the reconstructed principal matches the login path's
 	// User.TenantID, plus the active flag the authenticator gates on.
 	GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error)
-	// Resolve an OIDC identity to a Leoflow user by its immutable (provider,
+	// Resolve an OIDC identity to a Dexaflow user by its immutable (provider,
 	// subject) pair (the trusted link key). Returns the tenant name (not the uuid)
 	// so the reconstructed principal matches the login path's User.TenantID, plus
 	// the active flag the login gates on. Never selects password_hash.

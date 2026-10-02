@@ -102,7 +102,7 @@ func newDagsDeleteCommand() *cobra.Command {
 			"--deregister it removes the DAG artifact entirely.\n\n" +
 			"GitOps note: deregister is not permanent while the DAG's source still exists. " +
 			"In production the next deploy re-registers it as a new version; under " +
-			"`leoflow dev` the watcher re-registers it on the next reload — delete the " +
+			"`dexaflow lite` the watcher re-registers it on the next reload — delete the " +
 			"DAG's file to stop that.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -124,7 +124,7 @@ func newDagsDeleteCommand() *cobra.Command {
 					return werr
 				}
 				_, werr := fmt.Fprintln(out, "Note: deregister is not permanent while the source exists — in prod the next "+
-					"deploy re-registers it; under `leoflow dev` the next reload does, unless you delete the file.")
+					"deploy re-registers it; under `dexaflow lite` the next reload does, unless you delete the file.")
 				return werr
 			}
 			_, werr := fmt.Fprintf(out, "Cleared %q's run history (DAG still registered). Use --deregister to remove the artifact.\n", dagID)

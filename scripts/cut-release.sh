@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cut a Leoflow release — one repo-owned entrypoint for the whole flow so the
+# Cut a Dexaflow release — one repo-owned entrypoint for the whole flow so the
 # steps are not re-invented (and re-broken) by hand each time (#879).
 #
 # It: preflights, prepares the chart/CHANGELOG bump on a release branch, opens the

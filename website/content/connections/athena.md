@@ -10,7 +10,7 @@ description: Amazon Athena connection
 ---
 
 Run SQL against Amazon Athena (serverless Presto/Trino over S3) from a managed
-Leoflow Connection. Athena has no host or port — the region, schema, and work
+Dexaflow Connection. Athena has no host or port — the region, schema, and work
 group live in **Extra**.
 
 ## Declare the provider

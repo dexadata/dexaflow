@@ -9,7 +9,7 @@ menu:
     weight: 20
 ---
 
-Everything about writing DAGs for Leoflow. A DAG is a `dag.py` on the Airflow Task
+Everything about writing DAGs for Dexaflow. A DAG is a `dag.py` on the Airflow Task
 SDK plus a `dexaflow.yaml` for packaging and bindings, compiled to one immutable
 artifact.
 
@@ -34,7 +34,7 @@ task below.
   <a class="lf-card" href="/author-dags/airflow-compatibility/">
     <span class="lf-card__icon"><i class="fa-brands fa-python"></i></span>
     <span class="lf-card__title">Airflow compatibility</span>
-    <span class="lf-card__desc">You write standard Airflow Task SDK code; Leoflow adds a thin runtime and <code>dexaflow.yaml</code> — it never re-implements Airflow's Python API.</span>
+    <span class="lf-card__desc">You write standard Airflow Task SDK code; Dexaflow adds a thin runtime and <code>dexaflow.yaml</code> — it never re-implements Airflow's Python API.</span>
     <span class="lf-card__more">See the model →</span>
   </a>
   <a class="lf-card" href="/author-dags/map-reduce/">

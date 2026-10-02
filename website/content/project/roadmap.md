@@ -5,7 +5,7 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Roadmap
 weight: 20
-description: The historical road to release — where Leoflow has been heading.
+description: The historical road to release — where Dexaflow has been heading.
 ---
 
 {{% alert title="Historical — the first release shipped" color="info" %}}
@@ -23,7 +23,7 @@ real DAG end to end, with no fancy features — before v0.1.
 
 This consolidates the open work after the audit + reverse analysis
 (`docs/reverse-analysis-mvp.md`, which captured and evaluated the real Airflow
-3.2.1 task logs, XCom, lifecycle, and API and mapped each to Leoflow).
+3.2.1 task logs, XCom, lifecycle, and API and mapped each to Dexaflow).
 
 ## Release phases — Alpha · Beta · GA
 
@@ -37,7 +37,7 @@ flowchart LR
 ### 🟡 Alpha — Developer experience (current focus)
 A data engineer can author, run, and iterate on DAGs locally with confidence.
 
-- `leoflow lite` (isolated k3d/subprocess), `leoflow lite provision`, `leoflow db`, hot reload, LITE marker.
+- `dexaflow lite` (isolated k3d/subprocess), `dexaflow lite provision`, `dexaflow db`, hot reload, LITE marker.
 - DAG authoring + binding/overrides (ADR 0023), guardrails, embedded migrations.
 - Documentation site, examples, the `dags/` convention.
 - **Exit:** the dev loop is reliable end-to-end; the authoring model is documented and tested.

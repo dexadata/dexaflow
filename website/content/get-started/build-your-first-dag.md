@@ -13,28 +13,28 @@ You do not need to understand every concept up front; follow the steps in order
 and it will work. The explanations come as you go.
 
 {{% alert title="Before you start" color="info" %}}
-Finish the [Quickstart](/get-started/quickstart/) first. You need **Leoflow Lite
+Finish the [Quickstart](/get-started/quickstart/) first. You need **Dexaflow Lite
 installed** and the `leoflow` command on your `PATH` (`leoflow version` should
-print a version). If `leoflow lite` is still running from the Quickstart, press
+print a version). If `dexaflow lite` is still running from the Quickstart, press
 **Ctrl-C** to stop it — you will start it again in step 5.
 {{% /alert %}}
 
 ## 1 · Scaffold a project
 
-A Leoflow DAG project is just a directory with two files: **`dag.py`** (your
-pipeline) and **`dexaflow.yaml`** (how to package it). `leoflow init` creates that
+A Dexaflow DAG project is just a directory with two files: **`dag.py`** (your
+pipeline) and **`dexaflow.yaml`** (how to package it). `dexaflow init` creates that
 pair for you:
 
 ```bash
-leoflow init taskflow_sales
+dexaflow init taskflow_sales
 ```
 
 ```
-Initialized Leoflow project "taskflow_sales" in taskflow_sales
+Initialized Dexaflow project "taskflow_sales" in taskflow_sales
 
 Next steps:
-  leoflow validate taskflow_sales    # quick syntax check
-  leoflow lite taskflow_sales        # run it locally with the embedded scheduler
+  dexaflow validate taskflow_sales    # quick syntax check
+  dexaflow lite taskflow_sales        # run it locally with the embedded scheduler
 ```
 
 The `dag_id` is taken from the directory name — `taskflow_sales`. Look inside:
@@ -85,22 +85,22 @@ with DAG("taskflow_sales", schedule=None, catchup=False, tags=["example"]):
 
 What you just wrote, top to bottom:
 
-- **`from airflow.sdk import DAG, task`** — Leoflow runs the standard
+- **`from airflow.sdk import DAG, task`** — Dexaflow runs the standard
   [Apache Airflow Task SDK](/author-dags/dag-authoring/). Your DAG source is
   ordinary Airflow 3 code.
 - **`@task`** turns a plain Python function into a task. Its **return value is
   pushed to XCom** automatically, and when you pass one task's result as the
-  argument to another, Leoflow **pulls it back** — that is the entire data-passing
+  argument to another, Dexaflow **pulls it back** — that is the entire data-passing
   model here, no explicit XCom calls.
 - **`with DAG(...)`** declares the DAG. `schedule=None` means it only runs when you
   trigger it (perfect for a tutorial); `tags=["example"]` groups it in the UI.
 - **`load(transform(extract()))`** is the wiring. Reading it inside-out gives the
-  dependency chain `extract → transform → load`; Leoflow builds the graph from
+  dependency chain `extract → transform → load`; Dexaflow builds the graph from
   those calls — you never draw edges by hand.
 
 ## 3 · Declare packaging
 
-Open `taskflow_sales/dexaflow.yaml` and make it match this. It tells Leoflow how to
+Open `taskflow_sales/dexaflow.yaml` and make it match this. It tells Dexaflow how to
 build the DAG's image — here, nothing beyond a Python version, because the pipeline
 has no third-party dependencies:
 
@@ -116,7 +116,7 @@ dependencies: []
 ```
 
 If your pipeline imported a library (say `pandas`), you would add it under
-`dependencies:` and Leoflow would bake it into the image. See
+`dependencies:` and Dexaflow would bake it into the image. See
 [Configuration](/reference/configuration/) for every key.
 
 ## 4 · Validate it
@@ -124,7 +124,7 @@ If your pipeline imported a library (say `pandas`), you would add it under
 Before running, check the project parses and matches the schema:
 
 ```bash
-leoflow validate taskflow_sales
+dexaflow validate taskflow_sales
 ```
 
 A clean run prints no errors. If you mistyped something in `dexaflow.yaml` or
@@ -135,13 +135,13 @@ A clean run prints no errors. If you mistyped something in `dexaflow.yaml` or
 Start Lite pointed at your project:
 
 ```bash
-leoflow lite taskflow_sales
+dexaflow lite taskflow_sales
 ```
 
 Lite brings up its datastore, registers the DAG, and prints where to go:
 
 ```
-✓ Leoflow Lite is ready
+✓ Dexaflow Lite is ready
     open:    http://127.0.0.1:8088
     login:   admin@leoflow.local
     project: /path/to/taskflow_sales
@@ -150,7 +150,7 @@ Lite brings up its datastore, registers the DAG, and prints where to go:
 Leave it running — it **hot-reloads** every time you save `dag.py`.
 
 Open **http://127.0.0.1:8088**, log in (the password is the one Quickstart printed;
-`leoflow lite reset-password` resets it), and `taskflow_sales` is in the **Dags**
+`dexaflow lite reset-password` resets it), and `taskflow_sales` is in the **Dags**
 list.
 
 ![The Dags list with taskflow_sales](/assets/screenshots/dev-dags.png)
@@ -193,7 +193,7 @@ XCom, and you wrote none of the plumbing.
 ## 8 · Break it on purpose
 
 One last thing worth seeing, because you *will* hit it for real: what a mistake
-looks like. With `leoflow lite` still running, add a deliberately broken import to
+looks like. With `dexaflow lite` still running, add a deliberately broken import to
 the top of `dag.py` and save:
 
 ```python
@@ -201,7 +201,7 @@ import this_module_does_not_exist
 ```
 
 Within a second or two the UI shows an **import-error banner** on the Dags page —
-Leoflow could not load the file, and it tells you exactly why instead of silently
+Dexaflow could not load the file, and it tells you exactly why instead of silently
 dropping the DAG:
 
 ![The import-error banner on the Dags home](/assets/screenshots/dev-import-error-home.png)
@@ -215,11 +215,11 @@ Delete the bad line, save, and the banner clears as the DAG reloads. Press
 
 ## What you learned
 
-- A DAG project is **`dag.py` + `dexaflow.yaml`**; `leoflow init` scaffolds the pair.
+- A DAG project is **`dag.py` + `dexaflow.yaml`**; `dexaflow init` scaffolds the pair.
 - Tasks are `@task` functions; **returning a value and passing it to another task**
   moves data over XCom with no boilerplate.
 - The **call graph is the dependency graph** — `load(transform(extract()))`.
-- `leoflow validate` catches problems before you run; `leoflow lite` runs it and
+- `dexaflow validate` catches problems before you run; `dexaflow lite` runs it and
   **hot-reloads** so authoring is a tight edit-save-watch loop.
 
 ## Next

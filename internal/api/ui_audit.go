@@ -18,7 +18,7 @@ type AuditLogReader interface {
 	ListAuditLogs(ctx context.Context, tenant, dagID string, limit, offset int) ([]domain.AuditLogEntry, int, error)
 }
 
-// eventLogDTO is the Airflow 3.2.1 EventLogResponse. Leoflow's audit_log records
+// eventLogDTO is the Airflow 3.2.1 EventLogResponse. Dexaflow's audit_log records
 // actions against resources; task/run/map fields are null (we audit at the DAG
 // and user level), and dag_id is set only for dag-scoped events.
 type eventLogDTO struct {

@@ -54,7 +54,7 @@ Save. The UI never shows the password again — it is encrypted at rest.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `postgres_load` → **Trigger DAG**.
@@ -84,8 +84,8 @@ contract.
   (`TestConnectionDeliveryChainOfCustodyIntegration`) pins this; if a real
   run still breaks, file an issue with the password shape that triggered it.
 - **Connection lost between runs** — Connections persist across
-  `leoflow lite` restarts (they live in the managed Postgres). They survive
-  `leoflow uninstall` (without `--purge`).
+  `dexaflow lite` restarts (they live in the managed Postgres). They survive
+  `dexaflow uninstall` (without `--purge`).
 
 ## Related
 

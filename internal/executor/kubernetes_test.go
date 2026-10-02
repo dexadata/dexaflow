@@ -126,7 +126,7 @@ func TestBuildPodPinsTerminationMessagePolicy(t *testing.T) {
 
 // TestBuildPodAppliesPriorityClassName locks the shared-cluster preemption knob
 // (ADR 0054): a declared PriorityClassName must land on the PodSpec so the
-// scheduler preempts Leoflow's ETL, not production, under contention.
+// scheduler preempts Dexaflow's ETL, not production, under contention.
 func TestBuildPodAppliesPriorityClassName(t *testing.T) {
 	req := sampleReq()
 	req.Execution.PriorityClassName = "leoflow-batch"
@@ -283,33 +283,33 @@ func TestBuildPodAppliesEphemeralStorage(t *testing.T) {
 }
 
 // TestBuildPodMergesLabelsAndAnnotations asserts operator-declared labels and
-// annotations are merged onto the task pod, but Leoflow's own leoflow.io/* labels
+// annotations are merged onto the task pod, but Dexaflow's own leoflow.io/* labels
 // and the task-instance-id annotation win any key collision — a DAG must not be
 // able to shadow the identity the reconciler and terminate path select on.
 func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	req := sampleReq()
 	req.Execution.Labels = map[string]string{
 		"team":              "data-eng",
-		"leoflow.io/dag-id": "hijacked", // collision: Leoflow must win
+		"leoflow.io/dag-id": "hijacked", // collision: Dexaflow must win
 	}
 	req.Execution.Annotations = map[string]string{
 		"cost-center":                 "1234",
-		"leoflow.io/task-instance-id": "hijacked", // collision: Leoflow must win
+		"leoflow.io/task-instance-id": "hijacked", // collision: Dexaflow must win
 	}
 	pod := BuildPod(req)
 	if pod.Labels["team"] != "data-eng" {
 		t.Errorf("declared label not merged: %v", pod.Labels)
 	}
 	if pod.Labels["leoflow.io/dag-id"] != "etl" {
-		t.Errorf("Leoflow label overridden by DAG: %q, want etl", pod.Labels["leoflow.io/dag-id"])
+		t.Errorf("Dexaflow label overridden by DAG: %q, want etl", pod.Labels["leoflow.io/dag-id"])
 	}
 	if pod.Annotations["cost-center"] != "1234" {
 		t.Errorf("declared annotation not merged: %v", pod.Annotations)
 	}
 	if pod.Annotations["leoflow.io/task-instance-id"] != "ti-1" {
-		t.Errorf("Leoflow annotation overridden by DAG: %q, want ti-1", pod.Annotations["leoflow.io/task-instance-id"])
+		t.Errorf("Dexaflow annotation overridden by DAG: %q, want ti-1", pod.Annotations["leoflow.io/task-instance-id"])
 	}
-	// Omission leaves only Leoflow's own metadata (5 labels, 1 annotation).
+	// Omission leaves only Dexaflow's own metadata (5 labels, 1 annotation).
 	base := BuildPod(sampleReq())
 	if len(base.Labels) != 5 || len(base.Annotations) != 1 {
 		t.Errorf("unexpected base metadata: labels=%v annotations=%v", base.Labels, base.Annotations)
@@ -402,7 +402,7 @@ func TestBuildPodMountsTaskSecret(t *testing.T) {
 		}
 	}
 	// With a task secret, mount it read-only at the configured path so a task can
-	// read a credential by key_path (ADR 0035 — Leoflow does not store the key).
+	// read a credential by key_path (ADR 0035 — Dexaflow does not store the key).
 	req := sampleReq()
 	req.TaskSecretName = "gcp-sa-key"
 	req.TaskSecretMountPath = "/var/secrets/gcp"

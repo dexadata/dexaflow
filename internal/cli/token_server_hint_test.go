@@ -174,7 +174,7 @@ func TestResolveServerTokenRecordsTheTarget(t *testing.T) {
 // REAL command tree, so moving or renaming `auth login` fails here instead of
 // in a user's terminal.
 func TestLoginHintNamesACommandThatExists(t *testing.T) {
-	path := strings.TrimPrefix(loginCommandPath, "leoflow ")
+	path := strings.TrimPrefix(loginCommandPath, "dexaflow ")
 	if path == loginCommandPath {
 		t.Fatalf("loginCommandPath %q must start with the binary name", loginCommandPath)
 	}

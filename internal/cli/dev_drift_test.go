@@ -6,7 +6,7 @@ import (
 )
 
 // TestDecideSchemaDrift pins the drift detector's decision (#136). The startup
-// path of `leoflow lite` relies on this to refuse to run an older binary
+// path of `dexaflow lite` relies on this to refuse to run an older binary
 // against a database a newer binary has already upgraded — the alternative
 // (silent reads/writes under a stale schema) is data corruption.
 func TestDecideSchemaDrift(t *testing.T) {
@@ -28,7 +28,7 @@ func TestDecideSchemaDrift(t *testing.T) {
 		{
 			name:      "DB ahead of the binary is the drift case — refuse",
 			dbVersion: 20, dirty: false, embedded: 15,
-			wantErr: "older `leoflow` is being run against a newer database",
+			wantErr: "older `dexaflow` is being run against a newer database",
 		},
 		{
 			name:      "DB just one version ahead is still drift",

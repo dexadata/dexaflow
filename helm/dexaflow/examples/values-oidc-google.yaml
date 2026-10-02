@@ -104,7 +104,7 @@ auth:
     defaultRole: "viewer"
     roleMappings: {}
 
-    # Create the Leoflow user row on first login. There is no alternative today:
+    # Create the Dexaflow user row on first login. There is no alternative today:
     # a login is matched by (provider, subject) and nothing else writes those
     # columns, so with this off every first SSO login is denied no_user_jit_off.
     # Safe here BECAUSE the two gates above are narrow: only a verified

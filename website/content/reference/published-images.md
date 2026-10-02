@@ -1,7 +1,7 @@
 ---
 title: Published images
 weight: 65
-description: "Every container image and chart Leoflow publishes, how each is tagged, and which tags are immutable."
+description: "Every container image and chart Dexaflow publishes, how each is tagged, and which tags are immutable."
 ---
 
 Every release publishes three images and one chart to GitHub Container Registry.
@@ -14,7 +14,7 @@ tag is the part people get wrong.
 | --- | --- | --- |
 | `ghcr.io/dexadata/dexaflow-server` | the control plane: API, scheduler, UI | the Helm chart, and `docker compose` for the demo |
 | `ghcr.io/dexadata/dexaflow-migrate` | schema migrations, run as a Helm pre-install and pre-upgrade hook | the chart's migration Job |
-| `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line | your DAG image's `FROM`, at `leoflow compile --build` |
+| `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line | your DAG image's `FROM`, at `dexaflow compile --build` |
 | `oci://ghcr.io/dexadata/charts/dexaflow` | the Helm chart | `helm install` / `helm upgrade` |
 
 ### Names from before the rename
@@ -54,12 +54,12 @@ want a build to reproduce.
 
 ## Which base your DAG image gets
 
-`leoflow compile --build` writes the `FROM` for you, and it picks between those
+`dexaflow compile --build` writes the `FROM` for you, and it picks between those
 two tag shapes **based on the CLI you are running**:
 
 | your `leoflow` binary | the `FROM` it writes |
 | --- | --- |
-| a released build (`leoflow version` shows a clean `X.Y.Z`) | `ghcr.io/dexadata/dexaflow-runtime:py<ver>-v<X.Y.Z>`, immutable |
+| a released build (`dexaflow version` shows a clean `X.Y.Z`) | `ghcr.io/dexadata/dexaflow-runtime:py<ver>-v<X.Y.Z>`, immutable |
 | a development build (built from source, a dirty tree, or a `git describe` version) | `ghcr.io/dexadata/dexaflow-runtime:py<ver>`, the moving line |
 
 A release pins its own base so a compile from that release reproduces byte for

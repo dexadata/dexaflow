@@ -40,7 +40,7 @@ func TestCheckSocketPathLen(t *testing.T) {
 // TestPGLocaleEnvForcesValidLocale guards the initdb locale regression: a macOS
 // SSH session forwards LC_CTYPE=UTF-8, which is NOT a valid locale on Linux and
 // made `initdb` fail ("invalid locale settings"), breaking the managed-PG default
-// on a fresh `leoflow lite`. pgLocaleEnv must strip any inherited LANG/LC_* and
+// on a fresh `dexaflow lite`. pgLocaleEnv must strip any inherited LANG/LC_* and
 // force a deterministic, valid LANG=C / LC_ALL=C, while preserving other vars.
 func TestPGLocaleEnvForcesValidLocale(t *testing.T) {
 	got := pgLocaleEnv([]string{"PATH=/usr/bin", "LC_CTYPE=UTF-8", "LANG=C.UTF-8", "LC_ALL=", "HOME=/h"})

@@ -83,13 +83,13 @@ func TestRegisterVersionRejectsRemovedHTTPAPIType(t *testing.T) {
 
 // A spec that declares a connection (or variable) the tenant has not defined is
 // rejected by the repository as domain.ErrValidation (ADR 0055 D6). That is a
-// client-fixable input error — the author must run `leoflow connections set` or
+// client-fixable input error — the author must run `dexaflow connections set` or
 // drop the declaration — so the handler must surface it as 400, not 500. Before
 // the handleRepoError ErrValidation branch it fell through to 500, which sent
 // users to server logs instead of to their own DAG (#724).
 func TestRegisterVersionUnknownConnectionReturns400(t *testing.T) {
 	repo := &fakeVersionRepo{err: domain.Safef(domain.ErrValidation,
-		"dag %q declares unknown connection(s) %s; define them (leoflow connections set) or remove them from the DAG's connections: declaration",
+		"dag %q declares unknown connection(s) %s; define them (dexaflow connections set) or remove them from the DAG's connections: declaration",
 		"etl", "warehouse")}
 	rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions", validSpecJSON)
 	if rec.Code != http.StatusBadRequest {

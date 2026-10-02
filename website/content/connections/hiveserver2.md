@@ -9,7 +9,7 @@ weight: 220
 description: HiveServer2 connection
 ---
 
-Query Apache Hive over HiveServer2 from a task via a managed Leoflow Connection and
+Query Apache Hive over HiveServer2 from a task via a managed Dexaflow Connection and
 Airflow's `HiveServer2Hook`. The conn_type is `hiveserver2`. A connection carries the
 **host:port** plus credentials and the default **database** (schema).
 
@@ -80,7 +80,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `hiveserver2`. Set Host, Port, Login, Password,
    and the default Schema.
-2. `leoflow lite path/to/this/dag` → trigger `hive_query`.
+2. `dexaflow lite path/to/this/dag` → trigger `hive_query`.
 
 ## Security notes
 

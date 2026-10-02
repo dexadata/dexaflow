@@ -30,7 +30,7 @@ def load(rows):
     ...
 ```
 
-Leoflow parses your DAG **without providers installed** (it only needs the DAG's
+Dexaflow parses your DAG **without providers installed** (it only needs the DAG's
 shape). A provider import at the module top level therefore fails the compile —
 with an actionable message telling you to move it into the task and declare it via
 `connectors:`. Inside the `@task` body it is never executed at parse time, and at
@@ -70,7 +70,7 @@ clear "The conn_id `pg_target` isn't defined" error.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `postgres_hook_load` → **Trigger DAG**.

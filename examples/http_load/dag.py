@@ -1,6 +1,6 @@
 """http_load — call an external HTTP endpoint via a managed Connection.
 
-The base URL and auth come from a managed Leoflow Connection injected as
+The base URL and auth come from a managed Dexaflow Connection injected as
 AIRFLOW_CONN_HTTP_TARGET (create it in Admin -> Connections). The DAG echoes a
 small payload via go-httpbin's /anything endpoint and asserts the round-trip,
 which is the simplest verification step for an HTTP connector.

@@ -5,7 +5,7 @@ weight: 95
 description: Turn on OIDC login against Google Workspace, and read the audit log when it denies.
 ---
 
-Leoflow's SSO is OIDC Authorization Code + PKCE, so Google Workspace works
+Dexaflow's SSO is OIDC Authorization Code + PKCE, so Google Workspace works
 through the same settings as any other issuer. Two things about Google make it
 worth its own page: it emits **no `groups` claim** unless Directory API group
 sync is configured, and its tenant claim is `hd`, a domain rather than an opaque
@@ -165,7 +165,7 @@ LIMIT 20;
 | `tenant_claim_shape` | the tenant claim is neither a string nor an array of strings | the pin cannot read it; your `tenant_claim` probably names the wrong claim |
 | `token_invalid` | verification failed for any other reason | the server log carries the underlying error |
 
-If the page instead says Leoflow could not complete the sign-in *on its side*,
+If the page instead says Dexaflow could not complete the sign-in *on its side*,
 the failure is ours and not a configuration problem: the error is in the server
 log, and a retry may well work.
 

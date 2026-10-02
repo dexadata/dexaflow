@@ -19,7 +19,7 @@ import (
 // Datastore backends for Lite's Postgres. The default is "auto": Docker Postgres
 // when Docker is present (the realistic case, since the k3d executor needs Docker
 // too), else a managed relocatable PostgreSQL under ~/.dexaflow on a Unix socket —
-// so `leoflow lite` runs on a Docker-free host with nothing to install. Either can
+// so `dexaflow lite` runs on a Docker-free host with nothing to install. Either can
 // be forced explicitly.
 const (
 	datastoreAuto    = "auto"
@@ -127,7 +127,7 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 	// message before the confusing startup error.
 	if verr := exec.CommandContext(ctx, filepath.Join(binDir, "postgres"), "--version").Run(); verr != nil { //nolint:gosec // managed binary + fixed arg
 		return fmt.Errorf("the managed Postgres can't run on this host — it needs system libraries (ICU, Kerberos) that are missing here (common on Alpine/musl and slim containers): %w\n"+
-			"  use `leoflow lite --postgres docker` (recommended; works everywhere).\n"+
+			"  use `dexaflow lite --postgres docker` (recommended; works everywhere).\n"+
 			"  installing the libs may help if the versions match (Debian/Ubuntu: `apt-get install libicu-dev libgssapi-krb5-2`; Alpine: `apk add icu-libs krb5-libs` — but the bundled build may need exact versions)", verr)
 	}
 
@@ -203,7 +203,7 @@ func stopManagedPostgres(cmd *cobra.Command) {
 // managedPGHint is appended to managed-Postgres startup failures: if the
 // relocatable build can't run on this host (very old glibc, musl, locale), the
 // Docker datastore is the escape hatch.
-const managedPGHint = " — if the managed Postgres can't run on this host (very old glibc, musl, or a locale issue), use `leoflow lite --postgres docker`"
+const managedPGHint = " — if the managed Postgres can't run on this host (very old glibc, musl, or a locale issue), use `dexaflow lite --postgres docker`"
 
 // maxUnixSocketPath is a conservative cap on the managed Postgres socket path.
 // The OS sun_path limit is ~104 (macOS) to ~108 (Linux); we guard below it so a
@@ -215,7 +215,7 @@ const maxUnixSocketPath = 100
 // the socket file is .s.PGSQL.5432). The data dir is single-quoted, so a path
 // with spaces is parsed correctly (unlike a space-split pg_ctl -o string).
 func managedPGConfLines(dataDir string) string {
-	return "\n# Leoflow Lite: socket-only datastore (no TCP), socket in the data dir.\n" +
+	return "\n# Dexaflow Lite: socket-only datastore (no TCP), socket in the data dir.\n" +
 		"listen_addresses = ''\n" +
 		"unix_socket_directories = '" + dataDir + "'\n" +
 		"port = 5432\n"
@@ -229,7 +229,7 @@ func checkSocketPathLen(dataDir string) error {
 	if len(sock) > maxUnixSocketPath {
 		return fmt.Errorf("managed Postgres socket path is too long (%d > %d chars): %s\n"+
 			"  your home directory is too deeply nested for a Unix socket.\n"+
-			"  use `leoflow lite --postgres docker`, or set a shorter HOME",
+			"  use `dexaflow lite --postgres docker`, or set a shorter HOME",
 			len(sock), maxUnixSocketPath, sock)
 	}
 	return nil

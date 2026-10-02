@@ -9,7 +9,7 @@ weight: 540
 description: Zendesk connection
 ---
 
-Connect a task to the Zendesk Support API over a managed Leoflow Connection.
+Connect a task to the Zendesk Support API over a managed Dexaflow Connection.
 The subdomain host, agent email, API token, and an Extra blob are encrypted at
 rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 

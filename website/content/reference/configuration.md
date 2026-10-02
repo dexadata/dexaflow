@@ -72,8 +72,8 @@ after (`python:3.9-slim` was last rebuilt 2025-11-01, one day after 3.9 went
 EOL). From that point `python:3.10-slim` — and so
 `leoflow-runtime:py3.10` — receives no further OS security updates and
 accumulates unfixed CVEs indefinitely. The `py3.10` leg keeps being published
-until 2026-10-31, so nothing breaks today; `leoflow validate`, `leoflow
-compile` and `leoflow deploy` warn when your project resolves to it.
+until 2026-10-31, so nothing breaks today; `dexaflow validate`, `leoflow
+compile` and `dexaflow deploy` warn when your project resolves to it.
 
 There are two ways to resolve to it, and they have different fixes:
 
@@ -92,7 +92,7 @@ base was on the day you pinned it.
 
 #### Which base you get when you do not pin one
 
-When `base_image` is unset, `leoflow compile --build` writes the `FROM` itself,
+When `base_image` is unset, `dexaflow compile --build` writes the `FROM` itself,
 and it chooses between two tag shapes based on the CLI you are running:
 
 - a **released** `leoflow` pins `leoflow-runtime:py<ver>-v<X.Y.Z>`, which is
@@ -117,7 +117,7 @@ cluster runs correctly, and phrases it as a mistake in your code.
 
 | Tool | What it does with the declared version |
 |---|---|
-| `leoflow validate` | Lints `dag.py` under that minor. If it is not installed, it falls back to any interpreter **at least as new**, because a newer one accepts everything the declared minor accepts. If all that is installed is older, the lint is **skipped with a warning** naming the version rather than run under it. |
+| `dexaflow validate` | Lints `dag.py` under that minor. If it is not installed, it falls back to any interpreter **at least as new**, because a newer one accepts everything the declared minor accepts. If all that is installed is older, the lint is **skipped with a warning** naming the version rather than run under it. |
 | `leoflow dev` | Builds the project's venv on it, and stops rather than substituting a different minor. |
 
 Three things follow from this that are worth knowing:
@@ -125,24 +125,24 @@ Three things follow from this that are worth knowing:
 - **Only an older interpreter is refused, not every different one.** Python's
   grammar grows, so a 3.11 checker rejects valid 3.13 code while a 3.13 checker
   accepts valid 3.11 code. Refusing every mismatch would have been the larger
-  bug: `leoflow init` writes `python_version` explicitly, so every scaffolded
+  bug: `dexaflow init` writes `python_version` explicitly, so every scaffolded
   project takes this path, and most hosts carry a newer `python3` than the
   `3.11` it writes.
 - **A skipped check is reported, never silent.** When only an older interpreter
   is around, `validate` would rather tell you it could not check than hand you
-  an answer it does not trust. Install the named minor, or run `leoflow setup`,
+  an answer it does not trust. Install the named minor, or run `dexaflow setup`,
   to turn the check back on. Your `dexaflow.yaml` is validated either way.
 - **The fallback is not as strict as the declared minor.** Checked under a newer
   interpreter, syntax that only the newer one accepts passes here and then fails
   on the task image. Installing the minor you declare is what makes the check
   exact; the fallback only guarantees that what it rejects is genuinely wrong.
-- **`leoflow compile` does not honour it yet.** The parser *executes* your
+- **`dexaflow compile` does not honour it yet.** The parser *executes* your
   `dag.py`, so its own interpreter decides which syntax is legal, and today that
-  is whichever interpreter `leoflow setup` baked into `parser_cmd`. A project
+  is whichever interpreter `dexaflow setup` baked into `parser_cmd`. A project
   declaring a newer minor can still see a `SyntaxError` from `compile` for code
   the cluster runs
   ([#1095](https://github.com/dexadata/leoflow/issues/1095)). Running
-  `leoflow setup` under the minor you declare is the workaround.
+  `dexaflow setup` under the minor you declare is the workaround.
 - **The three exemptions are the same everywhere.** A version you never wrote is
   not a statement (the default applies), a declared `base_image` makes the field
   inert because you chose the `FROM` by hand, and a deprecated version warns
@@ -198,7 +198,7 @@ field alone: a dbt project path reaches the same `.dockerignore` through the
 build-artifact exclusions leoflow adds for it, so checking only the field left
 the class reachable through `dbt.project` and `dbt_groups`.
 
-The same guards apply to the Dockerfile `leoflow lite --executor=k8s` generates
+The same guards apply to the Dockerfile `dexaflow lite --executor=k8s` generates
 when a project ships none. That one writes `<project>/Dockerfile` and leaves it
 there, and a project-supplied Dockerfile is afterwards used verbatim, so a
 value that slipped through there would outlive the command that wrote it.
@@ -241,8 +241,8 @@ If yours has one, re-key with `openssl rand -hex 32` and rotate using the list
 above, which is the safe way to change it.
 {{% /alert %}}
 
-{{% alert title="Leoflow Lite: new installs only, for now" color="warning" %}}
-`leoflow setup` generates a per-install key and keeps it in
+{{% alert title="Dexaflow Lite: new installs only, for now" color="warning" %}}
+`dexaflow setup` generates a per-install key and keeps it in
 `~/.dexaflow/config.yaml`.
 
 **An install created before per-install keys existed is not migrated.** Its
@@ -252,9 +252,9 @@ datastore file can read them. Moving an existing install means re-encrypting
 every stored secret, and that migration is tracked separately.
 
 **`config.yaml` holds the only copy of the key that decrypts your stored
-connections.** `leoflow lite backup` includes it, which also means the backup
+connections.** `dexaflow lite backup` includes it, which also means the backup
 archive holds the key and the ciphertext together. If you roll your own backup
-of the datastore, back up `config.yaml` with it, and `leoflow uninstall` warns
+of the datastore, back up `config.yaml` with it, and `dexaflow uninstall` warns
 before it removes the only copy.
 {{% /alert %}}
 
@@ -310,7 +310,7 @@ flowchart LR
 ```
 
 The **Edition** column reads `both` (Lite and Pro), `Pro` (Pro / Kubernetes
-topologies only), or `dev-only`. `leoflow lite` sets the dev-appropriate values
+topologies only), or `dev-only`. `dexaflow lite` sets the dev-appropriate values
 automatically (isolated DB, port 8088, admin login on, no Redis).
 
 **List**-valued keys (CORS origins, OIDC scopes, allowed email domains,
@@ -371,14 +371,14 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_JWT_SECRET` | — *(required)* | both | Signs API/agent tokens. Required for both `jwt` and `oidc` (both mint the app's own HS256 token). |
 | `DEXAFLOW_AUTH_JWT_TOKEN_TTL_SECONDS` | `3600` | both | Lifetime, in seconds, of an issued API token. |
 | `DEXAFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS` | `86400` | both | Ceiling, in seconds, on the **total** age of a transparently renewed session, measured from first login and preserved across every renewal. Past it, `POST /api/v2/auth/token/renew` refuses and the user must log in again; the short `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long a live session may keep refreshing. A non-positive value disables the ceiling. Renewal also re-checks that the account is still active, so a deactivated user stops being issued tokens as well as being refused on use. The chart has no value for this yet — set it through `extraEnv`. |
-| `DEXAFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | both | Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force). A successful login consumes no budget. `leoflow lite` raises this well above the default (local single-user tool). |
+| `DEXAFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | both | Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force). A successful login consumes no budget. `dexaflow lite` raises this well above the default (local single-user tool). |
 | `DEXAFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)). Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
 | `DEXAFLOW_AUTH_SECRET_SCOPING` | `permissive` | both | Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `permissive` (delivers the whole tenant vault; warns when a DAG declares a narrower set), `enforce` (delivers only the declared subset — empty declaration ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable. Helm: `auth.secretScoping`. |
 | `DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |
 | `DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME` | `24h` | both | Duration ceiling on how long one attempt's agent credential may be kept alive by heartbeat renewal ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)). A runaway-task backstop — the short per-attempt TTL is what bounds a stolen token. A non-positive value disables the ceiling. No Helm value yet — `extraEnv` only ([#955](https://github.com/dexadata/leoflow/issues/955)). |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
-| `DEXAFLOW_AUTH_DEV_NO_AUTH` | `false` | dev-only | Legacy escape hatch — bypasses auth entirely, treating every request as admin. Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite uses a real admin login generated by `leoflow setup`; set this only for ephemeral test scaffolds. |
+| `DEXAFLOW_AUTH_DEV_NO_AUTH` | `false` | dev-only | Legacy escape hatch — bypasses auth entirely, treating every request as admin. Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite uses a real admin login generated by `dexaflow setup`; set this only for ephemeral test scaffolds. |
 
 ### OIDC / SSO (`auth.oidc.*`)
 
@@ -412,10 +412,10 @@ lacks the tenant pin. See the chart README's SSO section and
 | `DEXAFLOW_AUTH_OIDC_REDIRECT_URL` | _(empty)_ | Pro | This server's callback URL registered with the IdP (`…/api/v2/auth/oidc/callback`). Must be `https://` (http allowed only for loopback hosts). |
 | `DEXAFLOW_AUTH_OIDC_SCOPES` | `openid, email, profile` | Pro | OAuth scopes requested. A list, set as a comma-separated env var. Add the IdP's groups scope when group→role mapping is used. |
 | `DEXAFLOW_AUTH_OIDC_GROUPS_CLAIM` | `groups` | Pro | The ID-token claim carrying the user's IdP groups; its values drive `role_mappings`. |
-| `auth.oidc.role_mappings` | _(empty map)_ | Pro | Maps an IdP group value → an existing Leoflow role name. **Default-DENY**: an unmapped group grants no role. YAML config file only (a map does not bind from an env var). Helm: `auth.oidc.roleMappings`, rendered into the mounted config file. Reconciliation is IdP-authoritative, so an EMPTY resolved set CLEARS the user's existing grants on every login: configure this or `default_role`. |
+| `auth.oidc.role_mappings` | _(empty map)_ | Pro | Maps an IdP group value → an existing Dexaflow role name. **Default-DENY**: an unmapped group grants no role. YAML config file only (a map does not bind from an env var). Helm: `auth.oidc.roleMappings`, rendered into the mounted config file. Reconciliation is IdP-authoritative, so an EMPTY resolved set CLEARS the user's existing grants on every login: configure this or `default_role`. |
 | `DEXAFLOW_AUTH_OIDC_DEFAULT_ROLE` | _(empty)_ | Pro | When an authenticated user resolves to zero mapped roles and this is set, grants this single role (advised: a read-only role such as `viewer`). Empty keeps strict default-deny. Must name an existing DB role for the resolved tenant. |
 | `DEXAFLOW_AUTH_OIDC_TENANT_CLAIM` | _(empty)_ | Pro | **Required with `provider: oidc`** (boot fails otherwise). Which IdP claim identifies the tenant: `tid` (Entra) or `hd` (Google Workspace). Set it to `hd` with exactly one entry in `tenant_claims` and the login redirect also carries Google's `hd` parameter, so the account chooser offers only accounts in that domain. That is a convenience: the pin is still the verified claim on the returned token. |
-| `auth.oidc.tenant_claims` | _(empty map)_ | Pro | **Required with `provider: oidc`, with at least one entry** (boot fails otherwise). Maps a `tenant_claim` value → a Leoflow tenant name. A value not present is rejected and the login never falls back to `default`. The claim may be a string or an array of strings (some IdPs emit `aud` as an array); an array naming two accepted tenants is rejected as ambiguous rather than resolved to either, and a claim that is neither shape is rejected with its own audit reason. Config file only (a map does not bind from an env var), read from the path in `DEXAFLOW_CONFIG`. Helm: `auth.oidc.tenantClaim` + `auth.oidc.tenantClaims`, which the chart requires together before it will render an SSO install. **The value must name a tenant that already exists**: the only tenant anything in Leoflow creates is `default`, from the first migration, so map to `default` unless you created one yourself. The server checks this at boot and warns. |
+| `auth.oidc.tenant_claims` | _(empty map)_ | Pro | **Required with `provider: oidc`, with at least one entry** (boot fails otherwise). Maps a `tenant_claim` value → a Dexaflow tenant name. A value not present is rejected and the login never falls back to `default`. The claim may be a string or an array of strings (some IdPs emit `aud` as an array); an array naming two accepted tenants is rejected as ambiguous rather than resolved to either, and a claim that is neither shape is rejected with its own audit reason. Config file only (a map does not bind from an env var), read from the path in `DEXAFLOW_CONFIG`. Helm: `auth.oidc.tenantClaim` + `auth.oidc.tenantClaims`, which the chart requires together before it will render an SSO install. **The value must name a tenant that already exists**: the only tenant anything in Dexaflow creates is `default`, from the first migration, so map to `default` unless you created one yourself. The server checks this at boot and warns. |
 | `DEXAFLOW_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS` | _(empty)_ | Pro | Login-level allowlist layered on TOP of the `tid`/`hd` tenant pin (not the pin itself). Empty imposes no domain restriction. Non-empty admits a login only when the verified email's domain is in the list. A list, set as a comma-separated env var. |
 | `DEXAFLOW_AUTH_OIDC_BREAK_GLASS_EMAILS` | _(empty)_ | Pro | Allowlist of local password logins permitted while provider is `oidc`; every other password login is rejected (SSO-only). A list, set as a comma-separated env var. **Empty means an IdP outage or a wrong tenant pin locks everyone out**, including whoever has to fix it; the server warns at boot. It also warns when none of the listed addresses has a **local password account**, which is the worse case: the allowlist admits the address and the credential store then rejects it exactly like a wrong password, so the hatch does not open while you believe it will. A user provisioned through SSO does not count, it has no password. Create the local account before you need it, while an admin session still exists. |
 | `DEXAFLOW_AUTH_OIDC_JIT_PROVISIONING` | `false` | Pro | Create a user row on first OIDC login when none matches; the new row is granted the roles from `role_mappings` (or `default_role`). **Off means no SSO login can succeed**: a login is matched by `(oidc_provider, oidc_subject)` and JIT is the only path that ever writes those columns, so there is no supported way to pre-provision a matching account and every first login is denied (audited `no_user_jit_off`). The Helm chart therefore defaults `auth.oidc.jitProvisioning` to `true`. An address that already has a local password account in the same tenant cannot be provisioned either way (unique `(tenant, email)`; audited `jit_failed`). The server logs a WARN at boot when it is off, so the cause is visible before the first login is attempted. |
@@ -464,7 +464,7 @@ a WARN at boot when the secret is empty.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `leoflow lite`/`leoflow dev` set it). |
+| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `dexaflow lite`/`leoflow dev` set it). |
 | `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). |
 | `DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR` | _(empty → `server.grpc_addr`)_ | both | gRPC address task pods dial back to. In a local k3d/kind cluster set it to a host-reachable address such as `host.k3d.internal:9091`. |
 | `DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP` | _(empty)_ | Pro | Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel (dev). |
@@ -526,7 +526,7 @@ dedicated pod per task attempt.
 
 Operator-only ([ADR 0060](/project/adrs/0060-external-secrets-resolution/)):
 delivered to the task pod as `DEXAFLOW_SECRETS_*`, which an author's task env can
-never set. Empty `backend` keeps the Leoflow vault as the only source —
+never set. Empty `backend` keeps the Dexaflow vault as the only source —
 byte-identical to having no external secrets at all. See
 [External secrets](/operate/external-secrets/) and run the
 [cluster validation runbook](/operate/external-secrets-cluster-validation/)
@@ -550,11 +550,11 @@ before enabling it in production.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_UI_INSTANCE_NAME` | `Leoflow` | both | UI navbar label (`leoflow lite` sets it to mark the environment). |
-| `DEXAFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS` | `0` | both | SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back to the production-safe 30s default; `leoflow lite` sets 1s for a snappy inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely when unset so the server default decides. |
+| `DEXAFLOW_UI_INSTANCE_NAME` | `Dexaflow` | both | UI navbar label (`dexaflow lite` sets it to mark the environment). |
+| `DEXAFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS` | `0` | both | SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back to the production-safe 30s default; `dexaflow lite` sets 1s for a snappy inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely when unset so the server default decides. |
 | `DEXAFLOW_UI_EDITION` | _(empty)_ | both | Edition badge in the UI shell: `lite` shows the silver LITE badge, `pro` the gold PRO badge (independent of the auth mode; also gates `auth.provider: oidc`). Empty/other shows no badge. |
 | `DEXAFLOW_UI_WORKSPACE` | _(empty)_ | both | DAG project directory the Lite web editor edits ([ADR 0025](/project/adrs/0025-lite-embedded-web-editor/)). Empty disables the editor. |
-| `DEXAFLOW_UI_MONACO_DIR` | _(empty)_ | both | Where the pinned Monaco bundle was fetched by `leoflow setup`; the editor page is served Monaco from it. Empty shows a setup hint. |
+| `DEXAFLOW_UI_MONACO_DIR` | _(empty)_ | both | Where the pinned Monaco bundle was fetched by `dexaflow setup`; the editor page is served Monaco from it. Empty shows a setup hint. |
 | `DEXAFLOW_UI_HOME_LINK_LABEL` | _(empty)_ | both | Text of an optional link from the UI back to the platform you serve it from, shown on every page at the bottom-left and opened in the same tab. Set it together with `DEXAFLOW_UI_HOME_LINK_URL`. Helm: `ui.homeLink.label`. |
 | `DEXAFLOW_UI_HOME_LINK_URL` | _(empty)_ | both | Absolute `http://` or `https://` URL of the home link. Empty shows no link. Boot fails on another scheme, a missing host, or a URL without a label. Helm: `ui.homeLink.url`. |
 | `DEXAFLOW_UI_THEME` | _(empty)_ | both | Theme for the UI as a JSON object, the same shape as Airflow's `[api] theme`: `tokens` (Chakra design tokens such as `colors.brand` and `fonts`), `globalCss`, `icon`, `icon_dark_mode`. Served in `/ui/config`, so the UI applies it through its own theming. Boot fails on invalid JSON, an unknown top-level key, or an icon that is not http(s) or root-relative. Helm: `ui.theme` (YAML, rendered as JSON). See [Branding the UI](#branding-the-ui). |
@@ -600,7 +600,7 @@ rule, and holds only as long as the bundle keeps the selector it targets.
 
 ### Trusted proxies and the client IP
 
-By default Leoflow trusts **no** proxy: `X-Forwarded-For` is ignored and the
+By default Dexaflow trusts **no** proxy: `X-Forwarded-For` is ignored and the
 client IP (used by the login rate-limiter and the audit log) is the direct peer.
 This is the safe default — it stops a spoofed `X-Forwarded-For` from forging the
 client IP — and is correct for Lite (exposed directly) and for any deployment
@@ -632,6 +632,7 @@ the current one wins.
 | `dexaflow.yaml` | `leoflow.yaml` | `dexaflow.yaml` is used and a note is printed; `leoflow.yaml` is ignored. |
 | `DEXAFLOW_*` variables | `LEOFLOW_*` variables | The `DEXAFLOW_*` value is used; a conflict is logged. Every binary mirrors one prefix onto the other at startup, so processes it starts see both. |
 | `~/.dexaflow` | `~/.leoflow` | An existing `~/.leoflow` is kept in place and `~/.dexaflow` becomes a link to it, so nothing is moved. |
+| `~/dexaflow` (default workspace) | `~/leoflow` | `~/dexaflow` is used. With only `~/leoflow`, that stays the default, so its DAG projects are found. A workspace recorded by `dexaflow setup` is always used as is. |
 | `dexaflow`, `dexaflow-server`, `dexaflow-agent`, `dexaflow-mcp` | `leoflow`, `leoflow-server`, `leoflow-agent`, `leoflow-mcp` | The installer and `make build` add the old names as links to the new binaries. |
 | `from dexaflow import ...` in a `dag.py` | `from leoflow import ...` | `leoflow` is a re-export of `dexaflow`; both names refer to the same objects. |
 | `dexaflow_*` metrics | `leoflow_*` metrics | The `/metrics` endpoint publishes every family under both names with the same values, so existing dashboards, alerts and recording rules keep working. Each family therefore appears twice in a scrape. |

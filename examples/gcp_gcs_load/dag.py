@@ -1,4 +1,4 @@
-"""gcp_gcs_load — write + read a GCS object using a managed Leoflow Connection.
+"""gcp_gcs_load — write + read a GCS object using a managed Dexaflow Connection.
 
 Demonstrates the `google_cloud_platform` connection in **both** auth modes:
 
@@ -45,7 +45,7 @@ def _field(extra: dict, name: str):
 
 
 def gcp_credentials(conn_id: str = GCP_CONN):
-    """Resolve GCP credentials from a Leoflow Connection. Returns (creds, project, mode).
+    """Resolve GCP credentials from a Dexaflow Connection. Returns (creds, project, mode).
 
     Resolution (first match wins): keyfile_dict -> key_path (K8s Secret) ->
     key_secret_name (GCP Secret Manager) -> ADC (keyless / Workload Identity).

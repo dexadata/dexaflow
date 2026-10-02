@@ -186,7 +186,7 @@ type GetUserByOIDCSubjectRow struct {
 	IsActive bool        `json:"is_active"`
 }
 
-// Resolve an OIDC identity to a Leoflow user by its immutable (provider,
+// Resolve an OIDC identity to a Dexaflow user by its immutable (provider,
 // subject) pair (the trusted link key). Returns the tenant name (not the uuid)
 // so the reconstructed principal matches the login path's User.TenantID, plus
 // the active flag the login gates on. Never selects password_hash.

@@ -66,7 +66,7 @@ func newWorkspaceWithProject(t *testing.T, name string) WorkspaceFS {
 // TestInstallExamplesSkipsRootCollision covers #298b (alpha-prep): when the
 // workspace already has a top-level project with the same name as an
 // embedded example, the install must skip that example wholesale — otherwise
-// the next `leoflow lite` boot refuses to start (multi-DAG discovery rejects
+// the next `dexaflow lite` boot refuses to start (multi-DAG discovery rejects
 // duplicate dag_ids). The handler reports skipped examples in a dedicated
 // response field so the IDE can surface "skipped: bash_pipeline (already
 // exists)" to the user instead of silently producing a broken workspace.

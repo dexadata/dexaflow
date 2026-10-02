@@ -13,13 +13,13 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// `leoflow validate` checked dag.py's syntax under whatever interpreter it
+// `dexaflow validate` checked dag.py's syntax under whatever interpreter it
 // found, never consulting python_version (#1094). The failure is the annoying
 // direction: valid 3.12+ code is REJECTED, because `type X[T]` is a SyntaxError
 // on 3.11, so validate fails a DAG the cluster runs fine and the author has no
 // way to tell the complaint is about the checker.
 //
-// It now asks the same question `leoflow dev` asks, with the same exemptions.
+// It now asks the same question `dexaflow lite` asks, with the same exemptions.
 func TestValidateEnforcesTheDeclaredPythonVersion(t *testing.T) {
 	cases := []struct {
 		name string
@@ -58,7 +58,7 @@ func TestValidateEnforcesTheDeclaredPythonVersion(t *testing.T) {
 
 // A deprecated version must not be enforced: the project is on its way off it,
 // and refusing to lint until the author installs an interpreter we are telling
-// them to abandon helps nobody. Same exemption `leoflow dev` makes.
+// them to abandon helps nobody. Same exemption `dexaflow lite` makes.
 func TestValidateDoesNotEnforceADeprecatedVersion(t *testing.T) {
 	// 3.10 is the version the schema marks deprecated (see .changie/the schema's
 	// x-leoflow-python-deprecations); skip if that ever stops being true rather
@@ -124,7 +124,7 @@ func TestSyntaxCheckTrustsAnInterpreterAtLeastAsNew(t *testing.T) {
 	}
 }
 
-// The regression this pair exists to stop: `leoflow init` writes python_version
+// The regression this pair exists to stop: `dexaflow init` writes python_version
 // explicitly, so EVERY scaffolded project takes the strict path. Skipping the
 // lint whenever that exact minor is missing would have stopped validate
 // catching a broken dag.py on any host that simply has a newer python3, which

@@ -84,6 +84,6 @@ assigns an `manual__<timestamp>` id.
 ## See also
 
 - [HTTP API (Scalar) reference](/reference/api/) — every endpoint, interactively.
-- [CI/CD deploy](/operate/cicd-deploy/) — the `leoflow push` + `DEXAFLOW_TOKEN`
+- [CI/CD deploy](/operate/cicd-deploy/) — the `dexaflow push` + `DEXAFLOW_TOKEN`
   path when you control the DAG source (vs. only triggering an existing DAG).
 - [ADR 0008 — JWT auth](/project/adrs/0008-jwt-auth/).

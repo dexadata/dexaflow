@@ -341,7 +341,7 @@ func createConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 			AbortProblem(c, http.StatusBadRequest, "bad request", "connection_id and conn_type are required")
 			return
 		}
-		// POST is an upsert (`leoflow connections set`), so merge against any
+		// POST is an upsert (`dexaflow connections set`), so merge against any
 		// existing connection: a masked field then preserves the stored secret,
 		// exactly as on PATCH. When the connection does not exist yet, stored is
 		// the zero value and a masked field has nothing to preserve, so toPatch

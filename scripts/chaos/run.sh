@@ -77,7 +77,7 @@ cd "$REPO_ROOT"
 # ─── Section 1: fresh-runner contract ────────────────────────────────────────
 # This catches the contributor-leak surface that hid the BYO Python gap in PR
 # #221 — the maintainer's machine had `pip install leoflow_parser` so compile
-# "just worked" without `leoflow setup`. A clean CI runner does NOT have this.
+# "just worked" without `dexaflow setup`. A clean CI runner does NOT have this.
 # The harness REFUSES to declare a green report when the host fails the
 # contract; the operator fixes their env or runs Phase 2 inside Docker.
 contract_check() {

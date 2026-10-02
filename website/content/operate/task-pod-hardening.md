@@ -30,10 +30,10 @@ and leaving the pod context unset skips the kubelet's recursive volume chown.
 
 Two of these are worth understanding rather than just reading.
 
-**`runAsNonRoot` without `runAsUser`.** Leoflow deliberately does not pin a UID.
+**`runAsNonRoot` without `runAsUser`.** Dexaflow deliberately does not pin a UID.
 The kubelet resolves the image's own `USER` and refuses the pod if it resolves
 to root. That means a **numeric** `USER` in your DAG image — `USER 65532:65532`,
-which the Leoflow base image uses — is required: a symbolic `USER myuser` cannot
+which the Dexaflow base image uses — is required: a symbolic `USER myuser` cannot
 be resolved by the kubelet before the container starts, and the pod fails
 admission with `CreateContainerConfigError`. If you build a DAG image from
 something other than our base, make the final `USER` numeric.
@@ -51,7 +51,7 @@ taskPodSecurity:
 
 With this on, the task container's root filesystem is mounted read-only and the
 executor mounts an `emptyDir` at `/tmp` so anything that needs scratch space
-still has it. The Leoflow base image already points dbt's target, log and
+still has it. The Dexaflow base image already points dbt's target, log and
 profiles paths at `/tmp`, so a dbt task needs no further configuration.
 
 **It is off by default** because a DAG image that writes anywhere outside `/tmp`
@@ -70,7 +70,7 @@ Two things to know before you rely on it:
 - **Airflow logs a warning in every task.** With a read-only root, Airflow cannot
   create `/home/leoflow/airflow/logs` and says so:
   `Could not create log folder … Read-only file system … Airflow will continue`.
-  It is harmless — Leoflow captures task output over its own channel, unaffected
+  It is harmless — Dexaflow captures task output over its own channel, unaffected
   — but it appears at the top of every task log.
 
 ## Running in a `restricted` namespace
@@ -106,7 +106,7 @@ hybrid DAG whose dbt models materialized normally.
 ## Memory limits, and what happens without one
 
 A task pod gets the CPU, memory and ephemeral-storage `requests` and `limits` the
-DAG author declares under `resources`. Leoflow adds none of its own.
+DAG author declares under `resources`. Dexaflow adds none of its own.
 
 **If nobody declares a memory limit, there is none.** The pod inherits whatever
 the namespace imposes, and if the namespace imposes nothing the task can grow

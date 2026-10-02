@@ -12,7 +12,7 @@ import (
 )
 
 // synthID derives a stable synthetic identifier from composite key parts, for UI
-// objects (task instances) Leoflow keys by composite rather than a UUID.
+// objects (task instances) Dexaflow keys by composite rather than a UUID.
 func synthID(parts ...any) string {
 	h := fnv.New64a()
 	for _, p := range parts {
@@ -86,7 +86,7 @@ func toDagDTO(d domain.DAG) dagDTO {
 
 // dagRunDTO is the Airflow 3.2.1 DAGRunResponse. Every spec-required field is
 // present — notably dag_versions (a required array the UI maps over; omitting it
-// crashes the run view with "undefined.map"). Fields Leoflow does not model are
+// crashes the run view with "undefined.map"). Fields Dexaflow does not model are
 // null/defaults.
 type dagRunDTO struct {
 	DagID              string          `json:"dag_id"`
@@ -172,8 +172,8 @@ func confOrEmptyObject(conf json.RawMessage) json.RawMessage {
 }
 
 // taskInstanceDTO is the Airflow 3.2.1 TaskInstanceResponse. Every spec-required
-// field is present; values Leoflow does not track are null/defaults. id is a
-// stable synthetic key (Leoflow keys task instances by composite, not a UUID).
+// field is present; values Dexaflow does not track are null/defaults. id is a
+// stable synthetic key (Dexaflow keys task instances by composite, not a UUID).
 type taskInstanceDTO struct {
 	ID               string          `json:"id"`
 	TaskID           string          `json:"task_id"`
@@ -209,7 +209,7 @@ type taskInstanceDTO struct {
 	Trigger          *string         `json:"trigger"`
 	TriggererJob     *string         `json:"triggerer_job"`
 	DagVersion       *dagVersionDTO  `json:"dag_version"`
-	// FailureReason is a Leoflow EXTENSION, not an Airflow field: a short,
+	// FailureReason is a Dexaflow EXTENSION, not an Airflow field: a short,
 	// human-readable cause for a terminal failure. It is additive — the Airflow
 	// SPA ignores fields it does not know — and exists because an attempt whose
 	// agent died before it ever registered streams no logs, leaving "failed" with

@@ -23,7 +23,7 @@ tested so far. The list below grows as we land them.
 
 A Connection only carries credentials. To *use* a connector — whether through
 its Airflow hook (`PostgresHook`) or a raw driver (`psycopg2`) — the matching
-Python package has to be in the image / venv. Leoflow gives you two ways to
+Python package has to be in the image / venv. Dexaflow gives you two ways to
 declare that in `dexaflow.yaml`, and you pick whichever fits:
 
 {{< tabpane text=true >}}
@@ -62,7 +62,7 @@ compile** with the offender, the known list, and a pointer to `dependencies:`,
 so a typo never slips through to a runtime `ModuleNotFoundError` in the task pod.
 
 {{% alert title="Import provider hooks inside the task function" color="success" %}}
-Leoflow parses your DAG without providers installed (the parser only needs the
+Dexaflow parses your DAG without providers installed (the parser only needs the
 DAG's *shape*). So put hook/operator imports **inside** the `@task` body, not at
 the module top level:
 

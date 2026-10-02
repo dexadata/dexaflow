@@ -274,10 +274,10 @@ class _StandaloneTaskInstance:
 
     Almost every provider operator calls ``context["ti"].xcom_push(...)`` at the end
     of ``execute()`` to persist its UI operator link (see Airflow's
-    ``.../links/base.py``); a few read ``try_number``. Leoflow propagates only the
+    ``.../links/base.py``); a few read ``try_number``. Dexaflow propagates only the
     operator's ``execute()`` return value as the downstream XCom (see
     :func:`_write_return`), so ``xcom_push``/``xcom_pull`` are deliberate no-ops —
-    they drop the UI link and any extra keyed XCom that Leoflow does not consume,
+    they drop the UI link and any extra keyed XCom that Dexaflow does not consume,
     rather than crashing the task *after* its real side effect (which on retry would
     re-run a non-idempotent operator). Identity fields come from the agent's env.
     Attributes beyond these are intentionally absent: an operator that needs the real
@@ -299,7 +299,7 @@ class _StandaloneTaskInstance:
     def xcom_push(self, key=None, value=None, *args, **kwargs) -> None:
         """Capture the push (keyed by ``key``) so the operator's UI deep-link buttons
         (operator_extra_links) can be computed after execute() — see
-        :func:`_extra_links` (ADR 0040, #375). Leoflow still propagates only the
+        :func:`_extra_links` (ADR 0040, #375). Dexaflow still propagates only the
         execute() return value downstream (:func:`_write_return`), not these pushes."""
         if key is not None:
             self.pushed[key] = value
@@ -308,7 +308,7 @@ class _StandaloneTaskInstance:
         """Resolve an upstream task's ``return_value`` — the Airflow-idiomatic way
         chained operators pass data (``ti.xcom_pull('compile')['name']``). The agent
         delivers each declared upstream's return_value in UPSTREAM_XCOM_ENV; only
-        the ``return_value`` key is carried (custom keys → None, matching Leoflow's
+        the ``return_value`` key is carried (custom keys → None, matching Dexaflow's
         single-payload XCom model). ``task_ids`` may be a single id (→ one value) or a
         list (→ a list, like Airflow); an unknown id resolves to ``default``
         (Airflow's ``default`` kwarg, itself None unless the caller passes one).
@@ -518,7 +518,7 @@ def run_operator(operator_class: str, args: dict) -> None:
             _signal_reschedule(exc, class_name)  # writes the file + SystemExit, or raises
         if _is_deferral_exc(exc):
             raise RuntimeError(
-                f"{class_name} asked to defer (deferrable=True), which Leoflow does not "
+                f"{class_name} asked to defer (deferrable=True), which Dexaflow does not "
                 f"support yet (ADR 0040 Phase C — no triggerer). Pass deferrable=False — "
                 f"the operator runs synchronously in the pod (poke-style).") from exc
         # A genuine failure (not a reschedule/deferral): run the on_failure_callback
@@ -677,7 +677,7 @@ def _signal_reschedule(exc: BaseException, class_name: str) -> None:
 def _is_deferral_exc(exc: BaseException) -> bool:
     """True if exc is Airflow's TaskDeferred (matched by name across the MRO, so the
     runtime needn't import Airflow). A deferrable operator (deferrable=True) raises
-    it to suspend onto a trigger; Leoflow has no triggerer yet (ADR 0040 Phase C),
+    it to suspend onto a trigger; Dexaflow has no triggerer yet (ADR 0040 Phase C),
     so we translate it into a clear "set deferrable=False" error rather than leaking
     a raw TaskDeferred traceback."""
     return any(base.__name__ == "TaskDeferred" for base in type(exc).__mro__)

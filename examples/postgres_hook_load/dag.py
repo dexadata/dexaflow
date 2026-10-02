@@ -5,7 +5,7 @@ PostgresHook instead of raw psycopg2. The provider is declared with one line of
 `connectors:` sugar in dexaflow.yaml (no driver to remember), and the hook reads
 the managed Connection `pg_target` (injected as AIRFLOW_CONN_PG_TARGET).
 
-Note the hook is imported INSIDE the task body, not at module top level: Leoflow
+Note the hook is imported INSIDE the task body, not at module top level: Dexaflow
 parses the DAG without providers installed, so a top-level provider import fails
 the compile. Inside the task it is fine — the parser never executes task bodies,
 and at runtime the provider is installed.

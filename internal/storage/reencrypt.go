@@ -14,7 +14,7 @@ import (
 // key opened, so the rotation can finish and the old key be retired.
 //
 // Without this a rotation never completes: the previous key stays in the read
-// set forever, and for Leoflow Lite that key was published in this repository
+// set forever, and for Dexaflow Lite that key was published in this repository
 // (#486). "Set the new key and keep the old one" is not a rotation, it is a
 // second key.
 //

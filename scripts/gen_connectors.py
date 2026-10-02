@@ -38,7 +38,7 @@ DEFAULT_OUT = os.path.join(
 )
 
 
-# Leoflow-native connection types absent from the Airflow providers introspection.
+# Dexaflow-native connection types absent from the Airflow providers introspection.
 # duckdb is an embedded, file-based warehouse — the zero-server backend for local dbt
 # development (ADR 0042/0043). Kept here so a catalog regeneration preserves it.
 _NATIVE_CONNECTIONS: list[dict] = [

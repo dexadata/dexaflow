@@ -10,7 +10,7 @@ description: Datadog connection
 ---
 
 Submit metrics, events, and query monitors from a task over a managed
-Leoflow Connection. `DatadogHook` authenticates with an API key + app key
+Dexaflow Connection. `DatadogHook` authenticates with an API key + app key
 against the Datadog site (US, EU, …).
 
 ## Declare the provider

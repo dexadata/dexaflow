@@ -5,7 +5,7 @@ weight: 10
 description: The /api/v2/ control-plane API, Airflow 3.2.x-compatible, as an interactive Scalar reference generated from the OpenAPI spec.
 ---
 
-Leoflow's control-plane API is the `/api/v2/` surface, pinned **Airflow
+Dexaflow's control-plane API is the `/api/v2/` surface, pinned **Airflow
 3.2.x-compatible**. It is documented from the OpenAPI spec (`openapi.yaml`) and
 rendered with [Scalar](https://github.com/scalar/scalar).
 

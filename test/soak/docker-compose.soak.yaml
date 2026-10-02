@@ -2,7 +2,7 @@
 #
 # Deliberately NOT docker-compose.dev.yaml: a soak left running over a weekend
 # must not share a database, a port or a volume with the machine's development
-# stack, or the first `leoflow db reset` in another terminal destroys the
+# stack, or the first `dexaflow db reset` in another terminal destroys the
 # evidence. Everything here is namespaced `leoflow-soak`.
 #
 # The resource limits are part of the cost budget, not decoration. The soak has
@@ -20,7 +20,7 @@ services:
     # exists. An unattended experiment must not outlive the experiment.
     restart: "no"
     environment:
-      # The credentials and database name are the ones `leoflow lite` hard-wires
+      # The credentials and database name are the ones `dexaflow lite` hard-wires
       # for its own datastore (internal/cli/dsn.go). Lite overrides
       # LEOFLOW_DATABASE_URL with that DSN unconditionally, so a soak cannot
       # simply point it at an arbitrary Postgres. Isolation is bought instead by

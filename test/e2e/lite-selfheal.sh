@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end gate for Lite's boot self-heal (#404): a reused metadata DB must not
-# leave un-removable ghosts. Two `leoflow lite` sessions share one external
+# leave un-removable ghosts. Two `dexaflow lite` sessions share one external
 # Postgres (--no-up + LEOFLOW_DATABASE_URL). Session 1 registers a valid DAG
 # (ghost), a kept DAG (keeper), and a broken DAG (import error); its files for
 # ghost+broken are then removed. Session 2's boot reconcile MUST deregister the

@@ -8,7 +8,7 @@ import (
 // TestApplyDefaults_AllZeroValuesGetSchemaDefaults verifies that a fully zero
 // LeoflowConfig is filled with every default declared in the JSON Schema
 // (internal/domain/schemas/leoflow-yaml-schema.json). This is the single
-// source of truth for "what does Leoflow assume when dexaflow.yaml is empty"
+// source of truth for "what does Dexaflow assume when dexaflow.yaml is empty"
 // and replaces the scattered inline `if x == "" { x = ...}` fallbacks.
 //
 // Reason for centralization (user ask 2026-06-01): the multi-DAG workspace

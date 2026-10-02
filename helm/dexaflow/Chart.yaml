@@ -1,6 +1,6 @@
 apiVersion: v2
 name: dexaflow
-description: Leoflow control plane — a GitOps-first, container-native workflow orchestrator (Airflow 3.2.x UI/API compatible).
+description: Dexaflow control plane — a GitOps-first, container-native workflow orchestrator (Airflow 3.2.x UI/API compatible).
 type: application
 # version is the chart version; appVersion tracks the leoflow-server image.
 # Both move in lockstep with the release tag (ADR 0028); decouple only if the
@@ -16,4 +16,4 @@ keywords:
   - airflow
   - dag
 maintainers:
-  - name: Leoflow
+  - name: Dexaflow

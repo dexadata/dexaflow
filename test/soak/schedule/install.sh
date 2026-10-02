@@ -76,7 +76,7 @@ PLIST
 systemd_service() {
   cat <<UNIT
 [Unit]
-Description=Leoflow soak battery (bounded, local)
+Description=Dexaflow soak battery (bounded, local)
 
 [Service]
 Type=oneshot
@@ -91,7 +91,7 @@ UNIT
 systemd_timer() {
   cat <<UNIT
 [Unit]
-Description=Leoflow soak battery schedule
+Description=Dexaflow soak battery schedule
 
 [Timer]
 OnCalendar=*-*-* ${HOUR}:${MIN}:00

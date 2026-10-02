@@ -3,7 +3,7 @@ package setup
 import "fmt"
 
 // Pinned relocatable PostgreSQL build (theseus-rs/postgresql-binaries). These are
-// the datastore Leoflow Lite manages itself so it needs no Docker (Fase 2). The
+// the datastore Dexaflow Lite manages itself so it needs no Docker (Fase 2). The
 // major is pinned to 16 to match the typical managed Postgres in Production.
 // Bumping the version means refreshing every SHA-256 below from the release's
 // per-asset .sha256 files.

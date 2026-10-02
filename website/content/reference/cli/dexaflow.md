@@ -31,12 +31,12 @@ Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow deploy](/reference/cli/dexaflow_deploy/)	 - Build, push, and register a DAG to a control plane (Pro).
 * [dexaflow doctor](/reference/cli/dexaflow_doctor/)	 - Report host platform, dependencies, and the achievable operating tier.
 * [dexaflow init](/reference/cli/dexaflow_init/)	 - Scaffold a new DAG project (dexaflow.yaml + dag.py).
-* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Leoflow Lite locally with hot reload.
+* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Dexaflow Lite locally with hot reload.
 * [dexaflow push](/reference/cli/dexaflow_push/)	 - Register a compiled dag.json with the control plane.
 * [dexaflow runs](/reference/cli/dexaflow_runs/)	 - Trigger and inspect DAG runs.
 * [dexaflow server](/reference/cli/dexaflow_server/)	 - Information about running the control plane.
-* [dexaflow setup](/reference/cli/dexaflow_setup/)	 - Bootstrap the managed Leoflow runtime (Python, parser, workspace).
-* [dexaflow uninstall](/reference/cli/dexaflow_uninstall/)	 - Remove the Leoflow installation (~/.dexaflow).
+* [dexaflow setup](/reference/cli/dexaflow_setup/)	 - Bootstrap the managed Dexaflow runtime (Python, parser, workspace).
+* [dexaflow uninstall](/reference/cli/dexaflow_uninstall/)	 - Remove the Dexaflow installation (~/.dexaflow).
 * [dexaflow validate](/reference/cli/dexaflow_validate/)	 - Validate dexaflow.yaml and the DAG source against the schema.
 * [dexaflow variables](/reference/cli/dexaflow_variables/)	 - Manage control-plane variables.
 * [dexaflow version](/reference/cli/dexaflow_version/)	 - Print the version, git commit, and build date.

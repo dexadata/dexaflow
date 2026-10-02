@@ -43,10 +43,10 @@ import (
 )
 
 // devEnv is the fixed local-development environment label and its defaults. The
-// subprocess executor runs user code unsandboxed, so `leoflow dev` is dev-only
+// subprocess executor runs user code unsandboxed, so `dexaflow lite` is dev-only
 // and shouts that fact in the banner and the UI navbar (ADR 0023).
 const (
-	devInstanceName = "Leoflow Lite"
+	devInstanceName = "Dexaflow Lite"
 	// devDatabaseURL targets a DEDICATED database, isolated from the product's
 	// "leoflow" db so the dev experience never mixes data with product development
 	// (no split brain). devMaintenanceURL is used only to CREATE it on first run.
@@ -76,7 +76,7 @@ const (
 	devPollInterval    = 750 * time.Millisecond
 	devReadyTimeout    = 30 * time.Second
 	// Dev uses ports distinct from the demo/production defaults (8080/9090/9091)
-	// so a `leoflow dev` and a demo control plane can run side by side without
+	// so a `dexaflow lite` and a demo control plane can run side by side without
 	// colliding. --port overrides the HTTP port; the gRPC and metrics ports derive
 	// from it (devGRPCPort/devMetricsPort) so multiple Lite instances can coexist.
 	devDefaultPort = 8088
@@ -133,7 +133,7 @@ type devOptions struct {
 	agentBin    string
 	noUp        bool
 	postgres    string // "auto" (default), "docker", or "managed" (relocatable PG, no Docker)
-	// Resolved from ~/.dexaflow/config.yaml (written by `leoflow setup`), not flags.
+	// Resolved from ~/.dexaflow/config.yaml (written by `dexaflow setup`), not flags.
 	adminHash  string
 	adminEmail string
 	// jwtSecret is the per-install Lite JWT signing secret loaded from
@@ -187,25 +187,25 @@ func prepareWorkspace(cmd *cobra.Command, out io.Writer, dir string) (*Workspace
 	return ws, nil
 }
 
-// resolveLiteProject picks the workspace dir for `leoflow lite`. With an
+// resolveLiteProject picks the workspace dir for `dexaflow lite`. With an
 // explicit path argument it uses that — must exist as a directory; the path
 // can be either a single-DAG project (back-compat: root holds dexaflow.yaml +
 // dag.py) or a multi-DAG workspace (subdirs each with their own pair). With
-// no argument it uses the configured workspace (the directory `leoflow setup`
+// no argument it uses the configured workspace (the directory `dexaflow setup`
 // chose). Scaffolding of an empty workspace is the caller's responsibility —
 // it now creates a subdir (`<workspace>/hello/`), not a root project.
 func resolveLiteProject(cmd *cobra.Command, args []string) (string, error) {
 	if len(args) == 1 {
 		p := args[0]
 		// An explicit argument must be an existing directory. Without this check a
-		// typo like `leoflow lite uninstall` was swallowed as a project path and
+		// typo like `dexaflow lite uninstall` was swallowed as a project path and
 		// failed later with a cryptic "open uninstall/dexaflow.yaml". Fail clearly.
 		info, err := os.Stat(p)
 		if err != nil || !info.IsDir() {
 			return "", fmt.Errorf("workspace path %q does not exist or is not a directory.\n"+
-				"  - run `leoflow lite` with no argument to use your workspace (%s)\n"+
-				"  - run `leoflow init %s` to create a project there\n"+
-				"  - for other actions see `leoflow --help` (e.g. `leoflow uninstall`)",
+				"  - run `dexaflow lite` with no argument to use your workspace (%s)\n"+
+				"  - run `dexaflow init %s` to create a project there\n"+
+				"  - for other actions see `dexaflow --help` (e.g. `dexaflow uninstall`)",
 				p, defaultWorkspace(cmd), p)
 		}
 		return p, nil
@@ -217,14 +217,15 @@ func resolveLiteProject(cmd *cobra.Command, args []string) (string, error) {
 	return dir, nil
 }
 
-// defaultWorkspace returns the workspace from config (set by `leoflow setup`),
-// falling back to ~/leoflow.
+// defaultWorkspace returns the workspace from config (set by `dexaflow setup`),
+// falling back to ~/dexaflow (or the ~/leoflow of an install from before the
+// rename, see defaultWorkspaceIn).
 func defaultWorkspace(cmd *cobra.Command) string {
 	if c, err := config.Load(configFilePath(cmd), nil); err == nil && c.Workspace != "" {
 		return c.Workspace
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, "leoflow")
+		return defaultWorkspaceIn(home)
 	}
 	return "."
 }
@@ -293,10 +294,10 @@ func warnIfExposed(out io.Writer, host, adminHash string) {
 	}
 	if adminHash == "" {
 		devPrintf(out, "  NOTE: --host %s ignored — no admin configured, so Lite stays on loopback "+
-			"(an unauthenticated control plane is never exposed). Run `leoflow setup` to enable a login first.\n", host)
+			"(an unauthenticated control plane is never exposed). Run `dexaflow setup` to enable a login first.\n", host)
 		return
 	}
-	devPrintf(out, "  ⚠ SECURITY: binding to %s exposes Leoflow Lite on your network. Lite uses a short "+
+	devPrintf(out, "  ⚠ SECURITY: binding to %s exposes Dexaflow Lite on your network. Lite uses a short "+
 		"admin password — only do this on a trusted internal network or VPN, never the public internet.\n", host)
 }
 
@@ -321,7 +322,7 @@ func announceReady(out io.Writer, host string, port int, adminEmail, dir string,
 	if abs, err := filepath.Abs(dir); err == nil {
 		project = abs
 	}
-	devPrintf(out, "\n  ✓ Leoflow Lite is ready\n")
+	devPrintf(out, "\n  ✓ Dexaflow Lite is ready\n")
 	devPrintf(out, "      open:    %s\n", displayURL(host, port))
 	if friendlyResolves() {
 		devPrintf(out, "      or:      %s\n", fmt.Sprintf("http://%s:%d", friendlyHost, port))
@@ -342,7 +343,7 @@ func announceReady(out io.Writer, host string, port int, adminEmail, dir string,
 	devPrintf(out, "\n")
 }
 
-// friendlyHost is the convenience hostname Leoflow suggests for the local UI.
+// friendlyHost is the convenience hostname Dexaflow suggests for the local UI.
 const friendlyHost = "leoflow.local"
 
 // friendlyResolves reports whether leoflow.local resolves on this machine, so the
@@ -370,7 +371,7 @@ func resolveLiteJWTSecret(secret string) string {
 		return secret
 	}
 	liteJWTFallbackOnce.Do(func() {
-		slog.Warn("config jwt_secret is empty; falling back to the dev-only constant — run `leoflow setup` to rotate the per-install secret (#121)")
+		slog.Warn("config jwt_secret is empty; falling back to the dev-only constant — run `dexaflow setup` to rotate the per-install secret (#121)")
 	})
 	return devJWTSecret
 }
@@ -483,7 +484,7 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 // Postgres (Lite is Redis-free — ADR 0026). An explicit --compose wins; else a docker-compose.dev.yaml in
 // the working dir (a source checkout) is used; else the compose embedded in the
 // binary is materialized under ~/.dexaflow, so a binary-only install runs with
-// `leoflow lite` alone.
+// `dexaflow lite` alone.
 func resolveComposeFile(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -513,16 +514,16 @@ func newLiteCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "lite [path]",
 		Aliases: []string{"dev"},
-		Short:   "Run Leoflow Lite locally with hot reload.",
-		Long: "lite is the Leoflow Lite edition: it brings up local dependencies and runs the " +
+		Short:   "Run Dexaflow Lite locally with hot reload.",
+		Long: "lite is the Dexaflow Lite edition: it brings up local dependencies and runs the " +
 			"control plane against an isolated local database, registers the DAG, and hot-reloads " +
 			"on every save. The UI is served on a Lite port (default 8088, --port), marked with a " +
-			("LITE badge, and behind a login (the admin created by `leoflow setup`, which prints the\n" +
-				"generated password ONCE — `leoflow lite reset-password` sets a new one if it is gone).\n\nExecutor ") +
+			("LITE badge, and behind a login (the admin created by `dexaflow setup`, which prints the\n" +
+				"generated password ONCE — `dexaflow lite reset-password` sets a new one if it is gone).\n\nExecutor ") +
 			"(--executor): 'subprocess' runs tasks unsandboxed on the host with no image build — " +
 			"the fast inner loop, best for local use. 'k8s' runs real pod-per-task on a dedicated, " +
 			"isolated k3d mini-cluster (leoflow-dev) — highest fidelity, best for development; it " +
-			"rebuilds the DAG image on each change.\n\n('leoflow dev' remains as a deprecated alias.)",
+			"rebuilds the DAG image on each change.\n\n('dexaflow dev' remains as a deprecated alias.)",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir, err := resolveLiteProject(cmd, args)
@@ -538,8 +539,8 @@ func newLiteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.image, "image", "leoflow-dev:local", "placeholder image recorded in dag.json (subprocess mode only)")
 	cmd.Flags().StringVar(&o.composeFile, "compose", "", "compose file for the local Postgres (default: a managed one under ~/.dexaflow, materialized on first run)")
 	cmd.Flags().StringVar(&o.runtimeSrc, "runtime-src", "runtime/python", "source of the leoflow_runtime package installed into the dev venv")
-	cmd.Flags().StringVar(&o.serverBin, "server-bin", "", "leoflow-server binary (default: PATH, then ./bin)")
-	cmd.Flags().StringVar(&o.agentBin, "agent-bin", "", "leoflow-agent binary (default: PATH, then ./bin)")
+	cmd.Flags().StringVar(&o.serverBin, "server-bin", "", "dexaflow-server binary (default: PATH, then ./bin)")
+	cmd.Flags().StringVar(&o.agentBin, "agent-bin", "", "dexaflow-agent binary (default: PATH, then ./bin)")
 	cmd.Flags().BoolVar(&o.noUp, "no-up", false, "skip docker compose (Postgres already running); the dev DB + venv are still provisioned")
 	cmd.Flags().BoolVar(&o.fresh, "fresh", false, "drop the local dev database first, so the session starts with nothing registered (DESTRUCTIVE: registered DAGs, runs and history)")
 	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
@@ -611,7 +612,7 @@ func kubectlNamespaceArgs(kubeconfig string) []string {
 // #1070 class and #1064 alongside it, and it is the worse of the two places to
 // have them: ensureProjectDockerfile WRITES the result to <project>/Dockerfile
 // and never removes it, and ensureDockerfile honors a project-shipped
-// Dockerfile verbatim, so one `leoflow lite` run would persist a poisoned file
+// Dockerfile verbatim, so one `dexaflow lite` run would persist a poisoned file
 // that every later `compile --build` then used.
 func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []string) (string, error) {
 	if err := dockerfileWord("dag_source", dagSource); err != nil {
@@ -705,7 +706,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	if err != nil {
 		return err
 	}
-	// Apply the executor/port chosen in `leoflow setup` (stored in config) as the
+	// Apply the executor/port chosen in `dexaflow setup` (stored in config) as the
 	// defaults, unless overridden on the command line. This honors the wizard's
 	// choice while keeping --executor/--port changeable per run.
 	applyLiteConfigDefaults(cmd, &o)
@@ -715,7 +716,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	uiURL := devURL(o.port)
 	devPrintln(out, liteBanner(uiURL))
 
-	// The admin login is provisioned by `leoflow setup` (hash-only in config).
+	// The admin login is provisioned by `dexaflow setup` (hash-only in config).
 	// With it, Lite enforces real auth; without it, fall back to no-auth + warn.
 	id := resolveLiteAdmin(cmd, out)
 	o.adminHash, o.adminEmail, o.jwtSecret = id.adminHash, id.adminEmail, id.jwtSecret
@@ -741,7 +742,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	// outlives every session: a DAG from an old spike stays registered, keeps
 	// being scheduled, and fails inside a run that has nothing to do with it
 	// (#1104). Destructive by definition, and scoped to the Lite dev database —
-	// it is the same drop `leoflow db reset` performs.
+	// it is the same drop `dexaflow db reset` performs.
 	// Provision the isolated dev state: own database + own venv (never the
 	// product's database or the system Python).
 	if derr := provisionDevDatabase(ctx, cmd, out, o.fresh); derr != nil {
@@ -760,7 +761,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	}
 
 	// "auto" (the default) uses k3d when Docker is present, else the unsandboxed
-	// subprocess executor so `leoflow lite` still runs without Docker.
+	// subprocess executor so `dexaflow lite` still runs without Docker.
 	o.executor = autoExecutor(cmd, o.executor)
 
 	// Mode-specific setup: the env the control plane runs with and the per-reload
@@ -948,7 +949,7 @@ func devClusterSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec,
 		}
 		return nil, nil, fmt.Errorf("cluster mode (--executor=k8s) does not support multi-DAG workspaces in v1 (got %d projects: %v)\n"+
 			"  - use --executor=subprocess for multi-DAG dev (the default, no Docker needed)\n"+
-			"  - or point lite at a single project: `leoflow lite <project-dir>`",
+			"  - or point lite at a single project: `dexaflow lite <project-dir>`",
 			len(ws.Projects), paths)
 	}
 	project := ws.Projects[0]
@@ -1018,10 +1019,10 @@ func devComposeUp(ctx context.Context, cmd *cobra.Command, o devOptions, service
 func composeUpError(err error, output string) error {
 	low := strings.ToLower(output)
 	if strings.Contains(low, "already allocated") || strings.Contains(low, "address already in use") || strings.Contains(low, "port is already") {
-		return fmt.Errorf("the Postgres port 5432 is already in use — another Postgres is bound to it. Stop it, run `leoflow lite --postgres managed` (a private, socket-only Postgres), or `leoflow lite --no-up` to point at your own (LEOFLOW_DATABASE_URL): %w", err)
+		return fmt.Errorf("the Postgres port 5432 is already in use — another Postgres is bound to it. Stop it, run `dexaflow lite --postgres managed` (a private, socket-only Postgres), or `dexaflow lite --no-up` to point at your own (LEOFLOW_DATABASE_URL): %w", err)
 	}
 	if strings.Contains(low, "unknown command") || strings.Contains(low, "is not a docker command") || strings.Contains(low, "compose") && strings.Contains(low, "not found") {
-		return fmt.Errorf("the Docker Compose v2 plugin is not installed (the `docker compose` subcommand is missing). Install it, or run `leoflow lite --postgres managed` for a Docker-free Postgres: %w", err)
+		return fmt.Errorf("the Docker Compose v2 plugin is not installed (the `docker compose` subcommand is missing). Install it, or run `dexaflow lite --postgres managed` for a Docker-free Postgres: %w", err)
 	}
 	return fmt.Errorf("docker compose up (is Docker running, with the Compose v2 plugin?): %w", err)
 }
@@ -1050,7 +1051,7 @@ func preflightDevPorts(ctx context.Context, host string, port int) error {
 	for _, c := range checks {
 		ln, err := lc.Listen(ctx, "tcp", c.addr)
 		if err != nil {
-			return fmt.Errorf("port %d is already in use (needed for %s); another Leoflow Lite may be running — stop it, or pass --port to pick a free port", c.num, c.role)
+			return fmt.Errorf("port %d is already in use (needed for %s); another Dexaflow Lite may be running — stop it, or pass --port to pick a free port", c.num, c.role)
 		}
 		_ = ln.Close() //nolint:errcheck // best-effort probe; closing frees the port for the real bind
 	}
@@ -1066,7 +1067,7 @@ func preflightDevPorts(ctx context.Context, host string, port int) error {
 // this binary (#136). That shape means an older binary is being run against
 // a database that a newer binary already upgraded — proceeding silently would
 // let the older binary read/write rows under a schema it does not understand.
-// The user is told to upgrade the binary, or to run `leoflow uninstall --purge`
+// The user is told to upgrade the binary, or to run `dexaflow uninstall --purge`
 // to start over.
 func devMigrate(cmd *cobra.Command) error {
 	devPrintln(cmd.OutOrStdout(), "▸ migrating "+devDBName+" (embedded) …")
@@ -1116,15 +1117,15 @@ func decideSchemaDrift(dbVersion uint, dirty bool, embedded uint) error {
 	if dirty {
 		return fmt.Errorf(
 			"database schema is marked dirty at version %d (a prior migration was interrupted); "+
-				"run `leoflow uninstall --purge` to reset, or fix manually with `migrate force` if you know what you are doing",
+				"run `dexaflow uninstall --purge` to reset, or fix manually with `migrate force` if you know what you are doing",
 			dbVersion,
 		)
 	}
 	if dbVersion > embedded {
 		return fmt.Errorf(
 			"database is at schema version %d but this binary only knows up to %d; "+
-				"an older `leoflow` is being run against a newer database. "+
-				"Upgrade the binary, or run `leoflow uninstall --purge` to start over (this WIPES your data)",
+				"an older `dexaflow` is being run against a newer database. "+
+				"Upgrade the binary, or run `dexaflow uninstall --purge` to start over (this WIPES your data)",
 			dbVersion, embedded,
 		)
 	}
@@ -1198,7 +1199,7 @@ const minPythonMinor = 11
 // With a declared wantVersion ("3.13") it resolves an interpreter REPORTING that
 // minor, and refuses rather than substituting — see resolvePythonFor. With no
 // declared version it keeps the historical precedence: the managed relocatable
-// CPython (installed by `leoflow setup` under ~/.dexaflow/python) when present,
+// CPython (installed by `dexaflow setup` under ~/.dexaflow/python) when present,
 // since it bundles venv + ensurepip, falling back to a python3.11 / python3 on
 // PATH that reports >= 3.11. Using the managed interpreter avoids
 // needing the system python3-venv package, which Debian/Ubuntu split out (the
@@ -1211,7 +1212,7 @@ func devBasePython(ctx context.Context, home, wantVersion string) (string, error
 	managed := filepath.Join(filepath.Dir(home), "python", "bin", "python3.11")
 	// A declared python_version is the authoring surface's statement about which
 	// interpreter the task runs on, and the cluster honors it through the task
-	// base image. Honor it here too, or `leoflow dev` validates the DAG on an
+	// base image. Honor it here too, or `dexaflow lite` validates the DAG on an
 	// interpreter the deployment will never use (#1092).
 	if wantVersion != "" {
 		want, verr := parsePythonMinor(wantVersion)
@@ -1225,13 +1226,13 @@ func devBasePython(ctx context.Context, home, wantVersion string) (string, error
 		return "", err
 	}
 	if p == "" {
-		return "", fmt.Errorf("no Python interpreter found; run `leoflow setup` to provision a managed CPython 3.%d", minPythonMinor)
+		return "", fmt.Errorf("no Python interpreter found; run `dexaflow setup` to provision a managed CPython 3.%d", minPythonMinor)
 	}
 	return p, nil
 }
 
 // leoflowManagedPython returns the path to the managed relocatable CPython that
-// `leoflow setup` installs under ~/.dexaflow/python, or "" if the home directory
+// `dexaflow setup` installs under ~/.dexaflow/python, or "" if the home directory
 // cannot be resolved.
 func leoflowManagedPython() string {
 	h, err := os.UserHomeDir()
@@ -1242,14 +1243,14 @@ func leoflowManagedPython() string {
 }
 
 // resolvePython3 returns a usable Python >= 3.11 with a single, unified
-// precedence shared by `leoflow dev` and `leoflow validate` (#742):
+// precedence shared by `dexaflow lite` and `dexaflow validate` (#742):
 //
 //   - the managed pinned build (when present) wins — it is the checksum-verified
-//     CPython `leoflow setup` provisioned at exactly the pinned version, so it is
+//     CPython `dexaflow setup` provisioned at exactly the pinned version, so it is
 //     trusted without being re-executed;
 //   - otherwise the first host python3.11/python3 that reports >= 3.11 is used;
 //   - a host interpreter that IS present but reports an unsupported version is
-//     rejected with an actionable `leoflow setup` hint, so a half-provisioned
+//     rejected with an actionable `dexaflow setup` hint, so a half-provisioned
 //     host never silently runs an unsupported interpreter that fails later at an
 //     unrelated component;
 //   - when no interpreter exists at all, it returns ("", nil) and lets the
@@ -1279,7 +1280,7 @@ func resolvePython3(ctx context.Context, managed string, lookPath func(string) (
 		sawUnsupported = true
 	}
 	if sawUnsupported {
-		return "", fmt.Errorf("found a Python interpreter but it is older than 3.%d; run `leoflow setup` to provision a managed CPython", minPythonMinor)
+		return "", fmt.Errorf("found a Python interpreter but it is older than 3.%d; run `dexaflow setup` to provision a managed CPython", minPythonMinor)
 	}
 	return "", nil
 }
@@ -1319,7 +1320,7 @@ func parsePythonVersion(s string) (major, minor int, err error) {
 
 // resolveRuntimeSrc returns the leoflow_runtime package source to pip-install
 // into the dev venv. An explicit --runtime-src wins; otherwise the repo path
-// (source checkout) is used when present; otherwise the copy `leoflow setup`
+// (source checkout) is used when present; otherwise the copy `dexaflow setup`
 // extracted under ~/.dexaflow/pysrc — a binary-only install has no repo, so the
 // repo-relative "runtime/python" does not exist there.
 func resolveRuntimeSrc(flagValue, home string) string {
@@ -1413,11 +1414,11 @@ func ensureBaseImage(ctx context.Context, cmd *cobra.Command) error {
 	// a binary install (curl|sh) has no source tree, so fail clearly and point at
 	// the local run mode instead of the cryptic "lstat runtime: no such file".
 	if _, err := os.Stat(filepath.Join("runtime", "Dockerfile")); err != nil {
-		return fmt.Errorf("cluster run mode needs the Leoflow source tree to build the task base image " +
+		return fmt.Errorf("cluster run mode needs the Dexaflow source tree to build the task base image " +
 			"(runtime/Dockerfile), which a binary install does not have.\n" +
-			"  Use the 'local' run mode: re-run `leoflow setup` and choose 1 (local), " +
+			"  Use the 'local' run mode: re-run `dexaflow setup` and choose 1 (local), " +
 			"or set `lite_executor: subprocess` in ~/.dexaflow/config.yaml.\n" +
-			"  (Cluster mode works when you run `leoflow lite` from a Leoflow source checkout.)")
+			"  (Cluster mode works when you run `dexaflow lite` from a Dexaflow source checkout.)")
 	}
 	devPrintln(cmd.OutOrStdout(), "▸ building task base image "+devBaseImage+" (first run) …")
 	if err := devRun(ctx, cmd, "docker", baseImageBuildArgs()...); err != nil {
@@ -1519,7 +1520,7 @@ func resolveAndReport(ctx context.Context, cmd *cobra.Command, explicit, kind st
 // reportCompanionBinary announces which companion binary was chosen and whether
 // its version matches this CLI's.
 //
-// The path alone is not enough. When `leoflow lite` silently ran a month-old
+// The path alone is not enough. When `dexaflow lite` silently ran a month-old
 // leoflow-server, every visible signal — the banner, /readyz, the logs — looked
 // correct, and the mismatch was found only by hashing the running process
 // afterwards. The trio is co-versioned (ADR 0028), so a disagreement is never
@@ -1580,7 +1581,7 @@ func companionVersion(ctx context.Context, path string) string {
 // Order: an explicit --flag, then the directory holding this executable, then
 // the installer's ~/.dexaflow/bin, then PATH, then ./bin.
 //
-// PATH used to come first, which meant `leoflow lite` ran whatever
+// PATH used to come first, which meant `dexaflow lite` ran whatever
 // leoflow-server was installed earliest — however old. A validation run against
 // v0.1.2-rc.1 spent its first boot exercising a v0.1.0-rc.4 server that predated
 // every feature under test, and the mismatch was invisible: the banner, /readyz
@@ -1664,7 +1665,7 @@ func isExecutableFile(path string) bool {
 
 // sharedServerEnv is the Lite control plane environment common to both executor
 // modes: the isolated local database, the LITE edition marker, and a writable
-// logs dir. When an admin hash is configured (by `leoflow setup`), Lite enforces
+// logs dir. When an admin hash is configured (by `dexaflow setup`), Lite enforces
 // real auth and bootstraps that admin; otherwise it falls back to the dev no-auth
 // bypass.
 //
@@ -1761,7 +1762,7 @@ func resolveBindHost(host, adminHash string) string {
 
 // liteEditorEnv enables the Lite web editor (ADR 0025) for the launched server:
 // the workspace it edits (the watched project dir) and the directory holding the
-// Monaco bundle that `leoflow setup` fetched. Both executors get it — the editor
+// Monaco bundle that `dexaflow setup` fetched. Both executors get it — the editor
 // is orthogonal to execution.
 func liteEditorEnv(workspaceDir, leoflowRoot string) []string {
 	return []string{
@@ -1781,7 +1782,7 @@ func applyLiteConfigDefaults(cmd *cobra.Command, o *devOptions) {
 }
 
 // mergeLiteDefaults applies the executor/port from config (written by
-// `leoflow setup`) when the corresponding flag was not set on the command line.
+// `dexaflow setup`) when the corresponding flag was not set on the command line.
 func mergeLiteDefaults(o *devOptions, c *config.Config, executorSet, portSet bool) {
 	if c == nil {
 		return
@@ -1801,13 +1802,13 @@ func mergeLiteDefaults(o *devOptions, c *config.Config, executorSet, portSet boo
 func resolveLiteAdmin(cmd *cobra.Command, out io.Writer) liteEnvParams {
 	p := loadLiteAdmin(cmd)
 	if p.adminHash == "" {
-		devPrintln(out, "  WARNING: no admin configured — run `leoflow setup`. Falling back to no-auth (local only, insecure).")
+		devPrintln(out, "  WARNING: no admin configured — run `dexaflow setup`. Falling back to no-auth (local only, insecure).")
 	}
 	return p
 }
 
 // loadLiteAdmin reads the Lite admin credential the setup wizard persisted (hash
-// only) and the per-install JWT secret (rotated by `leoflow setup` so a reinstall
+// only) and the per-install JWT secret (rotated by `dexaflow setup` so a reinstall
 // invalidates the prior install's tokens — #121) from ~/.dexaflow/config.yaml.
 // Returns an empty hash when no admin is configured.
 func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
@@ -2235,13 +2236,13 @@ func resolvePythonFor(ctx context.Context, want int, managed string,
 }
 
 // installHint names the action that actually produces the requested minor.
-// `leoflow setup` provisions exactly one version — the managed build's pinned
+// `dexaflow setup` provisions exactly one version — the managed build's pinned
 // minor — so offering it for any other minor sends the user around a loop that
 // cannot end: setup succeeds, the version they asked for is still missing, and
 // the same error comes back.
 func installHint(want int) string {
 	if want == minPythonMinor {
-		return fmt.Sprintf("run `leoflow setup` to provision a managed CPython 3.%d", want)
+		return fmt.Sprintf("run `dexaflow setup` to provision a managed CPython 3.%d", want)
 	}
 	return fmt.Sprintf("install Python 3.%d", want)
 }
@@ -2368,7 +2369,7 @@ func countRegisteredDags(ctx context.Context) int {
 // State under ~/.dexaflow/dev otherwise outlives every session: a DAG registered
 // during an old spike stays registered, keeps being scheduled, and fails inside
 // a run that has nothing to do with it (#1104). The drop is the same one
-// `leoflow db reset` performs, and it is announced before it happens — it takes
+// `dexaflow db reset` performs, and it is announced before it happens — it takes
 // registered DAGs, runs and history with it.
 func provisionDevDatabase(ctx context.Context, cmd *cobra.Command, out io.Writer, fresh bool) error {
 	if fresh {

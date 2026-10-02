@@ -7,11 +7,11 @@ linkTitle: "lite reset-password"
 weight: 41
 ---
 
-Reset the Leoflow Lite admin password.
+Reset the Dexaflow Lite admin password.
 
 ### Synopsis
 
-reset-password generates a new admin password, updates it in the Lite database, and shows it once. Run it as the same user as `leoflow lite` (no sudo). The Lite Postgres must be reachable (start `leoflow lite` if it is not).
+reset-password generates a new admin password, updates it in the Lite database, and shows it once. Run it as the same user as `dexaflow lite` (no sudo). The Lite Postgres must be reachable (start `dexaflow lite` if it is not).
 
 ```
 dexaflow lite reset-password [flags]
@@ -34,5 +34,5 @@ dexaflow lite reset-password [flags]
 
 ### SEE ALSO
 
-* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Leoflow Lite locally with hot reload.
+* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Dexaflow Lite locally with hot reload.
 

@@ -29,7 +29,7 @@ func uiServer() *gin.Engine {
 
 func TestUIConfigInstanceNameConfigurable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cases := map[string]string{"": "Leoflow", "Leoflow · DEV": "Leoflow · DEV"}
+	cases := map[string]string{"": "Dexaflow", "Dexaflow · DEV": "Dexaflow · DEV"}
 	for in, want := range cases {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
@@ -69,7 +69,7 @@ func TestUIConfigAutoRefreshIntervalConfigurable(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/config", http.NoBody)
-			uiConfigHandler("Leoflow", tc.in, nil)(c)
+			uiConfigHandler("Dexaflow", tc.in, nil)(c)
 			var cfg map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -97,8 +97,8 @@ func TestUIConfigIsPublicAndShaped(t *testing.T) {
 			t.Errorf("config missing required field %q", field)
 		}
 	}
-	if cfg["instance_name"] != "Leoflow" {
-		t.Errorf("instance_name = %v, want Leoflow", cfg["instance_name"])
+	if cfg["instance_name"] != "Dexaflow" {
+		t.Errorf("instance_name = %v, want Dexaflow", cfg["instance_name"])
 	}
 	if cfg["auto_refresh_interval"].(float64) != 30 {
 		t.Errorf("auto_refresh_interval = %v, want 30", cfg["auto_refresh_interval"])

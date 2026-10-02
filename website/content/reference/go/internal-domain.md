@@ -8,7 +8,7 @@ weight: 1
 import "github.com/dexadata/dexaflow/internal/domain"
 ```
 
-Package domain defines the core Leoflow types \(DAG, Task, project config\) and validates them against the canonical JSON Schemas in docs/api.
+Package domain defines the core Dexaflow types \(DAG, Task, project config\) and validates them against the canonical JSON Schemas in docs/api.
 
 ## Index
 
@@ -115,7 +115,7 @@ var ErrInvalidRunID = errors.New("invalid run_id")
 var ErrNotFound = errors.New("resource not found")
 ```
 
-<a name="ErrUnknownAlertPlaceholder"></a>ErrUnknownAlertPlaceholder reports an alert message template referencing a substitution Leoflow does not perform.
+<a name="ErrUnknownAlertPlaceholder"></a>ErrUnknownAlertPlaceholder reports an alert message template referencing a substitution Dexaflow does not perform.
 
 ```go
 var ErrUnknownAlertPlaceholder = errors.New("unknown alert placeholder")
@@ -170,7 +170,7 @@ type AlertRule struct {
     // Type is the channel: "slack" (Slack incoming webhook) or "webhook" (a generic
     // HTTP POST, e.g. PagerDuty/Opsgenie/Teams). Validated by the schema enum.
     Type string `json:"type" yaml:"type"`
-    // Conn is the managed Leoflow connection id holding the endpoint (and secret).
+    // Conn is the managed Dexaflow connection id holding the endpoint (and secret).
     Conn string `json:"conn" yaml:"conn"`
     // Message is the optional notification body; it is templated at fire time with
     // run context ({{dag}}, {{run_id}}, {{task}}, …). Empty uses a default summary.
@@ -499,7 +499,7 @@ type DagVersion struct {
 <a name="DbtConfig"></a>
 ## type [DbtConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L85-L105>)
 
-DbtConfig declares a dbt project as the DAG source \(ADR 0042\). The compiler reads the project's manifest.json and renders one task per dbt node \(or per group\), so a dbt project becomes a Leoflow DAG with no Cosmos or Airflow.
+DbtConfig declares a dbt project as the DAG source \(ADR 0042\). The compiler reads the project's manifest.json and renders one task per dbt node \(or per group\), so a dbt project becomes a Dexaflow DAG with no Cosmos or Airflow.
 
 ```go
 type DbtConfig struct {
@@ -515,7 +515,7 @@ type DbtConfig struct {
     // "0 6 * * *"). dbt carries no schedule, so it is declared here; empty means
     // an unscheduled DAG (run on demand).
     Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
-    // Connection is a managed Leoflow connection id (ADR 0043 #2). When set, the
+    // Connection is a managed Dexaflow connection id (ADR 0043 #2). When set, the
     // dbt task generates its profiles.yml from the connection delivered to the pod
     // instead of a profiles.yml baked into the image — use one or the other.
     Connection string `json:"connection,omitempty" yaml:"connection,omitempty"`
@@ -575,7 +575,7 @@ type Execution struct {
 
     // PriorityClassName ranks this task pod against its neighbors on a shared
     // cluster; the named PriorityClass is a platform-owned, cluster-scoped object,
-    // so under genuine contention the scheduler preempts Leoflow's ETL rather than
+    // so under genuine contention the scheduler preempts Dexaflow's ETL rather than
     // production services (ADR 0054).
     PriorityClassName string `json:"priority_class_name,omitempty" yaml:"priority_class_name,omitempty"`
     // TerminationGracePeriodSeconds is how long the pod is given to shut down after
@@ -599,7 +599,7 @@ type Execution struct {
     // one by naming it in Resources.Claims.
     ResourceClaims []map[string]any `json:"resource_claims,omitempty" yaml:"resource_claims,omitempty"`
     // Labels and Annotations are operator-declared pod metadata merged onto the task
-    // pod. Leoflow's own leoflow.io/* labels and the task-instance-id annotation win
+    // pod. Dexaflow's own leoflow.io/* labels and the task-instance-id annotation win
     // any key collision (the reconciler and terminate path select on them), so a DAG
     // cannot shadow them.
     Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
@@ -628,7 +628,7 @@ const (
 <a name="HistoricalMetrics"></a>
 ## type [HistoricalMetrics](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dashboard.go#L14-L17>)
 
-HistoricalMetrics holds run\- and task\-instance counts grouped by state over a time window, keyed by the Leoflow state name \(e.g. "success", "up\_for\_retry"\).
+HistoricalMetrics holds run\- and task\-instance counts grouped by state over a time window, keyed by the Dexaflow state name \(e.g. "success", "up\_for\_retry"\).
 
 ```go
 type HistoricalMetrics struct {
@@ -687,11 +687,11 @@ type LeoflowConfig struct {
     Registry       *RegistryConfig `json:"registry,omitempty" yaml:"registry,omitempty"`
     Defaults       *ConfigDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
     // Staging requests the opt-in per-DAG-run shared volume (ADR 0022). It is a
-    // Leoflow deployment concern (not an Airflow DAG attribute), so it lives in
+    // Dexaflow deployment concern (not an Airflow DAG attribute), so it lives in
     // leoflow.yaml and the compiler overlays it onto the produced dag.json.
     Staging *StagingConfig `json:"staging,omitempty" yaml:"staging,omitempty"`
     // Dbt declares a dbt project as the DAG source (ADR 0042). Its presence routes
-    // `leoflow compile` to the dbt renderer instead of the Python parser.
+    // `dexaflow compile` to the dbt renderer instead of the Python parser.
     Dbt *DbtConfig `json:"dbt,omitempty" yaml:"dbt,omitempty"`
     // DbtGroups configures dbt projects embedded as task groups in a dag.py (ADR
     // 0043), keyed by the name passed to `dbt_group(name)`. Schedule does not apply
@@ -703,7 +703,7 @@ type LeoflowConfig struct {
     Tasks map[string]*TaskConfig `json:"tasks,omitempty" yaml:"tasks,omitempty"`
     // Alerts declares native on-failure alerting (#424): the scheduler fires the
     // listed rules when a DagRun reaches the terminal failed state, in Go, with no
-    // task pod and no Python in the hot path. A Leoflow deployment concern (not an
+    // task pod and no Python in the hot path. A Dexaflow deployment concern (not an
     // Airflow DAG attribute), so it lives in leoflow.yaml and the compiler overlays
     // it onto the produced dag.json.
     Alerts *AlertsConfig `json:"alerts,omitempty" yaml:"alerts,omitempty"`
@@ -1141,7 +1141,7 @@ type VariablePatch struct {
 <a name="XComEntryMeta"></a>
 ## type [XComEntryMeta](<https://github.com/dexadata/leoflow/blob/main/internal/domain/xcom.go#L8-L12>)
 
-XComEntryMeta is the metadata for one stored XCom value \(without the value payload\) — the source for a task instance's XCom list. Leoflow XComs are unmapped, so MapIndex is \-1.
+XComEntryMeta is the metadata for one stored XCom value \(without the value payload\) — the source for a task instance's XCom list. Dexaflow XComs are unmapped, so MapIndex is \-1.
 
 ```go
 type XComEntryMeta struct {

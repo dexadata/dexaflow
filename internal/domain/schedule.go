@@ -8,7 +8,7 @@ import (
 )
 
 // cronlessSchedules are Airflow string schedules that are valid but are NOT cron
-// expressions (they select a non-cron timetable). Leoflow does not cron-schedule
+// expressions (they select a non-cron timetable). Dexaflow does not cron-schedule
 // them, but they must still register, so they are accepted at compile and skipped
 // — not flagged as malformed — by the scheduler.
 var cronlessSchedules = map[string]bool{"@once": true, "@continuous": true}
@@ -44,7 +44,7 @@ func (d *DAGSpec) ValidateSchedule() error {
 		return nil
 	}
 	if _, err := cron.ParseStandard(expr); err != nil {
-		return fmt.Errorf("invalid schedule %q: %v; Leoflow supports standard 5-field cron "+
+		return fmt.Errorf("invalid schedule %q: %v; Dexaflow supports standard 5-field cron "+
 			`(e.g. "*/3 * * * *" for every 3 minutes), the @hourly/@daily/@weekly/@monthly/@yearly presets, and @once`, expr, err)
 	}
 	return nil

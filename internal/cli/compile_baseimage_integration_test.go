@@ -48,7 +48,7 @@ import (
 // pushes tags to — instead of agreeing with the constant whatever it becomes.
 const publishedRuntimeRepo = "ghcr.io/dexadata/dexaflow-runtime"
 
-// scaffoldPythonVersion is what `leoflow init` writes into dexaflow.yaml, and
+// scaffoldPythonVersion is what `dexaflow init` writes into dexaflow.yaml, and
 // what release.yaml's runtime-image matrix publishes a base for.
 const scaffoldPythonVersion = "3.11"
 
@@ -208,7 +208,7 @@ func compiledDockerfileFrom(t *testing.T, bin string) string {
 	dir := filepath.Join(work, "proj")
 
 	if out, err := cliCmd(t, bin, home, "init", dir).CombinedOutput(); err != nil {
-		t.Fatalf("leoflow init: %v\n%s", err, out)
+		t.Fatalf("dexaflow init: %v\n%s", err, out)
 	}
 	// Guard the premise: the scaffold must not carry a base_image, because an
 	// explicit one short-circuits resolveBaseImage and the FROM below would say
@@ -255,7 +255,7 @@ func compiledDockerfileFrom(t *testing.T, bin string) string {
 		"--build", "--builder", builder)
 	out, cerr := compile.CombinedOutput()
 	if cerr != nil {
-		t.Fatalf("leoflow compile --build: %v\n%s", cerr, out)
+		t.Fatalf("dexaflow compile --build: %v\n%s", cerr, out)
 	}
 
 	raw, err := os.ReadFile(captured)

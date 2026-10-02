@@ -39,7 +39,7 @@ func TestEmbeddedAssetsPresent(t *testing.T) {
 	// venv from ~/.leoflow/pysrc and gets a runtime with no `leoflow` in it. Every
 	// python task in a hybrid DAG then dies on the DAG's first line, and the venv
 	// freshness gate (which probes both packages) can never be satisfied, so every
-	// `leoflow dev` boot reinstalls every DAG's venv.
+	// `dexaflow lite` boot reinstalls every DAG's venv.
 	t.Run("PythonSources contains the leoflow authoring package", func(t *testing.T) {
 		entries, err := fs.ReadDir(PythonSources(), "runtime/python/leoflow")
 		if err != nil {

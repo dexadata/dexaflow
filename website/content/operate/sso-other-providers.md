@@ -5,7 +5,7 @@ weight: 96
 description: Turn on OIDC login against an IdP other than Google Workspace, and the two settings that differ per provider.
 ---
 
-Leoflow's SSO is a single OIDC Authorization Code + PKCE flow (ADR 0057). Every
+Dexaflow's SSO is a single OIDC Authorization Code + PKCE flow (ADR 0057). Every
 issuer configures through the same `auth.oidc.*` keys documented in the
 [configuration reference](/reference/configuration/#oidc--sso-authoidc); the
 [Google Workspace page](/operate/sso-google-workspace/) is IdP-specific only
@@ -40,7 +40,7 @@ and rejects (403, `tenant_not_allowed`) any value that is not a key in
 Google-specific about the mechanism:
 
 - **Microsoft Entra ID**: set `tenantClaim: tid`. The value is the Entra tenant
-  GUID, not a domain, so `tenantClaims` maps that GUID to a Leoflow tenant name.
+  GUID, not a domain, so `tenantClaims` maps that GUID to a Dexaflow tenant name.
 - **Amazon Cognito**: see [SSO with Amazon Cognito](/operate/sso-cognito/). The
   short version is that a user-pool token carries no domain claim, so pin on
   `iss` and do not reach for `aud`, which is already validated as the audience.

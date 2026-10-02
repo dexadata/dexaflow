@@ -284,7 +284,7 @@ CFGEOF
 # database at boot, and golang-migrate's advisory lock serializes them only if
 # both get that far.
 #
-# `leoflow db migrate` is NOT the tool here: it is hardcoded to the Lite dev
+# `dexaflow db migrate` is NOT the tool here: it is hardcoded to the Lite dev
 # database (schema leoflow_dev). The server's own schema is owned by migrations/
 # and golang-migrate, the same way every k3d job in CI applies it.
 command -v migrate >/dev/null 2>&1 \

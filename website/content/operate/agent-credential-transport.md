@@ -8,7 +8,7 @@ weight: 90
 description: "How declared secrets reach the in-container agent, and the trust boundary."
 ---
 
-Every task pod runs a Leoflow **agent** ([ADR 0004](/project/adrs/0004-thin-agent/)) that
+Every task pod runs a Dexaflow **agent** ([ADR 0004](/project/adrs/0004-thin-agent/)) that
 talks to the control plane over gRPC to fetch the task spec, resolve the task's
 Variables and Connections, push XCom, and report state. To do that the agent needs
 a **bearer credential** the control plane trusts. How that credential reaches the
@@ -28,7 +28,7 @@ Lite.
 
 ## `envvar` — the plaintext bearer (default)
 
-With `auth.agent_token_transport=envvar`, the control plane mints a Leoflow JWT at
+With `auth.agent_token_transport=envvar`, the control plane mints a Dexaflow JWT at
 dispatch and sets it as a plaintext `DEXAFLOW_AGENT_TOKEN` environment variable on the
 task pod's spec. This is the historical behavior and remains the default so that
 nothing regresses.
@@ -51,7 +51,7 @@ With `auth.agent_token_transport=exchange`, **no bearer credential sits on the p
 object at all.** Instead the pod mounts a **projected ServiceAccount token**
 (audience `leoflow-control-plane`, pod-bound, short-lived, auto-rotated by the
 kubelet). The agent presents that token **once**, and the control plane exchanges it
-for a task-scoped Leoflow JWT:
+for a task-scoped Dexaflow JWT:
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,7 @@ flowchart LR
   CP -->|"2 · TokenReview<br/>(once per pod)"| API["Kubernetes<br/>API server"]
   API -->|"authenticated:<br/>pod-name + pod-uid"| CP
   CP -->|"3 · resolve pod → task instance<br/>via pod annotation"| CP
-  CP -->|"4 · minted task-scoped<br/>Leoflow JWT"| AG
+  CP -->|"4 · minted task-scoped<br/>Dexaflow JWT"| AG
   AG -->|"5 · steady-state RPCs<br/>(secrets, XCom, heartbeat)<br/>— apiserver-free"| CP
 ```
 
@@ -78,7 +78,7 @@ flowchart LR
 3. **Resolve pod → task instance.** From the authenticated pod identity the control
    plane resolves the exact task instance via the pod's identity annotation (pod
    labels are sanitized and lossy, so the annotation is the single-sourced contract).
-4. **Mint a task-scoped JWT.** The control plane returns a **task-scoped Leoflow JWT**
+4. **Mint a task-scoped JWT.** The control plane returns a **task-scoped Dexaflow JWT**
    — the identity that secret scoping filters on and that liveness enforcement checks.
 5. **Apiserver-free steady state.** Every steady-state RPC (secrets, XCom, heartbeat)
    authenticates with **that JWT**. The projected SA token was a bootstrap credential

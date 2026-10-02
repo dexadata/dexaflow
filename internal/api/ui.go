@@ -11,7 +11,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/auth"
 )
 
-// supportedMenuItems are the Airflow 3.2.1 UI menu sections Leoflow backs. The
+// supportedMenuItems are the Airflow 3.2.1 UI menu sections Dexaflow backs. The
 // UI renders only the sections /ui/auth/menus authorizes, so omitting the rest
 // (Assets, Pools, Providers, Jobs, XComs, ...) hides them without modifying the
 // SPA. Each value must be a real 3.2.1 MenuItem enum member (validMenuItems).
@@ -100,7 +100,7 @@ func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefres
 // hammer the DB). See docs/configuration.md.
 func uiConfigHandler(instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage) gin.HandlerFunc {
 	if instanceName == "" {
-		instanceName = "Leoflow"
+		instanceName = "Dexaflow"
 	}
 	if autoRefreshIntervalSecs <= 0 {
 		autoRefreshIntervalSecs = DefaultUIAutoRefreshIntervalSeconds
@@ -174,7 +174,7 @@ func uiMeHandler() gin.HandlerFunc {
 	}
 }
 
-// uiMenusHandler returns the menu sections Leoflow backs, filtered to those the
+// uiMenusHandler returns the menu sections Dexaflow backs, filtered to those the
 // current user is authorized for, so the UI hides both unbacked sections and
 // sections the caller lacks permission to use (MenuItemCollectionResponse).
 func uiMenusHandler() gin.HandlerFunc {
@@ -206,7 +206,7 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool) gin.Han
 				return
 			}
 			AbortProblem(c, http.StatusNotImplemented, "not implemented",
-				"this action is not available in Leoflow yet")
+				"this action is not available in Dexaflow yet")
 			return
 		case strings.HasPrefix(path, "/api/"):
 			AbortProblem(c, http.StatusNotFound, "not found", "API route not found")

@@ -32,7 +32,7 @@ func newForgetCommand() *cobra.Command {
 			"are still present, so use this when you want to deregister AND " +
 			"plan to delete the source files yourself, OR when you want a " +
 			"clean re-registration after a manual database edit.\n\n" +
-			"Run it as the same user as `leoflow lite` (no sudo). The Lite " +
+			"Run it as the same user as `dexaflow lite` (no sudo). The Lite " +
 			"Postgres must be reachable.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if all {
@@ -63,7 +63,7 @@ func runForget(cmd *cobra.Command, ids []string, all, dryRun bool) error {
 	ctx := cmdContext(cmd)
 	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: devDSNs().database})
 	if err != nil {
-		return fmt.Errorf("connecting to the Lite database (is Postgres up? start `leoflow lite`): %w", err)
+		return fmt.Errorf("connecting to the Lite database (is Postgres up? start `dexaflow lite`): %w", err)
 	}
 	defer pg.Close()
 

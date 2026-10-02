@@ -9,7 +9,7 @@ weight: 80
 description: Discord connection
 ---
 
-Post messages to a Discord channel from a task over a managed Leoflow
+Post messages to a Discord channel from a task over a managed Dexaflow
 Connection. `DiscordWebhookHook` sends to a channel webhook.
 
 ## Declare the provider

@@ -8,7 +8,7 @@ weight: 2
 import "github.com/dexadata/dexaflow/internal/scheduler"
 ```
 
-Package scheduler implements the Leoflow scheduling state machine and loop.
+Package scheduler implements the Dexaflow scheduling state machine and loop.
 
 ## Index
 
@@ -71,7 +71,7 @@ const LockID int64 = 0x4C656F466C6F77
 func CanTransition(from, to domain.TaskState) bool
 ```
 
-CanTransition reports whether a task instance may move from one state to another under the Leoflow state machine.
+CanTransition reports whether a task instance may move from one state to another under the Dexaflow state machine.
 
 <a name="CanTransitionDagRun"></a>
 ## func [CanTransitionDagRun](<https://github.com/dexadata/leoflow/blob/main/internal/scheduler/state_machine.go#L51>)

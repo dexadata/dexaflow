@@ -10,7 +10,7 @@ description: Pinot connection
 ---
 
 Connect a task to an Apache Pinot real-time OLAP store (the `PinotDbApiHook`)
-over a managed Leoflow Connection. Queries go through the Pinot broker.
+over a managed Dexaflow Connection. Queries go through the Pinot broker.
 
 ## Declare the provider
 

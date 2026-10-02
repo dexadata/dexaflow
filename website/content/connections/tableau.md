@@ -10,7 +10,7 @@ description: Tableau connection
 ---
 
 Connect a task to Tableau Server or Tableau Cloud to refresh extracts,
-publish workbooks, or query metadata over a managed Leoflow Connection.
+publish workbooks, or query metadata over a managed Dexaflow Connection.
 `TableauHook` signs in to the REST API.
 
 ## Declare the provider

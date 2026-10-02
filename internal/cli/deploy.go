@@ -31,7 +31,7 @@ type deployOptions struct {
 	yes        bool
 }
 
-// newDeployCommand builds `leoflow deploy [path]`: the pipeline-less promotion of
+// newDeployCommand builds `dexaflow deploy [path]`: the pipeline-less promotion of
 // a DAG to a Pro control plane (ADR 0041). It reuses the compile/build/push
 // primitives, then re-pins the image by digest and registers the dag.json — one
 // verb for what is otherwise compile --build --push + push by hand.
@@ -190,7 +190,7 @@ func deployImageRef(cfg *domain.LeoflowConfig, version, sha string) string {
 
 // resolveServerToken applies the deploy auth precedence: --server/--token, then
 // LEOFLOW_* env (via the token flag default), then the persisted config written
-// by `leoflow auth login`.
+// by `dexaflow auth login`.
 //
 // When the token comes from that persisted session file (not a --token flag or
 // LEOFLOW_TOKEN env, which are caller- or CI-managed), it is transparently

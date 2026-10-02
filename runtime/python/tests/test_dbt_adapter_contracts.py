@@ -1,4 +1,4 @@
-"""Adapter contract tests: the profiles.yml Leoflow emits for each cloud warehouse
+"""Adapter contract tests: the profiles.yml Dexaflow emits for each cloud warehouse
 must be accepted by that warehouse's *real* dbt adapter.
 
 The mapper (leoflow_runtime.dbt) emits a profile dict; the unit tests in test_dbt.py
@@ -25,7 +25,7 @@ from leoflow_runtime.dbt import dbt_profile_from_uri
 
 
 def _conn_uri(scheme, login="", password="", host="", schema="", extra=None):
-    """Build an Airflow connection URI the way Leoflow delivers it (conn_type with
+    """Build an Airflow connection URI the way Dexaflow delivers it (conn_type with
     _->-, extra as a single __extra__ JSON query param). Mirrors test_dbt._conn_uri."""
     netloc = f"{login}:{password}@" if (login or password) else ""
     netloc += host
@@ -35,7 +35,7 @@ def _conn_uri(scheme, login="", password="", host="", schema="", extra=None):
 
 
 def _as_credentials(cls, profile):
-    """Feed a Leoflow-emitted profile through the adapter's real credential parsing:
+    """Feed a Dexaflow-emitted profile through the adapter's real credential parsing:
     drop the profile-level keys the Credentials dataclass doesn't take (type,
     threads), apply the adapter's own alias resolution, and construct. Raises exactly
     as the adapter would when dbt loads the profile — no network."""
