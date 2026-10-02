@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **Event-driven warm-pool refill.** With `execution.warm_pool_event_refill`
+  (Helm: `execution.warmPoolEventRefill`) on, the warm-pool reconciler reads the
+  warm fleet from a dedicated pod informer instead of listing pods every 30
+  seconds, reacts at once when a warm pod is deleted, fails, or is claimed by an
+  attempt, and creates replacement pods in parallel (up to 4 at a time). The
+  30-second tick stays as a backstop, and the failover reapers and the delete of
+  a drained version's GC anchor still read the cluster live. Off by default:
+  today's polling refill is unchanged.
+time: 2026-10-02T17:30:00.000000000-03:00

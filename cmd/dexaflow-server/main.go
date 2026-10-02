@@ -1843,16 +1843,24 @@ func startGatedTicker(ctx context.Context, name string, interval time.Duration, 
 // panic-isolated by safeCycle. A tick that arrives while not leading is dropped,
 // not queued.
 func runGatedTicker(ctx context.Context, name string, ticks <-chan time.Time, leading func() bool, logger *slog.Logger, fn func()) {
+	runGatedTickerOrKick(ctx, name, ticks, nil, leading, logger, fn)
+}
+
+// runGatedTickerOrKick is runGatedTicker that also runs the cycle on a signal
+// from kicks (event-driven warm-pool refill), under the same leadership gate. A
+// nil kicks channel never fires, which is exactly runGatedTicker.
+func runGatedTickerOrKick(ctx context.Context, name string, ticks <-chan time.Time, kicks <-chan struct{}, leading func() bool, logger *slog.Logger, fn func()) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticks:
-			if leading != nil && !leading() {
-				continue
-			}
-			safeCycle(name, logger, fn)
+		case <-kicks:
 		}
+		if leading != nil && !leading() {
+			continue
+		}
+		safeCycle(name, logger, fn)
 	}
 }
 
@@ -1989,13 +1997,52 @@ func runMaintenancePhase(ctx context.Context, name string, timeout time.Duration
 // the busy set (busy) once per tick to classify workers. Like the pod reconciler
 // it mutates cluster state, so it runs on the leader alone via the gated ticker.
 // It is only called when warm pools are enabled.
-func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSource, pods executor.WarmPodClient, busy executor.BusyWarmWorkerSource, maxWarmPodsPerTenant int, leading func() bool, rec executor.DecisionRecorder, logger *slog.Logger) {
+func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSource, pods executor.WarmPodClient, busy executor.BusyWarmWorkerSource, maxWarmPodsPerTenant int, warmCache *executor.WarmPodInformer, leading func() bool, rec executor.DecisionRecorder, logger *slog.Logger) {
 	rc := executor.NewWarmPoolReconciler(targets, pods, busy, maxWarmPodsPerTenant, logger, rec)
-	startGatedTicker(ctx, "warm-pool-reconcile", reconcileInterval, leading, logger, func() {
-		if err := rc.Reconcile(ctx); err != nil {
-			logger.Error("warm pool reconcile", "error", err)
-		}
-	})
+	// Event-driven refill (execution.warm_pool_event_refill): read the fleet from
+	// the warm-pod informer, reconcile on its change signals as well as on the
+	// tick, and create in parallel. Without it, kicks stays nil and this is the
+	// polling reconciler it always was.
+	var kicks <-chan struct{}
+	if warmCache != nil {
+		rc.SetCache(warmCache, warmCreateParallelism)
+		kicks = warmCache.Changes()
+	}
+	t := time.NewTicker(reconcileInterval)
+	go func() {
+		defer t.Stop()
+		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, leading, logger, func() {
+			if err := rc.Reconcile(ctx); err != nil {
+				logger.Error("warm pool reconcile", "error", err)
+			}
+		})
+	}()
+}
+
+// warmCreateParallelism bounds how many warm pod creates one event-driven
+// reconcile issues at once: enough to refill a burst of claims in one or two
+// apiserver round trips, few enough not to stampede the apiserver or the image
+// registry when a large pool refills.
+const warmCreateParallelism = 4
+
+// buildWarmPodInformer starts the warm-pod informer for event-driven refill and
+// waits for its first sync within the same boot budget as the task-pod informer.
+// A nil return (it could not be built) leaves the reconciler polling with a live
+// LIST; an informer that has not synced is read live until it does.
+func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, logger *slog.Logger) *executor.WarmPodInformer {
+	wi, err := executor.NewWarmPodInformer(cs, namespace)
+	if err != nil {
+		logger.Warn("warm pod informer unavailable; warm pools keep polling refill", "error", err)
+		return nil
+	}
+	wi.Start(ctx)
+	syncCtx, cancel := context.WithTimeout(ctx, podInformerSyncTimeout)
+	defer cancel()
+	if !wi.WaitForCacheSync(syncCtx) {
+		logger.Warn("warm pod informer did not sync within the boot budget; the warm-pool reconciler reads pods live until it does",
+			"namespace", namespace, "budget", podInformerSyncTimeout)
+	}
+	return wi
 }
 
 // warmPodSpecFunc returns the per-target warm-pod spec builder the warm-pod client
@@ -2467,7 +2514,15 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		// The busy set (running attempts durably bound to a warm worker) makes the
 		// reconciler busy-aware (ADR 0058 N1d-b): it scales the IDLE buffer and never
 		// deletes a worker with an in-flight attempt. store implements it.
-		startWarmPoolReconciler(ctx, store, warmPods, store, cfg.Execution.MaxWarmPodsPerTenant, sched.IsLeading, metrics, logger)
+		var warmCache *executor.WarmPodInformer
+		if cfg.Execution.WarmPoolEventRefill {
+			warmCache = buildWarmPodInformer(ctx, cs, cfg.Executor.TaskNamespace, logger)
+			if warmCache != nil && warmPools != nil {
+				// A claimed worker leaves the idle buffer short: refill now.
+				warmPools.SetOnClaim(warmCache.Kick)
+			}
+		}
+		startWarmPoolReconciler(ctx, store, warmPods, store, cfg.Execution.MaxWarmPodsPerTenant, warmCache, sched.IsLeading, metrics, logger)
 		logger.Warn("warm pool reconciler enabled (ADR 0058 N1b2b); maintaining min_idle warm workers per active dag_version", "namespace", cfg.Executor.TaskNamespace)
 	}
 	logger.Info("pod dispatch enabled", "namespace", cfg.Executor.TaskNamespace, "agent_control_plane_addr", controlAddr)

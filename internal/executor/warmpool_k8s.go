@@ -50,23 +50,27 @@ func (k *KubernetesWarmPods) ListWarmPods(ctx context.Context) ([]WarmPodInfo, e
 	}
 	out := make([]WarmPodInfo, 0, len(list.Items))
 	for i := range list.Items {
-		p := &list.Items[i]
+		out = append(out, warmPodInfoOf(&list.Items[i]))
+	}
+	return out, nil
+}
+
+// warmPodInfoOf maps a warm pod to the reconciler's view of it, shared by the
+// live LIST and the WarmPodInformer cache so both read the fleet identically.
+func warmPodInfoOf(p *corev1.Pod) WarmPodInfo {
+	return WarmPodInfo{
+		Name:         p.Name,
+		DagVersionID: p.Labels[warmDagVersionLabelKey],
 		// Warm pods are RestartPolicy:Never; a Succeeded/Failed pod is a dead
 		// worker that can never serve again. Flag it so the reconciler neither
 		// counts it toward the target nor leaves it to leak.
-		terminal := p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed
-		out = append(out, WarmPodInfo{
-			Name:         p.Name,
-			DagVersionID: p.Labels[warmDagVersionLabelKey],
-			Terminal:     terminal,
-			// Tenant attribution for the per-tenant aggregate cap (M4). A pre-label
-			// pod (rolling upgrade) has no tenant label and reads "" here; the
-			// reconciler attributes it via its version when resolvable and never
-			// deletes it for the cap.
-			TenantID: p.Labels[warmTenantLabelKey],
-		})
+		Terminal: podTerminal(p),
+		// Tenant attribution for the per-tenant aggregate cap (M4). A pre-label
+		// pod (rolling upgrade) has no tenant label and reads "" here; the
+		// reconciler attributes it via its version when resolvable and never
+		// deletes it for the cap.
+		TenantID: p.Labels[warmTenantLabelKey],
 	}
-	return out, nil
 }
 
 // CreateWarmPod mints the target's warm-pod spec, builds the pod, and creates it.

@@ -242,6 +242,13 @@ type ExecutionSection struct {
 	// misconfiguration), and the cap is enforced only by refusing to CREATE new
 	// warm pods — never by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
+	// WarmPoolEventRefill makes warm-pool refill event driven: the reconciler
+	// reads the fleet from a dedicated warm-pod informer instead of a LIST per
+	// tick, reacts at once to a worker being deleted, failing or claimed, and
+	// issues replacement creates concurrently (bounded). Default false keeps
+	// today's 30s polling with a LIST and serial creates. The failover reapers
+	// and the drained-anchor delete keep their live reads either way.
+	WarmPoolEventRefill bool `mapstructure:"warm_pool_event_refill"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -864,6 +871,9 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
+	"execution.warm_pool_event_refill": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"sync"
 )
 
 // WarmTarget is one active dag_version the warm-pool reconciler keeps warm workers
@@ -149,6 +150,61 @@ type WarmPoolReconciler struct {
 	// reconciler (this is what the pre-M4 unit tests exercise). In production it is
 	// always >= 1 (boot validation), so the tenant budget always applies.
 	maxWarmPodsPerTenant int
+
+	// cache, when set (execution.warm_pool_event_refill), replaces the per-tick
+	// LIST with the WarmPodInformer's view, and createParallelism bounds the
+	// creates a tick issues at once. Nil keeps the live LIST and serial creates.
+	cache             WarmPodCache
+	createParallelism int
+}
+
+// WarmPodCache is the reconciler's cached read of the warm fleet (the
+// WarmPodInformer), plus create expectations: a create the cache has not
+// observed yet holds back further creates for its version, so a lagging cache
+// cannot push a pool past its target or MaxPoolSize.
+type WarmPodCache interface {
+	CachedWarmPods() ([]WarmPodInfo, bool)
+	ExpectCreate(dagVersionID string)
+	CreateFailed(dagVersionID string)
+	CreatesPending(dagVersionID string) bool
+}
+
+// SetCache switches the reconciler to the cached fleet view and parallel
+// creates bounded by parallelism (values below 1 mean 1). The cascading anchor
+// delete is still confirmed with a live LIST.
+func (r *WarmPoolReconciler) SetCache(c WarmPodCache, parallelism int) {
+	r.cache = c
+	r.createParallelism = max(parallelism, 1)
+}
+
+// listFleet reads the warm fleet from the synced cache when there is one, else
+// live. fromCache tells the caller the view may lag the cluster.
+func (r *WarmPoolReconciler) listFleet(ctx context.Context) (pods []WarmPodInfo, fromCache bool, err error) {
+	if r.cache != nil {
+		if cached, synced := r.cache.CachedWarmPods(); synced {
+			return cached, true, nil
+		}
+	}
+	pods, err = r.pods.ListWarmPods(ctx)
+	return pods, false, err
+}
+
+// anchorDrainedLive confirms with a live LIST that no pod of dagVersionID
+// remains before its anchor is deleted. The delete cascades to every pod still
+// referencing the anchor, so a cached "drained" reading never authorizes it.
+func (r *WarmPoolReconciler) anchorDrainedLive(ctx context.Context, dagVersionID string) bool {
+	live, err := r.pods.ListWarmPods(ctx)
+	if err != nil {
+		r.logger.ErrorContext(ctx, "confirming a drained warm version live failed; keeping its anchor", "dag_version", dagVersionID, "error", err)
+		r.record("warm_pool_anchor_confirm_error")
+		return false
+	}
+	for _, p := range live {
+		if p.DagVersionID == dagVersionID {
+			return false
+		}
+	}
+	return true
 }
 
 // NewWarmPoolReconciler builds a reconciler over the given target source, pod
@@ -177,7 +233,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	existing, err := r.pods.ListWarmPods(ctx)
+	existing, fromCache, err := r.listFleet(ctx)
 	if err != nil {
 		return err
 	}
@@ -245,7 +301,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 		// is create-only; this delete is bookkeeping to stop the anchor leaking once
 		// its version is gone — the cascade itself is the BACKSTOP for external
 		// teardown (namespace delete / uninstall), never for scale-down.
-		if remaining == 0 {
+		if remaining == 0 && (!fromCache || r.anchorDrainedLive(ctx, dagVersionID)) {
 			r.deleteWarmAnchor(ctx, dagVersionID)
 		}
 	}
@@ -524,6 +580,12 @@ func (r *WarmPoolReconciler) ensureAnchorAndCreate(ctx context.Context, t WarmTa
 	if create <= 0 {
 		return
 	}
+	if r.cache != nil && r.cache.CreatesPending(t.DagVersionID) {
+		// Earlier creates are not in the cache yet; it would undercount this pool.
+		// Their watch events re-trigger the reconcile once they land.
+		r.record("warm_pool_create_held_pending")
+		return
+	}
 	uid, err := r.pods.EnsureWarmAnchor(ctx, t.DagVersionID)
 	if err != nil {
 		r.logger.ErrorContext(ctx, "ensuring warm anchor; skipping creates for this dag_version this tick to avoid a warm pod with no GC owner",
@@ -532,15 +594,51 @@ func (r *WarmPoolReconciler) ensureAnchorAndCreate(ctx context.Context, t WarmTa
 		return
 	}
 	anchorName := warmAnchorName(t.DagVersionID)
-	for i := 0; i < create; i++ {
-		if err := r.pods.CreateWarmPod(ctx, t, anchorName, uid); err != nil {
-			r.logger.ErrorContext(ctx, "creating warm worker",
-				"dag_version", t.DagVersionID, "image", t.Image, "error", err)
-			r.record("warm_pool_create_error")
-			continue
+	if r.cache == nil {
+		for i := 0; i < create; i++ {
+			r.createOne(ctx, t, anchorName, uid)
 		}
-		r.record("warm_pool_pod_created")
+		return
 	}
+	// Event-driven refill: issue the creates concurrently, at most
+	// createParallelism at once, so refilling N workers costs about one apiserver
+	// round trip per batch instead of N in a row. Each raises its expectation
+	// before the call so the cache's lag cannot cause a duplicate on the next tick.
+	sem := make(chan struct{}, r.createParallelism)
+	var wg sync.WaitGroup
+	for i := 0; i < create; i++ {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			r.cache.ExpectCreate(t.DagVersionID)
+			created := false
+			defer func() {
+				if p := recover(); p != nil {
+					r.logger.ErrorContext(ctx, "warm worker create panicked", "dag_version", t.DagVersionID, "panic", p)
+					r.record("warm_pool_version_panic")
+				}
+				if !created {
+					r.cache.CreateFailed(t.DagVersionID)
+				}
+			}()
+			created = r.createOne(ctx, t, anchorName, uid)
+		}()
+	}
+	wg.Wait()
+}
+
+// createOne creates one warm worker, logging and metering a failure. It reports
+// whether the create was accepted.
+func (r *WarmPoolReconciler) createOne(ctx context.Context, t WarmTarget, anchorName, uid string) bool {
+	if err := r.pods.CreateWarmPod(ctx, t, anchorName, uid); err != nil {
+		r.logger.ErrorContext(ctx, "creating warm worker",
+			"dag_version", t.DagVersionID, "image", t.Image, "error", err)
+		r.record("warm_pool_create_error")
+		return false
+	}
+	r.record("warm_pool_pod_created")
+	return true
 }
 
 // deleteWarmPod deletes one warm worker by name, logging/metering a failure

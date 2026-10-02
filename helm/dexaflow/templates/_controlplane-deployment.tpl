@@ -407,6 +407,8 @@ spec:
               value: {{ .ctx.Values.execution.workerIdleTtl | quote }}
             - name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
               value: {{ .ctx.Values.execution.maxWarmPodsPerTenant | quote }}
+            - name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+              value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:
