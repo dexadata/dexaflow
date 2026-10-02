@@ -59,6 +59,11 @@ func TestWarmResourcesCompatible(t *testing.T) {
 	q := func(cpu, mem string) *domain.ResourceQuantity { return &domain.ResourceQuantity{CPU: cpu, Memory: mem} }
 	warm := &domain.Resources{Requests: q("500m", "512Mi"), Limits: q("500m", "512Mi")}
 	unlimitedWarm := &domain.Resources{Requests: q("1", "1Gi")}
+	burstyWarm := &domain.Resources{Requests: q("500m", "512Mi"), Limits: q("2", "2Gi")}
+	storageWarm := &domain.Resources{
+		Requests: &domain.ResourceQuantity{EphemeralStorage: "2Gi"},
+		Limits:   &domain.ResourceQuantity{EphemeralStorage: "8Gi"},
+	}
 	cases := []struct {
 		name string
 		task *domain.Resources
@@ -77,6 +82,17 @@ func TestWarmResourcesCompatible(t *testing.T) {
 		{"request, warm unsized", &domain.Resources{Requests: q("250m", "")}, nil, false},
 		{"unparseable", &domain.Resources{Requests: q("lots", "")}, unlimitedWarm, false},
 		{"claim", &domain.Resources{Claims: []map[string]any{{"name": "gpu"}}}, unlimitedWarm, false},
+		// A limit with no request makes Kubernetes request the limit, so the warm
+		// pod must request at least that much.
+		{"limit only, within warm", &domain.Resources{Limits: q("250m", "256Mi")}, warm, true},
+		{"limit only, above warm request", &domain.Resources{Limits: q("1", "256Mi")}, burstyWarm, false},
+		// An unlimited warm pod does not give a task the cap it declared (its QoS
+		// and its noisy-neighbour bound), so it goes to a dedicated pod.
+		{"limit, warm unlimited", &domain.Resources{Requests: q("250m", ""), Limits: q("250m", "")}, unlimitedWarm, false},
+		{"limit only, warm unlimited", &domain.Resources{Limits: q("500m", "")}, unlimitedWarm, false},
+		{"ephemeral limit only, warm unlimited", &domain.Resources{Limits: &domain.ResourceQuantity{EphemeralStorage: "1Gi"}}, unlimitedWarm, false},
+		{"ephemeral limit only, warm covers", &domain.Resources{Limits: &domain.ResourceQuantity{EphemeralStorage: "1Gi"}}, storageWarm, true},
+		{"ephemeral limit only, above warm request", &domain.Resources{Limits: &domain.ResourceQuantity{EphemeralStorage: "4Gi"}}, storageWarm, false},
 	}
 	for _, c := range cases {
 		task := domain.TaskSpec{Resources: c.task}
