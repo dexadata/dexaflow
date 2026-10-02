@@ -349,6 +349,14 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// GzipResponses gzips JSON and NDJSON responses of 1 KB or more on the API
+	// and UI surfaces for clients that accept it. Log routes and anything that
+	// flushes (live tails, SSE) stay uncompressed. Routes that return secrets
+	// or tokens (variables, connections, XComs, auth) also stay uncompressed:
+	// compressing a secret next to reflected input lets its length leak the
+	// secret (BREACH). Other JSON can still echo request input next to private
+	// data, which is the trade-off of turning this on. Off by default (ADR 0062).
+	GzipResponses bool `mapstructure:"gzip_responses"`
 }
 
 // Server roles (ADR 0049).
@@ -864,6 +872,8 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): false sends every API body uncompressed, as before.
+	"server.gzip_responses": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
