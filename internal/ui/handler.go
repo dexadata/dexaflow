@@ -126,7 +126,14 @@ type Server struct {
 	instanceName string
 	homeLabel    string
 	homeURL      string
+	favicon      string
+	stylesheets  []string
 }
+
+// stockFavicon is the favicon tag of the pinned Airflow bundle, the anchor
+// SetFavicon rewrites. TestEmbeddedBundleFaviconIsRebranded fails if a bundle
+// upgrade changes it.
+const stockFavicon = `<link rel="icon" type="image/png" href="./static/pin_32.png" />`
 
 // SetLiteBanner toggles injection of the LITE overlay into the served shell. It
 // is enabled by the Lite edition (`leoflow lite`); the demo and production never
@@ -151,6 +158,15 @@ func (s *Server) SetInstanceName(name string) { s.instanceName = name }
 // SetHomeLink sets the operator's link back to their platform (#1290), shown on
 // every UI page and opened in the same tab. An empty url disables it.
 func (s *Server) SetHomeLink(label, url string) { s.homeLabel, s.homeURL = label, url }
+
+// SetFavicon replaces the bundle's favicon with url (#1289). Empty keeps the
+// stock icon. Config validation limits url to http(s) or a root-relative path.
+func (s *Server) SetFavicon(url string) { s.favicon = url }
+
+// SetStylesheets adds stylesheets every UI page loads in <head>, typically the
+// web fonts a theme names (#1289). Config validation limits each URL as for
+// SetFavicon.
+func (s *Server) SetStylesheets(urls []string) { s.stylesheets = urls }
 
 // New builds a Server over the embedded, pinned SPA bundle.
 func New() *Server { return NewFromFS(Assets(), Version()) }
@@ -291,6 +307,7 @@ func (s *Server) Index(w http.ResponseWriter, basePath string) {
 		title = "Leoflow"
 	}
 	body = strings.ReplaceAll(body, "<title>Airflow</title>", "<title>"+title+"</title>")
+	body = s.brand(body)
 	// Always inject the clipboard polyfill — no-op on https / localhost, the
 	// only place it matters is plain http://<lan-ip>:port (#242).
 	body = injectBeforeBodyEnd(body, clipboardFallbackHTML)
@@ -312,6 +329,26 @@ func (s *Server) Index(w http.ResponseWriter, basePath string) {
 	if _, err := w.Write([]byte(body)); err != nil {
 		return // client hung up mid-write; nothing actionable to do.
 	}
+}
+
+// brand applies the favicon and stylesheet settings to the shell. Every value
+// is HTML-escaped into its attribute.
+func (s *Server) brand(body string) string {
+	if s.favicon != "" {
+		body = strings.Replace(body, stockFavicon,
+			`<link rel="icon" href="`+html.EscapeString(s.favicon)+`" />`, 1)
+	}
+	if len(s.stylesheets) == 0 {
+		return body
+	}
+	var links strings.Builder
+	for _, href := range s.stylesheets {
+		links.WriteString(`<link rel="stylesheet" href="` + html.EscapeString(href) + `">`)
+	}
+	if i := strings.Index(body, "</head>"); i >= 0 {
+		return body[:i] + links.String() + body[i:]
+	}
+	return links.String() + body
 }
 
 // injectBeforeBodyEnd places snippet just before </body> so it renders over the

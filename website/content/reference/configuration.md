@@ -557,6 +557,46 @@ before enabling it in production.
 | `DEXAFLOW_UI_MONACO_DIR` | _(empty)_ | both | Where the pinned Monaco bundle was fetched by `leoflow setup`; the editor page is served Monaco from it. Empty shows a setup hint. |
 | `DEXAFLOW_UI_HOME_LINK_LABEL` | _(empty)_ | both | Text of an optional link from the UI back to the platform you serve it from, shown on every page at the bottom-left and opened in the same tab. Set it together with `DEXAFLOW_UI_HOME_LINK_URL`. Helm: `ui.homeLink.label`. |
 | `DEXAFLOW_UI_HOME_LINK_URL` | _(empty)_ | both | Absolute `http://` or `https://` URL of the home link. Empty shows no link. Boot fails on another scheme, a missing host, or a URL without a label. Helm: `ui.homeLink.url`. |
+| `DEXAFLOW_UI_THEME` | _(empty)_ | both | Theme for the UI as a JSON object, the same shape as Airflow's `[api] theme`: `tokens` (Chakra design tokens such as `colors.brand` and `fonts`), `globalCss`, `icon`, `icon_dark_mode`. Served in `/ui/config`, so the UI applies it through its own theming. Boot fails on invalid JSON, an unknown top-level key, or an icon that is not http(s) or root-relative. Helm: `ui.theme` (YAML, rendered as JSON). See [Branding the UI](#branding-the-ui). |
+| `DEXAFLOW_UI_FAVICON_URL` | _(empty)_ | both | Favicon for the UI, http(s) or root-relative. Empty keeps the stock icon. Helm: `ui.faviconUrl`. |
+| `DEXAFLOW_UI_STYLESHEET_URLS` | _(empty)_ | both | Comma-separated stylesheets every UI page loads in `<head>`, typically the web fonts a theme names. Each must be http(s) or root-relative and contain no comma. Helm: `ui.stylesheetUrls`. |
+
+### Branding the UI
+
+The bundled UI reads its look from `theme` in `/ui/config`, so a theme changes
+colors, fonts and the navigation icon without touching the bundle. This example
+uses a blue brand palette and the Outfit and JetBrains Mono fonts, and loads the
+fonts from Google Fonts:
+
+```yaml
+ui:
+  theme:
+    tokens:
+      colors:
+        brand:
+          "50":  { value: "#eff6ff" }
+          "100": { value: "#dbeafe" }
+          "200": { value: "#bfdbfe" }
+          "300": { value: "#93c5fd" }
+          "400": { value: "#60a5fa" }
+          "500": { value: "#3b82f6" }
+          "600": { value: "#2563eb" }
+          "700": { value: "#1d4ed8" }
+          "800": { value: "#1e40af" }
+          "900": { value: "#1e3a8a" }
+          "950": { value: "#172554" }
+      fonts:
+        heading: { value: "Outfit, system-ui, sans-serif" }
+        body:    { value: "Outfit, system-ui, sans-serif" }
+        mono:    { value: "'JetBrains Mono', ui-monospace, monospace" }
+  stylesheetUrls:
+    - "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+```
+
+Set all eleven `brand` shades: the UI uses different shades for buttons,
+selections and the navigation highlight, on the light and the dark theme. The UI only
+exposes part of its styling through the theme; anything else is a `globalCss`
+rule, and holds only as long as the bundle keeps the selector it targets.
 
 ### Trusted proxies and the client IP
 

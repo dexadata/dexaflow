@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1313,10 +1314,21 @@ func newUIServer(cfg *config.ServerConfig, logger *slog.Logger) (*ui.Server, api
 	uiSrv.SetProBanner(showProBadge(cfg))
 	uiSrv.SetInstanceName(cfg.UI.InstanceName)
 	uiSrv.SetHomeLink(cfg.UI.HomeLink.Label, cfg.UI.HomeLink.URL)
+	uiSrv.SetFavicon(cfg.UI.FaviconURL)
+	uiSrv.SetStylesheets(cfg.UI.StylesheetURLs)
 
 	editorFS := liteEditorFS(cfg, logger)
 	uiSrv.SetEditorButton(editorFS != nil)
 	return uiSrv, editorFS
+}
+
+// uiTheme returns ui.theme as raw JSON for /ui/config, or nil when unset.
+// Validate has already checked it is a JSON object.
+func uiTheme(cfg *config.ServerConfig) json.RawMessage {
+	if cfg.UI.Theme == "" {
+		return nil
+	}
+	return json.RawMessage(cfg.UI.Theme)
 }
 
 func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow) *http.Server {
@@ -1340,6 +1352,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TokenMaxLifetimeSecs:         cfg.Auth.JWT.MaxLifetimeSeconds,
 		InstanceName:                 cfg.UI.InstanceName,
 		UIAutoRefreshIntervalSeconds: cfg.UI.AutoRefreshIntervalSeconds,
+		UITheme:                      uiTheme(cfg),
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
 

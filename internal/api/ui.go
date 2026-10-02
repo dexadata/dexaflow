@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,8 +80,8 @@ const DefaultUIAutoRefreshIntervalSeconds = 30
 // autoRefreshIntervalSecs is the SPA's polling cadence for DAG / DagRun /
 // task-instance state refresh (non-positive values fall back to the
 // production default).
-func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int) {
-	r.GET("/ui/config", uiConfigHandler(instanceName, autoRefreshIntervalSecs))
+func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage) {
+	r.GET("/ui/config", uiConfigHandler(instanceName, autoRefreshIntervalSecs, theme))
 	r.GET("/ui/auth/me", uiMeHandler())
 	r.GET("/ui/auth/menus", uiMenusHandler())
 	r.POST("/ui/auth/token", uiTokenHandler(tokenTTLSecs))
@@ -88,15 +89,16 @@ func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefres
 
 // uiConfigHandler returns the UI ConfigResponse (Airflow 3.2.1 shape). It keeps
 // every spec-required field present; values stay minimal for the MVP (Phase 5.3
-// tunes them). theme is null — required-but-nullable in the spec — meaning "no
-// custom Chakra theme". is_db_isolation_mode is intentionally absent: it is not
+// tunes them). theme is the operator's Chakra theme (#1289), or null when none
+// is configured: required-but-nullable in the spec, read as "no custom
+// theme". is_db_isolation_mode is intentionally absent: it is not
 // part of the 3.2.1 ConfigResponse.
 //
 // autoRefreshIntervalSecs controls the SPA's polling cadence for DAG / DagRun
 // state. A non-positive value falls back to DefaultUIAutoRefreshIntervalSeconds
 // so a misconfigured env var cannot accidentally drop it to 0 (which would
 // hammer the DB). See docs/configuration.md.
-func uiConfigHandler(instanceName string, autoRefreshIntervalSecs int) gin.HandlerFunc {
+func uiConfigHandler(instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage) gin.HandlerFunc {
 	if instanceName == "" {
 		instanceName = "Leoflow"
 	}
@@ -116,10 +118,19 @@ func uiConfigHandler(instanceName string, autoRefreshIntervalSecs int) gin.Handl
 			"dashboard_alert":                 []any{},
 			"show_external_log_redirect":      false,
 			"external_log_name":               nil,
-			"theme":                           nil,
+			"theme":                           themeOrNull(theme),
 			"multi_team":                      false,
 		})
 	}
+}
+
+// themeOrNull renders an unset theme as JSON null rather than as an empty
+// raw message, which would not be valid JSON.
+func themeOrNull(theme json.RawMessage) any {
+	if len(theme) == 0 {
+		return nil
+	}
+	return theme
 }
 
 // uiTokenHandler implements POST /ui/auth/token: it re-mints a bearer token for

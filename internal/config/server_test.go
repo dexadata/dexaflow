@@ -611,3 +611,79 @@ func TestValidateUIHomeLink(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadServerReadsUIBrandingFromEnv locks that the branding keys (#1289)
+// bind from the environment, the list one comma-split like trusted_proxies.
+func TestLoadServerReadsUIBrandingFromEnv(t *testing.T) {
+	t.Setenv("LEOFLOW_UI_THEME", `{"tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}`)
+	t.Setenv("LEOFLOW_UI_FAVICON_URL", "https://cdn.example.com/favicon.png")
+	t.Setenv("LEOFLOW_UI_STYLESHEET_URLS", "https://fonts.example.com/a.css,https://cdn.example.com/b.css")
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if !strings.Contains(c.UI.Theme, `"brand"`) {
+		t.Errorf("UI.Theme = %q, want the JSON from the environment", c.UI.Theme)
+	}
+	if c.UI.FaviconURL != "https://cdn.example.com/favicon.png" {
+		t.Errorf("UI.FaviconURL = %q", c.UI.FaviconURL)
+	}
+	want := []string{"https://fonts.example.com/a.css", "https://cdn.example.com/b.css"}
+	if len(c.UI.StylesheetURLs) != 2 || c.UI.StylesheetURLs[0] != want[0] || c.UI.StylesheetURLs[1] != want[1] {
+		t.Errorf("UI.StylesheetURLs = %v, want %v", c.UI.StylesheetURLs, want)
+	}
+}
+
+// TestLoadServerBrandingIsOffByDefault locks that a default install keeps the
+// stock look: no theme, favicon or extra stylesheet.
+func TestLoadServerBrandingIsOffByDefault(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.UI.Theme != "" || c.UI.FaviconURL != "" || len(c.UI.StylesheetURLs) != 0 {
+		t.Errorf("branding defaults = theme %q favicon %q stylesheets %v, want all empty",
+			c.UI.Theme, c.UI.FaviconURL, c.UI.StylesheetURLs)
+	}
+}
+
+// TestValidateUIBranding covers the boot checks: the theme is a JSON object
+// with only the keys the Airflow 3.2.1 UI reads, and every URL is http(s) or
+// root-relative, so a typo fails boot instead of shipping a broken look and
+// no javascript: or data: URL reaches the page.
+func TestValidateUIBranding(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*UISection)
+		wantErr string
+	}{
+		{"unset", func(*UISection) {}, ""},
+		{"full theme", func(u *UISection) {
+			u.Theme = `{"tokens":{"colors":{}},"globalCss":{"body":{"fontFamily":"Outfit"}},"icon":"https://x.example/i.svg","icon_dark_mode":"/static/i-dark.svg"}`
+		}, ""},
+		{"theme not json", func(u *UISection) { u.Theme = `{tokens:` }, "ui.theme"},
+		{"theme not an object", func(u *UISection) { u.Theme = `["tokens"]` }, "ui.theme"},
+		{"theme unknown key", func(u *UISection) { u.Theme = `{"tokenz":{}}` }, "tokenz"},
+		{"theme icon javascript", func(u *UISection) { u.Theme = `{"icon":"javascript:alert(1)"}` }, "ui.theme icon"},
+		{"theme icon not a string", func(u *UISection) { u.Theme = `{"icon":3}` }, "ui.theme icon"},
+		{"favicon https", func(u *UISection) { u.FaviconURL = "https://cdn.example.com/f.png" }, ""},
+		{"favicon root-relative", func(u *UISection) { u.FaviconURL = "/brand/f.png" }, ""},
+		{"favicon data", func(u *UISection) { u.FaviconURL = "data:image/png;base64,AAAA" }, "ui.favicon_url"},
+		{"favicon protocol-relative", func(u *UISection) { u.FaviconURL = "//evil.example/f.png" }, "ui.favicon_url"},
+		{"stylesheet javascript", func(u *UISection) { u.StylesheetURLs = []string{"https://ok.example/a.css", "javascript:x"} }, "ui.stylesheet_urls"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			tc.mutate(&c.UI)
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
