@@ -509,6 +509,41 @@ func TestValidateLogsBackend(t *testing.T) {
 	}
 }
 
+// TestLoadServerLogsSinkLayout pins the object-log layout gate: it defaults to
+// the single-object layout every reader understands, binds from both the
+// DEXAFLOW_* and the legacy LEOFLOW_* variable, and rejects an unknown value.
+func TestLoadServerLogsSinkLayout(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Logs.Sink.Layout != "single" {
+		t.Errorf("Logs.Sink.Layout = %q, want \"single\" by default", c.Logs.Sink.Layout)
+	}
+	for _, env := range []string{"DEXAFLOW_LOGS_SINK_LAYOUT", "LEOFLOW_LOGS_SINK_LAYOUT"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "segmented")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			if c.Logs.Sink.Layout != "segmented" {
+				t.Errorf("Logs.Sink.Layout = %q, want \"segmented\" from %s", c.Logs.Sink.Layout, env)
+			}
+		})
+	}
+	bad := &ServerConfig{}
+	bad.Auth.Provider = AuthProviderJWT
+	bad.Auth.JWT.Secret = "set"
+	bad.Server.HTTPAddr = "0.0.0.0:8080"
+	bad.Logs.Backend = "s3"
+	bad.Logs.Sink.Bucket = "b"
+	bad.Logs.Sink.Layout = "striped"
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate() accepted an unknown logs.sink.layout")
+	}
+}
+
 // TestLoadServerDottedOIDCMapKeys locks the fix for #826: a MAP KEY containing
 // dots (Google Workspace `hd` = a domain; a dotted IdP group name) must survive
 // config decoding. viper's key delimiter is ".", so without the empty-map
