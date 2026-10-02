@@ -7,9 +7,9 @@ type: application
 # chart ever needs a cadence of its own for a template-only fix.
 version: 0.4.8
 appVersion: "0.4.8"
-home: https://github.com/dexadata/leoflow
+home: https://github.com/dexadata/dexaflow
 sources:
-  - https://github.com/dexadata/leoflow
+  - https://github.com/dexadata/dexaflow
 keywords:
   - workflow
   - orchestrator

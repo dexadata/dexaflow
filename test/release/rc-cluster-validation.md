@@ -29,9 +29,9 @@ the issue they name closes.
 | Server image | `ghcr.io/dexadata/dexaflow-server:<tag>` |
 | Date / operator | `<date>` / `<who>` |
 
-Links: release <https://github.com/dexadata/leoflow/releases/tag/TAG> ·
+Links: release <https://github.com/dexadata/dexaflow/releases/tag/TAG> ·
 Helm guide <https://dexaflow.dexadata.ai/operate/helm-chart/> ·
-chart README (full values) <https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md> ·
+chart README (full values) <https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md> ·
 install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 
 ---
@@ -49,7 +49,7 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
   **IRSA** (`eks.amazonaws.com/role-arn`) or GKE **Workload Identity**
   (`iam.gke.io/gcp-service-account`) — see §4.2/#728 and §5.
 - The `leoflow` CLI locally (client):
-  `LEOFLOW_VERSION=<tag> curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh`
+  `LEOFLOW_VERSION=<tag> curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh`
   (explicit tag — "latest" skips pre-releases).
 
 ---
@@ -72,7 +72,7 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 > `.github/workflows/helm-release.yaml`, so a cut with a stale chart fails the
 > Helm chart release job rather than shipping wrong image defaults. Once tagged,
 > install the **published OCI chart** (`--version` = tag without the `v`) rather
-> than a source checkout — see the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#quick-start).
+> than a source checkout — see the [chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#quick-start).
 
 Confirmed chart value keys used below (defaults in parens) — see the chart README
 for the datastore/secret keys this runbook intentionally does not spell out:
@@ -773,7 +773,7 @@ cloud reads as proof, and that is the failure §5 exists to prevent.
 | #1023 | in-flight migration above the running binary: endpoints never empty, `/readyz` stays 200; dirty at the same version still goes NotReady (§4.6b) | | |
 | ADR 0052 | `LEOFLOW_CHAOS_ONLY=CD chaos-runtime.sh` — C and D pass (§4.5) | | |
 
-For each FAIL: open an issue on `dexadata/leoflow` with the root cause and, where
+For each FAIL: open an issue on `dexadata/dexaflow` with the root cause and, where
 possible, the file:line (the #722–#729 batch is the quality bar). A red RC →
 fix → **rc.4** (tags are immutable, ADR 0033); a green RC → the GA promotion is a
 separate maintainer decision.

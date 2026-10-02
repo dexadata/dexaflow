@@ -120,5 +120,5 @@ regenerate. When you move or rename a page, update `link-map.csv` and rerun it.
 scratch, which drops the alias block. Rerun `build_redirects.py` after either one.
 CI runs the generators but not `build_redirects.py`, so the old `/cli/*.html` and
 `/go/*.html` URLs do not currently redirect on the published site. That gap is
-[#1122](https://github.com/dexadata/leoflow/issues/1122).
+[#1122](https://github.com/dexadata/dexaflow/issues/1122).
 {{% /alert %}}

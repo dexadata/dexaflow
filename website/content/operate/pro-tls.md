@@ -67,7 +67,7 @@ chart use them verbatim and skip auto-generation. The clean way to provision
 that cert is [cert-manager](https://cert-manager.io).
 
 An operator-ready values file is at
-[`helm/dexaflow/examples/values-pro-tls.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-pro-tls.yaml)
+[`helm/dexaflow/examples/values-pro-tls.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-pro-tls.yaml)
 — `-f` it after the steps below. (The full chart value reference is the
 [Helm chart](/operate/helm-chart/) page.)
 
@@ -149,7 +149,7 @@ $ helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION
     -f values-pro-tls.yaml
 ```
 
-(Use the chart version for the [latest release](https://github.com/dexadata/leoflow/releases) —
+(Use the chart version for the [latest release](https://github.com/dexadata/dexaflow/releases) —
 the tag with the leading `v` stripped. From a source checkout, swap the OCI
 reference for `./helm/dexaflow`.)
 

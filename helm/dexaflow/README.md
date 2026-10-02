@@ -7,7 +7,7 @@ Dexaflow control plane — a GitOps-first, container-native workflow orchestrato
 Deploys the Dexaflow **control plane** (`leoflow-server`) into Kubernetes for a
 production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
-**Homepage:** <https://github.com/dexadata/leoflow>
+**Homepage:** <https://github.com/dexadata/dexaflow>
 
 ## What it installs
 
@@ -122,7 +122,7 @@ of defaulting into it:
 | `podAnnotations: {karpenter.sh/do-not-disrupt: "true"}` | **EKS/Karpenter-only opt-in**, not set by default: exempts the node from voluntary disruption, trading maintenance friction for eviction protection |
 
 The one-switch HA profile is
-[`examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
+[`examples/values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
 two replicas spread across nodes, task logs in object storage
 (`logs.persistence.enabled: false` + `logs.sink.provider: s3|gcs` — the
 recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
@@ -286,7 +286,7 @@ Dexaflow releases in one cluster never collide on them.
 
 ### `execution.warmPoolsEnabled`
 
-Warm worker pools ([ADR 0058](https://github.com/dexadata/leoflow/blob/main/docs/adr/0058-warm-worker-pools.md))
+Warm worker pools ([ADR 0058](https://github.com/dexadata/dexaflow/blob/main/docs/adr/0058-warm-worker-pools.md))
 reuse one pod across many attempts of the **same DAG version**, instead of one pod
 per attempt. Off by default: every attempt gets a dedicated pod, which is today's
 behavior.
@@ -316,7 +316,7 @@ a real cluster, and unit tests do not clear it.
 
 `extraEnv` appends raw env entries to the control-plane container, for any
 `LEOFLOW_*` setting without a first-class value (the full surface is in
-[`docs/configuration.md`](https://github.com/dexadata/leoflow/blob/main/docs/configuration.md)):
+[`docs/configuration.md`](https://github.com/dexadata/dexaflow/blob/main/docs/configuration.md)):
 
 ```yaml
 extraEnv:
@@ -376,7 +376,7 @@ auth:
 ```
 
 A full worked example is in
-[`examples/values-oidc-google.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
+[`examples/values-oidc-google.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
 
 Three things the chart refuses at render time rather than letting them become a
 CrashLoopBackOff whose cause is visible only in container logs: the one channel a
@@ -426,8 +426,8 @@ chart deliberately won't fall back to embedded datastores — that's Lite's
 job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
 path is to install Bitnami's Postgres + Redis charts alongside Dexaflow:
 
-- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md)
-- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/poc.yaml)
+- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md)
+- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/poc.yaml)
 
 Three `helm install`s in total. **Not for production** — see the recipe for
 the production-shaped command.
@@ -452,7 +452,7 @@ bash scripts/helm-template-checks.sh   # contract assertions (env wiring, Job ha
 
 ## Source Code
 
-* <https://github.com/dexadata/leoflow>
+* <https://github.com/dexadata/dexaflow>
 
 ## Values
 
@@ -501,7 +501,7 @@ differ from what's committed.
 | bootstrap.existingSecret | string | `""` | Name of a Secret with key `bootstrapPassword` (takes precedence over `password`). |
 | bootstrap.password | string | `""` | Initial admin password (first install only). Leave empty to skip the bootstrap; the operator then creates the first admin out-of-band. |
 | config.agentControlPlaneAddr | string | `""` | gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods. |
-| config.cors.allowedOrigins | list | `[]` | CORS origins the API accepts (`server.cors.allowed_origins`). Leoflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list. |
+| config.cors.allowedOrigins | list | `[]` | CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list. |
 | config.logsDir | string | `"/var/log/leoflow"` | Directory inside the pod where task logs are written. Mounted from `logs.persistence` (a PVC by default) so logs survive pod restarts. Set `logs.persistence.enabled: false` to fall back to an ephemeral emptyDir (dev only). |
 | config.scheduler.enabled | bool | `true` | Run the scheduler loop. Disable only for read-only API-only replicas (rare). |
 | config.scheduler.loopIntervalMs | int | `1000` | Scheduler loop interval in milliseconds. Lower = faster reactivity, higher CPU. 1000ms is the production-tested default. |

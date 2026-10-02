@@ -10,7 +10,7 @@ description: "The DEXAFLOW_* environment variables and config keys for the serve
 
 Two surfaces: **`dexaflow.yaml`** (per-DAG, authoring) and **server environment**
 (`DEXAFLOW_*`, the control plane). The canonical `dexaflow.yaml` schema is
-[`docs/api/leoflow-yaml-schema.json`](https://github.com/dexadata/leoflow/blob/main/docs/api/leoflow-yaml-schema.json).
+[`docs/api/leoflow-yaml-schema.json`](https://github.com/dexadata/dexaflow/blob/main/docs/api/leoflow-yaml-schema.json).
 
 {{% alert title="Deploying Pro on Kubernetes?" color="info" %}}
 These `DEXAFLOW_*` variables are what the Helm chart sets under the hood. For the
@@ -141,7 +141,7 @@ Three things follow from this that are worth knowing:
   is whichever interpreter `dexaflow setup` baked into `parser_cmd`. A project
   declaring a newer minor can still see a `SyntaxError` from `compile` for code
   the cluster runs
-  ([#1095](https://github.com/dexadata/leoflow/issues/1095)). Running
+  ([#1095](https://github.com/dexadata/dexaflow/issues/1095)). Running
   `dexaflow setup` under the minor you declare is the workaround.
 - **The three exemptions are the same everywhere.** A version you never wrote is
   not a statement (the default applies), a declared `base_image` makes the field
@@ -262,7 +262,7 @@ before it removes the only copy.
 
 Every field in `dexaflow.yaml` is optional. Zero-valued fields are filled by
 `LeoflowConfig.ApplyDefaults()` (`internal/domain/config.go`) from the values
-declared in [`leoflow-yaml-schema.json`](https://github.com/dexadata/leoflow/blob/main/docs/api/leoflow-yaml-schema.json).
+declared in [`leoflow-yaml-schema.json`](https://github.com/dexadata/dexaflow/blob/main/docs/api/leoflow-yaml-schema.json).
 Defaults are hardcoded for v1; making them workspace-configurable is a v2
 roadmap item.
 
@@ -277,7 +277,7 @@ roadmap item.
 | `system_packages` | `[]` | apt packages. `apt-get install`ed into the DAG image at compile, resolving against the task base image's Debian suite — see the `system_packages` row under [dexaflow.yaml](#leoflowyaml) for which suite that is and what moved. |
 | `include_paths` | `["."]` | Extra paths copied into the image **alongside** `dag_source` — a helper module, a config file, a fixtures directory. Entries are relative to the project directory; an absolute one, or one escaping the context (`../x`), is refused at compile with the entry named, because Docker cannot `COPY` it and failing at build time would name a Docker error instead. The default `["."]` means *no extra paths*, not "everything": it is what every existing project carries, so it must not change what their images contain. Entries already copied (the DAG source, a dbt group directory) are skipped rather than duplicated. Only the **generated** Dockerfile honours it — a project-supplied Dockerfile copies whatever its own `COPY` lines say. Included paths are scanned by the credential warning like everything else that ships. |
 | `exclude_paths` | `[".git", "__pycache__", "*.pyc", ".venv", "venv"]` | Kept out of the image. On `--build` these become a `.dockerignore` in the build context for the duration of the build — merged with yours if you have one, and removed afterwards. Each entry is expanded to the forms Docker actually honours, because a bare name in a `.dockerignore` matches only at the context root: a plain directory name becomes four patterns (`p`, `**/p`, `p/**`, `**/p/**`) so that both the directory and its contents are pruned at any depth; an entry whose last segment contains a glob becomes `p` and `**/p` only, since a glob names files rather than a directory to descend into; and an entry containing a `/` is already anchored, so it becomes `p` and `p/**`. An entry starting with `!` or `#` contributes nothing: it is dropped rather than expanded, so a negation belongs in your own `.dockerignore` (which is merged, never rewritten) and not here. A dropped `!` is **reported by name** at build time — leoflow's block is appended after your own lines, so a negation emitted there could resurrect a path one of your earlier lines excluded. Add anything holding credentials: the image is pushed to a registry and pulled by every pod that runs the DAG. **Not** used by workspace discovery, which has its own hardcoded skip list. |
-| `build.context` | `"."` | **Not implemented.** Declared and defaulted, but the build always uses the DAG directory. Tracked in [#1062](https://github.com/dexadata/leoflow/issues/1062). |
+| `build.context` | `"."` | **Not implemented.** Declared and defaulted, but the build always uses the DAG directory. Tracked in [#1062](https://github.com/dexadata/dexaflow/issues/1062). |
 | `build.platforms` | `["linux/amd64"]` | Multi-arch via `["linux/amd64","linux/arm64"]`. |
 | `registry.auth_method` | `"docker_config"` | Credential source for `compile --push`. |
 | `registry.tag_strategy` | `"version"` | How `dag_version` is mapped to image tag. |
@@ -289,7 +289,7 @@ roadmap item.
 
 This page is hand-maintained against the server's configuration struct and
 default map in
-[`internal/config/server.go`](https://github.com/dexadata/leoflow/blob/main/internal/config/server.go)
+[`internal/config/server.go`](https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go)
 — treat that source as the final authority. Every `DEXAFLOW_*` variable maps to a
 config key by upper-casing it and replacing `.` (and `-`) with `_`: e.g.
 `auth.oidc.client_id` → `DEXAFLOW_AUTH_OIDC_CLIENT_ID`. The same keys can be set in
@@ -326,7 +326,7 @@ group name, a Google Workspace domain) and a dotted key is ambiguous in both env
 and viper's own key space. The chart sets them through `auth.oidc.tenantClaims`
 and `auth.oidc.roleMappings`, which it renders into a ConfigMap mounted as the
 server's `DEXAFLOW_CONFIG` file, with the keys quoted so a dotted domain survives
-([#1143](https://github.com/dexadata/leoflow/issues/1143)). That file is
+([#1143](https://github.com/dexadata/dexaflow/issues/1143)). That file is
 deliberately partial: it carries only these two keys, so it can never override a
 setting the chart delivers as an env var.
 
@@ -376,7 +376,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_SECRET_SCOPING` | `permissive` | both | Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `permissive` (delivers the whole tenant vault; warns when a DAG declares a narrower set), `enforce` (delivers only the declared subset — empty declaration ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable. Helm: `auth.secretScoping`. |
 | `DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |
-| `DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME` | `24h` | both | Duration ceiling on how long one attempt's agent credential may be kept alive by heartbeat renewal ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)). A runaway-task backstop — the short per-attempt TTL is what bounds a stolen token. A non-positive value disables the ceiling. No Helm value yet — `extraEnv` only ([#955](https://github.com/dexadata/leoflow/issues/955)). |
+| `DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME` | `24h` | both | Duration ceiling on how long one attempt's agent credential may be kept alive by heartbeat renewal ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)). A runaway-task backstop — the short per-attempt TTL is what bounds a stolen token. A non-positive value disables the ceiling. No Helm value yet — `extraEnv` only ([#955](https://github.com/dexadata/dexaflow/issues/955)). |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
 | `DEXAFLOW_AUTH_DEV_NO_AUTH` | `false` | dev-only | Legacy escape hatch — bypasses auth entirely, treating every request as admin. Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite uses a real admin login generated by `dexaflow setup`; set this only for ephemeral test scaffolds. |
 
@@ -387,7 +387,7 @@ pro`) and fails boot closed unless `issuer`, `client_id`, `redirect_url` **and
 the tenant pin (`tenant_claim` + `tenant_claims`)** are all set. The pin is in
 that set because every login resolves a tenant from it and an absent or unmapped
 claim value fails the login closed, never falling back to `default`, so a
-deployment without it boots green and rejects 100% of logins ([#1143](https://github.com/dexadata/leoflow/issues/1143)).
+deployment without it boots green and rejects 100% of logins ([#1143](https://github.com/dexadata/dexaflow/issues/1143)).
 `tenant_claims` is a map, so it loads only from the YAML config file named by
 `DEXAFLOW_CONFIG`; no env var can carry it. A blank name on either side of an
 entry in `tenant_claims` or `role_mappings` fails boot: `corp.example:` with

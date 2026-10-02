@@ -105,7 +105,7 @@ enableGitInfo = true
   # sidebar box on too.
   offlineSearch = true
   offlineSearchMaxResults = 25
-  github_repo = "https://github.com/dexadata/leoflow"
+  github_repo = "https://github.com/dexadata/dexaflow"
   github_branch = "main"
   # "Edit this page" + "Create child page" + "View page source" links. The docs
   # live under docs/ on the live site today; the Hugo content root is website/content.
@@ -152,12 +152,12 @@ enableGitInfo = true
   [params.links]
     [[params.links.user]]
       name = "GitHub"
-      url = "https://github.com/dexadata/leoflow"
+      url = "https://github.com/dexadata/dexaflow"
       icon = "fab fa-github"
       desc = "Source, issues, and discussions"
     [[params.links.developer]]
       name = "GitHub"
-      url = "https://github.com/dexadata/leoflow"
+      url = "https://github.com/dexadata/dexaflow"
       icon = "fab fa-github"
       desc = "Development happens here"
 
@@ -186,7 +186,7 @@ enableGitInfo = true
   [[menu.main]]
     name = "GitHub"
     weight = 100
-    url = "https://github.com/dexadata/leoflow"
+    url = "https://github.com/dexadata/dexaflow"
     pre = "<i class='fab fa-github'></i>"
 
 [outputs]

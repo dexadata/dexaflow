@@ -168,7 +168,7 @@ still *resolve* is over-served and does **not** prove that no DAG would lose
 secrets under `enforce`: the warning counts only declared names that actually
 resolve, so neither a DAG that declares nothing nor a DAG whose declared names
 were since deleted from the vault ever appears in it
-([#800](https://github.com/dexadata/leoflow/issues/800)). All are
+([#800](https://github.com/dexadata/dexaflow/issues/800)). All are
 operator-scoped and documented in the
 [Configuration reference](/reference/configuration/#server-environment-leoflow_).
 

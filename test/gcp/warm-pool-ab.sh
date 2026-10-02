@@ -111,7 +111,7 @@ ARMS="A Aprime B"
 
 # The CLI that builds and pushes the DAG image. Built from this tree rather than
 # downloaded: the experiment is about this source, not about a released binary.
-WP_CLI="${WP_CLI:-$EXP_REPO_ROOT/.bin/leoflow}"
+WP_CLI="${WP_CLI:-$EXP_REPO_ROOT/.bin/dexaflow}"
 WP_DAG_VERSION="${WP_DAG_VERSION:-gcpexp1}"
 WP_JWT=""
 WP_PW=""
@@ -586,7 +586,7 @@ run_experiment() {
 wp_build_and_push() { # <out dir>
   local out="$1"
   exp_require docker
-  [ -x "$WP_CLI" ] || exp_die "no leoflow CLI at $WP_CLI. Build one: go build -o $WP_CLI ./cmd/dexaflow"
+  [ -x "$WP_CLI" ] || exp_die "no dexaflow CLI at $WP_CLI. Build one: go build -o $WP_CLI ./cmd/dexaflow"
   mkdir -p "$out/dag-project"
   cp "$EXP_REPO_ROOT"/test/gcp/dags/gcp_probe/* "$out/dag-project/"
   # The registry URL carries ${GCP_PROJECT} in the committed file precisely so

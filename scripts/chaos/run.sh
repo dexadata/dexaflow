@@ -83,7 +83,7 @@ cd "$REPO_ROOT"
 contract_check() {
   local violations=0
   if [[ -d "$HOME/.dexaflow" ]]; then
-    echo "  - ${RED}~/.dexaflow/ exists${RESET} — host has Leoflow state that may mask bugs."
+    echo "  - ${RED}~/.dexaflow/ exists${RESET} — host has Dexaflow state that may mask bugs."
     echo "    Hint: \`leoflow uninstall\` (keeps your DAGs; removes ~/.dexaflow only)."
     violations+=1
   fi

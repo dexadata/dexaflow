@@ -223,7 +223,7 @@ The contract is **loud rejection, not silent mistranslation**: every
 "skipped" branch would otherwise actually execute at runtime, so a
 DAG that imports a sensor or interpolates a Jinja template is
 refused at compile with a clear error naming the construct
-([#225](https://github.com/dexadata/leoflow/issues/225)).
+([#225](https://github.com/dexadata/dexaflow/issues/225)).
 {{% /alert %}}
 
 The unsupported set, with the things Airflow users most often expect to
@@ -301,7 +301,7 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
   left empty (keeps the artifact portable across clusters) — but **wholesale**:
   if a task declares any `resources` at all, even only `ephemeral_storage`, the
   platform cpu/memory default does not apply to it
-  ([#802](https://github.com/dexadata/leoflow/issues/802)).
+  ([#802](https://github.com/dexadata/dexaflow/issues/802)).
 - **`staging` is DAG-level only** — one RWX volume is shared atomically by the
   whole run, so it cannot be per-task.
 

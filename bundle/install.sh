@@ -8,7 +8,7 @@
 # and prints the next-step commands.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/bundle/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/bundle/install.sh | bash
 # or, if you cloned the repo:
 #   bash bundle/install.sh
 
@@ -42,7 +42,7 @@ fi
 # the DAGs sit next to it. When piped from curl, we re-fetch them from the
 # same repo+commit the script came from (BUNDLE_REPO + BUNDLE_REF defaults
 # below; override via env if you're testing a branch).
-BUNDLE_REPO="${BUNDLE_REPO:-dexadata/leoflow}"
+BUNDLE_REPO="${BUNDLE_REPO:-dexadata/dexaflow}"
 BUNDLE_REF="${BUNDLE_REF:-main}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 if [[ -n "$SCRIPT_DIR" && -d "$SCRIPT_DIR/dags" ]]; then

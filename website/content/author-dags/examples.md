@@ -8,7 +8,7 @@ weight: 70
 description: Runnable example DAGs covering the common authoring patterns.
 ---
 
-A gallery of ready-to-run DAGs under [`examples/`](https://github.com/dexadata/leoflow/tree/main/examples),
+A gallery of ready-to-run DAGs under [`examples/`](https://github.com/dexadata/dexaflow/tree/main/examples),
 covering every Dexaflow task type and the common patterns. Each is compile-valid
 (`dexaflow compile`) and authored parser-safe (heavy imports live *inside* the
 tasks). Run any of them with:

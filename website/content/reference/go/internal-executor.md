@@ -144,7 +144,7 @@ const (
 ```
 
 <a name="BuildPod"></a>
-## func [BuildPod](<https://github.com/dexadata/leoflow/blob/main/internal/executor/kubernetes.go#L72>)
+## func [BuildPod](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L72>)
 
 ```go
 func BuildPod(req Request) *corev1.Pod
@@ -153,7 +153,7 @@ func BuildPod(req Request) *corev1.Pod
 BuildPod constructs the pod spec for a task instance. It is pure \(modulo the random name suffix\) and unit\-tested independently of any cluster.
 
 <a name="BuildWarmPod"></a>
-## func [BuildWarmPod](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpod.go#L156>)
+## func [BuildWarmPod](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpod.go#L156>)
 
 ```go
 func BuildWarmPod(spec WarmPodSpec) *corev1.Pod
@@ -168,7 +168,7 @@ BuildWarmPod constructs the pod spec for one warm worker. It reuses BuildPod's m
 It is pure \(modulo the random name suffix\) and unit\-tested independently of any cluster. It bakes NO task token in. When the spec carries a GC anchor \(D11\) it stamps an ownerReference to that anchor ConfigMap so the pod is cascade\-GC'd on external teardown; without an anchor it builds a bare pod, unchanged.
 
 <a name="IsAgentLost"></a>
-## func [IsAgentLost](<https://github.com/dexadata/leoflow/blob/main/internal/executor/heartbeat_reap.go#L51>)
+## func [IsAgentLost](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/heartbeat_reap.go#L51>)
 
 ```go
 func IsAgentLost(c AgentLostCandidate, threshold time.Duration, now time.Time) bool
@@ -177,7 +177,7 @@ func IsAgentLost(c AgentLostCandidate, threshold time.Duration, now time.Time) b
 IsAgentLost reports whether the agent has been silent long enough to be declared lost. A zero LastHeartbeat \(never reported\) is treated as alive, not lost — the TI may be inline \(no agent ever exists\), or simply has not completed its first interval yet. The reaper only fires on TIs that did heartbeat at least once and then went silent; this is the "do no harm" rule of ADR 0031. Future timestamps \(clock skew\) are treated as alive.
 
 <a name="IsDispatchLost"></a>
-## func [IsDispatchLost](<https://github.com/dexadata/leoflow/blob/main/internal/executor/stale_queued_reap.go#L42>)
+## func [IsDispatchLost](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/stale_queued_reap.go#L42>)
 
 ```go
 func IsDispatchLost(c StaleQueuedCandidate, threshold time.Duration, now time.Time) bool
@@ -186,7 +186,7 @@ func IsDispatchLost(c StaleQueuedCandidate, threshold time.Duration, now time.Ti
 IsDispatchLost reports whether a queued TI has been waiting long enough to be declared dispatch\-lost. A zero QueuedAt is treated as alive — a TI without that stamp is too poorly observed to reap defensively. Future timestamps \(clock skew\) are treated as alive. Mirrors IsAgentLost's "do no harm" rule \(ADR 0031\).
 
 <a name="IsOrphaned"></a>
-## func [IsOrphaned](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reap.go#L27>)
+## func [IsOrphaned](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reap.go#L27>)
 
 ```go
 func IsOrphaned(c ReapCandidate, threshold time.Duration, now time.Time) bool
@@ -195,7 +195,7 @@ func IsOrphaned(c ReapCandidate, threshold time.Duration, now time.Time) bool
 IsOrphaned reports whether a running run has been quiet long enough to be declared orphaned. A zero LastActivity \(no progress signal at all\) counts as orphaned: a running run with no recorded activity since at least its started\_at is, by definition, a run nothing is touching. Future timestamps \(clock skew\) are treated as fresh — the reaper is a backstop, not a clock arbiter, so it errs on the side of leaving recent\-looking runs alone.
 
 <a name="IsPodLostCandidate"></a>
-## func [IsPodLostCandidate](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_lost_reap.go#L32>)
+## func [IsPodLostCandidate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_lost_reap.go#L32>)
 
 ```go
 func IsPodLostCandidate(c PodLostCandidate, grace time.Duration, now time.Time) bool
@@ -204,7 +204,7 @@ func IsPodLostCandidate(c PodLostCandidate, grace time.Duration, now time.Time) 
 IsPodLostCandidate reports whether a running TI has been running long enough to warrant a pod\-liveness check. A zero RunningSince is treated as alive \(too poorly observed to reap — the "do no harm" rule of ADR 0031\), and a future RunningSince \(clock skew\) is treated as alive. This gate is purely about elapsed time; the actual lost\-vs\-alive decision is the pod\-liveness check.
 
 <a name="StagingClaimName"></a>
-## func [StagingClaimName](<https://github.com/dexadata/leoflow/blob/main/internal/executor/staging.go#L45>)
+## func [StagingClaimName](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/staging.go#L45>)
 
 ```go
 func StagingClaimName(dagID, runID string) string
@@ -213,7 +213,7 @@ func StagingClaimName(dagID, runID string) string
 StagingClaimName is the deterministic PVC name for a run's staging volume. It must be stable across retries and clear\+re\-run so the same PVC is re\-attached \(ADR 0022\), and DNS\-safe.
 
 <a name="ValidateResilienceLadder"></a>
-## func [ValidateResilienceLadder](<https://github.com/dexadata/leoflow/blob/main/internal/executor/resilience_ladder.go#L106>)
+## func [ValidateResilienceLadder](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/resilience_ladder.go#L106>)
 
 ```go
 func ValidateResilienceLadder(l ResilienceLadder) error
@@ -222,7 +222,7 @@ func ValidateResilienceLadder(l ResilienceLadder) error
 ValidateResilienceLadder checks the orderings the restart recovery depends on \(see ResilienceLadder\) and reports the first violated relation, naming both sides with their values. A relation between build\-time constants can only be broken by a code change, so its error says so and asks for a bug report; the one relation involving an operator knob names the config key. All build\-time rungs must be positive. It is pure — the server calls it once at boot and refuses to start on an error, turning what used to be a comment\-level convention into an enforced invariant.
 
 <a name="AgentLostCandidate"></a>
-## type [AgentLostCandidate](<https://github.com/dexadata/leoflow/blob/main/internal/executor/heartbeat_reap.go#L30-L43>)
+## type [AgentLostCandidate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/heartbeat_reap.go#L30-L43>)
 
 AgentLostCandidate is one task instance in \`running\` whose agent may have gone silent, with the timestamp of its most recent heartbeat. The reaper compares the gap from this stamp to "now" against a stall threshold; a non\-zero gap larger than the threshold means the agent is presumed gone and the TI is failed with reason "agent\_lost".
 
@@ -244,7 +244,7 @@ type AgentLostCandidate struct {
 ```
 
 <a name="BusyWarmWorkerSource"></a>
-## type [BusyWarmWorkerSource](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L59-L61>)
+## type [BusyWarmWorkerSource](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L59-L61>)
 
 BusyWarmWorkerSource yields the set of warm\-worker pod names currently serving a \`running\` attempt \(ADR 0058 N1d\-b\): a warm worker is BUSY iff some \`running\` task\_instance is durably bound to it \(warm\_worker\_id = the pod's own name — the binding landed in N1d\-a1/a2\). Returned as a set keyed by pod name so the reconciler classifies each live pod in O\(1\).
 
@@ -257,7 +257,7 @@ type BusyWarmWorkerSource interface {
 ```
 
 <a name="DecisionRecorder"></a>
-## type [DecisionRecorder](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L14-L16>)
+## type [DecisionRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L14-L16>)
 
 DecisionRecorder records the reaper's per\-tick decision metrics. It is the narrow slice of the scheduler's metrics sink the reapers need — only the one counter — so the executor depends on a capability, not on the observability package. A nil DecisionRecorder is tolerated \(tests need not stub it\).
 
@@ -268,7 +268,7 @@ type DecisionRecorder interface {
 ```
 
 <a name="DispatchLostReapStore"></a>
-## type [DispatchLostReapStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/stale_queued_reap.go#L52-L61>)
+## type [DispatchLostReapStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/stale_queued_reap.go#L52-L61>)
 
 DispatchLostReapStore is the slice of scheduler.Store the dispatch\-lost reaper needs. The full scheduler.Store embeds this interface so production wires through one type; unit tests fake just this surface.
 
@@ -286,7 +286,7 @@ type DispatchLostReapStore interface {
 ```
 
 <a name="Disposition"></a>
-## type [Disposition](<https://github.com/dexadata/leoflow/blob/main/internal/executor/dispatch_classify.go#L14>)
+## type [Disposition](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/dispatch_classify.go#L14>)
 
 Disposition is the typed outcome of a dispatch attempt, returned by Executor.Execute so the scheduler can act on WHY a dispatch failed without reaching into Kubernetes error types itself. Classification lives on the execution layer — the only layer that knows how a given runtime signals backpressure — and travels up the seam as this enum \(ADR 0051 Phase 4\).
 
@@ -320,7 +320,7 @@ const (
 ```
 
 <a name="Disposition.String"></a>
-### func \(Disposition\) [String](<https://github.com/dexadata/leoflow/blob/main/internal/executor/dispatch_classify.go#L38>)
+### func \(Disposition\) [String](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/dispatch_classify.go#L38>)
 
 ```go
 func (d Disposition) String() string
@@ -329,7 +329,7 @@ func (d Disposition) String() string
 String renders the disposition for logs and error notes.
 
 <a name="Executor"></a>
-## type [Executor](<https://github.com/dexadata/leoflow/blob/main/internal/executor/executor.go#L145-L147>)
+## type [Executor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L145-L147>)
 
 Executor runs or dispatches a task. For asynchronous executors \(Kubernetes/Docker/subprocess\) the return reflects dispatch only, and the agent reports the final state over gRPC. The Disposition tells the scheduler WHY a dispatch failed — transient cluster Backpressure vs a permanent Rejected — so the orchestration layer never has to inspect runtime\-specific error types itself \(ADR 0051 Phase 4\). A successful dispatch returns \(Dispatched, nil\); a failure returns the classified disposition alongside the non\-nil cause \(its text feeds the scheduler's note/log\).
 
@@ -340,7 +340,7 @@ type Executor interface {
 ```
 
 <a name="HeartbeatReapStore"></a>
-## type [HeartbeatReapStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/heartbeat_reap.go#L61-L73>)
+## type [HeartbeatReapStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/heartbeat_reap.go#L61-L73>)
 
 HeartbeatReapStore is the slice of scheduler.Store the TI heartbeat reaper needs. The full scheduler.Store embeds this interface so production wires through one type; unit tests fake just this surface.
 
@@ -361,7 +361,7 @@ type HeartbeatReapStore interface {
 ```
 
 <a name="KubernetesExecutor"></a>
-## type [KubernetesExecutor](<https://github.com/dexadata/leoflow/blob/main/internal/executor/kubernetes.go#L23-L27>)
+## type [KubernetesExecutor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L23-L27>)
 
 KubernetesExecutor runs each task as an ephemeral pod \(ADR 0002\).
 
@@ -372,7 +372,7 @@ type KubernetesExecutor struct {
 ```
 
 <a name="NewKubernetesExecutor"></a>
-### func [NewKubernetesExecutor](<https://github.com/dexadata/leoflow/blob/main/internal/executor/kubernetes.go#L34>)
+### func [NewKubernetesExecutor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L34>)
 
 ```go
 func NewKubernetesExecutor(clientset kubernetes.Interface, namespace string) *KubernetesExecutor
@@ -381,7 +381,7 @@ func NewKubernetesExecutor(clientset kubernetes.Interface, namespace string) *Ku
 NewKubernetesExecutor builds an executor creating pods in the given namespace.
 
 <a name="KubernetesExecutor.DeleteRunPods"></a>
-### func \(\*KubernetesExecutor\) [DeleteRunPods](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_terminate.go#L64>)
+### func \(\*KubernetesExecutor\) [DeleteRunPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_terminate.go#L64>)
 
 ```go
 func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) error
@@ -390,7 +390,7 @@ func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) er
 DeleteRunPods deletes every task pod belonging to a single reaped run. The orphan\-run reaper abandons a whole run \(failing all its still\-active TIs\), so every pod of that run must be torn down. The run\-id is a unique per\-run UUID, so this selector can only ever match pods of the one abandoned run — never a different run's live pod. The terminal\-phase skip applies per pod inside the run, not just to the per\-attempt delete above \(\#928\): this reaper reads no presence at all, so a run abandoned at the 5\-minute threshold would otherwise take every finished task's outcome record with it. A mixed set is safe because each settle is guarded on the pod's own try\-number, ReapRun has already flipped the run and every still\-active task instance in one transaction before this runs, and pod names carry a random suffix so a preserved pod can never collide with a redispatch. The subtlest cell is a reschedule poke pod, which the reconciler collects immediately rather than on age because a reschedule reuses the same try\-number: preserving one delays that collect by up to a cycle, which is harmless because up\_for\_reschedule is not an active state for any reaper, so a reaper only ever preserves a poke pod for an attempt it has just made terminal. Tolerates NotFound.
 
 <a name="KubernetesExecutor.DeleteTaskPod"></a>
-### func \(\*KubernetesExecutor\) [DeleteTaskPod](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_terminate.go#L41>)
+### func \(\*KubernetesExecutor\) [DeleteTaskPod](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_terminate.go#L41>)
 
 ```go
 func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, runID, taskID string, tryNumber int) error
@@ -399,7 +399,7 @@ func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, runID, taskID st
 DeleteTaskPod deletes the pod\(s\) for exactly one reaped task instance: the \(run, task, try\) tuple. Pinning try\-number is the invariant guard — a retry bumps try\_number in place and dispatches a new pod with a new try\-number label, so a newer live attempt can never match this selector and is never deleted. A pod already in a terminal phase is left for the reconciler \(\#928\). Tolerates NotFound.
 
 <a name="KubernetesExecutor.Execute"></a>
-### func \(\*KubernetesExecutor\) [Execute](<https://github.com/dexadata/leoflow/blob/main/internal/executor/kubernetes.go#L47>)
+### func \(\*KubernetesExecutor\) [Execute](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L47>)
 
 ```go
 func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposition, error)
@@ -408,7 +408,7 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposit
 Execute creates the task pod. The agent inside the pod reports state over gRPC. A dispatch failure is classified on this layer — where the apiserver's error types are known — into transient Backpressure \(a ResourceQuota 403 or an APF 429\) or a permanent Rejected, so the scheduler acts on the disposition without importing Kubernetes error types \(ADR 0051 Phase 4\). The cause is returned alongside so its text still feeds the scheduler's note/log.
 
 <a name="KubernetesExecutor.GCStagingClaims"></a>
-### func \(\*KubernetesExecutor\) [GCStagingClaims](<https://github.com/dexadata/leoflow/blob/main/internal/executor/staging.go#L113>)
+### func \(\*KubernetesExecutor\) [GCStagingClaims](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/staging.go#L113>)
 
 ```go
 func (e *KubernetesExecutor) GCStagingClaims(ctx context.Context, ttl time.Duration) error
@@ -417,7 +417,7 @@ func (e *KubernetesExecutor) GCStagingClaims(ctx context.Context, ttl time.Durat
 GCStagingClaims reclaims per\-run staging PVCs from the metadatabase\-tracked lifecycle \(ADR 0022\): a successful run frees its volume immediately; a failed run keeps it until ttl elapses after the run's terminal time \(clear\+re\-run safety\); an orphaned volume \(run row gone\) is reclaimed. Each deletion is recorded with its reason. A no\-op when no StagingStore is wired.
 
 <a name="KubernetesExecutor.SetStagingStore"></a>
-### func \(\*KubernetesExecutor\) [SetStagingStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/kubernetes.go#L31>)
+### func \(\*KubernetesExecutor\) [SetStagingStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L31>)
 
 ```go
 func (e *KubernetesExecutor) SetStagingStore(s StagingStore)
@@ -426,7 +426,7 @@ func (e *KubernetesExecutor) SetStagingStore(s StagingStore)
 SetStagingStore wires the metadatabase\-backed staging\-volume lifecycle store \(ADR 0022\). With no store set, provisioning is not recorded and GC is a no\-op.
 
 <a name="KubernetesExecutor.TaskPodPresence"></a>
-### func \(\*KubernetesExecutor\) [TaskPodPresence](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_terminate.go#L171>)
+### func \(\*KubernetesExecutor\) [TaskPodPresence](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_terminate.go#L171>)
 
 ```go
 func (e *KubernetesExecutor) TaskPodPresence(ctx context.Context, runID, taskID string, tryNumber int) (PodPresence, error)
@@ -439,7 +439,7 @@ A present\-but\-finished pod is reported apart from an absence on purpose. The p
 Try\-number is pinned — the same invariant guard as DeleteTaskPod above. The retry rail resets up\_for\_retry \-\> none with try\_number\+1 and the planner re\-queues the TI \(storage/queries/runs.sql\), so a \`queued\`/\`running\` TI can be on try 2 while try 1's pod still lingers Pending after a failed best\-effort delete. Selecting on \(run, task\) alone would match that stale older pod and false\-defer the reap of the current attempt forever \(\#723\). Asking about the attempt the reaper is about to fail is the correct liveness question.
 
 <a name="KubernetesWarmPods"></a>
-## type [KubernetesWarmPods](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L25-L29>)
+## type [KubernetesWarmPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L25-L29>)
 
 KubernetesWarmPods is the production WarmPodClient: it lists warm pods by the warm\-worker label, builds new ones via the injected spec func \+ BuildWarmPod, and deletes them, all in one namespace. It owns the label selector so the executor's warm\-worker label contract stays private to this package.
 
@@ -450,7 +450,7 @@ type KubernetesWarmPods struct {
 ```
 
 <a name="NewKubernetesWarmPods"></a>
-### func [NewKubernetesWarmPods](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L33>)
+### func [NewKubernetesWarmPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L33>)
 
 ```go
 func NewKubernetesWarmPods(cs kubernetes.Interface, namespace string, newSpec WarmPodSpecFunc) *KubernetesWarmPods
@@ -459,7 +459,7 @@ func NewKubernetesWarmPods(cs kubernetes.Interface, namespace string, newSpec Wa
 NewKubernetesWarmPods builds the cluster\-backed warm\-pod client. newSpec is the auth/config\-aware builder invoked per create; List and Delete do not need it.
 
 <a name="KubernetesWarmPods.CreateWarmPod"></a>
-### func \(\*KubernetesWarmPods\) [CreateWarmPod](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L78>)
+### func \(\*KubernetesWarmPods\) [CreateWarmPod](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L78>)
 
 ```go
 func (k *KubernetesWarmPods) CreateWarmPod(ctx context.Context, t WarmTarget, anchorName, anchorUID string) error
@@ -468,7 +468,7 @@ func (k *KubernetesWarmPods) CreateWarmPod(ctx context.Context, t WarmTarget, an
 CreateWarmPod mints the target's warm\-pod spec, builds the pod, and creates it. anchorName/anchorUID identify the version's GC\-anchor ConfigMap \(ADR 0058 D11\); when non\-empty they are threaded onto the spec so BuildWarmPod stamps the pod's ownerReference to the anchor. The reconciler ensures the anchor and reads its UID before any create, so both are populated on the live path; a caller that passes them empty gets a bare pod, unchanged.
 
 <a name="KubernetesWarmPods.DeleteWarmAnchor"></a>
-### func \(\*KubernetesWarmPods\) [DeleteWarmAnchor](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L143>)
+### func \(\*KubernetesWarmPods\) [DeleteWarmAnchor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L143>)
 
 ```go
 func (k *KubernetesWarmPods) DeleteWarmAnchor(ctx context.Context, dagVersionID string) error
@@ -477,7 +477,7 @@ func (k *KubernetesWarmPods) DeleteWarmAnchor(ctx context.Context, dagVersionID 
 DeleteWarmAnchor deletes the per\-dag\-version GC\-anchor ConfigMap \(ADR 0058 D11\), tolerating NotFound \(already gone / never created\). The reconciler calls this ONLY for a fully\-drained inactive version \(zero live pods\), so the cascade the ownerReference sets up is a no\-op — it can never kill a live warm attempt.
 
 <a name="KubernetesWarmPods.DeleteWarmPod"></a>
-### func \(\*KubernetesWarmPods\) [DeleteWarmPod](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L97>)
+### func \(\*KubernetesWarmPods\) [DeleteWarmPod](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L97>)
 
 ```go
 func (k *KubernetesWarmPods) DeleteWarmPod(ctx context.Context, name string) error
@@ -486,7 +486,7 @@ func (k *KubernetesWarmPods) DeleteWarmPod(ctx context.Context, name string) err
 DeleteWarmPod removes one warm worker by name.
 
 <a name="KubernetesWarmPods.EnsureWarmAnchor"></a>
-### func \(\*KubernetesWarmPods\) [EnsureWarmAnchor](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L112>)
+### func \(\*KubernetesWarmPods\) [EnsureWarmAnchor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L112>)
 
 ```go
 func (k *KubernetesWarmPods) EnsureWarmAnchor(ctx context.Context, dagVersionID string) (string, error)
@@ -495,7 +495,7 @@ func (k *KubernetesWarmPods) EnsureWarmAnchor(ctx context.Context, dagVersionID 
 EnsureWarmAnchor ensures the per\-dag\-version GC\-anchor ConfigMap exists and returns its UID \(ADR 0058 D11\). The anchor owns the version's warm pods via an ownerReference, so on control\-plane loss / namespace teardown the pods are cascade\-GC'd — the orphan class the reconciler\-as\-deleter cannot cover. It is create\-then\-read and idempotent: an AlreadyExists \(a prior tick, or another leader\) is success, and the UID is read back with a GET so every pod created this tick is stamped with the SAME owner UID. The anchor carries no data \(empty ConfigMap\); the labels only make it discoverable.
 
 <a name="KubernetesWarmPods.ListWarmPods"></a>
-### func \(\*KubernetesWarmPods\) [ListWarmPods](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L46>)
+### func \(\*KubernetesWarmPods\) [ListWarmPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L46>)
 
 ```go
 func (k *KubernetesWarmPods) ListWarmPods(ctx context.Context) ([]WarmPodInfo, error)
@@ -504,7 +504,7 @@ func (k *KubernetesWarmPods) ListWarmPods(ctx context.Context) ([]WarmPodInfo, e
 ListWarmPods returns every warm\-worker pod in the namespace, tagged with the dag\_version it serves \(from its label\).
 
 <a name="LadderWarning"></a>
-## type [LadderWarning](<https://github.com/dexadata/leoflow/blob/main/internal/executor/resilience_ladder.go#L186-L197>)
+## type [LadderWarning](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/resilience_ladder.go#L186-L197>)
 
 LadderWarning is one boot WARN about a ladder setting that is valid but removes a resilience backstop: the operator\-readable sentence plus the two things a monitoring rule needs as FIELDS. Logging only a pre\-formatted string leaves the JSON record with nothing but msg, so the single alert an operator would actually want — "some instance booted with the credential ceiling disabled" — can only be written as a substring match on prose that a later reword silently breaks \(\#924\). Msg stays self\-contained \(it names the key and the value too\) so a plain\-text log needs no field expansion to be read. Every rung of the ladder is a duration, so Value is one.
 
@@ -524,7 +524,7 @@ type LadderWarning struct {
 ```
 
 <a name="ResilienceLadderWarnings"></a>
-### func [ResilienceLadderWarnings](<https://github.com/dexadata/leoflow/blob/main/internal/executor/resilience_ladder.go#L164>)
+### func [ResilienceLadderWarnings](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/resilience_ladder.go#L164>)
 
 ```go
 func ResilienceLadderWarnings(l ResilienceLadder) []LadderWarning
@@ -533,7 +533,7 @@ func ResilienceLadderWarnings(l ResilienceLadder) []LadderWarning
 ResilienceLadderWarnings reports the ladder settings that are valid but remove a resilience backstop, so the server can surface them as boot WARNs. ValidateResilienceLadder deliberately accepts a non\-positive credential ceiling — it is the operator's documented "no ceiling" setting — but that one value disables every wall\-clock bound the ceiling carries: heartbeat renewal of an attempt's bearer becomes unbounded; a dedicated task pod whose DAG declares no execution timeout gets no ActiveDeadlineSeconds floor; and, with warm pools enabled, the per\-attempt watchdog that keeps a wedged attempt from pinning a warm slot is off too \(a warm pod has no pod\-level deadline at all, and the worker lifetime cap drains between attempts, never mid\-attempt\). A task that wedges while still heartbeating then has no bound of its own even with a healthy control plane: the orphan\-run reaper skips a run with a live task instance and agent\-lost never fires on a live agent. None of these losses is an error; all are invisible without this signal. Pure, like the validator: the server calls it once at boot after the logger exists.
 
 <a name="OutcomeReporter"></a>
-## type [OutcomeReporter](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reconcile.go#L234-L238>)
+## type [OutcomeReporter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L234-L238>)
 
 OutcomeReporter records a terminal task\-instance outcome the reconciler recovered from a pod \(its durable outcome record, or its phase\). Every method is guarded by the attempt \(try\_number\) so a stale reconciler acting on a previous attempt's pod never clobbers a live retry, and is idempotent: a settle on an already\-terminal instance is a no\-op, not an error.
 
@@ -546,7 +546,7 @@ type OutcomeReporter interface {
 ```
 
 <a name="PodIdentity"></a>
-## type [PodIdentity](<https://github.com/dexadata/leoflow/blob/main/internal/executor/kubernetes.go#L328-L335>)
+## type [PodIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L328-L335>)
 
 PodIdentity is the JSON payload of AgentIdentityAnnotation: the full task\-instance identity the control plane mints the exchanged JWT for.
 
@@ -562,7 +562,7 @@ type PodIdentity struct {
 ```
 
 <a name="ParseAgentIdentity"></a>
-### func [ParseAgentIdentity](<https://github.com/dexadata/leoflow/blob/main/internal/executor/kubernetes.go#L340>)
+### func [ParseAgentIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L340>)
 
 ```go
 func ParseAgentIdentity(raw string) (PodIdentity, error)
@@ -571,7 +571,7 @@ func ParseAgentIdentity(raw string) (PodIdentity, error)
 ParseAgentIdentity decodes the AgentIdentityAnnotation payload. It is the read side of the identity contract mountAgentToken writes, used by the pod → task\-instance resolver on the exchange path.
 
 <a name="PodInformer"></a>
-## type [PodInformer](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L49-L56>)
+## type [PodInformer](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L49-L56>)
 
 PodInformer is a shared\-informer read\-path over task pods, scoped by namespace and the leoflow.io/run\-id label \(ADR 0002 pods\). It replaces the reapers' per\-running\-TI\-per\-second apiserver LIST storm and the reconciler's 30s LIST with one long\-lived watch feeding a local cache.
 
@@ -586,7 +586,7 @@ type PodInformer struct {
 ```
 
 <a name="NewPodInformer"></a>
-### func [NewPodInformer](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L62>)
+### func [NewPodInformer](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L62>)
 
 ```go
 func NewPodInformer(clientset kubernetes.Interface, namespace string) *PodInformer
@@ -595,7 +595,7 @@ func NewPodInformer(clientset kubernetes.Interface, namespace string) *PodInform
 NewPodInformer builds a shared pod informer over the given cluster, scoped to namespace and to pods carrying the leoflow.io/run\-id label \(managed task pods\). Resync is 0: reads are level\-triggered on demand, so there are no logic\-bearing handlers to re\-fire. It does not start watching until Start is called.
 
 <a name="PodInformer.CachedPodActive"></a>
-### func \(\*PodInformer\) [CachedPodActive](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L128>)
+### func \(\*PodInformer\) [CachedPodActive](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L128>)
 
 ```go
 func (p *PodInformer) CachedPodActive(runID, taskID string, tryNumber int) bool
@@ -604,7 +604,7 @@ func (p *PodInformer) CachedPodActive(runID, taskID string, tryNumber int) bool
 CachedPodActive reports whether the cache holds a pod for exactly the \(run, task, try\) attempt that is Pending or Running — the exact predicate TaskPodPresence uses, pinned to the same attempt \(\#723\). It is the safe direction of the asymmetric\-trust contract: a true return may DEFER a reap; a false return is NEVER authoritative and the caller must fall through to the live read. Before the cache has synced it returns false, so a cold cache degrades to the live path rather than misreporting absence.
 
 <a name="PodInformer.HasSynced"></a>
-### func \(\*PodInformer\) [HasSynced](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L110>)
+### func \(\*PodInformer\) [HasSynced](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L110>)
 
 ```go
 func (p *PodInformer) HasSynced() bool
@@ -613,7 +613,7 @@ func (p *PodInformer) HasSynced() bool
 HasSynced reports whether the initial LIST has populated the cache. It is the live form of WaitForCacheSync's one\-shot answer, for a caller that must keep asking — the reaper's leader\-settling gate — so a cache that synced late \(a watch recovered after an RBAC fix\) is seen, and one that never synced is not mistaken for an empty cluster.
 
 <a name="PodInformer.Shutdown"></a>
-### func \(\*PodInformer\) [Shutdown](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L116>)
+### func \(\*PodInformer\) [Shutdown](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L116>)
 
 ```go
 func (p *PodInformer) Shutdown()
@@ -622,7 +622,7 @@ func (p *PodInformer) Shutdown()
 Shutdown stops the watch and waits for the informer goroutines to exit. Safe to call more than once \(Start's ctx\-cancel path and an explicit caller may race\).
 
 <a name="PodInformer.SnapshotTaskPods"></a>
-### func \(\*PodInformer\) [SnapshotTaskPods](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L153>)
+### func \(\*PodInformer\) [SnapshotTaskPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L153>)
 
 ```go
 func (p *PodInformer) SnapshotTaskPods() ([]*corev1.Pod, error)
@@ -631,7 +631,7 @@ func (p *PodInformer) SnapshotTaskPods() ([]*corev1.Pod, error)
 SnapshotTaskPods returns the managed task pods currently in the cache — the reconciler's read replacement for its 30s LIST. It errors \(errCacheNotSynced\) before the initial sync so the reconciler retries next tick instead of acting on a cold cache that looks empty.
 
 <a name="PodInformer.Start"></a>
-### func \(\*PodInformer\) [Start](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L89>)
+### func \(\*PodInformer\) [Start](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L89>)
 
 ```go
 func (p *PodInformer) Start(ctx context.Context)
@@ -640,7 +640,7 @@ func (p *PodInformer) Start(ctx context.Context)
 Start begins the watch in the background and stops it when ctx is canceled, so the informer is always\-on for the process lifetime \(warming the cache before leadership\). It is idempotent\-safe to call once per informer.
 
 <a name="PodInformer.WaitForCacheSync"></a>
-### func \(\*PodInformer\) [WaitForCacheSync](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_informer.go#L101>)
+### func \(\*PodInformer\) [WaitForCacheSync](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L101>)
 
 ```go
 func (p *PodInformer) WaitForCacheSync(ctx context.Context) bool
@@ -649,7 +649,7 @@ func (p *PodInformer) WaitForCacheSync(ctx context.Context) bool
 WaitForCacheSync blocks until the initial LIST has populated the cache or ctx is canceled, returning whether the sync completed. A false return \(canceled or timed out\) is not fatal: CachedPodActive independently gates on HasSynced and returns false until warm, so consumers simply keep using their live read paths.
 
 <a name="PodLostCandidate"></a>
-## type [PodLostCandidate](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_lost_reap.go#L16-L25>)
+## type [PodLostCandidate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_lost_reap.go#L16-L25>)
 
 PodLostCandidate is one task instance in \`running\` whose backing pod may have vanished — deleted, evicted, OOM\-killed, or lost with its node — before any other reaper could catch it. RunningSince is when the TI entered \`running\`; the reaper only checks pod liveness once the TI has been running past a grace period, so a just\-dispatched TI whose pod is still materializing is never reaped on a transient "no pod yet".
 
@@ -667,7 +667,7 @@ type PodLostCandidate struct {
 ```
 
 <a name="PodLostReapStore"></a>
-## type [PodLostReapStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_lost_reap.go#L42-L53>)
+## type [PodLostReapStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_lost_reap.go#L42-L53>)
 
 PodLostReapStore is the slice of scheduler.Store the pod\-lost reaper needs. The full scheduler.Store embeds this interface so production wires through one type; unit tests fake just this surface.
 
@@ -687,7 +687,7 @@ type PodLostReapStore interface {
 ```
 
 <a name="PodManager"></a>
-## type [PodManager](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_manager.go#L19-L45>)
+## type [PodManager](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_manager.go#L19-L45>)
 
 PodManager is the slice of the Kubernetes executor the reapers use to \(1\) tear down a reaped task's pod and \(2\) check whether a queued TI's pod is actually live before declaring its dispatch lost \(\#474, \#461\).
 
@@ -728,7 +728,7 @@ type PodManager interface {
 ```
 
 <a name="PodPresence"></a>
-## type [PodPresence](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_manager.go#L58>)
+## type [PodPresence](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_manager.go#L58>)
 
 PodPresence is the three\-way answer to "what does the apiserver hold for this attempt's pod?".
 
@@ -772,7 +772,7 @@ const (
 ```
 
 <a name="PodPresence.String"></a>
-### func \(PodPresence\) [String](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_manager.go#L90>)
+### func \(PodPresence\) [String](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_manager.go#L90>)
 
 ```go
 func (p PodPresence) String() string
@@ -781,7 +781,7 @@ func (p PodPresence) String() string
 String names the presence for logs.
 
 <a name="PodPresenceCache"></a>
-## type [PodPresenceCache](<https://github.com/dexadata/leoflow/blob/main/internal/executor/pod_manager.go#L119-L126>)
+## type [PodPresenceCache](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_manager.go#L119-L126>)
 
 PodPresenceCache is an optional read\-through cache of pod presence — backed by a shared informer \(PR\-10\) — that the pod\-lost and dispatch\-lost reapers consult ONLY to DEFER a reap, never to authorize one. Its trust is asymmetric \(\#461\):
 
@@ -802,7 +802,7 @@ type PodPresenceCache interface {
 ```
 
 <a name="PodSecurity"></a>
-## type [PodSecurity](<https://github.com/dexadata/leoflow/blob/main/internal/executor/executor.go#L14-L32>)
+## type [PodSecurity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L14-L32>)
 
 PodSecurity holds the task\-pod hardening knobs whose defaults are behavioral rather than free. Both zero values are the safe choice, so a Request that never touches this struct gets a pod that Pod Security Admission's \`restricted\` profile admits.
 
@@ -829,7 +829,7 @@ type PodSecurity struct {
 ```
 
 <a name="PodSnapshotter"></a>
-## type [PodSnapshotter](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reconcile.go#L246-L251>)
+## type [PodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L246-L251>)
 
 PodSnapshotter supplies the reconciler's task\-pod set from a local cache instead of a live LIST every tick \(PR\-10\). It is safe here without a live confirm: the signal the reconciler acts on is presence of a terminal pod, which is monotonic \(a pod that reached Failed/Succeeded stays terminal\), and every settle is attempt\- and state\-guarded \(ADR 0052\), so at worst cache lag delays a settle by a tick. A nil snapshotter \(Lite/subprocess, or a cold start\) keeps the live LIST.
 
@@ -843,7 +843,7 @@ type PodSnapshotter interface {
 ```
 
 <a name="ReapCandidate"></a>
-## type [ReapCandidate](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reap.go#L15-L19>)
+## type [ReapCandidate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reap.go#L15-L19>)
 
 ReapCandidate is one running dag run the reaper is considering, with the timestamp of its most recent observable activity \(max of the run's started\_at and its task instances' started\_at / ended\_at\). The reaper compares the gap from this stamp to "now" against a stall threshold; a non\-zero gap larger than the threshold means the run is orphaned and should be failed.
 
@@ -856,7 +856,7 @@ type ReapCandidate struct {
 ```
 
 <a name="ReapStore"></a>
-## type [ReapStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reap.go#L37-L47>)
+## type [ReapStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reap.go#L37-L47>)
 
 ReapStore is the slice of scheduler.Store the reaper needs. The full scheduler.Store embeds this interface so production wires through one type; the unit tests fake just this surface.
 
@@ -875,7 +875,7 @@ type ReapStore interface {
 ```
 
 <a name="Reaper"></a>
-## type [Reaper](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L110-L139>)
+## type [Reaper](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L110-L139>)
 
 Reaper is the execution\-side backstop that fails stuck runs and task instances the scheduler dispatched but that then went dark. It bundles the five independent reapers behind one ReapOnce entrypoint the leader's maintenance loop drives once per cycle, after the pod reconciler's sweep, so the caller depends on a single capability rather than wiring each reaper itself.
 
@@ -886,7 +886,7 @@ type Reaper struct {
 ```
 
 <a name="NewReaper"></a>
-### func [NewReaper](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L154>)
+### func [NewReaper](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L154>)
 
 ```go
 func NewReaper(store ReaperStore, pods PodManager, cache PodPresenceCache, warmPods WarmPodLister, rec DecisionRecorder, logger *slog.Logger, cfg ReaperConfig, inStepDown func() bool) *Reaper
@@ -897,7 +897,7 @@ NewReaper constructs the reapers and wires their pod\-teardown / liveness capabi
 warmPods is the live warm\-pod seam \(ADR 0058 N1d\-a2\), threaded to the two warm consumers exactly the way pods/cache are threaded: the warm\-worker\-lost reaper \(which recovers a dead worker's attempts\) and the dispatch\-lost reaper's H3 defer. Nil \(warm pools off / not wired\) makes the warm reaper a no\-op and the dispatch\-lost warm defer inert — with the flag off no TI ever carries a warm\_worker\_id either, so both warm paths are doubly inert, byte\-for\-byte today.
 
 <a name="Reaper.ReapOnce"></a>
-### func \(\*Reaper\) [ReapOnce](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L389>)
+### func \(\*Reaper\) [ReapOnce](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L389>)
 
 ```go
 func (r *Reaper) ReapOnce(ctx context.Context) error
@@ -910,7 +910,7 @@ The whole tick is skipped — and the skip metered as reap\_gate\_skip — when 
 Each reaper's infra\-level list error is logged and metered but never returned: the reapers are independent backstops, so one's failure must not block the others, and a list error must not stall the caller's cycle. Per\-candidate failures are already isolated inside each reaper's run. ReapOnce therefore always returns nil today; the error return is kept for the seam so a future hard\-failure mode need not change the caller.
 
 <a name="Reaper.SetInformerSynced"></a>
-### func \(\*Reaper\) [SetInformerSynced](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L243>)
+### func \(\*Reaper\) [SetInformerSynced](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L243>)
 
 ```go
 func (r *Reaper) SetInformerSynced(fn func() bool)
@@ -919,7 +919,7 @@ func (r *Reaper) SetInformerSynced(fn func() bool)
 SetInformerSynced wires the pod informer's sync predicate into the settling gate. Until the cache has synced, the reapers' presence reads fall back to live LISTs \(safe, but the fleet view a fresh leader is about to judge from is still being assembled\), so the gate waits. Nil \(no informer: Lite, or a non\-Kubernetes executor\) leaves this condition satisfied.
 
 <a name="Reaper.SetLastSweepCompleted"></a>
-### func \(\*Reaper\) [SetLastSweepCompleted](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L253>)
+### func \(\*Reaper\) [SetLastSweepCompleted](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L253>)
 
 ```go
 func (r *Reaper) SetLastSweepCompleted(fn func() time.Time)
@@ -928,7 +928,7 @@ func (r *Reaper) SetLastSweepCompleted(fn func() time.Time)
 SetLastSweepCompleted wires the reconciler's last\-completed\-sweep record into the settling gate: the gate holds until a sweep has COMPLETED at or after leadership was acquired, because that sweep is what recovers the durable outcome of a task pod that finished during the outage; before it, "no live pod" and "no recent heartbeat" are indistinguishable from a lost task. Nil \(no reconciler: Lite\) leaves this condition satisfied.
 
 <a name="Reaper.SetLeaderSince"></a>
-### func \(\*Reaper\) [SetLeaderSince](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L234>)
+### func \(\*Reaper\) [SetLeaderSince](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L234>)
 
 ```go
 func (r *Reaper) SetLeaderSince(fn func() time.Time)
@@ -937,7 +937,7 @@ func (r *Reaper) SetLeaderSince(fn func() time.Time)
 SetLeaderSince wires the accessor the settling gate measures its grace from: when this instance last acquired scheduler leadership \(zero while not leading\). Measured from leadership acquisition, not process start, so a re\-election also resets the gate. Nil \(Lite / no leadership\) disables the gate entirely — the other two inputs are only meaningful under a leader.
 
 <a name="Reaper.SetLeading"></a>
-### func \(\*Reaper\) [SetLeading](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L202>)
+### func \(\*Reaper\) [SetLeading](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L202>)
 
 ```go
 func (r *Reaper) SetLeading(fn func() bool)
@@ -946,7 +946,7 @@ func (r *Reaper) SetLeading(fn func() bool)
 SetLeading wires the leadership predicate into the destructive gate, so a reaper tick on an instance that no longer holds leadership marks and deletes nothing. The maintenance loop already drives ReapOnce only while leading; this is the defensive re\-check at the point of the write. Nil leaves the gate on ctx and step\-down alone.
 
 <a name="Reaper.SetLogSink"></a>
-### func \(\*Reaper\) [SetLogSink](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L225>)
+### func \(\*Reaper\) [SetLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L225>)
 
 ```go
 func (r *Reaper) SetLogSink(s logSink)
@@ -955,7 +955,7 @@ func (r *Reaper) SetLogSink(s logSink)
 SetLogSink wires the sink the agent\-lost reaper uses to append a final "killed: agent\_lost" marker to a reaped attempt's log stream, so a killed task's log ends with the reason instead of a silent truncation. Any logs.Sink satisfies the parameter; nil \(Lite / unwired\) leaves markers off.
 
 <a name="ReaperConfig"></a>
-## type [ReaperConfig](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L61-L73>)
+## type [ReaperConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L61-L73>)
 
 ReaperConfig holds the idle thresholds and the post\-leadership settling grace the reapers apply. Zero values are legal but reap aggressively; callers pass DefaultReaperConfig unless a test or load harness deliberately overrides them.
 
@@ -976,7 +976,7 @@ type ReaperConfig struct {
 ```
 
 <a name="DefaultReaperConfig"></a>
-### func [DefaultReaperConfig](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L77>)
+### func [DefaultReaperConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L77>)
 
 ```go
 func DefaultReaperConfig() ReaperConfig
@@ -985,7 +985,7 @@ func DefaultReaperConfig() ReaperConfig
 DefaultReaperConfig returns the production thresholds — the exact values the scheduler configured before the reapers moved here.
 
 <a name="ReaperStore"></a>
-## type [ReaperStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reaper.go#L22-L28>)
+## type [ReaperStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reaper.go#L22-L28>)
 
 ReaperStore is the full store surface the five reapers need, composed from each reaper's own slice. The metadatabase\-backed SchedulerStore satisfies all five, so production wires through one type; a unit test fakes just the slice its reaper touches.
 
@@ -1000,7 +1000,7 @@ type ReaperStore interface {
 ```
 
 <a name="Reconciler"></a>
-## type [Reconciler](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reconcile.go#L269-L284>)
+## type [Reconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L269-L284>)
 
 Reconciler detects task pods whose task instance was never settled by the agent \(a pod killed before or during its report\) and records the true outcome — from the pod's durable outcome record where present, else its phase — so retries and run finalization proceed instead of stranding the task. It also garbage\-collects finished pods once they age out.
 
@@ -1013,7 +1013,7 @@ type Reconciler struct {
 ```
 
 <a name="NewReconciler"></a>
-### func [NewReconciler](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reconcile.go#L287>)
+### func [NewReconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L287>)
 
 ```go
 func NewReconciler(clientset kubernetes.Interface, namespace string, reporter OutcomeReporter) *Reconciler
@@ -1022,7 +1022,7 @@ func NewReconciler(clientset kubernetes.Interface, namespace string, reporter Ou
 NewReconciler builds a Reconciler over the given cluster and outcome reporter.
 
 <a name="Reconciler.LastSweepCompletedAt"></a>
-### func \(\*Reconciler\) [LastSweepCompletedAt](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reconcile.go#L308>)
+### func \(\*Reconciler\) [LastSweepCompletedAt](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L308>)
 
 ```go
 func (r *Reconciler) LastSweepCompletedAt() time.Time
@@ -1033,7 +1033,7 @@ LastSweepCompletedAt reports when the last COMPLETED sweep finished: the task\-p
 A sweep that could not list pods records nothing. A sweep whose individual settle failed on a DB error still counts: that pod is retried next sweep, and the gate's grace leaves room for the retry before any reaper may act.
 
 <a name="Reconciler.Reconcile"></a>
-### func \(\*Reconciler\) [Reconcile](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reconcile.go#L319>)
+### func \(\*Reconciler\) [Reconcile](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L319>)
 
 ```go
 func (r *Reconciler) Reconcile(ctx context.Context) error
@@ -1042,7 +1042,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error
 Reconcile lists managed task pods, records each terminal one's outcome against its task instance, and garbage\-collects finished pods older than the grace period. A completed sweep is stamped for LastSweepCompletedAt.
 
 <a name="Reconciler.SetPodSnapshotter"></a>
-### func \(\*Reconciler\) [SetPodSnapshotter](<https://github.com/dexadata/leoflow/blob/main/internal/executor/reconcile.go#L294>)
+### func \(\*Reconciler\) [SetPodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L294>)
 
 ```go
 func (r *Reconciler) SetPodSnapshotter(s PodSnapshotter)
@@ -1051,7 +1051,7 @@ func (r *Reconciler) SetPodSnapshotter(s PodSnapshotter)
 SetPodSnapshotter wires a cache\-backed pod source so Reconcile reads its task\-pod set from the shared informer instead of a live LIST every tick \(PR\-10\). Left unset, the reconciler keeps the live LIST — today's behavior.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/dexadata/leoflow/blob/main/internal/executor/executor.go#L35-L135>)
+## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L135>)
 
 Request bundles everything an executor needs to run a single task instance.
 
@@ -1160,7 +1160,7 @@ type Request struct {
 ```
 
 <a name="ResilienceLadder"></a>
-## type [ResilienceLadder](<https://github.com/dexadata/leoflow/blob/main/internal/executor/resilience_ladder.go#L52-L76>)
+## type [ResilienceLadder](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/resilience_ladder.go#L52-L76>)
 
 ResilienceLadder is the set of timing knobs whose relative ORDER the control\-plane\-restart recovery depends on. Each is owned by a different package \(agent, executor, scheduler, server main, operator config\) and tuned for its own reason, so nothing but this type states that they must line up. The invariants:
 
@@ -1211,7 +1211,7 @@ type ResilienceLadder struct {
 ```
 
 <a name="StagingStore"></a>
-## type [StagingStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/staging.go#L102-L106>)
+## type [StagingStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/staging.go#L102-L106>)
 
 StagingStore persists the per\-run staging\-volume lifecycle in the metadatabase \(ADR 0022\): provisioning records an active row, GC marks it deleted with a reason, and GC reads the active set joined with each run's state. Identified by the deterministic PVC name \(unique per namespace\).
 
@@ -1224,7 +1224,7 @@ type StagingStore interface {
 ```
 
 <a name="StaleQueuedCandidate"></a>
-## type [StaleQueuedCandidate](<https://github.com/dexadata/leoflow/blob/main/internal/executor/stale_queued_reap.go#L18-L35>)
+## type [StaleQueuedCandidate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/stale_queued_reap.go#L18-L35>)
 
 StaleQueuedCandidate is one task instance in \`queued\` whose dispatch may have been lost — typically because the scheduler crashed mid\-tick between committing the scheduled→queued transition and actually dispatching the TI to an executor. The reaper compares the gap from QueuedAt to "now" against a dispatch\-lost threshold; a non\-zero gap larger than the threshold means the dispatch is presumed gone and the TI is failed with reason \`dispatch\_lost\`. This unblocks the orphan\-run reaper, which keeps stuck runs out of its candidate set as long as any TI looks active \(\#202\).
 
@@ -1250,7 +1250,7 @@ type StaleQueuedCandidate struct {
 ```
 
 <a name="SubprocessExecutor"></a>
-## type [SubprocessExecutor](<https://github.com/dexadata/leoflow/blob/main/internal/executor/subprocess.go#L49-L59>)
+## type [SubprocessExecutor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/subprocess.go#L49-L59>)
 
 SubprocessExecutor runs the agent as a host subprocess with no isolation. It is for dev mode only and logs a prominent warning on construction.
 
@@ -1261,7 +1261,7 @@ type SubprocessExecutor struct {
 ```
 
 <a name="NewSubprocessExecutor"></a>
-### func [NewSubprocessExecutor](<https://github.com/dexadata/leoflow/blob/main/internal/executor/subprocess.go#L65>)
+### func [NewSubprocessExecutor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/subprocess.go#L65>)
 
 ```go
 func NewSubprocessExecutor(agentPath string, logger *slog.Logger) *SubprocessExecutor
@@ -1270,7 +1270,7 @@ func NewSubprocessExecutor(agentPath string, logger *slog.Logger) *SubprocessExe
 NewSubprocessExecutor builds a SubprocessExecutor running the given agent binary. It warns that user code runs unsandboxed. The per\-DAG venv root is read from LEOFLOW\_LITE\_VENVS\_ROOT at construction time so the executor can pick the right Python for each task without a follow\-up call.
 
 <a name="SubprocessExecutor.Execute"></a>
-### func \(\*SubprocessExecutor\) [Execute](<https://github.com/dexadata/leoflow/blob/main/internal/executor/subprocess.go#L154>)
+### func \(\*SubprocessExecutor\) [Execute](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/subprocess.go#L154>)
 
 ```go
 func (e *SubprocessExecutor) Execute(ctx context.Context, req Request) (Disposition, error)
@@ -1281,7 +1281,7 @@ Execute launches the agent subprocess and returns once it has started, like the 
 A subprocess dispatch failure is always Rejected: a Lite executor talks to no apiserver, so its errors are never cluster backpressure — this preserves today's "every Lite error is permanent" behavior across the typed seam \(ADR 0051 Phase 4\). Success is Dispatched \(the agent reports its terminal state over gRPC\).
 
 <a name="SubprocessExecutor.SetWorkDir"></a>
-### func \(\*SubprocessExecutor\) [SetWorkDir](<https://github.com/dexadata/leoflow/blob/main/internal/executor/subprocess.go#L95>)
+### func \(\*SubprocessExecutor\) [SetWorkDir](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/subprocess.go#L95>)
 
 ```go
 func (e *SubprocessExecutor) SetWorkDir(dir string)
@@ -1290,7 +1290,7 @@ func (e *SubprocessExecutor) SetWorkDir(dir string)
 SetWorkDir sets the working directory the agent runs in. In a task pod the image's WORKDIR holds the DAG code; on a dev host \`leoflow dev\` points this at the project directory so the agent can import the user's dag.py. Empty keeps the parent process's working directory.
 
 <a name="WarmBoundTI"></a>
-## type [WarmBoundTI](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warm_worker_lost_reap.go#L53-L59>)
+## type [WarmBoundTI](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warm_worker_lost_reap.go#L53-L59>)
 
 WarmBoundTI is one \`running\` task instance durably bound to a warm worker \(ADR 0058 N1d\-a2\): WarmWorkerID is the warm pod that acked and is serving this attempt. The failover reaper matches WarmWorkerID against the live warm\-pod set to find attempts a dead warm pod held.
 
@@ -1305,7 +1305,7 @@ type WarmBoundTI struct {
 ```
 
 <a name="WarmPodClient"></a>
-## type [WarmPodClient](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L99-L105>)
+## type [WarmPodClient](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L99-L105>)
 
 WarmPodClient is the cluster side of warm\-pool reconciliation: list the warm fleet, create a new warm worker for a target \(which mints the bootstrap token, builds the pod via BuildWarmPod, and Creates it — the auth/config\-aware half, wired in main.go\), delete one by name, and manage the per\-dag\-version GC\-anchor ConfigMap \(ADR 0058 D11\). Kept as a narrow seam so the reconciler is unit\-tested with a fake and the executor imports neither auth nor config. KubernetesWarmPods is the production implementation.
 
@@ -1322,7 +1322,7 @@ type WarmPodClient interface {
 ```
 
 <a name="WarmPodInfo"></a>
-## type [WarmPodInfo](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L77-L82>)
+## type [WarmPodInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L77-L82>)
 
 WarmPodInfo identifies one existing warm\-worker pod and the dag\_version it serves \(read from its labels\). The reconciler counts these per version.
 
@@ -1338,7 +1338,7 @@ type WarmPodInfo struct {
 ```
 
 <a name="WarmPodLister"></a>
-## type [WarmPodLister](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warm_worker_lost_reap.go#L15-L17>)
+## type [WarmPodLister](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warm_worker_lost_reap.go#L15-L17>)
 
 WarmPodLister is the narrow read\-only seam onto the live warm fleet the failover paths need: just the warm\-pod LIST, no create/delete. Both the warm\-worker\-lost reaper and the dispatch\-lost reaper's H3 defer depend on this capability rather than the full WarmPodClient, so a unit test fakes only the LIST. KubernetesWarmPods \(via WarmPodClient\) already satisfies it — production reuses that one type, it is not duplicated.
 
@@ -1349,7 +1349,7 @@ type WarmPodLister interface {
 ```
 
 <a name="WarmPodSpec"></a>
-## type [WarmPodSpec](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpod.go#L60-L132>)
+## type [WarmPodSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpod.go#L60-L132>)
 
 WarmPodSpec is everything BuildWarmPod needs to build one long\-lived warm\-worker pod: which dag\_version pool it serves, the image \(the DAG's image — a warm worker runs the agent in warm mode and forks a child per attempt\), the control\-plane connection, and how its BOOTSTRAP credential reaches it \(the same transport a task pod uses\). It carries NO task instance: the per\-attempt token and task identity arrive in\-band over AwaitAssignment, never on this spec.
 
@@ -1430,7 +1430,7 @@ type WarmPodSpec struct {
 ```
 
 <a name="WarmPodSpecFunc"></a>
-## type [WarmPodSpecFunc](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool_k8s.go#L19>)
+## type [WarmPodSpecFunc](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_k8s.go#L19>)
 
 WarmPodSpecFunc mints the per\-pod bootstrap credential and fills the transport / connection / security fields for a warm worker of the target, returning a spec ready for BuildWarmPod. It is the auth\- and config\-aware half of warm\-pod creation, injected from main.go so the executor package imports neither auth nor config. It is called once per warm worker the reconciler needs to create.
 
@@ -1439,7 +1439,7 @@ type WarmPodSpecFunc func(t WarmTarget) (WarmPodSpec, error)
 ```
 
 <a name="WarmPoolReconciler"></a>
-## type [WarmPoolReconciler](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L139-L152>)
+## type [WarmPoolReconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L139-L152>)
 
 WarmPoolReconciler maintains the IDLE warm\-worker buffer per active dag\_version \(ADR 0058 N1b2b \+ N1d\-b, model A2\). Each tick it reads the active targets, the existing warm fleet, and the busy set \(pods serving a running attempt\), then per version partitions the live pods into BUSY and IDLE and:
 
@@ -1461,7 +1461,7 @@ type WarmPoolReconciler struct {
 ```
 
 <a name="NewWarmPoolReconciler"></a>
-### func [NewWarmPoolReconciler](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L163>)
+### func [NewWarmPoolReconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L163>)
 
 ```go
 func NewWarmPoolReconciler(targets WarmTargetSource, pods WarmPodClient, busy BusyWarmWorkerSource, maxWarmPodsPerTenant int, logger *slog.Logger, rec DecisionRecorder) *WarmPoolReconciler
@@ -1470,7 +1470,7 @@ func NewWarmPoolReconciler(targets WarmTargetSource, pods WarmPodClient, busy Bu
 NewWarmPoolReconciler builds a reconciler over the given target source, pod client, and busy\-worker source. busy is REQUIRED: it classifies each live pod as busy or idle so scale\-down never kills an in\-flight attempt \(ADR 0058 N1d\-b M1\); without it every worker would look idle and a busy worker could be deleted, so a nil busy source \(or a busy\-list error at tick time\) makes the tick do nothing — do\-no\-harm. maxWarmPodsPerTenant is the per\-tenant aggregate cap \(M4\); \<= 0 disables tenant accounting \(pre\-M4 per\-version behavior\). logger and rec \(metrics\) are optional — a nil logger falls back to the default and a nil rec skips metering.
 
 <a name="WarmPoolReconciler.Reconcile"></a>
-### func \(\*WarmPoolReconciler\) [Reconcile](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L175>)
+### func \(\*WarmPoolReconciler\) [Reconcile](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L175>)
 
 ```go
 func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error
@@ -1479,7 +1479,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error
 Reconcile brings the warm fleet in line with the active targets for one tick. It returns an error only when it could not read the world \(the target source or the pod list failed\) so the ticker logs it and retries next tick without acting on a bad view; per\-version and per\-pod failures are logged/metered and isolated, and never abort the sweep.
 
 <a name="WarmTarget"></a>
-## type [WarmTarget](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L31-L37>)
+## type [WarmTarget](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L31-L37>)
 
 WarmTarget is one active dag\_version the warm\-pool reconciler keeps warm workers ready for \(model A2, ADR 0058 N1d\-b\). Image is the DAG's image the warm worker runs the agent from.
 
@@ -1498,7 +1498,7 @@ type WarmTarget struct {
 ```
 
 <a name="WarmTargetSource"></a>
-## type [WarmTargetSource](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warmpool.go#L45-L47>)
+## type [WarmTargetSource](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L45-L47>)
 
 WarmTargetSource yields the currently active dag\_versions and their effective warm target. It is implemented on the storage/scheduler side \(it reads active runs and their cached specs and applies the operator's clamp/fallback\), and is defined HERE so the executor's reconciler depends on a narrow capability rather than importing the scheduler or storage package \(which would be a dependency cycle — storage already imports executor\).
 
@@ -1509,7 +1509,7 @@ type WarmTargetSource interface {
 ```
 
 <a name="WarmWorkerLostReapStore"></a>
-## type [WarmWorkerLostReapStore](<https://github.com/dexadata/leoflow/blob/main/internal/executor/warm_worker_lost_reap.go#L65-L73>)
+## type [WarmWorkerLostReapStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warm_worker_lost_reap.go#L65-L73>)
 
 WarmWorkerLostReapStore is the slice of the store the warm\-worker\-lost reaper needs: list the warm\-bound running TIs, and reuse the pod\-lost mark to route a lost attempt to infra \(bumps infra\_attempts, NOT try\_number\). The full scheduler store satisfies it; a unit test fakes just this surface.
 

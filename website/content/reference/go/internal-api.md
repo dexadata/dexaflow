@@ -77,7 +77,7 @@ var ErrNotFound = domain.ErrNotFound
 ```
 
 <a name="AbortProblem"></a>
-## func [AbortProblem](<https://github.com/dexadata/leoflow/blob/main/internal/api/problem.go#L16>)
+## func [AbortProblem](<https://github.com/dexadata/dexaflow/blob/main/internal/api/problem.go#L16>)
 
 ```go
 func AbortProblem(c *gin.Context, status int, title, detail string)
@@ -86,7 +86,7 @@ func AbortProblem(c *gin.Context, status int, title, detail string)
 AbortProblem writes an RFC 7807 problem response and stops the handler chain.
 
 <a name="CORS"></a>
-## func [CORS](<https://github.com/dexadata/leoflow/blob/main/internal/api/middleware.go#L84>)
+## func [CORS](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L84>)
 
 ```go
 func CORS(allowed []string) gin.HandlerFunc
@@ -95,7 +95,7 @@ func CORS(allowed []string) gin.HandlerFunc
 CORS allows the configured origins \(use "\*" to allow any\).
 
 <a name="DevBypassAuth"></a>
-## func [DevBypassAuth](<https://github.com/dexadata/leoflow/blob/main/internal/api/middleware.go#L142>)
+## func [DevBypassAuth](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L142>)
 
 ```go
 func DevBypassAuth() gin.HandlerFunc
@@ -104,7 +104,7 @@ func DevBypassAuth() gin.HandlerFunc
 DevBypassAuth authenticates EVERY request as a fixed admin user, with no token required. It exists solely for \`leoflow dev\` \(the local, unsandboxed loop\) so a developer reaches the UI without logging in. It must only be wired under the explicit dev opt\-in \(config auth.dev\_no\_auth\); the server logs a prominent warning when it is active. NEVER enable this in production.
 
 <a name="JWTAuth"></a>
-## func [JWTAuth](<https://github.com/dexadata/leoflow/blob/main/internal/api/middleware.go#L151>)
+## func [JWTAuth](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L151>)
 
 ```go
 func JWTAuth(authn auth.Authenticator) gin.HandlerFunc
@@ -113,7 +113,7 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc
 JWTAuth validates the bearer token on protected routes and stores the user.
 
 <a name="NewServer"></a>
-## func [NewServer](<https://github.com/dexadata/leoflow/blob/main/internal/api/server.go#L140>)
+## func [NewServer](<https://github.com/dexadata/dexaflow/blob/main/internal/api/server.go#L140>)
 
 ```go
 func NewServer(deps Dependencies) *gin.Engine
@@ -122,7 +122,7 @@ func NewServer(deps Dependencies) *gin.Engine
 NewServer builds the gin engine with the full middleware chain, health and metrics endpoints, embedded Scalar docs, and the auth token endpoint.
 
 <a name="NoStoreOnVolatileRoutes"></a>
-## func [NoStoreOnVolatileRoutes](<https://github.com/dexadata/leoflow/blob/main/internal/api/no_store.go#L30>)
+## func [NoStoreOnVolatileRoutes](<https://github.com/dexadata/dexaflow/blob/main/internal/api/no_store.go#L30>)
 
 ```go
 func NoStoreOnVolatileRoutes() gin.HandlerFunc
@@ -137,7 +137,7 @@ Static assets \(\`/ide/vs/\*\` for the Monaco bundle\) are content\-hashed and S
 We deliberately use "no\-store" rather than "no\-cache": no\-store forbids the browser from writing the response anywhere, which is the strongest guarantee we can give a TanStack\-backed SPA. "must\-revalidate" is added for older intermediaries \(proxies / SW\) that may not honor no\-store alone. This is ADR\-0017\-compatible: no SPA changes.
 
 <a name="ObservabilityHandler"></a>
-## func [ObservabilityHandler](<https://github.com/dexadata/leoflow/blob/main/internal/api/observability_handler.go#L26>)
+## func [ObservabilityHandler](<https://github.com/dexadata/dexaflow/blob/main/internal/api/observability_handler.go#L26>)
 
 ```go
 func ObservabilityHandler(registry *prometheus.Registry, checks map[string]HealthChecker) http.Handler
@@ -150,7 +150,7 @@ Roles that do not serve the full API — the ADR 0049 scheduler role — still n
 This handler is intentionally unauthenticated \(probes carry no token\) and does not run the API middleware chain; it is the same trust level as scraping /metrics, which is already public.
 
 <a name="Observe"></a>
-## func [Observe](<https://github.com/dexadata/leoflow/blob/main/internal/api/observe.go#L20>)
+## func [Observe](<https://github.com/dexadata/dexaflow/blob/main/internal/api/observe.go#L20>)
 
 ```go
 func Observe(metrics Metrics, tracer trace.Tracer) gin.HandlerFunc
@@ -159,7 +159,7 @@ func Observe(metrics Metrics, tracer trace.Tracer) gin.HandlerFunc
 Observe wraps each request in an OTel span and records HTTP metrics \(ADR 0010\). A nil tracer falls back to the global \(no\-op\) tracer; nil metrics are skipped, so the middleware is safe in tests.
 
 <a name="RequestID"></a>
-## func [RequestID](<https://github.com/dexadata/leoflow/blob/main/internal/api/middleware.go#L27>)
+## func [RequestID](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L27>)
 
 ```go
 func RequestID() gin.HandlerFunc
@@ -168,7 +168,7 @@ func RequestID() gin.HandlerFunc
 RequestID assigns a request id \(honoring an inbound X\-Request\-Id\) and echoes it.
 
 <a name="RequirePermission"></a>
-## func [RequirePermission](<https://github.com/dexadata/leoflow/blob/main/internal/api/middleware.go#L213>)
+## func [RequirePermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L213>)
 
 ```go
 func RequirePermission(action, resource string) gin.HandlerFunc
@@ -177,7 +177,7 @@ func RequirePermission(action, resource string) gin.HandlerFunc
 RequirePermission enforces an RBAC permission on a route.
 
 <a name="StructuredLogger"></a>
-## func [StructuredLogger](<https://github.com/dexadata/leoflow/blob/main/internal/api/middleware.go#L48>)
+## func [StructuredLogger](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L48>)
 
 ```go
 func StructuredLogger(logger *slog.Logger) gin.HandlerFunc
@@ -186,7 +186,7 @@ func StructuredLogger(logger *slog.Logger) gin.HandlerFunc
 StructuredLogger logs one structured line per request \(ADR 0010\).
 
 <a name="UserFromContext"></a>
-## func [UserFromContext](<https://github.com/dexadata/leoflow/blob/main/internal/api/middleware.go#L203>)
+## func [UserFromContext](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L203>)
 
 ```go
 func UserFromContext(c *gin.Context) (*auth.User, bool)
@@ -195,7 +195,7 @@ func UserFromContext(c *gin.Context) (*auth.User, bool)
 UserFromContext returns the authenticated user stored by JWTAuth.
 
 <a name="AuditLogReader"></a>
-## type [AuditLogReader](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_audit.go#L17-L19>)
+## type [AuditLogReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_audit.go#L17-L19>)
 
 AuditLogReader lists recorded actions for the Audit Log view. dagID == "" means no DAG filter.
 
@@ -206,7 +206,7 @@ type AuditLogReader interface {
 ```
 
 <a name="AuditWriter"></a>
-## type [AuditWriter](<https://github.com/dexadata/leoflow/blob/main/internal/api/resources.go#L57-L59>)
+## type [AuditWriter](<https://github.com/dexadata/dexaflow/blob/main/internal/api/resources.go#L57-L59>)
 
 AuditWriter records task\-level actions \(clear, mark state\) for the Audit Log view, with the acting user and the run/task in the entry.
 
@@ -217,7 +217,7 @@ type AuditWriter interface {
 ```
 
 <a name="AuthAuditWriter"></a>
-## type [AuthAuditWriter](<https://github.com/dexadata/leoflow/blob/main/internal/api/oidc_handler.go#L55-L57>)
+## type [AuthAuditWriter](<https://github.com/dexadata/dexaflow/blob/main/internal/api/oidc_handler.go#L55-L57>)
 
 AuthAuditWriter records authentication events to the audit sink \(H5\). It is best\-effort: a write error never changes the auth outcome.
 
@@ -228,7 +228,7 @@ type AuthAuditWriter interface {
 ```
 
 <a name="ConnectionStore"></a>
-## type [ConnectionStore](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_connections.go#L76-L81>)
+## type [ConnectionStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_connections.go#L76-L81>)
 
 ConnectionStore reads and writes Airflow\-style Connections for the Admin UI. Password is encrypted at rest by the store \(ADR 0019\) and never returned.
 
@@ -242,7 +242,7 @@ type ConnectionStore interface {
 ```
 
 <a name="ConnectionTester"></a>
-## type [ConnectionTester](<https://github.com/dexadata/leoflow/blob/main/internal/api/connection_probe.go#L25-L27>)
+## type [ConnectionTester](<https://github.com/dexadata/dexaflow/blob/main/internal/api/connection_probe.go#L25-L27>)
 
 ConnectionTester checks whether a connection is well\-formed. The default implementation validates STRUCTURE only and makes no network call: the Go control plane must never reach out to a user\-configured host \(SSRF / internal port\-scan — go/request\-forgery\), and "reachable from the control plane" is the wrong question anyway, since a connection is used in the task's network scope, not the control plane's. Live reachability/auth is tested where the connection is actually used \(the task/executor\) — tracked as a follow\-up.
 
@@ -253,7 +253,7 @@ type ConnectionTester interface {
 ```
 
 <a name="DagLatestRunsReader"></a>
-## type [DagLatestRunsReader](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_dags.go#L22-L24>)
+## type [DagLatestRunsReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_dags.go#L22-L24>)
 
 DagLatestRunsReader fetches the most\-recent runs for a set of DAGs in one query, so /ui/dags can embed run history without an N\+1.
 
@@ -264,7 +264,7 @@ type DagLatestRunsReader interface {
 ```
 
 <a name="DagRepository"></a>
-## type [DagRepository](<https://github.com/dexadata/leoflow/blob/main/internal/api/resources.go#L25-L32>)
+## type [DagRepository](<https://github.com/dexadata/dexaflow/blob/main/internal/api/resources.go#L25-L32>)
 
 DagRepository reads, updates, and deletes registered DAGs.
 
@@ -280,7 +280,7 @@ type DagRepository interface {
 ```
 
 <a name="DagRunRepository"></a>
-## type [DagRunRepository](<https://github.com/dexadata/leoflow/blob/main/internal/api/resources.go#L35-L41>)
+## type [DagRunRepository](<https://github.com/dexadata/dexaflow/blob/main/internal/api/resources.go#L35-L41>)
 
 DagRunRepository reads and creates DAG runs.
 
@@ -295,7 +295,7 @@ type DagRunRepository interface {
 ```
 
 <a name="DagSpecReader"></a>
-## type [DagSpecReader](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_structure.go#L15-L17>)
+## type [DagSpecReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_structure.go#L15-L17>)
 
 DagSpecReader reads the parsed spec of a DAG's current version, the source of task topology for the grid and graph views.
 
@@ -306,7 +306,7 @@ type DagSpecReader interface {
 ```
 
 <a name="DagVersionLister"></a>
-## type [DagVersionLister](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_dagversions.go#L17-L19>)
+## type [DagVersionLister](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_dagversions.go#L17-L19>)
 
 DagVersionLister lists a DAG's registered versions. The Airflow UI fetches this to resolve a version\_number before requesting version\-scoped structure \(the Graph view\); without it the graph never loads. See docs/ui\-compatibility.md.
 
@@ -317,7 +317,7 @@ type DagVersionLister interface {
 ```
 
 <a name="DagVersionRepository"></a>
-## type [DagVersionRepository](<https://github.com/dexadata/leoflow/blob/main/internal/api/versions.go#L13-L18>)
+## type [DagVersionRepository](<https://github.com/dexadata/dexaflow/blob/main/internal/api/versions.go#L13-L18>)
 
 DagVersionRepository registers compiled DAG versions.
 
@@ -331,7 +331,7 @@ type DagVersionRepository interface {
 ```
 
 <a name="DashboardStatsReader"></a>
-## type [DashboardStatsReader](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_dashboard.go#L15-L18>)
+## type [DashboardStatsReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_dashboard.go#L15-L18>)
 
 DashboardStatsReader backs the home dashboard widgets with real counts.
 
@@ -343,7 +343,7 @@ type DashboardStatsReader interface {
 ```
 
 <a name="Dependencies"></a>
-## type [Dependencies](<https://github.com/dexadata/leoflow/blob/main/internal/api/server.go#L29-L136>)
+## type [Dependencies](<https://github.com/dexadata/dexaflow/blob/main/internal/api/server.go#L29-L136>)
 
 Dependencies bundles everything the HTTP server needs.
 
@@ -459,7 +459,7 @@ type Dependencies struct {
 ```
 
 <a name="ExecutorInfo"></a>
-## type [ExecutorInfo](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_executor.go#L15-L19>)
+## type [ExecutorInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_executor.go#L15-L19>)
 
 ExecutorInfo describes the control plane's execution capacity. It surfaces whether pod dispatch is available — the cluster\-level answer to "why is a task stuck queued" \(\#46/\#47\). The stock Airflow UI has no widget for it, but operators \(curl/monitoring\) and a future custom Cluster Activity view consume it. Cluster Activity in Airflow 3.2 is otherwise the Home dashboard, already backed by /api/v2/monitor/health \(\#33\) and /ui/dashboard/\* \(\#39\).
 
@@ -472,7 +472,7 @@ type ExecutorInfo struct {
 ```
 
 <a name="FavoriteStore"></a>
-## type [FavoriteStore](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_favorites.go#L11-L15>)
+## type [FavoriteStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_favorites.go#L11-L15>)
 
 FavoriteStore persists per\-user DAG favorites \(the DAG\-list star\).
 
@@ -485,7 +485,7 @@ type FavoriteStore interface {
 ```
 
 <a name="HealthChecker"></a>
-## type [HealthChecker](<https://github.com/dexadata/leoflow/blob/main/internal/api/health.go#L12-L14>)
+## type [HealthChecker](<https://github.com/dexadata/dexaflow/blob/main/internal/api/health.go#L12-L14>)
 
 HealthChecker reports dependency health for readiness checks.
 
@@ -496,7 +496,7 @@ type HealthChecker interface {
 ```
 
 <a name="Heartbeater"></a>
-## type [Heartbeater](<https://github.com/dexadata/leoflow/blob/main/internal/api/monitor.go#L18-L20>)
+## type [Heartbeater](<https://github.com/dexadata/dexaflow/blob/main/internal/api/monitor.go#L18-L20>)
 
 Heartbeater reports a long\-running component's liveness and last heartbeat for the monitor health endpoint. The scheduler implements it.
 
@@ -507,7 +507,7 @@ type Heartbeater interface {
 ```
 
 <a name="ImportErrorStore"></a>
-## type [ImportErrorStore](<https://github.com/dexadata/leoflow/blob/main/internal/api/import_errors.go#L19-L23>)
+## type [ImportErrorStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/import_errors.go#L19-L23>)
 
 ImportErrorStore reads and writes DAG parse/compile errors that back Airflow's "Import Errors" banner on the home dashboard. The \`leoflow dev\` watcher writes an entry on a failed compile and clears it on the next good compile; the public GET /api/v2/importErrors feed is what the UI polls.
 
@@ -520,7 +520,7 @@ type ImportErrorStore interface {
 ```
 
 <a name="LogReader"></a>
-## type [LogReader](<https://github.com/dexadata/leoflow/blob/main/internal/api/logs.go#L20-L23>)
+## type [LogReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/logs.go#L20-L23>)
 
 LogReader streams a task attempt's stored logs and, for running tasks, tails new lines live.
 
@@ -532,7 +532,7 @@ type LogReader interface {
 ```
 
 <a name="Metrics"></a>
-## type [Metrics](<https://github.com/dexadata/leoflow/blob/main/internal/api/observe.go#L13-L15>)
+## type [Metrics](<https://github.com/dexadata/dexaflow/blob/main/internal/api/observe.go#L13-L15>)
 
 Metrics records HTTP request metrics. observability.Metrics implements it.
 
@@ -543,7 +543,7 @@ type Metrics interface {
 ```
 
 <a name="OIDCUserStore"></a>
-## type [OIDCUserStore](<https://github.com/dexadata/leoflow/blob/main/internal/api/oidc_handler.go#L37-L51>)
+## type [OIDCUserStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/oidc_handler.go#L37-L51>)
 
 OIDCUserStore resolves and just\-in\-time\-provisions OIDC identities. storage implements it. The interface lives with its consumer \(the callback handler\).
 
@@ -566,7 +566,7 @@ type OIDCUserStore interface {
 ```
 
 <a name="PoolStore"></a>
-## type [PoolStore](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_pools.go#L15-L21>)
+## type [PoolStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_pools.go#L15-L21>)
 
 PoolStore reads and writes named task pools for the Admin UI \(ADR 0053 Stage 3\). Pools are tenant\-scoped; PoolSlotUsage reports per\-pool occupancy for the Airflow slot fields.
 
@@ -581,7 +581,7 @@ type PoolStore interface {
 ```
 
 <a name="Problem"></a>
-## type [Problem](<https://github.com/dexadata/leoflow/blob/main/internal/api/problem.go#L7-L13>)
+## type [Problem](<https://github.com/dexadata/dexaflow/blob/main/internal/api/problem.go#L7-L13>)
 
 Problem is an RFC 7807 problem\-details response body.
 
@@ -596,7 +596,7 @@ type Problem struct {
 ```
 
 <a name="TaskInstanceRepository"></a>
-## type [TaskInstanceRepository](<https://github.com/dexadata/leoflow/blob/main/internal/api/resources.go#L45-L53>)
+## type [TaskInstanceRepository](<https://github.com/dexadata/dexaflow/blob/main/internal/api/resources.go#L45-L53>)
 
 TaskInstanceRepository reads task instances, clears them for re\-run, and sets their state directly \(the UI's mark\-success/failed actions\).
 
@@ -613,7 +613,7 @@ type TaskInstanceRepository interface {
 ```
 
 <a name="TaskSummaryReader"></a>
-## type [TaskSummaryReader](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_summaries.go#L20-L22>)
+## type [TaskSummaryReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_summaries.go#L20-L22>)
 
 TaskSummaryReader fetches task instances across a set of runs of a DAG, the source for the grid's per\-cell state summaries.
 
@@ -624,7 +624,7 @@ type TaskSummaryReader interface {
 ```
 
 <a name="TokenRenewer"></a>
-## type [TokenRenewer](<https://github.com/dexadata/leoflow/blob/main/internal/api/auth_handler.go#L18-L20>)
+## type [TokenRenewer](<https://github.com/dexadata/dexaflow/blob/main/internal/api/auth_handler.go#L18-L20>)
 
 TokenRenewer re\-mints a still\-valid user bearer with a fresh short TTL, bounded by max\_lifetime since first login. \*auth.JWTAuthenticator implements it via RenewUserToken; the handler depends on this narrow interface so the renew route can be tested without a real signing key.
 
@@ -635,7 +635,7 @@ type TokenRenewer interface {
 ```
 
 <a name="UIServer"></a>
-## type [UIServer](<https://github.com/dexadata/leoflow/blob/main/internal/api/server.go#L23-L26>)
+## type [UIServer](<https://github.com/dexadata/dexaflow/blob/main/internal/api/server.go#L23-L26>)
 
 UIServer serves the embedded single\-page app: static assets and an index.html shell that the SPA's client\-side router falls back to. It is satisfied by internal/ui.Server. When nil, the server runs API\-only and unknown paths return 404 instead of the SPA shell.
 
@@ -647,7 +647,7 @@ type UIServer interface {
 ```
 
 <a name="UserAuditWriter"></a>
-## type [UserAuditWriter](<https://github.com/dexadata/leoflow/blob/main/internal/api/users.go#L49-L51>)
+## type [UserAuditWriter](<https://github.com/dexadata/dexaflow/blob/main/internal/api/users.go#L49-L51>)
 
 UserAuditWriter records account\-creation events for the Audit Log. It is a separate, narrow interface \(not the task\-shaped AuditWriter\) so account management writes a "user" resource entry with the acting admin as owner. The granted roles are passed as a single joined string so the record captures the full set.
 
@@ -658,7 +658,7 @@ type UserAuditWriter interface {
 ```
 
 <a name="UserStore"></a>
-## type [UserStore](<https://github.com/dexadata/leoflow/blob/main/internal/api/users.go#L39-L42>)
+## type [UserStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/users.go#L39-L42>)
 
 UserStore creates control\-plane accounts for the admin create\-user API. The store hashes the plaintext password \(reusing the bootstrap admin's bcrypt scheme\) and returns the created user without any secret. A duplicate email must surface as domain.ErrConflict and an unknown role as domain.ErrValidation.
 
@@ -670,7 +670,7 @@ type UserStore interface {
 ```
 
 <a name="VariableStore"></a>
-## type [VariableStore](<https://github.com/dexadata/leoflow/blob/main/internal/api/ui_variables.go#L15-L20>)
+## type [VariableStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_variables.go#L15-L20>)
 
 VariableStore reads and writes Airflow\-style Variables for the Admin UI.
 
@@ -684,7 +684,7 @@ type VariableStore interface {
 ```
 
 <a name="WorkspaceFS"></a>
-## type [WorkspaceFS](<https://github.com/dexadata/leoflow/blob/main/internal/api/ide.go#L27-L34>)
+## type [WorkspaceFS](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ide.go#L27-L34>)
 
 WorkspaceFS is the workspace\-confined filesystem backing the Lite web editor \(ADR 0025\). Every path is relative to the workspace root and confined to it.
 
@@ -700,7 +700,7 @@ type WorkspaceFS interface {
 ```
 
 <a name="XComReader"></a>
-## type [XComReader](<https://github.com/dexadata/leoflow/blob/main/internal/api/xcoms.go#L17-L20>)
+## type [XComReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/xcoms.go#L17-L20>)
 
 XComReader reads stored XCom values and lists a task instance's XCom keys for the read API.
 

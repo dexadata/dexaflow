@@ -132,7 +132,7 @@ fetch-airflow-ui: ## Extract the pinned Airflow UI SPA into internal/ui/assets (
 .PHONY: rebrand-ui
 rebrand-ui: ## Rewrite the embedded SPA's Docs/GitHub nav links from Airflow to Leoflow
 	@for js in $(UI_ASSETS_DIR)/assets/index-*.js ; do \
-		perl -i -pe 's{https://github\.com/apache/airflow}{https://github.com/dexadata/leoflow}g; s{`https://airflow\.apache\.org/docs/`,key:`documentation`}{`https://dexaflow.dexadata.ai/`,key:`documentation`}g; s{`https://airflow\.apache\.org/`,rel:`noopener}{`https://dexaflow.dexadata.ai/`,rel:`noopener}g;' "$$js" ; \
+		perl -i -pe 's{https://github\.com/apache/airflow}{https://github.com/dexadata/dexaflow}g; s{`https://airflow\.apache\.org/docs/`,key:`documentation`}{`https://dexaflow.dexadata.ai/`,key:`documentation`}g; s{`https://airflow\.apache\.org/`,rel:`noopener}{`https://dexaflow.dexadata.ai/`,rel:`noopener}g;' "$$js" ; \
 	done
 	@echo "rebranded nav Docs/GitHub links to Leoflow (templated provider docs left pointing at Airflow)"
 

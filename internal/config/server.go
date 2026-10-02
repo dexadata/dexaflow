@@ -296,7 +296,7 @@ type UISection struct {
 	// the editor page is served Monaco from it. Empty shows a setup hint.
 	MonacoDir string `mapstructure:"monaco_dir"`
 	// HomeLink is an optional, persistent link from the UI back to the platform
-	// the operator serves Leoflow from (#1290). Empty shows no link.
+	// the operator serves Dexaflow from (#1290). Empty shows no link.
 	HomeLink HomeLinkSection `mapstructure:"home_link"`
 	// Theme is a JSON object in the shape of Airflow's `[api] theme` (#1289):
 	// `tokens` (Chakra design tokens, such as colors.brand and fonts),
