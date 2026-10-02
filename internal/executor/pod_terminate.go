@@ -20,10 +20,12 @@ import (
 //
 // Every selector below reuses the exact label scheme BuildPod stamps
 // (leoflow.io/run-id, /task-id, /try-number). Deletion is by List-then-Delete,
-// not DeleteCollection: the executor Role grants the `list` and `delete` verbs
-// but NOT `deletecollection` (helm/dexaflow/templates/rbac.yaml), so a
-// DeleteCollection call would 403 in production. NotFound is always tolerated —
-// a pod may have been garbage-collected between the list and the delete.
+// not DeleteCollection: a reap must judge each pod (see terminalForTeardown
+// below), and a cluster whose Role predates the `deletecollection` grant would
+// 403 it. The settled-run collection (run_settle_collect.go) is the one caller
+// of DeleteCollection, and it falls back to per-pod deletes on a 403. NotFound
+// is always tolerated: a pod may have been garbage-collected between the list
+// and the delete.
 //
 // Both methods skip a pod that has already reached a terminal phase (#928) —
 // see terminalForTeardown. That is enforced HERE, at the one delete site, rather

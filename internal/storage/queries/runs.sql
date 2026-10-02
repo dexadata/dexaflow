@@ -1007,3 +1007,21 @@ UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
     next_dispatch_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
+
+-- name: ListSettledRunIDs :many
+-- Of the given (tenant, run) pairs, the settled runs: run in success or failed
+-- and no task instance outside success, failed, skipped and upstream_failed.
+-- This is the same "settled" the retention janitor's LockExpiredSettledRuns
+-- uses (duplicated there on purpose, keep the two identical). A run marked
+-- failed while a task still runs is not settled, so the reconciler never
+-- collects a pod whose outcome it may not have recorded yet. The pairs come
+-- from the pods' tenant and run labels; a pair whose tenant does not own the
+-- run matches nothing.
+SELECT r.id, r.tenant_id FROM dag_runs r
+WHERE (r.tenant_id, r.id) IN (
+    SELECT unnest(sqlc.arg(tenant_ids)::uuid[]), unnest(sqlc.arg(run_ids)::uuid[]))
+  AND r.state IN ('success', 'failed')
+  AND NOT EXISTS (
+    SELECT 1 FROM task_instances ti
+    WHERE ti.dag_run_id = r.id
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'));

@@ -290,6 +290,15 @@ type Querier interface {
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
 	// "may this DAG take another active run?" (max_active_runs, see #200).
 	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
+	// Of the given (tenant, run) pairs, the settled runs: run in success or failed
+	// and no task instance outside success, failed, skipped and upstream_failed.
+	// This is the same "settled" the retention janitor's LockExpiredSettledRuns
+	// uses (duplicated there on purpose, keep the two identical). A run marked
+	// failed while a task still runs is not settled, so the reconciler never
+	// collects a pod whose outcome it may not have recorded yet. The pairs come
+	// from the pods' tenant and run labels; a pair whose tenant does not own the
+	// run matches nothing.
+	ListSettledRunIDs(ctx context.Context, arg ListSettledRunIDsParams) ([]ListSettledRunIDsRow, error)
 	// Lists every TI currently in `queued` alongside its queued_at timestamp for
 	// the dispatch-lost reaper (#202). The reaper applies the threshold per
 	// candidate so the SQL stays simple and the decision is purely in Go. The
