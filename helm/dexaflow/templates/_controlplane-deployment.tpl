@@ -147,6 +147,17 @@ spec:
             - name: LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .ctx.Values.ui.homeLink }}
+            {{- if .url }}
+            # The operator's link back to their platform (#1290). Omitted when
+            # unset, like the interval above; the server validates both values
+            # at boot.
+            - name: LEOFLOW_UI_HOME_LINK_LABEL
+              value: {{ .label | quote }}
+            - name: LEOFLOW_UI_HOME_LINK_URL
+              value: {{ .url | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_SERVER_HTTP_ADDR
               value: ":{{ .ctx.Values.ports.http }}"
             - name: LEOFLOW_SERVER_METRICS_ADDR

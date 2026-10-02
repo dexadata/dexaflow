@@ -555,6 +555,8 @@ before enabling it in production.
 | `DEXAFLOW_UI_EDITION` | _(empty)_ | both | Edition badge in the UI shell: `lite` shows the silver LITE badge, `pro` the gold PRO badge (independent of the auth mode; also gates `auth.provider: oidc`). Empty/other shows no badge. |
 | `DEXAFLOW_UI_WORKSPACE` | _(empty)_ | both | DAG project directory the Lite web editor edits ([ADR 0025](/project/adrs/0025-lite-embedded-web-editor/)). Empty disables the editor. |
 | `DEXAFLOW_UI_MONACO_DIR` | _(empty)_ | both | Where the pinned Monaco bundle was fetched by `dexaflow setup`; the editor page is served Monaco from it. Empty shows a setup hint. |
+| `DEXAFLOW_UI_HOME_LINK_LABEL` | _(empty)_ | both | Text of an optional link from the UI back to the platform you serve it from, shown on every page at the bottom-left and opened in the same tab. Set it together with `DEXAFLOW_UI_HOME_LINK_URL`. Helm: `ui.homeLink.label`. |
+| `DEXAFLOW_UI_HOME_LINK_URL` | _(empty)_ | both | Absolute `http://` or `https://` URL of the home link. Empty shows no link. Boot fails on another scheme, a missing host, or a URL without a label. Helm: `ui.homeLink.url`. |
 
 ### Trusted proxies and the client IP
 

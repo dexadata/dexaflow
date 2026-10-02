@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **An optional link from the UI back to the platform you serve it from**
+  (#1290). Operators who run Leoflow inside an internal portal or a hosting
+  console can set `ui.home_link.label` and `ui.home_link.url` (Helm:
+  `ui.homeLink`), and every UI page shows a small "back" pill at the
+  bottom-left that opens the URL in the same tab. It is off by default. Boot
+  fails on a URL that is not absolute `http://` or `https://`, or on a label
+  without a URL, so a typo never renders a dead or script-bearing link.
+time: 2026-10-02T12:00:00.000000000-03:00

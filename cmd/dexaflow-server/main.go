@@ -1303,19 +1303,27 @@ func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slo
 	return flow, nil
 }
 
-func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow) *http.Server {
-	if cfg.Auth.DevNoAuth {
-		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only — NEVER use in production")
-	}
+// newUIServer builds the embedded UI server from cfg and returns it with the
+// Lite editor's workspace (nil when the editor is off).
+func newUIServer(cfg *config.ServerConfig, logger *slog.Logger) (*ui.Server, api.WorkspaceFS) {
 	// Show the LITE badge for the Lite edition (independent of the auth mode), and
 	// also when the legacy dev auth bypass is on. The demo/production show neither.
 	uiSrv := ui.New()
 	uiSrv.SetLiteBanner(showLiteBadge(cfg))
 	uiSrv.SetProBanner(showProBadge(cfg))
 	uiSrv.SetInstanceName(cfg.UI.InstanceName)
+	uiSrv.SetHomeLink(cfg.UI.HomeLink.Label, cfg.UI.HomeLink.URL)
 
-	editorFS := liteEditorFS(cfg, tel.Logger)
+	editorFS := liteEditorFS(cfg, logger)
 	uiSrv.SetEditorButton(editorFS != nil)
+	return uiSrv, editorFS
+}
+
+func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow) *http.Server {
+	if cfg.Auth.DevNoAuth {
+		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only — NEVER use in production")
+	}
+	uiSrv, editorFS := newUIServer(cfg, tel.Logger)
 
 	handler := api.NewServer(api.Dependencies{
 		Logger:                       tel.Logger,
