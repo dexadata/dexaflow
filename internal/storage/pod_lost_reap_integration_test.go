@@ -38,7 +38,7 @@ func TestListRunningTasksIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cands, err := sched.ListRunningTasks(ctx)
+	cands, err := sched.ListRunningTasks(ctx, 0)
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "t", domain.TaskStateRunning); err != nil {
 		t.Fatal(err)
 	}
-	cands, _ := sched.ListRunningTasks(ctx)
+	cands, _ := sched.ListRunningTasks(ctx, 0)
 	c := findPodLostCandidate(cands, runUUID, "t")
 	if c == nil {
 		t.Fatalf("expected a running candidate")
@@ -95,7 +95,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 		t.Errorf("after MarkTaskPodLost, TI state = %+v, want failed", tis)
 	}
 	// A failed TI is no longer in the running candidate set.
-	cands, _ = sched.ListRunningTasks(ctx)
+	cands, _ = sched.ListRunningTasks(ctx, 0)
 	if findPodLostCandidate(cands, runUUID, "t") != nil {
 		t.Errorf("a failed TI must no longer appear in ListRunningTasks")
 	}
@@ -107,6 +107,86 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 	}
 	if applied {
 		t.Errorf("second MarkTaskPodLost on a failed TI must report applied=false (0 rows)")
+	}
+}
+
+// TestListRunningTasksExcludesWarmAttemptsIntegration: a warm attempt runs in a
+// shared warm pod that carries no per-task labels, so the pod-lost reaper's
+// presence check always reads it as absent. The warm-worker-lost reaper owns
+// those attempts; the pod-lost candidate set must never contain one, or a warm
+// task that outlives the grace period is failed as pod_lost while it runs.
+func TestListRunningTasksExcludesWarmAttemptsIntegration(t *testing.T) {
+	repo, sched, exec, ctx := openExec(t)
+	dagID := fmt.Sprintf("podlost_warm_%d", time.Now().UnixNano())
+	tasks := []domain.TaskSpec{
+		{TaskID: "warm", Type: domain.TaskTypePython},
+		{TaskID: "dedicated", Type: domain.TaskTypePython},
+	}
+	registerSpec(t, repo, ctx, dagID, tasks)
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	runUUID := resolveRunUUID(t, sched, ctx, dagID)
+	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
+		t.Fatalf("MaterializeTasks: %v", err)
+	}
+	for _, task := range []string{"warm", "dedicated"} {
+		if err := sched.ApplyTransition(ctx, runUUID, task, domain.TaskStateRunning); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exec.BindWarmAttempt(ctx, runUUID, "warm", 1, "warm-worker-0"); err != nil {
+		t.Fatalf("BindWarmAttempt: %v", err)
+	}
+
+	cands, err := sched.ListRunningTasks(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListRunningTasks: %v", err)
+	}
+	if findPodLostCandidate(cands, runUUID, "warm") != nil {
+		t.Errorf("a running warm attempt must NOT be a pod-lost candidate")
+	}
+	if findPodLostCandidate(cands, runUUID, "dedicated") == nil {
+		t.Errorf("a running dedicated attempt must still be a pod-lost candidate")
+	}
+}
+
+// TestListRunningTasksAppliesGraceBeforeLimitIntegration: the grace period is
+// applied in SQL, so attempts still inside it never take one of the LIMIT slots
+// a past-grace attempt needs.
+func TestListRunningTasksAppliesGraceBeforeLimitIntegration(t *testing.T) {
+	repo, sched, _, ctx := openExec(t)
+	dagID := fmt.Sprintf("podlost_grace_%d", time.Now().UnixNano())
+	tasks := []domain.TaskSpec{{TaskID: "fresh", Type: domain.TaskTypePython}}
+	registerSpec(t, repo, ctx, dagID, tasks)
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	runUUID := resolveRunUUID(t, sched, ctx, dagID)
+	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
+		t.Fatalf("MaterializeTasks: %v", err)
+	}
+	if err := sched.ApplyTransition(ctx, runUUID, "fresh", domain.TaskStateRunning); err != nil {
+		t.Fatal(err)
+	}
+
+	cands, err := sched.ListRunningTasks(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("ListRunningTasks: %v", err)
+	}
+	if findPodLostCandidate(cands, runUUID, "fresh") != nil {
+		t.Errorf("an attempt running for less than the grace period must not be listed")
+	}
+	cands, err = sched.ListRunningTasks(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListRunningTasks: %v", err)
+	}
+	if findPodLostCandidate(cands, runUUID, "fresh") == nil {
+		t.Errorf("with no grace period the running attempt must be listed")
 	}
 }
 

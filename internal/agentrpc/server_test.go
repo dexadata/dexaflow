@@ -114,7 +114,7 @@ func ctxWithToken(t *testing.T, a *auth.JWTAuthenticator) context.Context {
 // It reuses "ti-1" as the worker id so the warm-pool tests' registry assertions
 // (reg.registered("ti-1")) read the authenticated identity.
 func warmTokenIdentity() auth.AgentIdentity {
-	return auth.AgentIdentity{Scope: auth.ScopeWarmWorker, WorkerID: "ti-1", DagVersionID: "v1", TenantID: "acme"}
+	return auth.AgentIdentity{Scope: auth.ScopeWarmWorker, WorkerID: "ti-1", DagVersionID: "dagver-1", TenantID: "acme"}
 }
 
 // ctxWithWarmToken builds an incoming context carrying a freshly minted
