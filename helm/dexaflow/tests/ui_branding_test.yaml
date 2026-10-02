@@ -1,0 +1,63 @@
+suite: ui branding reaches the chart (#1289)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders the theme as compact JSON and the URLs as variables
+    set:
+      ui.theme:
+        tokens:
+          colors:
+            brand:
+              "500":
+                value: "#3b82f6"
+      ui.faviconUrl: https://cdn.example.com/f.png
+      ui.stylesheetUrls:
+        - https://fonts.example.com/a.css
+        - https://cdn.example.com/b.css
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_THEME
+            value: '{"tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_FAVICON_URL
+            value: https://cdn.example.com/f.png
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_STYLESHEET_URLS
+            value: https://fonts.example.com/a.css,https://cdn.example.com/b.css
+
+  - it: renders none of them when unset
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_THEME
+            value: "{}"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_FAVICON_URL
+            value: ""
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_STYLESHEET_URLS
+            value: ""

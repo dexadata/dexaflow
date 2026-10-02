@@ -147,6 +147,21 @@ spec:
             - name: LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .ctx.Values.ui.theme }}
+            # The UI's Chakra theme (#1289), as the compact JSON the server
+            # validates at boot. Omitted when unset: the stock look.
+            - name: LEOFLOW_UI_THEME
+              value: {{ toJson . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.ui.faviconUrl }}
+            - name: LEOFLOW_UI_FAVICON_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.ui.stylesheetUrls }}
+            # Comma-joined; the server splits it back into a list.
+            - name: LEOFLOW_UI_STYLESHEET_URLS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .ctx.Values.ui.homeLink }}
             {{- if .url }}
             # The operator's link back to their platform (#1290). Omitted when

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -59,6 +60,10 @@ type Dependencies struct {
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
 	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
 	UIAutoRefreshIntervalSeconds int
+	// UITheme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
+	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
+	// JSON object at boot. Nil serves null, the stock look (#1289).
+	UITheme json.RawMessage
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
 	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
@@ -223,7 +228,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.GET("/api/v2/monitor/executor", monitorExecutorHandler(deps.ExecutorInfo))
 
 	registerResources(r, deps)
-	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds)
+	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary)
