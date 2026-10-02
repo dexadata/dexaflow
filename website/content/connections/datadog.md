@@ -64,7 +64,7 @@ def send():
 
     hook = DatadogHook(datadog_conn_id="datadog_default")
     hook.send_metric(
-        metric_name="leoflow.dag.runs",
+        metric_name="dexaflow.dag.runs",
         datapoint=1,
         tags=["dag:datadog_metric"],
     )

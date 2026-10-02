@@ -42,14 +42,14 @@ No key in the Connection — credentials come from the ambient identity.
    `roles/storage.objectAdmin` on the bucket).
 2. Let the chart create + annotate the task KSA (cloud-agnostic knob):
    ```bash
-   helm upgrade leoflow ./helm/dexaflow -n leoflow --reuse-values \
-     --set taskServiceAccount.create=true --set taskServiceAccount.name=leoflow-gcs \
+   helm upgrade <release> <chart> -n leoflow --reset-then-reuse-values \
+     --set taskServiceAccount.create=true --set taskServiceAccount.name=dexaflow-gcs \
      --set 'taskServiceAccount.annotations.iam\.gke\.io/gcp-service-account=GSA@PROJECT.iam.gserviceaccount.com'
    gcloud iam service-accounts add-iam-policy-binding GSA@PROJECT.iam.gserviceaccount.com \
      --role roles/iam.workloadIdentityUser \
-     --member "serviceAccount:PROJECT.svc.id.goog[leoflow/leoflow-gcs]"
+     --member "serviceAccount:PROJECT.svc.id.goog[leoflow/dexaflow-gcs]"
    ```
-   Then set `execution.service_account: leoflow-gcs` in the DAG's `dexaflow.yaml`
+   Then set `execution.service_account: dexaflow-gcs` in the DAG's `dexaflow.yaml`
    (already done in this example).
 3. Create the Connection `google_cloud_default` with **empty key fields** (just
    `project`/`scopes` if you want). Run the DAG — no key touches the cluster.
@@ -84,7 +84,7 @@ The key stays in the cluster's secret store; Dexaflow only mounts it.
 
 ```bash
 kubectl -n leoflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
-helm upgrade leoflow ./helm/dexaflow -n leoflow --reuse-values \
+helm upgrade <release> <chart> -n leoflow --reset-then-reuse-values \
   --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/leoflow/secrets
 ```
 Then the Connection's Extra: `{ "key_path": "/etc/leoflow/secrets/key.json", "project": "my-project" }`.
@@ -95,9 +95,9 @@ Store the JSON key in Secret Manager; the task fetches it via ADC (so the task's
 identity — typically Workload Identity — needs `roles/secretmanager.secretAccessor`).
 
 ```bash
-gcloud secrets create leoflow-gcp-key --data-file=/path/to/key.json
+gcloud secrets create dexaflow-gcp-key --data-file=/path/to/key.json
 ```
-Then the Connection's Extra: `{ "key_secret_name": "leoflow-gcp-key", "project": "my-project" }`.
+Then the Connection's Extra: `{ "key_secret_name": "dexaflow-gcp-key", "project": "my-project" }`.
 
 ## Run + verify
 

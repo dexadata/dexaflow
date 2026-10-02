@@ -38,9 +38,9 @@ taskServiceAccount:
   create: true
   annotations:
     # AWS IRSA / Pod Identity:
-    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<leoflow-secrets-reader>
+    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<dexaflow-secrets-reader>
     # GKE Workload Identity instead:
-    # iam.gke.io/gcp-service-account: <leoflow-secrets-reader>@<project>.iam.gserviceaccount.com
+    # iam.gke.io/gcp-service-account: <dexaflow-secrets-reader>@<project>.iam.gserviceaccount.com
 
 taskNetworkPolicy:
   enabled: true

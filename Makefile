@@ -130,11 +130,11 @@ fetch-airflow-ui: ## Extract the pinned Airflow UI SPA into internal/ui/assets (
 	@echo "NOTE: the bundle is unverified until walked in a real browser (see docs/ui-compatibility.md)."
 
 .PHONY: rebrand-ui
-rebrand-ui: ## Rewrite the embedded SPA's Docs/GitHub nav links from Airflow to Leoflow
+rebrand-ui: ## Rewrite the embedded SPA's Docs/GitHub nav links from Airflow (or an earlier rebrand) to Dexaflow
 	@for js in $(UI_ASSETS_DIR)/assets/index-*.js ; do \
-		perl -i -pe 's{https://github\.com/apache/airflow}{https://github.com/dexadata/dexaflow}g; s{`https://airflow\.apache\.org/docs/`,key:`documentation`}{`https://dexaflow.dexadata.ai/`,key:`documentation`}g; s{`https://airflow\.apache\.org/`,rel:`noopener}{`https://dexaflow.dexadata.ai/`,rel:`noopener}g;' "$$js" ; \
+		perl -i -pe 's{https://github\.com/(apache/airflow|neochaotic/leoflow|dexadata/leoflow)\b}{https://github.com/dexadata/dexaflow}g; s{`https://(airflow\.apache\.org/docs/|neochaotic\.github\.io/leoflow/)`,key:`documentation`}{`https://dexaflow.dexadata.ai/`,key:`documentation`}g; s{`https://(airflow\.apache\.org/|neochaotic\.github\.io/leoflow/)`,rel:`noopener}{`https://dexaflow.dexadata.ai/`,rel:`noopener}g;' "$$js" ; \
 	done
-	@echo "rebranded nav Docs/GitHub links to Leoflow (templated provider docs left pointing at Airflow)"
+	@echo "rebranded nav Docs/GitHub links to Dexaflow (templated provider docs left pointing at Airflow)"
 
 .PHONY: e2e-lite
 e2e-lite: ## End-to-end Lite happy path (setup -> control plane -> login); needs local Postgres+Redis (DESTRUCTIVE: resets leoflow_dev)

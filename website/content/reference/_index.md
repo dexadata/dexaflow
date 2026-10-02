@@ -28,7 +28,7 @@ are **generated from source on every push**, so they never drift from the code. 
   <a class="lf-card" href="/reference/cli/">
     <span class="lf-card__icon"><i class="fa-solid fa-terminal"></i></span>
     <span class="lf-card__title">CLI reference</span>
-    <span class="lf-card__desc">Every <code>leoflow</code> command and flag, generated from Cobra.</span>
+    <span class="lf-card__desc">Every <code>dexaflow</code> command and flag, generated from Cobra.</span>
     <span class="lf-card__more">CLI commands →</span>
   </a>
   <a class="lf-card" href="/reference/go/">

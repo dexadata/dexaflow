@@ -30,7 +30,7 @@ touch Kubernetes. Pick your starting point below.
   <a class="lf-card" href="/get-started/installation/">
     <span class="lf-card__icon"><i class="fa-solid fa-download"></i></span>
     <span class="lf-card__title">Installation</span>
-    <span class="lf-card__desc">Install the <code>leoflow</code> CLI and provision the managed Python runtime — the one-command setup.</span>
+    <span class="lf-card__desc">Install the <code>dexaflow</code> CLI and provision the managed Python runtime — the one-command setup.</span>
     <span class="lf-card__more">Install the CLI →</span>
   </a>
 </div>

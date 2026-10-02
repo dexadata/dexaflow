@@ -150,7 +150,7 @@ rights; the two halves share nothing but Postgres.
 ```mermaid
 flowchart TB
   subgraph LITE["Lite · role=all — one process"]
-    ALL["leoflow-server<br/>API + UI + scheduler<br/>+ dispatch + agent gRPC"]
+    ALL["dexaflow-server<br/>API + UI + scheduler<br/>+ dispatch + agent gRPC"]
   end
 
   subgraph PRO["Pro · role=api + role=scheduler — two deployments"]

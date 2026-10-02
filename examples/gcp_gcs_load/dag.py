@@ -101,8 +101,8 @@ def gcs_roundtrip() -> str:
     print(f"gcp auth mode: {mode}  project: {project}")
 
     client = storage.Client(project=project, credentials=creds)
-    blob = client.bucket(bucket_name).blob("leoflow/gcp_gcs_load.txt")
-    payload = "hello from leoflow gcp_gcs_load"
+    blob = client.bucket(bucket_name).blob("dexaflow/gcp_gcs_load.txt")
+    payload = "hello from dexaflow gcp_gcs_load"
     blob.upload_from_string(payload)
     got = blob.download_as_text()
     assert got == payload, f"roundtrip mismatch: {got!r}"

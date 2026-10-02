@@ -58,7 +58,7 @@ def trigger():
     hook.create_event(
         summary="DAG failed",
         severity="critical",
-        source="leoflow",
+        source="dexaflow",
     )
 
 

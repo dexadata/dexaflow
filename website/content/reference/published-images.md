@@ -57,7 +57,7 @@ want a build to reproduce.
 `dexaflow compile --build` writes the `FROM` for you, and it picks between those
 two tag shapes **based on the CLI you are running**:
 
-| your `leoflow` binary | the `FROM` it writes |
+| your `dexaflow` binary | the `FROM` it writes |
 | --- | --- |
 | a released build (`dexaflow version` shows a clean `X.Y.Z`) | `ghcr.io/dexadata/dexaflow-runtime:py<ver>-v<X.Y.Z>`, immutable |
 | a development build (built from source, a dirty tree, or a `git describe` version) | `ghcr.io/dexadata/dexaflow-runtime:py<ver>`, the moving line |

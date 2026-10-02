@@ -3,6 +3,8 @@
 aliases:
   - /why-leoflow.html
 # --- end AUTO redirect aliases ---
+  # The page was /why-leoflow/ before the rename.
+  - /why-leoflow/
 title: Why Dexaflow
 weight: 5
 description: "The five wounds Airflow won't heal, and how Dexaflow heals them."

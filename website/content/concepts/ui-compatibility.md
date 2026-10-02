@@ -68,7 +68,7 @@ works") reflects the **2.x** architecture. It does not hold for 3.x.
    implement exactly the `/ui/*` endpoints that version calls, pinned to 3.2.1.
    Delivers the familiar Airflow UI now, but is brittle and version-locked.
 3. **Defer the UI.** For the MVP, the operator surface is the embedded **Scalar
-   API reference** (`/docs`) plus the `leoflow runs` / `leoflow` CLI. The visual
+   API reference** (`/docs`) plus the `dexaflow runs` / `dexaflow` CLI. The visual
    UI lands later via path 1 or 2.
 
 ## Public `/api/v2/` compatibility audit
@@ -163,11 +163,11 @@ already exposes; the UI calls those directly.
 ```
 browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
         ──▶ /ui/*    ─┐
-        ──▶ /api/v2/* ─┼─▶ leoflow-server   (reverse proxy serves assets + routes API)
+        ──▶ /api/v2/* ─┼─▶ dexaflow-server   (reverse proxy serves assets + routes API)
                        ─┘
 ```
 
-- A reverse proxy (or a static-file route in leoflow-server) serves the pinned
+- A reverse proxy (or a static-file route in dexaflow-server) serves the pinned
   3.2.1 SPA bundle and routes `/ui/*` and `/api/v2/*` to the control plane.
 - **Auth (dual-path — corrected 2026-05-22).** The earlier assumption that the UI
   logs in via `POST /ui/auth/token` was **wrong**: the spec's `GenerateTokenBody`

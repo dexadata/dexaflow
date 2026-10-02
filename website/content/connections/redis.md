@@ -80,7 +80,7 @@ planned follow-up; for now, `redis` + Extra is the supported path.
 ## Example DAG
 
 [`examples/redis_load`](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load) writes 20 hash fields under
-`leoflow:example_load` using `redis-py`. The example's
+`dexaflow:example_load` using `redis-py`. The example's
 [README](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load/README.md)
 walks through Connection setup and verification with `redis-cli HGETALL`.
 

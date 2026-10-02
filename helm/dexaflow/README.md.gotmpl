@@ -4,7 +4,7 @@
 
 {{ template "chart.description" . }}
 
-Deploys the Dexaflow **control plane** (`leoflow-server`) into Kubernetes for a
+Deploys the Dexaflow **control plane** (`dexaflow-server`) into Kubernetes for a
 production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
 {{ template "chart.homepageLine" . }}
@@ -13,7 +13,7 @@ production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
 | Resource | Purpose |
 |---|---|
-| Deployment | `leoflow-server` (HTTP `8080`, metrics `9090`, agent gRPC `9091`) |
+| Deployment | `dexaflow-server` (HTTP `8080`, metrics `9090`, agent gRPC `9091`) |
 | Service | ClusterIP exposing http / metrics / grpc |
 | ServiceAccount + Role/RoleBinding | lets the control plane create/watch/delete **task pods** and read their logs in `taskNamespace` |
 | ClusterRole + ClusterRoleBinding | **only** when `auth.agentTokenTransport: exchange` — `create` on `tokenreviews` (cluster-scoped API). See [Agent credential transport](#agent-credential-transport-and-warm-worker-pools) |
@@ -94,7 +94,7 @@ its own.
 > (`database.url`, `redis.url`, `auth.jwtSecret`, `secretKey`,
 > `bootstrap.password`). Credentials wired via `*.existingSecret` are **outside
 > the chart's visibility**: rotating them requires a manual
-> `kubectl rollout restart deployment/leoflow` for the change to take effect.
+> `kubectl rollout restart deployment/<release>` for the change to take effect.
 
 ## High availability
 
@@ -129,7 +129,7 @@ recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
 memory sized for the object sink's per-attempt buffer, and the longer drain grace:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
   -f helm/dexaflow/examples/values-ha.yaml
 ```
 
@@ -161,7 +161,7 @@ Without the CA bundle mounted, the strongest TLS posture you can pin is
    path:
 
    ```bash
-   helm upgrade --install leoflow ./helm/dexaflow -n leoflow \
+   helm upgrade --install dexaflow ./helm/dexaflow -n leoflow \
      --set database.caConfigMap=managed-pg-ca \
      --set database.url='postgres://user:pass@cloudsql-private-ip:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
    ```
@@ -173,7 +173,7 @@ is required.
 > **Rotation note.** Kubernetes auto-updates the mounted file when the
 > ConfigMap changes, but the pgx pool keeps its existing connections until
 > they cycle. Cert rotation that invalidates the old chain may break in-flight
-> connections; rolling the pod (`kubectl rollout restart deploy/leoflow`)
+> connections; rolling the pod (`kubectl rollout restart deploy/<release>`)
 > guarantees a clean cutover.
 
 > **Redis sibling — coming next** (#312). The same pattern lands for Redis in
@@ -227,14 +227,14 @@ Set `redis.caConfigMap` to a ConfigMap holding the provider CA as
 `ca.crt`:
 
 ```bash
-kubectl create configmap leoflow-redis-ca \
+kubectl create configmap dexaflow-redis-ca \
   --from-file=ca.crt=./memorystore-server-ca.pem -n leoflow
 ```
 
 ```yaml
 redis:
   url: rediss://10.0.0.5:6378/0
-  caConfigMap: leoflow-redis-ca
+  caConfigMap: dexaflow-redis-ca
 ```
 
 The chart then:
@@ -366,7 +366,7 @@ auth:
     enabled: true
     issuer: "https://accounts.google.com"
     clientId: "…apps.googleusercontent.com"
-    existingSecret: leoflow-idp          # key: oidcClientSecret
+    existingSecret: dexaflow-idp          # key: oidcClientSecret
     redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
     tenantClaim: "hd"                    # `tid` on Entra
     tenantClaims:

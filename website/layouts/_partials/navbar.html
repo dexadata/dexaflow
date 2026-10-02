@@ -5,7 +5,7 @@
   `resources.Get "icons/logo.svg"`, which this project does not ship. Instead we
   render the brand mark (static/assets/icon.png — the pinwheel-lion, WITHOUT the
   "leoflow" wordmark, since the wordmark would duplicate the adjacent site title)
-  as an <img> next to the "Leoflow" text. Gated on ui.navbar_logo, like upstream.
+  as an <img> next to the "Dexaflow" text. Gated on ui.navbar_logo, like upstream.
   Everything else is copied verbatim from docsy@v0.15.0; re-sync on theme bumps.
 */ -}}
 {{ $cover := and
@@ -22,7 +22,7 @@
     {{- /**/ -}}
     <span class="navbar-brand__logo navbar-logo">
       {{- if ne .Site.Params.ui.navbar_logo false -}}
-        <img class="lf-navbar-logo" src="{{ "assets/icon.png" | relURL }}" alt="Leoflow" width="32" height="32">
+        <img class="lf-navbar-logo" src="{{ "assets/icon.png" | relURL }}" alt="Dexaflow" width="32" height="32">
       {{ end -}}
     </span>
     {{- /**/ -}}

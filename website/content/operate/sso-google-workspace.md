@@ -45,7 +45,7 @@ auth:
     enabled: true
     issuer: https://accounts.google.com
     clientId: "<client-id>.apps.googleusercontent.com"
-    existingSecret: leoflow-google-oidc   # key: oidcClientSecret
+    existingSecret: dexaflow-google-oidc   # key: oidcClientSecret
     redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
 
     # The tenant pin. On Google the claim is hd and its value is the Workspace
@@ -66,7 +66,7 @@ auth:
 Create the secret separately so it is never in a values file:
 
 ```bash
-kubectl create secret generic leoflow-google-oidc --from-literal=oidcClientSecret='<client-secret>'
+kubectl create secret generic dexaflow-google-oidc --from-literal=oidcClientSecret='<client-secret>'
 ```
 
 With exactly one entry in `tenantClaims` and `tenantClaim: hd`, the login

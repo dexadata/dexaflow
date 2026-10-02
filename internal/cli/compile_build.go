@@ -1066,7 +1066,7 @@ func warnDroppedNegations(w io.Writer, excludes []string) {
 	// ESC survives into a value we print, and every other message in this file
 	// already quotes. An operator's terminal is not a rendering target for
 	// whatever is in a yaml.
-	fmt.Fprintf(w, "warning: exclude_paths %s %s ignored — a negation is not emitted into the block leoflow appends, because that block lands AFTER your own lines and could resurrect a path you excluded. Put the negation in your own %s, which leoflow only ever appends to.\n",
+	fmt.Fprintf(w, "warning: exclude_paths %s %s ignored — a negation is not emitted into the block Dexaflow appends, because that block lands AFTER your own lines and could resurrect a path you excluded. Put the negation in your own %s, which leoflow only ever appends to.\n",
 		quoteAll(dropped), plural(len(dropped), "was", "were"), dockerignoreName)
 }
 

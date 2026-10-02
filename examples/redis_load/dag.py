@@ -6,7 +6,7 @@ local URI for a quick run on a developer machine.
 
 Unlike the SQL-family connectors, Redis has no schemas/tables: data is
 key-value with optional hash / set / list types. This example uses a hash so
-the verification step (``redis-cli HGETALL leoflow:example_load``) is one
+the verification step (``redis-cli HGETALL dexaflow:example_load``) is one
 command.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def load(payload: dict[str, str]) -> None:
     src = "managed Connection redis_target" if os.environ.get("AIRFLOW_CONN_REDIS_TARGET") else "fallback URI"
     print(f"load: connecting via {src}")
     client = redis.Redis.from_url(uri, decode_responses=True)
-    key = "leoflow:example_load"
+    key = "dexaflow:example_load"
     client.delete(key)
     client.hset(key, mapping=payload)
     count = client.hlen(key)

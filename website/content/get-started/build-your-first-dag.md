@@ -14,7 +14,7 @@ and it will work. The explanations come as you go.
 
 {{% alert title="Before you start" color="info" %}}
 Finish the [Quickstart](/get-started/quickstart/) first. You need **Dexaflow Lite
-installed** and the `leoflow` command on your `PATH` (`leoflow version` should
+installed** and the `dexaflow` command on your `PATH` (`dexaflow version` should
 print a version). If `dexaflow lite` is still running from the Quickstart, press
 **Ctrl-C** to stop it — you will start it again in step 5.
 {{% /alert %}}
@@ -230,4 +230,4 @@ Delete the bad line, save, and the banner clears as the DAG reloads. Press
   browser instead of a local editor.
 - [Examples](/author-dags/examples/) — more runnable DAGs, including this one, to
   copy and adapt.
-- [CLI reference](/reference/cli/) — every `leoflow` command and flag.
+- [CLI reference](/reference/cli/) — every `dexaflow` command and flag.

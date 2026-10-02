@@ -95,7 +95,7 @@ the open Airflow tab does not auto-refresh DAG *structure* — reload it.)
 ## Provisioning the editor assets
 
 To keep the binary light, the Monaco bundle (~13 MB) is **not** baked into the
-`leoflow` binary. It is downloaded **once**, pinned and SHA-256-verified, by:
+`dexaflow` binary. It is downloaded **once**, pinned and SHA-256-verified, by:
 
 ```bash
 dexaflow setup            # end-user install

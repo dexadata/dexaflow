@@ -152,7 +152,7 @@ older `dag.json`.
 {{% /alert %}}
 
 ## Prerequisites
-- The `leoflow` CLI on the runner (download the release binary, or `go install`).
+- The `dexaflow` CLI on the runner (download the release binary, or `go install`).
 - **Python 3.11+ on the runner** (`dexaflow compile` invokes the stdlib-only
   parser shim — [ADR 0024](/project/adrs/0024-dag-parsing-structural-shim/) — to turn `dag.py`
   into `dag.json`). See [Python on the runner](#python-on-the-runner) below.
@@ -171,7 +171,7 @@ The recommended path on each runner type:
 
 | Runner | Recipe |
 |---|---|
-| **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing leoflow. Cached automatically. |
+| **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing dexaflow. Cached automatically. |
 | **GitLab CI** | Use a `python:3.12-slim` (or `python:3.12-bookworm`) base image instead of a bare `alpine`/`ubuntu`. |
 | **Cloud Build / CodeBuild** | Use a `python:3.x-slim` build step, or one of the cloud-provider's "python3.12" images. |
 | **Self-hosted runners** | Pin Python via your image baseline (`apt install python3.12` or `pyenv`) and version-lock in your runner provisioning. |
@@ -184,11 +184,11 @@ release once the parser shim is re-verified against it.
 
 ### One more step: `dexaflow setup` extracts the parser
 
-After the `leoflow` binary lands on the runner and Python is in scope, run
+After the `dexaflow` binary lands on the runner and Python is in scope, run
 `dexaflow setup` ONCE per runner. The CLI ships the parser source embedded;
 `setup` extracts it under `~/.dexaflow/pysrc/parser/` and writes a config
 file pointing the `compile` command at the chosen interpreter. Without this
-step `leoflow compile` fails with `No module named leoflow_parser` (the
+step `dexaflow compile` fails with `No module named leoflow_parser` (the
 runner's Python has no idea where the parser lives).
 
 The snippets below all show `dexaflow setup` as the step after the install,
@@ -201,7 +201,7 @@ into.
 
 {{% alert title="Cache `~/.dexaflow/` between CI runs" color="success" %}}
 Ephemeral CI runners re-extract the parser on every build (~3-5 s).
-Cache the directory keyed by the leoflow binary version (or the leoflow
+Cache the directory keyed by the dexaflow binary version (or the dexaflow
 release URL) to skip it on warm runs:
 `actions/cache` on GitHub Actions, `cache:` keys on GitLab CI, the
 workspace cache on Cloud Build. With Python on PATH, the cache hit makes
@@ -233,8 +233,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install leoflow
-        run: curl -fsSL https://github.com/dexadata/dexaflow/releases/latest/download/leoflow-linux-amd64 -o /usr/local/bin/leoflow && chmod +x /usr/local/bin/leoflow
+      - name: Install dexaflow
+        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
       - name: Bootstrap the parser (uses the BYO Python from above)
         run: dexaflow setup
       - name: Compile + build + push image
@@ -264,7 +264,7 @@ deploy_dag:
     IMAGE: $CI_REGISTRY_IMAGE/my_pipeline:$CI_COMMIT_SHA
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - wget -qO /usr/local/bin/leoflow https://github.com/dexadata/dexaflow/releases/latest/download/leoflow-linux-amd64 && chmod +x /usr/local/bin/leoflow
+    - wget -qO- https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
     - dexaflow setup        # extracts the parser into ~/.dexaflow/ using the python3 from before_script
     - dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
     - dexaflow push dag.json --server "$DEXAFLOW_SERVER"   # DEXAFLOW_TOKEN from CI vars
@@ -285,7 +285,7 @@ steps:
         # BYO Python — Cloud Builders' docker image is Debian; install python3.
         # See #python-on-the-runner for the rationale.
         apt-get update -qq && apt-get install -y --no-install-recommends python3
-        curl -fsSL https://github.com/dexadata/dexaflow/releases/latest/download/leoflow-linux-amd64 -o /usr/bin/leoflow && chmod +x /usr/bin/leoflow
+        curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/bin sh
         dexaflow setup    # extracts the parser into ~/.dexaflow/ using the python3 just installed
         IMAGE="$_REGION-docker.pkg.dev/$PROJECT_ID/dags/my_pipeline:$SHORT_SHA"
         dexaflow compile dags/my_pipeline --image "$$IMAGE" --build --push -o dag.json
@@ -319,7 +319,7 @@ the yaml-driven path has none for it to build.)
 {{< tabpane text=true >}}
 {{% tab header="Generic / Makefile" %}}
 
-Any runner with Docker, **Python 3.11+**, and the `leoflow` CLI
+Any runner with Docker, **Python 3.11+**, and the `dexaflow` CLI
 (see [Python on the runner](#python-on-the-runner)):
 
 ```bash
@@ -333,11 +333,11 @@ dexaflow push dag.json --server "$DEXAFLOW_SERVER" --token "$DEXAFLOW_TOKEN"
 
 ## Control-plane deployment (Helm chart, in validation)
 
-Deploying the control plane itself (Helm chart, published `leoflow-server`/
-`leoflow-migrate` images, TLS on the agent channel, keyless cloud auth) is the
+Deploying the control plane itself (Helm chart, published `dexaflow-server`/
+`dexaflow-migrate` images, TLS on the agent channel, keyless cloud auth) is the
 **Pro** track. One command installs the chart with auto-generated TLS and no
 cert-manager — from its published OCI artifact
-(`helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION>`),
+(`helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION>`),
 or from source on `main` for the bleeding edge
 (`helm install lf ./helm/dexaflow …`). See [Install Pro](/get-started/installation/#install-pro).
 The chart is installable today and in validation — see the

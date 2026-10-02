@@ -5,7 +5,7 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Installation
 weight: 30
-description: Install the leoflow CLI and provision the managed Python runtime.
+description: Install the dexaflow CLI and provision the managed Python runtime.
 ---
 
 Dexaflow ships in **two editions** — pick the install path that matches the one
@@ -156,10 +156,10 @@ dexaflow doctor
 Each binary reports its own build, so you can confirm what landed on `PATH`:
 
 ```console
-$ leoflow --version          # root CLI (dexaflow version also prints commit + build date)
-$ leoflow-server --version   # control plane
-$ leoflow-agent --version    # in-pod agent
-$ leoflow-mcp --version      # MCP server (see the MCP guide)
+$ dexaflow --version          # root CLI (dexaflow version also prints commit + build date)
+$ dexaflow-server --version   # control plane
+$ dexaflow-agent --version    # in-pod agent
+$ dexaflow-mcp --version      # MCP server (see the MCP guide)
 ```
 
 ### Installer options
@@ -225,7 +225,7 @@ gRPC channel stays **mandatory**, the chart just mints a stable self-signed CA
 external Postgres and Redis and go:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
@@ -259,7 +259,7 @@ Publish the provider's CA bundle as a ConfigMap with the key `ca.crt`, point
 kubectl create namespace leoflow
 kubectl -n leoflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
 
-helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.caConfigMap=rds-ca \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
@@ -304,7 +304,7 @@ this is only needed when you want `main`. Same required values, from the
 
 ```bash
 git clone --depth 1 https://github.com/dexadata/dexaflow   # current main
-cd leoflow
+cd dexaflow
 
 helm install lf ./helm/dexaflow -n leoflow --create-namespace \
   --set image.tag=v0.4.0-rc.2 \
@@ -328,7 +328,7 @@ What this installs (one Deployment, one Service, RBAC for the pod-per-task
 executor, a pre-install/upgrade migrations Job; optional Ingress, PDB, HPA,
 ServiceMonitor, NetworkPolicy):
 
-- **`leoflow-server`** Deployment listening on HTTP `8080`, metrics `9090`,
+- **`dexaflow-server`** Deployment listening on HTTP `8080`, metrics `9090`,
   and agent gRPC `9091`.
 - A pre-install/pre-upgrade **Job** running `golang-migrate` against
   `database.url` before the server starts.
@@ -515,8 +515,8 @@ expectations, rollback — lives in [Upgrades](/operate/upgrades/).
 
 ### Verifying the chart and images
 
-Both the **chart** and the **images** (`leoflow-server`, `leoflow-migrate`,
-plus `leoflow` and `leoflow-agent` binaries) are published by
+Both the **chart** and the **images** (`dexaflow-server`, `dexaflow-migrate`,
+plus `dexaflow` and `dexaflow-agent` binaries) are published by
 `.github/workflows/release.yaml` and **cosign-signed** (keyless):
 
 ```bash
