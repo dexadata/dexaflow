@@ -21,12 +21,12 @@ import (
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
-// usage is printed for `--help`. leoflow-agent takes no positional args; it is
+// usage is printed for `--help`. dexaflow-agent takes no positional args; it is
 // configured via environment and normally launched by the control plane.
-const usage = `leoflow-agent — runs as PID 1 inside a task pod: connects to the control plane
+const usage = `dexaflow-agent — runs as PID 1 inside a task pod: connects to the control plane
 over gRPC, runs the task, streams logs, and reports the result.
 
-Configured via environment (LEOFLOW_CONTROL_PLANE_ADDR, LEOFLOW_AGENT_TOKEN, …);
+Configured via environment (DEXAFLOW_CONTROL_PLANE_ADDR, DEXAFLOW_AGENT_TOKEN, …);
 there are no positional arguments. Normally launched by the control plane, not
 by hand.
 

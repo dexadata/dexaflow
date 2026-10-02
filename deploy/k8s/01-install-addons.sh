@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 01-install-addons.sh — Cluster-level prerequisites for Leoflow Pro.
+# 01-install-addons.sh — Cluster-level prerequisites for Dexaflow Pro.
 #
 # Installs cert-manager. The Pro Helm chart ships with agentTLS.enabled=true by
 # default (the agent <-> control-plane gRPC channel is TLS, issue #58), and the

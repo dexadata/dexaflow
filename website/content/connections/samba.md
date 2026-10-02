@@ -9,7 +9,7 @@ weight: 440
 description: Samba connection
 ---
 
-Connect a task to an SMB/CIFS file share over a managed Leoflow Connection.
+Connect a task to an SMB/CIFS file share over a managed Dexaflow Connection.
 The host, port, credentials, and an Extra blob (`share_type`) are encrypted at
 rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 

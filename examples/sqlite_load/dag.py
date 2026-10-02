@@ -1,6 +1,6 @@
 """sqlite_load — compute rows and load them into a sqlite file.
 
-The target DB path comes from a managed Leoflow Connection injected as
+The target DB path comes from a managed Dexaflow Connection injected as
 AIRFLOW_CONN_SQLITE_TARGET (create it in Admin → Connections). The Schema
 field carries the absolute file path; the URI looks like
 `sqlite:///var/lib/leoflow/warehouse.db`.

@@ -20,7 +20,7 @@ type pgxQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// PostgresBackend is the XCom Backend used by Leoflow Lite: it stores entries in
+// PostgresBackend is the XCom Backend used by Dexaflow Lite: it stores entries in
 // the xcom_store table with an expires_at TTL, so Lite needs no Redis at all
 // (scheduler locks already use Postgres advisory locks). Production keeps the
 // RedisBackend per ADR 0006.

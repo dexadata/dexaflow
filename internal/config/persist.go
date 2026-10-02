@@ -10,7 +10,7 @@ import (
 
 // PersistSession writes the control-plane server URL and auth token into the
 // config file at path, preserving any other keys already there (e.g. the Lite
-// settings written by `leoflow setup`). It creates the file and its parent
+// settings written by `dexaflow setup`). It creates the file and its parent
 // directory when absent, and keeps the file at 0600 because the token is a
 // secret. An empty path is an error: the caller must resolve the target first.
 func PersistSession(path, serverURL, token string) error {

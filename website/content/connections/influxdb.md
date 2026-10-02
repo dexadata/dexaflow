@@ -10,7 +10,7 @@ description: InfluxDB connection
 ---
 
 Connect a task to an InfluxDB time-series database (the `InfluxDBHook`) over a
-managed Leoflow Connection. InfluxDB 2.x authenticates with an **org + token**
+managed Dexaflow Connection. InfluxDB 2.x authenticates with an **org + token**
 carried in Extra — not login/password.
 
 ## Declare the provider

@@ -383,7 +383,7 @@ STUB
   exp_valid_cluster_name "leoflow exp" \
     && { echo "  FAIL a name with a space was accepted"; fail=1; } \
     || echo "  ok   a name with a space is refused rather than word-split into two arguments"
-  exp_valid_cluster_name "Leoflow-Exp" \
+  exp_valid_cluster_name "Dexaflow-Exp" \
     && { echo "  FAIL an uppercase name was accepted"; fail=1; } \
     || echo "  ok   an uppercase name is refused, as GKE would refuse it"
 

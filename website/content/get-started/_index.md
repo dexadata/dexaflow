@@ -2,14 +2,14 @@
 title: Get started
 linkTitle: Get started
 weight: 10
-description: Install Leoflow and run your first DAG in minutes.
+description: Install Dexaflow and run your first DAG in minutes.
 cascade: { type: docs }
 menu:
   main:
     weight: 10
 ---
 
-Zero to a running DAG in minutes. Leoflow **Lite** runs the whole control plane on
+Zero to a running DAG in minutes. Dexaflow **Lite** runs the whole control plane on
 one machine, so you can author, compile, and trigger a real DAG before you ever
 touch Kubernetes. Pick your starting point below.
 
@@ -18,7 +18,7 @@ touch Kubernetes. Pick your starting point below.
     <span class="lf-card__badge">Start here</span>
     <span class="lf-card__icon"><i class="fa-solid fa-bolt"></i></span>
     <span class="lf-card__title">Quickstart</span>
-    <span class="lf-card__desc">Get Leoflow Lite running locally in two commands, then trigger your first run from the browser.</span>
+    <span class="lf-card__desc">Get Dexaflow Lite running locally in two commands, then trigger your first run from the browser.</span>
     <span class="lf-card__more">Run it in 2 commands →</span>
   </a>
   <a class="lf-card" href="/get-started/build-your-first-dag/">

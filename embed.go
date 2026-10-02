@@ -36,9 +36,9 @@ func PythonSources() embed.FS { return pythonSources }
 //go:embed docker-compose.dev.yaml
 var devCompose []byte
 
-// DevCompose returns the embedded docker-compose for Leoflow Lite's local
+// DevCompose returns the embedded docker-compose for Dexaflow Lite's local
 // Postgres + Redis, so a binary-only install (no source checkout) can bring the
-// datastores up with `leoflow lite` alone — it is materialized under ~/.dexaflow
+// datastores up with `dexaflow lite` alone — it is materialized under ~/.dexaflow
 // on first run.
 func DevCompose() []byte { return devCompose }
 

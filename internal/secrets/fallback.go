@@ -11,7 +11,7 @@ type StaleReader interface {
 
 // fallbackCipher writes with one key and reads with several.
 //
-// Leoflow Lite encrypted every connection secret with a constant compiled into
+// Dexaflow Lite encrypted every connection secret with a constant compiled into
 // this repository, identical on every install on earth (#486). Moving to a
 // per-install key cannot orphan what the old one wrote: a rotation that leaves
 // existing credentials undecryptable is worse than the published key it

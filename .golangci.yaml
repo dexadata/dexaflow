@@ -1,5 +1,5 @@
 # .golangci.yaml
-# Lint configuration for Leoflow (golangci-lint v2 schema).
+# Lint configuration for Dexaflow (golangci-lint v2 schema).
 # Enforces Go Report Card A+ (ADR 0012) plus security and correctness checks (ADR 0014).
 version: "2"
 

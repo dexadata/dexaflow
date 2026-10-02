@@ -8,7 +8,7 @@ import (
 
 // Meta carries the DAG metadata a dbt manifest does not provide: identity,
 // version, image, ownership, schedule, and the granularity strategy. These come
-// from the Leoflow project config, not from dbt.
+// from the Dexaflow project config, not from dbt.
 type Meta struct {
 	// Warn, when set, receives advisories that are not build failures — passed
 	// through to Render. nil means say nothing (#1114).

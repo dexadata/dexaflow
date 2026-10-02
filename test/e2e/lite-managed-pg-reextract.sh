@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end gate for the managed-Postgres re-extract idempotency fix (#729).
 #
-# `leoflow lite --postgres managed` downloads a relocatable PostgreSQL under
+# `dexaflow lite --postgres managed` downloads a relocatable PostgreSQL under
 # ~/.dexaflow/postgres and extracts it. A re-run over an EXISTING install used to
 # break two ways:
 #   1. extractSymlink ended with os.Symlink, which fails EEXIST when the link

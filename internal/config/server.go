@@ -123,7 +123,7 @@ type ExecutorSection struct {
 	TaskNamespace string `mapstructure:"task_namespace"`
 	// Type selects the pod-path executor: "kubernetes" (default, pod-per-task) or
 	// "subprocess" (dev only, runs the agent on the host without isolation, used
-	// by `leoflow dev`).
+	// by `dexaflow lite`).
 	Type string `mapstructure:"type"`
 	// AgentPath is the leoflow-agent binary the subprocess executor runs (dev only).
 	AgentPath string `mapstructure:"agent_path"`
@@ -148,7 +148,7 @@ type ExecutorSection struct {
 	// TaskSecretName names a Kubernetes Secret mounted (read-only) into every task
 	// pod at TaskSecretMountPath. It lets a task read a credential that lives in
 	// the cluster's secret store (e.g. a GCP service-account key) referenced by a
-	// connection's key_path — so Leoflow never stores the key itself (ADR 0035).
+	// connection's key_path — so Dexaflow never stores the key itself (ADR 0035).
 	// Empty = no secret mounted.
 	TaskSecretName string `mapstructure:"task_secret_name"`
 	// TaskSecretMountPath is where TaskSecretName is mounted in the task pod.
@@ -275,12 +275,12 @@ func (e ExecutionSection) EffectiveMinIdle(dagMinIdle int) int {
 // UISection configures the embedded Airflow UI.
 type UISection struct {
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Leoflow"; `leoflow lite` sets it to mark the environment.
+	// falls back to "Dexaflow"; `dexaflow lite` sets it to mark the environment.
 	InstanceName string `mapstructure:"instance_name"`
 	// AutoRefreshIntervalSeconds is the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Zero (the default) falls back to api.DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `leoflow lite` sets it to 1s for a snappy inner
+	// (30s, production-safe). `dexaflow lite` sets it to 1s for a snappy inner
 	// loop so the SPA reflects state changes almost immediately during dev.
 	AutoRefreshIntervalSeconds int `mapstructure:"auto_refresh_interval_seconds"`
 	// Edition marks the running edition; "lite" shows the silver LITE badge and
@@ -291,7 +291,7 @@ type UISection struct {
 	// Workspace is the DAG project directory the Lite web editor edits (ADR 0025).
 	// Empty disables the editor (Production, or Lite without one).
 	Workspace string `mapstructure:"workspace"`
-	// MonacoDir is where the pinned Monaco bundle was fetched by `leoflow setup`;
+	// MonacoDir is where the pinned Monaco bundle was fetched by `dexaflow setup`;
 	// the editor page is served Monaco from it. Empty shows a setup hint.
 	MonacoDir string `mapstructure:"monaco_dir"`
 }
@@ -393,7 +393,7 @@ type AuthSection struct {
 	// in both modes.
 	OIDC OIDCSection `mapstructure:"oidc"`
 	// DevNoAuth disables authentication entirely, treating every request as an
-	// admin. It exists ONLY for `leoflow dev` (local, unsandboxed). It is false by
+	// admin. It exists ONLY for `dexaflow lite` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
 	// this in production (LEOFLOW_AUTH_DEV_NO_AUTH).
 	DevNoAuth bool `mapstructure:"dev_no_auth"`
@@ -469,7 +469,7 @@ type JWTSection struct {
 	// MaxLifetimeSeconds is the hard ceiling on how long a user session may be kept
 	// alive by transparent token renewal (aresta #5), measured since first login
 	// (the token's oiat claim). Past it, POST /api/v2/auth/token/renew is refused
-	// and the user must `leoflow auth login` again. The short TokenTTLSeconds still
+	// and the user must `dexaflow auth login` again. The short TokenTTLSeconds still
 	// bounds a stolen token independently; this only caps the total renewed
 	// lifetime, mirroring auth.max_attempt_credential_lifetime for agent tokens.
 	// Generous by default (24h) so a normal dev day never re-logs in mid-session; a
@@ -506,7 +506,7 @@ type OIDCSection struct {
 	// GroupsClaim is the ID-token claim carrying the user's IdP groups (default
 	// "groups"). Its values drive RoleMappings.
 	GroupsClaim string `mapstructure:"groups_claim"`
-	// RoleMappings maps an IdP group value to an existing Leoflow role name.
+	// RoleMappings maps an IdP group value to an existing Dexaflow role name.
 	// Default-DENY: a group with no mapping grants no role. Configure via a YAML
 	// config file only. The chart ships none today, so this map has no route
 	// through Helm (#1143).
@@ -526,7 +526,7 @@ type OIDCSection struct {
 	// TenantClaim selects which IdP claim identifies the tenant: "tid" (Entra) or
 	// "hd" (Google Workspace).
 	TenantClaim string `mapstructure:"tenant_claim"`
-	// TenantClaims maps a TenantClaim value to a Leoflow tenant name. A value not
+	// TenantClaims maps a TenantClaim value to a Dexaflow tenant name. A value not
 	// present here is rejected (403) — the login never falls back to "default".
 	//
 	// Decoded OUT-OF-BAND (mapstructure:"-"), not by viper: a Google Workspace
@@ -753,7 +753,7 @@ var serverDefaults = map[string]any{
 	"observability.otel.endpoint":        "localhost:4317",
 	"observability.log_level":            "info",
 	"observability.log_format":           "json",
-	"ui.instance_name":                   "Leoflow",
+	"ui.instance_name":                   "Dexaflow",
 	"ui.edition":                         "",
 	"ui.workspace":                       "",
 	"ui.monaco_dir":                      "",
@@ -761,7 +761,7 @@ var serverDefaults = map[string]any{
 	// falls back to api.DefaultUIAutoRefreshIntervalSeconds when ≤ 0): viper's
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
-	// was silently dropped, so `leoflow lite` (which exports the env var to
+	// was silently dropped, so `dexaflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
 	"ui.auto_refresh_interval_seconds": 0,
 	"auth.dev_no_auth":                 false,
@@ -1151,7 +1151,7 @@ func tenantPinHint(c *ServerConfig) string {
 		return ""
 	}
 	return ". The tenant pin decides whether any login can succeed: a claim value that is absent or not mapped is rejected with 403 (audited as tenant_not_allowed) and never falls back to the default tenant, so without it every SSO login fails. " +
-		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Leoflow tenant. " +
+		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Dexaflow tenant. " +
 		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by LEOFLOW_CONFIG; no LEOFLOW_AUTH_OIDC_* environment variable can carry it. " +
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
 }

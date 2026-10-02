@@ -37,7 +37,7 @@ func TestVersionCommandPrintsInfo(t *testing.T) {
 }
 
 // TestVersionFlagMatchesSubcommand pins #598: `leoflow --version` (flag) must
-// work and print exactly what `leoflow version` (subcommand) prints — the
+// work and print exactly what `dexaflow version` (subcommand) prints — the
 // companion binaries accept the --version flag, so the root CLI must too.
 func TestVersionFlagMatchesSubcommand(t *testing.T) {
 	flagOut, _, err := run(t, "--version")
@@ -148,7 +148,7 @@ func TestValidateRejectsBrokenDagPython(t *testing.T) {
 
 // TestValidateGracefulWithoutPython covers the fresh-install path: when no
 // Python interpreter is reachable (managed not yet installed via
-// `leoflow setup`, system python3 not on PATH), validate must still succeed
+// `dexaflow setup`, system python3 not on PATH), validate must still succeed
 // on a well-formed scaffold and surface a warning telling the user how to
 // enable the strict check — never silently passing without explanation.
 func TestValidateGracefulWithoutPython(t *testing.T) {
@@ -165,16 +165,16 @@ func TestValidateGracefulWithoutPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate with no python should still succeed on a good scaffold, got %v (%s)", err, stderr)
 	}
-	if !strings.Contains(stderr, "skipping dag.py syntax check") || !strings.Contains(stderr, "leoflow setup") {
-		t.Errorf("expected a warning naming the skip and pointing to `leoflow setup`, got: %q", stderr)
+	if !strings.Contains(stderr, "skipping dag.py syntax check") || !strings.Contains(stderr, "dexaflow setup") {
+		t.Errorf("expected a warning naming the skip and pointing to `dexaflow setup`, got: %q", stderr)
 	}
 }
 
 // TestCompileRecoversAfterConfigUpdate covers the EXACT user scenario from
-// the BYO-Python docs review: run `leoflow compile` before `leoflow setup`
+// the BYO-Python docs review: run `dexaflow compile` before `dexaflow setup`
 // (so the default parser_cmd has no module to load), then "fix the state"
 // by writing a working parser_cmd into ~/.leoflow/config.yaml (which is
-// what `leoflow setup` does in real life), then re-run compile WITHOUT any
+// what `dexaflow setup` does in real life), then re-run compile WITHOUT any
 // flag override and confirm it picks up the new config and succeeds.
 //
 // This is the file-state version of TestCompileFailThenRecoverIsClean
@@ -210,7 +210,7 @@ func TestCompileRecoversAfterConfigUpdate(t *testing.T) {
 		t.Fatalf("compile fail left a stale %s — recovery via config update would be poisoned", out)
 	}
 
-	// Simulate `leoflow setup` having just landed: overwrite the config with
+	// Simulate `dexaflow setup` having just landed: overwrite the config with
 	// a working parser_cmd. The next compile must pick up the new value
 	// (no in-process caching of the file content from the previous run).
 	goodParser := filepath.Join(t.TempDir(), "good-parser.sh")
@@ -244,13 +244,13 @@ func TestCompileRecoversAfterConfigUpdate(t *testing.T) {
 
 // TestCompileFailThenRecoverIsClean covers the out-of-order scenario surfaced
 // during the BYO-Python deploy-docs review: a CI user who runs
-// `leoflow compile` before `leoflow setup` (or before a working parser_cmd
+// `dexaflow compile` before `dexaflow setup` (or before a working parser_cmd
 // is in scope) sees a clean failure, and a subsequent run with the parser
 // correctly wired succeeds — no partial dag.json, no stale state from the
 // failed attempt that would poison the recovery.
 //
 // The contract here is "fail early, leave nothing behind". We do not test
-// `leoflow setup` end-to-end (that path provisions a managed Python on disk,
+// `dexaflow setup` end-to-end (that path provisions a managed Python on disk,
 // which a unit test cannot afford); we simulate "fixed parser_cmd" by
 // swapping the failing parser command for a working fake on the second run.
 func TestCompileFailThenRecoverIsClean(t *testing.T) {
@@ -274,7 +274,7 @@ func TestCompileFailThenRecoverIsClean(t *testing.T) {
 	}
 
 	// Step 2 — supply a working parser_cmd (the recovery the user would do by
-	// running `leoflow setup` in real life). compile must succeed cleanly.
+	// running `dexaflow setup` in real life). compile must succeed cleanly.
 	goodParser := filepath.Join(t.TempDir(), "good-parser.sh")
 	goodScript := "#!/usr/bin/env bash\n" +
 		"out=\"\"\n" +
@@ -493,7 +493,7 @@ func TestServerCommandPointsToBinary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
-	if !strings.Contains(out, "leoflow-server") {
-		t.Errorf("server output = %q, want mention of leoflow-server", out)
+	if !strings.Contains(out, "dexaflow-server") {
+		t.Errorf("server output = %q, want mention of dexaflow-server", out)
 	}
 }

@@ -5,11 +5,11 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: "Backup & restore"
 weight: 50
-description: "Back up and restore Leoflow state — metadata, secrets, and logs."
+description: "Back up and restore Dexaflow state — metadata, secrets, and logs."
 ---
 
 Lite ships two commands that snapshot and re-load the whole install in one
-portable file: `leoflow lite backup` and `leoflow lite restore`. Use them to
+portable file: `dexaflow lite backup` and `dexaflow lite restore`. Use them to
 migrate to another machine, survive an OS reinstall, or roll back a botched
 upgrade.
 
@@ -34,7 +34,7 @@ A backup archive (`leoflow-backup-<timestamp>.tar.gz`) contains:
 
 What is **not** included:
 
-- `~/.dexaflow/python/` (managed CPython) — re-fetched by `leoflow setup` on the
+- `~/.dexaflow/python/` (managed CPython) — re-fetched by `dexaflow setup` on the
   target machine if needed.
 - `~/.dexaflow/postgres/` (managed PG binaries) — same.
 - `~/.dexaflow/venv/` (parser/runtime venv) — re-installed lazily.
@@ -50,24 +50,24 @@ user committed locally but did not push.
 
 ```sh
 # Default: leoflow-backup-<UTC-timestamp>.tar.gz in the current directory.
-leoflow lite backup
+dexaflow lite backup
 
 # Custom output path:
-leoflow lite backup --output ~/snapshots/before-upgrade.tar.gz
+dexaflow lite backup --output ~/snapshots/before-upgrade.tar.gz
 ```
 
 `backup` requires Lite to be running (it talks to the managed Postgres via
-its socket to capture a consistent dump). Run `leoflow lite` in another
+its socket to capture a consistent dump). Run `dexaflow lite` in another
 terminal first.
 
 ## Restore
 
 ```sh
 # Refuses to overwrite an existing ~/.dexaflow install:
-leoflow lite restore --input ~/snapshots/before-upgrade.tar.gz
+dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz
 
-# Use --force to overwrite explicitly (e.g. after `leoflow uninstall`):
-leoflow lite restore --input ~/snapshots/before-upgrade.tar.gz --force
+# Use --force to overwrite explicitly (e.g. after `dexaflow uninstall`):
+dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz --force
 ```
 
 The restore command refuses, with a clear error, when:
@@ -88,29 +88,29 @@ opt-in.
 
 ```sh
 # On the source machine (Lite running):
-leoflow lite backup --output /tmp/snap.tar.gz
+dexaflow lite backup --output /tmp/snap.tar.gz
 scp /tmp/snap.tar.gz user@new-host:~/
 
 # On the new machine, after `curl ... install.sh`:
-leoflow setup           # provisions managed Python + binaries
-leoflow lite restore --input ~/snap.tar.gz
-leoflow lite            # boots with the restored datastore + workspace
+dexaflow setup           # provisions managed Python + binaries
+dexaflow lite restore --input ~/snap.tar.gz
+dexaflow lite            # boots with the restored datastore + workspace
 ```
 
 ## Worked example: roll back a botched upgrade
 
 ```sh
 # Before upgrading: take a snapshot.
-leoflow lite backup --output ~/snap-before-upgrade.tar.gz
+dexaflow lite backup --output ~/snap-before-upgrade.tar.gz
 
-# Upgrade (re-run install.sh, restart leoflow lite). Something breaks.
+# Upgrade (re-run install.sh, restart dexaflow lite). Something breaks.
 
 # Wipe and restore. --purge removes the new install completely; restore
 # refuses without it because ~/.dexaflow is non-empty after the upgrade.
-leoflow uninstall --purge
+dexaflow uninstall --purge
 # Re-install the previous version's binaries via install.sh's pin, then:
-leoflow lite restore --input ~/snap-before-upgrade.tar.gz
-leoflow lite
+dexaflow lite restore --input ~/snap-before-upgrade.tar.gz
+dexaflow lite
 ```
 
 ## Pro (Pro)

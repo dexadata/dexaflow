@@ -44,7 +44,7 @@ func TestLiteSubcommandsWired(t *testing.T) {
 	}
 	for name, found := range want {
 		if !found {
-			t.Errorf("`leoflow lite` should have a %q subcommand", name)
+			t.Errorf("`dexaflow lite` should have a %q subcommand", name)
 		}
 	}
 }

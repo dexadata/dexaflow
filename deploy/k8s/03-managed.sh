@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 03-managed.sh — Switch the Leoflow Pro install to managed datastores
+# 03-managed.sh — Switch the Dexaflow Pro install to managed datastores
 #                 (Cloud SQL for Postgres + Memorystore for Redis).
 #
 # This is the production-realistic path, run AFTER 00/01/02 (the in-cluster test

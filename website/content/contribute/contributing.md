@@ -5,7 +5,7 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Contributing
 weight: 10
-description: "How to contribute to Leoflow — workflow, standards, and the TDD gate."
+description: "How to contribute to Dexaflow — workflow, standards, and the TDD gate."
 ---
 
 This page is the **functional path** from zero to a merged pull request. Every
@@ -57,15 +57,15 @@ make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the gates you must pass before pushing
 ```
 
-For a full author→run loop without Kubernetes, `leoflow lite` runs an isolated,
+For a full author→run loop without Kubernetes, `dexaflow lite` runs an isolated,
 hot-reloading stack with the silver **Lite** edition badge (see
 [Operating modes](/concepts/editions/)):
 
 ```bash
 make dev-install            # put leoflow + server + agent on your PATH
-leoflow lite provision           # check/provision dev dependencies
-leoflow init dags/my_dag    # scaffold a project
-leoflow lite dags/my_dag     # hot-reload at http://localhost:8088 (Lite edition)
+dexaflow lite provision           # check/provision dev dependencies
+dexaflow init dags/my_dag    # scaffold a project
+dexaflow lite dags/my_dag     # hot-reload at http://localhost:8088 (Lite edition)
 ```
 
 ## 3. The quality bar (non-negotiable)
@@ -103,7 +103,7 @@ Comment on the issue to claim it before starting, so effort isn't duplicated.
 {{% tab header="Report a bug" %}}
 
 Open a [new issue](https://github.com/dexadata/leoflow/issues/new/choose) and
-pick **Bug report**. The form asks for repro steps, how you're running Leoflow
+pick **Bug report**. The form asks for repro steps, how you're running Dexaflow
 (Lite / Pro / Demo), and environment — fill it in fully so we can
 reproduce.
 {{% /tab %}}
@@ -188,7 +188,7 @@ for three business days.
 
 By contributing you agree your work is licensed under
 [Apache 2.0](https://github.com/dexadata/leoflow/blob/main/LICENSE). Thank you for
-helping make Leoflow better.
+helping make Dexaflow better.
 
 ## Editing the docs
 

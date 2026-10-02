@@ -93,7 +93,7 @@ func TestRunSetupDryRun(t *testing.T) {
 		t.Fatalf("setup --dry-run err = %v", err)
 	}
 	s := out.String()
-	for _, want := range []string{"leoflow setup", "platform", "executor", "dry run"} {
+	for _, want := range []string{"dexaflow setup", "platform", "executor", "dry run"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("dry-run output missing %q\n---\n%s", want, s)
 		}

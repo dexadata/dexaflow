@@ -9,7 +9,7 @@ weight: 350
 description: Oracle connection
 ---
 
-Connect a task to Oracle via a managed Leoflow Connection and `OracleHook`. The
+Connect a task to Oracle via a managed Dexaflow Connection and `OracleHook`. The
 conn_type is `oracle`. It is the standard host:port + login/password shape; the
 **Schema** field carries the service name / PDB.
 

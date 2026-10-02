@@ -11,7 +11,7 @@ description: Trino connection
 
 Connect a task to a [Trino](https://trino.io/) coordinator to run
 federated SQL across Hive, Iceberg, PostgreSQL, and other catalogs over a
-managed Leoflow Connection.
+managed Dexaflow Connection.
 
 ## Declare the provider
 

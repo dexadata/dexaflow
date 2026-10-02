@@ -9,7 +9,7 @@ weight: 290
 description: MongoDB connection
 ---
 
-Connect a task to MongoDB via a managed Leoflow Connection and `MongoHook`. The
+Connect a task to MongoDB via a managed Dexaflow Connection and `MongoHook`. The
 conn_type is `mongo`. It is the host:port + login/password shape; the **Schema**
 field carries the database (or auth database).
 

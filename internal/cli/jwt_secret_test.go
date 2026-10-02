@@ -14,7 +14,7 @@ func isLowerHex(r rune) bool {
 
 // TestGenerateJWTSecretLengthAndHex: the secret is 32 random bytes hex-encoded
 // (64 chars, all lowercase hex), and each call returns a new value — so
-// `leoflow setup` rotates it on every fresh install (#121).
+// `dexaflow setup` rotates it on every fresh install (#121).
 func TestGenerateJWTSecretLengthAndHex(t *testing.T) {
 	a, err := generateJWTSecret()
 	if err != nil {
@@ -46,7 +46,7 @@ func TestResolveLiteJWTSecretPrefersConfig(t *testing.T) {
 
 // TestResolveLiteJWTSecretLegacyFallback: an empty config (legacy install with
 // no `jwt_secret` field) falls back to the dev-only constant — so the upgrade
-// does not break existing setups; the user is told to run `leoflow setup` to
+// does not break existing setups; the user is told to run `dexaflow setup` to
 // rotate the secret per install.
 func TestResolveLiteJWTSecretLegacyFallback(t *testing.T) {
 	if got := resolveLiteJWTSecret(""); got != devJWTSecret {

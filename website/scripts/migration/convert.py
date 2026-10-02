@@ -1,5 +1,5 @@
 """
-Markdown -> Hugo/Docsy transforms for the Leoflow docs migration.
+Markdown -> Hugo/Docsy transforms for the Dexaflow docs migration.
 
 Pure text transforms, each independently testable:
   * strip_frontmatter / strip_h1  -> derive title, drop the source hero

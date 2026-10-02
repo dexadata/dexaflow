@@ -4,7 +4,7 @@ import "time"
 
 // ImportError is a DAG parse/compile failure surfaced as Airflow's "Import
 // Errors" banner on the home dashboard. It is keyed by Filename; a successful
-// re-import of the same file clears it. The `leoflow dev` watcher writes these
+// re-import of the same file clears it. The `dexaflow lite` watcher writes these
 // on a failed compile and removes them on the next good compile.
 type ImportError struct {
 	// ID is the stable identifier of the error record.

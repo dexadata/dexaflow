@@ -14,11 +14,11 @@ description: "Planning note: Airflow 3.X connector compatibility."
 > 3.X (3.2.x line, `main` as of 2026-06-02). Airflow 2.x is out of scope.**
 >
 > **Goal:**
-> - **Long-term:** Leoflow stays architecturally independent of Apache Airflow
+> - **Long-term:** Dexaflow stays architecturally independent of Apache Airflow
 >   (no Airflow at runtime, no Flask/SQLAlchemy/Pendulum stack in our pods).
 > - **Short-term:** existing Airflow 3.X DAGs that use connectors
 >   (`from airflow.providers.postgres.hooks.postgres import PostgresHook`) run
->   on Leoflow **unchanged**, so adoption costs nothing for current Airflow
+>   on Dexaflow **unchanged**, so adoption costs nothing for current Airflow
 >   users.
 >
 > Both goals are reachable simultaneously with a small Python shim. This
@@ -27,20 +27,20 @@ description: "Planning note: Airflow 3.X connector compatibility."
 ## The model in one picture — connection metadata and connector code never live together
 
 Connection **metadata** (host, login, password, extra JSON) is owned by the
-Leoflow control plane: created in the admin UI, encrypted at rest (ADR 0019).
+Dexaflow control plane: created in the admin UI, encrypted at rest (ADR 0019).
 Connector **code** (`PostgresHook.get_records()`, `GCSHook.upload()`, …) is
 owned by the user's DAG image: pip-installed from `apache-airflow-providers-<X>`
-declared in `dexaflow.yaml.dependencies`. Leoflow ships **no** provider code.
+declared in `dexaflow.yaml.dependencies`. Dexaflow ships **no** provider code.
 
 The two meet only at runtime, through the `AIRFLOW_CONN_<ID>` environment
-variable (ADR 0021 wire format) that the Leoflow agent stamps into the task
-process. The Leoflow runtime compat shim (ADR 0036) intercepts
+variable (ADR 0021 wire format) that the Dexaflow agent stamps into the task
+process. The Dexaflow runtime compat shim (ADR 0036) intercepts
 `BaseHook.get_connection()` and returns the canonical Connection. The upstream
 hook does the real work.
 
 ```text
 ┌─────────────────────────────────────────┐    ┌──────────────────────────────────┐
-│  Admin UI / API  (Leoflow control plane,│    │  dexaflow.yaml  (user, per-DAG)   │
+│  Admin UI / API  (Dexaflow control plane,│    │  dexaflow.yaml  (user, per-DAG)   │
 │                   Go — ADR 0014)        │    │                                  │
 │                                         │    │  dependencies:                   │
 │  POST /api/v2/connections               │    │    - apache-airflow-providers-   │
@@ -51,7 +51,7 @@ hook does the real work.
                      │                                            │
                      ▼                                            ▼
 ┌─────────────────────────────────────────┐    ┌──────────────────────────────────┐
-│  Leoflow DB (encrypted, ADR 0019)       │    │  DAG image (built once per push) │
+│  Dexaflow DB (encrypted, ADR 0019)       │    │  DAG image (built once per push) │
 │  connections:                           │    │  ─────────────                   │
 │    id="my_pg" type="postgres"           │    │  leoflow-base:py3.11             │
 │    password = AES-256-GCM(...)          │    │  + apache-airflow-providers-     │
@@ -61,7 +61,7 @@ hook does the real work.
                      │ on dispatch              │       ADR 0036)                  │
                      ▼                          └─────────────────┬────────────────┘
 ┌─────────────────────────────────────────┐                      │
-│  Leoflow agent (Go, in the pod or       │                      │
+│  Dexaflow agent (Go, in the pod or       │                      │
 │  subprocess host)                       │                      │
 │  - decrypts password + extra            │                      │
 │  - renders the URI:                     │                      │
@@ -88,7 +88,7 @@ hook does the real work.
                                       ▼ provider calls
                                       │ BaseHook.get_connection("my_pg")
                 ┌──────────────────────────────────────────────┐
-                │  Leoflow runtime compat shim  (ADR 0036)     │
+                │  Dexaflow runtime compat shim  (ADR 0036)     │
                 │  ──────────────────────────                  │
                 │  1. Read AIRFLOW_CONN_MY_PG env var          │
                 │  2. Parse URI → host/login/password/port/    │
@@ -117,13 +117,13 @@ hook does the real work.
 
 ### What works out of the box vs what needs a provider declared
 
-Two tiers of "Airflow imports that work on Leoflow" — they have very
+Two tiers of "Airflow imports that work on Dexaflow" — they have very
 different dependency contracts, and the cookbook pages must state this in
 the very first line.
 
 | Tier | Import | Needs a provider in `dexaflow.yaml.dependencies`? | Runtime path |
 |---|---|---|---|
-| **A. Native (already shipped)** | `from airflow.sdk import DAG, task` | **No** | Parser maps to `python` / `bash` task types; Leoflow runtime executes directly. |
+| **A. Native (already shipped)** | `from airflow.sdk import DAG, task` | **No** | Parser maps to `python` / `bash` task types; Dexaflow runtime executes directly. |
 | A. | `from airflow.providers.standard.operators.python import PythonOperator` | **No** | Same as above. |
 | A. | `from airflow.providers.standard.operators.bash import BashOperator` | **No** | Same. |
 | A. | `from airflow.providers.standard.operators.empty import EmptyOperator` | **No** | Same. |
@@ -142,20 +142,20 @@ recipe.
 Out of scope (still rejected at compile time per the closed-set policy):
 sensors, dynamic task mapping (`.expand` / `.partial`), `TaskGroup`,
 branching operators, untyped operators outside the standard / http
-providers. Parser fails fast with "not supported by Leoflow".
+providers. Parser fails fast with "not supported by Dexaflow".
 
 ## 0. TL;DR
 
-| | Strategy A — **Shim Airflow core minimally**, use upstream providers | Strategy B — Re-implement hooks natively in Leoflow | Strategy C — Allow user-installed `apache-airflow-providers-*` |
+| | Strategy A — **Shim Airflow core minimally**, use upstream providers | Strategy B — Re-implement hooks natively in Dexaflow | Strategy C — Allow user-installed `apache-airflow-providers-*` |
 |---|---|---|---|
-| **New code in Leoflow** | ~1,200 LOC Python | ~4,000 LOC Python (top-15 hooks + base) | 0 |
+| **New code in Dexaflow** | ~1,200 LOC Python | ~4,000 LOC Python (top-15 hooks + base) | 0 |
 | **Runtime image footprint** | +~50 MB (shim + per-provider SDK only) | +~10 MB (per-provider SDK only) | **+200-300 MB** (apache-airflow pulls Flask, SQLAlchemy, FAB, Pendulum, Alembic, Connexion, ~600 transitive deps) |
 | **User DAG `import airflow.providers.*` works?** | YES (default) | NO without an import rewriter — every DAG would have to change `from airflow.providers.postgres.hooks.postgres import PostgresHook` → `from leoflow_runtime.hooks.postgres import PostgresHook` | YES |
-| **Maintenance** | 1-2 engineer-days per Airflow minor (CI matrix re-runs upstream provider tests against the shim) | Ongoing per-hook drift with the underlying SDKs (boto3, google-cloud-storage, etc.) | None on Leoflow's side; full surface drift cost lands on the user |
+| **Maintenance** | 1-2 engineer-days per Airflow minor (CI matrix re-runs upstream provider tests against the shim) | Ongoing per-hook drift with the underlying SDKs (boto3, google-cloud-storage, etc.) | None on Dexaflow's side; full surface drift cost lands on the user |
 | **Conflict with ADR 0024** | No — natural extension of the same "shim, don't install" principle | No | YES — pulls the full Airflow control plane into a task pod that has no DB |
 | **Cold-start of Lite subprocess executor** | Negligible (shim is ~0.05 s import) | Negligible | **Catastrophic** — Airflow imports Flask + SQLAlchemy + Pendulum = 4-7 s on a laptop |
 
-**Recommendation: Strategy A.** ~1,200 LOC of pure Python unlocks ~80 upstream providers without touching ADR 0024's spirit. The Connection model in Leoflow already has **100% field-level parity** with Airflow 3.X's, so the gap is only "give user code a `BaseHook.get_connection()`-shaped door into the env vars the agent already injects."
+**Recommendation: Strategy A.** ~1,200 LOC of pure Python unlocks ~80 upstream providers without touching ADR 0024's spirit. The Connection model in Dexaflow already has **100% field-level parity** with Airflow 3.X's, so the gap is only "give user code a `BaseHook.get_connection()`-shaped door into the env vars the agent already injects."
 
 ## 1. Architecture in Airflow 3.X
 
@@ -203,7 +203,7 @@ The full public surface a Hook subclass uses from `BaseHook`:
 - `aget_connection(cls, conn_id) -> Connection`  *(async siblings call this)*
 - `get_hook(cls, conn_id, hook_params=None)`  *(used by sensors)*
 - `get_conn(self)`  *(abstract — each provider implements)*
-- `get_connection_form_widgets(cls)` + `get_ui_field_behaviour(cls)`  *(form metadata for the Airflow UI; Leoflow can return `{}`)*
+- `get_connection_form_widgets(cls)` + `get_ui_field_behaviour(cls)`  *(form metadata for the Airflow UI; Dexaflow can return `{}`)*
 - `log` property (from `LoggingMixin`)
 
 That's the entire seven-method surface to fake.
@@ -218,8 +218,8 @@ Despite the file's size, providers use a narrow subset:
 - `from_uri(uri)` class method (constructs from `AIRFLOW_CONN_<ID>` value)
 - `EXTRA_KEY = "__extra__"` class constant
 
-The other ~450 LOC handle Fernet roundtripping (not relevant — Leoflow encrypts
-elsewhere) and the metastore ORM (not relevant — Leoflow's metastore is Go).
+The other ~450 LOC handle Fernet roundtripping (not relevant — Dexaflow encrypts
+elsewhere) and the metastore ORM (not relevant — Dexaflow's metastore is Go).
 
 ### 1.4 Connection resolution chain
 
@@ -234,9 +234,9 @@ elsewhere) and the metastore ORM (not relevant — Leoflow's metastore is Go).
 
 The default backend chain in 3.x starts with the
 `EnvironmentVariablesBackend`, which reads exactly the `AIRFLOW_CONN_<ID>`
-env var Leoflow's agent already produces (`internal/agent/runner.go:170`).
+env var Dexaflow's agent already produces (`internal/agent/runner.go:170`).
 
-**Implication:** Leoflow's shim can skip the entire backend chain and read
+**Implication:** Dexaflow's shim can skip the entire backend chain and read
 the env var directly. Strictly less code, strictly more deterministic.
 
 ### 1.5 Provider package layout in 3.x
@@ -307,7 +307,7 @@ into a **runtime shim** that provides:
 | `airflow.sdk.definitions.connection.Connection` | ~400 | Re-implement `from_uri` / `get_uri` / `__extra__` handling. Cannot shortcut: every DB hook calls `conn.get_uri()` for SQLAlchemy. |
 | `airflow.sdk.definitions.variable.Variable` | ~80 | `get/set` against `AIRFLOW_VAR_*` env. |
 | `airflow.sdk.exceptions` | ~40 | `AirflowException`, `AirflowNotFoundException`, `AirflowRuntimeError`, `ErrorType` enum, `AirflowOptionalProviderFeatureException`. |
-| `airflow.sdk.log` | ~30 | `mask_secret` (Leoflow already masks in the UI; can be a no-op for the agent's purposes). |
+| `airflow.sdk.log` | ~30 | `mask_secret` (Dexaflow already masks in the UI; can be a no-op for the agent's purposes). |
 | `airflow.sdk.execution_time.context` | ~150 | `_get_connection`, `_async_get_connection`, `_get_variable` reading from env + a worker-local cache. |
 | `airflow.sdk._shared.module_loading` | ~20 | `import_string` (wraps stdlib `importlib`). |
 | `airflow.sdk.definitions._internal.logging_mixin.LoggingMixin` | ~25 | Wraps `logging.getLogger(self.__class__.__name__)`. |
@@ -353,7 +353,7 @@ runtime shim is a deliberate, principled scope expansion of the same idea
 
 ### Strategy B — Re-implement hooks natively in `leoflow_runtime.hooks.*`
 
-Estimated LOC for native re-implementations of the top-15 (Leoflow-flavored,
+Estimated LOC for native re-implementations of the top-15 (Dexaflow-flavored,
 no Airflow surface):
 
 | Hook | Native LOC estimate | Saved vs. Airflow |
@@ -414,12 +414,12 @@ support; never the default path.
 
 ## 4. Connection model gap (field-by-field)
 
-Already 100% parity. The Leoflow Connection model
+Already 100% parity. The Dexaflow Connection model
 (`internal/domain/connection.go`) and the AIRFLOW_CONN URI renderer
 (`internal/storage/conn_uri.go:40`) cover every field a 3.x `Connection`
 exposes:
 
-| Field | Airflow 3.X `Connection` | Leoflow `domain.Connection` | Status |
+| Field | Airflow 3.X `Connection` | Dexaflow `domain.Connection` | Status |
 |---|---|---|---|
 | `conn_id` | `str` | `ConnID string` | PARITY |
 | `conn_type` | `str \| None` | `ConnType string` | PARITY |
@@ -433,7 +433,7 @@ exposes:
 | `EXTRA_KEY = "__extra__"` | URI carries extra in `?__extra__=` | `internal/storage/conn_uri.go:40` emits exactly this | PARITY |
 
 **URI form** `<conn_type>://<login>:<password>@<host>:<port>/<schema>?__extra__=<json>`
-— Leoflow already renders this byte-for-byte. The only edge case handled:
+— Dexaflow already renders this byte-for-byte. The only edge case handled:
 `sqlite:///` triple-slash idempotency (`conn_uri.go:31-35`).
 
 **Gap on the model side: zero.** The Connection is feature-complete for
@@ -443,7 +443,7 @@ Once a `BaseHook.get_connection()` exists, every Airflow-style hook works.
 
 ## 5. Recommendation
 
-### Pick Strategy A as the default. Use Strategy B as a targeted overlay for the 5 hooks where Leoflow-native ergonomics matter.
+### Pick Strategy A as the default. Use Strategy B as a targeted overlay for the 5 hooks where Dexaflow-native ergonomics matter.
 
 **Why:**
 
@@ -453,11 +453,11 @@ Once a `BaseHook.get_connection()` exists, every Airflow-style hook works.
    reversal.
 2. Field-level parity on `Connection` is already 100%. The only missing
    piece is a `BaseHook` class wired to the existing `AIRFLOW_CONN_*` env-var
-   delivery — which Leoflow's agent (`internal/agent/runner.go:170`) already
+   delivery — which Dexaflow's agent (`internal/agent/runner.go:170`) already
    produces.
 3. ~1,200-1,500 LOC of Python shim unlocks the long tail (~80 providers).
    Re-implementing all 80 natively would be 15k+ LOC and nobody on
-   Leoflow's roadmap wants to maintain that.
+   Dexaflow's roadmap wants to maintain that.
 4. The 3.x design — secrets backends, no Fernet in the SDK, attrs-based
    dataclasses — is dramatically more shimmable than 2.x's `airflow.models`
    jungle. **The window to do this cheaply is now**; only 3.x as the cut
@@ -488,7 +488,7 @@ Once a `BaseHook.get_connection()` exists, every Airflow-style hook works.
   `apache-airflow-providers-{postgres,sqlite,redis,http}` against the shim
   and run their unit tests. **This is the regression gate.**
 
-**Phase A.1 — The 80/20 cut.** Ship official Leoflow support
+**Phase A.1 — The 80/20 cut.** Ship official Dexaflow support
 (CI matrix + cookbook page + connection-test DAG, matching the precedent set
 by the prior connector-rigor work) for these **five hooks**:
 
@@ -496,7 +496,7 @@ by the prior connector-rigor work) for these **five hooks**:
    full-stop.
 2. **http** — REST APIs, webhooks; the lingua franca of integration.
 3. **sqlite** — 51 LOC upstream, almost free; great for tutorials.
-4. **redis** — 162 LOC, ~zero risk; already a Leoflow infra primitive.
+4. **redis** — 162 LOC, ~zero risk; already a Dexaflow infra primitive.
 5. **mysql** — Postgres' counterpart; very common.
 
 These five cover the majority of "I want to migrate my Airflow DAG" cases
@@ -514,7 +514,7 @@ via `airflow_compat: true`.
 
 **Phase B (later, optional overlay).** For the 5 hooks in A.1 *only*, ship
 a native `leoflow_runtime.hooks.postgres.PostgresHook` that subclasses the
-upstream PostgresHook by composition. This gives Leoflow-native ergonomics
+upstream PostgresHook by composition. This gives Dexaflow-native ergonomics
 (better error messages, structured logging into our lifecycle stream)
 while still satisfying `isinstance(h, PostgresHook)` for DAG code.
 **Total new LOC for B: ~500.** Skip this until A is in production for 2
@@ -524,7 +524,7 @@ releases.
 
 1. **Airflow provider drift.** A minor release renames
    `providers.common.compat.sdk`. *Mitigation:* CI matrix on every Airflow
-   minor; pin the supported Airflow line per Leoflow release (e.g. Leoflow
+   minor; pin the supported Airflow line per Dexaflow release (e.g. Dexaflow
    0.2 supports Airflow providers compatible with `apache-airflow~=3.2`,
    0.3 bumps to 3.3). Document the support matrix.
 2. **License.** All providers are Apache 2.0 — re-distributing `DbApiHook`
@@ -538,11 +538,11 @@ releases.
 4. **Async surface.** Async hooks (`aget_connection`, `HttpAsyncHook`) use
    `sync_to_async` from `asgiref` and `asyncio`. The shim must stub
    `_async_get_connection`. Trivial — already shown in 3.x source.
-5. **Connection encryption mismatch.** Leoflow encrypts `password` at rest;
+5. **Connection encryption mismatch.** Dexaflow encrypts `password` at rest;
    Airflow 3.x SDK does not. **Zero conflict** — encryption is metastore-
    side. We decrypt before stamping `AIRFLOW_CONN_*` (already the case at
    `internal/agent/runner.go:170`).
-6. **Variable scope.** Leoflow Variables are plaintext today. The shim's
+6. **Variable scope.** Dexaflow Variables are plaintext today. The shim's
    `Variable.get()` will read `AIRFLOW_VAR_<KEY>` which the agent already
    emits (`internal/agent/runner.go:163`) — no behavior change required.
 
@@ -573,17 +573,17 @@ Not blockers for this study, but listed so they're explicit:
    explicit)? Strong lean: `airflow.*` for compatibility, but only on
    `sys.path` when `airflow_compat: true`. This avoids polluting non-
    compat builds.
-2. **Versioned support matrix.** Leoflow 0.2 supports providers from
+2. **Versioned support matrix.** Dexaflow 0.2 supports providers from
    Airflow 3.2; 0.3 from 3.3. Or do we pick a single "supported Airflow
-   range" per Leoflow release and document it?
+   range" per Dexaflow release and document it?
 3. **Test isolation.** Should the CI matrix run *upstream* provider test
    suites (slow, large, real network) or only a curated subset of "smoke"
    tests we write ourselves?
 4. **Error surface.** When an unsupported provider's hook raises an
    internal-looking error (e.g. `AirflowOptionalProviderFeatureException`),
-   do we re-raise as a Leoflow-branded error or let it bubble?
+   do we re-raise as a Dexaflow-branded error or let it bubble?
 
-## 7. Files this study referenced (Leoflow side)
+## 7. Files this study referenced (Dexaflow side)
 
 - Parser shim: `parser/leoflow_parser/_shim/airflow/_core.py`,
   `parser/leoflow_parser/_shim/airflow/sdk/__init__.py`

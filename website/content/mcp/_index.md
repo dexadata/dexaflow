@@ -2,14 +2,14 @@
 title: MCP server
 linkTitle: MCP
 weight: 25
-description: The Leoflow MCP server — let an AI agent read, reason about, and diagnose your DAGs, runs, and logs over the Model Context Protocol.
+description: The Dexaflow MCP server — let an AI agent read, reason about, and diagnose your DAGs, runs, and logs over the Model Context Protocol.
 cascade: { type: docs }
 menu:
   main:
     weight: 25
 ---
 
-`leoflow-mcp` is Leoflow's **Model Context Protocol** server
+`leoflow-mcp` is Dexaflow's **Model Context Protocol** server
 ([ADR 0050](/project/adrs/0050-mcp-server/)). Point an LLM agent — Claude Desktop,
 Claude Code, or any MCP client — at your control plane and it can read and reason
 about your DAGs, runs, task instances, and logs: *"which task failed in last
@@ -74,7 +74,7 @@ transports.
 
 ```bash
 export DEXAFLOW_SERVER_URL=http://localhost:8088     # your Lite control plane
-export DEXAFLOW_TOKEN="$(leoflow auth create-token \
+export DEXAFLOW_TOKEN="$(dexaflow auth create-token \
   --server http://localhost:8088 \
   --username admin@leoflow.local --password <your-admin-password>)"
 leoflow-mcp                                          # speaks MCP over stdin/stdout
@@ -111,11 +111,11 @@ never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mo
 
 ## Auth: getting a token
 
-The MCP **passes the caller's Leoflow JWT through** to `/api/v2` and never mints one
+The MCP **passes the caller's Dexaflow JWT through** to `/api/v2` and never mints one
 (ADR 0050 D9). Obtain one from the control plane with your admin login:
 
 ```bash
-leoflow auth create-token \
+dexaflow auth create-token \
   --server http://localhost:8088 \
   --username admin@leoflow.local \
   --password <your-admin-password>
@@ -165,7 +165,7 @@ Add `leoflow-mcp` to your client's MCP server config. For **Claude Desktop**
       "command": "leoflow-mcp",
       "env": {
         "DEXAFLOW_SERVER_URL": "http://localhost:8088",
-        "DEXAFLOW_TOKEN": "<paste a JWT from `leoflow auth create-token`>"
+        "DEXAFLOW_TOKEN": "<paste a JWT from `dexaflow auth create-token`>"
       }
     }
   }
@@ -173,7 +173,7 @@ Add `leoflow-mcp` to your client's MCP server config. For **Claude Desktop**
 ```
 
 If `leoflow-mcp` is not on the launcher's `PATH`, use its absolute path as
-`command` (e.g. `~/.dexaflow/bin/leoflow-mcp`). Restart the client, and Leoflow's
+`command` (e.g. `~/.dexaflow/bin/leoflow-mcp`). Restart the client, and Dexaflow's
 tools and resources appear. Start with *"list my DAGs"* or *"diagnose the latest
 failed run of `<dag_id>`"*.
 

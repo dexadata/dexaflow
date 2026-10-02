@@ -10,7 +10,7 @@ description: A worked 1 GB ETL that shares data between tasks through the per-ru
 ---
 
 A worked, **measured** end-to-end pipeline: generate ~1 GB, process it with DuckDB,
-and load the result into an external Postgres — all on `leoflow lite` running real
+and load the result into an external Postgres — all on `dexaflow lite` running real
 pods on a single-node k3d cluster (a "pseudo-cluster" on a laptop). Every number
 below was measured on that setup.
 
@@ -166,7 +166,7 @@ ADR 0020 has the reasoning.
 
 ## The external load uses a managed Connection
 
-The `load` target is a **Leoflow Connection** (`etl_target`), created in
+The `load` target is a **Dexaflow Connection** (`etl_target`), created in
 Admin → Connections — encrypted at rest (ADR 0019) and **injected into the pod as
 `AIRFLOW_CONN_ETL_TARGET` over an authenticated gRPC pull** (ADR 0021), so the
 secret never appears in the pod spec. The task log confirms it:

@@ -561,7 +561,7 @@ CreateUser provisions a new account in the tenant and grants it the given set of
 
 The insert and the role grants run in a single transaction, so a failure in any grant rolls the user insert back. Without that atomicity a failed grant would leave an account the \(tenant\_id, email\) UNIQUE makes impossible to recreate — every retry would 409 forever with no recovery path.
 
-This backs \`leoflow auth create\-user\` \(ADR 0008\) and is purely additive: it does not touch the bootstrap/reconcile path.
+This backs \`dexaflow auth create\-user\` \(ADR 0008\) and is purely additive: it does not touch the bootstrap/reconcile path.
 
 <a name="Repository.DagStats"></a>
 ### func \(\*Repository\) [DagStats](<https://github.com/dexadata/leoflow/blob/main/internal/storage/dashboard_stats.go#L16>)
@@ -651,7 +651,7 @@ FindUserByLogin loads a user and its bcrypt hash for authentication.
 func (r *Repository) FindUserByOIDCSubject(ctx context.Context, provider, subject string) (*auth.User, bool, error)
 ```
 
-FindUserByOIDCSubject resolves an OIDC identity to a Leoflow user by its immutable \(provider, subject\) pair — the trusted link key for a returning SSO login. Like FindUserByID it loads the current tenant, roles, and permissions plus the active flag, so the caller reconstructs the same principal the credential path would. A pair matching no row yields auth.ErrUserNotFound \(the signal to consider just\-in\-time provisioning\); any other failure is returned as\-is so the caller can fail closed.
+FindUserByOIDCSubject resolves an OIDC identity to a Dexaflow user by its immutable \(provider, subject\) pair — the trusted link key for a returning SSO login. Like FindUserByID it loads the current tenant, roles, and permissions plus the active flag, so the caller reconstructs the same principal the credential path would. A pair matching no row yields auth.ErrUserNotFound \(the signal to consider just\-in\-time provisioning\); any other failure is returned as\-is so the caller can fail closed.
 
 <a name="Repository.GetConnection"></a>
 ### func \(\*Repository\) [GetConnection](<https://github.com/dexadata/leoflow/blob/main/internal/storage/repository.go#L1798>)
@@ -714,7 +714,7 @@ GetVariable returns one variable by key, or ErrNotFound.
 func (r *Repository) HistoricalMetrics(ctx context.Context, tenant string, since, until time.Time) (domain.HistoricalMetrics, error)
 ```
 
-HistoricalMetrics returns run\- and task\-instance state counts for runs whose logical date falls within \[since, until\], keyed by Leoflow state name.
+HistoricalMetrics returns run\- and task\-instance state counts for runs whose logical date falls within \[since, until\], keyed by Dexaflow state name.
 
 <a name="Repository.LatestRunsForDags"></a>
 ### func \(\*Repository\) [LatestRunsForDags](<https://github.com/dexadata/leoflow/blob/main/internal/storage/repository.go#L840>)
@@ -1055,7 +1055,7 @@ SetTaskInstanceState sets a task instance's state directly, backing the UI's "ma
 func (r *Repository) SetUserPassword(ctx context.Context, tenant, email, hash string) (bool, error)
 ```
 
-SetUserPassword sets a user's bcrypt hash by email, returning whether a user was updated \(false when no such user exists\). Used by \`leoflow lite reset\-password\`.
+SetUserPassword sets a user's bcrypt hash by email, returning whether a user was updated \(false when no such user exists\). Used by \`dexaflow lite reset\-password\`.
 
 <a name="Repository.SetVariable"></a>
 ### func \(\*Repository\) [SetVariable](<https://github.com/dexadata/leoflow/blob/main/internal/storage/repository.go#L1642>)

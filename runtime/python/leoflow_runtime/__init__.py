@@ -1,4 +1,4 @@
-"""Leoflow task runtime: the helper that runs inside every task container.
+"""Dexaflow task runtime: the helper that runs inside every task container.
 
 It runs the user's Python callable, captures its return value as an XCom, and
 exposes upstream XCom inputs. The leoflow-agent invokes ``python -m

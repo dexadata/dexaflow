@@ -1,4 +1,4 @@
-# Leoflow Helm values for evaluating the chart end-to-end on a single
+# Dexaflow Helm values for evaluating the chart end-to-end on a single
 # Kubernetes cluster, using PLAIN OFFICIAL postgres + redis images as
 # ephemeral datastores (kubectl apply, no Bitnami chart).
 #

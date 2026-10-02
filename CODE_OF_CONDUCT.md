@@ -30,5 +30,5 @@ time here.
 
 *This replaced Contributor Covenant 2.1, whose enforcement ladder and "community
 leaders" described a governance structure that does not exist here. Shorter and
-true beats longer and borrowed. If Leoflow ever joins a foundation that requires
+true beats longer and borrowed. If Dexaflow ever joins a foundation that requires
 the Covenant, it comes back.*

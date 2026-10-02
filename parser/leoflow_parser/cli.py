@@ -1,4 +1,4 @@
-"""Command-line entry point for the Leoflow DAG parser."""
+"""Command-line entry point for the Dexaflow DAG parser."""
 from __future__ import annotations
 
 import argparse

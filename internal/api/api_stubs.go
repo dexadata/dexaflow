@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// The public /api/v2 endpoints below back Airflow features Leoflow does not
+// The public /api/v2 endpoints below back Airflow features Dexaflow does not
 // implement yet (tags, warnings, import errors, assets, plugins,
 // human-in-the-loop). The 3.2.1 UI polls them on the DAG list and detail
 // screens; a 404 surfaces as a broken detail view and console errors. Each
@@ -39,10 +39,10 @@ func registerAPIStubs(r gin.IRouter) {
 	// The connection form's "create default connections" action: the SPA POSTs
 	// here when the Connections area opens and its generated client handles only
 	// 401/403 — an unhandled 404 crashed the React view, so the connector config
-	// page "wouldn't open". Leoflow seeds no legacy default connections, so this
+	// page "wouldn't open". Dexaflow seeds no legacy default connections, so this
 	// is a no-op that returns the empty envelope the form reads (`.connections`).
 	r.POST("/api/v2/connections/defaults", apiEmptyCollection("connections"))
-	// The Config screen reads {sections:[]} (not a collection envelope). Leoflow
+	// The Config screen reads {sections:[]} (not a collection envelope). Dexaflow
 	// does not expose the Airflow config, so render an empty (graceful) one.
 	r.GET("/api/v2/config", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"sections": []any{}})

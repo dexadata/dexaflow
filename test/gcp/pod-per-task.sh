@@ -3,7 +3,7 @@
 # pod-per-task: drive rising concurrency until something saturates, and say
 # WHICH thing saturated.
 #
-# WHY. The local soak runs `leoflow lite --executor subprocess`, so the entire
+# WHY. The local soak runs `dexaflow lite --executor subprocess`, so the entire
 # Kubernetes executor path is unmeasured: pod-per-task, image pulls, the pod
 # informer, the reaper acting on pods. That is the path production runs.
 #

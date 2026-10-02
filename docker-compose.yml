@@ -1,4 +1,4 @@
-# Local development dependencies for the Leoflow control plane.
+# Local development dependencies for the Dexaflow control plane.
 #
 # Brings up Postgres and Redis matching the server's default configuration:
 #   database.url = postgres://leoflow:leoflow@localhost:5432/leoflow

@@ -206,7 +206,7 @@ func (d oidcDeps) readState(c *gin.Context) (oidc.StatePayload, bool) {
 	return payload, true
 }
 
-// resolveUser turns a verified identity into a Leoflow user, applying the
+// resolveUser turns a verified identity into a Dexaflow user, applying the
 // group→role mapping (with the default_role fallback), the JIT policy, and
 // fail-closed role validation. On any rejection it audits and answers through
 // denyWithCause, returning errRejected so the caller stops.
@@ -433,7 +433,7 @@ const loginPageWithSSOError = "/api/v2/auth/login?" + ssoErrorParam + "=" + ssoE
 
 // The two sso_error markers. They carry no reason, only which of the two things
 // happened, because the words the page needs are different: a refusal is the
-// deployment saying no and needs an administrator, a failure is Leoflow breaking
+// deployment saying no and needs an administrator, a failure is Dexaflow breaking
 // and needs a retry. Telling a user to go find an administrator for a transient
 // mint error sends them somewhere no setting will help.
 const (
@@ -449,7 +449,7 @@ const (
 const loginPageWithSSOServerFailure = "/api/v2/auth/login?" + ssoErrorParam + "=" + ssoErrorServer
 
 // abortSSOServerFailure logs the cause and returns the browser to the login page
-// saying Leoflow broke. The cause never reaches the browser, for the same reason
+// saying Dexaflow broke. The cause never reaches the browser, for the same reason
 // a denial's does not, and the log line is what an operator reads.
 func abortSSOServerFailure(c *gin.Context, logger *slog.Logger, what string, cause error) {
 	if logger != nil {

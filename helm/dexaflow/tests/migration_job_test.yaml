@@ -246,7 +246,7 @@ tests:
   # #1056: the Job is the FIRST workload the chart runs and was the only one
   # ignoring the pod-placement values every other workload honours. On a cluster
   # with a tainted or dedicated pool — the operator set `tolerations` precisely
-  # so Leoflow lands there — the pre-install hook is unschedulable: the pod sits
+  # so Dexaflow lands there — the pre-install hook is unschedulable: the pod sits
   # Pending, Helm waits out the hook timeout, and the install fails with a
   # message that says nothing about scheduling.
   - it: inherits nodeSelector, tolerations and affinity from the top-level values

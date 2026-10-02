@@ -14,7 +14,7 @@ import (
 type PodSecurity struct {
 	// RunAsNonRoot refuses to start a task container whose image resolves to
 	// UID 0. It completes the `restricted` set and is on by default: the images
-	// Leoflow ships now satisfy it. runtime/Dockerfile runs as the numeric
+	// Dexaflow ships now satisfy it. runtime/Dockerfile runs as the numeric
 	// non-root UID 65532 (`USER 65532:65532` — a name the kubelet cannot resolve
 	// is what previously blocked this), and every examples/*/image inherits it.
 	// When set, BuildPod also stamps a pod-level fsGroup (nonRootFSGroup) so the
@@ -121,7 +121,7 @@ type Request struct {
 	// TaskSecretName, when set, is a Kubernetes Secret mounted read-only into the
 	// task pod at TaskSecretMountPath. It carries a credential a task references by
 	// path (e.g. a GCP service-account key via the connection's key_path), keeping
-	// the key in the cluster's secret store rather than in Leoflow (ADR 0035).
+	// the key in the cluster's secret store rather than in Dexaflow (ADR 0035).
 	TaskSecretName      string
 	TaskSecretMountPath string
 

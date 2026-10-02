@@ -1,5 +1,5 @@
 ####################################################################################
-# Leoflow documentation site — Hugo + Docsy (CNCF/enterprise-grade toolchain).
+# Dexaflow documentation site — Hugo + Docsy (CNCF/enterprise-grade toolchain).
 #
 # This is the PHASE 0 scaffold of the MkDocs-Material -> Hugo+Docsy migration. It is
 # a PARALLEL track: the live Material+mike site under ../docs, ../mkdocs.yml and the
@@ -10,7 +10,7 @@
 ####################################################################################
 
 baseURL = "https://dexaflow.dexadata.ai/"
-title = "Leoflow"
+title = "Dexaflow"
 
 # GitHub Pages serves this project site under the /leoflow/ SUBPATH. Every internal
 # URL — page links, images, static assets (the Scalar page, screenshots), the
@@ -175,7 +175,7 @@ enableGitInfo = true
   [languages.en]
     label = "English"
     weight = 1
-    title = "Leoflow"
+    title = "Dexaflow"
     [languages.en.params]
       description = "GitOps-first, container-native workflow orchestrator with an Airflow-compatible UI and REST API — a Go control plane instead of Python's."
 

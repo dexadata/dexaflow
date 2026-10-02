@@ -13,7 +13,7 @@ Remove a DAG (and all its history) from the Lite registry without touching the s
 
 forget hard-deletes a DAG from the Lite registry. The dag.py and dexaflow.yaml on disk are untouched — only the database rows go. FK cascade handles versions, runs, task instances, and XCom. The watcher will re-discover the project on the next tick if its files are still present, so use this when you want to deregister AND plan to delete the source files yourself, OR when you want a clean re-registration after a manual database edit.
 
-Run it as the same user as `leoflow lite` (no sudo). The Lite Postgres must be reachable.
+Run it as the same user as `dexaflow lite` (no sudo). The Lite Postgres must be reachable.
 
 ```
 dexaflow lite forget [dag_id] [flags]
@@ -37,5 +37,5 @@ dexaflow lite forget [dag_id] [flags]
 
 ### SEE ALSO
 
-* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Leoflow Lite locally with hot reload.
+* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Dexaflow Lite locally with hot reload.
 

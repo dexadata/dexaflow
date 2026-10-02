@@ -6,8 +6,8 @@ import (
 )
 
 // TestForgetCommandArgs pins the CLI's input validation: exactly one dag_id
-// without --all, no positional with --all. Without this, `leoflow lite forget`
-// (no args) would silently no-op and `leoflow lite forget --all foo` would
+// without --all, no positional with --all. Without this, `dexaflow lite forget`
+// (no args) would silently no-op and `dexaflow lite forget --all foo` would
 // confuse the operator about whether foo was deregistered.
 func TestForgetCommandArgs(t *testing.T) {
 	cases := []struct {

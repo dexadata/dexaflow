@@ -9,7 +9,7 @@ import (
 
 // config.Load overlays LEOFLOW_* environment variables on top of the file, so
 // reading the key through it and writing the result back persists whatever the
-// operator happened to have exported. That turns `leoflow lite reset-password`
+// operator happened to have exported. That turns `dexaflow lite reset-password`
 // into a command that destroys the only copy of the key decrypting every stored
 // connection. This repo's own e2e scripts export LEOFLOW_SECRET_KEY.
 //

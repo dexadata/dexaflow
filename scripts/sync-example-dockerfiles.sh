@@ -2,7 +2,7 @@
 # sync-example-dockerfiles.sh — keep each examples/<dag>/Dockerfile aligned with
 # its dexaflow.yaml (#318). Idempotent: re-running on an in-sync tree is a no-op.
 #
-# The generated Dockerfile follows the same template `leoflow lite` uses
+# The generated Dockerfile follows the same template `dexaflow lite` uses
 # in-process (internal/cli/dev.go devDockerfile): FROM the matching task base,
 # pip install declared dependencies, COPY the DAG source, set PYTHONPATH.
 #
@@ -12,7 +12,7 @@
 # the old shape is a gate certifying the bug.
 #
 # These examples FROM the LOCAL base `leoflow-base:py<ver>` on purpose: they are
-# the Lite learning track — `leoflow lite examples/<x>` builds that base locally,
+# the Lite learning track — `dexaflow lite examples/<x>` builds that base locally,
 # so the examples build and run offline, no registry needed. The real Pro pipeline
 # is yaml-driven and FROMs the PUBLISHED base ghcr.io/dexadata/dexaflow-runtime
 # (internal/cli/compile_build.go resolveBaseImage) so it builds anywhere — that is
@@ -73,7 +73,7 @@ gen_dockerfile() {
   fi
 
   cat <<EOF
-# Standard DAG image (#318). Built by 'leoflow compile --build' or by hand:
+# Standard DAG image (#318). Built by 'dexaflow compile --build' or by hand:
 #   docker build -t my-registry/$(basename "$(dirname "$yaml")"):<tag> .
 # Synthesized by scripts/sync-example-dockerfiles.sh from dexaflow.yaml; do
 # not hand-edit — re-run the script after changing python_version or

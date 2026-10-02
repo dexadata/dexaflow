@@ -193,7 +193,7 @@ func TestAuthenticateFailsClosedOnStoreError(t *testing.T) {
 }
 
 func TestAuthenticateFallsBackToClaimsForMintedToken(t *testing.T) {
-	// A directly-minted token (leoflow dev / in-process trusted caller) has no
+	// A directly-minted token (dexaflow lite / in-process trusted caller) has no
 	// backing user row. Its signed claims stay the source of truth so the dev
 	// inner loop keeps working even when the control plane enforces real auth.
 	const secret = "minted-secret"

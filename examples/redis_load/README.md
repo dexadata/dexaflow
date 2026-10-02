@@ -51,7 +51,7 @@ Save. The UI never shows the password again — it is encrypted at rest.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `redis_load` → **Trigger DAG**.
