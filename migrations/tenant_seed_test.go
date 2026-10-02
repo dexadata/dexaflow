@@ -11,8 +11,7 @@ import (
 
 // TestDefaultIsTheOnlyTenantAnyMigrationCreates pins the sentence the boot-time
 // OIDC name warning tells operators: map your tenant_claims values to "default",
-// because no migration creates another tenant (the service API of #1283 is the
-// only other way one comes to exist, and only when an operator calls it).
+// because nothing in this project creates another tenant.
 //
 // That remedy is a claim about these files, and it is the kind of claim a later
 // migration can falsify without any test noticing: adding a second seeded tenant

@@ -88,7 +88,9 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 // PUT /api/v2/service/tenants/{tenant}/users/{subject} with
 // {"email": "...", "roles": [...]}: it makes sure a passwordless user linked
 // to the trusted issuer's subject exists with exactly those roles, so the
-// issuer's handoff (#1284) can sign them in. It needs a trusted issuer.
+// issuer's handoff (#1284) can sign them in. It needs a trusted issuer. A
+// subject linked in another tenant and an email already used by another user
+// of the tenant (for example a password account) are both 409.
 func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if deps.TrustedIssuer == nil {
@@ -115,7 +117,7 @@ func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 		case errors.Is(err, domain.ErrValidation):
 			AbortProblemCause(c, http.StatusUnprocessableEntity, "unprocessable", "a role is not a role of this tenant", err)
 		case errors.Is(err, domain.ErrConflict):
-			AbortProblem(c, http.StatusConflict, "conflict", "this subject is already linked in another tenant")
+			AbortProblem(c, http.StatusConflict, "conflict", "the subject is linked in another tenant, or the email belongs to another user of this tenant")
 		default:
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", "could not ensure the user", err)
 		}

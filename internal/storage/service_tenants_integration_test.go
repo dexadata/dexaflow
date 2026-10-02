@@ -128,3 +128,23 @@ func TestEnsureIssuerUserNeedsTheTenant(t *testing.T) {
 		t.Errorf("err = %v, want domain.ErrNotFound", err)
 	}
 }
+
+// TestEnsureIssuerUserRefusesAnEmailAnotherUserHas: the tenant already has a
+// password account with this email; linking a second account to it would
+// break the one-email-per-tenant rule, so it is a conflict, not a silent merge.
+func TestEnsureIssuerUserRefusesAnEmailAnotherUserHas(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	tenant := uniqueTenant("hooli")
+	if _, err := repo.EnsureTenant(ctx, tenant, "Hooli"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateUser(ctx, tenant, "gavin@hooli.com", "a-long-password-123", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := repo.EnsureIssuerUser(ctx, tenant, "gavin@hooli.com", "issuer:portal", uniqueTenant("sub"), nil)
+
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Errorf("err = %v, want domain.ErrConflict", err)
+	}
+}

@@ -618,7 +618,8 @@ issuer](#trusted-issuer-handoff) under that subject, with exactly those roles.
 It answers `201` for a new user and `200` for an existing one, whose roles it
 sets to the list given. It needs `auth.trusted_issuer` (`409` otherwise),
 answers `404` for an unknown tenant, `422` for a role the tenant does not have,
-and `409` for a subject already linked in another tenant. The user signs in
+and `409` for a subject already linked in another tenant or an email already
+used by another user of the tenant, such as a password account. The user signs in
 only through the trusted issuer's handoff.
 
 ### Trusted proxies and the client IP
