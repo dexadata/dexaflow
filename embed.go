@@ -22,7 +22,7 @@ import "embed"
 // does. .gitignore is named explicitly for the same reason — a directory walk
 // skips dotfiles, and that one has to travel: hatchling resolves its ignore
 // patterns by walking up from its own root, so without it a build from
-// ~/.leoflow/pysrc reaches $HOME's. embed_test.go asserts each of these arrives.
+// ~/.dexaflow/pysrc reaches $HOME's. embed_test.go asserts each of these arrives.
 //
 //go:embed all:parser/leoflow_parser parser/pyproject.toml parser/README.md
 //go:embed all:runtime/python/leoflow_runtime all:runtime/python/leoflow runtime/python/pyproject.toml runtime/python/README.md runtime/python/.gitignore
@@ -37,7 +37,7 @@ var devCompose []byte
 
 // DevCompose returns the embedded docker-compose for Leoflow Lite's local
 // Postgres + Redis, so a binary-only install (no source checkout) can bring the
-// datastores up with `leoflow lite` alone — it is materialized under ~/.leoflow
+// datastores up with `leoflow lite` alone — it is materialized under ~/.dexaflow
 // on first run.
 func DevCompose() []byte { return devCompose }
 

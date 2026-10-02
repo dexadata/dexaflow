@@ -14,7 +14,7 @@ type Runner func(ctx context.Context, name string, args ...string) error
 
 // ExtractFS writes every file in fsys into dest, preserving the directory
 // structure. It is used to materialize the embedded Python sources into
-// ~/.leoflow so a binary-only install can pip-install them.
+// ~/.dexaflow so a binary-only install can pip-install them.
 func ExtractFS(fsys fs.FS, dest string) error {
 	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

@@ -106,8 +106,8 @@ enforcement from [ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness
 control plane **refuses to boot** with warm pools on unless both are set:
 
 ```
-auth.agent_token_transport = exchange   # LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT
-auth.secret_liveness_mode  = enforce    # LEOFLOW_AUTH_SECRET_LIVENESS_MODE
+auth.agent_token_transport = exchange   # DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT
+auth.secret_liveness_mode  = enforce    # DEXAFLOW_AUTH_SECRET_LIVENESS_MODE
 ```
 
 This coupling is deliberate and has **no safe degraded mode** — the degraded mode
@@ -128,12 +128,12 @@ transport is selected — see
 ### 2. Turn on the pool and tune it
 
 The pool knobs live under the chart's `execution` values (which map to the
-`LEOFLOW_EXECUTION_*` server environment). Start with the default,
+`DEXAFLOW_EXECUTION_*` server environment). Start with the default,
 `minIdleWorkers: 0`:
 
 ```yaml
 execution:
-  warmPoolsEnabled: true      # LEOFLOW_EXECUTION_WARM_POOLS_ENABLED
+  warmPoolsEnabled: true      # DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED
   minIdleWorkers: 0           # default: scale-to-zero, no standing cost
 ```
 
@@ -222,7 +222,7 @@ Each attempt runs in a **fresh child process, hard-scrubbed, forked from a prist
 template — never from a sibling attempt.** Before each attempt the worker:
 
 - **rebuilds the environment from scratch** — only that attempt's `AIRFLOW_VAR_*` /
-  `AIRFLOW_CONN_*` + `LEOFLOW_*`, with no residue from a prior attempt, and the
+  `AIRFLOW_CONN_*` + `DEXAFLOW_*`, with no residue from a prior attempt, and the
   agent-only variable strip re-runs per attempt;
 - **resets the agent scratch and redirects `TMPDIR` into it** — the child's
   `TMPDIR` points at a per-attempt subdirectory of the agent scratch that is wiped
@@ -402,11 +402,11 @@ Enable is gated on all of the above passing **and** the two security flips
 ## Configuration reference
 
 Pool knobs live under `execution` in the Helm chart values and map to the
-`LEOFLOW_EXECUTION_*` server environment. All are **operator-scoped** (never
+`DEXAFLOW_EXECUTION_*` server environment. All are **operator-scoped** (never
 DAG-author-settable). With `warmPoolsEnabled: false` (the default) **none** of the
 others is read — the deployment is byte-for-byte pod-per-task.
 
-| Chart value (`execution.`) | Env (`LEOFLOW_EXECUTION_`) | Type / unit | Default | Meaning |
+| Chart value (`execution.`) | Env (`DEXAFLOW_EXECUTION_`) | Type / unit | Default | Meaning |
 |---|---|---|---|---|
 | `warmPoolsEnabled` | `WARM_POOLS_ENABLED` | bool | `false` | Master switch for N:1 pod reuse. Off ⇒ dedicated pod-per-task. Requires the exchange + enforce security flips at boot. |
 | `minIdleWorkers` | `MIN_IDLE_WORKERS` | int (pods) | `0` | Warm pods kept ready **per DAG version**. `0` = scale-to-zero. A DAG author may request warmth per DAG; this is the operator floor when the DAG declares none, and the value is clamped to `maxPoolSize`. |
@@ -437,4 +437,4 @@ The related auth knobs — `agent_token_transport`, `secret_liveness_mode`,
   record.
 - [ADR 0055 — Secret scoping and token liveness](/project/adrs/0055-secret-scoping-and-token-liveness/) —
   the security prerequisite this feature depends on.
-- [Configuration reference](/reference/configuration/) — every `LEOFLOW_*` server variable.
+- [Configuration reference](/reference/configuration/) — every `DEXAFLOW_*` server variable.

@@ -27,7 +27,7 @@ const pyVersionFile = ".py-version"
 
 // EnsureOpts configures EnsurePython.
 type EnsureOpts struct {
-	Home     string // the managed root, e.g. ~/.leoflow
+	Home     string // the managed root, e.g. ~/.dexaflow
 	GOOS     string
 	GOARCH   string
 	Libc     string

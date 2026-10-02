@@ -13,7 +13,7 @@ import (
 )
 
 // newResetPasswordCommand resets the Lite admin password. Lite is a per-user
-// install (the database and ~/.leoflow config belong to the user who ran it), so
+// install (the database and ~/.dexaflow config belong to the user who ran it), so
 // this runs as that user — NOT root. Running it under sudo would resolve HOME to
 // /root and miss the user's config; run it as the same user as `leoflow lite`.
 func newResetPasswordCommand() *cobra.Command {
@@ -102,7 +102,7 @@ func invokingUserHome() string {
 	return h
 }
 
-// loadUserConfig loads ~/.leoflow/config.yaml for the given home, or nil.
+// loadUserConfig loads ~/.dexaflow/config.yaml for the given home, or nil.
 func loadUserConfig(home string) *config.Config {
 	if home == "" {
 		return nil

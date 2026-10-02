@@ -46,7 +46,7 @@ are **generated from source on every push**, so they never drift from the code. 
   <a class="lf-card" href="/reference/configuration/">
     <span class="lf-card__icon"><i class="fa-solid fa-sliders"></i></span>
     <span class="lf-card__title">Configuration</span>
-    <span class="lf-card__desc">The <code>LEOFLOW_*</code> environment variables and config keys for the server.</span>
+    <span class="lf-card__desc">The <code>DEXAFLOW_*</code> environment variables and config keys for the server.</span>
     <span class="lf-card__more">Configuration →</span>
   </a>
   <a class="lf-card" href="/mcp/">

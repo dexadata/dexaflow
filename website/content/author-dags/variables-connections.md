@@ -24,11 +24,11 @@ Via the Airflow-compatible UI (Admin → Variables / Connections) or the API:
 
 ```bash
 # Variable
-curl -X POST "$LEOFLOW_SERVER/api/v2/variables" -H "Authorization: Bearer $TOKEN" \
+curl -X POST "$DEXAFLOW_SERVER/api/v2/variables" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"key":"greeting","value":"hello"}'
 
 # Connection (password + extra are encrypted at rest)
-curl -X POST "$LEOFLOW_SERVER/api/v2/connections" -H "Authorization: Bearer $TOKEN" \
+curl -X POST "$DEXAFLOW_SERVER/api/v2/connections" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"connection_id":"warehouse","conn_type":"postgres","host":"db","login":"u","password":"p","schema":"analytics"}'
 ```
@@ -61,11 +61,11 @@ validation needs the provider hooks (a later addition).
 
 A task doesn't automatically get the value just because it exists on the
 control plane — the DAG that consumes a Variable or Connection should
-**declare** it in `leoflow.yaml`, the same consumption-declared model
+**declare** it in `dexaflow.yaml`, the same consumption-declared model
 [declared secrets](/project/adrs/0045-declared-secret-delivery/) use:
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: sales_report
 variables:
   - greeting
@@ -74,7 +74,7 @@ connections:
 ```
 
 The three-step flow is: **create** the Variable/Connection (UI or API, above) →
-**declare** it in `leoflow.yaml` → **read** it in the task (below).
+**declare** it in `dexaflow.yaml` → **read** it in the task (below).
 
 {{% alert title="What declaring actually controls today" color="warning" %}}
 The control plane's secret-delivery policy (`auth.secret_scoping`, [ADR
@@ -123,7 +123,7 @@ def use_secrets():
 ```
 
 Scope is global (per tenant). Delivery requires a secure agent channel (TLS, #58)
-or, in dev, the explicit `LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (set by
+or, in dev, the explicit `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (set by
 `leoflow lite`). Pro on Kubernetes (including GKE) **requires** TLS — the chart
 ships `agentTLS.enabled: true` by default and the server refuses the insecure
 bypass; the plaintext escape hatch is Lite-only, for local iteration. See

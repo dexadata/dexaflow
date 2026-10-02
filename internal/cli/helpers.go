@@ -320,7 +320,7 @@ func configFilePath(cmd *cobra.Command) string {
 }
 
 // stateDirIn returns the per-user state directory under the home directory
-// home: ~/.dexaflow, or a link to an existing ~/.leoflow (config.HomeDirIn).
+// home: ~/.dexaflow, or a link to an existing ~/.dexaflow (config.HomeDirIn).
 func stateDirIn(home string) string {
 	dir, err := config.HomeDirIn(home)
 	if err != nil {

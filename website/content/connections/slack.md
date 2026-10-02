@@ -17,7 +17,7 @@ fire-and-forget message to one channel.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: slack_alert
 connectors:
   - slack
@@ -69,7 +69,7 @@ with DAG("slack_alert", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: slack_alert
 description: Post a message to Slack via SlackHook.

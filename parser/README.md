@@ -8,7 +8,7 @@ It is invoked by `leoflow compile` as a subprocess:
 ```bash
 python -m leoflow_parser compile \
     --source ./dag.py \
-    --config ./leoflow.yaml \
+    --config ./dexaflow.yaml \
     --output ./dag.json \
     --image myrepo/etl:v1.2.3
 ```

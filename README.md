@@ -61,7 +61,7 @@ Leoflow ships in two editions. Pick the track that matches your target:
 ### Lite — the full engine on a single host
 
 The **full Leoflow control plane on one machine** — the same engine, the same
-Airflow-3.2 UI, the same `dag.py` + `leoflow.yaml` as Pro — in a one-command,
+Airflow-3.2 UI, the same `dag.py` + `dexaflow.yaml` as Pro — in a one-command,
 **no-Kubernetes** package. Light to run, powerful where it counts: real
 pod-per-task execution, a **durable** Postgres datastore, hot-reload, a real
 admin login. It is not a stripped-down demo — it is the whole engine scoped to
@@ -78,7 +78,7 @@ parser, creates your workspace at `~/leoflow/`) — **no sudo, no system Python,
 no package manager**. Docker is optional and only unlocks the Kubernetes
 executor for higher-fidelity local runs. Linux + macOS, amd64 + arm64
 (Windows via WSL2). Each DAG gets its own per-DAG venv under
-`~/.leoflow/dev/venvs/<dag_id>/` so conflicting dependencies between DAGs
+`~/.dexaflow/dev/venvs/<dag_id>/` so conflicting dependencies between DAGs
 coexist out of the box.
 
 ### Pro — Kubernetes cluster (Helm)
@@ -141,7 +141,7 @@ This is not marketing. This is what falls out of replacing a Python control plan
 Leoflow is a **GitOps-first, container-native workflow orchestrator** written in Go. Each phrase carries weight:
 
 - **GitOps-first.** Your DAG is a versioned artifact (`dag.json` + container image), not live source code. CI builds it. The registry stores it. Rollback is a tag change.
-- **Container-native.** Each DAG is its own container image, with its own dependencies, its own Python version, its own everything. Built automatically from a one-page `leoflow.yaml` — you never touch Docker unless you want to.
+- **Container-native.** Each DAG is its own container image, with its own dependencies, its own Python version, its own everything. Built automatically from a one-page `dexaflow.yaml` — you never touch Docker unless you want to.
 - **Airflow-UI compatible.** The MVP runs the unmodified Apache Airflow 3.2.x UI. Your team's muscle memory survives the migration. No new tool to learn.
 - **Go performance, Go discipline.** Static binary. No GIL. Goroutines for concurrency. Test-driven from the first commit. The full `golangci-lint` A+ stack enforced in CI.
 
@@ -150,7 +150,7 @@ Leoflow is a **GitOps-first, container-native workflow orchestrator** written in
 A complete Leoflow DAG project. No Dockerfile. No `requirements.txt`. No CI plumbing to invent.
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: etl_vendas
 python_version: "3.11"
 dependencies:
@@ -238,7 +238,7 @@ metadata; Redis holds XCom values and live-log fan-out.
 ```mermaid
 flowchart LR
     subgraph dev["Author / CI"]
-        src["leoflow.yaml · dag.py · Dockerfile"]
+        src["dexaflow.yaml · dag.py · Dockerfile"]
     end
 
     subgraph cp["Control plane — Go"]
@@ -296,7 +296,7 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 - Python, Bash, and HTTP API operators
 
 - Python, Bash, and HTTP API operators
-- DAG-as-Image model with automatic image build via `leoflow.yaml`
+- DAG-as-Image model with automatic image build via `dexaflow.yaml`
 - Hybrid DAG authoring: Python source parsed at compile time, or declarative YAML
 - XCom on Redis with 256 KB limit, TTL, and optional schema validation
 - Apache Airflow 3.2.x UI compatibility (no fork required)
@@ -352,7 +352,7 @@ make build            # builds bin/leoflow, bin/leoflow-server, bin/leoflow-agen
 make dev-up           # docker compose up --wait + migrate-up; `make dev-down` to stop
 
 # Run the control plane (bootstraps a default admin user)
-LEOFLOW_AUTH_JWT_SECRET=dev LEOFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/leoflow-server &
+DEXAFLOW_AUTH_JWT_SECRET=dev DEXAFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/leoflow-server &
 # API docs (Scalar) at http://localhost:8080/docs ; metrics at http://localhost:9090/metrics
 
 # Author, compile, and register a DAG

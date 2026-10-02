@@ -133,15 +133,15 @@ type devOptions struct {
 	agentBin    string
 	noUp        bool
 	postgres    string // "auto" (default), "docker", or "managed" (relocatable PG, no Docker)
-	// Resolved from ~/.leoflow/config.yaml (written by `leoflow setup`), not flags.
+	// Resolved from ~/.dexaflow/config.yaml (written by `leoflow setup`), not flags.
 	adminHash  string
 	adminEmail string
 	// jwtSecret is the per-install Lite JWT signing secret loaded from
-	// ~/.leoflow/config.yaml; empty on a legacy install (resolveLiteJWTSecret
+	// ~/.dexaflow/config.yaml; empty on a legacy install (resolveLiteJWTSecret
 	// then falls back to devJWTSecret with a one-shot warning).
 	jwtSecret string
 	// secretKey is the per-install connection-encryption key from
-	// ~/.leoflow/config.yaml (#486).
+	// ~/.dexaflow/config.yaml (#486).
 	secretKey string
 	// secretKeyPrevious is a decrypt-only predecessor. Nothing writes it: it is
 	// a hand-set escape hatch for an install whose key was changed by hand and
@@ -482,7 +482,7 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 // resolveComposeFile returns the docker-compose file Lite uses for its local
 // Postgres (Lite is Redis-free — ADR 0026). An explicit --compose wins; else a docker-compose.dev.yaml in
 // the working dir (a source checkout) is used; else the compose embedded in the
-// binary is materialized under ~/.leoflow, so a binary-only install runs with
+// binary is materialized under ~/.dexaflow, so a binary-only install runs with
 // `leoflow lite` alone.
 func resolveComposeFile(flagValue string) (string, error) {
 	if flagValue != "" {
@@ -536,13 +536,13 @@ func newLiteCommand() *cobra.Command {
 	cmd.Flags().IntVar(&o.port, "port", devDefaultPort, "HTTP/UI port (dev default 8088, distinct from the demo's 8080)")
 	cmd.Flags().StringVar(&o.host, "host", "127.0.0.1", "address to bind the UI/API to; use 0.0.0.0 to reach it from your internal network/VPN (insecure — see the warning)")
 	cmd.Flags().StringVar(&o.image, "image", "leoflow-dev:local", "placeholder image recorded in dag.json (subprocess mode only)")
-	cmd.Flags().StringVar(&o.composeFile, "compose", "", "compose file for the local Postgres (default: a managed one under ~/.leoflow, materialized on first run)")
+	cmd.Flags().StringVar(&o.composeFile, "compose", "", "compose file for the local Postgres (default: a managed one under ~/.dexaflow, materialized on first run)")
 	cmd.Flags().StringVar(&o.runtimeSrc, "runtime-src", "runtime/python", "source of the leoflow_runtime package installed into the dev venv")
 	cmd.Flags().StringVar(&o.serverBin, "server-bin", "", "leoflow-server binary (default: PATH, then ./bin)")
 	cmd.Flags().StringVar(&o.agentBin, "agent-bin", "", "leoflow-agent binary (default: PATH, then ./bin)")
 	cmd.Flags().BoolVar(&o.noUp, "no-up", false, "skip docker compose (Postgres already running); the dev DB + venv are still provisioned")
 	cmd.Flags().BoolVar(&o.fresh, "fresh", false, "drop the local dev database first, so the session starts with nothing registered (DESTRUCTIVE: registered DAGs, runs and history)")
-	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.leoflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
+	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
 	cmd.AddCommand(newLiteProvisionCommand())
 	cmd.AddCommand(newResetPasswordCommand())
 	cmd.AddCommand(newForgetCommand())
@@ -737,7 +737,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	}
 	defer cleanupDeps() // stops managed Postgres on exit; no-op for the Docker path
 	// --fresh drops the local database before it is recreated, so a session
-	// starts with nothing registered. State under ~/.leoflow/dev otherwise
+	// starts with nothing registered. State under ~/.dexaflow/dev otherwise
 	// outlives every session: a DAG from an old spike stays registered, keeps
 	// being scheduled, and fails inside a run that has nothing to do with it
 	// (#1104). Destructive by definition, and scoped to the Lite dev database —
@@ -847,12 +847,12 @@ func devSubprocessSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSp
 	}
 	// Self-heal the extracted Python sources before anything references them.
 	// On a binary-only install (no repo) resolveRuntimeSrc points the per-DAG
-	// venv at ~/.leoflow/pysrc/runtime/python; if the boot provisions that venv
+	// venv at ~/.dexaflow/pysrc/runtime/python; if the boot provisions that venv
 	// before the sources are extracted, pip aborts with "does not exist" (#587).
 	// Checksum-gated, so a warm install pays nothing.
 	ensurePysrc(cmd)
 	runtimeSrc := resolveRuntimeSrc(o.runtimeSrc, home)
-	// Per-DAG venvs: every project gets its own ~/.leoflow/dev/venvs/<dag_id>/.
+	// Per-DAG venvs: every project gets its own ~/.dexaflow/dev/venvs/<dag_id>/.
 	// Editing one project's `dependencies:` only re-runs pip for THAT project,
 	// not the whole workspace (#346). The first project's venv is the boot
 	// fallback exposed via LEOFLOW_PYTHON so the agent always has a runnable
@@ -1154,7 +1154,7 @@ func ensureDevDatabase(ctx context.Context, cmd *cobra.Command) error {
 	return nil
 }
 
-// devHome returns the isolated dev state directory (~/.leoflow/dev), created on
+// devHome returns the isolated dev state directory (~/.dexaflow/dev), created on
 // demand. All dev state (the venv, etc.) lives here, never in the project.
 func devHome() (string, error) {
 	h, err := os.UserHomeDir()
@@ -1168,7 +1168,7 @@ func devHome() (string, error) {
 	return d, nil
 }
 
-// liteDevDir is the per-user Lite scratch dir (~/.leoflow/dev) for state that must
+// liteDevDir is the per-user Lite scratch dir (~/.dexaflow/dev) for state that must
 // never be shared between users: the compiled dag.json and task logs. A global
 // /tmp path is owned by whoever ran Lite first and then denies every other user
 // (the root-vs-non-root "permission denied" trap). Best-effort: it falls back to a
@@ -1198,7 +1198,7 @@ const minPythonMinor = 11
 // With a declared wantVersion ("3.13") it resolves an interpreter REPORTING that
 // minor, and refuses rather than substituting — see resolvePythonFor. With no
 // declared version it keeps the historical precedence: the managed relocatable
-// CPython (installed by `leoflow setup` under ~/.leoflow/python) when present,
+// CPython (installed by `leoflow setup` under ~/.dexaflow/python) when present,
 // since it bundles venv + ensurepip, falling back to a python3.11 / python3 on
 // PATH that reports >= 3.11. Using the managed interpreter avoids
 // needing the system python3-venv package, which Debian/Ubuntu split out (the
@@ -1231,7 +1231,7 @@ func devBasePython(ctx context.Context, home, wantVersion string) (string, error
 }
 
 // leoflowManagedPython returns the path to the managed relocatable CPython that
-// `leoflow setup` installs under ~/.leoflow/python, or "" if the home directory
+// `leoflow setup` installs under ~/.dexaflow/python, or "" if the home directory
 // cannot be resolved.
 func leoflowManagedPython() string {
 	h, err := os.UserHomeDir()
@@ -1320,7 +1320,7 @@ func parsePythonVersion(s string) (major, minor int, err error) {
 // resolveRuntimeSrc returns the leoflow_runtime package source to pip-install
 // into the dev venv. An explicit --runtime-src wins; otherwise the repo path
 // (source checkout) is used when present; otherwise the copy `leoflow setup`
-// extracted under ~/.leoflow/pysrc — a binary-only install has no repo, so the
+// extracted under ~/.dexaflow/pysrc — a binary-only install has no repo, so the
 // repo-relative "runtime/python" does not exist there.
 func resolveRuntimeSrc(flagValue, home string) string {
 	if flagValue != "" && flagValue != "runtime/python" {
@@ -1416,7 +1416,7 @@ func ensureBaseImage(ctx context.Context, cmd *cobra.Command) error {
 		return fmt.Errorf("cluster run mode needs the Leoflow source tree to build the task base image " +
 			"(runtime/Dockerfile), which a binary install does not have.\n" +
 			"  Use the 'local' run mode: re-run `leoflow setup` and choose 1 (local), " +
-			"or set `lite_executor: subprocess` in ~/.leoflow/config.yaml.\n" +
+			"or set `lite_executor: subprocess` in ~/.dexaflow/config.yaml.\n" +
 			"  (Cluster mode works when you run `leoflow lite` from a Leoflow source checkout.)")
 	}
 	devPrintln(cmd.OutOrStdout(), "▸ building task base image "+devBaseImage+" (first run) …")
@@ -1578,7 +1578,7 @@ func companionVersion(ctx context.Context, path string) string {
 // with the running CLI over whatever happens to be installed.
 //
 // Order: an explicit --flag, then the directory holding this executable, then
-// the installer's ~/.leoflow/bin, then PATH, then ./bin.
+// the installer's ~/.dexaflow/bin, then PATH, then ./bin.
 //
 // PATH used to come first, which meant `leoflow lite` ran whatever
 // leoflow-server was installed earliest — however old. A validation run against
@@ -1652,7 +1652,7 @@ func companionDirs() []string {
 }
 
 // isExecutableFile reports whether path is a regular file with an execute bit.
-// The directory check matters: `~/.leoflow/bin/leoflow-agent/` as a directory
+// The directory check matters: `~/.dexaflow/bin/leoflow-agent/` as a directory
 // would otherwise satisfy a plain os.Stat and be handed to exec.
 func isExecutableFile(path string) bool {
 	fi, err := os.Stat(path)
@@ -1701,7 +1701,7 @@ func sharedServerEnv(p liteEnvParams) []string {
 		// "connection refused to :4317" every export interval. Prometheus metrics
 		// (scraped, not pushed) stay on.
 		"LEOFLOW_OBSERVABILITY_OTEL_ENABLED=false",
-		// Per-user, under ~/.leoflow — NOT a shared /tmp path. A global
+		// Per-user, under ~/.dexaflow — NOT a shared /tmp path. A global
 		// /tmp/leoflow-dev-logs is created by whoever runs Lite first and then
 		// rejects every other user with "permission denied" (root vs non-root). The
 		// user's own .leoflow dir never collides.
@@ -1770,7 +1770,7 @@ func liteEditorEnv(workspaceDir, leoflowRoot string) []string {
 	}
 }
 
-// applyLiteConfigDefaults loads ~/.leoflow/config.yaml and applies the recorded
+// applyLiteConfigDefaults loads ~/.dexaflow/config.yaml and applies the recorded
 // executor/port to o, unless those flags were set on the command line.
 func applyLiteConfigDefaults(cmd *cobra.Command, o *devOptions) {
 	c, err := config.Load(configFilePath(cmd), nil)
@@ -1808,7 +1808,7 @@ func resolveLiteAdmin(cmd *cobra.Command, out io.Writer) liteEnvParams {
 
 // loadLiteAdmin reads the Lite admin credential the setup wizard persisted (hash
 // only) and the per-install JWT secret (rotated by `leoflow setup` so a reinstall
-// invalidates the prior install's tokens — #121) from ~/.leoflow/config.yaml.
+// invalidates the prior install's tokens — #121) from ~/.dexaflow/config.yaml.
 // Returns an empty hash when no admin is configured.
 func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
 	c, err := config.Load(configFilePath(cmd), nil)
@@ -2028,7 +2028,7 @@ func devCompileAndRegister(ctx context.Context, cmd *cobra.Command, dir string, 
 			return aerr
 		}
 	}
-	data, err := os.ReadFile(opts.output) //nolint:gosec // path is leoflow-controlled under ~/.leoflow
+	data, err := os.ReadFile(opts.output) //nolint:gosec // path is leoflow-controlled under ~/.dexaflow
 	if err != nil {
 		return fmt.Errorf("reading compiled dag.json: %w", err)
 	}
@@ -2365,7 +2365,7 @@ func countRegisteredDags(ctx context.Context) int {
 // provisionDevDatabase brings the Lite dev database up, dropping it first when
 // fresh is set.
 //
-// State under ~/.leoflow/dev otherwise outlives every session: a DAG registered
+// State under ~/.dexaflow/dev otherwise outlives every session: a DAG registered
 // during an old spike stays registered, keeps being scheduled, and fails inside
 // a run that has nothing to do with it (#1104). The drop is the same one
 // `leoflow db reset` performs, and it is announced before it happens — it takes

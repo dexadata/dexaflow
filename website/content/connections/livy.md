@@ -16,7 +16,7 @@ Connection and Airflow's `LivyHook`. The conn_type is `livy`. A connection carri
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: livy_batch
 connectors:
   - livy
@@ -63,7 +63,7 @@ with DAG("livy_batch", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: livy_batch
 description: Submit a Spark batch via LivyHook.

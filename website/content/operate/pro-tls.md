@@ -156,7 +156,7 @@ reference for `./helm/leoflow`.)
 ## Troubleshooting
 
 - **`the Pro edition requires TLS on the agent gRPC channel, but it is off`** — the
-  server refused to boot because `LEOFLOW_SERVER_GRPC_TLS_CERT`/`_KEY` are unset:
+  server refused to boot because `DEXAFLOW_SERVER_GRPC_TLS_CERT`/`_KEY` are unset:
   the cert Secret didn't mount, or the server was started outside this chart.
   Provide the cert as above (#281).
 - **`agentTLS.enabled=false is not a supported configuration`** — helm refused the

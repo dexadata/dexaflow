@@ -15,7 +15,7 @@ managed Leoflow Connection. The query path goes through the Druid broker.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: druid_smoke
 connectors:
   - druid
@@ -70,7 +70,7 @@ with DAG("druid_smoke", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: druid_smoke
 python_version: "3.11"

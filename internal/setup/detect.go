@@ -1,7 +1,7 @@
 // Package setup implements host detection and bootstrap for `leoflow setup`
 // and `leoflow doctor`: it determines the platform, which dependencies are
 // present, and which operating tier is achievable, preferring relocatable
-// downloads into ~/.leoflow over system package managers.
+// downloads into ~/.dexaflow over system package managers.
 package setup
 
 import (

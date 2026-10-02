@@ -16,7 +16,7 @@ Events-API routing key (integration key) for Events v2 alerts.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: pagerduty_alert
 connectors:
   - pagerduty
@@ -67,7 +67,7 @@ with DAG("pagerduty_alert", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: pagerduty_alert
 python_version: "3.12"

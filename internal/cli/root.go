@@ -28,7 +28,7 @@ func NewRootCommand() *cobra.Command {
 		Version: version.Get().String(),
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
-	root.PersistentFlags().String("config", "", "config file path (default ~/.leoflow/config.yaml)")
+	root.PersistentFlags().String("config", "", "config file path (default ~/.dexaflow/config.yaml)")
 	root.PersistentFlags().String("log-level", "", "log level: debug, info, warn, error")
 	root.PersistentFlags().String("server-url", "", "control plane API base URL")
 

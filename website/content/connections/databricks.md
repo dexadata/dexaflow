@@ -16,7 +16,7 @@ Databricks provider hooks. The conn_type is `databricks`. A connection carries t
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: databricks_job
 connectors:
   - databricks
@@ -82,7 +82,7 @@ with DAG("databricks_job", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: databricks_job
 description: Trigger a Databricks job via DatabricksHook.

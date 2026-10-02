@@ -19,7 +19,7 @@ every boundary in one shot:
 
 ```mermaid
 flowchart LR
-  A[dag.py + leoflow.yaml] --> B[compile → dag.json]
+  A[dag.py + dexaflow.yaml] --> B[compile → dag.json]
   B --> C[build DAG image<br/>FROM leoflow-runtime]
   C --> D[push image → your registry]
   D --> E[re-pin by digest<br/>+ register → control plane]
@@ -31,7 +31,7 @@ flowchart LR
   today with `leoflow deploy`. Everything here runs as-is.
 - **[The complete path](#the-complete-path--your-own-dag-yaml-driven)** — author
   your own DAG with **no Dockerfile** (the build is synthesized from
-  `leoflow.yaml`) and real `connectors:`. That richer flow is still landing;
+  `dexaflow.yaml`) and real `connectors:`. That richer flow is still landing;
   it is shown at the end so you can see where this is going.
 {{% /alert %}}
 
@@ -53,7 +53,7 @@ flowchart LR
 $ leoflow auth login --server https://pro.example.com
 Username: admin
 Password:
-Logged in to https://pro.example.com (token saved to ~/.leoflow/config.yaml)
+Logged in to https://pro.example.com (token saved to ~/.dexaflow/config.yaml)
 ```
 
 The token is stored, so every later `leoflow deploy` needs **no auth flags**. The
@@ -61,7 +61,7 @@ password is read hidden — it never lands in your shell history. (This is the
 control-plane login; it is unrelated to `docker login`, which authenticates your
 *builder* to the registry — do that once too: `docker login ghcr.io`.)
 
-## Step 1 — a project (`dag.py` + `leoflow.yaml` + `Dockerfile`)
+## Step 1 — a project (`dag.py` + `dexaflow.yaml` + `Dockerfile`)
 
 ```python title="dag.py"
 from airflow.sdk import DAG, task
@@ -78,7 +78,7 @@ with DAG("first_pro_dag", schedule=None) as dag:
     load(extract())
 ```
 
-```yaml title="leoflow.yaml"
+```yaml title="dexaflow.yaml"
 dag_id: first_pro_dag
 python_version: "3.11"
 dependencies:
@@ -104,7 +104,7 @@ Your image layers `FROM` the **published Leoflow task base**
 (PID 1, talks gRPC to the control plane) and the `leoflow_runtime` helper, is
 multi-arch and signed, and is built by our CI. You only add your deps and copy
 your DAG in. (In [the complete path](#the-complete-path--your-own-dag-yaml-driven)
-even this Dockerfile goes away — it is synthesized from `leoflow.yaml`.)
+even this Dockerfile goes away — it is synthesized from `dexaflow.yaml`.)
 {{% /alert %}}
 
 ## Step 2 — deploy (one command)
@@ -120,7 +120,7 @@ Deployed first_pro_dag -> https://pro.example.com
 
 That one command crossed every boundary:
 
-1. **compile** — parsed `dag.py`, overlaid `leoflow.yaml`, ran the guardrails
+1. **compile** — parsed `dag.py`, overlaid `dexaflow.yaml`, ran the guardrails
    (unknown `task_id`, unsupported operator, duplicate keys), wrote `dag.json`.
 2. **build** — built the image from your `Dockerfile`, **for the cluster's
    architecture** (`linux/amd64` by default, so a macOS/arm64 laptop produces an
@@ -155,7 +155,7 @@ shows state and logs. That is the whole Pro lifecycle, in one verb.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `deploy requires a container registry…` | no `registry:` in `leoflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
+| `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
 | `denied` / `unauthorized` on push | builder not logged in to the registry | `docker login ghcr.io` (registry auth ≠ control-plane auth) |
 | Task pod: `exec format error` | image arch ≠ cluster arch | already handled — deploy builds `linux/amd64`; for a Graviton cluster pass `--platform linux/arm64` |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …` — create them on Pro (UI/API) first; see [Variables & Connections](/author-dags/variables-connections/) |
@@ -170,7 +170,7 @@ collects every gate `deploy`/`push` enforce, with the exact error and the fix.
 ```bash
 leoflow deploy <dag_id>     # a specific DAG in a multi-DAG workspace
 leoflow deploy --all        # every DAG in the workspace (best-effort; non-zero exit if any fail)
-leoflow deploy --skip-build # reuse the existing image (skip docker build/push); dag.json is still recompiled from leoflow.yaml/dag.py
+leoflow deploy --skip-build # reuse the existing image (skip docker build/push); dag.json is still recompiled from dexaflow.yaml/dag.py
 ```
 
 ## Build in one CI job, deploy in another
@@ -189,7 +189,7 @@ leoflow deploy . --skip-build --dag-version "$VERSION"
 ```
 
 The two steps have to name the **same image**, and the name comes from
-`registry.tag_strategy` in `leoflow.yaml`. Pass the same `--dag-version` to
+`registry.tag_strategy` in `dexaflow.yaml`. Pass the same `--dag-version` to
 both, and run both from the same commit when the strategy is `git_sha`.
 
 {{% alert title="Prefer tag_strategy: git_sha for a split pipeline" color="info" %}}
@@ -212,7 +212,7 @@ about the tag.
 
 {{% alert title="Not yet the default path" color="warning" %}}
 The flow below is the **complete, Dockerfile-free** authoring experience. The
-yaml-driven build (synthesizing the image from `leoflow.yaml`) is still
+yaml-driven build (synthesizing the image from `dexaflow.yaml`) is still
 landing. On the current release, keep the `Dockerfile` from Step 1.
 This section shows where the happy path is going.
 {{% /alert %}}
@@ -234,7 +234,7 @@ with DAG("orders_report", schedule="@daily") as dag:
     load()
 ```
 
-```yaml title="leoflow.yaml"
+```yaml title="dexaflow.yaml"
 dag_id: orders_report
 python_version: "3.11"
 connectors:

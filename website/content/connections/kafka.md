@@ -16,7 +16,7 @@ Apache Kafka provider hooks. The conn_type is `kafka` (from
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: kafka_produce
 connectors:
   - kafka
@@ -65,7 +65,7 @@ with DAG("kafka_produce", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: kafka_produce
 description: Produce a message to Kafka via KafkaProducerHook.

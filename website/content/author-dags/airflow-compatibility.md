@@ -15,7 +15,7 @@ surface is deliberately tiny.
 The Python you write is **Airflow's**, not Leoflow's. Operators, sensors, hooks,
 the `DAG`/`@task` API — all of that is the Apache Airflow Task SDK, documented on
 [airflow.apache.org](https://airflow.apache.org/docs/). Leoflow contributes a Go
-control plane (no Python), a `leoflow.yaml` packaging file, and a ~2-function
+control plane (no Python), a `dexaflow.yaml` packaging file, and a ~2-function
 runtime shim. Nothing more.
 {{% /alert %}}
 
@@ -53,8 +53,8 @@ The Leoflow-specific surface is small and worth learning once:
 
 | Piece | What it is | Where it's documented |
 | --- | --- | --- |
-| `leoflow.yaml` | Packaging & deploy config that pairs with `dag.py`. **Not** an Airflow file. | [DAG authoring](/author-dags/dag-authoring/) |
-| Compile-to-artifact | `dag.py` + `leoflow.yaml` → an immutable `dag.json` + image (ADR 0003) — parsed once, at compile time. | [DAG authoring](/author-dags/dag-authoring/) |
+| `dexaflow.yaml` | Packaging & deploy config that pairs with `dag.py`. **Not** an Airflow file. | [DAG authoring](/author-dags/dag-authoring/) |
+| Compile-to-artifact | `dag.py` + `dexaflow.yaml` → an immutable `dag.json` + image (ADR 0003) — parsed once, at compile time. | [DAG authoring](/author-dags/dag-authoring/) |
 | `leoflow_runtime` | The in-pod shim that runs your task callable and bridges its return value to XCom — public API is just `run` and `xcom_pull`. | [Python runtime API](/reference/python-api/) |
 | Go control plane | Speaks the Airflow-compatible `/api/v2/` and orchestrates pods. **Never imports Airflow.** | [Architecture](/concepts/architecture/) |
 
@@ -73,7 +73,7 @@ edges (a compile-time structural shim in [ADR 0024](/project/adrs/0024-dag-parsi
 real execution in the pod) and adds only the glue.
 
 The consequence: **there is no large Leoflow Python API to learn.** You learn
-Airflow (which you may already know) plus `leoflow.yaml` and two runtime helpers.
+Airflow (which you may already know) plus `dexaflow.yaml` and two runtime helpers.
 
 ## Where to go next
 

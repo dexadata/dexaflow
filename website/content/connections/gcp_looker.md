@@ -19,7 +19,7 @@ password** — the API3 `client_id` and `client_secret` live in **Extra**.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: looker_pdt
 connectors:
   - gcp_looker
@@ -64,7 +64,7 @@ with DAG("looker_pdt", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: looker_pdt
 description: Build a Looker PDT via LookerHook.

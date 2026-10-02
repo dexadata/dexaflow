@@ -29,7 +29,7 @@ Lite.
 ## `envvar` — the plaintext bearer (default)
 
 With `auth.agent_token_transport=envvar`, the control plane mints a Leoflow JWT at
-dispatch and sets it as a plaintext `LEOFLOW_AGENT_TOKEN` environment variable on the
+dispatch and sets it as a plaintext `DEXAFLOW_AGENT_TOKEN` environment variable on the
 task pod's spec. This is the historical behavior and remains the default so that
 nothing regresses.
 

@@ -115,7 +115,7 @@ In order of preference:
    - **`key_path` + a mounted Kubernetes Secret** (chart `taskSecret`);
    - **`key_secret_name` + GCP Secret Manager** (task fetches via ADC).
 3. **`keyfile_dict`** — **discouraged.** It stores the key inside the connection
-   (encrypted at rest with `LEOFLOW_SECRET_KEY`, ADR 0019; delivered only over
+   (encrypted at rest with `DEXAFLOW_SECRET_KEY`, ADR 0019; delivered only over
    the TLS agent channel, ADR 0021). It is the cloud-key analog of how
    connections store a database user/password — pragmatic and Airflow-compatible,
    but **not** the desired posture. Use only for dev / low-criticality; many orgs

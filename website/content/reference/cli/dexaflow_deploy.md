@@ -22,7 +22,7 @@ dexaflow deploy [path | dag_id] [flags]
       --dockerfile string    Dockerfile path relative to the DAG directory (default "Dockerfile")
   -h, --help                 help for deploy
       --server string        control plane base URL (default: config server_url)
-      --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from leoflow.yaml/dag.py
+      --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py
       --token string         JWT bearer token (default: config token)
       --trigger              trigger a run immediately after registering
   -y, --yes                  skip the confirmation prompt (for automation)
@@ -31,7 +31,7 @@ dexaflow deploy [path | dag_id] [flags]
 ### Options inherited from parent commands
 
 ```
-      --config string       config file path (default ~/.leoflow/config.yaml)
+      --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
 ```

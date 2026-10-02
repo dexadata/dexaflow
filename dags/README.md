@@ -9,7 +9,7 @@ Each subdirectory is one DAG project (one image per DAG, ADR 0003):
 dags/
   hello/
     dag.py         # Airflow SDK 3.2.x DAG (TaskFlow or operators)
-    leoflow.yaml   # deploy config: dag_id, deps, per-task overrides (ADR 0023)
+    dexaflow.yaml   # deploy config: dag_id, deps, per-task overrides (ADR 0023)
 ```
 
 ## Create a new project

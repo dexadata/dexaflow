@@ -275,7 +275,7 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
       real implementations tracked in issues **#26–#32**.
     - Inline http_api tasks succeeded but their logs 404'd: the distroless
       container's nonroot user could not create `/var/log/leoflow`. Fixed by
-      pointing `LEOFLOW_LOGS_DIR` at a writable path in the demo compose. Logs now
+      pointing `DEXAFLOW_LOGS_DIR` at a writable path in the demo compose. Logs now
       persist and render (e.g. `inline http_api GET … -> success`).
     - Note: **http_api** ran inline (ADR 0015; removed, ADR 0047/0048); python/bash tasks need a
       Kubernetes worker pod, which the compose demo does not provide.

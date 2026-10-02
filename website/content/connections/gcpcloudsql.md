@@ -17,7 +17,7 @@ runtime identity (ADC).
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: cloudsql_demo
 connectors:
   - gcpcloudsql
@@ -71,7 +71,7 @@ with DAG("cloudsql_demo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: cloudsql_demo
 python_version: "3.12"

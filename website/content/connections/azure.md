@@ -27,7 +27,7 @@ provider exposes **many** conn types — all from
 One line covers the whole family:
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: blob_load
 connectors:
   - wasb            # or adls / azure_data_factory / azure_synapse / ...
@@ -77,7 +77,7 @@ with DAG("blob_load", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: blob_load
 description: Upload a blob to Azure Storage via WasbHook.

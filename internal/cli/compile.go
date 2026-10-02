@@ -182,7 +182,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 		return perr
 	}
 	// Self-heal the extracted parser sources before running the parser, so a binary
-	// upgrade (new features like dbt vs a stale ~/.leoflow/pysrc) never surfaces as
+	// upgrade (new features like dbt vs a stale ~/.dexaflow/pysrc) never surfaces as
 	// a confusing "not supported" error (#239).
 	ensurePysrc(cmd)
 	if cfg.Dbt != nil {
@@ -738,7 +738,7 @@ func runParser(cmd *cobra.Command, command string, a parserArgs) error {
 	pc := exec.CommandContext(cmdContext(cmd), fields[0], argv...)
 	// Build the child environment. Guarantee the extracted parser sources are
 	// importable: on a binary-only install the default command is a bare
-	// `python3 -m leoflow_parser` and nothing else wires ~/.leoflow/pysrc/parser
+	// `python3 -m leoflow_parser` and nothing else wires ~/.dexaflow/pysrc/parser
 	// onto PYTHONPATH, so the parser fails with ModuleNotFoundError (#587).
 	env := withParserPythonPath(os.Environ())
 	// Hand the resolved project config to the parser as JSON via an env var.

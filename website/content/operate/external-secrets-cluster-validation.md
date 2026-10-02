@@ -13,7 +13,7 @@ This runbook is that missing gate. Run it on a real EKS or GKE cluster and compl
 - A cluster with the keyless mechanism you intend to use already wired at the **cloud** side (the IAM role / service account, the trust policy, and the identity webhook or agent). This runbook validates that Leoflow drives it correctly; it does not set up the cloud IAM.
 - `kubectl` context on that cluster and permission to install/upgrade the Leoflow Helm release in a throwaway namespace.
 - Access to the provider secret store to create and delete one test secret.
-- The provider's Airflow backend package available in your task image (e.g. `apache-airflow-providers-amazon` for AWS, `-google` for GCP). A `leoflow.yaml` `dependencies:` entry bakes it in.
+- The provider's Airflow backend package available in your task image (e.g. `apache-airflow-providers-amazon` for AWS, `-google` for GCP). A `dexaflow.yaml` `dependencies:` entry bakes it in.
 
 Do this in a **non-production namespace** first.
 
@@ -85,7 +85,7 @@ with DAG("canary_secrets", schedule=None, catchup=False):
 ```
 
 ```yaml
-# canary_secrets/leoflow.yaml
+# canary_secrets/dexaflow.yaml
 dag_id: canary_secrets
 dependencies: [apache-airflow-providers-amazon]   # or -google for GKE
 variables:

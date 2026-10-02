@@ -63,7 +63,7 @@ Two things to know before you rely on it:
 
 - **The `/tmp` emptyDir has no `sizeLimit`.** The volume itself is unbounded, but
   the DAG author already controls this per task: set
-  `resources.limits.ephemeral_storage` in `leoflow.yaml` (ADR 0054), which the
+  `resources.limits.ephemeral_storage` in `dexaflow.yaml` (ADR 0054), which the
   kubelet enforces against the task container. A namespace `LimitRange` default,
   or failing that the node's own eviction threshold, is the cluster-side backstop
   — reach for it only when you cannot change the DAG.

@@ -103,7 +103,7 @@ leoflow setup            # end-user install
 leoflow lite provision
 ```
 
-into `~/.leoflow/assets/monaco/<version>/`. After that first fetch the editor
+into `~/.dexaflow/assets/monaco/<version>/`. After that first fetch the editor
 works **fully offline**.
 
 If the assets are not present yet (for example, an offline install), the `/ide`

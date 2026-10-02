@@ -15,7 +15,7 @@ Connection. `DiscordWebhookHook` sends to a channel webhook.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: discord_notify
 connectors:
   - discord
@@ -67,7 +67,7 @@ with DAG("discord_notify", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: discord_notify
 python_version: "3.12"

@@ -9,7 +9,7 @@ weight: 30
 description: Drop dbt_group() into a dag.py and your dbt project's models become tasks in the same graph.
 ---
 
-A Leoflow DAG is a `dag.py` plus a `leoflow.yaml`. **`dbt_group("name")` puts a dbt
+A Leoflow DAG is a `dag.py` plus a `dexaflow.yaml`. **`dbt_group("name")` puts a dbt
 project inside one**: Leoflow reads dbt's own `manifest.json` at compile time and
 turns each node (seed, model, snapshot, test) into a task in the same graph as your
 Python and Bash tasks, executed **pod-per-task** against your warehouse — no Apache
@@ -33,7 +33,7 @@ library to import and no profile-mapping boilerplate.
 
 Author a `dag.py` and call `dbt_group("<name>")` where the models belong. The
 group is a task like any other: operators before it, operators after it, one
-graph. Configure the project under `dbt_groups:` in `leoflow.yaml`.
+graph. Configure the project under `dbt_groups:` in `dexaflow.yaml`.
 
 {{% alert title="Packing models into fewer pods" color="info" %}}
 By default (`granularity: node`) each model is its own pod — like Cosmos. Set
@@ -64,9 +64,9 @@ with DAG("sales", schedule="@daily"):
 ```
 
 ```yaml
-# sales/leoflow.yaml
+# sales/dexaflow.yaml
 # The schedule lives in dag.py's DAG(schedule=…) — there is no top-level
-# schedule: key, and leoflow.yaml rejects one.
+# schedule: key, and dexaflow.yaml rejects one.
 dag_id: sales
 dependencies:
   - dbt-postgres==1.9.*       # the adapter; the base image ships no dbt
@@ -158,7 +158,7 @@ default only kicks in when there's nothing configured.
 {{% alert title="Top-level `connections:` and `variables:` reach dbt tasks too" color="info" %}}
 `dbt.connection` is the one the runtime turns into `profiles.yml`. Anything else
 your models need — a connection a pre-hook calls, a variable a macro reads — is
-declared at the top level of `leoflow.yaml`, exactly as for a `dag.py` project:
+declared at the top level of `dexaflow.yaml`, exactly as for a `dag.py` project:
 
 ```yaml
 connections: [warehouse_pg, reporting]
@@ -335,9 +335,9 @@ skips the already-built models ([#569](https://github.com/dexadata/leoflow/issue
 | file | owner | describes |
 |---|---|---|
 | `dbt_project.yml`, `profiles.yml`, `models/**/*.yml` | **dbt** | the transformation (models, materializations, tests, connection) |
-| `leoflow.yaml` | **Leoflow** | the DAG (id, schedule, granularity, packing, managed connection) |
+| `dexaflow.yaml` | **Leoflow** | the DAG (id, schedule, granularity, packing, managed connection) |
 
-They never overlap: `dbt_project.yml` never mentions schedules/pods; `leoflow.yaml`
+They never overlap: `dbt_project.yml` never mentions schedules/pods; `dexaflow.yaml`
 never mentions SQL. Author your **models** in your dbt tooling (VS Code + dbt
 Power User, dbt Cloud IDE); Leoflow only adds orchestration and packing.
 
@@ -386,7 +386,7 @@ not author-settable on *either* path yet — [#797](https://github.com/dexadata/
 A top-level `connections:`/`variables:` is worse than rejected — the schema accepts
 it and the compiled DAG silently drops it ([#997](https://github.com/dexadata/leoflow/issues/997)).
 `retries` and `resources` can be scoped per task; `alerts` and `staging` are
-DAG-wide — all four come from `leoflow.yaml` and apply to both shapes.
+DAG-wide — all four come from `dexaflow.yaml` and apply to both shapes.
 
 **Adding one Python task means rewriting the DAG.** Delete `dbt:`, add
 `dbt_groups:`, write a `dag.py`, and move the schedule from `dbt.schedule` to
@@ -401,11 +401,11 @@ reading of both at once
 continuity and any per-task override in `tasks:` bound by id.
 {{% /alert %}}
 
-You write dbt the way you always do, and add one `leoflow.yaml`:
+You write dbt the way you always do, and add one `dexaflow.yaml`:
 
 ```
-sales/                         # the DAG = a dbt project + leoflow.yaml
-├── leoflow.yaml               # the only Leoflow file
+sales/                         # the DAG = a dbt project + dexaflow.yaml
+├── dexaflow.yaml               # the only Leoflow file
 ├── dbt_project.yml            # dbt
 ├── profiles.yml               # dbt (or use a managed connection — see below)
 ├── seeds/raw_orders.csv
@@ -415,7 +415,7 @@ sales/                         # the DAG = a dbt project + leoflow.yaml
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: sales
 owner: data-team
@@ -480,7 +480,7 @@ $ ls target/manifest.json     # now sitting in your project dir
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dbt:
   project: .
   manifest: target/manifest.json   # pinned — leoflow compile skips `dbt parse` entirely
@@ -498,7 +498,7 @@ this problem.
 
 ## Reference
 
-`leoflow.yaml` `dbt:` (whole-DAG) and each `dbt_groups:` entry (embedded) accept:
+`dexaflow.yaml` `dbt:` (whole-DAG) and each `dbt_groups:` entry (embedded) accept:
 
 | field | meaning |
 |---|---|
@@ -507,7 +507,7 @@ this problem.
 | `manifest` | optional pre-built `manifest.json` path (project-relative); empty runs `dbt parse` |
 | `connection` | managed Leoflow connection id; empty = bring-your-own `profiles.yml` |
 | `schema` | overrides the dbt target schema in the generated profile |
-| `schedule` | *(whole-DAG `dbt:` only)* cron/preset; empty = on-demand. Declared **under `dbt:`** — a `dag.py` DAG takes its schedule from `DAG(schedule=…)` instead. There is no top-level `schedule:` key, and `leoflow.yaml` rejects one. |
+| `schedule` | *(whole-DAG `dbt:` only)* cron/preset; empty = on-demand. Declared **under `dbt:`** — a `dag.py` DAG takes its schedule from `DAG(schedule=…)` instead. There is no top-level `schedule:` key, and `dexaflow.yaml` rejects one. |
 
 ## Cosmos at a glance
 
@@ -515,7 +515,7 @@ this problem.
 |---|---|---|
 | Where the translation runs | Python lib at DAG-parse time | Go at compile time |
 | Manifest | re-parsed per `DbtDag` init | parsed once at compile time |
-| Config | in the `dag.py` (4 config objects) | in `leoflow.yaml` (declarative) |
+| Config | in the `dag.py` (4 config objects) | in `dexaflow.yaml` (declarative) |
 | Connection → profile | per-warehouse `profile_mapping` class | one `connection:` line, generated in-pod |
 | Pod packing | execution mode + per-model | `granularity` knob (split/fused) |
 | Mixing with operators | `DbtTaskGroup` in a DAG | `dbt_group()` in a `dag.py` |

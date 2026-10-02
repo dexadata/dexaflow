@@ -50,7 +50,7 @@ func writeFileAtomic(path string, data []byte) error {
 	// ownership survived; a temp file plus rename creates a NEW one owned by
 	// whoever is running. The installer prints `sudo leoflow lite
 	// reset-password` as the password-recovery command, so that path is not
-	// hypothetical: without this the user's ~/.leoflow/config.yaml becomes
+	// hypothetical: without this the user's ~/.dexaflow/config.yaml becomes
 	// root-owned 0600, their next non-root `leoflow lite` cannot read it, the
 	// control plane silently drops to no-auth, and every connection encrypted
 	// under the per-install key becomes unreadable.

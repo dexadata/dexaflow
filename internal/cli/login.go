@@ -66,7 +66,7 @@ func newLoginCommand() *cobra.Command {
 }
 
 // sessionConfigPath resolves the config file `login` writes to: the --config
-// flag when set, otherwise the default ~/.leoflow/config.yaml. Unlike
+// flag when set, otherwise the default ~/.dexaflow/config.yaml. Unlike
 // configFilePath, it returns the default path even when the file does not yet
 // exist, because login is allowed to create it.
 func sessionConfigPath(cmd *cobra.Command) (string, error) {

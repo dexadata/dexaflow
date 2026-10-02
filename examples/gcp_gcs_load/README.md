@@ -49,7 +49,7 @@ No key in the Connection — credentials come from the ambient identity.
      --role roles/iam.workloadIdentityUser \
      --member "serviceAccount:PROJECT.svc.id.goog[leoflow/leoflow-gcs]"
    ```
-   Then set `execution.service_account: leoflow-gcs` in the DAG's `leoflow.yaml`
+   Then set `execution.service_account: leoflow-gcs` in the DAG's `dexaflow.yaml`
    (already done in this example).
 3. Create the Connection `google_cloud_default` with **empty key fields** (just
    `project`/`scopes` if you want). Run the DAG — no key touches the cluster.

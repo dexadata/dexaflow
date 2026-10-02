@@ -26,7 +26,7 @@ dexaflow lite [path] [flags]
 
 ```
       --agent-bin string     leoflow-agent binary (default: PATH, then ./bin)
-      --compose string       compose file for the local Postgres (default: a managed one under ~/.leoflow, materialized on first run)
+      --compose string       compose file for the local Postgres (default: a managed one under ~/.dexaflow, materialized on first run)
       --executor string      execution mode: 'auto' (default; k3d if Docker is present, else subprocess), 'k8s' (dedicated k3d cluster, real pods), or 'subprocess' (host, fast, unsandboxed) (default "auto")
       --fresh                drop the local dev database first, so the session starts with nothing registered (DESTRUCTIVE: registered DAGs, runs and history)
   -h, --help                 help for lite
@@ -34,7 +34,7 @@ dexaflow lite [path] [flags]
       --image string         placeholder image recorded in dag.json (subprocess mode only) (default "leoflow-dev:local")
       --no-up                skip docker compose (Postgres already running); the dev DB + venv are still provisioned
       --port int             HTTP/UI port (dev default 8088, distinct from the demo's 8080) (default 8088)
-      --postgres string      Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.leoflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs) (default "auto")
+      --postgres string      Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs) (default "auto")
       --runtime-src string   source of the leoflow_runtime package installed into the dev venv (default "runtime/python")
       --server-bin string    leoflow-server binary (default: PATH, then ./bin)
 ```
@@ -42,7 +42,7 @@ dexaflow lite [path] [flags]
 ### Options inherited from parent commands
 
 ```
-      --config string       config file path (default ~/.leoflow/config.yaml)
+      --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
 ```

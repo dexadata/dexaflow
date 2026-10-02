@@ -95,4 +95,4 @@ The install script is **idempotent** for everything except the password:
 - DAGs are copied fresh each run; you can also drop your own DAG folders
   into `~/leoflow/` at any time.
 - To start from a clean slate: `leoflow uninstall` (removes
-  `~/.leoflow/`, KEEPS `~/leoflow/` workspace), then re-run this script.
+  `~/.dexaflow/`, KEEPS `~/leoflow/` workspace), then re-run this script.

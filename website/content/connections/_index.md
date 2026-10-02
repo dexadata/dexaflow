@@ -24,7 +24,7 @@ tested so far. The list below grows as we land them.
 A Connection only carries credentials. To *use* a connector — whether through
 its Airflow hook (`PostgresHook`) or a raw driver (`psycopg2`) — the matching
 Python package has to be in the image / venv. Leoflow gives you two ways to
-declare that in `leoflow.yaml`, and you pick whichever fits:
+declare that in `dexaflow.yaml`, and you pick whichever fits:
 
 {{< tabpane text=true >}}
 {{% tab header="connectors: (the sugar)" %}}

@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | 
 
 That script downloads the release archive for your OS/architecture, verifies
 its SHA-256 against the signed checksums, installs the binaries to
-`~/.leoflow/bin`, and then runs [`leoflow setup`](#what-leoflow-setup-does).
+`~/.dexaflow/bin`, and then runs [`leoflow setup`](#what-leoflow-setup-does).
 
 ### What you need
 
@@ -65,10 +65,10 @@ picks the highest path available**; without Docker it uses subprocess. Run
 1. **Ensures Python 3.11.** Uses a system `python3.11` if one is on `PATH`;
    otherwise downloads a pinned, checksum-verified [relocatable
    CPython](https://github.com/astral-sh/python-build-standalone) into
-   `~/.leoflow/python`. No sudo, no system install.
+   `~/.dexaflow/python`. No sudo, no system install.
 2. **Extracts the DAG parser and task runtime** (embedded in the binary) to
-   `~/.leoflow/pysrc`.
-3. **Points `parser_cmd` at the parser** in `~/.leoflow/config.yaml`. The parser is
+   `~/.dexaflow/pysrc`.
+3. **Points `parser_cmd` at the parser** in `~/.dexaflow/config.yaml`. The parser is
    pure Python with its dependencies vendored (the Airflow shim and PyYAML — ADR
    0024), so there is **no parser venv, no pip, and no Apache Airflow install** — it
    runs on the interpreter from step 1 directly.
@@ -86,7 +86,7 @@ on **localhost, an internal network, or a VPN**, never exposed publicly.
 Production-grade deploys are Pro's job. See [Editions](/concepts/editions/).
 {{% /alert %}}
 
-Everything Leoflow manages lives under `~/.leoflow`; your DAG source lives in
+Everything Leoflow manages lives under `~/.dexaflow`; your DAG source lives in
 the workspace — the two are kept separate.
 
 ```bash
@@ -97,7 +97,7 @@ leoflow setup --workspace ~/work   # choose where your DAG projects live
 
 {{% alert title="There is no scanned `dags/` folder" color="info" %}}
 Unlike Airflow, Leoflow has no monolithic DAGs directory. Each DAG is its
-own project (`dag.py` + `leoflow.yaml`); you point `leoflow lite <path>` at
+own project (`dag.py` + `dexaflow.yaml`); you point `leoflow lite <path>` at
 it. The workspace is just a convenient home for those projects.
 {{% /alert %}}
 
@@ -166,9 +166,9 @@ $ leoflow-mcp --version      # MCP server (see the MCP guide)
 
 | Variable | Effect |
 |---|---|
-| `LEOFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/leoflow/releases) for the current tag. |
-| `LEOFLOW_NO_SETUP=1` | install binaries only; run `leoflow setup` yourself later |
-| `LEOFLOW_INSTALL_DIR=~/.leoflow/bin` | where to put the binaries |
+| `DEXAFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/leoflow/releases) for the current tag. |
+| `DEXAFLOW_NO_SETUP=1` | install binaries only; run `leoflow setup` yourself later |
+| `DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin` | where to put the binaries |
 
 ### Building Lite from source
 
@@ -183,7 +183,7 @@ leoflow setup
 ```
 
 The subsequent `leoflow setup` provisions the same managed runtime the
-install-script path uses (managed CPython under `~/.leoflow/`).
+install-script path uses (managed CPython under `~/.dexaflow/`).
 
 ### Uninstalling Lite
 
@@ -191,7 +191,7 @@ Use the built-in command — it removes the install directory and (with
 `--purge`) your workspace too:
 
 ```bash
-leoflow uninstall              # removes ~/.leoflow (binaries, managed Python, parser, config)
+leoflow uninstall              # removes ~/.dexaflow (binaries, managed Python, parser, config)
 leoflow uninstall --purge      # also removes ~/leoflow (your DAGs!)
 ```
 
@@ -199,7 +199,7 @@ If the `leoflow` binary is gone or broken, fall back to the same paths by
 hand:
 
 ```bash
-rm -rf ~/.leoflow              # what `leoflow uninstall` would have removed
+rm -rf ~/.dexaflow              # what `leoflow uninstall` would have removed
 rm -rf ~/leoflow               # what `--purge` adds (your workspace)
 ```
 
@@ -477,7 +477,7 @@ deploy, layer on:
 
 {{% alert title="`secretScoping: enforce` denies secrets to a DAG that declares none" color="warning" %}}
 Under `enforce` a task receives **only** the Variables and Connections its
-`leoflow.yaml` declares — and a DAG that declares **nothing** therefore receives
+`dexaflow.yaml` declares — and a DAG that declares **nothing** therefore receives
 **nothing**, not everything. The declaration schema is new, so most existing DAGs
 declare nothing and would break on the flip. Land it the way any breaking
 security change lands: leave `permissive` on while your DAGs adopt

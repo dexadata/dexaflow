@@ -20,7 +20,7 @@ Python pain. Native map-reduce for ML/AI: fan-out + reduce as a list comprehensi
 {{% /blocks/cover %}}
 
 {{% blocks/lead color="dark" %}}
-A DAG is a `leoflow.yaml` plus a `dag.py` (the real Airflow SDK) that compile to
+A DAG is a `dexaflow.yaml` plus a `dag.py` (the real Airflow SDK) that compile to
 **one immutable artifact** — a `dag.json` and a container image. Parsed once, at
 compile time. No shared `/dags` filesystem, no dependency hell, no re-parsing on
 every tick.
@@ -29,7 +29,7 @@ every tick.
 {{% blocks/section color="white" type="row" %}}
 
 {{% blocks/feature icon="fa-solid fa-pen-ruler" title="Author" url="/author-dags/dag-authoring/" url_text="Author a DAG" %}}
-Write a `dag.py` on the Airflow Task SDK, declare packaging in `leoflow.yaml`, and
+Write a `dag.py` on the Airflow Task SDK, declare packaging in `dexaflow.yaml`, and
 compile it to an immutable image. Native **map-reduce** for ML/AI as a Python list
 comprehension.
 {{% /blocks/feature %}}
@@ -72,5 +72,5 @@ changes.
 two commands. **Evaluating?** [Why Leoflow](/why-leoflow/) and
 [Editions & modes](/concepts/editions/) lay out the model and the Lite/Pro split.
 **Building?** The [Reference](/reference/) has the HTTP API, CLI, Go packages, and
-every `LEOFLOW_*` config key.
+every `DEXAFLOW_*` config key.
 {{% /blocks/section %}}

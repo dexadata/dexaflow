@@ -30,7 +30,7 @@ Connection **metadata** (host, login, password, extra JSON) is owned by the
 Leoflow control plane: created in the admin UI, encrypted at rest (ADR 0019).
 Connector **code** (`PostgresHook.get_records()`, `GCSHook.upload()`, …) is
 owned by the user's DAG image: pip-installed from `apache-airflow-providers-<X>`
-declared in `leoflow.yaml.dependencies`. Leoflow ships **no** provider code.
+declared in `dexaflow.yaml.dependencies`. Leoflow ships **no** provider code.
 
 The two meet only at runtime, through the `AIRFLOW_CONN_<ID>` environment
 variable (ADR 0021 wire format) that the Leoflow agent stamps into the task
@@ -40,7 +40,7 @@ hook does the real work.
 
 ```text
 ┌─────────────────────────────────────────┐    ┌──────────────────────────────────┐
-│  Admin UI / API  (Leoflow control plane,│    │  leoflow.yaml  (user, per-DAG)   │
+│  Admin UI / API  (Leoflow control plane,│    │  dexaflow.yaml  (user, per-DAG)   │
 │                   Go — ADR 0014)        │    │                                  │
 │                                         │    │  dependencies:                   │
 │  POST /api/v2/connections               │    │    - apache-airflow-providers-   │
@@ -121,7 +121,7 @@ Two tiers of "Airflow imports that work on Leoflow" — they have very
 different dependency contracts, and the cookbook pages must state this in
 the very first line.
 
-| Tier | Import | Needs a provider in `leoflow.yaml.dependencies`? | Runtime path |
+| Tier | Import | Needs a provider in `dexaflow.yaml.dependencies`? | Runtime path |
 |---|---|---|---|
 | **A. Native (already shipped)** | `from airflow.sdk import DAG, task` | **No** | Parser maps to `python` / `bash` task types; Leoflow runtime executes directly. |
 | A. | `from airflow.providers.standard.operators.python import PythonOperator` | **No** | Same as above. |
@@ -390,7 +390,7 @@ match Airflow's method signatures *anyway* — most of the LOC savings vanish.
 
 ### Strategy C — Allow user-installed `apache-airflow-providers-*`
 
-User declares `apache-airflow-providers-postgres` in `leoflow.yaml.deps`;
+User declares `apache-airflow-providers-postgres` in `dexaflow.yaml.deps`;
 runtime pip-installs at venv build / image build time. The providers import
 `from airflow.providers.common.compat.sdk import BaseHook, Connection` which
 forces `apache-airflow>=3.0` as a runtime dep.
@@ -476,7 +476,7 @@ Once a `BaseHook.get_connection()` exists, every Airflow-style hook works.
 - Move the parser shim into a shared package:
   `leoflow_python_compat/airflow/...` with two entry points (parser-mode =
   lazy stubs; runtime-mode = real shim). Runtime install gated by
-  `leoflow.yaml.airflow_compat: true`.
+  `dexaflow.yaml.airflow_compat: true`.
 - Implement `BaseHook`, `Connection`, `Variable`, `exceptions`,
   `log.mask_secret`, `execution_time.context._get_connection` (reads
   `AIRFLOW_CONN_*` env directly — skip the SecretsBackend chain entirely;
@@ -553,7 +553,7 @@ Build a ~1,200 LOC Python "runtime compatibility shim" that fakes
 `airflow.sdk.exceptions/log/execution_time.context`, the
 `airflow.providers.common.compat.*` re-export layer, and vendors the
 1,250-line `DbApiHook` verbatim. Gate it behind an opt-in
-`airflow_compat: true` in `leoflow.yaml` so the default Lite footprint stays
+`airflow_compat: true` in `dexaflow.yaml` so the default Lite footprint stays
 slim. Officially support 5 hooks via CI (postgres / http / sqlite / redis /
 mysql), document the rest as best-effort. The Connection model has zero
 gap. Avoid Strategy C (pulling apache-airflow into the image) at all costs

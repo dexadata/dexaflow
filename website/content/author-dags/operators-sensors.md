@@ -57,7 +57,7 @@ flowchart TB
   STORE -->|"gRPC GetTaskSpec<br/>(agentrpc TaskSpec)"| AGENT
 
   subgraph POD["Task pod (DAG image)"]
-    AGENT["leoflow-agent (Go, PID 1)<br/>buildEnv: stamps LEOFLOW_* / AIRFLOW_* env<br/>BuildCommand: picks runtime mode"]
+    AGENT["leoflow-agent (Go, PID 1)<br/>buildEnv: stamps DEXAFLOW_* / AIRFLOW_* env<br/>BuildCommand: picks runtime mode"]
     RT["leoflow_runtime (Python)<br/>run / run_operator / run_bash"]
     SDK["Apache Airflow SDK<br/>import_string(class)(**args).execute(context)"]
     AGENT -->|"argv + env"| RT --> SDK
@@ -94,27 +94,27 @@ variables and small files** — there is no shared Airflow object. The agent's
 
 | Env var | Set by | Read by | Purpose |
 |---|---|---|---|
-| `LEOFLOW_OPERATOR_ARGS` | agent | `run_operator` | JSON of the operator's constructor args |
-| `LEOFLOW_CALL_ARGS_JSON` | agent | `_resolve_kwargs` | literal args written at a `@task(...)` call (#115) |
-| `LEOFLOW_XCOM_<PARAM>` | agent | `_resolve_kwargs` / `_merge_operator_xcom` | one upstream task's `return_value`, keyed by param |
-| `LEOFLOW_UPSTREAM_XCOM` | agent | `_load_xcom_by_task` | map of `{task_id: value}` for `ti.xcom_pull` |
-| `LEOFLOW_TASK_ID` / `_DAG_ID` / `_RUN_ID` / `_TRY_NUMBER` | agent | context + ti shim | run identity |
-| `LEOFLOW_TS` / `LEOFLOW_DS` | agent | `_operator_context` | logical date as ISO timestamp / `YYYY-MM-DD` |
-| `LEOFLOW_DATA_INTERVAL_START` / `_END` | agent | `_operator_context` | the run's data interval |
-| `LEOFLOW_PARAMS` | agent | `_operator_context` | JSON of DAG/run params (#148) |
+| `DEXAFLOW_OPERATOR_ARGS` | agent | `run_operator` | JSON of the operator's constructor args |
+| `DEXAFLOW_CALL_ARGS_JSON` | agent | `_resolve_kwargs` | literal args written at a `@task(...)` call (#115) |
+| `DEXAFLOW_XCOM_<PARAM>` | agent | `_resolve_kwargs` / `_merge_operator_xcom` | one upstream task's `return_value`, keyed by param |
+| `DEXAFLOW_UPSTREAM_XCOM` | agent | `_load_xcom_by_task` | map of `{task_id: value}` for `ti.xcom_pull` |
+| `DEXAFLOW_TASK_ID` / `_DAG_ID` / `_RUN_ID` / `_TRY_NUMBER` | agent | context + ti shim | run identity |
+| `DEXAFLOW_TS` / `DEXAFLOW_DS` | agent | `_operator_context` | logical date as ISO timestamp / `YYYY-MM-DD` |
+| `DEXAFLOW_DATA_INTERVAL_START` / `_END` | agent | `_operator_context` | the run's data interval |
+| `DEXAFLOW_PARAMS` | agent | `_operator_context` | JSON of DAG/run params (#148) |
 | `AIRFLOW_VAR_<KEY>` | agent | Airflow env-secrets backend | a Variable, resolved by `{{ var.value.X }}` / `Variable.get` |
 | `AIRFLOW_CONN_<ID>` | agent | Airflow env-secrets backend | a Connection URI, resolved by hooks / `{{ conn.X }}` |
-| `LEOFLOW_RETURN_VALUE_PATH` | agent | `_write_return` | file the runtime writes the task's `return_value` to |
-| `LEOFLOW_EXTRA_LINKS_PATH` | agent | `_write_extra_links` | file for computed UI extra-links |
-| `LEOFLOW_PUSHES_PATH` | agent | `_write_xcom_pushes` | file for custom-keyed `ti.xcom_push` values |
+| `DEXAFLOW_RETURN_VALUE_PATH` | agent | `_write_return` | file the runtime writes the task's `return_value` to |
+| `DEXAFLOW_EXTRA_LINKS_PATH` | agent | `_write_extra_links` | file for computed UI extra-links |
+| `DEXAFLOW_PUSHES_PATH` | agent | `_write_xcom_pushes` | file for custom-keyed `ti.xcom_push` values |
 
-{{% alert title="The `LEOFLOW_XCOM_` prefix is reserved" color="warning" %}}
-`_merge_operator_xcom` consumes **every** env var named `LEOFLOW_XCOM_<…>` as
+{{% alert title="The `DEXAFLOW_XCOM_` prefix is reserved" color="warning" %}}
+`_merge_operator_xcom` consumes **every** env var named `DEXAFLOW_XCOM_<…>` as
 an operator constructor kwarg. Any new channel between agent and runtime must
 **not** start with that prefix or it gets silently swallowed as an argument.
-Two bugs were caused by exactly this (`LEOFLOW_XCOM_BY_TASK` and
-`LEOFLOW_XCOM_PUSHES_PATH`), which is why those channels are now named
-`LEOFLOW_UPSTREAM_XCOM` and `LEOFLOW_PUSHES_PATH`. Both were caught by live
+Two bugs were caused by exactly this (`DEXAFLOW_XCOM_BY_TASK` and
+`DEXAFLOW_XCOM_PUSHES_PATH`), which is why those channels are now named
+`DEXAFLOW_UPSTREAM_XCOM` and `DEXAFLOW_PUSHES_PATH`. Both were caught by live
 end-to-end runs, not unit tests with fakes.
 {{% /alert %}}
 
@@ -156,7 +156,7 @@ operators and native tasks see the same macros Airflow exposes:
 `data_interval_end`, `params`, `var`, `conn`.
 
 `params` (#148) come from the DAG/run config the control plane resolved
-(`run.Conf`), serialized into `LEOFLOW_PARAMS`. The data interval and logical date
+(`run.Conf`), serialized into `DEXAFLOW_PARAMS`. The data interval and logical date
 ride through the gRPC `TaskSpec` (proto fields `logical_date`,
 `data_interval_start/end`, `params_json`).
 
@@ -165,7 +165,7 @@ ride through the gRPC `TaskSpec` (proto fields `logical_date`,
 Tasks pass data the Airflow way: `value = ti.xcom_pull(task_ids="upstream")`.
 There is no live TaskInstance in a standalone pod, so the runtime supplies
 `_StandaloneTaskInstance` — a tolerant shim whose `xcom_pull` resolves from the
-`{task_id: value}` map the agent delivered in `LEOFLOW_UPSTREAM_XCOM`, and whose
+`{task_id: value}` map the agent delivered in `DEXAFLOW_UPSTREAM_XCOM`, and whose
 `xcom_push(key, value)` captures custom keys for shipping back.
 
 On the control-plane side, the agent only delivers an upstream's value when the
@@ -182,7 +182,7 @@ value for `x`, the macro for `ds`, and everything else via `context`.
 
 Beyond the single `return_value`, an operator (or a `@task` via `**context`) can
 `ti.xcom_push(key="row_count", value=7)`. The runtime collects these in the ti
-shim's `pushed` dict and writes them to `LEOFLOW_PUSHES_PATH`; the agent reads that
+shim's `pushed` dict and writes them to `DEXAFLOW_PUSHES_PATH`; the agent reads that
 file and publishes each as an individual XCom. This gives native tasks the same
 multi-key XCom that operators emit.
 
@@ -194,7 +194,7 @@ them generically by calling Airflow's own `link.get_link(operator, ti_key)`, whi
 reads values the operator stashed via `BaseXCom.get_value`. The runtime bridges
 that lookup to the captured pushes (`_generic_link_url`), with a templated URL
 fallback (`_format_link_url`) for older link styles. Computed links are written to
-`LEOFLOW_EXTRA_LINKS_PATH`; the agent ships them as the reserved `_extra_links`
+`DEXAFLOW_EXTRA_LINKS_PATH`; the agent ships them as the reserved `_extra_links`
 XCom, and the API serves them from the resource's `/links` action so the Airflow
 UI renders the buttons.
 
@@ -216,7 +216,7 @@ changing existing behaviour:
 `{{ var.value.X }}`, `{{ params.region }}`) when the command contains `{{` — a
 plain command stays a direct `bash -c` so bash-only images need no Python. Jinja2
 is optional at runtime: if it is absent the command falls back to its raw form and
-the `$LEOFLOW_DS` / `$AIRFLOW_VAR_*` env vars still reach the shell. Every
+the `$DEXAFLOW_DS` / `$AIRFLOW_VAR_*` env vars still reach the shell. Every
 interpolated **value** is shell-quoted (`shlex.quote`) before exec, so a `params`
 value from an untrusted `conf` cannot inject shell — write interpolations unquoted
 (`--name {{ params.x }}`, not `--name "{{ params.x }}"`). See

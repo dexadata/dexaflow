@@ -73,15 +73,15 @@ transports.
 {{% tab header="stdio (default) — local Lite dev" %}}
 
 ```bash
-export LEOFLOW_SERVER_URL=http://localhost:8088     # your Lite control plane
-export LEOFLOW_TOKEN="$(leoflow auth create-token \
+export DEXAFLOW_SERVER_URL=http://localhost:8088     # your Lite control plane
+export DEXAFLOW_TOKEN="$(leoflow auth create-token \
   --server http://localhost:8088 \
   --username admin@leoflow.local --password <your-admin-password>)"
 leoflow-mcp                                          # speaks MCP over stdin/stdout
 ```
 
 On the **stdio** transport the process token **is** the caller's identity: the
-server reads it once from `LEOFLOW_TOKEN` and every `/api/v2` call carries it. Logs
+server reads it once from `DEXAFLOW_TOKEN` and every `/api/v2` call carries it. Logs
 go to **stderr** — stdout is the MCP protocol channel and carries nothing else.
 This is the transport an MCP client (Claude Desktop / Code) launches for you; you
 rarely run it by hand.
@@ -95,7 +95,7 @@ leoflow-mcp --transport http --listen :9099 --server https://leoflow.internal
 The HTTP transport serves `POST /mcp` (plus `GET /healthz`) and is **stateless**:
 identity is a **per-request bearer**, never an ambient process token (ADR 0050 D9).
 A request without an `Authorization: Bearer <jwt>` header is refused — the server
-never falls back to a process credential. `LEOFLOW_TOKEN` is ignored in this mode.
+never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mode.
 {{% /tab %}}
 {{< /tabpane >}}
 
@@ -103,10 +103,10 @@ never falls back to a process credential. `LEOFLOW_TOKEN` is ignored in this mod
 
 | Flag | Env | Default | Purpose |
 |---|---|---|---|
-| `--server` | `LEOFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
-| `--transport` | `LEOFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
-| `--listen` | `LEOFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
-| — | `LEOFLOW_TOKEN` | — | Bearer JWT for the **stdio** transport (ignored on `http`). |
+| `--server` | `DEXAFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
+| `--transport` | `DEXAFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
+| `--listen` | `DEXAFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
+| — | `DEXAFLOW_TOKEN` | — | Bearer JWT for the **stdio** transport (ignored on `http`). |
 | `--version` | — | — | Print the version and exit. |
 
 ## Auth: getting a token
@@ -121,7 +121,7 @@ leoflow auth create-token \
   --password <your-admin-password>
 ```
 
-Use that token as `LEOFLOW_TOKEN` (stdio) or as the request `Authorization: Bearer`
+Use that token as `DEXAFLOW_TOKEN` (stdio) or as the request `Authorization: Bearer`
 header (http). Tokens are short-lived; treat them as secrets (never log them, never
 commit them).
 
@@ -164,8 +164,8 @@ Add `leoflow-mcp` to your client's MCP server config. For **Claude Desktop**
     "leoflow": {
       "command": "leoflow-mcp",
       "env": {
-        "LEOFLOW_SERVER_URL": "http://localhost:8088",
-        "LEOFLOW_TOKEN": "<paste a JWT from `leoflow auth create-token`>"
+        "DEXAFLOW_SERVER_URL": "http://localhost:8088",
+        "DEXAFLOW_TOKEN": "<paste a JWT from `leoflow auth create-token`>"
       }
     }
   }
@@ -173,7 +173,7 @@ Add `leoflow-mcp` to your client's MCP server config. For **Claude Desktop**
 ```
 
 If `leoflow-mcp` is not on the launcher's `PATH`, use its absolute path as
-`command` (e.g. `~/.leoflow/bin/leoflow-mcp`). Restart the client, and Leoflow's
+`command` (e.g. `~/.dexaflow/bin/leoflow-mcp`). Restart the client, and Leoflow's
 tools and resources appear. Start with *"list my DAGs"* or *"diagnose the latest
 failed run of `<dag_id>`"*.
 

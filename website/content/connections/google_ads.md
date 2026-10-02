@@ -78,7 +78,7 @@ google_ads_demo()
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: google_ads_demo
 python_version: "3.12"
 connectors: [google_ads]

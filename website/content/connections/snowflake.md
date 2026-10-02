@@ -21,7 +21,7 @@ One line of `connectors:` sugar installs `apache-airflow-providers-snowflake`
 (which pulls the Snowflake driver):
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: snowflake_load
 connectors:
   - snowflake
@@ -101,7 +101,7 @@ with DAG("snowflake_load", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: snowflake_load
 description: Load rows into Snowflake via SnowflakeHook.

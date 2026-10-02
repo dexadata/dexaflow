@@ -27,18 +27,18 @@ default**:
 
 | What | Where | Notes |
 |---|---|---|
-| **Workspace** | The path under `workspace:` in `~/.leoflow/config.yaml` (default `~/leoflow`) | Your `dag.py`, `leoflow.yaml`, and any other project files. The installer does not touch this directory. |
-| **Datastore** | `~/.leoflow/managed-postgres/data/` (managed Postgres) **or** the `leoflow-data-*` Docker volume (Docker Postgres) | Includes DAG history, runs, task instances, XCom, Variables, Connections. The new binary applies any pending SQL migrations on first start. |
-| **Admin login** | `~/.leoflow/config.yaml` (`admin_email`, `admin_password_hash`) | Your password is not regenerated. Use `leoflow lite reset-password` if you forgot it. |
-| **JWT signing secret** | `~/.leoflow/config.yaml` (`jwt_secret`) | Browser sessions survive the upgrade (no forced re-login). |
-| **Parser + runtime venv** | `~/.leoflow/venv/` | Project dependencies are reinstalled lazily as needed (the marker at `~/.leoflow/venv/.leoflow-deps` triggers a refresh when the project's deps change). |
+| **Workspace** | The path under `workspace:` in `~/.dexaflow/config.yaml` (default `~/leoflow`) | Your `dag.py`, `dexaflow.yaml`, and any other project files. The installer does not touch this directory. |
+| **Datastore** | `~/.dexaflow/managed-postgres/data/` (managed Postgres) **or** the `leoflow-data-*` Docker volume (Docker Postgres) | Includes DAG history, runs, task instances, XCom, Variables, Connections. The new binary applies any pending SQL migrations on first start. |
+| **Admin login** | `~/.dexaflow/config.yaml` (`admin_email`, `admin_password_hash`) | Your password is not regenerated. Use `leoflow lite reset-password` if you forgot it. |
+| **JWT signing secret** | `~/.dexaflow/config.yaml` (`jwt_secret`) | Browser sessions survive the upgrade (no forced re-login). |
+| **Parser + runtime venv** | `~/.dexaflow/venv/` | Project dependencies are reinstalled lazily as needed (the marker at `~/.dexaflow/venv/.leoflow-deps` triggers a refresh when the project's deps change). |
 
 ## What changes
 
 | What | Why |
 |---|---|
 | The `leoflow` / `leoflow-server` / `leoflow-agent` binaries on `PATH` | Replaced by `install.sh`. |
-| `~/.leoflow/python/` (managed CPython) | Pinned per release; replaced if the new release pins a different version. |
+| `~/.dexaflow/python/` (managed CPython) | Pinned per release; replaced if the new release pins a different version. |
 | The SQL schema | The new binary applies any missing migrations on first start. |
 
 ## Drift detection
@@ -64,7 +64,7 @@ If you want a clean slate without the prior history:
 leoflow uninstall --purge
 ```
 
-`--purge` removes the binaries, `~/.leoflow/` (config + datastore + parser
+`--purge` removes the binaries, `~/.dexaflow/` (config + datastore + parser
 sources), and the workspace directory. Without `--purge`, uninstall keeps the
 datastore and workspace so a future reinstall picks up where you left off
 (this is also the contract upgrades rely on).

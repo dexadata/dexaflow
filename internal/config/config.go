@@ -100,7 +100,7 @@ func Load(configFile string, flags *pflag.FlagSet) (*Config, error) {
 	// ReadInConfig populates the key directly.
 	v.SetDefault("token", "")
 
-	v.SetEnvPrefix("LEOFLOW")
+	v.SetEnvPrefix("DEXAFLOW")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv()
 
@@ -119,6 +119,10 @@ func Load(configFile string, flags *pflag.FlagSet) (*Config, error) {
 				}
 			}
 		}
+	}
+
+	if err := bindBothPrefixes(v, strings.NewReplacer("-", "_")); err != nil {
+		return nil, err
 	}
 
 	var c Config

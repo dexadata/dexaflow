@@ -11,7 +11,7 @@ description: The two editions (Lite and Pro) and the three runtime modes (Lite �
 ---
 
 Leoflow ships in **two editions** that share the same engine, the same
-Airflow-3.2.x UI, and the same DAG format (`dag.py` + `leoflow.yaml`): **Lite**
+Airflow-3.2.x UI, and the same DAG format (`dag.py` + `dexaflow.yaml`): **Lite**
 (the full control plane on one host — laptop, VM, or internal server) and **Pro**
 (Helm-installed on Kubernetes). You author a DAG once and it runs on either. A
 third, contributor-facing **Demo** mode is a production-shaped reference
@@ -60,7 +60,7 @@ Lite is the whole control plane on your machine, scoped down for local use. One
 command installs it, [`leoflow setup`](/get-started/installation/#what-leoflow-setup-does)
 provisions a managed Python and a single admin, and `leoflow lite <project>`
 serves the UI with hot-reload at <http://localhost:8088> (marked **Leoflow Lite**
-in the navbar, login enabled). Edit `dags/<project>/dag.py` or `leoflow.yaml`,
+in the navbar, login enabled). Edit `dags/<project>/dag.py` or `dexaflow.yaml`,
 save, and it hot-reloads — fully **isolated** from Demo (own DB, own cluster, own
 ports) so there is no split brain.
 
@@ -95,7 +95,7 @@ installs upgrade in place.
 Lite's datastore is **Postgres, chosen automatically for the host**: when Docker is
 present it uses the `postgres:16` container; when it is not, it falls back to an
 **embedded managed Postgres** (a pinned, checksum-verified relocatable build
-downloaded under `~/.leoflow`, on a local Unix socket) — so `leoflow lite` runs on
+downloaded under `~/.dexaflow`, on a local Unix socket) — so `leoflow lite` runs on
 a **Docker-free host with nothing to install**. (Force either with
 `--postgres docker|managed`.)
 

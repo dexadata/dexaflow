@@ -221,7 +221,7 @@ func TestMergeEnvStripsUnknownLeoflowVariablesByDefault(t *testing.T) {
 // DEXAFLOW_AUTH_JWT_SECRET twin hands the task an admin-minting key.
 func TestMergeEnvStripsTheNewPrefixToo(t *testing.T) {
 	got := mergeEnv([]string{
-		"DEXAFLOW_SECRET_KEY=0123456789abcdef0123456789abcdef", // gitleaks:allow — fixture; the point is the KEY NAME
+		"DEXAFLOW_SECRET_KEY=0123456789abcdef0123456789abcdef", // gitleaks:allow: fixture; the point is the KEY NAME
 		"DEXAFLOW_AUTH_JWT_SECRET=hmac-signing-secret",
 		"DEXAFLOW_AGENT_TOKEN=eyJhbGciOi.secret.sig",
 		"DEXAFLOW_SOME_FUTURE_CREDENTIAL=shhh",

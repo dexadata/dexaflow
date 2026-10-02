@@ -16,7 +16,7 @@ Connection. EMR carries no host and no password — only the AWS region lives in
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: emr_demo
 connectors:
   - emr
@@ -71,7 +71,7 @@ with DAG("emr_demo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: emr_demo
 python_version: "3.12"

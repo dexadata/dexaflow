@@ -16,7 +16,7 @@ against the Datadog site (US, EU, …).
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: datadog_metric
 connectors:
   - datadog
@@ -75,7 +75,7 @@ with DAG("datadog_metric", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: datadog_metric
 python_version: "3.12"

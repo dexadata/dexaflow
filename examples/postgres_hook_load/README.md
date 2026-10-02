@@ -13,7 +13,7 @@ imports and runs inside the task, and the managed Connection is delivered as
 
 | | `postgres_load` (raw) | `postgres_hook_load` (this) |
 |---|---|---|
-| leoflow.yaml | `dependencies: [psycopg2-binary==2.9.10]` | `connectors: [postgres]` |
+| dexaflow.yaml | `dependencies: [psycopg2-binary==2.9.10]` | `connectors: [postgres]` |
 | In the task | `import psycopg2; psycopg2.connect(dsn)` | `PostgresHook(postgres_conn_id="pg_target")` |
 | Needs the Connection? | No (falls back to a local DSN) | **Yes** — the hook resolves `pg_target` |
 
