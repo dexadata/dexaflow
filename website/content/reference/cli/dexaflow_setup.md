@@ -22,7 +22,7 @@ dexaflow setup [flags]
 ```
       --dry-run            detect and print the plan without downloading or writing anything
   -h, --help               help for setup
-      --workspace string   workspace dir for your DAG projects (default ~/leoflow)
+      --workspace string   workspace dir for your DAG projects (default ~/dexaflow, or an existing ~/leoflow)
 ```
 
 ### Options inherited from parent commands

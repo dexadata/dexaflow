@@ -52,7 +52,7 @@ type Dependencies struct {
 	// re-authenticate. Non-positive disables the ceiling.
 	TokenMaxLifetimeSecs int
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Dexaflow"; `leoflow dev` sets it to mark the DEV environment.
+	// falls back to "Dexaflow"; `dexaflow lite` sets it to mark the DEV environment.
 	InstanceName string
 	// UIAutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
@@ -60,7 +60,7 @@ type Dependencies struct {
 	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
 	UIAutoRefreshIntervalSeconds int
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
-	// request as an admin (no login). It is for `leoflow dev` only and must never
+	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
 	DevNoAuth bool
 	// Edition marks the running edition ("pro", "lite", or empty). It gates

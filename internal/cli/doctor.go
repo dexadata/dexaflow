@@ -72,7 +72,7 @@ func renderDoctor(w io.Writer, r setup.Report) {
 
 	if r.UnderMnt {
 		p("\n  WARNING: this directory is under /mnt (WSL). Keep your project in the WSL\n")
-		p("  native filesystem (~/...) so `leoflow dev` hot-reload (inotify) works.\n")
+		p("  native filesystem (~/...) so `dexaflow lite` hot-reload (inotify) works.\n")
 	}
 	p("\n  next: run `dexaflow setup` to bootstrap the managed runtime.\n")
 }

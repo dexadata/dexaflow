@@ -123,7 +123,7 @@ type ExecutorSection struct {
 	TaskNamespace string `mapstructure:"task_namespace"`
 	// Type selects the pod-path executor: "kubernetes" (default, pod-per-task) or
 	// "subprocess" (dev only, runs the agent on the host without isolation, used
-	// by `leoflow dev`).
+	// by `dexaflow lite`).
 	Type string `mapstructure:"type"`
 	// AgentPath is the leoflow-agent binary the subprocess executor runs (dev only).
 	AgentPath string `mapstructure:"agent_path"`
@@ -393,7 +393,7 @@ type AuthSection struct {
 	// in both modes.
 	OIDC OIDCSection `mapstructure:"oidc"`
 	// DevNoAuth disables authentication entirely, treating every request as an
-	// admin. It exists ONLY for `leoflow dev` (local, unsandboxed). It is false by
+	// admin. It exists ONLY for `dexaflow lite` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
 	// this in production (LEOFLOW_AUTH_DEV_NO_AUTH).
 	DevNoAuth bool `mapstructure:"dev_no_auth"`

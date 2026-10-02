@@ -170,7 +170,7 @@ func newSetupCommand() *cobra.Command {
 			return runSetup(cmd, workspace, dryRun)
 		},
 	}
-	cmd.Flags().StringVar(&workspace, "workspace", "", "workspace dir for your DAG projects (default ~/leoflow)")
+	cmd.Flags().StringVar(&workspace, "workspace", "", "workspace dir for your DAG projects (default ~/dexaflow, or an existing ~/leoflow)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "detect and print the plan without downloading or writing anything")
 	return cmd
 }
@@ -190,7 +190,7 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 
 	def := liteSettings{Workspace: workspaceFlag, Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 	if def.Workspace == "" {
-		def.Workspace = filepath.Join(homeDir, "leoflow")
+		def.Workspace = defaultWorkspaceIn(homeDir)
 	}
 
 	pal := newPalette(colorEnabled(out))

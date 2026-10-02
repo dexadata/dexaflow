@@ -72,7 +72,7 @@ picks the highest path available**; without Docker it uses subprocess. Run
    pure Python with its dependencies vendored (the Airflow shim and PyYAML — ADR
    0024), so there is **no parser venv, no pip, and no Apache Airflow install** — it
    runs on the interpreter from step 1 directly.
-4. **Creates your workspace** (default `~/leoflow`, override with `--workspace`)
+4. **Creates your workspace** (default `~/dexaflow`, override with `--workspace`)
    for your DAG projects, and asks (on a terminal) for the workspace, executor
    (`subprocess` for local use, `k8s` for a dev mini-cluster — changeable later),
    and UI port. Run non-interactively (e.g. `curl | sh`) it uses sensible defaults.
@@ -192,15 +192,15 @@ Use the built-in command — it removes the install directory and (with
 
 ```bash
 dexaflow uninstall              # removes ~/.dexaflow (binaries, managed Python, parser, config)
-dexaflow uninstall --purge      # also removes ~/leoflow (your DAGs!)
+dexaflow uninstall --purge      # also removes your workspace (your DAGs!)
 ```
 
-If the `leoflow` binary is gone or broken, fall back to the same paths by
+If the `dexaflow` binary is gone or broken, fall back to the same paths by
 hand:
 
 ```bash
 rm -rf ~/.dexaflow              # what `dexaflow uninstall` would have removed
-rm -rf ~/leoflow               # what `--purge` adds (your workspace)
+rm -rf ~/dexaflow              # what `--purge` adds (your workspace)
 ```
 
 ---

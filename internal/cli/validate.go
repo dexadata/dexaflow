@@ -73,7 +73,7 @@ func newValidateCommand() *cobra.Command {
 // validateEnforcedPythonVersion returns the interpreter minor `validate` must
 // lint under, or empty when any supported one will do.
 //
-// Same rule and same three exemptions as `leoflow dev` (#1092): a version the
+// Same rule and same three exemptions as `dexaflow lite` (#1092): a version the
 // author did not write is not a statement, `base_image` makes the field inert
 // because the FROM is chosen by hand, and a deprecated version is one we are
 // asking them to leave rather than one we should demand an interpreter for.
@@ -106,7 +106,7 @@ func checkDagPythonSyntax(cmd *cobra.Command, dagPath string, cfg *domain.Leoflo
 	if want := validateEnforcedPythonVersion(cfg); want != "" {
 		return checkDagSyntaxUnder(cmd, dagPath, want)
 	}
-	// Unified precedence with `leoflow dev` (#742): managed pinned build, then a
+	// Unified precedence with `dexaflow lite` (#742): managed pinned build, then a
 	// host python3.11/python3 that reports >= 3.11. A present-but-unsupported
 	// interpreter is a hard error (validate must not lint under 3.9 a DAG that
 	// will run under 3.11), while no interpreter at all is a soft skip so a fresh

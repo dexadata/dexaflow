@@ -590,6 +590,7 @@ the current one wins.
 | `dexaflow.yaml` | `leoflow.yaml` | `dexaflow.yaml` is used and a note is printed; `leoflow.yaml` is ignored. |
 | `DEXAFLOW_*` variables | `LEOFLOW_*` variables | The `DEXAFLOW_*` value is used; a conflict is logged. Every binary mirrors one prefix onto the other at startup, so processes it starts see both. |
 | `~/.dexaflow` | `~/.leoflow` | An existing `~/.leoflow` is kept in place and `~/.dexaflow` becomes a link to it, so nothing is moved. |
+| `~/dexaflow` (default workspace) | `~/leoflow` | `~/dexaflow` is used. With only `~/leoflow`, that stays the default, so its DAG projects are found. A workspace recorded by `dexaflow setup` is always used as is. |
 | `dexaflow`, `dexaflow-server`, `dexaflow-agent`, `dexaflow-mcp` | `leoflow`, `leoflow-server`, `leoflow-agent`, `leoflow-mcp` | The installer and `make build` add the old names as links to the new binaries. |
 | `from dexaflow import ...` in a `dag.py` | `from leoflow import ...` | `leoflow` is a re-export of `dexaflow`; both names refer to the same objects. |
 | `dexaflow_*` metrics | `leoflow_*` metrics | The `/metrics` endpoint publishes every family under both names with the same values, so existing dashboards, alerts and recording rules keep working. Each family therefore appears twice in a scrape. |

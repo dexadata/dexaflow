@@ -11,7 +11,7 @@ import (
 
 const tokenIssuer = "leoflow"
 
-// DevTokenSubject is the subject of the in-process token that `leoflow dev` mints
+// DevTokenSubject is the subject of the in-process token that `dexaflow lite` mints
 // for its admin. It intentionally has no user row, so Authenticate trusts its
 // signed claims as the ONLY subject exempt from the per-request DB authz reload.
 const DevTokenSubject = "leoflow-dev"
@@ -63,7 +63,7 @@ func (a *JWTAuthenticator) clock() time.Time {
 }
 
 // MintUserToken signs a user JWT directly, without checking credentials against
-// a store. It is for trusted in-process callers only — notably `leoflow dev`,
+// a store. It is for trusted in-process callers only — notably `dexaflow lite`,
 // which runs its own control plane and must register DAGs without a login
 // round-trip. The token validates under Authenticate using the same secret.
 func MintUserToken(secret string, ttl time.Duration, user User) (string, error) {
@@ -97,7 +97,7 @@ func (a *JWTAuthenticator) IssueToken(ctx context.Context, creds Credentials) (s
 //
 // Two cases fall back to the signed claims instead of the reload: a nil store
 // (no data plane bound — the trusted in-process minting context) and a subject
-// with no backing row (a directly-minted token, e.g. `leoflow dev`). Any other
+// with no backing row (a directly-minted token, e.g. `dexaflow lite`). Any other
 // store failure fails closed, so a flaky database cannot silently disable
 // revocation.
 func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*User, error) {

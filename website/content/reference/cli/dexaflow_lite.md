@@ -16,7 +16,7 @@ generated password ONCE — `dexaflow lite reset-password` sets a new one if it 
 
 Executor (--executor): 'subprocess' runs tasks unsandboxed on the host with no image build — the fast inner loop, best for local use. 'k8s' runs real pod-per-task on a dedicated, isolated k3d mini-cluster (leoflow-dev) — highest fidelity, best for development; it rebuilds the DAG image on each change.
 
-('leoflow dev' remains as a deprecated alias.)
+('dexaflow dev' remains as a deprecated alias.)
 
 ```
 dexaflow lite [path] [flags]

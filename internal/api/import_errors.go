@@ -13,7 +13,7 @@ import (
 )
 
 // ImportErrorStore reads and writes DAG parse/compile errors that back Airflow's
-// "Import Errors" banner on the home dashboard. The `leoflow dev` watcher writes
+// "Import Errors" banner on the home dashboard. The `dexaflow lite` watcher writes
 // an entry on a failed compile and clears it on the next good compile; the
 // public GET /api/v2/importErrors feed is what the UI polls.
 type ImportErrorStore interface {

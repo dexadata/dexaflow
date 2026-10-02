@@ -182,7 +182,7 @@ func detectLibc(p Probe) string {
 }
 
 // PythonCandidates returns the interpreter binary names Detect probes for, in
-// preference order. It exists so `leoflow dev` and `dexaflow validate` resolve an
+// preference order. It exists so `dexaflow lite` and `dexaflow validate` resolve an
 // interpreter from the SAME list `dexaflow setup` and `dexaflow doctor` report on
 // (#1092): the two used to disagree, so doctor could name a python3.13 that dev
 // never probed for. The slice is copied because callers are in another package

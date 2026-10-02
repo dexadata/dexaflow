@@ -38,7 +38,7 @@ This installs the binaries to a directory on your `PATH` (e.g. `/usr/local/bin`)
 and runs the **setup wizard**, which asks a few questions — press Enter to accept
 each `[default]`:
 
-- **Where your DAGs live** (workspace) — default `~/leoflow`
+- **Where your DAGs live** (workspace) — default `~/dexaflow`
 - **How tasks run** — `subprocess` (each task as a process on this machine — simple,
   no Docker, recommended) or `k8s` (real pod-per-task on a local mini-Kubernetes —
   mirrors Pro, needs Docker). The wizard also accepts the friendly aliases `local`

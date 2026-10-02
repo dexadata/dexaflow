@@ -638,9 +638,9 @@ jobs:
           [ -n "$PW" ] || { echo "could not capture admin password"; cat /tmp/setup.log; exit 1; }
           # Register the typed-params fixture DAG alongside the scaffolded hello so
           # the trigger dialog has declared params to render its native form from.
-          # It lands in the workspace dexaflow setup chose (~/leoflow by default).
-          mkdir -p "$HOME/leoflow/params_demo"
-          cp examples/params_demo/dag.py examples/params_demo/dexaflow.yaml "$HOME/leoflow/params_demo/"
+          # It lands in the workspace dexaflow setup chose (~/dexaflow by default).
+          mkdir -p "$HOME/dexaflow/params_demo"
+          cp examples/params_demo/dag.py examples/params_demo/dexaflow.yaml "$HOME/dexaflow/params_demo/"
           dexaflow lite --port 18080 --postgres managed --executor subprocess \
             --server-bin "$PWD/bin/leoflow-server" --agent-bin "$PWD/bin/leoflow-agent" > /tmp/lite.log 2>&1 &
           for _ in $(seq 1 60); do curl -fsS http://localhost:18080/readyz >/dev/null 2>&1 && break; sleep 3; done

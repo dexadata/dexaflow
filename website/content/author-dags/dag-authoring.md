@@ -34,10 +34,10 @@ Scaffold one with `dexaflow init dags/my_pipeline`.
 > and changes nothing about how Pro runs them.
 
 `dexaflow lite` watches a **workspace** that can hold many DAGs as sibling
-subdirectories. The default workspace is `~/leoflow/` (set by `dexaflow setup`).
+subdirectories. The default workspace is `~/dexaflow/` (set by `dexaflow setup`).
 
 ```
-~/leoflow/                       # workspace root
+~/dexaflow/                      # workspace root
   recurring_print/               # one DAG project per subdir
     dexaflow.yaml
     dag.py
@@ -53,7 +53,7 @@ subdirectories. The default workspace is `~/leoflow/` (set by `dexaflow setup`).
 **Recommended layout (best practice, not enforced)**: name the subdirectory the
 same as the `dag_id`. The binding is by `dag_id` (yaml field, or the subdir
 basename when no yaml is present — see below), but matching names make the
-workspace navigable by humans and grep-friendly. `~/leoflow/sales_etl/` for a
+workspace navigable by humans and grep-friendly. `~/dexaflow/sales_etl/` for a
 DAG named `sales_etl`.
 
 ### Discovery rules

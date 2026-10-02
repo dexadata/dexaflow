@@ -28,7 +28,7 @@ func TestDecideSchemaDrift(t *testing.T) {
 		{
 			name:      "DB ahead of the binary is the drift case — refuse",
 			dbVersion: 20, dirty: false, embedded: 15,
-			wantErr: "older `leoflow` is being run against a newer database",
+			wantErr: "older `dexaflow` is being run against a newer database",
 		},
 		{
 			name:      "DB just one version ahead is still drift",

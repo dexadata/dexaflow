@@ -48,7 +48,7 @@ func TestParsePythonMinor(t *testing.T) {
 	}
 }
 
-// TestResolvePythonForVersion is the regression for #1092: `leoflow dev` built
+// TestResolvePythonForVersion is the regression for #1092: `dexaflow lite` built
 // every venv on the managed CPython 3.11 whatever the project declared, so a
 // project pinned to 3.13 ran on 3.13 in the cluster and 3.11 locally.
 //
@@ -338,7 +338,7 @@ func TestInstallHintOnlyOffersSetupForTheVersionItInstalls(t *testing.T) {
 // TestDevEnforcedPythonVersion is the regression for the blocker the review
 // caught in the first cut of #1092: ApplyDefaults fills python_version with
 // "3.11" for every config that omits it, and discovery defaults EVERY project,
-// so enforcing the field unconditionally turned a working `leoflow dev` into a
+// so enforcing the field unconditionally turned a working `dexaflow lite` into a
 // hard refusal on any host without a 3.11 — over a value the CLI invented and
 // then attributed to the user ("this project declares python_version 3.11").
 //

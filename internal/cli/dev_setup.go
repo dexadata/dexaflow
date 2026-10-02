@@ -10,7 +10,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/setup"
 )
 
-// devTool is a host dependency `leoflow dev` needs, with how to install it when
+// devTool is a host dependency `dexaflow lite` needs, with how to install it when
 // missing. brewPkg empty means it cannot be auto-installed (e.g. Docker Desktop).
 type devTool struct {
 	bin     string
@@ -18,7 +18,7 @@ type devTool struct {
 	hint    string
 }
 
-// devTools are the host dependencies for `leoflow dev` (dev-only). Production
+// devTools are the host dependencies for `dexaflow lite` (dev-only). Production
 // setup is a separate, later concern (#48/#61).
 var devTools = []devTool{
 	{bin: "docker", brewPkg: "", hint: "install Docker Desktop and start it: https://www.docker.com/products/docker-desktop"},

@@ -19,7 +19,7 @@ The script will:
    the latest pre-release `leoflow` binary into `~/.local/bin/`.
 2. Run `dexaflow setup` — which **generates the admin password and prints it
    once in cyan**. SAVE IT.
-3. Drop the curated DAG bundle into `~/leoflow/` (the workspace).
+3. Drop the curated DAG bundle into the workspace (`~/dexaflow/` by default).
 4. Print the credentials block + start command.
 
 After it finishes, run:
@@ -93,6 +93,6 @@ The install script is **idempotent** for everything except the password:
 - A second `dexaflow setup` preserves the existing config (and prints
   "already configured"). The password from the first run still works.
 - DAGs are copied fresh each run; you can also drop your own DAG folders
-  into `~/leoflow/` at any time.
+  into the workspace at any time.
 - To start from a clean slate: `dexaflow uninstall` (removes
-  `~/.dexaflow/`, KEEPS `~/leoflow/` workspace), then re-run this script.
+  `~/.dexaflow/`, KEEPS the workspace), then re-run this script.

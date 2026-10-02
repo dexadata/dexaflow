@@ -100,7 +100,13 @@ fi
 PASSWORD_LINE="$(grep -E '^\s+password:' "$SETUP_LOG" | head -1 || true)"
 
 # ─── 5. Copy the DAG bundle into the workspace ──────────────────────────────
-WORKSPACE="${HOME}/leoflow"
+# The workspace `dexaflow setup` recorded; without one, the same default it
+# uses: ~/dexaflow, or the ~/leoflow of an install from before the rename.
+WORKSPACE="$(sed -n 's/^workspace: "\(.*\)"$/\1/p' "${HOME}/.dexaflow/config.yaml" 2>/dev/null | head -1)"
+if [[ -z "$WORKSPACE" ]]; then
+  WORKSPACE="${HOME}/dexaflow"
+  [[ ! -d "$WORKSPACE" && -d "${HOME}/leoflow" ]] && WORKSPACE="${HOME}/leoflow"
+fi
 mkdir -p "$WORKSPACE"
 echo
 echo "${BOLD}3. Copying the DAG bundle into ${WORKSPACE}${RESET}"

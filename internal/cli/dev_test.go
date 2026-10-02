@@ -715,7 +715,7 @@ func writeFakeBinary(t *testing.T, path string) {
 	}
 }
 
-// TestDevDockerfileCopiesDbtGroupProjects: the `leoflow dev` cluster path had
+// TestDevDockerfileCopiesDbtGroupProjects: the `dexaflow lite` cluster path had
 // the same #20 gap as the compile path — it layered only the DAG source, so a
 // hybrid DAG's dbt task groups ran against project directories that were not in
 // the image. The Lite subprocess loop reads from disk and never notices, which

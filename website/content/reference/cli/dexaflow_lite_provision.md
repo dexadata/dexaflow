@@ -11,7 +11,7 @@ Check and provision the local deps the from-source `dexaflow lite` loop needs.
 
 ### Synopsis
 
-provision readies this machine for the from-source `leoflow lite` loop: it checks Docker/k3d/kubectl/python3 (installing the brew-installable ones with --install), ensures the task base image, and provisions the isolated local database (leoflow_dev). For end users, `leoflow setup` (the installer) handles onboarding; this is the contributor's machine prep.
+provision readies this machine for the from-source `dexaflow lite` loop: it checks Docker/k3d/kubectl/python3 (installing the brew-installable ones with --install), ensures the task base image, and provisions the isolated local database (leoflow_dev). For end users, `dexaflow setup` (the installer) handles onboarding; this is the contributor's machine prep.
 
 ```
 dexaflow lite provision [flags]

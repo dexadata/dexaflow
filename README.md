@@ -78,7 +78,7 @@ dexaflow lite                # hot-reload at http://localhost:8088 (LITE badge)
 ```
 
 Installs the binaries and runs `dexaflow setup` (ensures Python, provisions the
-parser, creates your workspace at `~/leoflow/`) — **no sudo, no system Python,
+parser, creates your workspace at `~/dexaflow/`) — **no sudo, no system Python,
 no package manager**. Docker is optional and only unlocks the Kubernetes
 executor for higher-fidelity local runs. Linux + macOS, amd64 + arm64
 (Windows via WSL2). Each DAG gets its own per-DAG venv under
@@ -334,7 +334,7 @@ dexaflow lite
 
 …then open **http://localhost:8088** (the **LITE** badge confirms you're on the
 Lite instance). The first run provisions a managed Postgres + admin login, drops
-example DAGs in `~/leoflow/examples/`, and hot-reloads every save. Recover the
+example DAGs in `~/dexaflow/examples/`, and hot-reloads every save. Recover the
 admin password any time with `dexaflow lite reset-password`.
 
 > Lite is the primary local path. The legacy Docker-Compose demo profile

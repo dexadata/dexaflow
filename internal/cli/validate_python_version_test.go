@@ -19,7 +19,7 @@ import (
 // on 3.11, so validate fails a DAG the cluster runs fine and the author has no
 // way to tell the complaint is about the checker.
 //
-// It now asks the same question `leoflow dev` asks, with the same exemptions.
+// It now asks the same question `dexaflow lite` asks, with the same exemptions.
 func TestValidateEnforcesTheDeclaredPythonVersion(t *testing.T) {
 	cases := []struct {
 		name string
@@ -58,7 +58,7 @@ func TestValidateEnforcesTheDeclaredPythonVersion(t *testing.T) {
 
 // A deprecated version must not be enforced: the project is on its way off it,
 // and refusing to lint until the author installs an interpreter we are telling
-// them to abandon helps nobody. Same exemption `leoflow dev` makes.
+// them to abandon helps nobody. Same exemption `dexaflow lite` makes.
 func TestValidateDoesNotEnforceADeprecatedVersion(t *testing.T) {
 	// 3.10 is the version the schema marks deprecated (see .changie/the schema's
 	// x-leoflow-python-deprecations); skip if that ever stops being true rather

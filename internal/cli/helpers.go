@@ -320,11 +320,28 @@ func configFilePath(cmd *cobra.Command) string {
 }
 
 // stateDirIn returns the per-user state directory under the home directory
-// home: ~/.dexaflow, or a link to an existing ~/.dexaflow (config.HomeDirIn).
+// home: ~/.dexaflow, or a link to an existing ~/.leoflow (config.HomeDirIn).
 func stateDirIn(home string) string {
 	dir, err := config.HomeDirIn(home)
 	if err != nil {
 		return filepath.Join(home, config.HomeDirName)
 	}
 	return dir
+}
+
+// defaultWorkspaceIn returns the default workspace under the home directory
+// home: ~/dexaflow, or the ~/leoflow an install from before the rename already
+// has, so its DAG projects keep being found. ~/dexaflow wins when both exist.
+func defaultWorkspaceIn(home string) string {
+	current := filepath.Join(home, "dexaflow")
+	legacy := filepath.Join(home, "leoflow")
+	if !isDirPath(current) && isDirPath(legacy) {
+		return legacy
+	}
+	return current
+}
+
+func isDirPath(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

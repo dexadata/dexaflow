@@ -55,12 +55,12 @@ func TestResolveLiteProjectExplicitArg(t *testing.T) {
 // at the workspace root) — see docs/dag-authoring.md (Workspace layout).
 func TestResolveLiteProjectNoArgReturnsWorkspace(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home) // no config -> defaultWorkspace falls back to $HOME/leoflow
+	t.Setenv("HOME", home) // no config -> defaultWorkspace falls back to $HOME/dexaflow
 	got, err := resolveLiteProject(bareCmd(), nil)
 	if err != nil {
 		t.Fatalf("no-arg resolve: %v", err)
 	}
-	want := filepath.Join(home, "leoflow")
+	want := filepath.Join(home, "dexaflow")
 	if got != want {
 		t.Errorf("no-arg dir = %q, want %q", got, want)
 	}

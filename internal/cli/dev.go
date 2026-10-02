@@ -43,7 +43,7 @@ import (
 )
 
 // devEnv is the fixed local-development environment label and its defaults. The
-// subprocess executor runs user code unsandboxed, so `leoflow dev` is dev-only
+// subprocess executor runs user code unsandboxed, so `dexaflow lite` is dev-only
 // and shouts that fact in the banner and the UI navbar (ADR 0023).
 const (
 	devInstanceName = "Dexaflow Lite"
@@ -76,7 +76,7 @@ const (
 	devPollInterval    = 750 * time.Millisecond
 	devReadyTimeout    = 30 * time.Second
 	// Dev uses ports distinct from the demo/production defaults (8080/9090/9091)
-	// so a `leoflow dev` and a demo control plane can run side by side without
+	// so a `dexaflow lite` and a demo control plane can run side by side without
 	// colliding. --port overrides the HTTP port; the gRPC and metrics ports derive
 	// from it (devGRPCPort/devMetricsPort) so multiple Lite instances can coexist.
 	devDefaultPort = 8088
@@ -205,7 +205,7 @@ func resolveLiteProject(cmd *cobra.Command, args []string) (string, error) {
 			return "", fmt.Errorf("workspace path %q does not exist or is not a directory.\n"+
 				"  - run `dexaflow lite` with no argument to use your workspace (%s)\n"+
 				"  - run `dexaflow init %s` to create a project there\n"+
-				"  - for other actions see `leoflow --help` (e.g. `dexaflow uninstall`)",
+				"  - for other actions see `dexaflow --help` (e.g. `dexaflow uninstall`)",
 				p, defaultWorkspace(cmd), p)
 		}
 		return p, nil
@@ -218,13 +218,14 @@ func resolveLiteProject(cmd *cobra.Command, args []string) (string, error) {
 }
 
 // defaultWorkspace returns the workspace from config (set by `dexaflow setup`),
-// falling back to ~/leoflow.
+// falling back to ~/dexaflow (or the ~/leoflow of an install from before the
+// rename, see defaultWorkspaceIn).
 func defaultWorkspace(cmd *cobra.Command) string {
 	if c, err := config.Load(configFilePath(cmd), nil); err == nil && c.Workspace != "" {
 		return c.Workspace
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, "leoflow")
+		return defaultWorkspaceIn(home)
 	}
 	return "."
 }
@@ -522,7 +523,7 @@ func newLiteCommand() *cobra.Command {
 			"(--executor): 'subprocess' runs tasks unsandboxed on the host with no image build — " +
 			"the fast inner loop, best for local use. 'k8s' runs real pod-per-task on a dedicated, " +
 			"isolated k3d mini-cluster (leoflow-dev) — highest fidelity, best for development; it " +
-			"rebuilds the DAG image on each change.\n\n('leoflow dev' remains as a deprecated alias.)",
+			"rebuilds the DAG image on each change.\n\n('dexaflow dev' remains as a deprecated alias.)",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir, err := resolveLiteProject(cmd, args)
@@ -1123,7 +1124,7 @@ func decideSchemaDrift(dbVersion uint, dirty bool, embedded uint) error {
 	if dbVersion > embedded {
 		return fmt.Errorf(
 			"database is at schema version %d but this binary only knows up to %d; "+
-				"an older `leoflow` is being run against a newer database. "+
+				"an older `dexaflow` is being run against a newer database. "+
 				"Upgrade the binary, or run `dexaflow uninstall --purge` to start over (this WIPES your data)",
 			dbVersion, embedded,
 		)
@@ -1211,7 +1212,7 @@ func devBasePython(ctx context.Context, home, wantVersion string) (string, error
 	managed := filepath.Join(filepath.Dir(home), "python", "bin", "python3.11")
 	// A declared python_version is the authoring surface's statement about which
 	// interpreter the task runs on, and the cluster honors it through the task
-	// base image. Honor it here too, or `leoflow dev` validates the DAG on an
+	// base image. Honor it here too, or `dexaflow lite` validates the DAG on an
 	// interpreter the deployment will never use (#1092).
 	if wantVersion != "" {
 		want, verr := parsePythonMinor(wantVersion)
@@ -1242,7 +1243,7 @@ func leoflowManagedPython() string {
 }
 
 // resolvePython3 returns a usable Python >= 3.11 with a single, unified
-// precedence shared by `leoflow dev` and `dexaflow validate` (#742):
+// precedence shared by `dexaflow lite` and `dexaflow validate` (#742):
 //
 //   - the managed pinned build (when present) wins — it is the checksum-verified
 //     CPython `dexaflow setup` provisioned at exactly the pinned version, so it is

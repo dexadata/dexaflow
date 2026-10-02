@@ -21,7 +21,7 @@ type LeoflowConfig struct {
 	// because the config declared none. It is not part of the authoring surface
 	// and never serialized — it exists so a consumer can tell "the author chose
 	// 3.11" from "nobody said anything", which are the same string afterwards.
-	// `leoflow dev` needs the distinction: enforcing a version the CLI invented
+	// `dexaflow lite` needs the distinction: enforcing a version the CLI invented
 	// refuses to boot over a choice the user never made (#1092 follow-up).
 	PythonVersionDefaulted bool     `json:"-" yaml:"-"`
 	BaseImage              string   `json:"base_image,omitempty" yaml:"base_image,omitempty"`
