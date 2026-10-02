@@ -991,7 +991,7 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 	}
 	_, spec, err := r.specs.getCurrent(ctx, r.q, currentSpecKey{tenant: tid, dagID: dagID}, dag.CurrentVersionID)
 	if err != nil {
-		return domain.DAGSpec{}, fmt.Errorf("decoding current spec: %w", err)
+		return domain.DAGSpec{}, fmt.Errorf("loading current spec: %w", err)
 	}
 	return spec, nil
 }

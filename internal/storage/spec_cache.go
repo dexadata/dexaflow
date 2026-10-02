@@ -29,6 +29,8 @@ type cachedSpec struct {
 	// never evicted and is kept out of the LRU list (elem is nil).
 	pins int
 	elem *list.Element
+	// tick is the last scheduler tick that read this version (0: none).
+	tick uint64
 }
 
 // currentSpecKey names one DAG for pinning its current version.
@@ -43,7 +45,7 @@ type currentSpecKey struct {
 // insert-only. A changed DAG is a NEW row (queries.InsertDagVersion) with a new
 // id; the only UPDATE that touches versioning is SetCurrentDagVersion, which
 // repoints dags.current_version_id and never rewrites a version's spec column.
-// So a given dag_version_id maps to one spec for the life of the process — the
+// So a given dag_version_id maps to one spec for the life of the process: the
 // parse is valid forever and the cache never has to be invalidated.
 //
 // Bound: every DAG's current version, as last seen by getCurrent, is pinned.
@@ -51,10 +53,16 @@ type currentSpecKey struct {
 // at most max entries. The raw spec JSON is dropped once decoded, so an entry
 // costs only the decoded spec.
 //
+// Tick working set: the scheduler reads the version of every active run on
+// every tick (beginTick, then getForTick per run). A version read in a tick is
+// not evicted until the following tick has ended without reading it, even past
+// max, so a tick over more active versions than the bound never thrashes: the
+// cache grows to the active set and returns to max once those runs finish.
+//
 // Concurrency: the scheduler tick (ActiveRuns), the pod-dispatch/agent path
 // (ExecutionStore.resolve) and the API (Repository.GetCurrentSpec) read this
 // from different goroutines, so access is guarded by a mutex. Fills are
-// idempotent — two goroutines racing on a cold key both decode the same
+// idempotent: two goroutines racing on a cold key both decode the same
 // immutable bytes and store equal values.
 //
 // Ownership: the cached spec is shared read-only. Callers that need to MUTATE
@@ -66,6 +74,8 @@ type specCache struct {
 	entries map[pgtype.UUID]*cachedSpec
 	lru     *list.List // unpinned entries, most recently used at the front.
 	current map[currentSpecKey]pgtype.UUID
+	// tick is the scheduler tick generation, advanced by beginTick.
+	tick uint64
 }
 
 // versionGetter is the one query the cache needs on a cold key. *queries.Queries
@@ -91,7 +101,7 @@ func newSpecCacheWithLimit(maxEntries int) *specCache {
 
 // sharedSpecCache returns the Postgres-owned cache, or a fresh private one when
 // the handle was built without NewPostgres (e.g. a bare &Postgres{} in a test).
-// A private cache is still correct — it just is not shared across stores.
+// A private cache is still correct; it just is not shared across stores.
 func sharedSpecCache(pg *Postgres) *specCache {
 	if pg.specs != nil {
 		return pg.specs
@@ -102,21 +112,36 @@ func sharedSpecCache(pg *Postgres) *specCache {
 // get returns the version row and decoded spec for a dag_version_id, decoding it
 // on a cold key (one GetDagVersionByID + one json.Unmarshal) and serving every
 // later call for that id from memory. The returned spec is shared and MUST NOT be
-// mutated — see the type doc. The returned version has no raw Spec bytes.
+// mutated (see the type doc). The returned version has no raw Spec bytes.
 func (c *specCache) get(ctx context.Context, q versionGetter, versionID pgtype.UUID) (queries.DagVersion, domain.DAGSpec, error) {
-	return c.load(ctx, q, versionID, nil)
+	return c.load(ctx, q, versionID, nil, false)
+}
+
+// beginTick starts a scheduler tick: versions read through getForTick from now
+// on belong to this tick's working set.
+func (c *specCache) beginTick() {
+	c.mu.Lock()
+	c.tick++
+	c.mu.Unlock()
+}
+
+// getForTick is get for the scheduler tick: it also marks the version as part
+// of the current tick's working set, so it is not evicted before the next tick
+// has had the chance to read it again.
+func (c *specCache) getForTick(ctx context.Context, q versionGetter, versionID pgtype.UUID) (queries.DagVersion, domain.DAGSpec, error) {
+	return c.load(ctx, q, versionID, nil, true)
 }
 
 // getCurrent is get for the version a DAG currently points at: it also pins
 // that version, and unpins the version the DAG pointed at before, if any.
 func (c *specCache) getCurrent(ctx context.Context, q versionGetter, key currentSpecKey, versionID pgtype.UUID) (queries.DagVersion, domain.DAGSpec, error) {
-	return c.load(ctx, q, versionID, &key)
+	return c.load(ctx, q, versionID, &key, false)
 }
 
-func (c *specCache) load(ctx context.Context, q versionGetter, versionID pgtype.UUID, pin *currentSpecKey) (queries.DagVersion, domain.DAGSpec, error) {
+func (c *specCache) load(ctx context.Context, q versionGetter, versionID pgtype.UUID, pin *currentSpecKey, inTick bool) (queries.DagVersion, domain.DAGSpec, error) {
 	c.mu.Lock()
 	if e, ok := c.entries[versionID]; ok {
-		c.touch(e, pin)
+		c.touch(e, pin, inTick)
 		c.mu.Unlock()
 		return e.version, e.spec, nil
 	}
@@ -140,13 +165,17 @@ func (c *specCache) load(ctx context.Context, q versionGetter, versionID pgtype.
 		e.elem = c.lru.PushFront(e)
 		c.entries[versionID] = e
 	}
-	c.touch(e, pin)
+	c.touch(e, pin, inTick)
 	c.evict()
 	return e.version, e.spec, nil
 }
 
-// touch marks e as just used and applies a pin. The caller holds c.mu.
-func (c *specCache) touch(e *cachedSpec, pin *currentSpecKey) {
+// touch marks e as just used (and read by the current tick when inTick) and
+// applies a pin. The caller holds c.mu.
+func (c *specCache) touch(e *cachedSpec, pin *currentSpecKey, inTick bool) {
+	if inTick {
+		e.tick = c.tick
+	}
 	if pin != nil {
 		if prev, ok := c.current[*pin]; !ok || prev != e.id {
 			if ok {
@@ -178,14 +207,28 @@ func (c *specCache) unpin(id pgtype.UUID) {
 	}
 }
 
-// evict drops least recently used unpinned versions past the limit. The caller
-// holds c.mu.
+// evict drops least recently used unpinned versions past the limit, skipping
+// those in the tick working set (read in this tick or the previous one). When
+// every unpinned version is in the working set the cache stays over the limit
+// until a later tick releases them. The caller holds c.mu.
 func (c *specCache) evict() {
-	for c.lru.Len() > c.max {
+	for skipped := 0; c.lru.Len() > c.max && skipped < c.lru.Len(); {
 		oldest := c.lru.Back()
-		e, ok := c.lru.Remove(oldest).(*cachedSpec)
+		e, ok := oldest.Value.(*cachedSpec)
+		if ok && c.inTickWorkingSet(e) {
+			c.lru.MoveToFront(oldest)
+			skipped++
+			continue
+		}
+		c.lru.Remove(oldest)
 		if ok {
 			delete(c.entries, e.id)
 		}
 	}
+}
+
+// inTickWorkingSet reports whether the scheduler read e in the current tick or
+// the one before it. The caller holds c.mu.
+func (c *specCache) inTickWorkingSet(e *cachedSpec) bool {
+	return e.tick != 0 && e.tick+1 >= c.tick
 }
