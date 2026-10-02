@@ -430,7 +430,7 @@ type TrustedIssuerSection struct {
 	// every tenant.
 	AllowedTenants []string `mapstructure:"allowed_tenants"`
 	// MaxLifetimeSeconds caps exp - iat of a token, the replay window of a
-	// handoff. Zero uses the 900-second default; at most 3600.
+	// handoff. Zero uses the 120-second default; at most 600.
 	MaxLifetimeSeconds int `mapstructure:"max_lifetime_seconds"`
 	// AllowedOrigins are the origins (scheme://host[:port]) whose pages may
 	// post a handoff. Any other Origin, or none, is refused, so another site
@@ -989,19 +989,7 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateExecution(); err != nil {
 		return err
 	}
-	if err := validateExternalAuthURL("auth.external_signin_url", c.Auth.ExternalSignInURL); err != nil {
-		return err
-	}
-	if err := validateExternalAuthURL("auth.external_signout_url", c.Auth.ExternalSignOutURL); err != nil {
-		return err
-	}
-	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
-		return err
-	}
-	if err := validateHomeLink(c.UI.HomeLink); err != nil {
-		return err
-	}
-	if err := validateBranding(c.UI); err != nil {
+	if err := c.validatePlatformIntegration(); err != nil {
 		return err
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
@@ -1257,6 +1245,25 @@ func tenantPinHint(c *ServerConfig) string {
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
 }
 
+// validatePlatformIntegration checks the settings an operator uses to serve
+// Leoflow from inside a larger platform: external sign-in and sign-out (#1288),
+// the trusted issuer (#1284), the home link (#1290) and branding (#1289).
+func (c *ServerConfig) validatePlatformIntegration() error {
+	if err := validateExternalAuthURL("auth.external_signin_url", c.Auth.ExternalSignInURL); err != nil {
+		return err
+	}
+	if err := validateExternalAuthURL("auth.external_signout_url", c.Auth.ExternalSignOutURL); err != nil {
+		return err
+	}
+	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
+		return err
+	}
+	if err := validateHomeLink(c.UI.HomeLink); err != nil {
+		return err
+	}
+	return validateBranding(c.UI)
+}
+
 // validateExternalAuthURL checks one of the #1288 settings: empty, or an
 // absolute http(s) URL with a host. A relative URL would send the browser back
 // into Leoflow, where the sign-in route redirects again: a loop.
@@ -1295,7 +1302,7 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{s.Audience != "", "auth.trusted_issuer.audience"},
 		{s.TenantClaim != "", "auth.trusted_issuer.tenant_claim"},
 		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
-		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 3600, "auth.trusted_issuer.max_lifetime_seconds (0 to 3600)"},
+		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 600, "auth.trusted_issuer.max_lifetime_seconds (0 to 600)"},
 		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
 	}
 	var problems []string

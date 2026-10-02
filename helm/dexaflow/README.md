@@ -499,7 +499,7 @@ differ from what's committed.
 | auth.trustedIssuer.audience | string | `""` | The `aud` the tokens must carry for this Leoflow. |
 | auth.trustedIssuer.issuer | string | `""` | The exact `iss` of the issuer's tokens. Empty (the default) disables the handoff and renders none of these keys. |
 | auth.trustedIssuer.jwksUrl | string | `""` | Where the issuer publishes its public signing keys. `https`, or `http` on a loopback host. |
-| auth.trustedIssuer.maxLifetimeSeconds | int | `0` | Longest `exp - iat` a handoff token may have. `0` uses 900 seconds; at most 3600. |
+| auth.trustedIssuer.maxLifetimeSeconds | int | `0` | Longest `exp - iat` a handoff token may have. `0` uses 120 seconds; at most 600. |
 | auth.trustedIssuer.name | string | `""` | Name of the issuer, 1-40 lowercase letters, digits or `-`. Users are linked under `issuer:<name>`, so keep it stable once users exist. |
 | auth.trustedIssuer.tenantClaim | string | `"tenant_id"` | The string claim naming the Leoflow tenant. |
 | autoscaling.behavior | object | `{}` | HPA scaling behavior (scale-up/scale-down policies). See K8s docs for autoscaling/v2 `behavior` schema. |

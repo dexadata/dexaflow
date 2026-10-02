@@ -383,7 +383,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Leoflow. Helm: `auth.trustedIssuer.audience`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Leoflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS` | _(empty)_ | both | Comma-separated tenants the issuer may sign in to; `*` allows every tenant, for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a handoff token may have, its replay window. `0` uses 900 seconds; at most 3600. Helm: `auth.trustedIssuer.maxLifetimeSeconds`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a handoff token may have, its replay window. `0` uses 120 seconds; at most 600. Helm: `auth.trustedIssuer.maxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Leoflow's page, for a Leoflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Leoflow session. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Leoflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Leoflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
@@ -615,8 +615,8 @@ the platform can open a Leoflow UI session for them without Leoflow storing a
 password and without the platform holding Leoflow's signing secret:
 
 1. The platform's issuer signs a short-lived JWT with its own key, carrying
-   `iss`, `aud`, `sub`, `iat`, `exp`, the tenant claim and, optionally,
-   `email`. It publishes the public key as a JWKS.
+   `iss`, `aud`, `sub`, `iat`, `exp`, a unique `jti`, the tenant claim and,
+   optionally, `email`. It publishes the public key as a JWKS.
 2. The browser posts that token to `POST /api/v2/auth/session` as the form
    field `token`, with the page to open as `next` (a same-origin path), from a
    page on one of `allowed_origins`. An auto-submitting form is the usual way,
@@ -636,8 +636,11 @@ Only pages on `allowed_origins` can post a handoff: browsers send `Origin` on
 every cross-site form post, and Leoflow refuses any other, so a page elsewhere
 cannot sign a visitor in as someone else. A token must also have been issued
 no later than a minute from now and live no longer than
-`max_lifetime_seconds`. Keep handoff tokens short-lived, use each once, and
-never put one in a URL.
+`max_lifetime_seconds` (120 seconds unless set, at most 600). Each token opens
+one session: a second post of the same `jti` is refused until the token
+expires. That memory is per server process, so with several replicas a token
+could be accepted once by each; the short lifetime is what bounds that
+window. Mint each token right before posting it, and never put one in a URL.
 
 ### Trusted proxies and the client IP
 

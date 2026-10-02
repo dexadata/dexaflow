@@ -1269,24 +1269,6 @@ var oidcDiscoveryTimeout = 15 * time.Second
 // flow or an error, never nil,nil). The client secret comes from the environment
 // (LEOFLOW_AUTH_OIDC_CLIENT_SECRET, bound by viper); it is never logged.
 // Discovery failure is a boot failure — fail closed.
-// newTrustedIssuer builds the #1284 verifier from auth.trusted_issuer, or nil
-// when none is configured. It makes no network call: the JWKS is fetched on
-// first use, so an issuer outage never blocks boot.
-func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.TrustedIssuer {
-	s := cfg.Auth.TrustedIssuer
-	if !s.Enabled() {
-		return nil
-	}
-	return issuer.New(ctx, issuer.Config{
-		Name:           s.Name,
-		Issuer:         s.Issuer,
-		JWKSURL:        s.JWKSURL,
-		Audience:       s.Audience,
-		TenantClaim:    s.TenantClaim,
-		AllowedTenants: s.AllowedTenants,
-		MaxLifetime:    time.Duration(s.MaxLifetimeSeconds) * time.Second,
-	})
-}
 
 func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slog.Logger) (*oidc.Flow, error) {
 	discCtx, cancel := context.WithTimeout(ctx, oidcDiscoveryTimeout)
@@ -1322,6 +1304,25 @@ func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slo
 		"jit_provisioning", cfg.Auth.OIDC.JITProvisioning,
 		"break_glass_accounts", len(cfg.Auth.OIDC.BreakGlassEmails))
 	return flow, nil
+}
+
+// newTrustedIssuer builds the #1284 verifier from auth.trusted_issuer, or nil
+// when none is configured. It makes no network call: the JWKS is fetched on
+// first use, so an issuer outage never blocks boot.
+func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.TrustedIssuer {
+	s := cfg.Auth.TrustedIssuer
+	if !s.Enabled() {
+		return nil
+	}
+	return issuer.New(ctx, issuer.Config{
+		Name:           s.Name,
+		Issuer:         s.Issuer,
+		JWKSURL:        s.JWKSURL,
+		Audience:       s.Audience,
+		TenantClaim:    s.TenantClaim,
+		AllowedTenants: s.AllowedTenants,
+		MaxLifetime:    time.Duration(s.MaxLifetimeSeconds) * time.Second,
+	})
 }
 
 // newUIServer builds the embedded UI server from cfg and returns it with the

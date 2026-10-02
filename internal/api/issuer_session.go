@@ -148,6 +148,8 @@ func issuerReason(err error) string {
 		return "token_lifetime"
 	case errors.Is(err, issuer.ErrTenantNotAllowed):
 		return "tenant_not_allowed"
+	case errors.Is(err, issuer.ErrReplayed):
+		return "token_replayed"
 	default:
 		return "invalid_token"
 	}

@@ -266,7 +266,7 @@ auth:
     tenantClaim: tenant_id
     # -- Tenants the issuer may sign in to; `["*"]` allows every tenant. Required when `issuer` is set.
     allowedTenants: []
-    # -- Longest `exp - iat` a handoff token may have. `0` uses 900 seconds; at most 3600.
+    # -- Longest `exp - iat` a handoff token may have. `0` uses 120 seconds; at most 600.
     maxLifetimeSeconds: 0
     # -- Origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. Any other `Origin`, or none, is refused, so another site cannot sign a visitor in as someone else. Required when `issuer` is set.
     allowedOrigins: []

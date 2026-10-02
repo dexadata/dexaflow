@@ -804,6 +804,8 @@ func TestValidateTrustedIssuer(t *testing.T) {
 		{"bad name", func(s *TrustedIssuerSection) { s.Name = "Portal One" }, []string{"auth.trusted_issuer.name"}},
 		{"plain http jwks", func(s *TrustedIssuerSection) { s.JWKSURL = "http://portal.example.com/jwks" }, []string{"auth.trusted_issuer.jwks_url"}},
 		{"lifetime too long", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 7200 }, []string{"auth.trusted_issuer.max_lifetime_seconds"}},
+		{"lifetime above the cap", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 601 }, []string{"auth.trusted_issuer.max_lifetime_seconds"}},
+		{"lifetime at the cap", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 600 }, nil},
 		{"empty tenant claim", func(s *TrustedIssuerSection) { s.TenantClaim = "" }, []string{"auth.trusted_issuer.tenant_claim"}},
 	}
 	for _, tc := range cases {
