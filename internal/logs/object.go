@@ -276,15 +276,20 @@ func (w *objectWriter) runFlusher(ctx context.Context) {
 // maxBufferedAttemptBytes rather than growing the control plane's memory without
 // bound; whatever was buffered before the cap is still flushed on Close.
 func (w *objectWriter) WriteEvent(ev Event) error {
-	line := EncodeLine(ev) + "\n"
+	return w.WriteLine(EncodeLine(ev))
+}
+
+// WriteLine buffers a line already encoded by EncodeLine, so a caller that also
+// publishes the line encodes it once. Same cap and flush rules as WriteEvent.
+func (w *objectWriter) WriteLine(line string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.buf.Len()+len(line) > maxBufferedAttemptBytes {
+	if w.buf.Len()+len(line)+1 > maxBufferedAttemptBytes {
 		return fmt.Errorf("task attempt log exceeds the %d-byte object-sink buffer cap; not buffering further lines", maxBufferedAttemptBytes)
 	}
-	if _, err := w.buf.WriteString(line); err != nil {
-		return fmt.Errorf("buffering log line: %w", err)
-	}
+	w.buf.Grow(len(line) + 1)
+	w.buf.WriteString(line)
+	w.buf.WriteByte('\n')
 	w.maybeFlushLocked(w.ctx)
 	return nil
 }
