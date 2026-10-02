@@ -338,3 +338,52 @@ func TestWakeOnAFollowerReadsNothing(t *testing.T) {
 		t.Errorf("a follower must not read scheduler state, ActiveRuns calls = %d", n)
 	}
 }
+
+// The spacing of woken ticks adapts to how long a tick takes: at least
+// wakeMinGap, and at least twice the previous tick's duration, so wake driven
+// ticks never hold the loop (and its database reads) for more than half the
+// time however slow a tick gets. The loop interval caps it, since the
+// interval tick fires by then anyway.
+func TestWakeGapAdaptsToTickDuration(t *testing.T) {
+	for _, tc := range []struct {
+		tick, interval, want time.Duration
+	}{
+		{tick: 0, interval: time.Second, want: wakeMinGap},
+		{tick: 10 * time.Millisecond, interval: time.Second, want: wakeMinGap},
+		{tick: 300 * time.Millisecond, interval: time.Second, want: 600 * time.Millisecond},
+		{tick: 800 * time.Millisecond, interval: time.Second, want: time.Second},
+		{tick: 0, interval: 50 * time.Millisecond, want: 50 * time.Millisecond},
+	} {
+		if got := wakeGap(tc.tick, tc.interval); got != tc.want {
+			t.Errorf("wakeGap(tick %s, interval %s) = %s, want %s", tc.tick, tc.interval, got, tc.want)
+		}
+	}
+}
+
+// wakeCountingRecorder counts woken ticks across the Run goroutine.
+type wakeCountingRecorder struct {
+	fakeRecorder
+	woken atomic.Int64
+}
+
+func (r *wakeCountingRecorder) RecordSchedulerWokenTick() { r.woken.Add(1) }
+
+// A tick started by Wake is counted, so operators can see how often
+// completions pull ticks forward; interval ticks are not.
+func TestWokenTicksAreCounted(t *testing.T) {
+	store := &countingStore{fakeStore: newFakeStore()}
+	s := NewScheduler(store, discardLogger(), time.Hour)
+	rec := &wakeCountingRecorder{}
+	s.SetRecorder(rec)
+	s.SetLeading(true)
+	s.EnableEagerPromotion()
+	stop := runLoop(t, s)
+	defer stop()
+	s.Wake()
+	if !pollUntil(t, func() bool { return rec.woken.Load() == 1 }, 2*time.Second) {
+		t.Fatalf("woken ticks counted = %d, want 1", rec.woken.Load())
+	}
+	if n := store.ticks.Load(); n != 1 {
+		t.Errorf("ticks = %d, want the one woken tick", n)
+	}
+}

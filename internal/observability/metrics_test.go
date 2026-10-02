@@ -38,13 +38,15 @@ func TestRecordersIncrementCounters(t *testing.T) {
 	m.RecordSchedulerDecision("panic")    // backs the scheduler resilience metric
 	m.RecordUndispatchable("no_executor") // backs the undispatchable signal (#46)
 	m.RecordUnitMisfit("register")        // backs executor.unit.enforce=warn (ADR 0066)
+	m.RecordSchedulerWokenTick()          // backs scheduler.eager_promotion's wake rate
 
 	// Each recorder must have incremented its counter to 1.
 	for name, want := range map[string]float64{
-		"dexaflow_http_requests_total":        1,
-		"dexaflow_scheduler_decisions_total":  1,
-		"dexaflow_tasks_undispatchable_total": 1,
-		"dexaflow_unit_misfit_total":          1,
+		"dexaflow_http_requests_total":         1,
+		"dexaflow_scheduler_decisions_total":   1,
+		"dexaflow_tasks_undispatchable_total":  1,
+		"dexaflow_unit_misfit_total":           1,
+		"dexaflow_scheduler_woken_ticks_total": 1,
 	} {
 		if got := counterTotal(t, reg, name); got != want {
 			t.Errorf("%s = %v, want %v", name, got, want)
@@ -112,6 +114,7 @@ func TestNewMetricsRegistersAllADR0010Metrics(t *testing.T) {
 	want := []string{
 		"dexaflow_scheduler_loop_duration_seconds",
 		"dexaflow_scheduler_decisions_total",
+		"dexaflow_scheduler_woken_ticks_total",
 		"dexaflow_task_state_transitions_total",
 		"dexaflow_task_duration_seconds",
 		"dexaflow_task_retries_total",
