@@ -337,6 +337,60 @@ Both bounds must be whole numbers. A float in a values file used to coerce past
 the check and render a fractional replica count the apiserver rejects, so
 non-integers are refused too.
 
+### Postgres connection budget
+
+Every control-plane pod opens three connection pools against the same
+database:
+
+| Pool | Size | Opened by |
+|---|---|---|
+| Requests and scheduling | `database.maxOpenConns` (chart default `20`) | every pod |
+| Health checks (`/readyz`, the UI database widget) | `2` | every pod |
+| Scheduler leader lock | `1` | every pod that runs the scheduler (`all` and `scheduler` roles) |
+
+So one pod can hold up to `maxOpenConns + 3` connections, and the cluster-wide
+ceiling is that number times the most pods that can be up at once: the HPA's
+`maxReplicas` (or `replicaCount`, or `split.api.replicaCount + 1` in split
+mode), plus one surge pod while a rolling update runs. The migration Job adds
+one short-lived connection per upgrade.
+
+With the shipped defaults and the HPA on, that is `(20 + 3) * 6 = 138`. Stock
+Postgres allows `max_connections = 100`, of which 3 are reserved for
+superusers, and managed offerings often size it from instance memory, so a
+small instance can allow fewer. When the pools reach the limit, new
+connections fail with `FATAL: sorry, too many clients already`: requests
+return 5xx and `/readyz` can fail across every replica at once.
+
+Keep `pods * (maxOpenConns + 3)` below the server's `max_connections` minus
+whatever else connects to it (backups, migrations, dashboards). In order of
+preference:
+
+1. **Lower `database.maxOpenConns`.** A replica rarely needs 20 connections in
+   flight; `10` at 6 replicas is `78`.
+2. **Cap `autoscaling.maxReplicas`** at what the database can serve.
+3. **Raise `max_connections`** on the server, if the instance has the memory
+   for it (each connection is a backend process).
+
+**PgBouncer.** A pooler in front of Postgres multiplexes many client
+connections over few server connections, but only in `transaction` pool mode,
+and two things in the control plane need a real session:
+
+- The scheduler's leadership is a session-scoped `pg_try_advisory_lock`
+  (ADR 0009). In `transaction` mode the lock is taken on whichever server
+  connection served that statement and is not tied to the pod, so two pods
+  can both believe they lead. Processes that run the scheduler must connect
+  to Postgres directly, or through PgBouncer in `session` mode.
+- The migration Job takes an advisory lock the same way.
+
+The api role in split mode holds no session state and can go through
+`transaction` mode. pgx then needs `default_query_exec_mode=simple_protocol`
+in the DSN (for example
+`postgres://user:pass@pgbouncer:6432/dexaflow?default_query_exec_mode=simple_protocol`),
+because named prepared statements do not survive a change of server
+connection. The chart takes one `database.url` for every role, so it cannot
+send the api Deployment through PgBouncer and the scheduler around it; until
+it can, size the pools as above.
+
 ## The PodDisruptionBudget — and the single-replica trap
 
 A PodDisruptionBudget tells the eviction API how many pods must stay up during a
