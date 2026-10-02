@@ -38,7 +38,7 @@ func BenchmarkStaticHandlerBundle(b *testing.B) {
 		b.Run("encoding="+enc, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				req := httptest.NewRequest(http.MethodGet, "/assets/index.js", nil)
+				req := httptest.NewRequestWithContext(b.Context(), http.MethodGet, "/assets/index.js", http.NoBody)
 				req.Header.Set("Accept-Encoding", enc)
 				rec := httptest.NewRecorder()
 				h.ServeHTTP(rec, req)
