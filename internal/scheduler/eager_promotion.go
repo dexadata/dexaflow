@@ -15,11 +15,20 @@ import (
 const maxSameTickPasses = 8
 
 // wakeMinGap is the shortest spacing between a woken tick and the tick before
-// it (capped at the loop interval). Completion reports can arrive faster than a
-// tick runs; the gap keeps a burst of them from turning the loop into a busy
-// loop against the database, while still cutting the wait from a full interval
-// to at most this long.
+// it. Completion reports can arrive faster than a tick runs; the gap keeps a
+// burst of them from turning the loop into a busy loop against the database,
+// while still cutting the wait from a full interval to about this long. See
+// wakeGap for how it grows with the tick's own duration.
 const wakeMinGap = 100 * time.Millisecond
+
+// wakeGap is the spacing, measured from the start of the previous tick, that a
+// woken tick waits for: wakeMinGap, or twice the previous tick's duration when
+// that is longer, so ticks pulled forward by wakes keep the loop busy at most
+// half the time however slow a tick gets on a large installation. It is capped
+// at the loop interval, which stays the upper bound between ticks.
+func wakeGap(lastTick, interval time.Duration) time.Duration {
+	return min(max(wakeMinGap, 2*lastTick), interval)
+}
 
 // EnableEagerPromotion turns on scheduler.eager_promotion: same-tick re-planning
 // of a run after its own state changes, and early ticks on Wake. Off by default
@@ -39,10 +48,11 @@ func (s *Scheduler) Wake() {
 	}
 }
 
-// waitWakeGap holds a woken tick back until wakeMinGap (capped at the interval)
-// has passed since the previous tick. It reports false when ctx ends first.
-func (s *Scheduler) waitWakeGap(ctx context.Context, last time.Time) bool {
-	wait := time.Until(last.Add(min(wakeMinGap, s.interval)))
+// waitWakeGap holds a woken tick back until wakeGap has passed since the start
+// of the previous tick, which took lastTick. It reports false when ctx ends
+// first.
+func (s *Scheduler) waitWakeGap(ctx context.Context, last time.Time, lastTick time.Duration) bool {
+	wait := time.Until(last.Add(wakeGap(lastTick, s.interval)))
 	if wait <= 0 {
 		return true
 	}

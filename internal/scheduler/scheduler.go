@@ -240,6 +240,9 @@ type Recorder interface {
 	// result. The scheduler records result="dropped" when its dispatch semaphore
 	// is saturated (#435); the dispatcher records "sent"/"failed" for deliveries.
 	RecordAlert(dagID, channelType, result string)
+	// RecordSchedulerWokenTick counts a tick started early by Wake
+	// (scheduler.eager_promotion) instead of by the loop interval.
+	RecordSchedulerWokenTick()
 }
 
 // Dispatcher launches a task instance for execution. The scheduler dispatches a
@@ -449,10 +452,10 @@ type Alerter interface {
 // a panic or error in a tick is recovered and logged, so the scheduler keeps
 // ticking — it may fall behind, but it never dies (the critical invariant).
 //
-// With eager promotion on, a Wake also starts a tick, no sooner than wakeMinGap
-// after the previous one, and restarts the interval so it stays the upper bound
-// between ticks. With it off the wake channel is nil, which never fires, so the
-// loop ticks on the interval alone.
+// With eager promotion on, a Wake also starts a tick, no sooner than wakeGap
+// after the start of the previous one, and restarts the interval so it stays
+// the upper bound between ticks. With it off the wake channel is nil, which
+// never fires, so the loop ticks on the interval alone.
 func (s *Scheduler) Run(ctx context.Context) error {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -460,20 +463,27 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if s.eagerPromotion {
 		wake = s.wake
 	}
-	var last time.Time
+	var (
+		last     time.Time
+		lastTick time.Duration
+	)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
 		case <-wake:
-			if !s.waitWakeGap(ctx, last) {
+			if !s.waitWakeGap(ctx, last, lastTick) {
 				return ctx.Err()
 			}
 			ticker.Reset(s.interval)
+			if s.recorder != nil {
+				s.recorder.RecordSchedulerWokenTick()
+			}
 		}
 		last = time.Now()
 		s.tick(ctx)
+		lastTick = time.Since(last)
 	}
 }
 
