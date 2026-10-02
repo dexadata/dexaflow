@@ -246,10 +246,14 @@ control on a writable root filesystem — most notably **`$HOME`** (which keeps 
 image-baked `~/.config` and anything a task writes there, e.g. `~/.aws/credentials`
 or a `~/.dbt/profiles.yml`), the container image layers, and mounted volumes. These
 persist for the whole worker's lifetime and are shared by every attempt the worker
-serves (same tenant + DAG version). Tasks that write secrets to `$HOME` rather than
-`$TMPDIR` should run warm pods with a **read-only task root filesystem**
-(`read_only_task_root_filesystem`) so those writes fail closed instead of leaking to
-the next attempt.
+serves (same tenant + DAG version). Turn on
+**`execution.warm_read_only_root_filesystem`** to close this: the warm container's
+root filesystem becomes read only, each attempt gets its own `$HOME` and XDG dirs
+(`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`) inside the
+scratch the worker wipes, and the `/tmp` emptyDir is emptied between attempts. A
+task that writes anywhere else (its working directory, an image path) fails with
+it on, and a task that reads config baked into the image's home dir must point at
+it explicitly, for example with `DBT_PROFILES_DIR`.
 {{% /alert %}}
 
 Because a fresh scrubbed child and a fresh per-attempt token are mandatory, there is
@@ -415,6 +419,7 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `maxWorkerLifetime` | `MAX_WORKER_LIFETIME` | duration | `1h` | Wall-clock ceiling on a worker before it drains + recycles, independent of attempt count. Must be > 0. |
 | `workerIdleTtl` | `WORKER_IDLE_TTL` | duration | `5m` | How long an idle worker is kept before recycle. Must be > 0. |
 | `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; promised idle floors are always honored. Must be ≥ 1. |
+| `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` emptied between attempts (see [isolation](#isolation-between-attempts)). Dedicated task pods are not affected. |
 
 Durations accept Go duration strings (`"90s"`, `"5m"`, `"1h"`). When
 `warmPoolsEnabled` is on, the server **validates these at boot and refuses to start**

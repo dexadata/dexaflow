@@ -242,6 +242,16 @@ type ExecutionSection struct {
 	// misconfiguration), and the cap is enforced only by refusing to CREATE new
 	// warm pods — never by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
+	// WarmReadOnlyRootFilesystem mounts every warm worker's root filesystem read
+	// only and gives each attempt its own HOME and XDG dirs inside the scratch the
+	// worker wipes between attempts, plus a sweep of the shared /tmp emptyDir. It
+	// closes X3.2: on a writable root a file one attempt plants on the image (a
+	// module on the working directory's sys.path, a ~/.local site-packages entry)
+	// is executed by the next attempt on the same worker. Default false keeps
+	// today's writable root, since a task that writes outside $HOME, $TMPDIR and
+	// /tmp would fail with it on. Dedicated task pods are not affected; they follow
+	// executor.defaults.read_only_task_root_filesystem.
+	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -864,6 +874,10 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
+	// today's writable warm root.
+	"execution.warm_read_only_root_filesystem": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,

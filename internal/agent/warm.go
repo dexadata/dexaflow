@@ -9,6 +9,7 @@ import (
 	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
@@ -77,6 +78,15 @@ type WarmRunner struct {
 	// recreated before every attempt (D4 isolation) and holds the return-value,
 	// extra-links, xcom-pushes, and reschedule files the runtime writes.
 	ScratchDir string
+
+	// AttemptHome is the read-only-root isolation mode (X3.2), set from
+	// LEOFLOW_WARM_ATTEMPT_HOME. Each attempt then gets its own HOME and XDG dirs
+	// under ScratchDir, and resetScratch also empties SharedTmpDir (the pod's /tmp
+	// emptyDir, the only other writable path) except for ScratchDir itself, so a
+	// generated dbt profile or a planted script there does not reach the next
+	// attempt. Off leaves HOME and /tmp exactly as before.
+	AttemptHome  bool
+	SharedTmpDir string
 
 	// TerminationLogPath and HeartbeatInterval mirror the single-shot Runner's
 	// fields and are threaded into every per-attempt Runner.
@@ -492,8 +502,36 @@ func (w *WarmRunner) resetScratch() error {
 	if err := os.RemoveAll(w.ScratchDir); err != nil {
 		return fmt.Errorf("removing scratch %q: %w", w.ScratchDir, err)
 	}
+	if w.AttemptHome && w.SharedTmpDir != "" {
+		if err := w.sweepSharedTmp(); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(w.ScratchDir, 0o700); err != nil {
 		return fmt.Errorf("recreating scratch %q: %w", w.ScratchDir, err)
+	}
+	return nil
+}
+
+// sweepSharedTmp removes every entry of SharedTmpDir except the one holding
+// ScratchDir (X3.2). With a read-only root that emptyDir is the only writable
+// path outside the scratch, and the runtime writes there by default: the image
+// points DBT_PROFILES_DIR at /tmp/leoflow/dbt, and the generated profiles.yml
+// carries the connection secret. Like resetScratch it is fail-closed.
+func (w *WarmRunner) sweepSharedTmp() error {
+	entries, err := os.ReadDir(w.SharedTmpDir)
+	if err != nil {
+		return fmt.Errorf("listing shared temp dir %q: %w", w.SharedTmpDir, err)
+	}
+	scratch := filepath.Clean(w.ScratchDir)
+	for _, e := range entries {
+		p := filepath.Join(w.SharedTmpDir, e.Name())
+		if p == scratch || strings.HasPrefix(scratch, p+string(filepath.Separator)) {
+			continue
+		}
+		if err := os.RemoveAll(p); err != nil {
+			return fmt.Errorf("removing %q from the shared temp dir: %w", p, err)
+		}
 	}
 	return nil
 }
@@ -517,7 +555,12 @@ func (w *WarmRunner) openSink(ctx context.Context) LogSink {
 // attempts), and its Client is the WorkClient bound to AttemptTokens so every
 // per-attempt RPC carries the attempt_token.
 func (w *WarmRunner) attemptRunner(sink LogSink) *Runner {
+	home := ""
+	if w.AttemptHome {
+		home = filepath.Join(w.ScratchDir, "home")
+	}
 	return &Runner{
+		HomeDir:        home,
 		Client:         w.WorkClient,
 		Cmd:            w.Cmd,
 		Sink:           sink,

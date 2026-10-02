@@ -1,0 +1,14 @@
+kind: Added
+body: |-
+  **A read-only root filesystem for warm workers.** With
+  `execution.warm_read_only_root_filesystem` (Helm:
+  `execution.warmReadOnlyRootFilesystem`) on, every warm worker pod mounts its
+  root filesystem read only, each attempt gets its own `HOME` and XDG dirs inside
+  the scratch the worker wipes between attempts, and the `/tmp` emptyDir is
+  emptied between attempts. A file one attempt writes (a module on the working
+  directory, a `~/.local` package, a generated dbt profile) can no longer be read
+  or run by the next attempt on the same worker. Off by default: a task that
+  writes outside `$HOME`, `$TMPDIR` and `/tmp` fails with it on. Dedicated task
+  pods are not affected. See [Warm worker
+  pools](https://dexaflow.dexadata.ai/operate/warm-pools/#isolation-between-attempts).
+time: 2026-10-02T17:00:00.000000000-03:00

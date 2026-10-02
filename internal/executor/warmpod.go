@@ -116,6 +116,15 @@ type WarmPodSpec struct {
 	// PodSecurity carries the same container/pod hardening choices as a task pod.
 	PodSecurity PodSecurity
 
+	// ReadOnlyRootFilesystem is the warm isolation mode (X3.2,
+	// execution.warm_read_only_root_filesystem). It forces a read-only root on the
+	// warm container whatever PodSecurity says, mounts the writable /tmp emptyDir,
+	// and tells the agent (warmAttemptHomeEnv) to give each attempt its own HOME
+	// and XDG dirs inside the scratch it wipes, and to sweep /tmp between
+	// attempts. On a writable root a file one attempt plants on the image would be
+	// executed by the next attempt on this worker.
+	ReadOnlyRootFilesystem bool
+
 	// AnchorName / AnchorUID identify the per-dag-version GC-anchor ConfigMap this
 	// warm pod is owned by (ADR 0058 D11). When BOTH are set, BuildWarmPod stamps an
 	// ownerReference to the anchor, so on control-plane loss / namespace teardown the
@@ -154,6 +163,9 @@ type WarmPodSpec struct {
 // stamps an ownerReference to that anchor ConfigMap so the pod is cascade-GC'd on
 // external teardown; without an anchor it builds a bare pod, unchanged.
 func BuildWarmPod(spec WarmPodSpec) *corev1.Pod {
+	if spec.ReadOnlyRootFilesystem {
+		spec.PodSecurity.ReadOnlyRootFilesystem = true
+	}
 	pullPolicy := corev1.PullIfNotPresent
 	if spec.ImagePullPolicy != "" {
 		pullPolicy = corev1.PullPolicy(spec.ImagePullPolicy)
@@ -322,8 +334,16 @@ func warmPodEnv(spec WarmPodSpec) []corev1.EnvVar {
 	if spec.PodSecurity.ReadOnlyRootFilesystem {
 		env = append(env, corev1.EnvVar{Name: "TMPDIR", Value: writableTmpMountPath})
 	}
+	if spec.ReadOnlyRootFilesystem {
+		env = append(env, corev1.EnvVar{Name: warmAttemptHomeEnv, Value: "1"})
+	}
 	return env
 }
+
+// warmAttemptHomeEnv tells the warm agent its root filesystem is read only by
+// design (X3.2), so it must give each attempt a HOME and XDG dirs inside its
+// wiped scratch and sweep the shared /tmp between attempts.
+const warmAttemptHomeEnv = "LEOFLOW_WARM_ATTEMPT_HOME"
 
 // mountWarmAgentTLSCA mounts the CA ConfigMap (when configured) into the warm pod
 // so the agent can verify the control plane's TLS cert, mirroring the task pod's

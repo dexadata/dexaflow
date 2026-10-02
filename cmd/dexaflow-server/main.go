@@ -2039,6 +2039,9 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			MaxWorkerLifetimeSeconds: int64(cfg.Execution.MaxWorkerLifetime.Seconds()),
 			WorkerIdleTTLSeconds:     int64(cfg.Execution.WorkerIdleTTL.Seconds()),
 			AttemptWatchdogSeconds:   int64(cfg.Auth.MaxAttemptCredentialLifetime.Seconds()),
+			// X3.2: a read-only root plus a per-attempt HOME, so nothing one attempt
+			// writes to the image survives into the next attempt on this worker.
+			ReadOnlyRootFilesystem: cfg.Execution.WarmReadOnlyRootFilesystem,
 		}
 		if useExchange {
 			// Exchange transport: project an SA token, no plaintext bootstrap token.
