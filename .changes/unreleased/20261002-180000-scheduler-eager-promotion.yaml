@@ -8,9 +8,11 @@ body: |-
   `scheduler.eager_promotion: true` in `dexaflow.yaml`), a ready task is queued
   in the same tick, skips and upstream failures cascade down the DAG within the
   tick (a bounded number of passes per run), and a task's final state report
-  triggers an early tick on the replica that receives it, at most one every
-  100 ms. The loop interval stays the upper bound, max active tasks and pool
-  limits still apply, and only the leader schedules. A chain of five instant
+  triggers an early tick on the replica that receives it, spaced at least
+  100 ms, or twice the previous tick's duration when that is longer, from the
+  previous tick; `dexaflow_scheduler_woken_ticks_total` counts them. The loop
+  interval stays the upper bound, max active tasks and pool limits still
+  apply, and only the leader schedules. A chain of five instant
   tasks at the default 1 s interval finishes in about 1.5 s instead of 11 s.
   Off by default. See [Configuration
   settings](https://dexaflow.dexadata.ai/reference/configuration/).
