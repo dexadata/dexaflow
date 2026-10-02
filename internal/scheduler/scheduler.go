@@ -271,6 +271,12 @@ type Scheduler struct {
 	stepTimeout time.Duration
 	recorder    Recorder
 	dispatcher  Dispatcher
+	// deferredRun is the run whose dispatch the buffered dispatcher deferred
+	// (its queue was full) during the current tick, "" when none was. Once set,
+	// the rest of the tick offers no more dispatches, and the next tick starts
+	// at the run after it, so one large run cannot take every freed buffer slot
+	// tick after tick. Touched only by the tick goroutine.
+	deferredRun string
 	alerter     Alerter
 	// alertSem bounds concurrent on-failure alert dispatches (#424): a mass
 	// failure must not spawn an unbounded burst of alert goroutines/POSTs. A
@@ -538,8 +544,10 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for i := range runs {
-		run := runs[i]
+	start := rotateAfter(runs, s.deferredRun)
+	s.deferredRun = ""
+	for k := range runs {
+		run := runs[(start+k)%len(runs)]
 		activeByDAG[run.DagID]++
 		run.ActiveTaskCount = activeTasksByDAG[run.DagID] + admittedTasksByDAG[run.DagID]
 		run.PoolsEnabled = s.poolsEnabled
@@ -552,6 +560,21 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		}
 	}
 	return s.createDueRuns(ctx, activeByDAG)
+}
+
+// rotateAfter returns the index the tick starts advancing runs at: right after
+// the run whose dispatch was deferred last tick, or 0 when none was (or it is no
+// longer active), which keeps the store's order whenever the buffer kept up.
+func rotateAfter(runs []RunState, deferredRun string) int {
+	if deferredRun == "" {
+		return 0
+	}
+	for i := range runs {
+		if runs[i].RunID == deferredRun {
+			return (i + 1) % len(runs)
+		}
+	}
+	return 0
 }
 
 // activeTaskCounts tallies, per DAG, the task instances that already occupy a
@@ -1056,6 +1079,11 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 		return fmt.Errorf("task %s not found in run %s", t.TaskID, run.RunID)
 	}
 	if s.dispatcher != nil {
+		if s.deferredRun != "" {
+			// The buffer refused a dispatch earlier this tick: leave the task
+			// scheduled, untouched, for the next tick instead of another refusal.
+			return nil
+		}
 		disp, err := s.dispatcher.Dispatch(ctx, run.RunID, run.DagID, run.DagVersionID, task)
 		if err != nil {
 			return s.handleDispatchFailure(ctx, run, t.TaskID, disp, err)
@@ -1094,6 +1122,7 @@ func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, tas
 		// dispatch-attempt budget or drive the task to dispatch_failed.
 		s.logger.Debug("dispatch deferred; buffer at capacity, re-offering next tick",
 			"run", run.RunID, "task", taskID, "error", cause)
+		s.deferredRun = run.RunID
 		return nil
 	}
 	if disp == executor.Backpressure {

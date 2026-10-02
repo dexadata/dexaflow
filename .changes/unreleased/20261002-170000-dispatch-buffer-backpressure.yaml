@@ -8,4 +8,7 @@ body: |-
   draining) buffer is now treated as backpressure: the task stays scheduled
   and is offered again on the next tick, with no attempt charged and no
   backoff. `dexaflow_dispatch_at_capacity_total` still counts each refusal.
+  After the first refusal the tick stops offering dispatches, and the next
+  tick starts at the run after the one that was refused, so one large run
+  cannot take every freed buffer slot tick after tick.
 time: 2026-10-02T17:00:00.000000000-03:00
