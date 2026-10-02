@@ -1,4 +1,4 @@
-Leoflow control plane "{{ include "leoflow.fullname" . }}" is installing into namespace "{{ .Release.Namespace }}".
+Dexaflow control plane "{{ include "leoflow.fullname" . }}" is installing into namespace "{{ .Release.Namespace }}".
 
 1. Task pods are created in namespace "{{ .Values.taskNamespace }}". Ensure it exists:
      kubectl create namespace {{ .Values.taskNamespace }} --dry-run=client -o yaml | kubectl apply -f -
@@ -148,7 +148,7 @@ to the namespace default SA and the pull secrets will not apply.
 
 Migrations run as a pre-install/pre-upgrade Job using image
 "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag | default .Chart.AppVersion }}",
-which bundles the Leoflow migrations at "{{ .Values.migrations.path }}"
+which bundles the Dexaflow migrations at "{{ .Values.migrations.path }}"
 (build/publish it with `make migrate-image`). Override migrations.image or set
 migrations.enabled=false to migrate out of band.
 {{- end }}

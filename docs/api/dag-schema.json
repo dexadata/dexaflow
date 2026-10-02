@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://leoflow.io/schemas/dag.json/v1.0",
-  "title": "Leoflow DAG Specification",
-  "description": "Canonical serialized representation of a DAG, consumed by the Leoflow Control Plane.",
+  "title": "Dexaflow DAG Specification",
+  "description": "Canonical serialized representation of a DAG, consumed by the Dexaflow Control Plane.",
   "type": "object",
   "required": [
     "schema_version",
@@ -354,14 +354,14 @@
             },
             "labels": {
               "type": "object",
-              "description": "Operator-declared pod labels merged onto the task pod. Leoflow's own leoflow.io/* labels win any key collision.",
+              "description": "Operator-declared pod labels merged onto the task pod. Dexaflow's own leoflow.io/* labels win any key collision.",
               "additionalProperties": {
                 "type": "string"
               }
             },
             "annotations": {
               "type": "object",
-              "description": "Operator-declared pod annotations merged onto the task pod. Leoflow's own task-instance-id annotation wins any key collision.",
+              "description": "Operator-declared pod annotations merged onto the task pod. Dexaflow's own task-instance-id annotation wins any key collision.",
               "additionalProperties": {
                 "type": "string"
               }
