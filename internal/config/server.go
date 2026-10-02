@@ -429,6 +429,11 @@ type AuthSection struct {
 	// UI session for them with a token its own issuer signed (#1284). Empty
 	// Issuer disables it.
 	TrustedIssuer TrustedIssuerSection `mapstructure:"trusted_issuer"`
+	// ServiceToken enables the operator service API under /api/v2/service/
+	// (#1283), which creates tenants and links users to the trusted issuer. It
+	// is the bearer credential for that API: at least 32 characters, kept in a
+	// Secret. Empty disables the API.
+	ServiceToken string `mapstructure:"service_token"`
 	// DevNoAuth disables authentication entirely, treating every request as an
 	// admin. It exists ONLY for `leoflow dev` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
@@ -802,6 +807,7 @@ var serverDefaults = map[string]any{
 	// poll every 1s) was actually running at the 30s production default.
 	"ui.auto_refresh_interval_seconds":         0,
 	"auth.dev_no_auth":                         false,
+	"auth.service_token":                       "",
 	"auth.trusted_issuer.name":                 "",
 	"auth.trusted_issuer.issuer":               "",
 	"auth.trusted_issuer.jwks_url":             "",
@@ -950,6 +956,9 @@ func (c *ServerConfig) Validate() error {
 	}
 	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
 		return err
+	}
+	if t := c.Auth.ServiceToken; t != "" && len(strings.TrimSpace(t)) < 32 {
+		return errors.New("auth.service_token must be at least 32 characters (generate one with `openssl rand -base64 48`)")
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
 	// verify), so the JWT secret is required for either.

@@ -396,6 +396,15 @@ spec:
                 secretKeyRef:
                   name: {{ .ctx.Values.auth.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
                   key: jwtSecret
+            {{- if or .ctx.Values.auth.serviceToken .ctx.Values.auth.serviceTokenExistingSecret }}
+            # Operator service API (#1283): rendered only when a token is given,
+            # always through a Secret, never as a plain value.
+            - name: LEOFLOW_AUTH_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .ctx.Values.auth.serviceTokenExistingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
+                  key: serviceToken
+            {{- end }}
             {{- if .ctx.Values.auth.oidc.enabled }}
             # OIDC/SSO (#1143). The scalars ride the env path the rest of this
             # chart uses; the two MAPS (tenant_claims, role_mappings) cannot,

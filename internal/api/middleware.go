@@ -117,8 +117,10 @@ func CORS(allowed []string) gin.HandlerFunc {
 // authentication). "/api/v2/auth/" covers the Airflow UI's login + logout, which
 // must be reachable precisely when the user has no token yet. /metrics is not
 // listed: it is not served on this listener at all (audit H2) — scraping lives on
-// the dedicated observability listener.
-var alwaysPublic = []string{"/auth/", "/api/v2/auth/", "/healthz", "/readyz", "/docs", "/openapi", "/ui/config"}
+// the dedicated observability listener. "/api/v2/service/" is the operator
+// service API (#1283): it is not open, it authenticates with the service token
+// in its own route group instead of a user session.
+var alwaysPublic = []string{"/auth/", "/api/v2/auth/", "/api/v2/service/", "/healthz", "/readyz", "/docs", "/openapi", "/ui/config"}
 
 // authTokenCookie is the cookie the Airflow 3.2.1 UI carries the JWT in (set by
 // the login flow). JWTAuth accepts it as a fallback to the Authorization header.

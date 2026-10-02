@@ -139,6 +139,11 @@ type Dependencies struct {
 	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
 	// (scheme://host[:port]), so another site cannot sign a browser in.
 	TrustedIssuerOrigins []string
+	// ServiceToken, when set, enables the operator service API under
+	// /api/v2/service/ (#1283), authenticated by this bearer token instead of a
+	// user session. ServiceTenants is its storage (the repo).
+	ServiceToken   string
+	ServiceTenants ServiceTenantStore
 	// JWTSecret is the HS256 secret the OIDC callback mints the app's _token with.
 	JWTSecret string
 	// SessionCookieInsecure drops the Secure attribute from the session and OIDC
@@ -208,6 +213,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 		breakGlass:   len(deps.OIDCSettings.BreakGlassEmails) > 0,
 		autoRedirect: deps.OIDCSettings.AutoRedirect,
 	}))
+	// Operator service API (#1283): registered only when a service token is
+	// configured. /api/v2/service/ is outside the user-session middleware's
+	// scope (alwaysPublic) because the group authenticates its own callers.
+	if deps.ServiceToken != "" {
+		registerService(r, deps)
+	}
 	// Trusted-issuer handoff (#1284): registered only when an issuer is
 	// configured, on its own per-IP limiter like the OIDC routes.
 	if deps.TrustedIssuer != nil {

@@ -377,6 +377,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |
 | `DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME` | `24h` | both | Duration ceiling on how long one attempt's agent credential may be kept alive by heartbeat renewal ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)). A runaway-task backstop — the short per-attempt TTL is what bounds a stolen token. A non-positive value disables the ceiling. No Helm value yet — `extraEnv` only ([#955](https://github.com/dexadata/leoflow/issues/955)). |
+| `DEXAFLOW_AUTH_SERVICE_TOKEN` | _(empty)_ | both | Turns on the [operator service API](#operator-service-api) under `/api/v2/service/` and is its bearer credential. At least 32 characters; boot fails on a shorter one. Keep it in a Secret. Empty leaves the API off and its routes absent. Helm: `auth.serviceToken`, or `auth.serviceTokenExistingSecret` naming a Secret with key `serviceToken`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER` | _(empty)_ | both | Turns on the [trusted-issuer handoff](#trusted-issuer-handoff): a platform that already authenticates its users opens a UI session for them by posting a token its own issuer signed. The exact `iss` of those tokens. Empty disables it and the endpoint does not exist. Helm: `auth.trustedIssuer.issuer`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME` | _(empty)_ | both | Name of the trusted issuer, 1-40 lowercase letters, digits or `-`. Users the issuer may sign in are linked under `issuer:<name>`, so keep it stable once users exist. Helm: `auth.trustedIssuer.name`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key, so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
@@ -594,6 +595,31 @@ cannot sign a visitor in as someone else. A token must also have been issued
 no later than a minute from now and live no longer than
 `max_lifetime_seconds`. Keep handoff tokens short-lived, use each once, and
 never put one in a URL.
+
+### Operator service API
+
+An operator that serves several organizations from one Leoflow (a hosting
+provider, an internal platform team) creates tenants and their users from its
+own automation instead of writing to the database. With `auth.service_token`
+set, two idempotent endpoints accept `Authorization: Bearer <service token>`;
+a user session never reaches them.
+
+`PUT /api/v2/service/tenants/{tenant}` with an optional
+`{"display_name": "Acme Corp"}` creates the tenant (1-63 lowercase letters,
+digits or `-`) with the same built-in roles, role permissions and default pool
+as the `default` tenant, copied from it so every tenant's ladder stays equal.
+It answers `201` when the tenant is new and `200` when it already existed; a
+second call fills in anything missing and changes nothing else.
+
+`PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
+`{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
+password exists in the tenant, linked to the [trusted
+issuer](#trusted-issuer-handoff) under that subject, with exactly those roles.
+It answers `201` for a new user and `200` for an existing one, whose roles it
+sets to the list given. It needs `auth.trusted_issuer` (`409` otherwise),
+answers `404` for an unknown tenant, `422` for a role the tenant does not have,
+and `409` for a subject already linked in another tenant. The user signs in
+only through the trusted issuer's handoff.
 
 ### Trusted proxies and the client IP
 

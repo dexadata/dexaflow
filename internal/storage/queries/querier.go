@@ -41,6 +41,11 @@ type Querier interface {
 	// making the next genuine failure a fresh episode with a fresh budget.
 	ClaimAlertAttempt(ctx context.Context, arg ClaimAlertAttemptParams) (ClaimAlertAttemptRow, error)
 	ClearDagRuns(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	// Grant each copied built-in role the same permissions as its "default" twin.
+	CopyDefaultRolePermissions(ctx context.Context, tenantID pgtype.UUID) error
+	// Give a tenant the built-in roles the migrations seed for "default". Copying
+	// keeps every tenant's ladder equal to default's as later migrations change it.
+	CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UUID) error
 	// Counts queued+running runs for a single DAG; used by the manual-trigger
 	// path to enforce max_active_runs (#200) before insert.
 	CountActiveDagRunsByDagID(ctx context.Context, dagID pgtype.UUID) (int64, error)
@@ -159,11 +164,17 @@ type Querier interface {
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
 	GetXComEntry(ctx context.Context, arg GetXComEntryParams) (GetXComEntryRow, error)
 	InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error)
+	// The implicit default pool every tenant needs (migration 023 seeds it for
+	// "default"), copied from default's so the slot count stays in step.
+	InsertDefaultPool(ctx context.Context, tenantID pgtype.UUID) error
 	// Just-in-time provisioning insert for a first OIDC login: an OIDC-only user
 	// (NULL password) linked by (oidc_provider, oidc_subject). The unique
 	// (oidc_provider, oidc_subject) constraint makes a concurrent double-provision
 	// surface as a conflict rather than a duplicate identity.
 	InsertOIDCUser(ctx context.Context, arg InsertOIDCUserParams) (InsertOIDCUserRow, error)
+	// Service API (#1283): create a tenant by name, or do nothing when it exists.
+	// Zero rows affected means it already existed.
+	InsertTenantIfMissing(ctx context.Context, arg InsertTenantIfMissingParams) (int64, error)
 	// Mirrors the bootstrap CreateUser insert (tenant_id, email, password_hash) but
 	// returns the columns the admin create-user API echoes back to the caller.
 	InsertUser(ctx context.Context, arg InsertUserParams) (InsertUserRow, error)
@@ -294,6 +305,8 @@ type Querier interface {
 	// get them via the JOIN.
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
 	ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error)
+	// "role:action:resource" for every grant of a tenant's built-in roles.
+	ListTenantRolePermissions(ctx context.Context, name string) ([]string, error)
 	// One row per user in the tenant, newest first, with every granted role name
 	// aggregated into a text array (empty when the user holds none). Paged by the
 	// caller. Never selects password_hash — the list must not expose secrets.
@@ -555,6 +568,7 @@ type Querier interface {
 	// value and the sensor honors its cumulative timeout across pokes (#380).
 	TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
+	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
 	// Rewrite one row's ciphertext in place during a key rotation. It touches only
 	// the two encrypted columns, so a re-encryption can never alter a connection's
 	// identity, host, or any field a user set.

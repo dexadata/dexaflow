@@ -1,0 +1,130 @@
+//go:build integration
+
+package storage_test
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/dexadata/dexaflow/internal/domain"
+)
+
+func uniqueTenant(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+}
+
+// TestEnsureTenantSeedsTheDefaultTenantsRolesAndPool covers #1283: a tenant
+// created through the service API starts with the same built-in roles, the
+// same permissions on each, and a default pool, as the tenant the migrations
+// seed. Copying from "default" keeps them equal as later migrations change the
+// ladder.
+func TestEnsureTenantSeedsTheDefaultTenantsRolesAndPool(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	name := uniqueTenant("acme")
+
+	created, err := repo.EnsureTenant(ctx, name, "Acme Corp")
+
+	if err != nil || !created {
+		t.Fatalf("EnsureTenant = %v, %v; want created", created, err)
+	}
+	for _, role := range []string{"admin", "viewer", "editor", "operator"} {
+		ok, rerr := repo.RoleExists(ctx, name, role)
+		if rerr != nil || !ok {
+			t.Errorf("role %s in %s: exists=%v err=%v", role, name, ok, rerr)
+		}
+	}
+	got, err := repo.TenantRolePermissions(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := repo.TenantRolePermissions(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("role permissions of %s differ from default:\n got %v\nwant %v", name, got, want)
+	}
+	if ok, err := repo.TenantHasDefaultPool(ctx, name); err != nil || !ok {
+		t.Errorf("default pool in %s: %v, %v", name, ok, err)
+	}
+}
+
+// TestEnsureTenantIsIdempotent: the second call changes nothing and says so.
+func TestEnsureTenantIsIdempotent(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	name := uniqueTenant("globex")
+	if _, err := repo.EnsureTenant(ctx, name, "Globex"); err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := repo.EnsureTenant(ctx, name, "Globex")
+
+	if err != nil || created {
+		t.Errorf("second EnsureTenant = %v, %v; want not created, no error", created, err)
+	}
+}
+
+// TestEnsureIssuerUserCreatesThenReconciles covers the user half of #1283: a
+// passwordless user linked to the issuer is created with its roles, and a
+// second call with other roles sets exactly those roles on the same user.
+func TestEnsureIssuerUserCreatesThenReconciles(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	tenant := uniqueTenant("initech")
+	if _, err := repo.EnsureTenant(ctx, tenant, "Initech"); err != nil {
+		t.Fatal(err)
+	}
+	subject := uniqueTenant("sub")
+
+	first, created, err := repo.EnsureIssuerUser(ctx, tenant, "peter@initech.com", "issuer:portal", subject, []string{"viewer"})
+	if err != nil || !created || first.TenantID != tenant || len(first.Roles) != 1 || first.Roles[0] != "viewer" {
+		t.Fatalf("first EnsureIssuerUser = %+v, %v, %v", first, created, err)
+	}
+
+	second, created, err := repo.EnsureIssuerUser(ctx, tenant, "peter@initech.com", "issuer:portal", subject, []string{"operator"})
+
+	if err != nil || created || second.ID != first.ID {
+		t.Fatalf("second EnsureIssuerUser = %+v, %v, %v; want the same user, not created", second, created, err)
+	}
+	got, active, err := repo.FindUserByOIDCSubject(ctx, "issuer:portal", subject)
+	if err != nil || !active || len(got.Roles) != 1 || got.Roles[0] != "operator" {
+		t.Errorf("after reconcile = %+v active=%v err=%v; want exactly [operator]", got, active, err)
+	}
+}
+
+// TestEnsureIssuerUserRefusesASubjectLinkedInAnotherTenant: one subject is one
+// person in one tenant; moving it would silently change where they work.
+func TestEnsureIssuerUserRefusesASubjectLinkedInAnotherTenant(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	a, b := uniqueTenant("a"), uniqueTenant("b")
+	for _, n := range []string{a, b} {
+		if _, err := repo.EnsureTenant(ctx, n, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	subject := uniqueTenant("sub")
+	if _, _, err := repo.EnsureIssuerUser(ctx, a, "x@a.com", "issuer:portal", subject, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := repo.EnsureIssuerUser(ctx, b, "x@a.com", "issuer:portal", subject, nil)
+
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Errorf("err = %v, want domain.ErrConflict", err)
+	}
+}
+
+// TestEnsureIssuerUserNeedsTheTenant: no tenant, no user.
+func TestEnsureIssuerUserNeedsTheTenant(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+
+	_, _, err := repo.EnsureIssuerUser(ctx, uniqueTenant("missing"), "x@y.com", "issuer:portal", uniqueTenant("sub"), nil)
+
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want domain.ErrNotFound", err)
+	}
+}
