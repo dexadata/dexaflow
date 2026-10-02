@@ -357,6 +357,12 @@ type Scheduler struct {
 	oversizeWarned      map[taskRef]bool
 	// clock is the tick's wall clock, replaceable in tests.
 	clock func() time.Time
+	// eagerPromotion is the scheduler.eager_promotion gate (see
+	// EnableEagerPromotion). Set once before Run, read on the loop goroutine.
+	eagerPromotion bool
+	// wake carries Wake requests to the loop. Capacity 1 coalesces a burst of
+	// them into one pending tick; the loop only reads it with eagerPromotion on.
+	wake chan struct{}
 }
 
 // NewScheduler builds a Scheduler over the given store, ticking every interval.
@@ -370,6 +376,7 @@ func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Sch
 		warnedRunCaps:   map[string]string{},
 		alertSem:        make(chan struct{}, defaultAlertConcurrency),
 		clock:           time.Now,
+		wake:            make(chan struct{}, 1),
 	}
 }
 
@@ -508,16 +515,32 @@ type Alerter interface {
 // Run drives the scheduling loop until ctx is canceled. The loop is crash-proof:
 // a panic or error in a tick is recovered and logged, so the scheduler keeps
 // ticking — it may fall behind, but it never dies (the critical invariant).
+//
+// With eager promotion on, a Wake also starts a tick, no sooner than wakeMinGap
+// after the previous one, and restarts the interval so it stays the upper bound
+// between ticks. With it off the wake channel is nil, which never fires, so the
+// loop ticks on the interval alone.
 func (s *Scheduler) Run(ctx context.Context) error {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
+	var wake <-chan struct{}
+	if s.eagerPromotion {
+		wake = s.wake
+	}
+	var last time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			s.tick(ctx)
+		case <-wake:
+			if !s.waitWakeGap(ctx, last) {
+				return ctx.Err()
+			}
+			ticker.Reset(s.interval)
 		}
+		last = time.Now()
+		s.tick(ctx)
 	}
 }
 
@@ -909,33 +932,16 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, er
 	// a run without the store's prebuilt graph gets one built here.
 	run.Graph = run.taskGraph()
 	poolOf := taskPools(run) // taskID → pool charge; nil when the pool gate is off.
-	// Plain state-set transitions (no side effect beyond the write + metric) are
-	// collected and flushed grouped by target state in one UPDATE each, instead of
-	// one per task. The queued (dispatch) and none (guarded reset) rails keep their
-	// per-task paths inside applyPlanned. Deferring the plain writes to after the
-	// loop is safe: each targets a distinct row, FinalizeRun reads the in-memory
-	// run (not the DB), and dispatch depends on task specs, not sibling TI state —
-	// so the per-tick effect is byte-identical, only the statement count drops.
-	batch := newTransitionBatch()
 	planned, waits := planRun(run)
 	res.waits = waits
-	for _, t := range planned {
-		if t.To == domain.TaskStateQueued {
-			res.admitted++
-			if poolOf != nil {
-				if res.byPool == nil {
-					res.byPool = map[string]int{}
-				}
-				c := poolOf[t.TaskID]
-				res.byPool[c.key] += c.slots
-			}
-		}
-		if aerr := s.applyPlanned(ctx, run, t, batch); aerr != nil {
-			return res, aerr
-		}
+	settled, err := s.applyPlan(ctx, run, planned, poolOf, &res)
+	if err != nil {
+		return res, err
 	}
-	if ferr := s.flushTransitions(ctx, run, batch); ferr != nil {
-		return res, ferr
+	if s.eagerPromotion {
+		if run, err = s.promoteSameTick(ctx, run, settled, poolOf, &res); err != nil {
+			return res, err
+		}
 	}
 	if state, done := FinalizeRun(run); done {
 		if err = s.store.SetRunState(ctx, run.RunID, state); err != nil {
@@ -944,6 +950,34 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, er
 		s.maybeAlertFailure(ctx, state, run)
 	}
 	return res, nil
+}
+
+// applyPlan applies one pass of planned transitions to a run, charging every
+// queued promotion to res (one max_active_tasks admission, and the task's slots
+// in its pool when the pool gate is on), and returns the plain transitions it
+// persisted.
+//
+// Plain state-set transitions (no side effect beyond the write + metric) are
+// collected and flushed grouped by target state in one UPDATE each, instead of
+// one per task. The queued (dispatch) and none (guarded reset) rails keep their
+// per-task paths inside applyPlanned. Deferring the plain writes to after the
+// loop is safe: each targets a distinct row, FinalizeRun reads the in-memory
+// run (not the DB), and dispatch depends on task specs, not sibling TI state,
+// so the per-tick effect is byte-identical, only the statement count drops.
+func (s *Scheduler) applyPlan(ctx context.Context, run RunState, plan []PlannedTransition, poolOf map[string]poolCharge, res *advanced) (*transitionBatch, error) {
+	batch := newTransitionBatch()
+	for _, t := range plan {
+		if t.To == domain.TaskStateQueued {
+			res.admit(poolOf, t.TaskID)
+		}
+		if err := s.applyPlanned(ctx, run, t, batch); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.flushTransitions(ctx, run, batch); err != nil {
+		return nil, err
+	}
+	return batch, nil
 }
 
 // poolCharge is what admitting one task costs its pool: the pool's budget key
