@@ -232,11 +232,15 @@ func warmPlacementCompatible(task domain.TaskSpec) bool {
 // warmResourcesCompatible reports whether a warm pod gives a task at least what
 // its dedicated pod would (X4). A task that declares no resources runs with the
 // warm pod's, which default to the platform resources its dedicated pod would
-// get. A task that declares its own runs warm only when, per dimension, the warm
-// pod requests at least as much (the scheduling guarantee it asked for) and caps
-// no lower (no earlier OOM kill or throttling than on its dedicated pod, where an
-// undeclared limit means none). A DRA claim never fits, since a warm pod holds
-// none, and an unparseable quantity is treated as not fitting.
+// get. A task that declares its own runs warm only when, per dimension (cpu,
+// memory, ephemeral-storage), the warm pod requests at least as much (the
+// scheduling guarantee it asked for) and caps the same way: a task limit is
+// covered only by a warm limit at least as high (an unlimited warm pod covers
+// none, since the task asked for a cap, and with it a QoS class and a bound on
+// its neighbors), and a task without a limit is not placed under a warm limit
+// (no earlier OOM kill or throttling than on its dedicated pod). As Kubernetes does, a task limit with no
+// request counts as the request too. A DRA claim never fits, since a warm pod
+// holds none, and an unparseable quantity is treated as not fitting.
 func warmResourcesCompatible(task domain.TaskSpec, warm *domain.Resources) bool {
 	if task.Resources == nil {
 		return true
@@ -254,10 +258,14 @@ func warmResourcesCompatible(task domain.TaskSpec, warm *domain.Resources) bool 
 		func(q *domain.ResourceQuantity) string { return q.EphemeralStorage },
 	} {
 		taskReq, taskLim := quantityOf(task.Resources.Requests, dim), quantityOf(task.Resources.Limits, dim)
+		if taskReq == "" {
+			taskReq = taskLim
+		}
 		if !covers(quantityOf(warmReq, dim), taskReq) {
 			return false
 		}
-		if wl := quantityOf(warmLim, dim); wl != "" && (taskLim == "" || !covers(wl, taskLim)) {
+		wl := quantityOf(warmLim, dim)
+		if (wl == "") != (taskLim == "") || !covers(wl, taskLim) {
 			return false
 		}
 	}

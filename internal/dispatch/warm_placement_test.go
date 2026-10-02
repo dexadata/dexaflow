@@ -87,7 +87,7 @@ func TestWarmResourcesCompatible(t *testing.T) {
 		{"limit only, within warm", &domain.Resources{Limits: q("250m", "256Mi")}, warm, true},
 		{"limit only, above warm request", &domain.Resources{Limits: q("1", "256Mi")}, burstyWarm, false},
 		// An unlimited warm pod does not give a task the cap it declared (its QoS
-		// and its noisy-neighbour bound), so it goes to a dedicated pod.
+		// and its noisy-neighbor bound), so it goes to a dedicated pod.
 		{"limit, warm unlimited", &domain.Resources{Requests: q("250m", ""), Limits: q("250m", "")}, unlimitedWarm, false},
 		{"limit only, warm unlimited", &domain.Resources{Limits: q("500m", "")}, unlimitedWarm, false},
 		{"ephemeral limit only, warm unlimited", &domain.Resources{Limits: &domain.ResourceQuantity{EphemeralStorage: "1Gi"}}, unlimitedWarm, false},

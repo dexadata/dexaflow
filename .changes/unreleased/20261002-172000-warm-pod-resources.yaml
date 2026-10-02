@@ -10,5 +10,12 @@ body: |-
   `execution.warm_pod_resources_cpu` / `warm_pod_resources_memory` (Helm:
   `execution.warmPodResources`) when set. A task that declares any placement, or
   resources the warm pod does not cover, now runs on a dedicated pod instead.
-  Only warm pools are affected.
+  Covering is checked per dimension (cpu, memory, ephemeral-storage): the warm
+  pod must request at least the task's request (or its limit, when it declares
+  only a limit), and must have a limit at least as high when the task declares
+  one. Two consequences to plan for: a task that declares limits runs on a
+  dedicated pod while warm pods are unlimited, and once warm pods have limits
+  (the default when the platform default resources are set), a task that
+  declares requests but no limits runs on a dedicated pod. Only warm pools are
+  affected.
 time: 2026-10-02T17:20:00.000000000-03:00

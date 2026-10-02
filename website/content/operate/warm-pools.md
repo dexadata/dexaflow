@@ -81,9 +81,13 @@ the work, and the same DAG version runs many attempts.
   or runtime class, termination grace, resource claims, labels, annotations) and
   only the warm pod's own requests and limits (`warmPodResources`, by default the
   platform default resources). A task that declares any of that placement, or
-  resources the warm pod does not cover (a bigger request, or a limit the warm pod
-  would undercut), **runs on a dedicated pod**, so it behaves exactly as it would
-  without warm pools.
+  resources the warm pod does not cover, **runs on a dedicated pod**, so it
+  behaves exactly as it would without warm pools. Per dimension (cpu, memory,
+  ephemeral-storage) the warm pod must request at least the task's request (its
+  limit when it declares only a limit, as Kubernetes does), and must have a limit
+  at least as high as the task's limit. So a task that declares a limit runs on a
+  dedicated pod while warm pods are unlimited, and a task that declares requests
+  but no limits runs on a dedicated pod once warm pods have limits.
 - **Non-idempotent tasks.** Warm-pool recovery re-runs an attempt after a worker is
   lost, and the safety argument for "a re-run is harmless" holds only for
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
