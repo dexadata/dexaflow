@@ -4,11 +4,16 @@ package storage_test
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dexadata/dexaflow/migrations"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -129,4 +134,89 @@ func TestTaskInstancesLeavesRoomForHOTUpdates(t *testing.T) {
 	if !slices.Contains(opts, "fillfactor=85") {
 		t.Errorf("task_instances reloptions = %v, want fillfactor=85", opts)
 	}
+}
+
+// TestNoInvalidIndexesAfterMigrating guards the migrated schema itself: an
+// interrupted CREATE INDEX CONCURRENTLY leaves an INVALID index that the
+// planner ignores but every write still maintains.
+func TestNoInvalidIndexesAfterMigrating(t *testing.T) {
+	pool, ctx := openSchemaPool(t)
+	rows, err := pool.Query(ctx, `
+SELECT c.relname
+FROM pg_index i
+JOIN pg_class c ON c.oid = i.indexrelid
+WHERE NOT i.indisvalid AND c.relnamespace = current_schema()::regnamespace`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invalid) > 0 {
+		t.Errorf("invalid indexes after migrating: %v", invalid)
+	}
+}
+
+// TestConcurrentIndexMigrationsFailOverInvalidIndex replays each migration
+// that builds an index CONCURRENTLY against the state an interrupted build
+// leaves behind: an INVALID index with the final name. The retry must fail
+// with duplicate_table instead of reporting success and keeping the invalid
+// index.
+func TestConcurrentIndexMigrationsFailOverInvalidIndex(t *testing.T) {
+	cases := []struct {
+		file, index, table, columns string
+	}{
+		{"027_dag_runs_version_index.up.sql", "idx_dag_runs_version", "dag_runs", "dag_version_id bigint"},
+		{"028_drop_ti_run_index.down.sql", "idx_ti_run", "task_instances", "dag_run_id bigint"},
+		{"029_drop_ti_task_index.down.sql", "idx_ti_task", "task_instances", "dag_run_id bigint, task_id text"},
+		{"030_drop_ti_running_heartbeat_index.down.sql", "idx_ti_running_heartbeat", "task_instances", "last_heartbeat_at timestamptz, state text"},
+	}
+	pool, ctx := openSchemaPool(t)
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			err := retryOverInvalidIndex(t, ctx, pool, tc.file, tc.index, tc.table, tc.columns)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "42P07" {
+				t.Errorf("retrying %s over an INVALID %s: err = %v, want duplicate_table (42P07)", tc.file, tc.index, err)
+			}
+		})
+	}
+}
+
+// retryOverInvalidIndex builds table in a scratch schema, leaves an INVALID
+// index named index on it (a unique build over duplicate keys fails the same
+// way an interrupted one does), then applies the migration file there and
+// returns its error.
+func retryOverInvalidIndex(t *testing.T, ctx context.Context, pool *pgxpool.Pool, file, index, table, columns string) error {
+	t.Helper()
+	const schema = "dexaflow_probe_invalid_index"
+	if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE; CREATE SCHEMA "+schema); err != nil {
+		t.Skipf("creating a scratch schema needs CREATE on the database: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE") })
+	cfg := pool.Config().Copy()
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	scratch, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scratch.Close()
+
+	if _, err := scratch.Exec(ctx, "CREATE TABLE "+table+" (k int, "+columns+"); INSERT INTO "+table+" (k) VALUES (1), (1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scratch.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY "+index+" ON "+table+" (k)"); err == nil {
+		t.Fatal("precondition: the unique build over duplicate keys must fail")
+	}
+	var valid bool
+	if err := scratch.QueryRow(ctx, "SELECT indisvalid FROM pg_index WHERE indexrelid = $1::regclass", index).Scan(&valid); err != nil || valid {
+		t.Fatalf("precondition: want an INVALID %s, got valid=%v err=%v", index, valid, err)
+	}
+	body, err := fs.ReadFile(migrations.Files, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = scratch.Exec(ctx, string(body))
+	return err
 }
