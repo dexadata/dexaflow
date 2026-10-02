@@ -54,8 +54,8 @@ type observabilityOptions struct {
 
 // WithoutLegacyMetricNames serves each metric family once, under its dexaflow_
 // name only (observability.metrics.drop_legacy_names). It halves the scrape and
-// the per-scrape copy of every family, for installs whose dashboards and alerts
-// no longer use the leoflow_ names.
+// the per-scrape copy of every family. It is an opt-in for installs that do
+// not need the leoflow_ names; the default keeps them.
 func WithoutLegacyMetricNames() ObservabilityOption {
 	return func(o *observabilityOptions) { o.legacyNames = false }
 }
