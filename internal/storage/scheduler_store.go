@@ -831,11 +831,11 @@ func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceI
 	return nil
 }
 
-// ListRunningTasks returns every `running` TI with the timestamp it entered
-// running, for the pod-lost reaper (#527). The reaper applies the grace period
-// and the pod-liveness check per row, so the SQL stays simple.
-func (s *SchedulerStore) ListRunningTasks(ctx context.Context) ([]executor.PodLostCandidate, error) {
-	rows, err := s.q.ListRunningTasks(ctx)
+// ListRunningTasks returns the `running`, non-warm TIs that have been running
+// for at least grace, with the timestamp each entered running, for the pod-lost
+// reaper (#527). The reaper still applies the pod-liveness check per row.
+func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Duration) ([]executor.PodLostCandidate, error) {
+	rows, err := s.q.ListRunningTasks(ctx, grace.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("listing running tasks: %w", err)
 	}

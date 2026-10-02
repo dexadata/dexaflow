@@ -175,6 +175,34 @@ func TestAwaitAssignmentRegistersWorker(t *testing.T) {
 	stream.pushErr(io.EOF) // clean shutdown
 }
 
+// A warm-worker credential is minted for exactly one dag_version pool (one
+// tenant's DAG version). Registering for any other pool would let it receive
+// that pool's assignments, and with them another tenant's task secrets, so the
+// payload's dag_version_id must match the token's.
+func TestAwaitAssignmentRejectsRegisterForAnotherPool(t *testing.T) {
+	srv, a, reg := newWarmServer(t, nil)
+	stream := newFakeAwaitStream(ctxWithWarmToken(t, a)) // token pool: dagver-1
+	stream.pushMsg(regMsg("dagver-other-tenant"))
+	done := make(chan error, 1)
+	go func() { done <- srv.AwaitAssignment(stream) }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(2 * time.Second):
+		stream.pushErr(io.EOF)
+		t.Fatal("register for another pool was accepted: the stream stayed open")
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("register for another pool: got %v, want PermissionDenied", err)
+	}
+	if reg.registered("ti-1") {
+		t.Fatal("a worker registering for another pool must not be registered")
+	}
+	if reg.Assign("dagver-other-tenant", &agentv1.WorkAssignment{AssignmentId: "x"}) {
+		t.Fatal("the other pool must have no worker to assign to")
+	}
+}
+
 // ─── (d) Assign pushes a WorkAssignment the stream receives ─────────────────
 
 func TestAwaitAssignmentDeliversAssignment(t *testing.T) {
@@ -411,15 +439,16 @@ func TestAwaitAssignmentReconnectSameIdentitySingleEntry(t *testing.T) {
 	srv, a, reg := newWarmServer(t, nil)
 
 	s1 := newFakeAwaitStream(ctxWithWarmToken(t, a))
-	s1.pushMsg(regMsg("v1"))
+	s1.pushMsg(regMsgPod("dagver-1", "pod-a"))
 	go func() { _ = srv.AwaitAssignment(s1) }()
-	awaitEventually(t, func() bool { return reg.dagVersionOf("ti-1") == "v1" })
+	awaitEventually(t, func() bool { return reg.podNameOf("ti-1") == "pod-a" })
 
-	// A reconnect with the SAME authenticated identity but a new registration.
+	// A reconnect with the SAME authenticated identity (and so the same pool) but
+	// a new registration.
 	s2 := newFakeAwaitStream(ctxWithWarmToken(t, a))
-	s2.pushMsg(regMsg("v2"))
+	s2.pushMsg(regMsgPod("dagver-1", "pod-b"))
 	go func() { _ = srv.AwaitAssignment(s2) }()
-	awaitEventually(t, func() bool { return reg.dagVersionOf("ti-1") == "v2" })
+	awaitEventually(t, func() bool { return reg.podNameOf("ti-1") == "pod-b" })
 
 	if reg.size() != 1 {
 		t.Fatalf("reconnect same identity: registry size = %d, want 1", reg.size())
