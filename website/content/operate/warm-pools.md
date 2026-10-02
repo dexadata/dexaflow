@@ -228,7 +228,15 @@ template — never from a sibling attempt.** Before each attempt the worker:
   `TMPDIR` points at a per-attempt subdirectory of the agent scratch that is wiped
   before every attempt, so a token cache, a dbt profile, or `~/.aws`-style
   credentials written to `$TMPDIR` do not survive into the next attempt;
-- **drops the prior attempt's task JWT** before minting the next one.
+- **drops the prior attempt's task JWT** before minting the next one;
+- **kills every process the previous attempt left behind**, including one that
+  detached with `setsid`, and checks that none is left before it accepts the next
+  assignment. A survivor it cannot kill ends the worker instead, and the pool
+  replaces the pod.
+
+The agent itself is **not dumpable**, so an attempt cannot read the worker's
+credentials out of `/proc/<agent>/environ` or `/proc/<agent>/mem` even though it
+runs as the same user.
 
 The invariant, tested rather than best-effort: *each attempt's child forks from a
 pristine template, never from a sibling attempt; no attempt observes another

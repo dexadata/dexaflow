@@ -1,0 +1,13 @@
+kind: Security
+body: |-
+  **Warm workers no longer let a process from one attempt run into the next.**
+  A task could detach a child with `setsid`, escape the process-group kill at the
+  end of its attempt, and keep running, with that attempt's environment and
+  secrets, while the next attempt ran on the same warm worker. After every
+  attempt the worker now kills every process descended from it and checks that
+  none is left before it accepts another assignment; if one cannot be killed the
+  worker exits and the pool replaces the pod. The warm agent is also no longer
+  dumpable, so a task cannot read the worker's credentials from
+  `/proc/<agent>/environ` or its memory. Only warm pools are affected; dedicated
+  task pods are unchanged.
+time: 2026-10-02T17:10:00.000000000-03:00
