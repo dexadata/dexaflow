@@ -83,14 +83,36 @@ func TestStaticReadsAndCompressesEachFileOnce(t *testing.T) {
 	cfs := &countingFS{FS: fstest.MapFS{"assets/app.js": {Data: data}}, opens: map[string]int{}}
 	h := NewFromFS(cfs, "test").StaticHandler()
 	for range 3 {
-		for _, enc := range []string{"gzip", ""} {
-			if rec := staticGet(t, h, "/assets/app.js", map[string]string{"Accept-Encoding": enc}); rec.Code != http.StatusOK {
-				t.Fatalf("status = %d", rec.Code)
-			}
+		if rec := staticGet(t, h, "/assets/app.js", map[string]string{"Accept-Encoding": "gzip"}); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
 		}
 	}
 	if n := cfs.opens["assets/app.js"]; n != 1 {
-		t.Errorf("file opened %d times across 6 requests, want 1", n)
+		t.Errorf("file opened %d times across 3 gzip requests, want 1", n)
+	}
+}
+
+// TestStaticServesIdentityFromTheBundle pins that the cache keeps no second
+// copy of the raw bundle: an identity request streams the file from the asset
+// filesystem (embedded in the binary in production), with Range support.
+func TestStaticServesIdentityFromTheBundle(t *testing.T) {
+	data := []byte(strings.Repeat("console.log('hi');", 100))
+	cfs := &countingFS{FS: fstest.MapFS{"assets/app.js": {Data: data}}, opens: map[string]int{}}
+	srv := NewFromFS(cfs, "test")
+	srv.Precompress()
+	h := srv.StaticHandler()
+	for range 3 {
+		rec := staticGet(t, h, "/assets/app.js", nil)
+		if rec.Code != http.StatusOK || rec.Body.String() != string(data) {
+			t.Fatalf("identity: status %d, %d bytes, want 200 and the file", rec.Code, rec.Body.Len())
+		}
+	}
+	if n := cfs.opens["assets/app.js"]; n != 4 {
+		t.Errorf("file opened %d times (1 build + 3 identity requests), want 4", n)
+	}
+	rec := staticGet(t, h, "/assets/app.js", map[string]string{"Range": "bytes=0-9"})
+	if rec.Code != http.StatusPartialContent || rec.Body.String() != string(data[:10]) {
+		t.Errorf("range: status %d, body %q, want 206 and the first 10 bytes", rec.Code, rec.Body.String())
 	}
 }
 
