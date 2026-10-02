@@ -219,3 +219,29 @@ func TestValidateExecutionSanityCaps(t *testing.T) {
 		})
 	}
 }
+
+// TestWarmPodResourcesDefaultAndEnv locks the X4 knobs: empty by default (the
+// warm pod inherits executor.defaults.resources_*), and reachable from both the
+// DEXAFLOW_* and the legacy LEOFLOW_* env names.
+func TestWarmPodResourcesDefaultAndEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Execution.WarmPodResourcesCPU != "" || c.Execution.WarmPodResourcesMemory != "" {
+		t.Errorf("warm pod resources default = %q/%q, want empty", c.Execution.WarmPodResourcesCPU, c.Execution.WarmPodResourcesMemory)
+	}
+	for _, prefix := range []string{"DEXAFLOW_", "LEOFLOW_"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Setenv(prefix+"EXECUTION_WARM_POD_RESOURCES_CPU", "750m")
+			t.Setenv(prefix+"EXECUTION_WARM_POD_RESOURCES_MEMORY", "1Gi")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			if c.Execution.WarmPodResourcesCPU != "750m" || c.Execution.WarmPodResourcesMemory != "1Gi" {
+				t.Errorf("warm pod resources = %q/%q, want 750m/1Gi from %s env", c.Execution.WarmPodResourcesCPU, c.Execution.WarmPodResourcesMemory, prefix)
+			}
+		})
+	}
+}
