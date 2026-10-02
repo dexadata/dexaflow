@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/dexadata/dexaflow/internal/config"
 )
 
@@ -19,19 +21,29 @@ func TestPoolTuningOffKeepsTodaysPools(t *testing.T) {
 	if _, ok := pc.ConnConfig.RuntimeParams["statement_timeout"]; ok {
 		t.Errorf("main pool sets statement_timeout %q with the key unset", pc.ConnConfig.RuntimeParams["statement_timeout"])
 	}
+	if pc.AfterConnect != nil {
+		t.Error("main pool runs an AfterConnect hook with the key unset")
+	}
 	if pc.MaxConnLifetimeJitter != 0 {
 		t.Errorf("main pool MaxConnLifetimeJitter = %s with the key unset, want 0", pc.MaxConnLifetimeJitter)
 	}
 }
 
-// statement_timeout bounds API statements on the main pool.
+// statement_timeout bounds API statements on the main pool. It is set with
+// SET once the connection is up, not sent as a startup parameter: PgBouncer
+// refuses a startup parameter it does not know with "unsupported startup
+// parameter", so a startup parameter would stop the server from connecting
+// through it at all. The integration test checks the value Postgres reports.
 func TestMainPoolAppliesStatementTimeout(t *testing.T) {
 	pc, err := mainPoolConfig(config.DatabaseSection{URL: tuningTestURL, StatementTimeoutMS: 30000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := pc.ConnConfig.RuntimeParams["statement_timeout"]; got != "30000" {
-		t.Errorf("main pool statement_timeout = %q, want 30000", got)
+	if got, ok := pc.ConnConfig.RuntimeParams["statement_timeout"]; ok {
+		t.Errorf("main pool sends statement_timeout %q as a startup parameter", got)
+	}
+	if pc.AfterConnect == nil {
+		t.Error("main pool has no AfterConnect hook to set statement_timeout")
 	}
 }
 
@@ -56,6 +68,11 @@ func TestStatementTimeoutStaysOffTheOtherPools(t *testing.T) {
 	} {
 		if v, ok := params["statement_timeout"]; ok {
 			t.Errorf("%s pool sets statement_timeout %q; only the main pool may", name, v)
+		}
+	}
+	for name, pc := range map[string]*pgxpool.Config{"leader": leader, "health": health, "scheduler": sched} {
+		if pc.AfterConnect != nil {
+			t.Errorf("%s pool runs an AfterConnect hook; only the main pool sets statement_timeout", name)
 		}
 	}
 }
