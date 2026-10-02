@@ -26,10 +26,9 @@ tests:
     asserts:
       - isKind:
           of: Role
-      # `pods`: create, get, list, watch, delete, deletecollection. NOT
-      # `update` or `patch` (the executor never mutates a running pod; it
-      # creates and deletes). deletecollection serves the opt-in settled-run
-      # collection (executor.collect_settled_run_pods).
+      # `pods`: create, get, list, watch, delete. NOT `update` or `patch`
+      # (the executor never mutates a running pod; it creates and deletes), and
+      # NOT `deletecollection` unless executor.collectSettledRunPods is on.
       - contains:
           path: rules[0].verbs
           content: create
@@ -45,7 +44,7 @@ tests:
       - contains:
           path: rules[0].verbs
           content: delete
-      - contains:
+      - notContains:
           path: rules[0].verbs
           content: deletecollection
       - notContains:
@@ -112,3 +111,18 @@ tests:
             apiGroups: [""]
             resources: ["persistentvolumeclaims"]
             verbs: ["create", "delete"]
+
+  - it: Role grants deletecollection on pods only with executor.collectSettledRunPods
+    documentIndex: 0
+    set:
+      executor.collectSettledRunPods: true
+    asserts:
+      - equal:
+          path: rules[0].resources[0]
+          value: pods
+      - contains:
+          path: rules[0].verbs
+          content: deletecollection
+      - contains:
+          path: rules[0].verbs
+          content: delete
