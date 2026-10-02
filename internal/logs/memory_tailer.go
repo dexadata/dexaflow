@@ -10,7 +10,7 @@ import (
 // agent log path; the buffer absorbs ordinary bursts.
 const memTailerBuffer = 256
 
-// MemoryTailer is an in-process Tailer for Leoflow Lite: it fans task log lines
+// MemoryTailer is an in-process Tailer for Dexaflow Lite: it fans task log lines
 // to live subscribers over Go channels, with no Redis. It is valid only within a
 // single process (Lite runs the agent gRPC and the read API together); a
 // multi-replica deployment must use RedisTailer instead (ADR 0026).

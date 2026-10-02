@@ -7,11 +7,11 @@ linkTitle: "uninstall"
 weight: 51
 ---
 
-Remove the Leoflow installation (~/.dexaflow).
+Remove the Dexaflow installation (~/.dexaflow).
 
 ### Synopsis
 
-uninstall removes the managed Leoflow home (~/.dexaflow): the binaries, config, managed Python, Monaco assets, and local dev state. It does NOT remove your DAG workspace or your datastore (the managed Postgres data in ~/.dexaflow/pgdata and this install's Docker volume) unless you pass --purge — so a reinstall keeps your data. It asks for confirmation unless --yes is given. (To upgrade instead, just re-run install.sh — it replaces the binaries and keeps your config.)
+uninstall removes the managed Dexaflow home (~/.dexaflow): the binaries, config, managed Python, Monaco assets, and local dev state. It does NOT remove your DAG workspace or your datastore (the managed Postgres data in ~/.dexaflow/pgdata and this install's Docker volume) unless you pass --purge — so a reinstall keeps your data. It asks for confirmation unless --yes is given. (To upgrade instead, just re-run install.sh — it replaces the binaries and keeps your config.)
 
 ```
 dexaflow uninstall [flags]

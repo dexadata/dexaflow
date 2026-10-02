@@ -10,7 +10,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/setup"
 )
 
-// devTool is a host dependency `leoflow dev` needs, with how to install it when
+// devTool is a host dependency `dexaflow lite` needs, with how to install it when
 // missing. brewPkg empty means it cannot be auto-installed (e.g. Docker Desktop).
 type devTool struct {
 	bin     string
@@ -18,7 +18,7 @@ type devTool struct {
 	hint    string
 }
 
-// devTools are the host dependencies for `leoflow dev` (dev-only). Production
+// devTools are the host dependencies for `dexaflow lite` (dev-only). Production
 // setup is a separate, later concern (#48/#61).
 var devTools = []devTool{
 	{bin: "docker", brewPkg: "", hint: "install Docker Desktop and start it: https://www.docker.com/products/docker-desktop"},
@@ -31,19 +31,19 @@ var devTools = []devTool{
 func brewInstallArgs(pkg string) []string { return []string{"install", pkg} }
 
 // newLiteProvisionCommand prepares the local machine for the from-source
-// `leoflow lite` loop: it checks the host dependencies (installing the
+// `dexaflow lite` loop: it checks the host dependencies (installing the
 // brew-installable ones with --install), ensures the task base image, and
 // provisions the isolated local database. Named `provision` to avoid colliding
-// with the top-level `leoflow setup` (the end-user install bootstrap).
+// with the top-level `dexaflow setup` (the end-user install bootstrap).
 func newLiteProvisionCommand() *cobra.Command {
 	var install bool
 	cmd := &cobra.Command{
 		Use:   "provision",
-		Short: "Check and provision the local deps the from-source `leoflow lite` loop needs.",
-		Long: "provision readies this machine for the from-source `leoflow lite` loop: it " +
+		Short: "Check and provision the local deps the from-source `dexaflow lite` loop needs.",
+		Long: "provision readies this machine for the from-source `dexaflow lite` loop: it " +
 			"checks Docker/k3d/kubectl/python3 (installing the brew-installable ones with " +
 			"--install), ensures the task base image, and provisions the isolated local " +
-			"database (leoflow_dev). For end users, `leoflow setup` (the installer) handles " +
+			"database (leoflow_dev). For end users, `dexaflow setup` (the installer) handles " +
 			"onboarding; this is the contributor's machine prep.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -59,7 +59,7 @@ func newLiteProvisionCommand() *cobra.Command {
 func runLiteProvision(cmd *cobra.Command, install bool) error {
 	out := cmd.OutOrStdout()
 	ctx := cmdContext(cmd)
-	devPrintln(out, "▸ leoflow lite provision (contributor machine prep; end users use `leoflow setup`)")
+	devPrintln(out, "▸ dexaflow lite provision (contributor machine prep; end users use `dexaflow setup`)")
 
 	missing := checkDevTools(cmd, install)
 
@@ -95,7 +95,7 @@ func runLiteProvision(cmd *cobra.Command, install bool) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("provision incomplete; unresolved: %v (see hints above)", missing)
 	}
-	devPrintln(out, "✓ local environment ready — run: leoflow lite dags/<project>")
+	devPrintln(out, "✓ local environment ready — run: dexaflow lite dags/<project>")
 	return nil
 }
 

@@ -2,14 +2,14 @@
 title: External secrets (keyless, ESO, and mounted secrets)
 linkTitle: External secrets
 weight: 58
-description: Reach credentials that live in your cloud secret store or Vault from task pods — keyless first, then External Secrets Operator or a mounted Kubernetes Secret — without duplicating them in Leoflow.
+description: Reach credentials that live in your cloud secret store or Vault from task pods — keyless first, then External Secrets Operator or a mounted Kubernetes Secret — without duplicating them in Dexaflow.
 ---
 
-Leoflow is **not a key manager** ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)). A
-Connection or Variable does not have to live in Leoflow's vault: if your secret
+Dexaflow is **not a key manager** ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)). A
+Connection or Variable does not have to live in Dexaflow's vault: if your secret
 already exists in **AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or
 HashiCorp Vault** — provisioned by Terraform, synced by the External Secrets
-Operator, etc. — a task can reach it **without a copy in Leoflow**. That keeps a
+Operator, etc. — a task can reach it **without a copy in Dexaflow**. That keeps a
 single source of truth and stays fully declarative/IaC.
 
 There are three ways for a task to reach an external secret, **in order of
@@ -17,7 +17,7 @@ preference**. Prefer the earliest one your environment allows.
 
 {{% alert title="Security: less secret material is safer" color="warning" %}}
 Every copy of a credential is a place it can leak. Keyless (option 1) keeps
-**zero** secret material anywhere — no value in Leoflow, no Kubernetes Secret, no
+**zero** secret material anywhere — no value in Dexaflow, no Kubernetes Secret, no
 env var. Reach for options 2–3 only when a credential (not a cloud identity) is
 genuinely required.
 {{% /alert %}}
@@ -35,12 +35,12 @@ to rotate or leak. This is the recommended path for any cloud connection.
 | Azure | **Azure Workload Identity** — the KSA federates to a managed identity |
 | HashiCorp Vault | **Kubernetes auth** — Vault trusts the pod's SA token |
 
-AWS, GCP, and Azure each have a native, keyless-first Leoflow Connection type
+AWS, GCP, and Azure each have a native, keyless-first Dexaflow Connection type
 (`aws`, `google_cloud_platform`, `wasb`/`adls`/…) that resolves this identity
 automatically — see [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/).
-Vault has no native Leoflow Connection type: a task reaches it by using Vault's
+Vault has no native Dexaflow Connection type: a task reaches it by using Vault's
 own client library with the pod's ambient ServiceAccount token, independent of
-Leoflow's Connection model.
+Dexaflow's Connection model.
 
 The Connection then declares **no key at all** — e.g. a `google_cloud_platform`
 connection with neither `key_path` nor `keyfile_dict` resolves via Application
@@ -51,7 +51,7 @@ chart's task ServiceAccount, then point a task at it:
 # values.yaml
 taskServiceAccount:
   create: true
-  name: leoflow-task
+  name: dexaflow-task
   annotations:
     # GKE Workload Identity:
     iam.gke.io/gcp-service-account: "<GSA>@<project>.iam.gserviceaccount.com"
@@ -64,22 +64,22 @@ taskServiceAccount:
 tasks:
   my_task_id:
     execution:
-      service_account: leoflow-task
+      service_account: dexaflow-task
 ```
 
-Leoflow passes the pod identity through untouched; it never sees a token or key.
+Dexaflow passes the pod identity through untouched; it never sees a token or key.
 
 ## 2. External Secrets Operator (ESO) → a mounted Kubernetes Secret
 
 When a **credential file** is genuinely required (a service-account JSON, a
 client certificate, a private CA) and keyless is not available, keep the secret
 in your external store and let **[ESO](https://external-secrets.io/)** sync it
-into a Kubernetes Secret. Leoflow mounts that Secret read-only into task pods;
+into a Kubernetes Secret. Dexaflow mounts that Secret read-only into task pods;
 the Connection references the file by path. **The secret value never enters
-Leoflow** — Leoflow only mounts a Secret you (or ESO) created.
+Dexaflow** — Dexaflow only mounts a Secret you (or ESO) created.
 
 This is available **today**, provider-neutral (ESO supports AWS/GCP/Azure/Vault
-and more), and needs no Leoflow code.
+and more), and needs no Dexaflow code.
 
 1. **ESO syncs the external secret into a Kubernetes Secret** (illustrative — AWS
    Secrets Manager; the same shape works for any ESO provider):
@@ -115,7 +115,7 @@ and more), and needs no Leoflow code.
 
 3. **Reference the mounted file from the Connection** with `key_path`
    ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)) — the key
-   is read from disk at task time, never stored in Leoflow. Create or edit the
+   is read from disk at task time, never stored in Dexaflow. Create or edit the
    Connection via **Admin → Connections** or the API, setting `key_path` in
    Extra:
 
@@ -149,20 +149,20 @@ your platform already runs.
 
 Without ESO or CSI, create the Kubernetes Secret yourself
 (`kubectl create secret generic gcp-sa-key --from-file=key.json=...`) and mount
-it with the same `taskSecret` config as step 2. Identical from Leoflow's side —
+it with the same `taskSecret` config as step 2. Identical from Dexaflow's side —
 you just own the sync instead of ESO.
 
-## 4. Native external secrets resolver (Leoflow-managed, ADR 0060)
+## 4. Native external secrets resolver (Dexaflow-managed, ADR 0060)
 
 Options 1–3 let a task *reach* a secret its own code reads. The **native resolver**
 goes further: a DAG **declares a Connection/Variable by name** exactly as it would
-for a vault secret, and Leoflow resolves it **pod-side** from your provider store —
-no copy in Leoflow's vault, no author-visible provider path. It covers operator,
+for a vault secret, and Dexaflow resolves it **pod-side** from your provider store —
+no copy in Dexaflow's vault, no author-visible provider path. It covers operator,
 `@task`/python, and **bash** tasks uniformly (the value is exported as
 `AIRFLOW_CONN_*` / `AIRFLOW_VAR_*`), which a raw in-pod Airflow backend does not.
 
 **How it resolves.** For each name the task declared, the chain is
-**external backend → Leoflow vault → env**: an external hit wins, a miss falls back
+**external backend → Dexaflow vault → env**: an external hit wins, a miss falls back
 to the vault. Resolution runs in the task pod under the pod's **own keyless
 identity** — the control plane never reaches your secret store (ADR 0048). It is
 **off by default**; with no backend configured the vault is the only source.
@@ -180,16 +180,16 @@ secrets:
 taskServiceAccount:
   create: true
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<leoflow-secrets-reader>
+    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<dexaflow-secrets-reader>
 ```
 
 ```python
-# dag.py — declare the name; no provider path, no key in Leoflow.
+# dag.py — declare the name; no provider path, no key in Dexaflow.
 with DAG("etl", ...):
     ...  # a task that declares connections=["warehouse"] / variables=["region"]
 ```
 
-Leoflow resolves `warehouse` from `<connections_prefix>/warehouse` in the store,
+Dexaflow resolves `warehouse` from `<connections_prefix>/warehouse` in the store,
 renders it as an Airflow connection URI, and exports `AIRFLOW_CONN_WAREHOUSE`.
 
 {{% alert title="Required: the provider package in the task image" color="warning" %}}
@@ -223,7 +223,7 @@ provider's backend class and keyless mechanism.
   attempt, exactly like a vault secret — never on the pod object or in etcd.
 
 > **Keyless end-to-end (IRSA / Workload Identity) is verified on a real cluster.**
-> Leoflow only sets the pod's ServiceAccount; the cloud identity webhook injects
+> Dexaflow only sets the pod's ServiceAccount; the cloud identity webhook injects
 > the token at admission. Confirm the KSA→role binding on your cluster.
 
 **NetworkPolicy — metadata egress (important for GKE and EKS Pod Identity).** The
@@ -280,9 +280,9 @@ wider range that is **not** the metadata range, use
   identity to *read* the secret). That's a per-connection escape hatch, not the
   general mechanism this page covers.
 - **Resolving a declared Connection/Variable directly from the external store**
-  — so a secret in AWS Secrets Manager becomes a Leoflow Connection/Variable with
+  — so a secret in AWS Secrets Manager becomes a Dexaflow Connection/Variable with
   no Kubernetes Secret in between — is **option 4 above** (the native resolver,
-  ADR 0060, [#811](https://github.com/dexadata/leoflow/issues/811)). It ships
+  ADR 0060, [#811](https://github.com/dexadata/dexaflow/issues/811)). It ships
   **off by default**; enable it with `secrets.backend` after validating keyless
   end-to-end on your cluster (see
   [Validate the native resolver on a real cluster]({{< relref "external-secrets-cluster-validation" >}})).
@@ -293,14 +293,14 @@ How a credential is isolated to the right task depends on the path it takes:
 
 - **Mounted Kubernetes Secret (options 2–3) is cluster-wide, not per-task.** The
   `taskSecret` mount is applied to **every** task pod, so any task can read the
-  files under `mountPath`. Isolate it *outside* Leoflow: put only broadly-shared
+  files under `mountPath`. Isolate it *outside* Dexaflow: put only broadly-shared
   material in that Secret, separate sensitive workloads by namespace/cluster, and
   restrict who can read the Secret with RBAC. Better still, use **keyless
   (option 1)** — there is no mounted material to over-share.
 - **Keyless (option 1) is scoped by the pod's own identity.** A task reaches a
   cloud API as the ServiceAccount identity you bound to its pod; another task with
   a different ServiceAccount cannot assume it. No secret is delivered at all.
-- **Leoflow-vault Connections/Variables — always attempt-scoped; per-task only under
+- **Dexaflow-vault Connections/Variables — always attempt-scoped; per-task only under
   `enforce`.** Delivery is always against a short-lived identity bound to that
   specific task attempt, over TLS. Whether a pod receives *only the names it
   declared* is an operator policy: under `secret_scoping: enforce` (with
@@ -321,7 +321,7 @@ How a credential is isolated to the right task depends on the path it takes:
 - **Rotation** is your external store's job — ESO re-syncs on its
   `refreshInterval`, and each task runs in a fresh pod that re-reads the mount, so
   there is no long-lived cached copy to invalidate.
-- Leoflow never logs or persists a mounted secret's value; it only sets the mount
+- Dexaflow never logs or persists a mounted secret's value; it only sets the mount
   path on the pod.
 
 ## See also

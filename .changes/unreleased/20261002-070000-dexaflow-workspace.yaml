@@ -1,0 +1,8 @@
+kind: Changed
+body: |-
+  **New installs keep their DAG projects in `~/dexaflow`.** An install from
+  before the rename that has `~/leoflow` keeps using it as the default
+  workspace, and a workspace recorded by `dexaflow setup` is used as is, so no
+  project moves. The bundle installer copies its DAGs into the recorded
+  workspace. Messages that still named the old `dev` command now say
+  `dexaflow lite`.

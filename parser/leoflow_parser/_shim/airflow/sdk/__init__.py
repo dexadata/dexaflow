@@ -18,12 +18,12 @@ __all__ = [
 
 
 class PythonOperator(BaseOperator):
-    """Classic PythonOperator (name carries 'Python' -> Leoflow 'python')."""
+    """Classic PythonOperator (name carries 'Python' -> Dexaflow 'python')."""
 
 
 class _TaskBranchOperator(PythonOperator):
     """The @task.branch shape. Branching needs scheduler skip-state (ADR 0040
-    Phase D) that Leoflow does not have yet; the 'Branch' in the class name routes
+    Phase D) that Dexaflow does not have yet; the 'Branch' in the class name routes
     it to the compiler's clean #225 reject instead of an opaque AttributeError at
     import time."""
 

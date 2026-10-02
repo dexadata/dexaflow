@@ -10,7 +10,7 @@ description: Elasticsearch connection
 ---
 
 Connect a task to an Elasticsearch cluster's SQL endpoint (the
-`ElasticsearchSQLHook`) over a managed Leoflow Connection.
+`ElasticsearchSQLHook`) over a managed Dexaflow Connection.
 
 ## Declare the provider
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fail a PR that changes shipped behavior without recording it in the CHANGELOG.
 #
-# Leoflow keeps a hand-written Keep-a-Changelog `CHANGELOG.md`; entries are added
+# Dexaflow keeps a hand-written Keep-a-Changelog `CHANGELOG.md`; entries are added
 # manually under `## [Unreleased]` and `cut-release.sh` dates that section at a GA.
 # Nothing forced an entry per PR, so features repeatedly merged with none and had
 # to be back-filled by separate "docs(changelog): record …" PRs (#529, #532, #708,

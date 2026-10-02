@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for filing a bug! Please search
-        [existing issues](https://github.com/dexadata/leoflow/issues) first to
+        [existing issues](https://github.com/dexadata/dexaflow/issues) first to
         avoid duplicates.
   - type: textarea
     id: what-happened
@@ -28,7 +28,7 @@ body:
   - type: dropdown
     id: mode
     attributes:
-      label: How are you running Leoflow?
+      label: How are you running Dexaflow?
       options:
         - Demo (docker compose --profile demo)
         - Dev (leoflow dev)
@@ -40,7 +40,7 @@ body:
     id: env
     attributes:
       label: Environment
-      description: "OS, `go version`, Docker / k3d versions, and the Leoflow commit or tag."
+      description: "OS, `go version`, Docker / k3d versions, and the Dexaflow commit or tag."
     validations:
       required: true
   - type: textarea

@@ -11,7 +11,7 @@ import (
 
 const tokenIssuer = "leoflow"
 
-// DevTokenSubject is the subject of the in-process token that `leoflow dev` mints
+// DevTokenSubject is the subject of the in-process token that `dexaflow lite` mints
 // for its admin. It intentionally has no user row, so Authenticate trusts its
 // signed claims as the ONLY subject exempt from the per-request DB authz reload.
 const DevTokenSubject = "leoflow-dev"
@@ -20,7 +20,7 @@ const DevTokenSubject = "leoflow-dev"
 // from agent identity tokens (see audienceAgent).
 const audienceUser = "leoflow-user"
 
-// jwtClaims is the Leoflow JWT payload.
+// jwtClaims is the Dexaflow JWT payload.
 type jwtClaims struct {
 	TenantID string   `json:"tenant_id"`
 	Email    string   `json:"email,omitempty"`
@@ -63,7 +63,7 @@ func (a *JWTAuthenticator) clock() time.Time {
 }
 
 // MintUserToken signs a user JWT directly, without checking credentials against
-// a store. It is for trusted in-process callers only — notably `leoflow dev`,
+// a store. It is for trusted in-process callers only — notably `dexaflow lite`,
 // which runs its own control plane and must register DAGs without a login
 // round-trip. The token validates under Authenticate using the same secret.
 func MintUserToken(secret string, ttl time.Duration, user User) (string, error) {
@@ -97,7 +97,7 @@ func (a *JWTAuthenticator) IssueToken(ctx context.Context, creds Credentials) (s
 //
 // Two cases fall back to the signed claims instead of the reload: a nil store
 // (no data plane bound — the trusted in-process minting context) and a subject
-// with no backing row (a directly-minted token, e.g. `leoflow dev`). Any other
+// with no backing row (a directly-minted token, e.g. `dexaflow lite`). Any other
 // store failure fails closed, so a flaky database cannot silently disable
 // revocation.
 func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*User, error) {
@@ -178,7 +178,7 @@ func (a *JWTAuthenticator) mintUserToken(user *User, ttl time.Duration, origin t
 // audience, HS256). It is the server half of transparent CLI token renewal (EKS
 // validation aresta #5): the short access-token TTL still bounds a stolen token,
 // while renewal keeps a genuinely live session working so a long dev session
-// never has to `leoflow auth login` again on the hour. It is modeled directly on
+// never has to `dexaflow auth login` again on the hour. It is modeled directly on
 // RenewAgentToken.
 //
 // The session's original login time is preserved across every renewal (the oiat

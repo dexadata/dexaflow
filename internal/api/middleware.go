@@ -148,7 +148,7 @@ func isPublic(path string) bool {
 }
 
 // DevBypassAuth authenticates EVERY request as a fixed admin user, with no token
-// required. It exists solely for `leoflow dev` (the local, unsandboxed loop) so a
+// required. It exists solely for `dexaflow lite` (the local, unsandboxed loop) so a
 // developer reaches the UI without logging in. It must only be wired under the
 // explicit dev opt-in (config auth.dev_no_auth); the server logs a prominent
 // warning when it is active. NEVER enable this in production.

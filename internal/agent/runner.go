@@ -1049,7 +1049,7 @@ func (r *Runner) reportReschedule(ctx context.Context, when time.Time) error {
 	})
 }
 
-// leoflowEnvPrefix marks the variables Leoflow itself owns in an inherited
+// leoflowEnvPrefix marks the variables Dexaflow itself owns in an inherited
 // environment. Everything under it is stripped unless explicitly kept.
 const leoflowEnvPrefix = "LEOFLOW_"
 
@@ -1104,7 +1104,7 @@ func isAgentOnlyEnv(name string) bool {
 	return false
 }
 
-// stripAgentOnly removes Leoflow's own variables from an inherited environment
+// stripAgentOnly removes Dexaflow's own variables from an inherited environment
 // before it is handed to user code, keeping only those a task legitimately needs.
 func stripAgentOnly(base []string) []string {
 	out := make([]string, 0, len(base))

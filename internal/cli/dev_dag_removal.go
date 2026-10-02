@@ -8,7 +8,7 @@ package cli
 //
 // Without this step the watcher is add-only: a DAG removed from disk stays
 // registered in the control plane forever (ghost in the UI). With this step,
-// `rm -rf ~/leoflow/foo` is enough to deregister.
+// `rm -rf ~/dexaflow/foo` is enough to deregister.
 //
 // Contract:
 //   - DAGs in "current" but NOT in "lastSeen" are newly added — not deleted.

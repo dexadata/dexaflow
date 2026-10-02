@@ -144,7 +144,7 @@ WS="$OUT/workspace"; mkdir -p "$WS"
 cp -R "$ROOT/test/soak/dags/soak_ingest" "$WS/"
 cp -R "$ROOT/test/soak/dags/soak_operators" "$WS/"
 warn "image build for the two DAGs is the step this script has not yet been run through"
-warn "it is expected to use: leoflow compile --build, then k3d image import"
+warn "it is expected to use: dexaflow compile --build, then k3d image import"
 
 # ── The two arms. Every variable that differs is listed here and nowhere else,
 #    so a reader can check the fairness claim by reading one block. ───────────

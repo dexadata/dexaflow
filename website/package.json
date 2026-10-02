@@ -2,7 +2,7 @@
   "name": "leoflow-website",
   "version": "0.0.1",
   "private": true,
-  "description": "Leoflow documentation site (Hugo + Docsy). Parallel migration track — not yet deployed.",
+  "description": "Dexaflow documentation site (Hugo + Docsy). Parallel migration track — not yet deployed.",
   "scripts": {
     "build": "hugo --gc --minify",
     "build:preview": "hugo --gc --minify --environment development"

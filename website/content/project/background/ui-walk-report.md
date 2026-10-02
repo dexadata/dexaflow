@@ -17,7 +17,7 @@ captured console errors + non-2xx requests. Every screenshot below was inspected
 and every finding cross-checked against the authoritative `_private_ui.yaml`
 (3.2.1) — so this supersedes the earlier external audit where the two disagree.
 
-> Why no side-by-side with real Airflow for most screens: Leoflow serves the
+> Why no side-by-side with real Airflow for most screens: Dexaflow serves the
 > **unmodified** Airflow 3.2.1 SPA, so the layout/chrome *is* Airflow's. A
 > real-Airflow comparison only adds value for data-shape differences; it is
 > worth doing specifically for the empty Graph view (below).

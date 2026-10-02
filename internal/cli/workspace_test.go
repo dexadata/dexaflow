@@ -308,7 +308,7 @@ func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
 //
 // This used to branch on Config.Dbt != nil while projectAt branches on the DAG
 // source existing, and the two disagree in exactly this shape. The consequence
-// was not abstract: `leoflow dev` printed "delete dag.py", the user deleted it,
+// was not abstract: `dexaflow lite` printed "delete dag.py", the user deleted it,
 // and nothing reloaded — no watched path's mtime moved, and the import-error
 // banner is only cleared by a successful reload, so the UI stayed red while the
 // project was already fixed.

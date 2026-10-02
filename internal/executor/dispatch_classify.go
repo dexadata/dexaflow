@@ -24,7 +24,7 @@ const (
 	// the cluster has headroom again. The scheduler backs the task off and
 	// re-offers it indefinitely, never counting it against the dispatch-attempt
 	// budget and never driving the task to dispatch_failed: the cluster asking
-	// Leoflow to slow down is not the user's task failing.
+	// Dexaflow to slow down is not the user's task failing.
 	Backpressure
 	// Rejected is a permanent dispatch failure that will not clear on its own: an
 	// invalid image, an RBAC denial, an admission-webhook rejection, a bad spec,

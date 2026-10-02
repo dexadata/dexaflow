@@ -339,7 +339,7 @@ func TestTriggerDagRunSpecReadDriverErrorIsOpaque(t *testing.T) {
 }
 
 // TestSafeErrorMessagesStillReachTheClient is the other half of the contract.
-// Redacting everything would be easy and useless: the messages Leoflow composes
+// Redacting everything would be easy and useless: the messages Dexaflow composes
 // itself — an unknown role, a max_active_runs cap — are the ones a caller can
 // act on, so they must survive the redaction that removes the driver's.
 func TestSafeErrorMessagesStillReachTheClient(t *testing.T) {

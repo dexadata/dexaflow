@@ -13,7 +13,7 @@ Clear a DAG's run history, or fully deregister it with --deregister.
 
 By default this clears the DAG's run history but keeps the DAG and its versions registered — the same as the UI trash button (ADR 0020). With --deregister it removes the DAG artifact entirely.
 
-GitOps note: deregister is not permanent while the DAG's source still exists. In production the next deploy re-registers it as a new version; under `leoflow dev` the watcher re-registers it on the next reload — delete the DAG's file to stop that.
+GitOps note: deregister is not permanent while the DAG's source still exists. In production the next deploy re-registers it as a new version; under `dexaflow lite` the watcher re-registers it on the next reload — delete the DAG's file to stop that.
 
 ```
 dexaflow dags delete <dag_id> [flags]

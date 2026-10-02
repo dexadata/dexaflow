@@ -40,7 +40,7 @@ func TestInfoStringContainsEveryField(t *testing.T) {
 }
 
 // TestInfoCarriesNoBuildExpiry pins the alpha-cut decision (this commit) that
-// Leoflow binaries do NOT carry a baked-in expiry. The pre-alpha 90-day timer
+// Dexaflow binaries do NOT carry a baked-in expiry. The pre-alpha 90-day timer
 // was removed when the alpha was about to ship — re-introducing it would
 // silently brick old installs after 90 days, which is exactly what we
 // stopped doing on purpose. This test fails the build if any of the three

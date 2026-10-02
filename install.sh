@@ -4,7 +4,7 @@
 # before the rename) and runs `dexaflow setup` to bootstrap the managed runtime
 # (Python, workspace).
 #
-#   curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh
 #
 # Environment overrides (the LEOFLOW_* names are still accepted):
 #   DEXAFLOW_VERSION=v0.5.0          pin a specific release (default: latest)
@@ -12,7 +12,7 @@
 #   DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin
 set -eu
 
-REPO="dexadata/leoflow"
+REPO="dexadata/dexaflow"
 
 # Choose where to put the binaries. Prefer a directory ALREADY on PATH so the
 # user needs no `source`/new shell — the common "command not found" trap. Order:

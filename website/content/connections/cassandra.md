@@ -10,7 +10,7 @@ description: Cassandra connection
 ---
 
 Connect a task to an Apache Cassandra cluster (the `CassandraHook`) over a
-managed Leoflow Connection. The keyspace lives in the Schema field.
+managed Dexaflow Connection. The keyspace lives in the Schema field.
 
 ## Declare the provider
 

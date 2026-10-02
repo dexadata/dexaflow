@@ -1,4 +1,4 @@
-# Default values for the Leoflow control plane chart.
+# Default values for the Dexaflow control plane chart.
 
 image:
   # -- Control-plane image. Published by GoReleaser on every tag, signed with cosign.
@@ -70,7 +70,7 @@ taskServiceAccount:
   # -- Annotations. GKE Workload Identity: `iam.gke.io/gcp-service-account: GSA@PROJECT.iam.gserviceaccount.com`. EKS IRSA: `eks.amazonaws.com/role-arn: ...`.
   annotations: {}
   # -- Pull secrets for private DAG images. Kubernetes auto-injects these into
-  # every task pod that runs as this SA, so a `leoflow deploy` to a private
+  # every task pod that runs as this SA, so a `dexaflow deploy` to a private
   # registry can be pulled (ADR 0041). Reference an existing docker-registry
   # secret, e.g. `[{name: regcred}]`.
   imagePullSecrets: []
@@ -144,8 +144,19 @@ service:
 
 # config maps to LEOFLOW_* env. Non-secret settings live here; secrets below.
 ui:
-  # -- How often the bundled SPA re-polls DAG, run and task-instance state, in seconds. Empty uses the server's production-safe default of 30s. It is POLLING, so this multiplies request and query load by the number of open browser tabs, not by the number of users: 5s is thirty tabs' worth of traffic at 30s, and 1s is what `leoflow lite` uses precisely because Lite is one person against a local database. Lower it when operators watch runs progress and the metadata database has room; the honest way to choose is to measure one refresh cycle against your own DAG count rather than to copy Lite (#1196). A zero or negative value is not an error and not a fast refresh: the server falls back to 30s, deliberately, so a misconfigured variable cannot drop the interval to 0 and hammer the database.
+  # -- How often the bundled SPA re-polls DAG, run and task-instance state, in seconds. Empty uses the server's production-safe default of 30s. It is POLLING, so this multiplies request and query load by the number of open browser tabs, not by the number of users: 5s is thirty tabs' worth of traffic at 30s, and 1s is what `dexaflow lite` uses precisely because Lite is one person against a local database. Lower it when operators watch runs progress and the metadata database has room; the honest way to choose is to measure one refresh cycle against your own DAG count rather than to copy Lite (#1196). A zero or negative value is not an error and not a fast refresh: the server falls back to 30s, deliberately, so a misconfigured variable cannot drop the interval to 0 and hammer the database.
   autoRefreshIntervalSeconds: ""
+  # -- Theme for the bundled UI, in the shape of Airflow's `[api] theme` (#1289): `tokens` (Chakra design tokens, for example `colors.brand` with shades 50 to 950 and `fonts.heading`/`fonts.body`/`fonts.mono`), `globalCss`, `icon` and `icon_dark_mode`. Rendered as compact JSON in `LEOFLOW_UI_THEME`. Empty (the default) keeps the stock look. The server refuses to boot on an unknown top-level key, or an icon that is not an http(s) URL or a root-relative path.
+  theme: {}
+  # -- Favicon URL for the UI, http(s) or root-relative. Empty keeps the stock icon.
+  faviconUrl: ""
+  # -- Extra stylesheets every UI page loads, typically the web fonts a `theme` names (for example a Google Fonts CSS URL). Each must be http(s) or root-relative and contain no comma, because the list travels comma-joined in `LEOFLOW_UI_STYLESHEET_URLS`.
+  stylesheetUrls: []
+  homeLink:
+    # -- Text of an optional link from the UI back to the platform you serve it from, such as an internal portal (#1290). Shown on every page at the bottom-left, opens in the same tab. Set it together with `url`.
+    label: ""
+    # -- Absolute `http://` or `https://` URL the home link opens. Empty (the default) shows no link and renders no variable. The server refuses to boot on a URL with another scheme or with a label missing.
+    url: ""
 
 config:
   # -- Directory inside the pod where task logs are written. Mounted from `logs.persistence` (a PVC by default) so logs survive pod restarts. Set `logs.persistence.enabled: false` to fall back to an ephemeral emptyDir (dev only).
@@ -156,7 +167,7 @@ config:
     # -- Scheduler loop interval in milliseconds. Lower = faster reactivity, higher CPU. 1000ms is the production-tested default.
     loopIntervalMs: 1000
   cors:
-    # -- CORS origins the API accepts (`server.cors.allowed_origins`). Leoflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
+    # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
     allowedOrigins: []
   # -- Proxy IPs/CIDRs whose `X-Forwarded-For` the server honors when resolving the client IP (`server.trusted_proxies`). Empty (default) trusts NO proxy, so a spoofed XFF cannot forge the client IP. Behind an ingress this MUST be set to the ingress/pod CIDR, otherwise every request is attributed to the ingress IP and the per-IP login rate-limit locks out the whole deployment on a few bad logins (#725). Rendered as a comma-joined `LEOFLOW_SERVER_TRUSTED_PROXIES` env var, which viper splits into a list.
   trustedProxies: []
@@ -237,16 +248,6 @@ redis:
   caConfigMap: ""
 
 auth:
-  # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
-  jwtSecret: ""
-  # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
-  existingSecret: ""
-  # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
-  tokenTtlSeconds: 3600
-  # -- Bearer token for the operator service API under `/api/v2/service/` (#1283), which creates tenants (with the built-in roles and default pool) and links passwordless users to `trustedIssuer`. At least 32 characters; generate with `openssl rand -base64 48`. Stored in the chart Secret. Empty (the default) leaves the service API off.
-  serviceToken: ""
-  # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.
-  serviceTokenExistingSecret: ""
   # Trusted-issuer handoff (#1284): a platform that already signs its users in
   # opens a UI session for them by posting a short-lived token its own issuer
   # signed to POST /api/v2/auth/session. Leoflow verifies it against the
@@ -265,10 +266,24 @@ auth:
     tenantClaim: tenant_id
     # -- Tenants the issuer may sign in to; `["*"]` allows every tenant. Required when `issuer` is set.
     allowedTenants: []
-    # -- Longest `exp - iat` a handoff token may have. `0` uses 900 seconds; at most 3600.
+    # -- Longest `exp - iat` a handoff token may have. `0` uses 120 seconds; at most 600.
     maxLifetimeSeconds: 0
     # -- Origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. Any other `Origin`, or none, is refused, so another site cannot sign a visitor in as someone else. Required when `issuer` is set.
     allowedOrigins: []
+  # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
+  jwtSecret: ""
+  # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
+  existingSecret: ""
+  # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
+  tokenTtlSeconds: 3600
+  # -- Bearer token for the operator service API under `/api/v2/service/` (#1283), which creates tenants (with the built-in roles and default pool) and links passwordless users to `trustedIssuer`. At least 32 characters; generate with `openssl rand -base64 48`. Stored in the chart Secret. Empty (the default) leaves the service API off.
+  serviceToken: ""
+  # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.
+  serviceTokenExistingSecret: ""
+  # -- Send UI visitors without a session to your own sign-in instead of Leoflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Leoflow session. Absolute `http(s)` URL; empty (the default) keeps Leoflow's page. `/api/v2/auth/login?local=1` still reaches Leoflow's page, so break-glass access survives an outage of your sign-in.
+  externalSigninUrl: ""
+  # -- Where sign-out lands after clearing the Leoflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Leoflow's sign-in page.
+  externalSignoutUrl: ""
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
   # fetch (ADR 0055). All three ship on the value that is byte-for-byte today's
@@ -332,19 +347,19 @@ auth:
       - profile
     # -- ID-token claim carrying the user's IdP groups; its values are what `roleMappings` matches on. Entra emits `groups` (object ids unless the app registration is configured to emit names); Okta emits whatever the groups claim is named in the authorization server.
     groupsClaim: groups
-    # -- Maps an IdP group value → an existing Leoflow role name. Default-DENY: a group with no entry here grants nothing. This is one of the two keys that CANNOT travel as an env var, so the chart writes it into the mounted `config.yaml`. Keys are quoted on render, which is what lets a dotted group name (`app.admins`) survive (#826). Optional, leave empty and every user falls back to `defaultRole`.
+    # -- Maps an IdP group value → an existing Dexaflow role name. Default-DENY: a group with no entry here grants nothing. This is one of the two keys that CANNOT travel as an env var, so the chart writes it into the mounted `config.yaml`. Keys are quoted on render, which is what lets a dotted group name (`app.admins`) survive (#826). Optional, leave empty and every user falls back to `defaultRole`.
     roleMappings: {}
     # -- Single role granted to an authenticated user who resolves to ZERO mapped roles. Empty (the default) keeps strict default-deny, which with an empty `roleMappings` means a successful SSO login that can see nothing, correct, and a confusing first experience. Set a read-only role such as `viewer` while you work the group mapping out. It must name a role that already exists for the resolved tenant; an unknown name fails the login closed.
     defaultRole: ""
     # -- Which claim identifies the tenant: `tid` on Entra, `hd` on Google Workspace. REQUIRED with `enabled: true`, together with `tenantClaims` it is the tenant pin, and the chart refuses to render without both.
     tenantClaim: ""
-    # -- Maps each accepted `tenantClaim` VALUE → a Leoflow tenant name. REQUIRED and non-empty with `enabled: true`. A claim value that is not a key here is rejected with a generic 403 whose cause reaches only the audit log (which, in an SSO-only deployment, nobody can log in to read (#1143)) and it never falls back to the `default` tenant. This is the second key that cannot travel as an env var, so it too is written into the mounted `config.yaml` with its keys quoted: a Google `hd` value is always a dotted domain. Example: `{"example.com": "default"}`. The VALUE must name a tenant that already exists: the first migration creates `default`, and any other must be created through the service API (`PUT /api/v2/service/tenants/<name>`, enabled by `auth.serviceToken`) before it can be mapped. The server checks this at boot and warns.
+    # -- Maps each accepted `tenantClaim` VALUE → a Dexaflow tenant name. REQUIRED and non-empty with `enabled: true`. A claim value that is not a key here is rejected with a generic 403 whose cause reaches only the audit log (which, in an SSO-only deployment, nobody can log in to read (#1143)) and it never falls back to the `default` tenant. This is the second key that cannot travel as an env var, so it too is written into the mounted `config.yaml` with its keys quoted: a Google `hd` value is always a dotted domain. Example: `{"example.com": "default"}`. The VALUE must name a tenant that already exists: the first migration creates `default`, and any other must be created through the service API (`PUT /api/v2/service/tenants/<name>`, enabled by `auth.serviceToken`) before it can be mapped. The server checks this at boot and warns.
     tenantClaims: {}
     # -- Login-level email-domain allowlist layered ON TOP of the tenant pin, not a replacement for it. Checked only after the pin and `email_verified` have passed, so the domain is trustworthy by then. Empty (the default) imposes no extra restriction. It gates EVERY OIDC login, not only JIT-provisioned ones. Rendered comma-joined, omitted when empty.
     allowedEmailDomains: []
     # -- Local password logins still accepted while SSO is on; every other password login is rejected. This is the lock-out escape hatch: with the list empty, an IdP outage or a wrong `tenantClaims` entry leaves nobody able to reach the UI, including the operator who has to fix it. Put at least one break-glass admin here before enabling SSO, and make sure it is an address with a LOCAL PASSWORD account: listing an address that has no password row (or only an SSO-provisioned one, which has no password at all) produces a hatch that does not open, because the allowlist admits it and the credential store then rejects it like a wrong password. The server checks this at boot and warns. Rendered comma-joined, omitted when empty.
     breakGlassEmails: []
-    # -- Create the Leoflow user row on first successful OIDC login. ON here, unlike the server default, because OFF means no SSO login can succeed at all: a login resolves its user by `(provider, subject)` alone and the only code path that ever writes those two columns is this one, so there is no supported way to pre-provision an account an SSO login will match, and every first login is denied with a generic 403 whose reason (`no_user_jit_off`) reaches only the audit log. Turning it on is not a widening of who may log in: the tenant pin, `email_verified` and `allowedEmailDomains` decide that, and the created row carries only the roles `roleMappings`/`defaultRole` resolve, which is none by default. One case it cannot serve either way: an address that already has a LOCAL password account in the same tenant collides on the users table's unique (tenant, email) and is denied `jit_failed`, so do not create local accounts for the addresses your users sign in with.
+    # -- Create the Dexaflow user row on first successful OIDC login. ON here, unlike the server default, because OFF means no SSO login can succeed at all: a login resolves its user by `(provider, subject)` alone and the only code path that ever writes those two columns is this one, so there is no supported way to pre-provision an account an SSO login will match, and every first login is denied with a generic 403 whose reason (`no_user_jit_off`) reaches only the audit log. Turning it on is not a widening of who may log in: the tenant pin, `email_verified` and `allowedEmailDomains` decide that, and the created row carries only the roles `roleMappings`/`defaultRole` resolve, which is none by default. One case it cannot serve either way: an address that already has a LOCAL password account in the same tenant collides on the users table's unique (tenant, email) and is denied `jit_failed`, so do not create local accounts for the addresses your users sign in with.
     jitProvisioning: true
     # -- Start the login flow on the sign-in page instead of rendering it. OFF by default, because turning it on removes the sign-in page from a deployment that relies on it. Turn it on where that page is a screen to acknowledge for nothing: an edge proxy has already authenticated the session, or SSO is the only way in and the click adds nothing. It is SUPPRESSED in two cases, and both matter. A refused sign-on returns to this page carrying `sso_error`, and redirecting that would bounce the denial straight back to the IdP: an infinite loop with no surface left to read the error on. And `?local=1` always renders the form, so a `breakGlassEmails` account can reach it when the IdP is the thing that is broken, without an operator having to edit values and roll out to get back in.
     autoRedirect: false
@@ -418,7 +433,7 @@ bootstrap:
 migrations:
   enabled: true
   image:
-    # -- leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Leoflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64).
+    # -- leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Dexaflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64).
     repository: ghcr.io/dexadata/dexaflow-migrate
     # -- Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms — use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=v0.4.0-rc.2`.
     tag: ""
@@ -496,7 +511,7 @@ agentTLS:
 # task can read ANY credential that lives in the cluster's secret store — a GCP
 # service-account key, an AWS credentials file, an Azure cert, a private CA, etc.
 # — referenced by a connection (e.g. the google_cloud_platform `key_path`) instead
-# of being stored in Leoflow (ADR 0035; Leoflow is not a key manager). You create
+# of being stored in Dexaflow (ADR 0035; Dexaflow is not a key manager). You create
 # the Secret (`kubectl create secret generic ...`); the chart only mounts it.
 # Prefer keyless (Workload Identity) over this; use it when keyless is unavailable.
 taskSecret:
@@ -507,7 +522,7 @@ taskSecret:
 
 # External secrets backend (ADR 0060): resolve a declared Connection/Variable
 # pod-side from a provider store (AWS Secrets Manager, …) under the pod's own
-# keyless identity, instead of Leoflow's vault. Empty `backend` = disabled (the
+# keyless identity, instead of Dexaflow's vault. Empty `backend` = disabled (the
 # vault is the only source — the default). Operator-only config.
 secrets:
   # -- Provider secrets-backend class the in-pod resolver drives (e.g. `airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend`). Empty disables external secrets.

@@ -24,7 +24,7 @@ func newAuthCommand() *cobra.Command {
 	return auth
 }
 
-// newCreateUserCommand builds `leoflow auth create-user`: it creates an account
+// newCreateUserCommand builds `dexaflow auth create-user`: it creates an account
 // on the control plane via the admin-only POST /api/v2/users endpoint. It is the
 // long-promised counterpart to bootstrap (ADR 0008) — until now the only way to
 // mint a user was the Lite bootstrap admin. Unlike create-token/login (which

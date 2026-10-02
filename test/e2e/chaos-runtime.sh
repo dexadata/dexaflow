@@ -208,7 +208,7 @@ wait_api() {
 if ! wait_api; then
   printf '\n---- api.log ----\n' >&2; tail -20 "${WORKDIR}/api.log" >&2 2>/dev/null || true
   printf '\n---- scheduler.log ----\n' >&2; tail -20 "${WORKDIR}/scheduler.log" >&2 2>/dev/null || true
-  fatal "the api role never served ${API}/healthz — see the role logs above (a local run needs the server's database migrated: DATABASE_URL=<dsn> bin/leoflow db migrate)"
+  fatal "the api role never served ${API}/healthz — see the role logs above (a local run needs the server's database migrated: DATABASE_URL=<dsn> bin/dexaflow db migrate)"
 fi
 
 log "Compiling + importing the DAG image"

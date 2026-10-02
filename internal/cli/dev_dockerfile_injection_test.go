@@ -9,14 +9,14 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// `leoflow lite --executor=k8s` has its own Dockerfile generator, and it had the
+// `dexaflow lite --executor=k8s` has its own Dockerfile generator, and it had the
 // whole #1070 class untouched: a newline in dag_source or a dbt group's project
 // injected an instruction, and dependencies were joined raw, which is #1064 in a
 // second place.
 //
 // It is the worse of the two, because ensureProjectDockerfile WRITES the result
 // to <project>/Dockerfile and never removes it. ensureDockerfile then honors a
-// project-shipped Dockerfile verbatim, so one `leoflow lite` run would persist
+// project-shipped Dockerfile verbatim, so one `dexaflow lite` run would persist
 // the poisoned file and every later `compile --build` would use it, bypassing
 // every guard the generated path has.
 func TestDevDockerfileRefusesTheSameInjections(t *testing.T) {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -52,15 +53,19 @@ type Dependencies struct {
 	// re-authenticate. Non-positive disables the ceiling.
 	TokenMaxLifetimeSecs int
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Leoflow"; `leoflow dev` sets it to mark the DEV environment.
+	// falls back to "Dexaflow"; `dexaflow lite` sets it to mark the DEV environment.
 	InstanceName string
 	// UIAutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `leoflow lite` sets it to ~5s for a snappy inner loop.
+	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
 	UIAutoRefreshIntervalSeconds int
+	// UITheme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
+	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
+	// JSON object at boot. Nil serves null, the stock look (#1289).
+	UITheme json.RawMessage
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
-	// request as an admin (no login). It is for `leoflow dev` only and must never
+	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
 	DevNoAuth bool
 	// Edition marks the running edition ("pro", "lite", or empty). It gates
@@ -98,7 +103,7 @@ type Dependencies struct {
 	Workspace WorkspaceFS
 
 	// MonacoDir is the directory holding the pinned Monaco bundle that
-	// `leoflow setup` fetched; the editor page is served Monaco from it. Empty or
+	// `dexaflow setup` fetched; the editor page is served Monaco from it. Empty or
 	// missing makes the page show a setup hint instead of a broken editor.
 	MonacoDir string
 
@@ -126,6 +131,11 @@ type Dependencies struct {
 	// OIDCSettings carries the role mappings, JIT policy, default_role, and
 	// break-glass allowlist the login flow and the credential gate read.
 	OIDCSettings config.OIDCSection
+	// ExternalSignInURL and ExternalSignOutURL are auth.external_signin_url and
+	// auth.external_signout_url (#1288): the operator's own sign-in and
+	// sign-out, used in place of Leoflow's pages. Empty keeps Leoflow's.
+	ExternalSignInURL  string
+	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).
 	OIDCUsers OIDCUserStore
 	// AuthAudit records authentication events (login, tenant-pin rejection, JIT,
@@ -207,11 +217,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
-	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure))
+	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
 	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{
-		sso:          deps.OIDCFlow != nil,
-		breakGlass:   len(deps.OIDCSettings.BreakGlassEmails) > 0,
-		autoRedirect: deps.OIDCSettings.AutoRedirect,
+		sso:            deps.OIDCFlow != nil,
+		breakGlass:     len(deps.OIDCSettings.BreakGlassEmails) > 0,
+		autoRedirect:   deps.OIDCSettings.AutoRedirect,
+		externalSignIn: deps.ExternalSignInURL,
 	}))
 	// Operator service API (#1283): registered only when a service token is
 	// configured. /api/v2/service/ is outside the user-session middleware's
@@ -257,7 +268,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.GET("/api/v2/monitor/executor", monitorExecutorHandler(deps.ExecutorInfo))
 
 	registerResources(r, deps)
-	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds)
+	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary)

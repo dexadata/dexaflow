@@ -1,4 +1,4 @@
-# Multi-stage build for the Leoflow control plane.
+# Multi-stage build for the Dexaflow control plane.
 #
 # The binary embeds the pinned Airflow 3.2.1 SPA (ADR 0017), so this single image
 # serves both the /api/v2 + /ui APIs and the UI. Build from the repository root:

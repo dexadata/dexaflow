@@ -285,7 +285,7 @@ func TestNameWarningsCatchAConfigurationNothingCanSatisfy(t *testing.T) {
 			a.OIDC.RoleMappings = map[string]string{"data-eng": "edtior", "ml": "edtior", "platform": "edtior"}
 		}))
 		if len(w) != 1 {
-			t.Fatalf("got %d warnings for one missing role named by three groups; mapping several IdP groups to one Leoflow role is the normal shape, and the same warning three times is the noise this check claims to avoid: %v", len(w), w)
+			t.Fatalf("got %d warnings for one missing role named by three groups; mapping several IdP groups to one Dexaflow role is the normal shape, and the same warning three times is the noise this check claims to avoid: %v", len(w), w)
 		}
 		// The role name alone does not tell an operator which of thirty mappings to
 		// edit. The groups that named it do.

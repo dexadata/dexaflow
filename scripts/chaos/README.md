@@ -78,7 +78,7 @@ expressed at the integration level.
 The risk Phase 1 catches: a contributor runs the full suite locally, every
 test passes, but the build CI runner finds the bug. The maintainer machine
 had pip-installed `leoflow_parser` so `leoflow compile` "just worked"
-without `leoflow setup` — the gap was only caught by reading code, not by
+without `dexaflow setup` — the gap was only caught by reading code, not by
 running tests (PR #221 self-review). The harness makes "did you actually
 run on a clean env?" a checkable question, not a vibe.
 

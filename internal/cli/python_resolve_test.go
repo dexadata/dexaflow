@@ -11,7 +11,7 @@ import (
 // TestResolvePython3 pins the unified interpreter precedence (#742): the managed
 // pinned build wins; otherwise the first host python3.11/python3 that reports
 // >= 3.11 is used; a present-but-unsupported interpreter is rejected with the
-// `leoflow setup` hint instead of being returned; and no interpreter at all is
+// `dexaflow setup` hint instead of being returned; and no interpreter at all is
 // reported as ("", nil) so callers can decide whether that is fatal.
 func TestResolvePython3(t *testing.T) {
 	ctx := context.Background()
@@ -53,8 +53,8 @@ func TestResolvePython3(t *testing.T) {
 		if got != "" {
 			t.Errorf("path = %q, want empty on rejection", got)
 		}
-		if !strings.Contains(err.Error(), "leoflow setup") {
-			t.Errorf("error %q, want an actionable `leoflow setup` hint", err)
+		if !strings.Contains(err.Error(), "dexaflow setup") {
+			t.Errorf("error %q, want an actionable `dexaflow setup` hint", err)
 		}
 	})
 

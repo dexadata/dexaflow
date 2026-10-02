@@ -5,12 +5,12 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Contributing
 weight: 10
-description: "How to contribute to Leoflow — workflow, standards, and the TDD gate."
+description: "How to contribute to Dexaflow — workflow, standards, and the TDD gate."
 ---
 
 This page is the **functional path** from zero to a merged pull request. Every
 command below is verified against the current repo. The exhaustive policy lives in
-[`CONTRIBUTING.md`](https://github.com/dexadata/leoflow/blob/main/CONTRIBUTING.md);
+[`CONTRIBUTING.md`](https://github.com/dexadata/dexaflow/blob/main/CONTRIBUTING.md);
 the design *why* lives in the [ADRs](/project/adrs/).
 
 ## The path at a glance
@@ -31,8 +31,8 @@ Airflow 3.2.1 UI** — runs from a single Compose profile. No Go or Python toolc
 needed for this step, just Docker.
 
 ```bash
-git clone https://github.com/dexadata/leoflow.git
-cd leoflow
+git clone https://github.com/dexadata/dexaflow.git
+cd dexaflow
 docker compose --profile demo up --build
 ```
 
@@ -52,20 +52,20 @@ described in [Operating modes](/concepts/editions/).
 cp .github/CLAUDE.md.template ./CLAUDE.md  # optional (Claude Code; gitignored)
 
 make setup        # Go tools, Python parser/runtime, and the pre-commit hook
-make build        # bin/leoflow, bin/leoflow-server, bin/leoflow-agent
+make build        # bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the gates you must pass before pushing
 ```
 
-For a full author→run loop without Kubernetes, `leoflow lite` runs an isolated,
+For a full author→run loop without Kubernetes, `dexaflow lite` runs an isolated,
 hot-reloading stack with the silver **Lite** edition badge (see
 [Operating modes](/concepts/editions/)):
 
 ```bash
-make dev-install            # put leoflow + server + agent on your PATH
-leoflow lite provision           # check/provision dev dependencies
-leoflow init dags/my_dag    # scaffold a project
-leoflow lite dags/my_dag     # hot-reload at http://localhost:8088 (Lite edition)
+make dev-install            # put dexaflow + server + agent on your PATH
+dexaflow lite provision           # check/provision dev dependencies
+dexaflow init dags/my_dag    # scaffold a project
+dexaflow lite dags/my_dag     # hot-reload at http://localhost:8088 (Lite edition)
 ```
 
 ## 3. The quality bar (non-negotiable)
@@ -94,22 +94,22 @@ amended in a separate PR. When in doubt, open an issue and ask before coding.
 {{< tabpane text=true >}}
 {{% tab header="Find something to work on" %}}
 
-Browse [open issues](https://github.com/dexadata/leoflow/issues). Good entry
+Browse [open issues](https://github.com/dexadata/dexaflow/issues). Good entry
 points are labelled
-[`good first issue`](https://github.com/dexadata/leoflow/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-and [`help wanted`](https://github.com/dexadata/leoflow/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+[`good first issue`](https://github.com/dexadata/dexaflow/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+and [`help wanted`](https://github.com/dexadata/dexaflow/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
 Comment on the issue to claim it before starting, so effort isn't duplicated.
 {{% /tab %}}
 {{% tab header="Report a bug" %}}
 
-Open a [new issue](https://github.com/dexadata/leoflow/issues/new/choose) and
-pick **Bug report**. The form asks for repro steps, how you're running Leoflow
+Open a [new issue](https://github.com/dexadata/dexaflow/issues/new/choose) and
+pick **Bug report**. The form asks for repro steps, how you're running Dexaflow
 (Lite / Pro / Demo), and environment — fill it in fully so we can
 reproduce.
 {{% /tab %}}
 {{% tab header="Propose a feature" %}}
 
-Open a [new issue](https://github.com/dexadata/leoflow/issues/new/choose) and
+Open a [new issue](https://github.com/dexadata/dexaflow/issues/new/choose) and
 pick **Feature request**. For anything architectural or cross-cutting, also open
 a PR adding a draft ADR under `website/content/project/adrs/` with status **Proposed** — the design
 discussion happens there.
@@ -126,8 +126,8 @@ code. This avoids misaligned designs and wasted effort.
 ```bash
 # 1. Fork on GitHub, then clone YOUR fork and add the upstream remote
 git clone https://github.com/<you>/leoflow.git
-cd leoflow
-git remote add upstream https://github.com/dexadata/leoflow.git
+cd dexaflow
+git remote add upstream https://github.com/dexadata/dexaflow.git
 
 # 2. Branch from an up-to-date main
 git fetch upstream && git switch -c fix/clear-error-message upstream/main
@@ -187,8 +187,8 @@ for three business days.
 ---
 
 By contributing you agree your work is licensed under
-[Apache 2.0](https://github.com/dexadata/leoflow/blob/main/LICENSE). Thank you for
-helping make Leoflow better.
+[Apache 2.0](https://github.com/dexadata/dexaflow/blob/main/LICENSE). Thank you for
+helping make Dexaflow better.
 
 ## Editing the docs
 

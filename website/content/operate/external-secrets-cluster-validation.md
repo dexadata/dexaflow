@@ -10,8 +10,8 @@ This runbook is that missing gate. Run it on a real EKS or GKE cluster and compl
 
 ## Before you start
 
-- A cluster with the keyless mechanism you intend to use already wired at the **cloud** side (the IAM role / service account, the trust policy, and the identity webhook or agent). This runbook validates that Leoflow drives it correctly; it does not set up the cloud IAM.
-- `kubectl` context on that cluster and permission to install/upgrade the Leoflow Helm release in a throwaway namespace.
+- A cluster with the keyless mechanism you intend to use already wired at the **cloud** side (the IAM role / service account, the trust policy, and the identity webhook or agent). This runbook validates that Dexaflow drives it correctly; it does not set up the cloud IAM.
+- `kubectl` context on that cluster and permission to install/upgrade the Dexaflow Helm release in a throwaway namespace.
 - Access to the provider secret store to create and delete one test secret.
 - The provider's Airflow backend package available in your task image (e.g. `apache-airflow-providers-amazon` for AWS, `-google` for GCP). A `dexaflow.yaml` `dependencies:` entry bakes it in.
 
@@ -38,9 +38,9 @@ taskServiceAccount:
   create: true
   annotations:
     # AWS IRSA / Pod Identity:
-    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<leoflow-secrets-reader>
+    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<dexaflow-secrets-reader>
     # GKE Workload Identity instead:
-    # iam.gke.io/gcp-service-account: <leoflow-secrets-reader>@<project>.iam.gserviceaccount.com
+    # iam.gke.io/gcp-service-account: <dexaflow-secrets-reader>@<project>.iam.gserviceaccount.com
 
 taskNetworkPolicy:
   enabled: true
@@ -92,7 +92,7 @@ variables:
   - canary_region
 ```
 
-Compile, push, and trigger it (`leoflow compile … && leoflow push … && curl -X POST …/dagRuns`).
+Compile, push, and trigger it (`dexaflow compile … && dexaflow push … && curl -X POST …/dagRuns`).
 
 ## 4. Assert — the four things only a real cluster proves
 
@@ -103,7 +103,7 @@ Compile, push, and trigger it (`leoflow compile … && leoflow push … && curl 
 
 ## 5. Tear down
 
-- Delete the canary DAG (`leoflow dags delete canary_secrets --deregister`), and
+- Delete the canary DAG (`dexaflow dags delete canary_secrets --deregister`), and
   remove its source so the next deploy does not re-register it.
 - Delete the throwaway secret from the store.
 - Restore any permission you removed for assertion 3.

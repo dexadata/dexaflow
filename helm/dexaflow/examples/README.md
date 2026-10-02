@@ -1,7 +1,7 @@
-# PoC: Leoflow + plain Postgres + plain Redis on one cluster
+# PoC: Dexaflow + plain Postgres + plain Redis on one cluster
 
 > [!WARNING]
-> **NOT FOR PRODUCTION.** This recipe is for evaluating Leoflow end-to-end on a
+> **NOT FOR PRODUCTION.** This recipe is for evaluating Dexaflow end-to-end on a
 > single Kubernetes cluster (kind, minikube, k3d, a scratch GKE/EKS namespace).
 > The datastores below run as plain unprotected pods with **emptyDir storage**:
 > no persistence, no HA, no auth on Redis. For real deploys, point
@@ -10,7 +10,7 @@
 
 The chart's `templates/deployment.yaml` deliberately fails the install when
 neither `database.url`/`existingSecret` nor `redis.url`/`existingSecret` is set
-— Pro Leoflow refuses to silently fall back to embedded datastores (those are
+— Pro Dexaflow refuses to silently fall back to embedded datastores (those are
 a Lite-edition concept). This recipe satisfies that contract by deploying
 plain Postgres + Redis pods first, then pointing the chart at them.
 
@@ -138,7 +138,7 @@ kubectl -n leoflow-poc rollout status deploy/redis-master  --timeout=120s
   shared cluster.
 - **Resource limits** are minimal (sized for evaluation, not load).
 
-### 3. Leoflow
+### 3. Dexaflow
 
 ```bash
 helm install leoflow ./helm/dexaflow \

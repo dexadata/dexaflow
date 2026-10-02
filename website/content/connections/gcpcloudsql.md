@@ -10,7 +10,7 @@ description: Google Cloud SQL connection
 ---
 
 Connect to a Google Cloud SQL instance (Postgres / MySQL) from a managed
-Leoflow Connection. The instance coordinates live in **Extra**; there is no
+Dexaflow Connection. The instance coordinates live in **Extra**; there is no
 password on the Connection — auth flows through the Cloud SQL connector via the
 runtime identity (ADC).
 

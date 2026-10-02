@@ -10,7 +10,7 @@ description: Azure connection
 ---
 
 Connect a task to Azure (Blob Storage, Data Lake, Data Factory, Synapse, …) via a
-managed Leoflow Connection and the Microsoft Azure provider hooks. The Azure
+managed Dexaflow Connection and the Microsoft Azure provider hooks. The Azure
 provider exposes **many** conn types — all from
 `apache-airflow-providers-microsoft-azure`. The common ones:
 
@@ -68,7 +68,7 @@ def upload() -> None:
 
     hook = WasbHook(wasb_conn_id="wasb_default")
     print("upload: putting blob via WasbHook(wasb_default)")
-    hook.load_string("hello from leoflow", container_name="data", blob_name="hello.txt", overwrite=True)
+    hook.load_string("hello from dexaflow", container_name="data", blob_name="hello.txt", overwrite=True)
     print("upload: ok")
 
 
@@ -93,11 +93,11 @@ connectors:
 
 1. **Admin → Connections → +**, type `wasb`. Use a managed identity (leave key
    blank) or set the storage account + account key.
-2. `leoflow lite path/to/this/dag` → trigger `blob_load`.
+2. `dexaflow lite path/to/this/dag` → trigger `blob_load`.
 
 ## Security notes
 
-- **Managed identity beats keys** (ADR 0035): nothing lives in the Leoflow DB.
+- **Managed identity beats keys** (ADR 0035): nothing lives in the Dexaflow DB.
 - **Never `print()` the URI** — it carries the account key / SAS token.
 
 ## Related

@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -69,15 +70,19 @@ func testConfig(f *fakeJWKS) Config {
 	}
 }
 
+// jtiSeq gives every test token its own jti, as a real issuer would.
+var jtiSeq atomic.Int64
+
 func goodClaims() jwt.MapClaims {
 	return jwt.MapClaims{
+		"jti":       "t-" + strconv.FormatInt(jtiSeq.Add(1), 10),
 		"iss":       "https://portal.example.com",
 		"aud":       "leoflow-engine",
 		"sub":       "user-42",
 		"email":     "ana@acme.com",
 		"tenant_id": "acme",
-		"iat":       testNow.Add(-time.Minute).Unix(),
-		"exp":       testNow.Add(4 * time.Minute).Unix(),
+		"iat":       testNow.Add(-30 * time.Second).Unix(),
+		"exp":       testNow.Add(60 * time.Second).Unix(),
 	}
 }
 
@@ -125,6 +130,8 @@ func TestVerifyRejections(t *testing.T) {
 		{"no issued-at", func(c jwt.MapClaims) { delete(c, "iat") }, nil, ErrLifetime},
 		{"lives too long", func(c jwt.MapClaims) { c["exp"] = testNow.Add(time.Hour).Unix() }, nil, ErrLifetime},
 		{"no subject", func(c jwt.MapClaims) { delete(c, "sub") }, nil, ErrInvalidToken},
+		{"no jti", func(c jwt.MapClaims) { delete(c, "jti") }, nil, ErrInvalidToken},
+		{"longer than the default", func(c jwt.MapClaims) { c["exp"] = testNow.Add(2 * time.Minute).Unix() }, nil, ErrLifetime},
 		{"no tenant", func(c jwt.MapClaims) { delete(c, "tenant_id") }, nil, ErrTenantNotAllowed},
 		{"tenant not allowed", func(c jwt.MapClaims) { c["tenant_id"] = "initech" }, nil, ErrTenantNotAllowed},
 		{"tenant not a string", func(c jwt.MapClaims) { c["tenant_id"] = []string{"acme"} }, nil, ErrTenantNotAllowed},
@@ -218,5 +225,63 @@ func TestVerifyToleratesSmallClockSkew(t *testing.T) {
 
 	if _, err := v.Verify(context.Background(), f.sign(t, claims, f.key)); err != nil {
 		t.Errorf("Verify with iat 30s ahead = %v, want accepted", err)
+	}
+}
+
+// TestVerifyRefusesAReplayedToken locks the one-session rule: the same token
+// posted twice opens one session, and the second post is ErrReplayed.
+func TestVerifyRefusesAReplayedToken(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, testConfig(f))
+	raw := f.sign(t, goodClaims(), f.key)
+
+	if _, err := v.Verify(context.Background(), raw); err != nil {
+		t.Fatalf("first Verify: %v", err)
+	}
+	_, err := v.Verify(context.Background(), raw)
+
+	if !errors.Is(err, ErrReplayed) {
+		t.Errorf("second Verify = %v, want ErrReplayed", err)
+	}
+}
+
+// TestVerifyKeepsTheJTIOfARefusedToken locks that a token refused for another
+// reason does not use up its jti, so a correct token is not blocked by an
+// earlier bad one that happened to share it.
+func TestVerifyKeepsTheJTIOfARefusedToken(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, testConfig(f))
+	claims := goodClaims()
+	claims["tenant_id"] = "initech"
+	if _, err := v.Verify(context.Background(), f.sign(t, claims, f.key)); !errors.Is(err, ErrTenantNotAllowed) {
+		t.Fatalf("Verify = %v, want ErrTenantNotAllowed", err)
+	}
+	claims["tenant_id"] = "acme"
+
+	if _, err := v.Verify(context.Background(), f.sign(t, claims, f.key)); err != nil {
+		t.Errorf("Verify with the same jti after a refusal = %v, want accepted", err)
+	}
+}
+
+// TestUsedIDsForgetExpiredTokens locks that the used-jti set does not grow
+// forever: once full, expired entries make room, and live ones never do.
+func TestUsedIDsForgetExpiredTokens(t *testing.T) {
+	var u usedIDs
+	for i := range maxUsedIDs {
+		if !u.claim(strconv.Itoa(i), testNow.Add(time.Minute), testNow) {
+			t.Fatalf("claim %d refused before the set was full", i)
+		}
+	}
+	if u.claim("one-more", testNow.Add(time.Minute), testNow) {
+		t.Fatal("claim on a full set of live tokens = true, want refused")
+	}
+
+	later := testNow.Add(2 * time.Minute)
+
+	if !u.claim("one-more", later.Add(time.Minute), later) {
+		t.Error("claim after every entry expired = false, want accepted")
+	}
+	if len(u.exp) != 1 {
+		t.Errorf("set holds %d entries after pruning, want 1", len(u.exp))
 	}
 }

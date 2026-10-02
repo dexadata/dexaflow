@@ -87,7 +87,7 @@ func Execute() int {
 			fmt.Fprintln(os.Stderr, "note: "+note)
 		}
 	}
-	// Only on an interactive terminal: scripts that run `leoflow version | head -1`
+	// Only on an interactive terminal: scripts that run `dexaflow version | head -1`
 	// or parse stderr must see exactly what they saw before the rename.
 	if notice := legacyNameNotice(os.Args[0]); notice != "" && stderrIsTerminal() {
 		fmt.Fprintln(os.Stderr, notice)

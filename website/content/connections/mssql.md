@@ -11,7 +11,7 @@ description: Microsoft SQL Server connection
 
 Connect a task to an external Microsoft SQL Server (Azure SQL, on-prem
 instance, or a Docker `mcr.microsoft.com/mssql/server` container) over a
-managed Leoflow Connection.
+managed Dexaflow Connection.
 
 ## URI shape
 
@@ -85,9 +85,9 @@ reserved characters (`@` → `%40`); without `unquote`, pymssql would see
 
 ## Example DAG
 
-[`examples/mssql_load`](https://github.com/dexadata/leoflow/tree/main/examples/mssql_load) reads `AIRFLOW_CONN_MSSQL_TARGET`, opens a
+[`examples/mssql_load`](https://github.com/dexadata/dexaflow/tree/main/examples/mssql_load) reads `AIRFLOW_CONN_MSSQL_TARGET`, opens a
 `pymssql` connection, and writes 20 rows. The example's
-[README](https://github.com/dexadata/leoflow/tree/main/examples/mssql_load/README.md)
+[README](https://github.com/dexadata/dexaflow/tree/main/examples/mssql_load/README.md)
 walks through Docker spin-up, Connection setup (with a password
 containing `@`), and verification.
 

@@ -11,7 +11,7 @@ Report host platform, dependencies, and the achievable operating tier.
 
 ### Synopsis
 
-doctor inspects the host (OS, architecture, libc), checks for Python 3.11, Docker, k3d, and kubectl, and reports which operating tier is achievable. It changes nothing; run `leoflow setup` to bootstrap.
+doctor inspects the host (OS, architecture, libc), checks for Python 3.11, Docker, k3d, and kubectl, and reports which operating tier is achievable. It changes nothing; run `dexaflow setup` to bootstrap.
 
 ```
 dexaflow doctor [flags]

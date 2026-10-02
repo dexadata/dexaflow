@@ -9,7 +9,7 @@ weight: 280
 description: Apache Livy connection
 ---
 
-Submit Spark batches over the Apache Livy REST API from a task via a managed Leoflow
+Submit Spark batches over the Apache Livy REST API from a task via a managed Dexaflow
 Connection and Airflow's `LivyHook`. The conn_type is `livy`. A connection carries the
 **host:port** plus credentials.
 
@@ -79,7 +79,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `livy`. Set Host, Port, and (if auth is enabled)
    Login and Password.
-2. `leoflow lite path/to/this/dag` → trigger `livy_batch`.
+2. `dexaflow lite path/to/this/dag` → trigger `livy_batch`.
 
 ## Security notes
 

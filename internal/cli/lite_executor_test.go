@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestResolveExecutor pins the auto-detect default: `leoflow lite` (executor
+// TestResolveExecutor pins the auto-detect default: `dexaflow lite` (executor
 // "auto") uses k3d when Docker is available, else falls back to the subprocess
 // executor so Lite still runs Docker-free; an explicit choice is honored.
 func TestResolveExecutor(t *testing.T) {

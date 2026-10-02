@@ -15,15 +15,15 @@ import (
 	"github.com/dexadata/dexaflow/internal/config"
 )
 
-// newUninstallCommand removes the Leoflow installation (~/.dexaflow). It confirms
+// newUninstallCommand removes the Dexaflow installation (~/.dexaflow). It confirms
 // first (unless --yes); --purge additionally removes the DAG workspace and the
 // Docker datastore volumes.
 func newUninstallCommand() *cobra.Command {
 	var yes, purge bool
 	cmd := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the Leoflow installation (~/.dexaflow).",
-		Long: "uninstall removes the managed Leoflow home (~/.dexaflow): the binaries, config, " +
+		Short: "Remove the Dexaflow installation (~/.dexaflow).",
+		Long: "uninstall removes the managed Dexaflow home (~/.dexaflow): the binaries, config, " +
 			"managed Python, Monaco assets, and local dev state. It does NOT remove your DAG " +
 			"workspace or your datastore (the managed Postgres data in ~/.dexaflow/pgdata and this " +
 			"install's Docker volume) unless you pass --purge — so a reinstall keeps your data. It " +
@@ -58,9 +58,9 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	}
 
 	binDir := installBinDir()
-	devPrintf(out, "This will remove the Leoflow installation:\n  %s  (config, managed Python, Monaco, sources)\n", root)
+	devPrintf(out, "This will remove the Dexaflow installation:\n  %s  (config, managed Python, Monaco, sources)\n", root)
 	if binDir != "" {
-		devPrintf(out, "  the leoflow binaries in %s\n", binDir)
+		devPrintf(out, "  the dexaflow binaries (and their leoflow links) in %s\n", binDir)
 	}
 	if purge {
 		if workspace != "" {
@@ -93,9 +93,9 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	if rerr := removeLeoflowHome(cmd, root, purge); rerr != nil {
 		return rerr
 	}
-	devPrintf(out, "✓ removed the Leoflow install at %s\n", root)
+	devPrintf(out, "✓ removed the Dexaflow install at %s\n", root)
 	if !purge {
-		devPrintln(out, "  (kept your datastore for a future reinstall — `leoflow uninstall --purge` removes it)")
+		devPrintln(out, "  (kept your datastore for a future reinstall — `dexaflow uninstall --purge` removes it)")
 	}
 	// Remove the binaries too — install.sh places them on a PATH dir (e.g.
 	// /usr/local/bin), NOT under ~/.dexaflow, so removing the home alone left a
@@ -108,7 +108,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 			devPrintf(out, "✓ removed workspace %s\n", workspace)
 		}
 	}
-	devPrintln(out, "Done. If install.sh added a 'leoflow' PATH line to your shell profile, remove it.")
+	devPrintln(out, "Done. If install.sh added a dexaflow (or, before the rename, leoflow) PATH line to your shell profile, remove it.")
 	return nil
 }
 
@@ -161,7 +161,7 @@ func confirmDestructive(cmd *cobra.Command) bool {
 	return answer == "yes" || answer == "y"
 }
 
-// removeLeoflowHome removes the Leoflow home, stopping a running managed Postgres
+// removeLeoflowHome removes the Dexaflow home, stopping a running managed Postgres
 // first (so no orphaned process points at a half-removed data dir). With purge it
 // also drops this install's Docker volume and removes the datastore; without it,
 // the datastore (managed pgdata / the Docker volume) is preserved for a reinstall.

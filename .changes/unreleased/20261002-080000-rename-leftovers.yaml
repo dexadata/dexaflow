@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **The last places that still said leoflow now say Dexaflow.** The UI's Docs
+  and GitHub links pointed at the old `neochaotic.github.io/leoflow` site, which
+  no longer exists; they now open https://dexaflow.dexadata.ai/ and the
+  repository. The MCP server reports itself as `dexaflow`, CLI messages name
+  `dexaflow`, and the docs use the `dexaflow*` binaries, a `dexaflow` release
+  name for new Helm installs, and `charts/leoflow` for upgrading a release
+  installed before the rename. The CI install snippets in the docs downloaded a
+  release asset that never existed; they now use the installer.

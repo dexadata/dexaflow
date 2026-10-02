@@ -71,7 +71,7 @@ func buildVariablePatch(key string, value, desc *string, stored domain.Variable,
 	return p
 }
 
-// variableDTO is the Airflow 3.2.1 VariableResponse. Leoflow stores variables in
+// variableDTO is the Airflow 3.2.1 VariableResponse. Dexaflow stores variables in
 // plaintext for now (is_encrypted is false) and has no teams (team_name null).
 type variableDTO struct {
 	Key         string  `json:"key"`
@@ -141,7 +141,7 @@ func createVariableHandler(store VariableStore) gin.HandlerFunc {
 			AbortProblem(c, http.StatusBadRequest, "bad request", "key is required")
 			return
 		}
-		// POST is an upsert (`leoflow variables set`), so merge against any existing
+		// POST is an upsert (`dexaflow variables set`), so merge against any existing
 		// variable: a masked value for an existing sensitive key then preserves the
 		// stored value, exactly as on PATCH. A genuinely new key (not found) is a
 		// create, where a masked value has nothing to preserve → empty (fail closed).

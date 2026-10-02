@@ -1,8 +1,8 @@
 """soak_operators: the non-native execution path of the soak battery.
 
-Everything here compiles to Leoflow's `airflow_operator` task type, which is the
+Everything here compiles to Dexaflow's `airflow_operator` task type, which is the
 path with the most moving parts: the runtime has to resolve a class path, import
-a provider package, construct the operator, hand it a Leoflow-managed Connection
+a provider package, construct the operator, hand it a Dexaflow-managed Connection
 rendered as an AIRFLOW_CONN_* env var, and execute it. A native `python` task
 touches none of that. Over a long run the question this DAG answers is whether
 that path degrades differently from the native one: whether resolution cost
@@ -16,14 +16,14 @@ Every endpoint is local by construction:
   we do, and an outage on their side would teach us nothing about our scheduler.
 * `sql_upsert` / `sql_count` point at the soak Postgres container through the
   managed Connection `soak_pg`, into its own `soak_warehouse` database, so the
-  workload never shares a table with Leoflow's own metadata.
+  workload never shares a table with Dexaflow's own metadata.
 * `wait_a_moment` is a reschedule-mode HttpSensor pointed at the fixture's
   `/fixture/ready` endpoint, which answers 404 for the first three pokes of a
   given run and 200 after that. It is in the battery because `up_for_reschedule`
   is a scheduler state with its own re-dispatch path, and a DAG that never enters
   it would leave that path uncovered for the whole run. A DateTimeSensor would
   have been the obvious choice and does not work here: its `target_time` needs a
-  future timestamp, and Leoflow renders neither `{{ macros.* }}` nor anything
+  future timestamp, and Dexaflow renders neither `{{ macros.* }}` nor anything
   else that could compute one, so the template reaches the provider verbatim and
   fails inside pendulum. The fixture-counter approach needs no clock and repeats
   identically on every run.
@@ -92,7 +92,7 @@ with DAG(
 
     # Reschedule mode: the sensor releases its slot on every not-ready poke and
     # is re-dispatched, so one run walks the up_for_reschedule path three times
-    # before succeeding. `{{ run_id }}` is rendered by Leoflow, which gives each
+    # before succeeding. `{{ run_id }}` is rendered by Dexaflow, which gives each
     # run its own poke counter on the fixture.
     wait_a_moment = HttpSensor(
         task_id="wait_a_moment",

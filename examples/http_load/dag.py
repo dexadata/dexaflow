@@ -1,6 +1,6 @@
 """http_load — call an external HTTP endpoint via a managed Connection.
 
-The base URL and auth come from a managed Leoflow Connection injected as
+The base URL and auth come from a managed Dexaflow Connection injected as
 AIRFLOW_CONN_HTTP_TARGET (create it in Admin -> Connections). The DAG echoes a
 small payload via go-httpbin's /anything endpoint and asserts the round-trip,
 which is the simplest verification step for an HTTP connector.
@@ -63,7 +63,7 @@ def call() -> dict[str, str]:
     # the Admin -> Connections UI.
     src = "managed Connection http_target" if os.environ.get("AIRFLOW_CONN_HTTP_TARGET") else "fallback URI"
     print(f"call: via {src}")
-    payload = {"name": "leoflow", "value": "42"}
+    payload = {"name": "dexaflow", "value": "42"}
     req = urllib.request.Request(
         f"{base}/anything",
         method="POST",
@@ -84,7 +84,7 @@ def call() -> dict[str, str]:
         # (docker run mccutchen/go-httpbin) and at the optional Connection.
         hint = (
             "is anything listening on the target? "
-            "Start the echo server (`docker run --rm -d --name leoflow-httpbin "
+            "Start the echo server (`docker run --rm -d --name dexaflow-httpbin "
             "-p 58080:8080 mccutchen/go-httpbin`) or configure the "
             "`http_target` Connection — see examples/http_load/README.md"
         )

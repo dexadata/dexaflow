@@ -9,7 +9,9 @@ body: |-
   page on one of the allowed origins. Leoflow verifies it
   against the issuer's public keys, signs in the existing active user linked
   to the token's subject in the token's tenant, and redirects to `next`. The
-  token never creates users or grants roles. Off by default, validated at boot,
+  token never creates users or grants roles, carries a `jti` and opens one
+  session (a replayed `jti` is refused), and lives at most two minutes by
+  default (`max_lifetime_seconds`, up to 600). Off by default, validated at boot,
   and keys are fetched on first use so an issuer outage cannot block boot. See
   [Trusted-issuer
   handoff](https://dexaflow.dexadata.ai/reference/configuration/#trusted-issuer-handoff).

@@ -81,8 +81,8 @@ func toUserDTO(u domain.User) userDTO {
 }
 
 // userListItemDTO is one row of the user list. Unlike the Airflow FAB users API
-// (which is username-keyed with first_name/last_name columns Leoflow does not
-// have), Leoflow accounts are email-keyed and carry a set of RBAC roles, so the
+// (which is username-keyed with first_name/last_name columns Dexaflow does not
+// have), Dexaflow accounts are email-keyed and carry a set of RBAC roles, so the
 // list is expressed in that native shape rather than the Airflow one. The
 // password and its hash are write-only and never appear here.
 type userListItemDTO struct {

@@ -1,6 +1,6 @@
 package oidc
 
-// MapRoles translates the user's IdP group values into Leoflow role names using
+// MapRoles translates the user's IdP group values into Dexaflow role names using
 // the configured mapping. It is DEFAULT-DENY: a group with no entry in the map
 // contributes no role. The result is de-duplicated and preserves first-seen
 // order, so a token's role list is stable regardless of group ordering.
