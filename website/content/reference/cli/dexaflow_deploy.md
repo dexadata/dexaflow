@@ -38,5 +38,5 @@ dexaflow deploy [path | dag_id] [flags]
 
 ### SEE ALSO
 
-* [dexaflow](dexaflow.md)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
 

@@ -25,7 +25,7 @@ Manage the local Lite database (schema name leoflow_dev for upgrade safety).
 
 ### SEE ALSO
 
-* [dexaflow](dexaflow.md)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
-* [dexaflow db migrate](dexaflow_db_migrate.md)	 - Create (if needed) and migrate the Lite database to the latest schema.
-* [dexaflow db reset](dexaflow_db_reset.md)	 - Drop, recreate, and migrate the Lite database (DESTRUCTIVE).
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+* [dexaflow db migrate](/reference/cli/dexaflow_db_migrate/)	 - Create (if needed) and migrate the Lite database to the latest schema.
+* [dexaflow db reset](/reference/cli/dexaflow_db_reset/)	 - Drop, recreate, and migrate the Lite database (DESTRUCTIVE).
 

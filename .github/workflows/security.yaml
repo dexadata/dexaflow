@@ -206,8 +206,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      # The GoReleaser recipe for the `leoflow-server` binary (.goreleaser.yaml,
-      # builds id: leoflow-server): CGO-free, -trimpath, version metadata in
+      # The GoReleaser recipe for the `dexaflow-server` binary (.goreleaser.yaml,
+      # builds id: dexaflow-server): CGO-free, -trimpath, version metadata in
       # ldflags. The ldflag VALUES do not affect what Trivy reports — it reads
       # the module list and toolchain from the build info — but the toolchain and
       # the build mode do, so those match exactly.
@@ -219,11 +219,11 @@ jobs:
             -ldflags="-s -w \
               -X github.com/dexadata/dexaflow/internal/version.version=ci \
               -X github.com/dexadata/dexaflow/internal/version.gitCommit=${GITHUB_SHA}" \
-            -o dist/image-scan-context/leoflow-server ./cmd/dexaflow-server
-          go version -m dist/image-scan-context/leoflow-server | head -3
+            -o dist/image-scan-context/dexaflow-server ./cmd/dexaflow-server
+          go version -m dist/image-scan-context/dexaflow-server | head -3
 
       # deploy/Dockerfile.server.release is the file .goreleaser.yaml points at
-      # for both published arches. It COPYs `leoflow-server` from the build
+      # for both published arches. It COPYs `dexaflow-server` from the build
       # context, so the context is the staging directory holding it.
       - name: Build leoflow-server image (the published Dockerfile)
         run: docker build -f deploy/Dockerfile.server.release -t leoflow-server:ci dist/image-scan-context

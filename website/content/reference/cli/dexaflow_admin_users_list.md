@@ -33,5 +33,5 @@ dexaflow admin users list [flags]
 
 ### SEE ALSO
 
-* [dexaflow admin users](dexaflow_admin_users.md)	 - Inspect accounts on the running control plane.
+* [dexaflow admin users](/reference/cli/dexaflow_admin_users/)	 - Inspect accounts on the running control plane.
 

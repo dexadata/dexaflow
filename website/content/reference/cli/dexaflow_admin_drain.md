@@ -39,5 +39,5 @@ dexaflow admin drain [flags]
 
 ### SEE ALSO
 
-* [dexaflow admin](dexaflow_admin.md)	 - Operate a running control plane (health, pause, drain, runs).
+* [dexaflow admin](/reference/cli/dexaflow_admin/)	 - Operate a running control plane (health, pause, drain, runs).
 

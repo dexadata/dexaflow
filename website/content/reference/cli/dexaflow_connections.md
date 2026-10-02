@@ -25,9 +25,9 @@ Manage control-plane connections.
 
 ### SEE ALSO
 
-* [dexaflow](dexaflow.md)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
-* [dexaflow connections delete](dexaflow_connections_delete.md)	 - Delete a connection.
-* [dexaflow connections get](dexaflow_connections_get.md)	 - Show a connection (password omitted, extra masked).
-* [dexaflow connections list](dexaflow_connections_list.md)	 - List connections (secrets never shown).
-* [dexaflow connections set](dexaflow_connections_set.md)	 - Create or update a connection (upsert).
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+* [dexaflow connections delete](/reference/cli/dexaflow_connections_delete/)	 - Delete a connection.
+* [dexaflow connections get](/reference/cli/dexaflow_connections_get/)	 - Show a connection (password omitted, extra masked).
+* [dexaflow connections list](/reference/cli/dexaflow_connections_list/)	 - List connections (secrets never shown).
+* [dexaflow connections set](/reference/cli/dexaflow_connections_set/)	 - Create or update a connection (upsert).
 

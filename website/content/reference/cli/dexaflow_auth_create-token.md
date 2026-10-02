@@ -33,5 +33,5 @@ dexaflow auth create-token [flags]
 
 ### SEE ALSO
 
-* [dexaflow auth](dexaflow_auth.md)	 - Manage authentication tokens.
+* [dexaflow auth](/reference/cli/dexaflow_auth/)	 - Manage authentication tokens.
 

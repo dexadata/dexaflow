@@ -31,5 +31,5 @@ dexaflow variables delete <key> [flags]
 
 ### SEE ALSO
 
-* [dexaflow variables](dexaflow_variables.md)	 - Manage control-plane variables.
+* [dexaflow variables](/reference/cli/dexaflow_variables/)	 - Manage control-plane variables.
 

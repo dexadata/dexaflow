@@ -33,5 +33,5 @@ dexaflow runs logs <dag_id> <run_id> <task_id> [flags]
 
 ### SEE ALSO
 
-* [dexaflow runs](dexaflow_runs.md)	 - Trigger and inspect DAG runs.
+* [dexaflow runs](/reference/cli/dexaflow_runs/)	 - Trigger and inspect DAG runs.
 

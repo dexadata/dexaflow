@@ -36,5 +36,5 @@ dexaflow lite backup [flags]
 
 ### SEE ALSO
 
-* [dexaflow lite](dexaflow_lite.md)	 - Run Leoflow Lite locally with hot reload.
+* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Leoflow Lite locally with hot reload.
 

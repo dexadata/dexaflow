@@ -34,5 +34,5 @@ dexaflow admin runs list [flags]
 
 ### SEE ALSO
 
-* [dexaflow admin runs](dexaflow_admin_runs.md)	 - Inspect DAG runs across the control plane.
+* [dexaflow admin runs](/reference/cli/dexaflow_admin_runs/)	 - Inspect DAG runs across the control plane.
 

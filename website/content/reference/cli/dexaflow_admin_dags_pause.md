@@ -32,5 +32,5 @@ dexaflow admin dags pause [dag_id] [flags]
 
 ### SEE ALSO
 
-* [dexaflow admin dags](dexaflow_admin_dags.md)	 - Pause or unpause registered DAGs.
+* [dexaflow admin dags](/reference/cli/dexaflow_admin_dags/)	 - Pause or unpause registered DAGs.
 

@@ -25,7 +25,7 @@ Pause or unpause registered DAGs.
 
 ### SEE ALSO
 
-* [dexaflow admin](dexaflow_admin.md)	 - Operate a running control plane (health, pause, drain, runs).
-* [dexaflow admin dags pause](dexaflow_admin_dags_pause.md)	 - Pause a DAG (PATCH is_paused), or every DAG with --all.
-* [dexaflow admin dags unpause](dexaflow_admin_dags_unpause.md)	 - Unpause a DAG (PATCH is_paused), or every DAG with --all.
+* [dexaflow admin](/reference/cli/dexaflow_admin/)	 - Operate a running control plane (health, pause, drain, runs).
+* [dexaflow admin dags pause](/reference/cli/dexaflow_admin_dags_pause/)	 - Pause a DAG (PATCH is_paused), or every DAG with --all.
+* [dexaflow admin dags unpause](/reference/cli/dexaflow_admin_dags_unpause/)	 - Unpause a DAG (PATCH is_paused), or every DAG with --all.
 

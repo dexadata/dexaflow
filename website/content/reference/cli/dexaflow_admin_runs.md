@@ -25,6 +25,6 @@ Inspect DAG runs across the control plane.
 
 ### SEE ALSO
 
-* [dexaflow admin](dexaflow_admin.md)	 - Operate a running control plane (health, pause, drain, runs).
-* [dexaflow admin runs list](dexaflow_admin_runs_list.md)	 - List DAG runs, filtered by --state, --older-than, and/or --dag.
+* [dexaflow admin](/reference/cli/dexaflow_admin/)	 - Operate a running control plane (health, pause, drain, runs).
+* [dexaflow admin runs list](/reference/cli/dexaflow_admin_runs_list/)	 - List DAG runs, filtered by --state, --older-than, and/or --dag.
 

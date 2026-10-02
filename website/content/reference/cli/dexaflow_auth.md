@@ -25,8 +25,8 @@ Manage authentication tokens.
 
 ### SEE ALSO
 
-* [dexaflow](dexaflow.md)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
-* [dexaflow auth create-token](dexaflow_auth_create-token.md)	 - Obtain a JWT from the control plane.
-* [dexaflow auth create-user](dexaflow_auth_create-user.md)	 - Create a user on the control plane (admin only).
-* [dexaflow auth login](dexaflow_auth_login.md)	 - Authenticate to a control plane (Pro) and store the token.
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+* [dexaflow auth create-token](/reference/cli/dexaflow_auth_create-token/)	 - Obtain a JWT from the control plane.
+* [dexaflow auth create-user](/reference/cli/dexaflow_auth_create-user/)	 - Create a user on the control plane (admin only).
+* [dexaflow auth login](/reference/cli/dexaflow_auth_login/)	 - Authenticate to a control plane (Pro) and store the token.
 

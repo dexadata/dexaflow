@@ -49,10 +49,10 @@ dexaflow lite [path] [flags]
 
 ### SEE ALSO
 
-* [dexaflow](dexaflow.md)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
-* [dexaflow lite backup](dexaflow_lite_backup.md)	 - Snapshot the Lite install (workspace + datastore + config) into a portable archive.
-* [dexaflow lite forget](dexaflow_lite_forget.md)	 - Remove a DAG (and all its history) from the Lite registry without touching the source files.
-* [dexaflow lite provision](dexaflow_lite_provision.md)	 - Check and provision the local deps the from-source `leoflow lite` loop needs.
-* [dexaflow lite reset-password](dexaflow_lite_reset-password.md)	 - Reset the Leoflow Lite admin password.
-* [dexaflow lite restore](dexaflow_lite_restore.md)	 - Restore a Lite install from an archive produced by `leoflow lite backup`.
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+* [dexaflow lite backup](/reference/cli/dexaflow_lite_backup/)	 - Snapshot the Lite install (workspace + datastore + config) into a portable archive.
+* [dexaflow lite forget](/reference/cli/dexaflow_lite_forget/)	 - Remove a DAG (and all its history) from the Lite registry without touching the source files.
+* [dexaflow lite provision](/reference/cli/dexaflow_lite_provision/)	 - Check and provision the local deps the from-source `leoflow lite` loop needs.
+* [dexaflow lite reset-password](/reference/cli/dexaflow_lite_reset-password/)	 - Reset the Leoflow Lite admin password.
+* [dexaflow lite restore](/reference/cli/dexaflow_lite_restore/)	 - Restore a Lite install from an archive produced by `leoflow lite backup`.
 

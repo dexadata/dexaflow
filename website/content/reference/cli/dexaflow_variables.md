@@ -25,9 +25,9 @@ Manage control-plane variables.
 
 ### SEE ALSO
 
-* [dexaflow](dexaflow.md)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
-* [dexaflow variables delete](dexaflow_variables_delete.md)	 - Delete a variable.
-* [dexaflow variables get](dexaflow_variables_get.md)	 - Show a variable (value masked when the key looks sensitive).
-* [dexaflow variables list](dexaflow_variables_list.md)	 - List variables (encrypted values not shown).
-* [dexaflow variables set](dexaflow_variables_set.md)	 - Create or replace a variable (upsert).
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+* [dexaflow variables delete](/reference/cli/dexaflow_variables_delete/)	 - Delete a variable.
+* [dexaflow variables get](/reference/cli/dexaflow_variables_get/)	 - Show a variable (value masked when the key looks sensitive).
+* [dexaflow variables list](/reference/cli/dexaflow_variables_list/)	 - List variables (encrypted values not shown).
+* [dexaflow variables set](/reference/cli/dexaflow_variables_set/)	 - Create or replace a variable (upsert).
 

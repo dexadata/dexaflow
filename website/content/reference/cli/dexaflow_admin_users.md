@@ -25,6 +25,6 @@ Inspect accounts on the running control plane.
 
 ### SEE ALSO
 
-* [dexaflow admin](dexaflow_admin.md)	 - Operate a running control plane (health, pause, drain, runs).
-* [dexaflow admin users list](dexaflow_admin_users_list.md)	 - List accounts (email, roles, active, age), bounded by --limit/--offset.
+* [dexaflow admin](/reference/cli/dexaflow_admin/)	 - Operate a running control plane (health, pause, drain, runs).
+* [dexaflow admin users list](/reference/cli/dexaflow_admin_users_list/)	 - List accounts (email, roles, active, age), bounded by --limit/--offset.
 

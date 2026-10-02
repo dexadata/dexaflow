@@ -29,5 +29,5 @@ dexaflow db migrate [flags]
 
 ### SEE ALSO
 
-* [dexaflow db](dexaflow_db.md)	 - Manage the local Lite database (schema name leoflow_dev for upgrade safety).
+* [dexaflow db](/reference/cli/dexaflow_db/)	 - Manage the local Lite database (schema name leoflow_dev for upgrade safety).
 

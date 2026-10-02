@@ -29,10 +29,10 @@ Operator commands for a running Leoflow control plane (Pro). These act over the 
 
 ### SEE ALSO
 
-* [dexaflow](dexaflow.md)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
-* [dexaflow admin dags](dexaflow_admin_dags.md)	 - Pause or unpause registered DAGs.
-* [dexaflow admin drain](dexaflow_admin_drain.md)	 - Pause every DAG, then wait for active runs to finish (quiesce for maintenance).
-* [dexaflow admin health](dexaflow_admin_health.md)	 - Report control-plane health; non-zero exit when unhealthy.
-* [dexaflow admin runs](dexaflow_admin_runs.md)	 - Inspect DAG runs across the control plane.
-* [dexaflow admin users](dexaflow_admin_users.md)	 - Inspect accounts on the running control plane.
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+* [dexaflow admin dags](/reference/cli/dexaflow_admin_dags/)	 - Pause or unpause registered DAGs.
+* [dexaflow admin drain](/reference/cli/dexaflow_admin_drain/)	 - Pause every DAG, then wait for active runs to finish (quiesce for maintenance).
+* [dexaflow admin health](/reference/cli/dexaflow_admin_health/)	 - Report control-plane health; non-zero exit when unhealthy.
+* [dexaflow admin runs](/reference/cli/dexaflow_admin_runs/)	 - Inspect DAG runs across the control plane.
+* [dexaflow admin users](/reference/cli/dexaflow_admin_users/)	 - Inspect accounts on the running control plane.
 

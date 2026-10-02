@@ -38,5 +38,5 @@ dexaflow dags delete <dag_id> [flags]
 
 ### SEE ALSO
 
-* [dexaflow dags](dexaflow_dags.md)	 - Manage registered DAGs.
+* [dexaflow dags](/reference/cli/dexaflow_dags/)	 - Manage registered DAGs.
 

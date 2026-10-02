@@ -45,5 +45,5 @@ dexaflow completion fish [flags]
 
 ### SEE ALSO
 
-* [dexaflow completion](dexaflow_completion.md)	 - Generate the autocompletion script for the specified shell
+* [dexaflow completion](/reference/cli/dexaflow_completion/)	 - Generate the autocompletion script for the specified shell
 

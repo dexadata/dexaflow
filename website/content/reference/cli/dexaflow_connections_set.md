@@ -49,5 +49,5 @@ dexaflow connections set <connection_id> [flags]
 
 ### SEE ALSO
 
-* [dexaflow connections](dexaflow_connections.md)	 - Manage control-plane connections.
+* [dexaflow connections](/reference/cli/dexaflow_connections/)	 - Manage control-plane connections.
 
