@@ -19,6 +19,11 @@ const (
 	// carries, under the 4 MiB default gRPC receive limit of the agent. Values
 	// past it are returned as deferred for the agent to fetch one by one.
 	xcomBatchBudgetBytes = 3 << 20
+	// xcomBatchChunk is how many keys one backend read of a batch covers. The
+	// batch is read chunk by chunk and reading stops once the budget is spent,
+	// so a request holds at most the budget plus one chunk of values (16 x
+	// xcom.MaxSizeBytes = 4 MiB) instead of every requested value.
+	xcomBatchChunk = 16
 )
 
 // xcomBatchFetcher is an XComService that reads several keys in one round
@@ -56,11 +61,50 @@ func (s *Server) FetchXComBatch(ctx context.Context, req *agentv1.FetchXComBatch
 		}
 		keys[i] = xcomKey(*id, upstream, it.GetKey())
 	}
-	results, err := s.fetchXComMany(ctx, keys)
-	if err != nil {
-		return nil, internalStatus("reading xcom", err, attemptAttrs(id)...)
+	return s.readXComBatch(ctx, keys, attemptAttrs(id))
+}
+
+// readXComBatch reads keys chunk by chunk into a response in request order,
+// deferring every value that would take the response past
+// xcomBatchBudgetBytes. Once a value is deferred the budget is spent: the keys
+// after the current chunk are returned deferred without being read (marked
+// found, since a per-value FetchXCom is what answers whether they exist), and
+// the agent fetches them one by one. The first value always fits: one value is
+// at most xcom.MaxSizeBytes.
+func (s *Server) readXComBatch(ctx context.Context, keys []xcom.Key, attrs []any) (*agentv1.FetchXComBatchResponse, error) {
+	resp := &agentv1.FetchXComBatchResponse{Items: make([]*agentv1.FetchXComBatchItem, len(keys))}
+	total, spent := 0, false
+	for start := 0; start < len(keys); start += xcomBatchChunk {
+		chunk := keys[start:min(start+xcomBatchChunk, len(keys))]
+		if spent {
+			for i, k := range chunk {
+				resp.Items[start+i] = &agentv1.FetchXComBatchItem{UpstreamTaskId: k.TaskID, Key: k.Name, Found: true, Deferred: true}
+			}
+			continue
+		}
+		results, err := s.fetchXComMany(ctx, chunk)
+		if err != nil {
+			return nil, internalStatus("reading xcom", err, attrs...)
+		}
+		for i, k := range chunk {
+			item := &agentv1.FetchXComBatchItem{UpstreamTaskId: k.TaskID, Key: k.Name, Found: results[i].Found}
+			resp.Items[start+i] = item
+			if !item.Found {
+				continue
+			}
+			e := results[i].Entry
+			if spent || (total > 0 && total+len(e.Value) > xcomBatchBudgetBytes) {
+				item.Deferred, spent = true, true
+				continue
+			}
+			total += len(e.Value)
+			item.Value = e.Value
+			item.ContentType = e.ContentType
+			item.SizeBytes = clampInt32(e.SizeBytes)
+			item.CreatedAt = timestamppb.New(e.CreatedAt)
+		}
 	}
-	return xcomBatchResponse(keys, results), nil
+	return resp, nil
 }
 
 func (s *Server) fetchXComMany(ctx context.Context, keys []xcom.Key) ([]xcom.Result, error) {
@@ -79,30 +123,4 @@ func (s *Server) fetchXComMany(ctx context.Context, keys []xcom.Key) ([]xcom.Res
 		out[i] = xcom.Result{Entry: e, Found: true}
 	}
 	return out, nil
-}
-
-// xcomBatchResponse renders the results in request order, deferring every
-// value that would take the response past xcomBatchBudgetBytes. The first
-// value always fits: one value is at most xcom.MaxSizeBytes.
-func xcomBatchResponse(keys []xcom.Key, results []xcom.Result) *agentv1.FetchXComBatchResponse {
-	resp := &agentv1.FetchXComBatchResponse{Items: make([]*agentv1.FetchXComBatchItem, len(keys))}
-	total := 0
-	for i, k := range keys {
-		item := &agentv1.FetchXComBatchItem{UpstreamTaskId: k.TaskID, Key: k.Name, Found: results[i].Found}
-		resp.Items[i] = item
-		if !item.Found {
-			continue
-		}
-		e := results[i].Entry
-		if total > 0 && total+len(e.Value) > xcomBatchBudgetBytes {
-			item.Deferred = true
-			continue
-		}
-		total += len(e.Value)
-		item.Value = e.Value
-		item.ContentType = e.ContentType
-		item.SizeBytes = clampInt32(e.SizeBytes)
-		item.CreatedAt = timestamppb.New(e.CreatedAt)
-	}
-	return resp
 }
