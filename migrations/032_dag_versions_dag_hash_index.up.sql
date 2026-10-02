@@ -1,0 +1,18 @@
+-- Index dag_versions by (dag_id, spec_hash) (performance item D3), the exact
+-- WHERE clause of GetDagVersionByHash, which registration runs on every bundle
+-- push. It replaces idx_dag_versions_hash (spec_hash alone), dropped in 033,
+-- which matched identical specs across every DAG and left dag_id to a filter.
+--
+-- CONCURRENTLY so the build does not block version registration. It cannot
+-- run inside a transaction, so this file holds this one statement and no
+-- BEGIN/COMMIT: golang-migrate sends the file as a single simple-protocol
+-- statement, which Postgres runs outside any transaction block.
+--
+-- If the build is interrupted, Postgres leaves an INVALID index behind and
+-- golang-migrate marks version 32 dirty. IF NOT EXISTS would then keep the
+-- invalid index, so drop it before retrying:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_dag_versions_dag_hash;
+--   migrate -path migrations -database "$DATABASE_URL" force 31
+--   migrate -path migrations -database "$DATABASE_URL" up
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dag_versions_dag_hash ON dag_versions (dag_id, spec_hash);
