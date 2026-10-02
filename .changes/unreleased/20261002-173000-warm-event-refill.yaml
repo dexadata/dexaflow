@@ -4,7 +4,10 @@ body: |-
   (Helm: `execution.warmPoolEventRefill`) on, the warm-pool reconciler reads the
   warm fleet from a dedicated pod informer instead of listing pods every 30
   seconds, reacts at once when a warm pod is deleted, fails, or is claimed by an
-  attempt, and creates replacement pods in parallel (up to 4 at a time). The
+  attempt (at most once a second), and creates replacement pods in parallel
+  (up to 4 at a time). Creates the informer has not shown yet count against
+  the version's target and the tenant's `max_warm_pods_per_tenant`, and the
+  fleet is re-read live when a create is never observed and every 5 minutes. The
   30-second tick stays as a backstop, and the failover reapers and the delete of
   a drained version's GC anchor still read the cluster live. Off by default:
   today's polling refill is unchanged.

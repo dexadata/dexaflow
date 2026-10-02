@@ -79,22 +79,23 @@ func warmPodInfoOf(p *corev1.Pod) WarmPodInfo {
 // ownerReference to the anchor. The reconciler ensures the anchor and reads its
 // UID before any create, so both are populated on the live path; a caller that
 // passes them empty gets a bare pod, unchanged.
-func (k *KubernetesWarmPods) CreateWarmPod(ctx context.Context, t WarmTarget, anchorName, anchorUID string) error {
+func (k *KubernetesWarmPods) CreateWarmPod(ctx context.Context, t WarmTarget, anchorName, anchorUID string) (string, error) {
 	if k.newSpec == nil {
-		return fmt.Errorf("warm pod creation requires a spec builder")
+		return "", fmt.Errorf("warm pod creation requires a spec builder")
 	}
 	spec, err := k.newSpec(t)
 	if err != nil {
-		return fmt.Errorf("building warm pod spec for dag_version %s: %w", t.DagVersionID, err)
+		return "", fmt.Errorf("building warm pod spec for dag_version %s: %w", t.DagVersionID, err)
 	}
 	spec.Namespace = k.namespace
 	spec.AnchorName = anchorName
 	spec.AnchorUID = types.UID(anchorUID)
 	pod := BuildWarmPod(spec)
-	if _, err := k.clientset.CoreV1().Pods(k.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("creating warm pod for dag_version %s: %w", t.DagVersionID, err)
+	created, err := k.clientset.CoreV1().Pods(k.namespace).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("creating warm pod for dag_version %s: %w", t.DagVersionID, err)
 	}
-	return nil
+	return created.Name, nil
 }
 
 // DeleteWarmPod removes one warm worker by name.

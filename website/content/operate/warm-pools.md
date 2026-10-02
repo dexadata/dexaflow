@@ -197,6 +197,11 @@ flowchart TB
    fails, or is claimed by an attempt, reads the fleet from a pod informer instead
    of listing pods each time, and creates replacements in parallel; before it
    deletes a drained version's GC anchor it still confirms with a live list.
+   Event-driven reconciles run at most once a second. A create counts against
+   its version's target and its tenant's `maxWarmPodsPerTenant` until the
+   informer shows that exact pod, and the reconciler re-reads the fleet live
+   when a create was never observed and at least every 5 minutes, so a lagging
+   or stale cache cannot overshoot either bound.
 2. **AwaitAssignment.** Each warm pod opens a long-lived bidirectional gRPC stream
    (`AwaitAssignment`) and **registers** under its authenticated identity, naming
    its `dag_version` and pod name. Work assignments flow down the stream; acks and

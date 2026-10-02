@@ -1843,24 +1843,38 @@ func startGatedTicker(ctx context.Context, name string, interval time.Duration, 
 // panic-isolated by safeCycle. A tick that arrives while not leading is dropped,
 // not queued.
 func runGatedTicker(ctx context.Context, name string, ticks <-chan time.Time, leading func() bool, logger *slog.Logger, fn func()) {
-	runGatedTickerOrKick(ctx, name, ticks, nil, leading, logger, fn)
+	runGatedTickerOrKick(ctx, name, ticks, nil, 0, leading, logger, fn)
 }
 
 // runGatedTickerOrKick is runGatedTicker that also runs the cycle on a signal
 // from kicks (event-driven warm-pool refill), under the same leadership gate. A
-// nil kicks channel never fires, which is exactly runGatedTicker.
-func runGatedTickerOrKick(ctx context.Context, name string, ticks <-chan time.Time, kicks <-chan struct{}, leading func() bool, logger *slog.Logger, fn func()) {
+// nil kicks channel never fires, which is exactly runGatedTicker. A kicked run
+// starts no sooner than minKickGap after the previous run, so a burst of events
+// (a deploy draining many workers) costs one reconcile instead of one per event;
+// kicks that arrive meanwhile coalesce into it. Ticks are never delayed.
+func runGatedTickerOrKick(ctx context.Context, name string, ticks <-chan time.Time, kicks <-chan struct{}, minKickGap time.Duration, leading func() bool, logger *slog.Logger, fn func()) {
+	var lastRun time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticks:
 		case <-kicks:
+			if wait := minKickGap - time.Since(lastRun); wait > 0 {
+				timer := time.NewTimer(wait)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
 		}
 		if leading != nil && !leading() {
 			continue
 		}
 		safeCycle(name, logger, fn)
+		lastRun = time.Now()
 	}
 }
 
@@ -2011,7 +2025,7 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 	t := time.NewTicker(reconcileInterval)
 	go func() {
 		defer t.Stop()
-		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, leading, logger, func() {
+		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, warmKickMinGap, leading, logger, func() {
 			if err := rc.Reconcile(ctx); err != nil {
 				logger.Error("warm pool reconcile", "error", err)
 			}
@@ -2024,6 +2038,11 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 // apiserver round trips, few enough not to stampede the apiserver or the image
 // registry when a large pool refills.
 const warmCreateParallelism = 4
+
+// warmKickMinGap is the least time between two event-driven warm-pool
+// reconciles. Each one reads the busy set from the database and may read the
+// fleet live, so a storm of pod events must not turn into a storm of those.
+const warmKickMinGap = time.Second
 
 // buildWarmPodInformer starts the warm-pod informer for event-driven refill and
 // waits for its first sync within the same boot budget as the task-pod informer.
