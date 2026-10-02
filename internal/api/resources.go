@@ -16,6 +16,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/pkg/hooks"
 )
 
 // ErrNotFound is returned by repositories when a resource does not exist.
@@ -502,7 +503,7 @@ func validateParamValue(schema, value json.RawMessage) error {
 	return compiled.Validate(inst)
 }
 
-func createDagRunHandler(repo DagRunRepository, specs DagSpecReader, audit AuditWriter) gin.HandlerFunc {
+func createDagRunHandler(repo DagRunRepository, specs DagSpecReader, audit AuditWriter, enforcer hooks.QuotaEnforcer, meter hooks.UsageMeter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
 			DagRunID    string          `json:"dag_run_id"`
@@ -566,11 +567,26 @@ func createDagRunHandler(repo DagRunRepository, specs DagSpecReader, audit Audit
 			Note:        body.Note,
 			Conf:        body.Conf,
 		}
-		created, err := repo.CreateDagRun(c.Request.Context(), tenantOf(c), c.Param("dag_id"), run)
+
+		tenantID := tenantOf(c)
+		if enforcer != nil {
+			if err := enforcer.CheckDagRunQuota(c.Request.Context(), tenantID); err != nil {
+				AbortProblem(c, http.StatusTooManyRequests, "quota exceeded", err.Error())
+				return
+			}
+		}
+
+		created, err := repo.CreateDagRun(c.Request.Context(), tenantID, c.Param("dag_id"), run)
 		if err != nil {
 			handleRepoError(c, err)
 			return
 		}
+
+		if meter != nil {
+			// Ignore error as metering failures shouldn't fail the user creation
+			_ = meter.RecordDagRunCreated(c.Request.Context(), tenantID, c.Param("dag_id"), created.RunID)
+		}
+
 		// Audit the trigger (run-level: no task) with the acting user as owner.
 		recordTaskAudit(c, audit, "dagrun."+run.RunType+".trigger", created.RunID, "", 0)
 		c.JSON(http.StatusCreated, toDagRunDTO(created))
@@ -1148,7 +1164,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 	if deps.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
 		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns))
-		g.POST("", RequirePermission("execute", "dag"), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
+		g.POST("", RequirePermission("execute", "dag"), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit, deps.QuotaEnforcer, deps.UsageMeter))
 		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.DagRuns))
 		g.PATCH("/:dag_run_id", RequirePermission("write", "dag_run"), patchDagRunHandler(deps.DagRuns, deps.Audit))
 		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.DagRuns))
