@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -298,6 +299,17 @@ type UISection struct {
 	// HomeLink is an optional, persistent link from the UI back to the platform
 	// the operator serves Dexaflow from (#1290). Empty shows no link.
 	HomeLink HomeLinkSection `mapstructure:"home_link"`
+	// Theme is a JSON object in the shape of Airflow's `[api] theme` (#1289):
+	// `tokens` (Chakra design tokens, such as colors.brand and fonts),
+	// `globalCss`, `icon` and `icon_dark_mode`. The UI applies it through its
+	// own theming. Empty keeps the stock look.
+	Theme string `mapstructure:"theme"`
+	// FaviconURL replaces the UI's favicon. It must be http(s) or root-relative.
+	FaviconURL string `mapstructure:"favicon_url"`
+	// StylesheetURLs are extra stylesheets loaded by every UI page, typically
+	// the web fonts a theme's fonts tokens name. Each must be http(s) or
+	// root-relative.
+	StylesheetURLs []string `mapstructure:"stylesheet_urls"`
 }
 
 // HomeLinkSection is the operator's way back from the UI: a label and the
@@ -441,6 +453,16 @@ type AuthSection struct {
 	// UI session for them with a token its own issuer signed (#1284). Empty
 	// Issuer disables it.
 	TrustedIssuer TrustedIssuerSection `mapstructure:"trusted_issuer"`
+	// ExternalSignInURL hands unauthenticated UI visitors to the operator's own
+	// sign-in instead of Leoflow's page, with the requested path in a `next`
+	// query parameter (#1288). The operator's flow is expected to return them
+	// with a Leoflow session. Empty keeps Leoflow's page; `?local=1` reaches it
+	// either way.
+	ExternalSignInURL string `mapstructure:"external_signin_url"`
+	// ExternalSignOutURL is where sign-out lands after clearing the session, so
+	// the operator can end their own session too (#1288). Empty returns to
+	// Leoflow's sign-in page.
+	ExternalSignOutURL string `mapstructure:"external_signout_url"`
 	// DevNoAuth disables authentication entirely, treating every request as an
 	// admin. It exists ONLY for `dexaflow lite` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
@@ -808,6 +830,9 @@ var serverDefaults = map[string]any{
 	"ui.monaco_dir":                      "",
 	"ui.home_link.label":                 "",
 	"ui.home_link.url":                   "",
+	"ui.theme":                           "",
+	"ui.favicon_url":                     "",
+	"ui.stylesheet_urls":                 []string{},
 	// Must appear here even though the zero value is meaningful (the handler
 	// falls back to api.DefaultUIAutoRefreshIntervalSeconds when ≤ 0): viper's
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
@@ -824,6 +849,8 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.allowed_tenants":      []string{},
 	"auth.trusted_issuer.max_lifetime_seconds": 0,
 	"auth.trusted_issuer.allowed_origins":      []string{},
+	"auth.external_signin_url":                 "",
+	"auth.external_signout_url":                "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
@@ -962,10 +989,19 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateExecution(); err != nil {
 		return err
 	}
+	if err := validateExternalAuthURL("auth.external_signin_url", c.Auth.ExternalSignInURL); err != nil {
+		return err
+	}
+	if err := validateExternalAuthURL("auth.external_signout_url", c.Auth.ExternalSignOutURL); err != nil {
+		return err
+	}
 	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
 		return err
 	}
 	if err := validateHomeLink(c.UI.HomeLink); err != nil {
+		return err
+	}
+	if err := validateBranding(c.UI); err != nil {
 		return err
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
@@ -1221,6 +1257,23 @@ func tenantPinHint(c *ServerConfig) string {
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
 }
 
+// validateExternalAuthURL checks one of the #1288 settings: empty, or an
+// absolute http(s) URL with a host. A relative URL would send the browser back
+// into Leoflow, where the sign-in route redirects again: a loop.
+func validateExternalAuthURL(key, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid URL (got %q): %w", key, raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%s must be an absolute http:// or https:// URL (got %q)", key, raw)
+	}
+	return nil
+}
+
 // issuerNamePattern is the shape of a trusted issuer's name: it becomes part of
 // the provider key stored on every linked user.
 var issuerNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
@@ -1279,6 +1332,65 @@ func validateHomeLink(l HomeLinkSection) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("ui.home_link.url must include a host (got %q)", l.URL)
+	}
+	return nil
+}
+
+// themeKeys are the top-level keys of a theme the Airflow 3.2.1 UI reads.
+var themeKeys = map[string]bool{"tokens": true, "globalCss": true, "icon": true, "icon_dark_mode": true}
+
+// validateBranding checks the #1289 settings: ui.theme is a JSON object with
+// only the keys the UI reads (an unknown key is almost always a typo the UI
+// would ignore in silence), and every URL, the theme's icons included, is
+// http(s) or root-relative.
+func validateBranding(u UISection) error {
+	if u.Theme != "" {
+		var theme map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(u.Theme), &theme); err != nil {
+			return fmt.Errorf("ui.theme must be a JSON object: %w", err)
+		}
+		for key, raw := range theme {
+			if !themeKeys[key] {
+				return fmt.Errorf("ui.theme has unknown key %q (the UI reads tokens, globalCss, icon, icon_dark_mode)", key)
+			}
+			if key != "icon" && key != "icon_dark_mode" {
+				continue
+			}
+			var icon string
+			if err := json.Unmarshal(raw, &icon); err != nil {
+				return fmt.Errorf("ui.theme icon %q must be a string URL", key)
+			}
+			if err := checkAssetURL(icon); err != nil {
+				return fmt.Errorf("ui.theme icon %q: %w", key, err)
+			}
+		}
+	}
+	if u.FaviconURL != "" {
+		if err := checkAssetURL(u.FaviconURL); err != nil {
+			return fmt.Errorf("ui.favicon_url: %w", err)
+		}
+	}
+	for _, sheet := range u.StylesheetURLs {
+		if err := checkAssetURL(sheet); err != nil {
+			return fmt.Errorf("ui.stylesheet_urls: %w", err)
+		}
+	}
+	return nil
+}
+
+// checkAssetURL accepts an absolute http(s) URL with a host or a root-relative
+// path ("/brand/logo.svg"). It refuses every other scheme and the
+// protocol-relative "//host" form, which would load from a host nobody named.
+func checkAssetURL(raw string) error {
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q is not a valid URL: %w", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%q must be an http(s) URL or a root-relative path", raw)
 	}
 	return nil
 }

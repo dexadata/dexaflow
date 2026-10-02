@@ -34,7 +34,7 @@ func TestUIConfigInstanceNameConfigurable(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/config", http.NoBody)
-		uiConfigHandler(in, 30)(c)
+		uiConfigHandler(in, 30, nil)(c)
 		var cfg map[string]any
 		if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
 			t.Fatalf("unmarshal: %v", err)
@@ -69,7 +69,7 @@ func TestUIConfigAutoRefreshIntervalConfigurable(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/config", http.NoBody)
-			uiConfigHandler("Dexaflow", tc.in)(c)
+			uiConfigHandler("Dexaflow", tc.in, nil)(c)
 			var cfg map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -343,5 +343,37 @@ func TestShellGateDeniesOnABackendError(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "<div id=\"root\"") {
 		t.Error("the authenticated SPA shell was served while the user store was unreachable")
+	}
+}
+
+// TestUIConfigServesConfiguredTheme covers #1289: the Airflow 3.2.1 UI reads a
+// Chakra theme from /ui/config (`theme`: tokens, globalCss, icon,
+// icon_dark_mode), so branding goes through the SPA's own mechanism. Unset
+// stays null, which the spec allows and the UI reads as "no custom theme".
+func TestUIConfigServesConfiguredTheme(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := map[string]struct {
+		theme json.RawMessage
+		want  string
+	}{
+		"unset is null": {nil, `null`},
+		"configured":    {json.RawMessage(`{"icon":"/brand.svg","tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}`), `{"icon":"/brand.svg","tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/config", http.NoBody)
+
+			uiConfigHandler("Leoflow", 30, tc.theme)(c)
+
+			var cfg map[string]json.RawMessage
+			if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if string(cfg["theme"]) != tc.want {
+				t.Errorf("theme = %s, want %s", cfg["theme"], tc.want)
+			}
+		})
 	}
 }

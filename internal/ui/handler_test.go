@@ -322,3 +322,53 @@ func TestIndexHomeLinkEscapesItsValues(t *testing.T) {
 		t.Errorf("label should be HTML-escaped text, got:\n%s", body)
 	}
 }
+
+// TestIndexBrandsFaviconAndStylesheets covers #1289's shell half: the
+// favicon link points at the configured URL and each extra stylesheet (web
+// fonts, overrides) loads in <head>, escaped. Unset leaves the shell as is.
+func TestIndexBrandsFaviconAndStylesheets(t *testing.T) {
+	fsys := fstest.MapFS{"index.html": {Data: []byte(
+		`<head><link rel="icon" type="image/png" href="./static/pin_32.png" /></head><body></body>`)}}
+
+	s := NewFromFS(fsys, "v")
+	s.SetFavicon("https://cdn.example.com/f.png")
+	s.SetStylesheets([]string{"https://fonts.example.com/a.css", `https://x.example/b.css?"><script>`})
+	rec := httptest.NewRecorder()
+	s.Index(rec, "/")
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="https://cdn.example.com/f.png"`) || strings.Contains(body, "pin_32.png") {
+		t.Errorf("favicon not rebranded:\n%s", body)
+	}
+	if !strings.Contains(body, `<link rel="stylesheet" href="https://fonts.example.com/a.css">`) {
+		t.Errorf("stylesheet link missing:\n%s", body)
+	}
+	if strings.Contains(body, `"><script>`) {
+		t.Errorf("stylesheet URL not escaped:\n%s", body)
+	}
+	if strings.Index(body, "a.css") > strings.Index(body, "</head>") {
+		t.Error("stylesheets must load in <head>")
+	}
+
+	plain := NewFromFS(fsys, "v")
+	rec2 := httptest.NewRecorder()
+	plain.Index(rec2, "/")
+	if !strings.Contains(rec2.Body.String(), "pin_32.png") || strings.Contains(rec2.Body.String(), `rel="stylesheet"`) {
+		t.Error("no branding configured must leave the favicon and add no stylesheet")
+	}
+}
+
+// TestEmbeddedBundleFaviconIsRebranded guards the anchor the favicon rewrite
+// depends on: a bundle upgrade that changes the favicon tag must fail here, not
+// silently keep the stock icon in production.
+func TestEmbeddedBundleFaviconIsRebranded(t *testing.T) {
+	s := New()
+	s.SetFavicon("/brand/favicon.svg")
+	rec := httptest.NewRecorder()
+
+	s.Index(rec, "/")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `<link rel="icon" href="/brand/favicon.svg" />`) || strings.Contains(body, "pin_32.png") {
+		t.Errorf("embedded bundle favicon was not rewritten:\n%s", body)
+	}
+}

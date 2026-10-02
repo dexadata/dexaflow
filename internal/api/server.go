@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -59,6 +60,10 @@ type Dependencies struct {
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
 	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
 	UIAutoRefreshIntervalSeconds int
+	// UITheme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
+	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
+	// JSON object at boot. Nil serves null, the stock look (#1289).
+	UITheme json.RawMessage
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
 	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
@@ -126,6 +131,11 @@ type Dependencies struct {
 	// OIDCSettings carries the role mappings, JIT policy, default_role, and
 	// break-glass allowlist the login flow and the credential gate read.
 	OIDCSettings config.OIDCSection
+	// ExternalSignInURL and ExternalSignOutURL are auth.external_signin_url and
+	// auth.external_signout_url (#1288): the operator's own sign-in and
+	// sign-out, used in place of Leoflow's pages. Empty keeps Leoflow's.
+	ExternalSignInURL  string
+	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).
 	OIDCUsers OIDCUserStore
 	// AuthAudit records authentication events (login, tenant-pin rejection, JIT,
@@ -202,11 +212,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
-	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure))
+	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
 	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{
-		sso:          deps.OIDCFlow != nil,
-		breakGlass:   len(deps.OIDCSettings.BreakGlassEmails) > 0,
-		autoRedirect: deps.OIDCSettings.AutoRedirect,
+		sso:            deps.OIDCFlow != nil,
+		breakGlass:     len(deps.OIDCSettings.BreakGlassEmails) > 0,
+		autoRedirect:   deps.OIDCSettings.AutoRedirect,
+		externalSignIn: deps.ExternalSignInURL,
 	}))
 	// Trusted-issuer handoff (#1284): registered only when an issuer is
 	// configured, on its own per-IP limiter like the OIDC routes.
@@ -246,7 +257,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.GET("/api/v2/monitor/executor", monitorExecutorHandler(deps.ExecutorInfo))
 
 	registerResources(r, deps)
-	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds)
+	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary)

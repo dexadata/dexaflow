@@ -146,6 +146,12 @@ service:
 ui:
   # -- How often the bundled SPA re-polls DAG, run and task-instance state, in seconds. Empty uses the server's production-safe default of 30s. It is POLLING, so this multiplies request and query load by the number of open browser tabs, not by the number of users: 5s is thirty tabs' worth of traffic at 30s, and 1s is what `dexaflow lite` uses precisely because Lite is one person against a local database. Lower it when operators watch runs progress and the metadata database has room; the honest way to choose is to measure one refresh cycle against your own DAG count rather than to copy Lite (#1196). A zero or negative value is not an error and not a fast refresh: the server falls back to 30s, deliberately, so a misconfigured variable cannot drop the interval to 0 and hammer the database.
   autoRefreshIntervalSeconds: ""
+  # -- Theme for the bundled UI, in the shape of Airflow's `[api] theme` (#1289): `tokens` (Chakra design tokens, for example `colors.brand` with shades 50 to 950 and `fonts.heading`/`fonts.body`/`fonts.mono`), `globalCss`, `icon` and `icon_dark_mode`. Rendered as compact JSON in `LEOFLOW_UI_THEME`. Empty (the default) keeps the stock look. The server refuses to boot on an unknown top-level key, or an icon that is not an http(s) URL or a root-relative path.
+  theme: {}
+  # -- Favicon URL for the UI, http(s) or root-relative. Empty keeps the stock icon.
+  faviconUrl: ""
+  # -- Extra stylesheets every UI page loads, typically the web fonts a `theme` names (for example a Google Fonts CSS URL). Each must be http(s) or root-relative and contain no comma, because the list travels comma-joined in `LEOFLOW_UI_STYLESHEET_URLS`.
+  stylesheetUrls: []
   homeLink:
     # -- Text of an optional link from the UI back to the platform you serve it from, such as an internal portal (#1290). Shown on every page at the bottom-left, opens in the same tab. Set it together with `url`.
     label: ""
@@ -242,12 +248,6 @@ redis:
   caConfigMap: ""
 
 auth:
-  # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
-  jwtSecret: ""
-  # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
-  existingSecret: ""
-  # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
-  tokenTtlSeconds: 3600
   # Trusted-issuer handoff (#1284): a platform that already signs its users in
   # opens a UI session for them by posting a short-lived token its own issuer
   # signed to POST /api/v2/auth/session. Leoflow verifies it against the
@@ -270,6 +270,16 @@ auth:
     maxLifetimeSeconds: 0
     # -- Origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. Any other `Origin`, or none, is refused, so another site cannot sign a visitor in as someone else. Required when `issuer` is set.
     allowedOrigins: []
+  # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
+  jwtSecret: ""
+  # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
+  existingSecret: ""
+  # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
+  tokenTtlSeconds: 3600
+  # -- Send UI visitors without a session to your own sign-in instead of Leoflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Leoflow session. Absolute `http(s)` URL; empty (the default) keeps Leoflow's page. `/api/v2/auth/login?local=1` still reaches Leoflow's page, so break-glass access survives an outage of your sign-in.
+  externalSigninUrl: ""
+  # -- Where sign-out lands after clearing the Leoflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Leoflow's sign-in page.
+  externalSignoutUrl: ""
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
   # fetch (ADR 0055). All three ship on the value that is byte-for-byte today's
