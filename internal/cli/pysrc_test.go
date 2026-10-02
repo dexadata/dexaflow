@@ -8,7 +8,7 @@ import (
 )
 
 // TestEnsurePysrcReextractsOnDrift: a stale or missing extracted parser tree
-// (the binary-upgrade case, #239) is re-extracted so `leoflow compile` never runs
+// (the binary-upgrade case, #239) is re-extracted so `dexaflow compile` never runs
 // against a parser predating a feature like dbt. A drifted checksum marker forces
 // a re-extract; a matching marker is a no-op.
 func TestEnsurePysrcReextractsOnDrift(t *testing.T) {

@@ -8,7 +8,7 @@ Closes #
 
 ## How it was tested
 
-<!-- Commands you ran and the tests you added. Leoflow is strict TDD (ADR 0011):
+<!-- Commands you ran and the tests you added. Dexaflow is strict TDD (ADR 0011):
      the test came first and failed before the implementation existed. -->
 
 ## Checklist

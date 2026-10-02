@@ -17,13 +17,13 @@ func TestPrintSetupSummaryHighlightsCredentials(t *testing.T) {
 	printSetupSummary(&buf, lc, "blueturtle42")
 	out := buf.String()
 	for _, want := range []string{
-		"═",                           // strong visual divider above + below
-		"LEOFLOW LITE ADMIN",          // uppercased, unmissable title
-		"SAVE NOW",                    // tells the user to save it
-		"admin@leoflow.local",         // user line
-		"blueturtle42",                // the password value, verbatim
-		"http://localhost:8088",       // open URL with the configured port
-		"leoflow lite reset-password", // recovery hint
+		"═",                            // strong visual divider above + below
+		"LEOFLOW LITE ADMIN",           // uppercased, unmissable title
+		"SAVE NOW",                     // tells the user to save it
+		"admin@leoflow.local",          // user line
+		"blueturtle42",                 // the password value, verbatim
+		"http://localhost:8088",        // open URL with the configured port
+		"dexaflow lite reset-password", // recovery hint
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("setup summary must contain %q so the user can find it; got:\n%s", want, out)
@@ -44,6 +44,6 @@ func TestPrintSetupSummaryOnRerun(t *testing.T) {
 		t.Errorf("re-run must not flash the credentials block, got:\n%s", out)
 	}
 	if !strings.Contains(out, "reset-password") {
-		t.Errorf("re-run must point at `leoflow lite reset-password`, got:\n%s", out)
+		t.Errorf("re-run must point at `dexaflow lite reset-password`, got:\n%s", out)
 	}
 }

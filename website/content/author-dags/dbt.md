@@ -9,8 +9,8 @@ weight: 30
 description: Drop dbt_group() into a dag.py and your dbt project's models become tasks in the same graph.
 ---
 
-A Leoflow DAG is a `dag.py` plus a `dexaflow.yaml`. **`dbt_group("name")` puts a dbt
-project inside one**: Leoflow reads dbt's own `manifest.json` at compile time and
+A Dexaflow DAG is a `dag.py` plus a `dexaflow.yaml`. **`dbt_group("name")` puts a dbt
+project inside one**: Dexaflow reads dbt's own `manifest.json` at compile time and
 turns each node (seed, model, snapshot, test) into a task in the same graph as your
 Python and Bash tasks, executed **pod-per-task** against your warehouse — no Apache
 Airflow in the control plane, and no [Cosmos](https://astronomer.github.io/astronomer-cosmos/)
@@ -22,7 +22,7 @@ here either way: the shortcut's exit cost is real, and this section is what you
 will need the day you add one Python task.
 
 {{% pageinfo %}}
-**Your `ref()` graph *is* the DAG.** Leoflow reads dbt's manifest at compile time
+**Your `ref()` graph *is* the DAG.** Dexaflow reads dbt's manifest at compile time
 and emits one task per node — you never write task dependencies, and there is no
 library to import and no profile-mapping boilerplate.
 {{% /pageinfo %}}
@@ -39,7 +39,7 @@ graph. Configure the project under `dbt_groups:` in `dexaflow.yaml`.
 By default (`granularity: node`) each model is its own pod — like Cosmos. Set
 `granularity: level` or `folder` (as below) to pack models into **grouped tasks**:
 each group compiles to a single `dbt build --select …` task — one pod that dbt runs
-internally — so a project of *N* models needn't become *N* pods. This is Leoflow's
+internally — so a project of *N* models needn't become *N* pods. This is Dexaflow's
 answer to pod sprawl for dbt; see
 [Core concepts → When you pay for a pod](/concepts/core-concepts/#when-you-pay-for-a-pod-and-when-you-dont).
 {{% /alert %}}
@@ -106,7 +106,7 @@ folder *named* `models` **and** a model at the root of `models/` gets both in a
 single task — the compile warns on stderr when that happens, naming the members.
 Use `granularity: node` if you need them apart.
 
-`node` is **split** (Leoflow's scheduler parallelizes across pods, one model per
+`node` is **split** (Dexaflow's scheduler parallelizes across pods, one model per
 pod). `level`/`folder` are **fused** — a group runs as a single
 `dbt build --select <members>` invocation.
 
@@ -128,14 +128,14 @@ pod startups**, while keeping in-pod parallelism. Rule of thumb:
 - **Pro (production):** `level`/`folder` — fewer pods at scale; `node` when you
   want strict per-model isolation and can afford the pods.
 
-> The fused trade-off is the same one Cosmos faces; the difference is Leoflow
+> The fused trade-off is the same one Cosmos faces; the difference is Dexaflow
 > exposes it as a single declarative knob.
 
 ---
 
 ## 3. The warehouse connection
 
-dbt needs a `profiles.yml`. Leoflow resolves it for you — pick the one that fits:
+dbt needs a `profiles.yml`. Dexaflow resolves it for you — pick the one that fits:
 
 ### Zero-config local (Lite → duckdb)
 
@@ -144,10 +144,10 @@ just runs — against an embedded **duckdb** file (`leoflow_local.duckdb`, in th
 with no setup at all:
 
 ```console
-$ leoflow lite            # write models, hit Trigger — that's it
+$ dexaflow lite            # write models, hit Trigger — that's it
 ```
 
-Leoflow generates the duckdb profile transparently at both compile (`dbt parse`) and run
+Dexaflow generates the duckdb profile transparently at both compile (`dbt parse`) and run
 time, in the task's working dir — **never touching your global `~/.dbt`**. It's the
 ideal way to develop and test transformations before wiring a real warehouse. Add a
 `connection:` (below) or a project `profiles.yml` at any time and that wins instead — the
@@ -181,7 +181,7 @@ honored — except for a secret that lives only in an
 and so was never requested at all.
 {{% /alert %}}
 
-Set `connection:` to a Leoflow connection id. Leoflow delivers the connection to
+Set `connection:` to a Dexaflow connection id. Dexaflow delivers the connection to
 the pod (encrypted at rest, decrypted in-pod) and the runtime **generates
 `profiles.yml`** before dbt runs — **no credential is ever baked into the image**.
 
@@ -199,8 +199,8 @@ $ curl -X POST .../api/v2/connections -d '{
 ```
 
 {{% alert title="Create the connection before you deploy" color="info" %}}
-The compiler **declares** the managed connection on the dbt tasks, so Leoflow
-validates it at registration: `leoflow push`/`deploy` is rejected if
+The compiler **declares** the managed connection on the dbt tasks, so Dexaflow
+validates it at registration: `dexaflow push`/`deploy` is rejected if
 `connection:` names a connection that neither exists in the vault nor is covered
 by an [external secrets backend](/operate/external-secrets/). Create the
 connection first (or configure the backend), then deploy — the same
@@ -219,7 +219,7 @@ python -m leoflow_runtime --dbt-profile warehouse_pg <profile> && dbt run --sele
 {{% alert title="Serverless warehouse cold-start" color="info" %}}
 A serverless SQL warehouse that has auto-stopped is woken transparently by the
 adapter, but the first task of a run pays the wake delay (~10s on Databricks
-serverless) before its query starts. Warehouse behavior, not Leoflow's; pre-warming
+serverless) before its query starts. Warehouse behavior, not Dexaflow's; pre-warming
 is a warehouse-side mitigation if it matters for your SLA.
 {{% /alert %}}
 
@@ -228,17 +228,17 @@ is a warehouse-side mitigation if it matters for your SLA.
 Omit `connection:` and ship a `profiles.yml` in the project (it is baked into the
 image). Simple for Lite; you own the credential delivery.
 
-> Use **one or the other** — a `connection:` makes Leoflow generate the profile;
+> Use **one or the other** — a `connection:` makes Dexaflow generate the profile;
 > without it, your baked `profiles.yml` is used.
 
 **Adapters:** Postgres, Snowflake, BigQuery, Databricks (the official
 `dbt-databricks` adapter, not the community one), and **duckdb** (embedded, for
-zero-server local dev) are supported — Leoflow maps the managed connection to each
+zero-server local dev) are supported — Dexaflow maps the managed connection to each
 adapter's profile. Declare the adapter package
 (`dbt-snowflake`, `dbt-bigquery`, `dbt-databricks`, …) as a dependency so it lands
 in the image.
 
-Each cloud adapter supports modern, service-account auth — Leoflow's recommended
+Each cloud adapter supports modern, service-account auth — Dexaflow's recommended
 mode for automation — alongside the legacy password/key-file mode. Everything is
 driven by the connection's `extra`, so nothing secret is baked into the image, and
 the connection form surfaces these fields with inline help:
@@ -261,16 +261,16 @@ is used. Per-warehouse setup — required fields (`account`/`warehouse`, `http_p
 
 **A syntax error in one model does not blow up production.** dbt parses the whole
 project on every invocation, so a compilation error in *any* model would, in
-naive setups, break *every* task. Leoflow stops that at the **build parse-gate**:
+naive setups, break *every* task. Dexaflow stops that at the **build parse-gate**:
 
-`leoflow compile` runs `dbt parse` on your machine — **both editions**, before it
+`dexaflow compile` runs `dbt parse` on your machine — **both editions**, before it
 writes anything. A broken project never produces a `dag.json` and, on Pro, never
 produces an image: nothing deploys. So a syntax error fails **loudly and early**,
 never at 5am.
 
 ### The baked manifest
 
-Leoflow compiles from `dbt parse`'s `target/manifest.json`. **`leoflow compile`
+Dexaflow compiles from `dbt parse`'s `target/manifest.json`. **`dexaflow compile`
 runs `dbt parse` on your machine** — both editions, not inside the image build —
 and the resulting manifest is copied into the DAG image alongside the project.
 Pin a pre-built one with `dbt.manifest` to skip the parse (see
@@ -279,12 +279,12 @@ Pin a pre-built one with `dbt.manifest` to skip the parse (see
 **Which `dbt` runs the parse is not the same in both editions**, and the
 difference decides whether you need dbt installed on your host at all:
 
-- Under **`leoflow dev`** the per-DAG venv is provisioned from `dependencies:`
+- Under **`dexaflow lite`** the per-DAG venv is provisioned from `dependencies:`
   *before* the project is compiled, and the parse uses **that venv's `dbt`**. So
   a Lite project that declares `dbt-core` and its adapter in `dependencies:`
   compiles with no dbt on your `PATH` — the version that parses your models is
   the same one that will run them.
-- Running **`leoflow compile` by hand** provisions nothing. It falls back to the
+- Running **`dexaflow compile` by hand** provisions nothing. It falls back to the
   `dbt` on your `PATH`, and fails with a message naming both ways out if there
   is none: install dbt-core plus your adapter, or pin `dbt.manifest`.
 
@@ -312,7 +312,7 @@ A fused group is one `dbt build --select <members>` task. If it fails mid-way, d
 keeps the models it already built — but **retrying the task re-runs the entire
 group from scratch**, including the models that already succeeded. dbt is not
 resumed from its failure point here (that would need `dbt retry`, which reads the
-previous run's `target/run_results.json` — an artifact Leoflow does not yet persist
+previous run's `target/run_results.json` — an artifact Dexaflow does not yet persist
 across pod attempts). On warehouses billed per compute-second, retrying a
 mostly-green group re-bills the green models.
 
@@ -326,7 +326,7 @@ Airflow's per-task retry. Choose per DAG:
   on the rare retry, save on pod startups.
 
 **Planned:** resumable fused retries — persisting `run_results.json` so `dbt retry`
-skips the already-built models ([#569](https://github.com/dexadata/leoflow/issues/569)).
+skips the already-built models ([#569](https://github.com/dexadata/dexaflow/issues/569)).
 
 ---
 
@@ -335,17 +335,17 @@ skips the already-built models ([#569](https://github.com/dexadata/leoflow/issue
 | file | owner | describes |
 |---|---|---|
 | `dbt_project.yml`, `profiles.yml`, `models/**/*.yml` | **dbt** | the transformation (models, materializations, tests, connection) |
-| `dexaflow.yaml` | **Leoflow** | the DAG (id, schedule, granularity, packing, managed connection) |
+| `dexaflow.yaml` | **Dexaflow** | the DAG (id, schedule, granularity, packing, managed connection) |
 
 They never overlap: `dbt_project.yml` never mentions schedules/pods; `dexaflow.yaml`
 never mentions SQL. Author your **models** in your dbt tooling (VS Code + dbt
-Power User, dbt Cloud IDE); Leoflow only adds orchestration and packing.
+Power User, dbt Cloud IDE); Dexaflow only adds orchestration and packing.
 
 ---
 
 ## 6. Adapters and auth
 
-Leoflow generates each warehouse's `profiles.yml` from your managed
+Dexaflow generates each warehouse's `profiles.yml` from your managed
 `connection:`, so the credential never enters the image or the repository.
 
 | Adapter | Auth modes |
@@ -358,7 +358,7 @@ Leoflow generates each warehouse's `profiles.yml` from your managed
 
 Each emitted profile is checked in CI against the real adapter's own credential
 parser — field names, alias resolution, required fields, and every auth mode
-above — so a profile Leoflow generates is one the adapter accepts.
+above — so a profile Dexaflow generates is one the adapter accepts.
 
 That is not the same as a query succeeding against your account. **Postgres and
 duckdb are the only adapters exercised against a live warehouse in CI**;
@@ -382,9 +382,9 @@ leaving it is a migration rather than an edit.
 operators, no Python or Bash. And because those live on the DAG object a
 `dag.py` builds, it also has nowhere to declare `start_date`, `catchup`,
 `max_active_runs` or DAG-level `params`. (`end_date` and `max_active_tasks` are
-not author-settable on *either* path yet — [#797](https://github.com/dexadata/leoflow/issues/797).)
+not author-settable on *either* path yet — [#797](https://github.com/dexadata/dexaflow/issues/797).)
 A top-level `connections:`/`variables:` is worse than rejected — the schema accepts
-it and the compiled DAG silently drops it ([#997](https://github.com/dexadata/leoflow/issues/997)).
+it and the compiled DAG silently drops it ([#997](https://github.com/dexadata/dexaflow/issues/997)).
 `retries` and `resources` can be scoped per task; `alerts` and `staging` are
 DAG-wide — all four come from `dexaflow.yaml` and apply to both shapes.
 
@@ -394,7 +394,7 @@ DAG-wide — all four come from `dexaflow.yaml` and apply to both shapes.
 a top-level `dbt:` block and a `dag.py` is refused by `compile` and `validate`,
 naming which block to remove — the two describe different DAGs and there is no
 reading of both at once
-([#1001](https://github.com/dexadata/leoflow/issues/1001)).
+([#1001](https://github.com/dexadata/dexaflow/issues/1001)).
 
 **Every `task_id` changes**: the shortcut emits bare node ids
 (`stg`), a group namespaces them (`transform__stg`). That breaks run-history
@@ -405,7 +405,7 @@ You write dbt the way you always do, and add one `dexaflow.yaml`:
 
 ```
 sales/                         # the DAG = a dbt project + dexaflow.yaml
-├── dexaflow.yaml               # the only Leoflow file
+├── dexaflow.yaml               # the only Dexaflow file
 ├── dbt_project.yml            # dbt
 ├── profiles.yml               # dbt (or use a managed connection — see below)
 ├── seeds/raw_orders.csv
@@ -430,11 +430,11 @@ dbt:
 Compile it like any DAG:
 
 ```console
-$ leoflow compile ./sales --image registry.example.com/sales:v1
+$ dexaflow compile ./sales --image registry.example.com/sales:v1
 Compiled sales -> sales/dag.json (image registry.example.com/sales:v1, version 9f3a2c1)
 ```
 
-`leoflow compile` reads the dbt manifest and emits one task per node:
+`dexaflow compile` reads the dbt manifest and emits one task per node:
 
 | task_id | command |
 |---|---|
@@ -445,7 +445,7 @@ Compiled sales -> sales/dag.json (image registry.example.com/sales:v1, version 9
 
 You never write task dependencies — `{{ ref('stg_orders') }}` **is** the edge.
 
-> The manifest comes from `dbt parse`, which `leoflow compile` runs on your
+> The manifest comes from `dbt parse`, which `dexaflow compile` runs on your
 > machine. Set `dbt.manifest: target/manifest.json` to point at a pre-built one
 > instead.
 
@@ -457,12 +457,12 @@ You never write task dependencies — `{{ ref('stg_orders') }}` **is** the edge.
 No dbt on this machine, or no wheel of your adapter for your Python? Pre-build
 the manifest in a container and pin it with `dbt.manifest`.
 
-`leoflow compile`/`--build` shells out to `dbt parse` on your machine (the
+`dexaflow compile`/`--build` shells out to `dbt parse` on your machine (the
 runtime never needs dbt — only compile-time manifest generation does). If your
 host has no dbt installed, or your adapter has no prebuilt wheel for your
 Python (a common one: `dbt-databricks` publishes wheels for 3.10–3.12, not the
 Python 3.9 that ships as the default `python3` on some LTS distros/older
-macOS), `dbt parse` fails or the adapter refuses to install — before Leoflow
+macOS), `dbt parse` fails or the adapter refuses to install — before Dexaflow
 ever gets involved.
 
 **Escape hatch: generate the manifest in a throwaway container with a Python
@@ -483,7 +483,7 @@ $ ls target/manifest.json     # now sitting in your project dir
 # dexaflow.yaml
 dbt:
   project: .
-  manifest: target/manifest.json   # pinned — leoflow compile skips `dbt parse` entirely
+  manifest: target/manifest.json   # pinned — dexaflow compile skips `dbt parse` entirely
   connection: warehouse_databricks
 ```
 
@@ -505,13 +505,13 @@ this problem.
 | `project` | directory containing `dbt_project.yml` |
 | `granularity` | `node` \| `level` \| `folder` (default `node`) |
 | `manifest` | optional pre-built `manifest.json` path (project-relative); empty runs `dbt parse` |
-| `connection` | managed Leoflow connection id; empty = bring-your-own `profiles.yml` |
+| `connection` | managed Dexaflow connection id; empty = bring-your-own `profiles.yml` |
 | `schema` | overrides the dbt target schema in the generated profile |
 | `schedule` | *(whole-DAG `dbt:` only)* cron/preset; empty = on-demand. Declared **under `dbt:`** — a `dag.py` DAG takes its schedule from `DAG(schedule=…)` instead. There is no top-level `schedule:` key, and `dexaflow.yaml` rejects one. |
 
 ## Cosmos at a glance
 
-| | Cosmos | Leoflow |
+| | Cosmos | Dexaflow |
 |---|---|---|
 | Where the translation runs | Python lib at DAG-parse time | Go at compile time |
 | Manifest | re-parsed per `DbtDag` init | parsed once at compile time |

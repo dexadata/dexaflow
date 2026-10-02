@@ -10,7 +10,7 @@ description: Datadog connection
 ---
 
 Submit metrics, events, and query monitors from a task over a managed
-Leoflow Connection. `DatadogHook` authenticates with an API key + app key
+Dexaflow Connection. `DatadogHook` authenticates with an API key + app key
 against the Datadog site (US, EU, …).
 
 ## Declare the provider
@@ -64,7 +64,7 @@ def send():
 
     hook = DatadogHook(datadog_conn_id="datadog_default")
     hook.send_metric(
-        metric_name="leoflow.dag.runs",
+        metric_name="dexaflow.dag.runs",
         datapoint=1,
         tags=["dag:datadog_metric"],
     )

@@ -1,7 +1,7 @@
 # UI contract sweep
 
 A browser-driven contract test: it drives every major view of the embedded
-Airflow 3.2.x SPA against a running Leoflow control plane and **fails if any view
+Airflow 3.2.x SPA against a running Dexaflow control plane and **fails if any view
 makes a non-2xx `/api` or `/ui` call or logs a console error**.
 
 Its purpose is to catch frontend↔backend contract breaks — especially when the

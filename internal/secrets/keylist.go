@@ -8,7 +8,7 @@ import (
 // ParseKeys parses a comma-separated key list. The FIRST key encrypts and
 // decrypts; every later one only decrypts.
 //
-// This is the shape Apache Airflow's `fernet_key` uses, and Leoflow is an
+// This is the shape Apache Airflow's `fernet_key` uses, and Dexaflow is an
 // Airflow-compatible control plane, so an operator arriving from Airflow
 // already knows the rule: put the new key first, the old ones after, then run
 // the re-encryption and drop the tail.

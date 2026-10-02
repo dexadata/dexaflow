@@ -6,7 +6,7 @@ from airflow.sdk import DAG, task
 
 @task
 def greet() -> str:
-    print("hello from your first Leoflow DAG")
+    print("hello from your first Dexaflow DAG")
     return "hello"
 
 

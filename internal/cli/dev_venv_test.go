@@ -140,7 +140,7 @@ func TestDagVenvDepsRoundtrip(t *testing.T) {
 // TestDagVenvRuntimeChecksumRoundtrip pins the per-DAG runtime checksum
 // marker: empty when absent, returns the stamped value after a write. The
 // binary-upgrade reinstall (#239) carries over from the single-venv layout —
-// without this, a `leoflow lite` rerun after `make dev-install` would keep
+// without this, a `dexaflow lite` rerun after `make dev-install` would keep
 // the previous build's runtime in the venv.
 func TestDagVenvRuntimeChecksumRoundtrip(t *testing.T) {
 	home := t.TempDir()

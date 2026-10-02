@@ -29,9 +29,9 @@ the issue they name closes.
 | Server image | `ghcr.io/dexadata/dexaflow-server:<tag>` |
 | Date / operator | `<date>` / `<who>` |
 
-Links: release <https://github.com/dexadata/leoflow/releases/tag/TAG> ·
+Links: release <https://github.com/dexadata/dexaflow/releases/tag/TAG> ·
 Helm guide <https://dexaflow.dexadata.ai/operate/helm-chart/> ·
-chart README (full values) <https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md> ·
+chart README (full values) <https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md> ·
 install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 
 ---
@@ -49,7 +49,7 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
   **IRSA** (`eks.amazonaws.com/role-arn`) or GKE **Workload Identity**
   (`iam.gke.io/gcp-service-account`) — see §4.2/#728 and §5.
 - The `leoflow` CLI locally (client):
-  `LEOFLOW_VERSION=<tag> curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh`
+  `LEOFLOW_VERSION=<tag> curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh`
   (explicit tag — "latest" skips pre-releases).
 
 ---
@@ -72,7 +72,7 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 > `.github/workflows/helm-release.yaml`, so a cut with a stale chart fails the
 > Helm chart release job rather than shipping wrong image defaults. Once tagged,
 > install the **published OCI chart** (`--version` = tag without the `v`) rather
-> than a source checkout — see the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#quick-start).
+> than a source checkout — see the [chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#quick-start).
 
 Confirmed chart value keys used below (defaults in parens) — see the chart README
 for the datastore/secret keys this runbook intentionally does not spell out:
@@ -105,15 +105,15 @@ helm install leoflow oci-or-repo/leoflow \
 ```
 
 Record: does the control plane reach `Ready`? Is `/api/v2/` + the UI reachable
-(via port-forward or the ingress)? Can you `leoflow auth login` and get a JWT?
+(via port-forward or the ingress)? Can you `dexaflow auth login` and get a JWT?
 
 ---
 
 ## §2 Smoke — the path a user actually runs
 
-1. `leoflow auth login` → JWT.
+1. `dexaflow auth login` → JWT.
 2. Register + trigger a DAG (author per
-   <https://dexaflow.dexadata.ai/author-dags/dag-authoring/>; `leoflow push` / `leoflow deploy`).
+   <https://dexaflow.dexadata.ai/author-dags/dag-authoring/>; `dexaflow push` / `dexaflow deploy`).
 3. **PASS:** every task instance reaches `success` — i.e. a real pod-per-task ran,
    its agent reported over gRPC, XCom chained. `kubectl get pods -n <taskNamespace>`
    shows one pod per task, completed.
@@ -281,7 +281,7 @@ the same carry-forward treatment for as long as #1089 stays open):
   warn.)
 - **#724 validation 400 ✔** — register a DAG version declaring an unknown
   connection. **PASS:** API returns **400** (not 500); message points at
-  `leoflow connections set`.
+  `dexaflow connections set`.
 - **#727 migration-job SA token ✔** — `kubectl get job <migrate> -o yaml`.
   **PASS:** `spec.template.spec.automountServiceAccountToken: false`.
 - **#729 managed-PG idempotent** — Lite/local, not a cloud cluster. Run the opt-in
@@ -345,7 +345,7 @@ helm upgrade leoflow ... \
   resources shows `qosClass` = **`Burstable`**, *not* the `Guaranteed` the chart
   comment used to promise; and `kubectl get pod <task> -o jsonpath='{.spec.containers[0].resources}'`
   shows **no memory request or limit at all**. Also compile a `leoflow.yaml` whose
-  `defaults.resources` sets only `cpu` — **PASS:** `leoflow compile` **fails**
+  `defaults.resources` sets only `cpu` — **PASS:** `dexaflow compile` **fails**
   naming the missing field (`missing property 'memory'`), it does not produce a
   `dag.json`.
 - **ClientIP PASS:** behind the ALB/NLB, several bad logins from **different**
@@ -773,7 +773,7 @@ cloud reads as proof, and that is the failure §5 exists to prevent.
 | #1023 | in-flight migration above the running binary: endpoints never empty, `/readyz` stays 200; dirty at the same version still goes NotReady (§4.6b) | | |
 | ADR 0052 | `LEOFLOW_CHAOS_ONLY=CD chaos-runtime.sh` — C and D pass (§4.5) | | |
 
-For each FAIL: open an issue on `dexadata/leoflow` with the root cause and, where
+For each FAIL: open an issue on `dexadata/dexaflow` with the root cause and, where
 possible, the file:line (the #722–#729 batch is the quality bar). A red RC →
 fix → **rc.4** (tags are immutable, ADR 0033); a green RC → the GA promotion is a
 separate maintainer decision.

@@ -6,7 +6,7 @@ aliases:
 title: Helm chart
 linkTitle: Helm chart
 weight: 30
-description: Install and configure the Leoflow Pro control plane on Kubernetes with the official Helm chart.
+description: Install and configure the Dexaflow Pro control plane on Kubernetes with the official Helm chart.
 ---
 
 The **Pro** control plane installs on Kubernetes via the official Helm chart. The
@@ -21,7 +21,7 @@ co-versioned with the release tag — so you can install a pinned version withou
 cloning the repo:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -n leoflow --create-namespace \
   -f values.yaml
 ```
@@ -30,15 +30,15 @@ Pass the release tag **without** the leading `v` (tag `v0.4.0` → `--version 0.
 the chart `version`/`appVersion` move in lockstep with the tag, so this also pins
 the control-plane image. Installing from a source checkout
 (`helm install ./helm/dexaflow`) is still supported for unreleased branches — see
-the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#quick-start)
+the [chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#quick-start)
 for both paths and the full values surface.
 
 {{% alert title="Reference lives with the chart" color="info" %}}
 This operator-journey page is the entry point; the exhaustive values reference is
 maintained **alongside the chart source** so it never drifts from `values.yaml`:
 
-**[→ Helm chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md)**
-(including the [datastore compatibility matrix](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)).
+**[→ Helm chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md)**
+(including the [datastore compatibility matrix](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)).
 
 A first-class values reference on this site is a TODO for a later migration phase.
 {{% /alert %}}
@@ -153,7 +153,7 @@ three failures — rather than Kubernetes' 1s/3.
 One of those values has a floor the chart enforces:
 
 ```console
-$ helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/dexaflow \
+$ helm upgrade --install dexaflow oci://ghcr.io/dexadata/charts/dexaflow \
     --set probes.readiness.timeoutSeconds=1
 Error: probes.readiness.timeoutSeconds=1 is below the 3s floor. [...]
 ```

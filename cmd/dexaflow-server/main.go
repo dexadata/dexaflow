@@ -1,4 +1,4 @@
-// Command leoflow-server runs the Leoflow control plane: the HTTP API, auth,
+// Command leoflow-server runs the Dexaflow control plane: the HTTP API, auth,
 // metrics, and (when enabled) the scheduler.
 package main
 
@@ -57,9 +57,9 @@ import (
 
 // usage is printed for `--help`. leoflow-server takes no positional args; it is
 // configured entirely via environment and an optional LEOFLOW_CONFIG file.
-const usage = `leoflow-server — the Leoflow control plane (HTTP API, auth, metrics, scheduler).
+const usage = `dexaflow-server — the Dexaflow control plane (HTTP API, auth, metrics, scheduler).
 
-Configured via environment variables and an optional config file (LEOFLOW_CONFIG);
+Configured via environment variables and an optional config file (DEXAFLOW_CONFIG);
 there are no positional arguments. See docs/configuration.md.
 
 Flags:
@@ -86,7 +86,7 @@ func main() {
 		return
 	}
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "leoflow-server:", err)
+		fmt.Fprintln(os.Stderr, "dexaflow-server:", err)
 		os.Exit(1)
 	}
 }
@@ -374,7 +374,7 @@ func bootstrapAdmin(ctx context.Context, repo *storage.Repository, logger *slog.
 	if email == "" {
 		email = "admin@leoflow.local"
 	}
-	// Prefer a precomputed bcrypt hash (Leoflow Lite never sends the plaintext to
+	// Prefer a precomputed bcrypt hash (Dexaflow Lite never sends the plaintext to
 	// the control plane); fall back to a plaintext bootstrap password.
 	if hash := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH"); hash != "" {
 		created, err := repo.BootstrapAdminHash(ctx, "default", email, hash)
@@ -675,7 +675,7 @@ func oidcNameWarnings(ctx context.Context, ck oidcNameChecker, c config.AuthSect
 		case !ok:
 			out = append(out, configWarning{
 				Msg: tenantsKey + " maps " + quotedList(claims) + " to the tenant " + quoted(tenant) +
-					", which does not exist. Every login carrying those claim values is denied, and nothing in Leoflow " +
+					", which does not exist. Every login carrying those claim values is denied, and nothing in Dexaflow " +
 					"creates a tenant: the only one is " + quoted("default") + ", created by the first migration. " +
 					"Map them to " + quoted("default") + " unless you created this tenant yourself",
 				Key:        tenantsKey,
@@ -770,7 +770,7 @@ const breakGlassTenant = "default"
 // sends an operator to grep the audit log for a reason that is not there.
 //
 // Each distinct role name is looked up once. Mapping several IdP groups to one
-// Leoflow role is the normal shape, and asking the same question per group is
+// Dexaflow role is the normal shape, and asking the same question per group is
 // both a repeated round trip on the boot path and, when the answer is "missing",
 // the same warning printed once per group.
 func missingRoleWarnings(ctx context.Context, ck oidcNameChecker, tenant string, o config.OIDCSection) []configWarning {
@@ -1323,19 +1323,27 @@ func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slo
 	return flow, nil
 }
 
-func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer) *http.Server {
-	if cfg.Auth.DevNoAuth {
-		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only — NEVER use in production")
-	}
+// newUIServer builds the embedded UI server from cfg and returns it with the
+// Lite editor's workspace (nil when the editor is off).
+func newUIServer(cfg *config.ServerConfig, logger *slog.Logger) (*ui.Server, api.WorkspaceFS) {
 	// Show the LITE badge for the Lite edition (independent of the auth mode), and
 	// also when the legacy dev auth bypass is on. The demo/production show neither.
 	uiSrv := ui.New()
 	uiSrv.SetLiteBanner(showLiteBadge(cfg))
 	uiSrv.SetProBanner(showProBadge(cfg))
 	uiSrv.SetInstanceName(cfg.UI.InstanceName)
+	uiSrv.SetHomeLink(cfg.UI.HomeLink.Label, cfg.UI.HomeLink.URL)
 
-	editorFS := liteEditorFS(cfg, tel.Logger)
+	editorFS := liteEditorFS(cfg, logger)
 	uiSrv.SetEditorButton(editorFS != nil)
+	return uiSrv, editorFS
+}
+
+func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer) *http.Server {
+	if cfg.Auth.DevNoAuth {
+		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only — NEVER use in production")
+	}
+	uiSrv, editorFS := newUIServer(cfg, tel.Logger)
 
 	handler := api.NewServer(api.Dependencies{
 		Logger:                       tel.Logger,

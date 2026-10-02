@@ -1,10 +1,10 @@
-# Contributing to Leoflow
+# Contributing to Dexaflow
 
-Thank you for your interest in contributing to Leoflow! This document explains how to get involved.
+Thank you for your interest in contributing to Dexaflow! This document explains how to get involved.
 
 ## Before You Start
 
-1. Read [`README.md`](README.md) to understand what Leoflow is.
+1. Read [`README.md`](README.md) to understand what Dexaflow is.
 2. Read the [Architecture Decision Records](website/content/project/adrs/) under `website/content/project/adrs/`. These document non-negotiable design choices. Contributions that contradict an ADR will be rejected unless the ADR is first amended via a separate PR.
 3. Read [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
@@ -12,7 +12,7 @@ Thank you for your interest in contributing to Leoflow! This document explains h
 
 ### Reporting Bugs
 
-1. Search [existing issues](https://github.com/dexadata/leoflow/issues) to confirm the bug has not been reported.
+1. Search [existing issues](https://github.com/dexadata/dexaflow/issues) to confirm the bug has not been reported.
 2. If not, open a new issue using the **Bug Report** template.
 3. Include reproduction steps, expected behavior, actual behavior, and environment details (OS, Go version, K8s version if applicable).
 
@@ -32,7 +32,7 @@ Open an issue or comment on an existing one before starting work on anything bey
 
 #### 2. Follow the Engineering Standards
 
-Leoflow has strict engineering standards documented in the ADRs:
+Dexaflow has strict engineering standards documented in the ADRs:
 
 - **[ADR 0011 — TDD Strict](website/content/project/adrs/0011-tdd-strict.md):** every production change is preceded by a failing test. Two-commit pattern preferred (`test:` followed by `feat:`).
 - **[ADR 0012 — Code Quality Standards](website/content/project/adrs/0012-code-quality-standards.md):** Go Report Card A+ as floor. GoDocs mandatory on every exported identifier. Cyclomatic complexity ≤ 15.
@@ -114,8 +114,8 @@ If you have a contribution in these areas, please open a discussion issue first.
 
 ```bash
 # Clone the repo
-git clone https://github.com/dexadata/leoflow.git
-cd leoflow
+git clone https://github.com/dexadata/dexaflow.git
+cd dexaflow
 ```
 
 ### See it run first (one command)
@@ -133,12 +133,12 @@ docker compose --profile demo up --build
 cp .github/CLAUDE.md.template ./CLAUDE.md
 
 make setup        # Go tools, Python parser/runtime, pre-commit hook
-make build        # build bin/leoflow, bin/leoflow-server, bin/leoflow-agent
+make build        # build bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent (plus leoflow* links)
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the quality gates you must pass before pushing
 ```
 
-For an end-to-end author→run loop without Kubernetes, use `leoflow dev`
+For an end-to-end author→run loop without Kubernetes, use `dexaflow lite`
 (see [Editions & operating modes](website/content/concepts/editions.md)).
 
 ## Project Layout
@@ -157,6 +157,6 @@ By contributing, you agree that your contributions will be licensed under the [A
 
 ## Recognition
 
-All contributors are shown on the repository's [contributors page](https://github.com/dexadata/leoflow/graphs/contributors). Significant contributions are also highlighted in release notes.
+All contributors are shown on the repository's [contributors page](https://github.com/dexadata/dexaflow/graphs/contributors). Significant contributions are also highlighted in release notes.
 
-Thank you for helping make Leoflow better!
+Thank you for helping make Dexaflow better!

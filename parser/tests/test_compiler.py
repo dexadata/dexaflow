@@ -1,4 +1,4 @@
-"""Tests for the Leoflow DAG compiler against fixture DAGs."""
+"""Tests for the Dexaflow DAG compiler against fixture DAGs."""
 from __future__ import annotations
 
 import json

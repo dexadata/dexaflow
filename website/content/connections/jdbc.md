@@ -10,7 +10,7 @@ description: JDBC connection
 ---
 
 Connect a task to any database that ships a JDBC driver (DB2, Oracle,
-SAP HANA, Vertica, …) over a managed Leoflow Connection. `JdbcHook` runs
+SAP HANA, Vertica, …) over a managed Dexaflow Connection. `JdbcHook` runs
 queries through a JVM driver loaded via JayDeBeApi.
 
 ## Declare the provider

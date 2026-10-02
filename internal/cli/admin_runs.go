@@ -32,7 +32,7 @@ func newAdminRunsCommand() *cobra.Command {
 	return cmd
 }
 
-// newAdminRunsListCommand builds `leoflow admin runs list`: list runs, optionally
+// newAdminRunsListCommand builds `dexaflow admin runs list`: list runs, optionally
 // narrowed by state (server-side), by DAG, and by age — the "what is stuck?"
 // query. Because runs are exposed per DAG, an unfiltered listing walks every
 // registered DAG.

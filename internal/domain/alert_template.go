@@ -10,7 +10,7 @@ import (
 )
 
 // ErrUnknownAlertPlaceholder reports an alert message template referencing a
-// substitution Leoflow does not perform.
+// substitution Dexaflow does not perform.
 var ErrUnknownAlertPlaceholder = errors.New("unknown alert placeholder")
 
 // placeholderRe matches a {{name}} span, tolerating inner spaces so an

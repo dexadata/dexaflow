@@ -147,6 +147,17 @@ spec:
             - name: LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .ctx.Values.ui.homeLink }}
+            {{- if .url }}
+            # The operator's link back to their platform (#1290). Omitted when
+            # unset, like the interval above; the server validates both values
+            # at boot.
+            - name: LEOFLOW_UI_HOME_LINK_LABEL
+              value: {{ .label | quote }}
+            - name: LEOFLOW_UI_HOME_LINK_URL
+              value: {{ .url | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_SERVER_HTTP_ADDR
               value: ":{{ .ctx.Values.ports.http }}"
             - name: LEOFLOW_SERVER_METRICS_ADDR
@@ -296,7 +307,7 @@ spec:
             {{- if .ctx.Values.taskSecret.name }}
             # Mount a Kubernetes Secret read-only into every task pod so a task can
             # read a credential (e.g. a GCP service-account key referenced by a
-            # connection's key_path) from the cluster's secret store — Leoflow
+            # connection's key_path) from the cluster's secret store — Dexaflow
             # never stores the key itself (ADR 0035).
             - name: LEOFLOW_EXECUTOR_TASK_SECRET_NAME
               value: {{ .ctx.Values.taskSecret.name | quote }}
@@ -314,7 +325,7 @@ spec:
             {{- if .ctx.Values.secrets.backend }}
             # External secrets backend (ADR 0060): a declared Connection/Variable is
             # resolved pod-side from the provider store under the pod's own keyless
-            # identity, instead of Leoflow's vault. Operator-only — delivered to task
+            # identity, instead of Dexaflow's vault. Operator-only — delivered to task
             # pods as LEOFLOW_SECRETS_*, which an author's task env can never set.
             - name: LEOFLOW_SECRETS_BACKEND
               value: {{ .ctx.Values.secrets.backend | quote }}

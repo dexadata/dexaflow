@@ -1,6 +1,6 @@
 // Package migrations embeds the SQL migration files so the control plane can
 // apply them without the source tree present — a step toward a binaries-only
-// `leoflow dev` (no checked-out repo required). See issue #60.
+// `dexaflow lite` (no checked-out repo required). See issue #60.
 package migrations
 
 import "embed"

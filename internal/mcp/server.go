@@ -1,4 +1,4 @@
-// Package mcp is the Leoflow Model Context Protocol server (ADR 0050). It exposes
+// Package mcp is the Dexaflow Model Context Protocol server (ADR 0050). It exposes
 // the control plane to an LLM agent as read tools over the official
 // modelcontextprotocol/go-sdk, talking to /api/v2 only through pkg/client — it
 // imports no other internal/ package and holds no privilege of its own (the
@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	serverName    = "leoflow"
+	serverName    = "dexaflow"
 	defaultDagLim = 25
 	maxDagLim     = 200
 )
@@ -69,7 +69,7 @@ func apiFor[P mcpsdk.Params](h *handlers, req *mcpsdk.ServerRequest[P]) (*apicli
 	return h.clientFor(req.Extra)
 }
 
-// NewServer builds a read-only Leoflow MCP server. api is the base control-plane
+// NewServer builds a read-only Dexaflow MCP server. api is the base control-plane
 // client; serverURL is the control-plane URL used to build per-request clients.
 // requireBearer selects the identity policy (true for the HTTP transport, where
 // each request carries its own token; false for stdio) — see handlers. It
@@ -81,7 +81,7 @@ func NewServer(api *apiclient.ClientWithResponses, serverURL, version string, re
 	h := &handlers{api: api, serverURL: serverURL, requireBearer: requireBearer}
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "list_dags",
-		Description: "List DAGs registered in the Leoflow control plane, with their paused state.",
+		Description: "List DAGs registered in the Dexaflow control plane, with their paused state.",
 	}, h.listDags)
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "diagnose_run",

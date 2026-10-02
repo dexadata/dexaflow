@@ -1,7 +1,7 @@
 //go:build integration
 
 // Package storage_test holds the Lima dogfood regression suite: each test
-// reproduces a bug a user actually hit running `leoflow lite` end-to-end and
+// reproduces a bug a user actually hit running `dexaflow lite` end-to-end and
 // asserts the contract the fix must satisfy. They are reality-anchored — the
 // kind of failure a unit test on a fake store would NEVER catch because the
 // bug lives at the SQL layer or in the composition of multiple steps.

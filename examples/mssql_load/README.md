@@ -24,7 +24,7 @@ the alternative drivers (pyodbc, SQLAlchemy).
 ### 1. Spin up a target SQL Server
 
 ```sh
-docker run --rm -d --name leoflow-warehouse-mssql \
+docker run --rm -d --name dexaflow-warehouse-mssql \
   -e ACCEPT_EULA=Y \
   -e MSSQL_SA_PASSWORD='Etl@1234' \
   -p 51433:1433 \
@@ -35,7 +35,7 @@ SQL Server takes ~30 s to initialise the system DBs on first run. Then
 create the `warehouse` database:
 
 ```sh
-docker exec leoflow-warehouse-mssql \
+docker exec dexaflow-warehouse-mssql \
   /opt/mssql-tools18/bin/sqlcmd -No -S localhost -U sa -P 'Etl@1234' \
   -Q "CREATE DATABASE warehouse"
 ```
@@ -63,7 +63,7 @@ A regression would surface as an authentication failure here.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `mssql_load` → **Trigger DAG**.
@@ -71,7 +71,7 @@ In the UI: open `mssql_load` → **Trigger DAG**.
 ### 4. Verify
 
 ```sh
-docker exec leoflow-warehouse-mssql \
+docker exec dexaflow-warehouse-mssql \
   /opt/mssql-tools18/bin/sqlcmd -No -S localhost -U sa -P 'Etl@1234' \
   -d warehouse -Q "SELECT COUNT(*) FROM example_load;"
 ```

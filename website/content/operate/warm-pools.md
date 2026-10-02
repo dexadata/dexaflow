@@ -12,7 +12,7 @@ description: Cut task start latency with pre-warmed worker pods.
 {{% alert title="Pro · off by default" color="info" %}}
 Warm worker pools are a **Pro** feature, gated behind
 `execution.warm_pools_enabled` (default **`false`**). With the flag off,
-Leoflow runs a **dedicated pod per task attempt** — the historical behavior
+Dexaflow runs a **dedicated pod per task attempt** — the historical behavior
 ([ADR 0002](/project/adrs/0002-pod-per-task/)), byte-for-byte unchanged. Lite ignores
 the flag entirely. Turning warm pools on has hard security prerequisites; read
 [How to enable](#how-to-enable) before you flip it.
@@ -425,7 +425,7 @@ silent correction.
 The related auth knobs — `agent_token_transport`, `secret_liveness_mode`,
 `secret_scoping`, `max_attempt_credential_lifetime` — are documented on the
 [Agent credential transport](/operate/agent-credential-transport/) page and in the
-[Configuration reference](/reference/configuration/#server-environment-leoflow_).
+[Configuration reference](/reference/configuration/#server-environment-dexaflow_).
 
 ## See also
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end happy path for Leoflow Lite: setup (as the installer runs it) →
+# End-to-end happy path for Dexaflow Lite: setup (as the installer runs it) →
 # control plane with REAL auth → admin login. Asserts the login the wizard
 # provisions actually works, and that a wrong password is rejected.
 #
@@ -32,7 +32,7 @@ export PATH="$HOME_DIR/bin:$PATH"
 echo "==> resetting the leoflow_dev database (migrated, empty)"
 "$HOME_DIR/leoflow" db reset --yes >/dev/null
 
-echo "==> leoflow setup (installer path) — generates the admin, prints the password once"
+echo "==> dexaflow setup (installer path) — generates the admin, prints the password once"
 SETUP_OUT="$(HOME="$HOME_DIR" "$HOME_DIR/leoflow" setup --workspace "$HOME_DIR/ws" </dev/null 2>&1)"
 PW="$(printf '%s\n' "$SETUP_OUT" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
 HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"

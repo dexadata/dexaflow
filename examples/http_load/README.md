@@ -28,7 +28,7 @@ example also runs in a quick demo on a developer machine.
 ### 1. Spin up an echo server
 
 ```sh
-docker run --rm -d --name leoflow-httpbin \
+docker run --rm -d --name dexaflow-httpbin \
   -p 58080:8080 \
   mccutchen/go-httpbin
 ```
@@ -58,7 +58,7 @@ Save. The password and the Extra blob are encrypted at rest.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `http_load` → **Trigger DAG**.
@@ -71,7 +71,7 @@ log prints `call: echo OK (N fields)`.
 To inspect raw traffic:
 
 ```sh
-docker logs leoflow-httpbin | tail
+docker logs dexaflow-httpbin | tail
 ```
 
 ## Notes that make this connector different

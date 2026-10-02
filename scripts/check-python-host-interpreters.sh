@@ -3,7 +3,7 @@
 # cover, and they are NOT the same fact as it (#1031, #1036).
 #
 # check-python-runtime-matrix.sh reconciles the copies of one list: the Python
-# lines Leoflow publishes a task base image for. These two answer a different
+# lines Dexaflow publishes a task base image for. These two answer a different
 # question — which interpreter runs on the DEVELOPER's host, in Lite:
 #
 #   internal/setup/python.go   the managed CPython we download when the host has none
@@ -13,7 +13,7 @@
 #
 #   1. The managed CPython's minor is a MEMBER of the published matrix. If it is
 #      not, a Lite user who let us install their interpreter develops on a minor
-#      we publish no base image for, and finds out at `leoflow compile` when the
+#      we publish no base image for, and finds out at `dexaflow compile` when the
 #      pull 404s — inside their build, naming an image they never typed.
 #   2. Every probe candidate is either in the matrix, or carries an explicit
 #      `// lite-only` marker on its line — an author assertion nothing else
@@ -92,7 +92,7 @@ if managed_minor not in published:
 		f"    managed CPython: {m.group(1)}.{m.group(2)} (minor {managed_minor})\n"
 		f"    published matrix: {', '.join(published)}\n"
 		"    A Lite user who let us install their interpreter would develop on a minor we\n"
-		"    publish no task base image for. They find out at `leoflow compile`, when the pull\n"
+		"    publish no task base image for. They find out at `dexaflow compile`, when the pull\n"
 		"    404s inside their own build, naming an image they never typed."
 	)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # End-to-end test for dbt MANAGED CONNECTIONS on a real Kubernetes cluster (k3d),
-# ADR 0043 #2. A dbt task gets its warehouse credentials from a Leoflow managed
+# ADR 0043 #2. A dbt task gets its warehouse credentials from a Dexaflow managed
 # connection (not a baked profiles.yml): the runtime generates profiles.yml in the
 # pod from the connection delivered over the agent seam.
 #

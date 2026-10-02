@@ -48,16 +48,16 @@ func TestIndexDefaultsEmptyBasePathToRoot(t *testing.T) {
 
 // TestIndexRewritesTitleToInstanceName covers #D15: the embedded SPA's
 // <title>Airflow</title> is rewritten to the configured instance name so the
-// browser tab brands as Leoflow, not as Airflow. Empty instance name falls
-// back to "Leoflow" (matching the default Airflow instance_name behavior).
+// browser tab brands as Dexaflow, not as Airflow. Empty instance name falls
+// back to "Dexaflow" (matching the default Airflow instance_name behavior).
 func TestIndexRewritesTitleToInstanceName(t *testing.T) {
 	cases := []struct {
 		name     string
 		instance string
 		wantTag  string
 	}{
-		{"default falls back to Leoflow", "", "<title>Leoflow</title>"},
-		{"custom Lite name", "Leoflow Lite", "<title>Leoflow Lite</title>"},
+		{"default falls back to Dexaflow", "", "<title>Dexaflow</title>"},
+		{"custom Lite name", "Dexaflow Lite", "<title>Dexaflow Lite</title>"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestIndexRewritesTitleToInstanceName(t *testing.T) {
 // TestIndexInjectsClipboardFallback covers #242: the Airflow SPA's copy
 // buttons (logs, run IDs, etc.) call navigator.clipboard.writeText, which
 // throws on plain http:// LAN origins because the Clipboard API requires a
-// secure context. The Leoflow shell injects a tiny polyfill so the copy
+// secure context. The Dexaflow shell injects a tiny polyfill so the copy
 // button still works when users access Lite over `http://<host-lan-ip>:8080`.
 // The polyfill is a no-op when the native API is available, so it is always
 // injected.
@@ -267,5 +267,58 @@ func TestIndexInjectsEditorButtonOnlyWhenEnabled(t *testing.T) {
 	off.Index(rec2, "/")
 	if strings.Contains(rec2.Body.String(), "leoflow-ide-button") {
 		t.Error("editor disabled must NOT inject the IDE button")
+	}
+}
+
+// TestIndexInjectsHomeLinkOnlyWhenSet covers #1290: an operator who serves
+// Dexaflow inside a larger platform can give users a persistent way back. The
+// link opens in the same tab (it is the way back, not a side trip) and is off
+// unless configured.
+func TestIndexInjectsHomeLinkOnlyWhenSet(t *testing.T) {
+	fsys := fstest.MapFS{"index.html": {Data: []byte(`<body><div id="root"></div></body>`)}}
+
+	on := NewFromFS(fsys, "v")
+	on.SetHomeLink("Back to portal", "https://portal.example.com/team")
+	rec := httptest.NewRecorder()
+	on.Index(rec, "/")
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="leoflow-home-link"`) || !strings.Contains(body, `href="https://portal.example.com/team"`) {
+		t.Fatalf("home link set: want an anchor to the configured URL, got:\n%s", body)
+	}
+	if !strings.Contains(body, ">Back to portal<") {
+		t.Error("home link must show the configured label")
+	}
+	if strings.Contains(body, `target="_blank"`) {
+		t.Error("home link must open in the same tab")
+	}
+	if strings.Index(body, "leoflow-home-link") > strings.Index(body, "</body>") {
+		t.Error("home link should be injected before </body>")
+	}
+
+	off := NewFromFS(fsys, "v")
+	rec2 := httptest.NewRecorder()
+	off.Index(rec2, "/")
+	if strings.Contains(rec2.Body.String(), "leoflow-home-link") {
+		t.Error("no home link configured must inject nothing")
+	}
+}
+
+// TestIndexHomeLinkEscapesItsValues locks that config values reach the page as
+// text, never as markup: a label or URL carrying quotes or tags must not break
+// out of the attribute or the element.
+func TestIndexHomeLinkEscapesItsValues(t *testing.T) {
+	fsys := fstest.MapFS{"index.html": {Data: []byte(`<body></body>`)}}
+	s := NewFromFS(fsys, "v")
+	s.SetHomeLink(`<script>alert(1)</script>`, `https://portal.example.com/?a="><script>x</script>`)
+	rec := httptest.NewRecorder()
+
+	s.Index(rec, "/")
+
+	body := rec.Body.String()
+	if strings.Contains(body, "<script>alert(1)") || strings.Contains(body, `"><script>x`) {
+		t.Errorf("home link values were not escaped:\n%s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("label should be HTML-escaped text, got:\n%s", body)
 	}
 }

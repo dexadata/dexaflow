@@ -23,7 +23,7 @@ tested so far. The list below grows as we land them.
 
 A Connection only carries credentials. To *use* a connector — whether through
 its Airflow hook (`PostgresHook`) or a raw driver (`psycopg2`) — the matching
-Python package has to be in the image / venv. Leoflow gives you two ways to
+Python package has to be in the image / venv. Dexaflow gives you two ways to
 declare that in `dexaflow.yaml`, and you pick whichever fits:
 
 {{< tabpane text=true >}}
@@ -62,7 +62,7 @@ compile** with the offender, the known list, and a pointer to `dependencies:`,
 so a typo never slips through to a runtime `ModuleNotFoundError` in the task pod.
 
 {{% alert title="Import provider hooks inside the task function" color="success" %}}
-Leoflow parses your DAG without providers installed (the parser only needs the
+Dexaflow parses your DAG without providers installed (the parser only needs the
 DAG's *shape*). So put hook/operator imports **inside** the `@task` body, not at
 the module top level:
 
@@ -223,16 +223,16 @@ share a provider package (e.g. `redshift`/`athena`/`emr` →
 
 | Connector | `conn_type` | Provider package | Auth shape | Local tier | Example |
 |---|---|---|---|---|---|
-| [postgres](/connections/postgres/) | `postgres` | `apache-airflow-providers-postgres` | host + login/password | local (Docker) | [postgres_load](https://github.com/dexadata/leoflow/tree/main/examples/postgres_load) |
-| [mysql](/connections/mysql/) | `mysql` / `mariadb` | `apache-airflow-providers-mysql` | host + login/password | local (Docker) | [mysql_load](https://github.com/dexadata/leoflow/tree/main/examples/mysql_load) |
-| [mssql](/connections/mssql/) | `mssql` | `apache-airflow-providers-microsoft-mssql` | host + login/password | local (Docker) | [mssql_load](https://github.com/dexadata/leoflow/tree/main/examples/mssql_load) |
-| [sqlite](/connections/sqlite/) | `sqlite` | `apache-airflow-providers-sqlite` | file path | local (tier 1) | [sqlite_load](https://github.com/dexadata/leoflow/tree/main/examples/sqlite_load) |
-| [redis](/connections/redis/) | `redis` | `apache-airflow-providers-redis` | host + password | local (tier 1) | [redis_load](https://github.com/dexadata/leoflow/tree/main/examples/redis_load) |
-| [http](/connections/http/) | `http` / `https` | `apache-airflow-providers-http` | base URL + Extra | local (tier 1) | [http_load](https://github.com/dexadata/leoflow/tree/main/examples/http_load) |
+| [postgres](/connections/postgres/) | `postgres` | `apache-airflow-providers-postgres` | host + login/password | local (Docker) | [postgres_load](https://github.com/dexadata/dexaflow/tree/main/examples/postgres_load) |
+| [mysql](/connections/mysql/) | `mysql` / `mariadb` | `apache-airflow-providers-mysql` | host + login/password | local (Docker) | [mysql_load](https://github.com/dexadata/dexaflow/tree/main/examples/mysql_load) |
+| [mssql](/connections/mssql/) | `mssql` | `apache-airflow-providers-microsoft-mssql` | host + login/password | local (Docker) | [mssql_load](https://github.com/dexadata/dexaflow/tree/main/examples/mssql_load) |
+| [sqlite](/connections/sqlite/) | `sqlite` | `apache-airflow-providers-sqlite` | file path | local (tier 1) | [sqlite_load](https://github.com/dexadata/dexaflow/tree/main/examples/sqlite_load) |
+| [redis](/connections/redis/) | `redis` | `apache-airflow-providers-redis` | host + password | local (tier 1) | [redis_load](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load) |
+| [http](/connections/http/) | `http` / `https` | `apache-airflow-providers-http` | base URL + Extra | local (tier 1) | [http_load](https://github.com/dexadata/dexaflow/tree/main/examples/http_load) |
 | [oracle](/connections/oracle/) | `oracle` | `apache-airflow-providers-oracle` | host + login/password (service in Schema) | doc-only | recipe |
 | [mongo](/connections/mongo/) | `mongo` | `apache-airflow-providers-mongo` | host + login/password (db in Schema) | doc-only | recipe |
 | [file-transfer](/connections/file-transfer/) | `ssh` / `sftp` / `ftp` | `apache-airflow-providers-ssh` / `-sftp` / `-ftp` | host + login/password (key in Extra) | doc-only | recipe |
-| [google_cloud_platform](/connections/google_cloud_platform/) | `google_cloud_platform` | `apache-airflow-providers-google` | keyless (Workload Identity / ADC) or key in Extra | doc-only | [gcp_gcs_load](https://github.com/dexadata/leoflow/tree/main/examples/gcp_gcs_load) |
+| [google_cloud_platform](/connections/google_cloud_platform/) | `google_cloud_platform` | `apache-airflow-providers-google` | keyless (Workload Identity / ADC) or key in Extra | doc-only | [gcp_gcs_load](https://github.com/dexadata/dexaflow/tree/main/examples/gcp_gcs_load) |
 | [snowflake](/connections/snowflake/) | `snowflake` | `apache-airflow-providers-snowflake` | login/password + account in Extra (or key-pair) | doc-only | recipe |
 | [aws](/connections/aws/) | `aws` | `apache-airflow-providers-amazon` | keyless (IAM role) or access key | doc-only | recipe |
 | [slack](/connections/slack/) | `slack` / `slackwebhook` | `apache-airflow-providers-slack` | token in password | doc-only | recipe |

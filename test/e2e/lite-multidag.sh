@@ -8,7 +8,7 @@
 # because the subprocess executor's materialize step saw an empty Source.
 #
 # This script is the regression guard: it builds the CLI, scaffolds a subdir
-# DAG project, runs `leoflow compile`, and asserts the resulting dag.json
+# DAG project, runs `dexaflow compile`, and asserts the resulting dag.json
 # carries the source verbatim. No Postgres, no Redis, no agent — just the
 # parser→spec contract that multi-DAG depends on. Fast (~3-5 s in CI), so it
 # runs on every PR.
@@ -50,7 +50,7 @@ EOF
 echo "==> compiling the subdir DAG"
 OUT="$HOME_DIR/hello.json"
 "$HOME_DIR/leoflow" compile "$WS/hello" --output "$OUT" >"$HOME_DIR/compile.log" 2>&1 \
-  || fail "leoflow compile failed:\n$(cat "$HOME_DIR/compile.log")"
+  || fail "dexaflow compile failed:\n$(cat "$HOME_DIR/compile.log")"
 [ -s "$OUT" ] || fail "compile produced an empty dag.json"
 pass "compile produced a non-empty dag.json"
 

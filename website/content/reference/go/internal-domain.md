@@ -8,7 +8,7 @@ weight: 1
 import "github.com/dexadata/dexaflow/internal/domain"
 ```
 
-Package domain defines the core Leoflow types \(DAG, Task, project config\) and validates them against the canonical JSON Schemas in docs/api.
+Package domain defines the core Dexaflow types \(DAG, Task, project config\) and validates them against the canonical JSON Schemas in docs/api.
 
 ## Index
 
@@ -115,7 +115,7 @@ var ErrInvalidRunID = errors.New("invalid run_id")
 var ErrNotFound = errors.New("resource not found")
 ```
 
-<a name="ErrUnknownAlertPlaceholder"></a>ErrUnknownAlertPlaceholder reports an alert message template referencing a substitution Leoflow does not perform.
+<a name="ErrUnknownAlertPlaceholder"></a>ErrUnknownAlertPlaceholder reports an alert message template referencing a substitution Dexaflow does not perform.
 
 ```go
 var ErrUnknownAlertPlaceholder = errors.New("unknown alert placeholder")
@@ -128,7 +128,7 @@ var ErrValidation = errors.New("invalid input")
 ```
 
 <a name="IsCronlessSchedule"></a>
-## func [IsCronlessSchedule](<https://github.com/dexadata/leoflow/blob/main/internal/domain/schedule.go#L19>)
+## func [IsCronlessSchedule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule.go#L19>)
 
 ```go
 func IsCronlessSchedule(expr string) bool
@@ -137,7 +137,7 @@ func IsCronlessSchedule(expr string) bool
 IsCronlessSchedule reports whether expr is empty \(manual\-only\) or a recognized non\-cron Airflow schedule. Such a schedule is valid but is never run on a cron, so callers skip cron handling for it without treating it as an error.
 
 <a name="IsOnceSchedule"></a>
-## func [IsOnceSchedule](<https://github.com/dexadata/leoflow/blob/main/internal/domain/schedule.go#L26>)
+## func [IsOnceSchedule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule.go#L26>)
 
 ```go
 func IsOnceSchedule(expr string) bool
@@ -146,7 +146,7 @@ func IsOnceSchedule(expr string) bool
 IsOnceSchedule reports whether expr is Airflow's "@once" — a DAG that runs exactly one time \(on first scheduler sight\) and never again.
 
 <a name="ValidateRunID"></a>
-## func [ValidateRunID](<https://github.com/dexadata/leoflow/blob/main/internal/domain/identifiers.go#L27>)
+## func [ValidateRunID](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/identifiers.go#L27>)
 
 ```go
 func ValidateRunID(v string) error
@@ -161,7 +161,7 @@ The sink refuses such a value independently; this exists so the request fails as
 Separators are banned, punctuation is not: Airflow\-generated ids embed an RFC3339 timestamp \("manual\_\_2026\-07\-30T12:00:00\+00:00"\), so rejecting ':' or '\+' would reject every run the scheduler creates.
 
 <a name="AlertRule"></a>
-## type [AlertRule](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L71-L80>)
+## type [AlertRule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L71-L80>)
 
 AlertRule is one channel to notify on an alert event. The endpoint and its secret always come from a managed connection \(Conn\), never a literal URL or token in leoflow.yaml — that keeps credentials out of the compiled dag.json and mirrors the env\-ref secret discipline.
 
@@ -170,7 +170,7 @@ type AlertRule struct {
     // Type is the channel: "slack" (Slack incoming webhook) or "webhook" (a generic
     // HTTP POST, e.g. PagerDuty/Opsgenie/Teams). Validated by the schema enum.
     Type string `json:"type" yaml:"type"`
-    // Conn is the managed Leoflow connection id holding the endpoint (and secret).
+    // Conn is the managed Dexaflow connection id holding the endpoint (and secret).
     Conn string `json:"conn" yaml:"conn"`
     // Message is the optional notification body; it is templated at fire time with
     // run context ({{dag}}, {{run_id}}, {{task}}, …). Empty uses a default summary.
@@ -179,7 +179,7 @@ type AlertRule struct {
 ```
 
 <a name="AlertsConfig"></a>
-## type [AlertsConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L62-L65>)
+## type [AlertsConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L62-L65>)
 
 AlertsConfig groups alert rules by the lifecycle event that fires them. Only on\_failure is wired today \(\#424\); on\_success/on\_retry are reserved for a later increment so the surface can grow without a breaking change.
 
@@ -191,7 +191,7 @@ type AlertsConfig struct {
 ```
 
 <a name="AuditLogEntry"></a>
-## type [AuditLogEntry](<https://github.com/dexadata/leoflow/blob/main/internal/domain/audit.go#L7-L15>)
+## type [AuditLogEntry](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/audit.go#L7-L15>)
 
 AuditLogEntry is one recorded action against a resource — the source for the UI's Audit Log table. ResourceID carries the DAG id for dag\-scoped events.
 
@@ -208,7 +208,7 @@ type AuditLogEntry struct {
 ```
 
 <a name="BuildConfig"></a>
-## type [BuildConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L126-L131>)
+## type [BuildConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L126-L131>)
 
 BuildConfig controls how the container image is built from the project.
 
@@ -222,7 +222,7 @@ type BuildConfig struct {
 ```
 
 <a name="ConfigDefaults"></a>
-## type [ConfigDefaults](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L143-L153>)
+## type [ConfigDefaults](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L143-L153>)
 
 ConfigDefaults holds task defaults applied to every task generated from the project at compile time.
 
@@ -241,7 +241,7 @@ type ConfigDefaults struct {
 ```
 
 <a name="Connection"></a>
-## type [Connection](<https://github.com/dexadata/leoflow/blob/main/internal/domain/connection.go#L6-L16>)
+## type [Connection](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/connection.go#L6-L16>)
 
 Connection is an Airflow\-style connection: credentials/endpoints for operators, managed from the Admin UI. Password and Extra are encrypted at rest \(ADR 0019\); Password is write\-only and never returned by the API.
 
@@ -260,7 +260,7 @@ type Connection struct {
 ```
 
 <a name="ConnectionPatch"></a>
-## type [ConnectionPatch](<https://github.com/dexadata/leoflow/blob/main/internal/domain/connection.go#L31-L41>)
+## type [ConnectionPatch](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/connection.go#L31-L41>)
 
 ConnectionPatch is a tri\-state write to a Connection \(\#887\). Each nullable field is one of three states the write path must keep distinct:
 
@@ -285,7 +285,7 @@ type ConnectionPatch struct {
 ```
 
 <a name="DAG"></a>
-## type [DAG](<https://github.com/dexadata/leoflow/blob/main/internal/domain/run.go#L10-L23>)
+## type [DAG](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L10-L23>)
 
 DAG is a registered DAG with its scheduling metadata \(distinct from DAGSpec, which is the compiled artifact\).
 
@@ -307,7 +307,7 @@ type DAG struct {
 ```
 
 <a name="DAGSpec"></a>
-## type [DAGSpec](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L61-L128>)
+## type [DAGSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L61-L128>)
 
 DAGSpec is the canonical serialized representation of a DAG consumed by the control plane. It mirrors docs/api/dag\-schema.json.
 
@@ -383,7 +383,7 @@ type DAGSpec struct {
 ```
 
 <a name="DAGSpec.CanonicalHash"></a>
-### func \(\*DAGSpec\) [CanonicalHash](<https://github.com/dexadata/leoflow/blob/main/internal/domain/hash.go#L13>)
+### func \(\*DAGSpec\) [CanonicalHash](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/hash.go#L13>)
 
 ```go
 func (d *DAGSpec) CanonicalHash() (string, error)
@@ -392,7 +392,7 @@ func (d *DAGSpec) CanonicalHash() (string, error)
 CanonicalHash returns the SHA\-256 of the spec's canonical JSON encoding. Go's struct marshaling is deterministic \(fixed field order, sorted map keys\), so identical specs hash identically — used to deduplicate DAG versions.
 
 <a name="DAGSpec.Validate"></a>
-### func \(\*DAGSpec\) [Validate](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L287>)
+### func \(\*DAGSpec\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L287>)
 
 ```go
 func (d *DAGSpec) Validate() error
@@ -401,7 +401,7 @@ func (d *DAGSpec) Validate() error
 Validate checks the DAGSpec against the canonical dag.json schema and returns a joined error describing every schema violation, or nil when valid.
 
 <a name="DAGSpec.ValidateSchedule"></a>
-### func \(\*DAGSpec\) [ValidateSchedule](<https://github.com/dexadata/leoflow/blob/main/internal/domain/schedule.go#L38>)
+### func \(\*DAGSpec\) [ValidateSchedule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule.go#L38>)
 
 ```go
 func (d *DAGSpec) ValidateSchedule() error
@@ -410,7 +410,7 @@ func (d *DAGSpec) ValidateSchedule() error
 ValidateSchedule checks that a DAG's cron schedule is parseable. An empty or absent schedule \(manual\-only\) and the recognized non\-cron Airflow schedules \(@once, @continuous\) are valid. A malformed cron expression — a 4\-field cron, a typo — is rejected here so it fails loudly at compile time; otherwise the scheduler silently can't parse it and the DAG simply never runs, with no error surfaced anywhere \(the worst failure mode\). The parser is robfig/cron's ParseStandard, the same one the scheduler uses, so what validates here is exactly what the scheduler can run \(see scheduler/cron.go\).
 
 <a name="DagRun"></a>
-## type [DagRun](<https://github.com/dexadata/leoflow/blob/main/internal/domain/run.go#L38-L52>)
+## type [DagRun](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L38-L52>)
 
 DagRun is an execution of a DAG, identified by dag\_id \+ run\_id.
 
@@ -433,7 +433,7 @@ type DagRun struct {
 ```
 
 <a name="DagRunState"></a>
-## type [DagRunState](<https://github.com/dexadata/leoflow/blob/main/internal/domain/state.go#L46>)
+## type [DagRunState](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/state.go#L46>)
 
 DagRunState is the lifecycle state of a DagRun. The values mirror the dag\_run\_state enum in the database \(migration 003\).
 
@@ -457,7 +457,7 @@ const (
 ```
 
 <a name="DagRunState.IsTerminal"></a>
-### func \(DagRunState\) [IsTerminal](<https://github.com/dexadata/leoflow/blob/main/internal/domain/state.go#L61>)
+### func \(DagRunState\) [IsTerminal](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/state.go#L61>)
 
 ```go
 func (s DagRunState) IsTerminal() bool
@@ -466,7 +466,7 @@ func (s DagRunState) IsTerminal() bool
 IsTerminal reports whether the dag run state is final.
 
 <a name="DagStats"></a>
-## type [DagStats](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dashboard.go#L5-L10>)
+## type [DagStats](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dashboard.go#L5-L10>)
 
 DagStats holds the home dashboard's DAG counters: the number of active DAGs and how many have a latest run in each state.
 
@@ -480,7 +480,7 @@ type DagStats struct {
 ```
 
 <a name="DagVersion"></a>
-## type [DagVersion](<https://github.com/dexadata/leoflow/blob/main/internal/domain/run.go#L27-L35>)
+## type [DagVersion](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L27-L35>)
 
 DagVersion is a registered version of a DAG. VersionNumber is the 1\-based ordinal the UI uses \(the stored version label is free\-form\).
 
@@ -497,9 +497,9 @@ type DagVersion struct {
 ```
 
 <a name="DbtConfig"></a>
-## type [DbtConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L85-L105>)
+## type [DbtConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L85-L105>)
 
-DbtConfig declares a dbt project as the DAG source \(ADR 0042\). The compiler reads the project's manifest.json and renders one task per dbt node \(or per group\), so a dbt project becomes a Leoflow DAG with no Cosmos or Airflow.
+DbtConfig declares a dbt project as the DAG source \(ADR 0042\). The compiler reads the project's manifest.json and renders one task per dbt node \(or per group\), so a dbt project becomes a Dexaflow DAG with no Cosmos or Airflow.
 
 ```go
 type DbtConfig struct {
@@ -515,7 +515,7 @@ type DbtConfig struct {
     // "0 6 * * *"). dbt carries no schedule, so it is declared here; empty means
     // an unscheduled DAG (run on demand).
     Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
-    // Connection is a managed Leoflow connection id (ADR 0043 #2). When set, the
+    // Connection is a managed Dexaflow connection id (ADR 0043 #2). When set, the
     // dbt task generates its profiles.yml from the connection delivered to the pod
     // instead of a profiles.yml baked into the image — use one or the other.
     Connection string `json:"connection,omitempty" yaml:"connection,omitempty"`
@@ -526,7 +526,7 @@ type DbtConfig struct {
 ```
 
 <a name="DefaultArgs"></a>
-## type [DefaultArgs](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L153-L157>)
+## type [DefaultArgs](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L153-L157>)
 
 DefaultArgs holds retry and timeout defaults applied to every task in a DAG.
 
@@ -539,7 +539,7 @@ type DefaultArgs struct {
 ```
 
 <a name="DefaultResources"></a>
-## type [DefaultResources](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L156-L159>)
+## type [DefaultResources](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L156-L159>)
 
 DefaultResources expresses default CPU and memory for generated tasks.
 
@@ -551,7 +551,7 @@ type DefaultResources struct {
 ```
 
 <a name="DefaultResources.AsResources"></a>
-### func \(\*DefaultResources\) [AsResources](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L171>)
+### func \(\*DefaultResources\) [AsResources](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L171>)
 
 ```go
 func (d *DefaultResources) AsResources() *Resources
@@ -562,7 +562,7 @@ AsResources expands the simplified default cpu/memory into a full Resources with
 Guaranteed QoS is reached only when BOTH cpu and memory are set \(and thus equal across requests and limits\). A partial default — only cpu, or only memory — leaves the other dimension unset, so Kubernetes classifies the pod as Burstable, not Guaranteed.
 
 <a name="Execution"></a>
-## type [Execution](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L237-L274>)
+## type [Execution](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L237-L274>)
 
 Execution carries executor\-specific placement and scheduling hints for a task. Every field beyond NodeSelector/Tolerations/ServiceAccount is applied only by the Kubernetes executor; Lite \(subprocess, no pods\) ignores them.
 
@@ -575,7 +575,7 @@ type Execution struct {
 
     // PriorityClassName ranks this task pod against its neighbors on a shared
     // cluster; the named PriorityClass is a platform-owned, cluster-scoped object,
-    // so under genuine contention the scheduler preempts Leoflow's ETL rather than
+    // so under genuine contention the scheduler preempts Dexaflow's ETL rather than
     // production services (ADR 0054).
     PriorityClassName string `json:"priority_class_name,omitempty" yaml:"priority_class_name,omitempty"`
     // TerminationGracePeriodSeconds is how long the pod is given to shut down after
@@ -599,7 +599,7 @@ type Execution struct {
     // one by naming it in Resources.Claims.
     ResourceClaims []map[string]any `json:"resource_claims,omitempty" yaml:"resource_claims,omitempty"`
     // Labels and Annotations are operator-declared pod metadata merged onto the task
-    // pod. Leoflow's own leoflow.io/* labels and the task-instance-id annotation win
+    // pod. Dexaflow's own leoflow.io/* labels and the task-instance-id annotation win
     // any key collision (the reconciler and terminate path select on them), so a DAG
     // cannot shadow them.
     Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
@@ -608,7 +608,7 @@ type Execution struct {
 ```
 
 <a name="ExecutionMode"></a>
-## type [ExecutionMode](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L34>)
+## type [ExecutionMode](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L34>)
 
 ExecutionMode selects how a task runs. Every task runs inside a worker pod; the field is retained for forward compatibility and defaults to pod.
 
@@ -626,9 +626,9 @@ const (
 ```
 
 <a name="HistoricalMetrics"></a>
-## type [HistoricalMetrics](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dashboard.go#L14-L17>)
+## type [HistoricalMetrics](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dashboard.go#L14-L17>)
 
-HistoricalMetrics holds run\- and task\-instance counts grouped by state over a time window, keyed by the Leoflow state name \(e.g. "success", "up\_for\_retry"\).
+HistoricalMetrics holds run\- and task\-instance counts grouped by state over a time window, keyed by the Dexaflow state name \(e.g. "success", "up\_for\_retry"\).
 
 ```go
 type HistoricalMetrics struct {
@@ -638,7 +638,7 @@ type HistoricalMetrics struct {
 ```
 
 <a name="ImportError"></a>
-## type [ImportError](<https://github.com/dexadata/leoflow/blob/main/internal/domain/import_error.go#L9-L20>)
+## type [ImportError](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/import_error.go#L9-L20>)
 
 ImportError is a DAG parse/compile failure surfaced as Airflow's "Import Errors" banner on the home dashboard. It is keyed by Filename; a successful re\-import of the same file clears it. The \`leoflow dev\` watcher writes these on a failed compile and removes them on the next good compile.
 
@@ -658,7 +658,7 @@ type ImportError struct {
 ```
 
 <a name="LeoflowConfig"></a>
-## type [LeoflowConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L13-L57>)
+## type [LeoflowConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L13-L57>)
 
 LeoflowConfig is the developer\-facing project configuration parsed from leoflow.yaml. It mirrors docs/api/leoflow\-yaml\-schema.json and is consumed by \`leoflow compile\` to build an image and emit a DAGSpec.
 
@@ -687,11 +687,11 @@ type LeoflowConfig struct {
     Registry       *RegistryConfig `json:"registry,omitempty" yaml:"registry,omitempty"`
     Defaults       *ConfigDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
     // Staging requests the opt-in per-DAG-run shared volume (ADR 0022). It is a
-    // Leoflow deployment concern (not an Airflow DAG attribute), so it lives in
+    // Dexaflow deployment concern (not an Airflow DAG attribute), so it lives in
     // leoflow.yaml and the compiler overlays it onto the produced dag.json.
     Staging *StagingConfig `json:"staging,omitempty" yaml:"staging,omitempty"`
     // Dbt declares a dbt project as the DAG source (ADR 0042). Its presence routes
-    // `leoflow compile` to the dbt renderer instead of the Python parser.
+    // `dexaflow compile` to the dbt renderer instead of the Python parser.
     Dbt *DbtConfig `json:"dbt,omitempty" yaml:"dbt,omitempty"`
     // DbtGroups configures dbt projects embedded as task groups in a dag.py (ADR
     // 0043), keyed by the name passed to `dbt_group(name)`. Schedule does not apply
@@ -703,7 +703,7 @@ type LeoflowConfig struct {
     Tasks map[string]*TaskConfig `json:"tasks,omitempty" yaml:"tasks,omitempty"`
     // Alerts declares native on-failure alerting (#424): the scheduler fires the
     // listed rules when a DagRun reaches the terminal failed state, in Go, with no
-    // task pod and no Python in the hot path. A Leoflow deployment concern (not an
+    // task pod and no Python in the hot path. A Dexaflow deployment concern (not an
     // Airflow DAG attribute), so it lives in leoflow.yaml and the compiler overlays
     // it onto the produced dag.json.
     Alerts *AlertsConfig `json:"alerts,omitempty" yaml:"alerts,omitempty"`
@@ -711,7 +711,7 @@ type LeoflowConfig struct {
 ```
 
 <a name="LeoflowConfig.ApplyDefaults"></a>
-### func \(\*LeoflowConfig\) [ApplyDefaults](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L191>)
+### func \(\*LeoflowConfig\) [ApplyDefaults](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L191>)
 
 ```go
 func (c *LeoflowConfig) ApplyDefaults()
@@ -722,7 +722,7 @@ ApplyDefaults fills zero\-valued fields with the defaults declared in the canoni
 Centralizing defaults here \(instead of scattered \`if x == ""\` fallbacks at each consumer\) is what lets the multi\-DAG workspace synthesize a working config when a subdir ships no leoflow.yaml, while keeping the resolved values debuggable from one place.
 
 <a name="LeoflowConfig.EffectiveDependencies"></a>
-### func \(\*LeoflowConfig\) [EffectiveDependencies](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L237>)
+### func \(\*LeoflowConfig\) [EffectiveDependencies](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L237>)
 
 ```go
 func (c *LeoflowConfig) EffectiveDependencies() ([]string, error)
@@ -733,7 +733,7 @@ EffectiveDependencies resolves the full pip install list the image/venv needs: t
 An unknown connector name is a compile error, not a silent drop: a typo that slipped through would otherwise surface as a ModuleNotFoundError inside the task pod, far from its cause. The message names the offender, lists the known types, and points at the dependencies: escape hatch.
 
 <a name="LeoflowConfig.Validate"></a>
-### func \(\*LeoflowConfig\) [Validate](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L258>)
+### func \(\*LeoflowConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L258>)
 
 ```go
 func (c *LeoflowConfig) Validate() error
@@ -742,7 +742,7 @@ func (c *LeoflowConfig) Validate() error
 Validate checks the LeoflowConfig against the canonical leoflow.yaml schema and returns a joined error describing every violation, or nil when valid.
 
 <a name="ParamSpec"></a>
-## type [ParamSpec](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L135-L141>)
+## type [ParamSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L135-L141>)
 
 ParamSpec is one author\-declared DAG\-run parameter: a default value and the JSON Schema its trigger\-time conf value is validated against. Both are carried as raw JSON so an arbitrary default and an arbitrary schema round\-trip verbatim. Schema is \{\} \(or absent\) when the author declared a bare default with no constraints, in which case any conf value for that key is accepted.
 
@@ -757,7 +757,7 @@ type ParamSpec struct {
 ```
 
 <a name="Pool"></a>
-## type [Pool](<https://github.com/dexadata/leoflow/blob/main/internal/domain/pool.go#L8-L13>)
+## type [Pool](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/pool.go#L8-L13>)
 
 Pool is a named, tenant\-scoped, cross\-DAG task\-concurrency budget \(Airflow's pool\). Slots is the cap: a task in the pool is admitted to \`queued\` only while the pool has a free slot, counting queued\+running task instances across every DAG \(ADR 0053 Stage 3\). IsDefault marks the implicit default\_pool a task with no declared pool falls back to. Pools are a Pro\-only concept.
 
@@ -771,7 +771,7 @@ type Pool struct {
 ```
 
 <a name="PoolUsage"></a>
-## type [PoolUsage](<https://github.com/dexadata/leoflow/blob/main/internal/domain/pool.go#L22-L27>)
+## type [PoolUsage](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/pool.go#L22-L27>)
 
 PoolUsage is a pool's per\-state occupancy, feeding the Airflow PoolResponse slot fields. The slots admission actually spends are queued\+running; scheduled and deferred are reported for the UI but do not hold a slot.
 
@@ -785,7 +785,7 @@ type PoolUsage struct {
 ```
 
 <a name="RegistryConfig"></a>
-## type [RegistryConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L134-L139>)
+## type [RegistryConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L134-L139>)
 
 RegistryConfig describes where the built image is pushed and how it is tagged.
 
@@ -799,7 +799,7 @@ type RegistryConfig struct {
 ```
 
 <a name="ResourceQuantity"></a>
-## type [ResourceQuantity](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L224-L232>)
+## type [ResourceQuantity](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L224-L232>)
 
 ResourceQuantity expresses CPU, memory, and ephemeral\-storage in Kubernetes notation.
 
@@ -816,7 +816,7 @@ type ResourceQuantity struct {
 ```
 
 <a name="Resources"></a>
-## type [Resources](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L210-L220>)
+## type [Resources](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L210-L220>)
 
 Resources holds Kubernetes\-style resource requests and limits for a task.
 
@@ -835,7 +835,7 @@ type Resources struct {
 ```
 
 <a name="StagingConfig"></a>
-## type [StagingConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L146-L150>)
+## type [StagingConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L146-L150>)
 
 StagingConfig is the opt\-in per\-DAG\-run shared staging volume \(ADR 0022\). Size is a Kubernetes quantity \(e.g. "5Gi"\); StorageClass empty uses the cluster default RWX class.
 
@@ -848,7 +848,7 @@ type StagingConfig struct {
 ```
 
 <a name="StagingVolumeState"></a>
-## type [StagingVolumeState](<https://github.com/dexadata/leoflow/blob/main/internal/domain/staging_volume.go#L9-L21>)
+## type [StagingVolumeState](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/staging_volume.go#L9-L21>)
 
 StagingVolumeState is a tracked per\-run staging volume joined with its DAG run's state, used by the GC to decide deletion \(ADR 0022\). RunState is empty when the run row is gone \(orphan\); RunEndedAt is the run's terminal time, used for the post\-terminal TTL on failed runs.
 
@@ -869,7 +869,7 @@ type StagingVolumeState struct {
 ```
 
 <a name="TaskConfig"></a>
-## type [TaskConfig](<https://github.com/dexadata/leoflow/blob/main/internal/domain/config.go#L111-L123>)
+## type [TaskConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L111-L123>)
 
 TaskConfig holds the leoflow.yaml per\-task overrides bound by task\_id \(ADR 0023\). Every field is optional; a set field overrides the value compiled from the DAG \(most specific wins: task override \> DAG default\_args\). These are Leoflow deployment concerns, not Airflow operator attributes.
 
@@ -890,7 +890,7 @@ type TaskConfig struct {
 ```
 
 <a name="TaskInstance"></a>
-## type [TaskInstance](<https://github.com/dexadata/leoflow/blob/main/internal/domain/run.go#L55-L87>)
+## type [TaskInstance](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L55-L87>)
 
 TaskInstance is an execution of a task within a DagRun.
 
@@ -931,7 +931,7 @@ type TaskInstance struct {
 ```
 
 <a name="TaskSpec"></a>
-## type [TaskSpec](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L160-L207>)
+## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L160-L207>)
 
 TaskSpec describes a single unit of work within a DAG.
 
@@ -987,7 +987,7 @@ type TaskSpec struct {
 ```
 
 <a name="TaskSpec.EffectiveExecutionMode"></a>
-### func \(TaskSpec\) [EffectiveExecutionMode](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L278>)
+### func \(TaskSpec\) [EffectiveExecutionMode](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L278>)
 
 ```go
 func (t TaskSpec) EffectiveExecutionMode() ExecutionMode
@@ -996,7 +996,7 @@ func (t TaskSpec) EffectiveExecutionMode() ExecutionMode
 EffectiveExecutionMode returns the task's execution mode, defaulting to pod when unset. Every task runs in a worker pod.
 
 <a name="TaskState"></a>
-## type [TaskState](<https://github.com/dexadata/leoflow/blob/main/internal/domain/state.go#L5>)
+## type [TaskState](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/state.go#L5>)
 
 TaskState is the lifecycle state of a TaskInstance. The values mirror the task\_state enum in the database \(migration 003\).
 
@@ -1034,7 +1034,7 @@ const (
 ```
 
 <a name="TaskState.IsTerminal"></a>
-### func \(TaskState\) [IsTerminal](<https://github.com/dexadata/leoflow/blob/main/internal/domain/state.go#L35>)
+### func \(TaskState\) [IsTerminal](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/state.go#L35>)
 
 ```go
 func (s TaskState) IsTerminal() bool
@@ -1043,7 +1043,7 @@ func (s TaskState) IsTerminal() bool
 IsTerminal reports whether the task state is final \(no further automatic transitions occur from it\).
 
 <a name="TaskType"></a>
-## type [TaskType](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L13>)
+## type [TaskType](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L13>)
 
 TaskType enumerates the kinds of work a task can perform.
 
@@ -1072,7 +1072,7 @@ const (
 ```
 
 <a name="TriggerRule"></a>
-## type [TriggerRule](<https://github.com/dexadata/leoflow/blob/main/internal/domain/dag.go#L43>)
+## type [TriggerRule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L43>)
 
 TriggerRule decides whether a task runs based on its upstreams' states.
 
@@ -1098,7 +1098,7 @@ const (
 ```
 
 <a name="User"></a>
-## type [User](<https://github.com/dexadata/leoflow/blob/main/internal/domain/user.go#L10-L16>)
+## type [User](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/user.go#L10-L16>)
 
 User is a control\-plane account as returned by the admin user\-management API. It never carries the password or its hash — those are write\-only. Roles is the full set of role names the user holds: the list path aggregates every role grant, and the create path echoes back the roles it granted \(empty when none were requested\).
 
@@ -1113,7 +1113,7 @@ type User struct {
 ```
 
 <a name="Variable"></a>
-## type [Variable](<https://github.com/dexadata/leoflow/blob/main/internal/domain/variable.go#L6-L10>)
+## type [Variable](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/variable.go#L6-L10>)
 
 Variable is a tenant\-scoped key/value setting consumed by DAGs and managed from the Admin UI. Value is stored as\-is \(plaintext for the MVP\); the API masks values of secret\-ish keys.
 
@@ -1126,7 +1126,7 @@ type Variable struct {
 ```
 
 <a name="VariablePatch"></a>
-## type [VariablePatch](<https://github.com/dexadata/leoflow/blob/main/internal/domain/variable.go#L18-L22>)
+## type [VariablePatch](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/variable.go#L18-L22>)
 
 VariablePatch is a tri\-state write to a Variable \(\#887\). Description mirrors domain.ConnectionPatch: nil preserves the stored value \(COALESCE\), non\-nil "" clears, and a value sets. Value is subtly different because the \`value\` column is NOT NULL: the caller resolves an omitted or masked \("\*\*\*" for a sensitive key\) value to the stored value BEFORE building the patch, so Value is expected non\-nil here — a non\-nil "" still clears. Key is always written.
 
@@ -1139,9 +1139,9 @@ type VariablePatch struct {
 ```
 
 <a name="XComEntryMeta"></a>
-## type [XComEntryMeta](<https://github.com/dexadata/leoflow/blob/main/internal/domain/xcom.go#L8-L12>)
+## type [XComEntryMeta](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/xcom.go#L8-L12>)
 
-XComEntryMeta is the metadata for one stored XCom value \(without the value payload\) — the source for a task instance's XCom list. Leoflow XComs are unmapped, so MapIndex is \-1.
+XComEntryMeta is the metadata for one stored XCom value \(without the value payload\) — the source for a task instance's XCom list. Dexaflow XComs are unmapped, so MapIndex is \-1.
 
 ```go
 type XComEntryMeta struct {

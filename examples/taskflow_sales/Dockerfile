@@ -1,4 +1,4 @@
-# Standard DAG image (#318). Built by 'leoflow compile --build' or by hand:
+# Standard DAG image (#318). Built by 'dexaflow compile --build' or by hand:
 #   docker build -t my-registry/taskflow_sales:<tag> .
 # Synthesized by scripts/sync-example-dockerfiles.sh from dexaflow.yaml; do
 # not hand-edit — re-run the script after changing python_version or

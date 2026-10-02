@@ -84,10 +84,10 @@ Postgres advisory lock — and the API serves **active-active** from every repli
 ### One switch: the HA profile
 
 The chart ships a complete overlay,
-[`helm/dexaflow/examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
+[`helm/dexaflow/examples/values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
 
 ```bash
-helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
+helm upgrade --install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -n leoflow -f values-ha.yaml
 ```
 
@@ -185,7 +185,7 @@ from the workers' side:
   backstop. So that worker sits blocked on a stream to a control plane that is
   already gone for minutes, not seconds — bounded, but far longer than the
   prompt failure a killed process produces. Tracked as
-  [#946](https://github.com/dexadata/leoflow/issues/946). The new leader's warm-pool
+  [#946](https://github.com/dexadata/dexaflow/issues/946). The new leader's warm-pool
   reconciler is leader-gated as well, and it counts live warm pods from the
   **apiserver** and busy ones from the durable `warm_worker_id` binding, never
   from the registry, so it rebuilds each active DAG version's

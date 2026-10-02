@@ -10,7 +10,7 @@ description: Vertica connection
 ---
 
 Connect a task to a Vertica analytics database (the `VerticaHook`) over a
-managed Leoflow Connection. The database lives in the Schema field.
+managed Dexaflow Connection. The database lives in the Schema field.
 
 ## Declare the provider
 

@@ -30,7 +30,7 @@ type adminHealthReport struct {
 	healthy    bool
 }
 
-// newAdminHealthCommand builds `leoflow admin health`: a post-deploy smoke test
+// newAdminHealthCommand builds `dexaflow admin health`: a post-deploy smoke test
 // that prints component health, executor capability, and version, and exits
 // non-zero when the control plane is unhealthy.
 func newAdminHealthCommand() *cobra.Command {

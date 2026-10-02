@@ -48,10 +48,10 @@ func writeFileAtomic(path string, data []byte) error {
 	}
 	// Keep the existing file's owner. os.WriteFile rewrote the SAME inode, so
 	// ownership survived; a temp file plus rename creates a NEW one owned by
-	// whoever is running. The installer prints `sudo leoflow lite
+	// whoever is running. The installer prints `sudo dexaflow lite
 	// reset-password` as the password-recovery command, so that path is not
 	// hypothetical: without this the user's ~/.dexaflow/config.yaml becomes
-	// root-owned 0600, their next non-root `leoflow lite` cannot read it, the
+	// root-owned 0600, their next non-root `dexaflow lite` cannot read it, the
 	// control plane silently drops to no-auth, and every connection encrypted
 	// under the per-install key becomes unreadable.
 	//

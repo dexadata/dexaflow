@@ -4,7 +4,7 @@
 
 {{ template "chart.description" . }}
 
-Deploys the Leoflow **control plane** (`leoflow-server`) into Kubernetes for a
+Deploys the Dexaflow **control plane** (`dexaflow-server`) into Kubernetes for a
 production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
 {{ template "chart.homepageLine" . }}
@@ -13,7 +13,7 @@ production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
 | Resource | Purpose |
 |---|---|
-| Deployment | `leoflow-server` (HTTP `8080`, metrics `9090`, agent gRPC `9091`) |
+| Deployment | `dexaflow-server` (HTTP `8080`, metrics `9090`, agent gRPC `9091`) |
 | Service | ClusterIP exposing http / metrics / grpc |
 | ServiceAccount + Role/RoleBinding | lets the control plane create/watch/delete **task pods** and read their logs in `taskNamespace` |
 | ClusterRole + ClusterRoleBinding | **only** when `auth.agentTokenTransport: exchange` — `create` on `tokenreviews` (cluster-scoped API). See [Agent credential transport](#agent-credential-transport-and-warm-worker-pools) |
@@ -94,7 +94,7 @@ its own.
 > (`database.url`, `redis.url`, `auth.jwtSecret`, `secretKey`,
 > `bootstrap.password`). Credentials wired via `*.existingSecret` are **outside
 > the chart's visibility**: rotating them requires a manual
-> `kubectl rollout restart deployment/leoflow` for the change to take effect.
+> `kubectl rollout restart deployment/<release>` for the change to take effect.
 
 ## High availability
 
@@ -122,14 +122,14 @@ of defaulting into it:
 | `podAnnotations: {karpenter.sh/do-not-disrupt: "true"}` | **EKS/Karpenter-only opt-in**, not set by default: exempts the node from voluntary disruption, trading maintenance friction for eviction protection |
 
 The one-switch HA profile is
-[`examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
+[`examples/values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
 two replicas spread across nodes, task logs in object storage
 (`logs.persistence.enabled: false` + `logs.sink.provider: s3|gcs` — the
 recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
 memory sized for the object sink's per-attempt buffer, and the longer drain grace:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
   -f helm/dexaflow/examples/values-ha.yaml
 ```
 
@@ -161,7 +161,7 @@ Without the CA bundle mounted, the strongest TLS posture you can pin is
    path:
 
    ```bash
-   helm upgrade --install leoflow ./helm/dexaflow -n leoflow \
+   helm upgrade --install dexaflow ./helm/dexaflow -n leoflow \
      --set database.caConfigMap=managed-pg-ca \
      --set database.url='postgres://user:pass@cloudsql-private-ip:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
    ```
@@ -173,7 +173,7 @@ is required.
 > **Rotation note.** Kubernetes auto-updates the mounted file when the
 > ConfigMap changes, but the pgx pool keeps its existing connections until
 > they cycle. Cert rotation that invalidates the old chain may break in-flight
-> connections; rolling the pod (`kubectl rollout restart deploy/leoflow`)
+> connections; rolling the pod (`kubectl rollout restart deploy/<release>`)
 > guarantees a clean cutover.
 
 > **Redis sibling — coming next** (#312). The same pattern lands for Redis in
@@ -186,9 +186,9 @@ is required.
 The pre-install/pre-upgrade Job runs `migrate -path <path> -database <url> up`
 using the default image **`ghcr.io/dexadata/dexaflow-migrate`** (built from
 `deploy/Dockerfile.migrate`, published by `.github/workflows/release.yaml` on
-every tag), which bundles the Leoflow `migrations/` at `migrations.path`. The
+every tag), which bundles the Dexaflow `migrations/` at `migrations.path`. The
 `migrate` binary in it is golang-migrate's own CLI, compiled from the version
-pinned in Leoflow's `go.mod` onto distroless static and running as UID 65532,
+pinned in Dexaflow's `go.mod` onto distroless static and running as UID 65532,
 rather than a third-party image pulled at build time (#1039).
 Override `migrations.image` to use your own, or set `migrations.enabled=false`
 to migrate out of band.
@@ -227,14 +227,14 @@ Set `redis.caConfigMap` to a ConfigMap holding the provider CA as
 `ca.crt`:
 
 ```bash
-kubectl create configmap leoflow-redis-ca \
+kubectl create configmap dexaflow-redis-ca \
   --from-file=ca.crt=./memorystore-server-ca.pem -n leoflow
 ```
 
 ```yaml
 redis:
   url: rediss://10.0.0.5:6378/0
-  caConfigMap: leoflow-redis-ca
+  caConfigMap: dexaflow-redis-ca
 ```
 
 The chart then:
@@ -282,11 +282,11 @@ sufficient on its own:
 > pod-per-task path included, not just warm pools.
 
 The cluster-scoped objects are named `<fullname>-<namespace>-tokenreview` so two
-Leoflow releases in one cluster never collide on them.
+Dexaflow releases in one cluster never collide on them.
 
 ### `execution.warmPoolsEnabled`
 
-Warm worker pools ([ADR 0058](https://github.com/dexadata/leoflow/blob/main/docs/adr/0058-warm-worker-pools.md))
+Warm worker pools ([ADR 0058](https://github.com/dexadata/dexaflow/blob/main/docs/adr/0058-warm-worker-pools.md))
 reuse one pod across many attempts of the **same DAG version**, instead of one pod
 per attempt. Off by default: every attempt gets a dedicated pod, which is today's
 behavior.
@@ -316,7 +316,7 @@ a real cluster, and unit tests do not clear it.
 
 `extraEnv` appends raw env entries to the control-plane container, for any
 `LEOFLOW_*` setting without a first-class value (the full surface is in
-[`docs/configuration.md`](https://github.com/dexadata/leoflow/blob/main/docs/configuration.md)):
+[`docs/configuration.md`](https://github.com/dexadata/dexaflow/blob/main/docs/configuration.md)):
 
 ```yaml
 extraEnv:
@@ -366,7 +366,7 @@ auth:
     enabled: true
     issuer: "https://accounts.google.com"
     clientId: "…apps.googleusercontent.com"
-    existingSecret: leoflow-idp          # key: oidcClientSecret
+    existingSecret: dexaflow-idp          # key: oidcClientSecret
     redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
     tenantClaim: "hd"                    # `tid` on Entra
     tenantClaims:
@@ -376,7 +376,7 @@ auth:
 ```
 
 A full worked example is in
-[`examples/values-oidc-google.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
+[`examples/values-oidc-google.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
 
 Three things the chart refuses at render time rather than letting them become a
 CrashLoopBackOff whose cause is visible only in container logs: the one channel a
@@ -424,10 +424,10 @@ boot and would otherwise leave an edited tenant map sitting on disk unread.
 For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
-path is to install Bitnami's Postgres + Redis charts alongside Leoflow:
+path is to install Bitnami's Postgres + Redis charts alongside Dexaflow:
 
-- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md)
-- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/poc.yaml)
+- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md)
+- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/poc.yaml)
 
 Three `helm install`s in total. **Not for production** — see the recipe for
 the production-shaped command.

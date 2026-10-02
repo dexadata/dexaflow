@@ -20,7 +20,7 @@ type liteFileSecrets struct {
 // LEOFLOW_* environment variables on top of the file. That is right for a
 // process deciding how to behave, and wrong for a command that REWRITES the
 // file: an operator with LEOFLOW_SECRET_KEY exported in their shell would have
-// the shell value written over the per-install key, and `leoflow lite
+// the shell value written over the per-install key, and `dexaflow lite
 // reset-password` would silently destroy the only copy of the key that decrypts
 // every stored connection. This repository's own end-to-end scripts export that
 // variable, so it is not a hypothetical shell.

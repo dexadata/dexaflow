@@ -99,7 +99,7 @@ chmod +x "$HOME_DIR/bin/python3.11"
 export PATH="$HOME_DIR/bin:$PATH"
 
 echo "==> migrating the database"
-# `leoflow db reset` is NOT used here, and the reason is worth stating: it builds
+# `dexaflow db reset` is NOT used here, and the reason is worth stating: it builds
 # its own DSN from Lite's managed-datastore convention (devDSNs → devDBPort) and
 # ignores DB_URL entirely. With DB_URL overridden it migrates one database while
 # the server connects to another, and the symptom surfaces much later as "schema
@@ -108,7 +108,7 @@ echo "==> migrating the database"
 command -v migrate >/dev/null || die "the golang-migrate CLI is required (go install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest)"
 migrate -path migrations -database "$DB_URL" up >/dev/null 2>&1 || die "applying migrations to $DB_URL"
 
-echo "==> leoflow setup"
+echo "==> dexaflow setup"
 SETUP_OUT="$(HOME="$HOME_DIR" LEOFLOW_DATABASE_URL="$DB_URL" "$HOME_DIR/leoflow" setup --workspace "$HOME_DIR/ws" </dev/null 2>&1)"
 PW="$(printf '%s\n' "$SETUP_OUT" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
 HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"

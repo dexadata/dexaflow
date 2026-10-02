@@ -1,4 +1,4 @@
-# Leoflow task base image.
+# Dexaflow task base image.
 #
 # A DAG image is built FROM this base (ADR 0003): it provides the leoflow-agent
 # (PID 1, talks gRPC to the control plane) and the leoflow_runtime Python helper
@@ -77,8 +77,8 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # this line. That makes it a user-visible change, not an internal one.
 FROM python:${PYTHON_VERSION}-slim-trixie
 
-LABEL org.opencontainers.image.source="https://github.com/dexadata/leoflow"
-LABEL org.opencontainers.image.description="Leoflow task base image (agent + Python runtime)"
+LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
+LABEL org.opencontainers.image.description="Dexaflow task base image (agent + Python runtime)"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Run as a NUMERIC non-root UID (not a login name). A PodSecurity `restricted`
@@ -111,10 +111,10 @@ RUN ln -s dexaflow-agent /usr/local/bin/leoflow-agent
 COPY runtime/python /opt/leoflow-runtime
 RUN pip install --no-cache-dir /opt/leoflow-runtime
 
-# Leoflow DAGs are authored with the Apache Airflow Task SDK (`from airflow.sdk
+# Dexaflow DAGs are authored with the Apache Airflow Task SDK (`from airflow.sdk
 # import DAG, task`), so the task container must be able to import it to load the
 # user's dag.py. This is the lightweight Task SDK, not airflow-core, pinned to
-# the 3.3.x line Leoflow targets (ADR 0003 / parser SDK version).
+# the 3.3.x line Dexaflow targets (ADR 0003 / parser SDK version).
 ARG AIRFLOW_TASK_SDK_VERSION=1.3.1
 RUN pip install --no-cache-dir "apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERSION}"
 

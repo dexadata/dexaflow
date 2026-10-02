@@ -13,7 +13,7 @@ import (
 )
 
 // gridRunDTO is the Airflow 3.2.1 GridRunsResponse — a DAG run as a grid column.
-// duration is wall-clock seconds; run_after maps to the logical date (Leoflow
+// duration is wall-clock seconds; run_after maps to the logical date (Dexaflow
 // has no separate run_after); has_missed_deadline is always false (deadlines are
 // not modeled in the MVP).
 type gridRunDTO struct {
@@ -45,7 +45,7 @@ func toGridRunDTO(r domain.DagRun) gridRunDTO {
 }
 
 // dagRunLightDTO is the Airflow 3.2.1 DAGRunLightResponse. The spec types id as
-// an integer, but Leoflow keys runs by (dag_id, run_id); id is a stable
+// an integer, but Dexaflow keys runs by (dag_id, run_id); id is a stable
 // non-negative hash of run_id, used purely as a display/key value. Every /ui
 // endpoint that fetches a run does so by run_id. See docs/ui-compatibility.md.
 type dagRunLightDTO struct {
@@ -115,7 +115,7 @@ func synthRunID(runID string) uint32 {
 // (https://airflow.apache.org/docs/apache-airflow/<version>/…), so this MUST be
 // the pinned Airflow UI version, not leoflow's build version — otherwise the UI
 // points users at a nonexistent Airflow docs release (#594). leoflow's own
-// version is surfaced on the CLI (`leoflow version`), the health endpoints, and
+// version is surfaced on the CLI (`dexaflow version`), the health endpoints, and
 // the MCP `health://control-plane` resource. git_version keeps leoflow's commit
 // as a build reference for the control plane actually serving this compat UI.
 func versionHandler() gin.HandlerFunc {

@@ -1,9 +1,9 @@
-// Package dbt renders a dbt project's manifest.json into Leoflow tasks (ADR 0042).
+// Package dbt renders a dbt project's manifest.json into Dexaflow tasks (ADR 0042).
 //
 // dbt already compiles a project into target/manifest.json — the canonical DAG of
 // nodes (seeds, models, snapshots, tests) with their dependencies. This package
-// reads that file in Go and emits flat Leoflow tasks, so a dbt project becomes a
-// Leoflow DAG with no Cosmos at runtime and no Airflow in the parser.
+// reads that file in Go and emits flat Dexaflow tasks, so a dbt project becomes a
+// Dexaflow DAG with no Cosmos at runtime and no Airflow in the parser.
 package dbt
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// Granularity controls how dbt nodes are partitioned into Leoflow tasks.
+// Granularity controls how dbt nodes are partitioned into Dexaflow tasks.
 type Granularity string
 
 // Granularity strategies. node is one task per dbt node; the rest contract a
@@ -40,7 +40,7 @@ type Options struct {
 	// only a folder group-key collision (#1114). This package is otherwise pure,
 	// so the caller decides where a warning goes; nil means say nothing.
 	Warn func(string)
-	// Connection, when set, is a managed Leoflow connection id; each task's dbt
+	// Connection, when set, is a managed Dexaflow connection id; each task's dbt
 	// command is prefixed with the runtime step that writes profiles.yml from it
 	// (ADR 0043 #2), so no credential is baked into the image.
 	Connection string
@@ -141,7 +141,7 @@ type execNode struct {
 	parents []string // ids of executable parent nodes
 }
 
-// Render parses a dbt manifest.json and returns Leoflow bash tasks. At node
+// Render parses a dbt manifest.json and returns Dexaflow bash tasks. At node
 // granularity it emits one task per executable node (`dbt <verb> --select`); at a
 // grouped granularity it contracts nodes into per-group tasks
 // (`dbt build --select`) and rejects a grouping that makes the task graph cyclic.
@@ -481,7 +481,7 @@ func checkDerivedTaskIDs(members map[string][]string, gran Granularity) error {
 // than one origin (#1114).
 //
 // The merge is NOT refused. dbt still orders the nodes inside the combined
-// task, so the data is not wrong — what is lost is Leoflow-level parallelism and
+// task, so the data is not wrong — what is lost is Dexaflow-level parallelism and
 // per-node failure isolation. Refusing would break a project that runs today;
 // staying silent leaves an author looking at one task named after a folder with
 // no indication that a root-level model was folded into it. Saying so loudly is

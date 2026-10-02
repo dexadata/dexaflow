@@ -30,7 +30,7 @@ Leave all key fields empty for **keyless** (ADC). Advanced Airflow fields
 ## Prerequisites
 
 - A GCS bucket the credentials can write to.
-- Set the bucket as a Leoflow **Variable** `GCS_BUCKET` (Admin → Variables), or
+- Set the bucket as a Dexaflow **Variable** `GCS_BUCKET` (Admin → Variables), or
   export `GCS_BUCKET` for a subprocess run.
 
 ## Keyless (recommended)
@@ -42,14 +42,14 @@ No key in the Connection — credentials come from the ambient identity.
    `roles/storage.objectAdmin` on the bucket).
 2. Let the chart create + annotate the task KSA (cloud-agnostic knob):
    ```bash
-   helm upgrade leoflow ./helm/dexaflow -n leoflow --reuse-values \
-     --set taskServiceAccount.create=true --set taskServiceAccount.name=leoflow-gcs \
+   helm upgrade <release> <chart> -n leoflow --reset-then-reuse-values \
+     --set taskServiceAccount.create=true --set taskServiceAccount.name=dexaflow-gcs \
      --set 'taskServiceAccount.annotations.iam\.gke\.io/gcp-service-account=GSA@PROJECT.iam.gserviceaccount.com'
    gcloud iam service-accounts add-iam-policy-binding GSA@PROJECT.iam.gserviceaccount.com \
      --role roles/iam.workloadIdentityUser \
-     --member "serviceAccount:PROJECT.svc.id.goog[leoflow/leoflow-gcs]"
+     --member "serviceAccount:PROJECT.svc.id.goog[leoflow/dexaflow-gcs]"
    ```
-   Then set `execution.service_account: leoflow-gcs` in the DAG's `dexaflow.yaml`
+   Then set `execution.service_account: dexaflow-gcs` in the DAG's `dexaflow.yaml`
    (already done in this example).
 3. Create the Connection `google_cloud_default` with **empty key fields** (just
    `project`/`scopes` if you want). Run the DAG — no key touches the cluster.
@@ -57,16 +57,16 @@ No key in the Connection — credentials come from the ambient identity.
 ### Lite (local — subprocess executor)
 ```bash
 gcloud auth application-default login        # or export GOOGLE_APPLICATION_CREDENTIALS=/path/key.json
-leoflow lite --executor=subprocess dags/gcp_gcs_load
+dexaflow lite --executor=subprocess dags/gcp_gcs_load
 ```
 The subprocess inherits your host ADC. (The **k3d** executor has no metadata
 server, so keyless isn't available there — use key mode under k3d.)
 
 ## Key mode (service-account JSON)
 
-> **Discouraged — Leoflow is not a key manager** ([ADR 0035](../../docs/adr/0035-cloud-connector-auth-keyless-first.md)).
+> **Discouraged — Dexaflow is not a key manager** ([ADR 0035](../../docs/adr/0035-cloud-connector-auth-keyless-first.md)).
 > Prefer keyless, or `key_path` pointing at a mounted Kubernetes Secret (the key
-> stays in the cluster's secret store, not in Leoflow). Use `keyfile_dict` only
+> stays in the cluster's secret store, not in Dexaflow). Use `keyfile_dict` only
 > for dev / low-criticality.
 
 1. Admin → Connections → **+**, Conn Id `google_cloud_default`, type
@@ -80,11 +80,11 @@ server, so keyless isn't available there — use key mode under k3d.)
 
 ## Key from a Kubernetes Secret (`key_path`) — preferred when not keyless
 
-The key stays in the cluster's secret store; Leoflow only mounts it.
+The key stays in the cluster's secret store; Dexaflow only mounts it.
 
 ```bash
 kubectl -n leoflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
-helm upgrade leoflow ./helm/dexaflow -n leoflow --reuse-values \
+helm upgrade <release> <chart> -n leoflow --reset-then-reuse-values \
   --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/leoflow/secrets
 ```
 Then the Connection's Extra: `{ "key_path": "/etc/leoflow/secrets/key.json", "project": "my-project" }`.
@@ -95,15 +95,15 @@ Store the JSON key in Secret Manager; the task fetches it via ADC (so the task's
 identity — typically Workload Identity — needs `roles/secretmanager.secretAccessor`).
 
 ```bash
-gcloud secrets create leoflow-gcp-key --data-file=/path/to/key.json
+gcloud secrets create dexaflow-gcp-key --data-file=/path/to/key.json
 ```
-Then the Connection's Extra: `{ "key_secret_name": "leoflow-gcp-key", "project": "my-project" }`.
+Then the Connection's Extra: `{ "key_secret_name": "dexaflow-gcp-key", "project": "my-project" }`.
 
 ## Run + verify
 
 ```bash
-# Pro: leoflow compile dags/gcp_gcs_load --image <REG>/gcp_gcs_load:v1 --build --push -o dag.json
-#      leoflow push dag.json && leoflow runs trigger gcp_gcs_load
-# Lite: leoflow lite --executor=subprocess dags/gcp_gcs_load
+# Pro: dexaflow compile dags/gcp_gcs_load --image <REG>/gcp_gcs_load:v1 --build --push -o dag.json
+#      dexaflow push dag.json && dexaflow runs trigger gcp_gcs_load
+# Lite: dexaflow lite --executor=subprocess dags/gcp_gcs_load
 ```
 The task log prints the resolved auth mode and `gcs roundtrip ok: gs://<bucket>/leoflow/gcp_gcs_load.txt`.

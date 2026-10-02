@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"compress/gzip"
+	"html"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -14,7 +15,7 @@ import (
 )
 
 // baseHrefPlaceholder is the Jinja token Airflow leaves in index.html for the
-// server to fill with the deployment base path. Leoflow substitutes it at
+// server to fill with the deployment base path. Dexaflow substitutes it at
 // request time, mirroring Airflow's TemplateResponse.
 const baseHrefPlaceholder = "{{ backend_server_base_url }}"
 
@@ -74,7 +75,7 @@ const proBannerHTML = `<div id="leoflow-pro-banner">PRO</div>` +
 // crisply at any size regardless of the system font (a Unicode glyph rendered
 // faintly or not at all on some platforms). The accent has a hex fallback before
 // the oklch the app uses, for browsers without oklch support.
-const ideButtonHTML = `<a id="leoflow-ide-button" href="/ide" target="_blank" rel="noopener" title="Open the Leoflow editor">` +
+const ideButtonHTML = `<a id="leoflow-ide-button" href="/ide" target="_blank" rel="noopener" title="Open the Dexaflow editor">` +
 	`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
 	`stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
 	`<polyline points="8 7 3 12 8 17"></polyline><polyline points="16 7 21 12 16 17"></polyline></svg>` +
@@ -87,6 +88,33 @@ const ideButtonHTML = `<a id="leoflow-ide-button" href="/ide" target="_blank" re
 	`#leoflow-ide-button:hover{background:#35507f;background:oklch(0.42 0.084 257.657)}` +
 	`#leoflow-ide-button svg{display:block}</style>`
 
+// homeLinkStyle styles the operator home link (#1290): a small floating pill at
+// the bottom-left, just right of the SPA's 64px navigation column, mirroring
+// the IDE button at the bottom-right. The top-right looked free but holds the
+// DAG page's Trigger button. It borrows the UI's native typography; the fill
+// inverts with the SPA's dark mode (the "dark" class Chakra sets on <html>) so
+// the pill keeps its contrast on either theme.
+const homeLinkStyle = `<style>#leoflow-home-link{position:fixed;left:76px;bottom:16px;z-index:2147483646;` +
+	`display:inline-flex;align-items:center;gap:6px;max-width:240px;` +
+	`font:500 13px/1 Inter,-apple-system,system-ui,"Segoe UI",Helvetica,Arial,sans-serif;` +
+	`color:#fff;background:rgba(15,23,42,.82);text-decoration:none;` +
+	`padding:7px 12px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.2)}` +
+	`#leoflow-home-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}` +
+	`#leoflow-home-link:hover{background:rgba(15,23,42,.95)}` +
+	`.dark #leoflow-home-link{color:#0f172a;background:rgba(241,245,249,.92)}` +
+	`.dark #leoflow-home-link:hover{background:#fff}</style>`
+
+// homeLinkHTML renders the operator home link. Both values are escaped, so
+// config reaches the page as text and never as markup; the URL's scheme is
+// limited to http(s) by config validation.
+func homeLinkHTML(label, href string) string {
+	return `<a id="leoflow-home-link" href="` + html.EscapeString(href) + `">` +
+		`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+		`stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+		`<polyline points="15 18 9 12 15 6"></polyline></svg>` +
+		`<span>` + html.EscapeString(label) + `</span></a>` + homeLinkStyle
+}
+
 // Server serves the embedded Airflow 3.2.1 SPA: static assets under a prefix and
 // an index.html fallback for client-side routes.
 type Server struct {
@@ -96,10 +124,12 @@ type Server struct {
 	proBanner    bool
 	editorButton bool
 	instanceName string
+	homeLabel    string
+	homeURL      string
 }
 
 // SetLiteBanner toggles injection of the LITE overlay into the served shell. It
-// is enabled by the Lite edition (`leoflow lite`); the demo and production never
+// is enabled by the Lite edition (`dexaflow lite`); the demo and production never
 // set it.
 func (s *Server) SetLiteBanner(on bool) { s.liteBanner = on }
 
@@ -114,9 +144,13 @@ func (s *Server) SetProBanner(on bool) { s.proBanner = on }
 func (s *Server) SetEditorButton(on bool) { s.editorButton = on }
 
 // SetInstanceName overrides the value used to rewrite the embedded SPA's
-// `<title>` tag (issue #D15). Empty falls back to "Leoflow" so the browser
+// `<title>` tag (issue #D15). Empty falls back to "Dexaflow" so the browser
 // tab never shows the upstream "Airflow" string from the bundled fork.
 func (s *Server) SetInstanceName(name string) { s.instanceName = name }
+
+// SetHomeLink sets the operator's link back to their platform (#1290), shown on
+// every UI page and opened in the same tab. An empty url disables it.
+func (s *Server) SetHomeLink(label, url string) { s.homeLabel, s.homeURL = label, url }
 
 // New builds a Server over the embedded, pinned SPA bundle.
 func New() *Server { return NewFromFS(Assets(), Version()) }
@@ -250,11 +284,11 @@ func (s *Server) Index(w http.ResponseWriter, basePath string) {
 	// SPA fallback (a text/html MIME type that breaks module preloading).
 	body = strings.ReplaceAll(body, `"./assets/`, `"./static/assets/`)
 	// Rewrite the bundled "<title>Airflow</title>" to the configured instance
-	// name (issue #D15) so the browser tab brands as Leoflow on first touch.
-	// Empty falls back to "Leoflow".
+	// name (issue #D15) so the browser tab brands as Dexaflow on first touch.
+	// Empty falls back to "Dexaflow".
 	title := s.instanceName
 	if title == "" {
-		title = "Leoflow"
+		title = "Dexaflow"
 	}
 	body = strings.ReplaceAll(body, "<title>Airflow</title>", "<title>"+title+"</title>")
 	// Always inject the clipboard polyfill — no-op on https / localhost, the
@@ -268,6 +302,9 @@ func (s *Server) Index(w http.ResponseWriter, basePath string) {
 	}
 	if s.editorButton {
 		body = injectBeforeBodyEnd(body, ideButtonHTML)
+	}
+	if s.homeURL != "" {
+		body = injectBeforeBodyEnd(body, homeLinkHTML(s.homeLabel, s.homeURL))
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")

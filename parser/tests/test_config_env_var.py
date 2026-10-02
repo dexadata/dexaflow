@@ -8,7 +8,7 @@ Python deps.
 
 These tests are the regression contract: if anyone reintroduces a YAML read
 path or accidentally drops the env-var handshake, the failure surfaces here
-instead of as a silent breakage of every ``leoflow compile``.
+instead of as a silent breakage of every ``dexaflow compile``.
 """
 from __future__ import annotations
 

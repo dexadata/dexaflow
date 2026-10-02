@@ -10,7 +10,7 @@ description: Telegram connection
 ---
 
 Send messages to a Telegram chat or channel from a task over a managed
-Leoflow Connection. `TelegramHook` posts to the Bot API using a bot token.
+Dexaflow Connection. `TelegramHook` posts to the Bot API using a bot token.
 
 ## Declare the provider
 

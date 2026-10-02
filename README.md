@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="website/static/assets/icon-256.png" alt="Leoflow" width="140">
+  <img src="website/static/assets/icon-256.png" alt="Dexaflow" width="140">
 </p>
 
-<h1 align="center">Leoflow</h1>
+<h1 align="center">Dexaflow</h1>
 
 <p align="center">
   <strong>A fast, container-native workflow orchestrator — compatible with the Apache Airflow UI &amp; REST API.</strong>
@@ -14,15 +14,19 @@
   <strong>Native map-reduce for ML/AI</strong> — fan-out + reduce as a Python list comprehension, no XCom plumbing, no broker, no special operator.</em>
 </p>
 
+<p align="center">
+  <sub>Formerly <strong>Leoflow</strong>. Every <code>leoflow</code> command, <code>leoflow.yaml</code>, <code>LEOFLOW_*</code> variable, image and chart name keeps working; see <a href="https://dexaflow.dexadata.ai/reference/configuration/#names-from-before-the-rename">names from before the rename</a>.</sub>
+</p>
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Code quality: golangci-lint A+](https://img.shields.io/badge/golangci--lint-A%2B-00ADD8?logo=go&logoColor=white)](https://dexaflow.dexadata.ai/project/adrs/0012-code-quality-standards/)
-[![CI](https://github.com/dexadata/leoflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/dexadata/leoflow/actions/workflows/ci.yaml)
-[![Security](https://github.com/dexadata/leoflow/actions/workflows/security.yaml/badge.svg)](https://github.com/dexadata/leoflow/actions/workflows/security.yaml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/dexadata/leoflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/dexadata/leoflow)
+[![CI](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml)
+[![Security](https://github.com/dexadata/dexaflow/actions/workflows/security.yaml/badge.svg)](https://github.com/dexadata/dexaflow/actions/workflows/security.yaml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/dexadata/dexaflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/dexadata/dexaflow)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13068/badge)](https://www.bestpractices.dev/projects/13068)
 
-[![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#leoflow-lite)
-[![Edition: Pro](https://img.shields.io/badge/edition-Pro-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#leoflow-pro-chart-installable)
+[![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-lite)
+[![Edition: Pro](https://img.shields.io/badge/edition-Pro-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-pro-chart-installable)
 
 ---
 
@@ -32,7 +36,7 @@
 
 | | |
 |---|---|
-| [Quickstart](https://dexaflow.dexadata.ai/get-started/quickstart/) · [Installation](https://dexaflow.dexadata.ai/get-started/installation/) | get Leoflow running locally |
+| [Quickstart](https://dexaflow.dexadata.ai/get-started/quickstart/) · [Installation](https://dexaflow.dexadata.ai/get-started/installation/) | get Dexaflow running locally |
 | [Operating modes](https://dexaflow.dexadata.ai/concepts/editions/) · [Editions](https://dexaflow.dexadata.ai/concepts/editions/) | Lite · Pro · Demo — the runtime split and the packaging split |
 | [DAG authoring](https://dexaflow.dexadata.ai/author-dags/dag-authoring/) · [Variables & Connections](https://dexaflow.dexadata.ai/author-dags/variables-connections/) | write a DAG; the Lite → deploy lifecycle |
 | [**Map-reduce for ML**](https://dexaflow.dexadata.ai/author-dags/map-reduce/) | fan-out + reduce as a Python list comprehension |
@@ -46,7 +50,7 @@
 
 <p align="center">
   <a href="https://dexaflow.dexadata.ai/">
-    <img src="website/static/assets/screenshots/dev-grid-tasks.png" alt="Leoflow running the Apache Airflow 3.2 UI — a DAG's grid view, task list, and run-duration overview" width="860">
+    <img src="website/static/assets/screenshots/dev-grid-tasks.png" alt="Dexaflow running the Apache Airflow 3.2 UI — a DAG's grid view, task list, and run-duration overview" width="860">
   </a>
 </p>
 
@@ -56,11 +60,11 @@
 
 ## ⚡ Install
 
-Leoflow ships in two editions. Pick the track that matches your target:
+Dexaflow ships in two editions. Pick the track that matches your target:
 
 ### Lite — the full engine on a single host
 
-The **full Leoflow control plane on one machine** — the same engine, the same
+The **full Dexaflow control plane on one machine** — the same engine, the same
 Airflow-3.2 UI, the same `dag.py` + `dexaflow.yaml` as Pro — in a one-command,
 **no-Kubernetes** package. Light to run, powerful where it counts: real
 pod-per-task execution, a **durable** Postgres datastore, hot-reload, a real
@@ -69,12 +73,12 @@ one host, carrying real workloads from local development to **light-to-medium
 production** on a laptop, a single VM, or an internal server (trusted network).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
-leoflow lite                # hot-reload at http://localhost:8088 (LITE badge)
+curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh
+dexaflow lite                # hot-reload at http://localhost:8088 (LITE badge)
 ```
 
-Installs the binaries and runs `leoflow setup` (ensures Python, provisions the
-parser, creates your workspace at `~/leoflow/`) — **no sudo, no system Python,
+Installs the binaries and runs `dexaflow setup` (ensures Python, provisions the
+parser, creates your workspace at `~/dexaflow/`) — **no sudo, no system Python,
 no package manager**. Docker is optional and only unlocks the Kubernetes
 executor for higher-fidelity local runs. Linux + macOS, amd64 + arm64
 (Windows via WSL2). Each DAG gets its own per-DAG venv under
@@ -95,7 +99,7 @@ helm install lf oci://ghcr.io/dexadata/charts/leoflow --version 0.4.8 -n leoflow
   --set bootstrap.password='change-me'
 ```
 
-Pro deploys the control plane on a real cluster (`leoflow-server` Deployment
+Pro deploys the control plane on a real cluster (`dexaflow-server` Deployment
 + RBAC for the pod-per-task executor + a pre-install migrations Job). **External**
 Postgres 13+ and Redis 6+ are required (the chart fails the install otherwise —
 embedded datastores are Lite-only). Managed datastores work out of the box
@@ -117,13 +121,13 @@ Airflow is the most widely deployed workflow orchestrator on earth. It is also t
 - **The worker that leaks until it dies.** Long-running Celery workers accumulate file descriptors, database connections, half-loaded modules. OOMKilled at three in the morning. Always.
 - **The dependency hell that has no door.** `pandas==1.0` for the legacy DAG, `pandas==2.0` for the new one. One Airflow image. Pick a side. Cry either way.
 
-Leoflow was built to close these five wounds, on day one, by construction.
+Dexaflow was built to close these five wounds, on day one, by construction.
 
 ## How It Closes Them
 
-Leoflow does not invent a new execution model. Pod-per-task is the right pattern, and Airflow's `KubernetesExecutor` proved it years ago. What Leoflow does is **strip out the Python overhead from every layer of the orchestration stack**:
+Dexaflow does not invent a new execution model. Pod-per-task is the right pattern, and Airflow's `KubernetesExecutor` proved it years ago. What Dexaflow does is **strip out the Python overhead from every layer of the orchestration stack**:
 
-| Wound | Airflow today | Leoflow |
+| Wound | Airflow today | Dexaflow |
 |---|---|---|
 | Scheduler latency | 3-10 seconds per decision | **<200 ms** — native Go, zero GIL |
 | Sensor concurrency | ~500 (asyncio Triggerer) | **100,000+** — each sensor is a 2 KB goroutine |
@@ -136,9 +140,9 @@ Leoflow does not invent a new execution model. Pod-per-task is the right pattern
 
 This is not marketing. This is what falls out of replacing a Python control plane with Go and embracing the container as the unit of isolation.
 
-## What Leoflow Is
+## What Dexaflow Is
 
-Leoflow is a **GitOps-first, container-native workflow orchestrator** written in Go. Each phrase carries weight:
+Dexaflow is a **GitOps-first, container-native workflow orchestrator** written in Go. Each phrase carries weight:
 
 - **GitOps-first.** Your DAG is a versioned artifact (`dag.json` + container image), not live source code. CI builds it. The registry stores it. Rollback is a tag change.
 - **Container-native.** Each DAG is its own container image, with its own dependencies, its own Python version, its own everything. Built automatically from a one-page `dexaflow.yaml` — you never touch Docker unless you want to.
@@ -147,7 +151,7 @@ Leoflow is a **GitOps-first, container-native workflow orchestrator** written in
 
 ## What It Looks Like to Use
 
-A complete Leoflow DAG project. No Dockerfile. No `requirements.txt`. No CI plumbing to invent.
+A complete Dexaflow DAG project. No Dockerfile. No `requirements.txt`. No CI plumbing to invent.
 
 ```yaml
 # dexaflow.yaml
@@ -177,11 +181,11 @@ with DAG("etl_vendas", schedule="0 5 * * *") as dag:
 ```
 
 ```bash
-leoflow compile .              # generates Dockerfile, builds image, produces dag.json
-leoflow push ./dag.json        # registers with the control plane
+dexaflow compile .              # generates Dockerfile, builds image, produces dag.json
+dexaflow push ./dag.json        # registers with the control plane
 ```
 
-That is the entire developer surface. The CLI builds the image on the published Leoflow task base (`ghcr.io/dexadata/dexaflow-runtime:py3.11`, selected by `python_version`), pushes to your registry, and registers a versioned DAG. The Airflow UI shows it at the next refresh.
+That is the entire developer surface. The CLI builds the image on the published Dexaflow task base (`ghcr.io/dexadata/dexaflow-runtime:py3.11`, selected by `python_version`), pushes to your registry, and registers a versioned DAG. The Airflow UI shows it at the next refresh.
 
 ## Native map-reduce for ML/AI
 
@@ -189,7 +193,7 @@ Hyperparameter search, k-fold cross-validation, ensemble training, batch
 inference, sharded preprocessing, Monte Carlo — **every parallel ML workload
 is map-reduce**. Most orchestrators make you build it: an operator per fan-out,
 a broker for the intermediate values, shared storage for the artifacts, and a
-custom reducer that knows how to find them all. Leoflow expresses the whole
+custom reducer that knows how to find them all. Dexaflow expresses the whole
 pattern in **two lines of Python**:
 
 ```python
@@ -232,7 +236,7 @@ activates fan-in vs what does not, and the on-disk `dag.json` shape.
 A DAG is compiled into an **immutable artifact** (a `dag.json` spec plus a
 container image) and pushed to the control plane. A Go **control plane**
 schedules it and, for each task, dispatches an ephemeral **worker pod** whose
-`leoflow-agent` runs the user code and reports back over gRPC. Postgres holds
+`dexaflow-agent` runs the user code and reports back over gRPC. Postgres holds
 metadata; Redis holds XCom values and live-log fan-out.
 
 ```mermaid
@@ -249,13 +253,13 @@ flowchart LR
         api --- sched --- asvc
     end
 
-    src -->|"leoflow compile / push"| api
+    src -->|"dexaflow compile / push"| api
     sched --- pg[("Postgres<br/>metadata")]
     asvc --- redis[("Redis<br/>XCom · log tail")]
 
     sched -->|"dispatch: one pod per task"| pod
     subgraph k8s["Kubernetes"]
-        pod["Worker pod = your DAG image<br/>leoflow-agent ⇄ your Python / Bash"]
+        pod["Worker pod = your DAG image<br/>dexaflow-agent ⇄ your Python / Bash"]
     end
     pod -->|"gRPC: register · fetch spec · push XCom · stream logs · report state"| asvc
 
@@ -271,7 +275,7 @@ in its own pod like any other (ADR 0040). Read
 
 🧪 **Experimental — pre-1.0.** The HTTP API (`/api/v2`), CLI, and Helm chart
 values may change between minor versions until **v1.0.0** locks them. **Lite**
-(single host) is the recommended way to run Leoflow today. **Pro** (Kubernetes)
+(single host) is the recommended way to run Dexaflow today. **Pro** (Kubernetes)
 is Helm-installable and in **active validation** — tested against GKE, not yet
 certified for production; pin to a specific tag, read the
 [upgrades guide](https://dexaflow.dexadata.ai/operate/upgrades/) before bumping, and exercise
@@ -282,14 +286,14 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 
 **Implemented today:**
 
-- **CLI + parser** — `leoflow init / validate / compile / push / runs trigger / runs status / auth create-token`; the Python DAG parser; `compile --build / --push` builds and pushes the DAG image (out-of-process).
+- **CLI + parser** — `dexaflow init / validate / compile / push / runs trigger / runs status / auth create-token`; the Python DAG parser; `compile --build / --push` builds and pushes the DAG image (out-of-process).
 - **Control plane** — Airflow-compatible `/api/v2` API, JWT auth + RBAC + multi-tenant, the scheduler state machine with cron scheduling, Postgres advisory-lock leader election, **task retries**, embedded Scalar API docs, and Prometheus + OpenTelemetry observability.
-- **Execution** — real pod-per-task execution via the `leoflow-agent` over gRPC (Kubernetes, ADR 0015); orphaned-pod reconciliation and completed-pod garbage collection.
+- **Execution** — real pod-per-task execution via the `dexaflow-agent` over gRPC (Kubernetes, ADR 0015); orphaned-pod reconciliation and completed-pod garbage collection.
 - **Data flow** — XCom on Redis (256 KB limit, TTL, optional schema validation) passed between tasks; log shipping to disk **or an opt-in S3/GCS object-store sink** (S3-compatible, keyless-first per ADR 0035) with a read API and live tailing over Redis pub/sub.
 - **dbt** — a dbt project runs as a DAG (pod-per-model or fused groups); managed warehouse connections generate `profiles.yml` in-pod, with modern service-account auth (Snowflake key-pair, BigQuery keyless / Workload Identity, Databricks OAuth M2M).
-- **MCP + typed client** — an experimental [`leoflow-mcp`](https://dexaflow.dexadata.ai/project/adrs/0050-mcp-server/) Model Context Protocol server (read tools + resources over stdio / Streamable HTTP) and a generated, typed Go client for `/api/v2` (`pkg/client`).
+- **MCP + typed client** — an experimental [`dexaflow-mcp`](https://dexaflow.dexadata.ai/project/adrs/0050-mcp-server/) Model Context Protocol server (read tools + resources over stdio / Streamable HTTP) and a generated, typed Go client for `/api/v2` (`pkg/client`).
 
-**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/leoflow/issues).
+**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/dexaflow/issues).
 
 ## Features
 
@@ -325,41 +329,41 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 After the Lite install above, just run:
 
 ```bash
-leoflow lite
+dexaflow lite
 ```
 
 …then open **http://localhost:8088** (the **LITE** badge confirms you're on the
 Lite instance). The first run provisions a managed Postgres + admin login, drops
-example DAGs in `~/leoflow/examples/`, and hot-reloads every save. Recover the
-admin password any time with `leoflow lite reset-password`.
+example DAGs in `~/dexaflow/examples/`, and hot-reloads every save. Recover the
+admin password any time with `dexaflow lite reset-password`.
 
 > Lite is the primary local path. The legacy Docker-Compose demo profile
 > (`docker compose --profile demo up --build`, login `admin@leoflow.local` /
 > `admin`) still works for CI / containerized-only environments — see
 > [docs/local-deploy.md](https://dexaflow.dexadata.ai/contribute/local-dev-loop/). The pinned Airflow 3.2.x UI is a
-> tactical MVP choice; a purpose-built Leoflow UI is the long-term direction
+> tactical MVP choice; a purpose-built Dexaflow UI is the long-term direction
 > (ADR 0018).
 
 ### Local development
 
 ```bash
-git clone https://github.com/dexadata/leoflow
-cd leoflow
+git clone https://github.com/dexadata/dexaflow
+cd dexaflow
 make setup            # Go tools, Python parser, pre-commit hook
-make build            # builds bin/leoflow, bin/leoflow-server, bin/leoflow-agent
+make build            # builds bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
 
 # Start Postgres + Redis (Docker) and apply migrations
 make dev-up           # docker compose up --wait + migrate-up; `make dev-down` to stop
 
 # Run the control plane (bootstraps a default admin user)
-DEXAFLOW_AUTH_JWT_SECRET=dev DEXAFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/leoflow-server &
+DEXAFLOW_AUTH_JWT_SECRET=dev DEXAFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/dexaflow-server &
 # API docs (Scalar) at http://localhost:8080/docs ; metrics at http://localhost:9090/metrics
 
 # Author, compile, and register a DAG
-./bin/leoflow init my-dag
-./bin/leoflow compile my-dag --image my-dag:dev -o my-dag/dag.json
-TOKEN=$(./bin/leoflow auth create-token --username admin@leoflow.local --password admin123)
-./bin/leoflow push my-dag/dag.json --token "$TOKEN"
+./bin/dexaflow init my-dag
+./bin/dexaflow compile my-dag --image my-dag:dev -o my-dag/dag.json
+TOKEN=$(./bin/dexaflow auth create-token --username admin@leoflow.local --password admin123)
+./bin/dexaflow push my-dag/dag.json --token "$TOKEN"
 ```
 
 > **Two dev environments.** `make dev-up` runs Postgres + Redis as plain Docker containers on the host for a fast inner loop (control plane on the host). For full in-cluster execution (control plane and dependencies on a local Kubernetes cluster, mirroring production and exercising real task pods), the [Helm chart](helm/dexaflow/README.md) is installable on any K8s cluster — chart-test CI gates every change with `helm lint` + `helm-unittest` (41 tests) + kind install/upgrade smoke. Task execution is on Kubernetes only (ADR 0015); the host containers are dev dependencies, not the execution path.
@@ -368,9 +372,9 @@ TOKEN=$(./bin/leoflow auth create-token --username admin@leoflow.local --passwor
 
 ## Honest Comparison
 
-We have no patience for marketing fiction. Here is where Leoflow sits in the landscape:
+We have no patience for marketing fiction. Here is where Dexaflow sits in the landscape:
 
-| | Airflow | Argo Workflows | Prefect | Dagster | **Leoflow** |
+| | Airflow | Argo Workflows | Prefect | Dagster | **Dexaflow** |
 |---|---|---|---|---|---|
 | Language of control plane | Python | Go | Python | Python | **Go** |
 | Pod-per-task model | Optional (KubernetesExecutor) | Yes | Optional | Optional | **Yes, only mode** |
@@ -385,7 +389,7 @@ We borrow from Argo Workflows (container-native), from Prefect (modern developer
 
 ## Engineering Discipline
 
-Leoflow holds itself to a higher bar than most open source projects, because workflow orchestrators must be boring and reliable to be useful:
+Dexaflow holds itself to a higher bar than most open source projects, because workflow orchestrators must be boring and reliable to be useful:
 
 - **Strict TDD** — every line of production code is preceded by a failing test ([ADR 0011](https://dexaflow.dexadata.ai/project/adrs/0011-tdd-strict/))
 - **golangci-lint A+ stack** — the goreportcard checks (gofmt, govet, gocyclo ≤ 15, golint, ineffassign, misspell) enforced in CI from the first commit ([ADR 0012](https://dexaflow.dexadata.ai/project/adrs/0012-code-quality-standards/))
@@ -402,29 +406,35 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## The name 🇧🇷
 
-> A note from Leoflow's creator.
+> A note from Dexaflow's creator.
 
-Leoflow started in Brazil — every line of it, from the first commit. I'm
+Dexaflow started in Brazil, every line of it, from the first commit. I'm
 Brazilian, and so are this project's roots.
 
-The *flow* part is easy — it orchestrates workflows. The *Leo* part is personal.
-Early in my career, **Leonardo** ([@leonardo-jas](https://github.com/leonardo-jas)) —
-an architect with deep roots in Brazil's tech industry — taught me to think in
-**state machines**: states, transitions, invariants, the things that must never
-happen. Years later, the core of this project turned out to be exactly that: a
-scheduler that is, underneath, a state machine. Naming it after the person who
-taught me that was the obvious choice.
+It was born as **Leoflow**. The *flow* part is easy: it orchestrates workflows.
+The *Leo* part is personal. Early in my career, **Leonardo**
+([@leonardo-jas](https://github.com/leonardo-jas)), an architect with deep roots
+in Brazil's tech industry, taught me to think in **state machines**: states,
+transitions, invariants, the things that must never happen. Years later, the
+core of this project turned out to be exactly that: a scheduler that is,
+underneath, a state machine. Naming it after the person who taught me that was
+the obvious choice.
 
-A living tribute, paid while he's still very much building — to Leonardo, and to
+In v0.5.0 the project took the name of the company that builds it, DexaData,
+and became Dexaflow. The dedication stays: it is where this project came from,
+and the `leoflow` command, configuration and images keep working for everyone
+who adopted it under that name.
+
+A living tribute, paid while he's still very much building, to Leonardo, and to
 the many like him who quietly hold up **Latin America's big-data ecosystem**.
 
 Built in Brazil 🇧🇷, for data teams everywhere.
 
-— **Alisson Rosa** ([@neochaotic](https://github.com/neochaotic)), creator of Leoflow
+**Alisson Rosa** ([@neochaotic](https://github.com/neochaotic)), creator of Dexaflow
 
 ## Acknowledgements
 
-Leoflow stands on the shoulders of Apache Airflow. The team behind Airflow defined the vocabulary, proved the architecture, and built the UI that Leoflow reuses without modification in the MVP. This project would not exist without their work, and we credit them at every layer of our documentation.
+Dexaflow stands on the shoulders of Apache Airflow. The team behind Airflow defined the vocabulary, proved the architecture, and built the UI that Dexaflow reuses without modification in the MVP. This project would not exist without their work, and we credit them at every layer of our documentation.
 
 We also studied the source of Argo Workflows, Prefect, and Dagster carefully. Each made decisions worth borrowing, and we did.
 
@@ -436,4 +446,4 @@ We also studied the source of Argo Workflows, Prefect, and Dagster carefully. Ea
 
 ---
 
-<sub>Apache Airflow® is a registered trademark of the Apache Software Foundation. Leoflow is an independent project, not affiliated with or endorsed by the ASF.</sub>
+<sub>Apache Airflow® is a registered trademark of the Apache Software Foundation. Dexaflow is an independent project, not affiliated with or endorsed by the ASF.</sub>

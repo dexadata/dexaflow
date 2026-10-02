@@ -1,4 +1,4 @@
-"""gcp_bigquery_query — a single real BigQuery operator through Leoflow's generic
+"""gcp_bigquery_query — a single real BigQuery operator through Dexaflow's generic
 operator path (ADR 0040), credentials from the google_cloud_platform connector.
 
 Runs one query with BigQueryInsertJobOperator against a BigQuery public dataset

@@ -99,9 +99,9 @@ def test_buttons_run_after_link_rewrite():
 
 
 def test_strip_h1_with_attr():
-    body = "# Leoflow { .home-hero-title }\n\nrest\n"
+    body = "# Dexaflow { .home-hero-title }\n\nrest\n"
     title, rest = C.strip_h1(body)
-    assert title == "Leoflow"
+    assert title == "Dexaflow"
     assert rest.strip() == "rest"
 
 

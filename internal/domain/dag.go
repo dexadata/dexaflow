@@ -1,4 +1,4 @@
-// Package domain defines the core Leoflow types (DAG, Task, project config)
+// Package domain defines the core Dexaflow types (DAG, Task, project config)
 // and validates them against the canonical JSON Schemas in docs/api.
 package domain
 
@@ -242,7 +242,7 @@ type Execution struct {
 
 	// PriorityClassName ranks this task pod against its neighbors on a shared
 	// cluster; the named PriorityClass is a platform-owned, cluster-scoped object,
-	// so under genuine contention the scheduler preempts Leoflow's ETL rather than
+	// so under genuine contention the scheduler preempts Dexaflow's ETL rather than
 	// production services (ADR 0054).
 	PriorityClassName string `json:"priority_class_name,omitempty" yaml:"priority_class_name,omitempty"`
 	// TerminationGracePeriodSeconds is how long the pod is given to shut down after
@@ -266,7 +266,7 @@ type Execution struct {
 	// one by naming it in Resources.Claims.
 	ResourceClaims []map[string]any `json:"resource_claims,omitempty" yaml:"resource_claims,omitempty"`
 	// Labels and Annotations are operator-declared pod metadata merged onto the task
-	// pod. Leoflow's own leoflow.io/* labels and the task-instance-id annotation win
+	// pod. Dexaflow's own leoflow.io/* labels and the task-instance-id annotation win
 	// any key collision (the reconciler and terminate path select on them), so a DAG
 	// cannot shadow them.
 	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
@@ -328,7 +328,7 @@ func (d *DAGSpec) Validate() error {
 // asked for, on a shared node, silently. And `2GB` is the plausible typo — it is
 // how memory is written everywhere except Kubernetes, which wants `2Gi` or `2G`.
 //
-// Checked here so `leoflow compile` fails while the author is still looking at
+// Checked here so `dexaflow compile` fails while the author is still looking at
 // it, rather than at registration or, worse, at dispatch.
 func (d *DAGSpec) validateResourceQuantities() error {
 	for _, t := range d.Tasks {

@@ -169,7 +169,7 @@ func (r *Repository) FindUserByID(ctx context.Context, id string) (*auth.User, b
 	return user, row.IsActive, nil
 }
 
-// FindUserByOIDCSubject resolves an OIDC identity to a Leoflow user by its
+// FindUserByOIDCSubject resolves an OIDC identity to a Dexaflow user by its
 // immutable (provider, subject) pair — the trusted link key for a returning SSO
 // login. Like FindUserByID it loads the current tenant, roles, and permissions
 // plus the active flag, so the caller reconstructs the same principal the
@@ -1090,7 +1090,7 @@ func (r *Repository) validateDeclaredSecrets(ctx context.Context, tid pgtype.UUI
 		}
 		if unknown := unknownDeclaredNames(varNames, existing, coveredVar); len(unknown) > 0 {
 			return domain.Safef(domain.ErrValidation,
-				"dag %q declares unknown variable(s) %s; define them (leoflow variables set) or remove them from the DAG's variables: declaration",
+				"dag %q declares unknown variable(s) %s; define them (dexaflow variables set) or remove them from the DAG's variables: declaration",
 				spec.DagID, strings.Join(unknown, ", "))
 		}
 	}
@@ -1102,7 +1102,7 @@ func (r *Repository) validateDeclaredSecrets(ctx context.Context, tid pgtype.UUI
 		}
 		if unknown := unknownDeclaredNames(connNames, existing, coveredConn); len(unknown) > 0 {
 			return domain.Safef(domain.ErrValidation,
-				"dag %q declares unknown connection(s) %s; define them (leoflow connections set) or remove them from the DAG's connections: declaration",
+				"dag %q declares unknown connection(s) %s; define them (dexaflow connections set) or remove them from the DAG's connections: declaration",
 				spec.DagID, strings.Join(unknown, ", "))
 		}
 	}
@@ -1194,7 +1194,7 @@ func (r *Repository) BootstrapAdmin(ctx context.Context, tenant, email, password
 // would leave an account the (tenant_id, email) UNIQUE makes impossible to
 // recreate — every retry would 409 forever with no recovery path.
 //
-// This backs `leoflow auth create-user` (ADR 0008) and is purely additive: it
+// This backs `dexaflow auth create-user` (ADR 0008) and is purely additive: it
 // does not touch the bootstrap/reconcile path.
 func (r *Repository) CreateUser(ctx context.Context, tenant, email, password string, roles []string) (domain.User, error) {
 	tid, err := r.tenantID(ctx, tenant)
@@ -1276,7 +1276,7 @@ func (r *Repository) ListUsers(ctx context.Context, tenant string, limit, offset
 }
 
 // SetUserPassword sets a user's bcrypt hash by email, returning whether a user
-// was updated (false when no such user exists). Used by `leoflow lite
+// was updated (false when no such user exists). Used by `dexaflow lite
 // reset-password`.
 func (r *Repository) SetUserPassword(ctx context.Context, tenant, email, hash string) (bool, error) {
 	n, err := r.q.UpdateUserPassword(ctx, queries.UpdateUserPasswordParams{

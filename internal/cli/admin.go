@@ -22,10 +22,10 @@ func newAdminCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
 		Short: "Operate a running control plane (health, pause, drain, runs).",
-		Long: "Operator commands for a running Leoflow control plane (Pro). These act " +
+		Long: "Operator commands for a running Dexaflow control plane (Pro). These act " +
 			"over the /api/v2 API — checking health, pausing DAGs, draining the control " +
 			"plane before maintenance, and inspecting runs — and reuse the same " +
-			"--server/--token/config precedence as `leoflow deploy`.",
+			"--server/--token/config precedence as `dexaflow deploy`.",
 	}
 	cmd.AddCommand(
 		newAdminHealthCommand(),
@@ -46,7 +46,7 @@ type adminFlags struct {
 
 // addAdminFlags registers the --server/--token flags with the deploy-style
 // precedence: the explicit flag, then the LEOFLOW_TOKEN env (as the token flag
-// default), then the persisted config written by `leoflow auth login`.
+// default), then the persisted config written by `dexaflow auth login`.
 func addAdminFlags(cmd *cobra.Command, f *adminFlags) {
 	cmd.Flags().StringVar(&f.serverURL, "server", "", "control plane base URL (default: config server_url)")
 	cmd.Flags().StringVar(&f.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")

@@ -3,7 +3,7 @@ package migrations
 import "testing"
 
 // TestLatestReturnsMaxEmbeddedVersion: Latest must return the highest version
-// number among the embedded .up.sql files. The drift detector in `leoflow lite`
+// number among the embedded .up.sql files. The drift detector in `dexaflow lite`
 // compares this against the DB's schema_migrations.version to refuse to start
 // when the DB is ahead of the binary (#136). A wrong answer here either fails
 // to detect drift (data loss risk) or false-positives on a fresh install.

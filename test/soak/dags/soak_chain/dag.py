@@ -1,6 +1,6 @@
 """soak_chain: the sequential-dependency shape of the soak battery.
 
-Shape: a 10-deep chain, alternating BashOperator (which Leoflow compiles to its
+Shape: a 10-deep chain, alternating BashOperator (which Dexaflow compiles to its
 native `bash` task type) and a TaskFlow @task (the native `python` type). Every
 hop is one scheduler decision that can only be taken after the previous task went
 terminal, so a run's wall-clock is dominated by 10 x (dispatch latency + tick
@@ -12,7 +12,7 @@ The bodies are deliberately trivial (an echo, a print). Making them heavy would
 only add noise to the measurement this DAG exists for.
 
 The five python hops are five separate functions rather than one decorated
-function reused with `.override(task_id=...)`: Leoflow's parser shim (ADR 0024)
+function reused with `.override(task_id=...)`: Dexaflow's parser shim (ADR 0024)
 implements the `@task` decorator itself and its returned object has no
 `.override`, so a DAG written the Airflow way fails to compile with
 `AttributeError: 'function' object has no attribute 'override'`.
@@ -55,7 +55,7 @@ with DAG("soak_chain", schedule="*/3 * * * *", catchup=False, max_active_runs=1,
     prev = None
     for i, py in enumerate(py_hops):
         # The native bash path, including Jinja templating of the run context:
-        # `{{ ds }}` is rendered by Leoflow's own templater, not by Airflow.
+        # `{{ ds }}` is rendered by Dexaflow's own templater, not by Airflow.
         b = BashOperator(
             task_id=f"hop_bash_{i}",
             bash_command=f"echo 'bash hop {i} ds={{{{ ds }}}}' && date +%s",

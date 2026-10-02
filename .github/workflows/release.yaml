@@ -111,7 +111,7 @@ jobs:
             exit 1
           fi
 
-  # ── Build + push leoflow-migrate (golang-migrate + Leoflow migrations)
+  # ── Build + push leoflow-migrate (golang-migrate + Dexaflow migrations)
   # The Helm chart's migration Job (#34/#48) defaults to
   # ghcr.io/dexadata/leoflow-migrate:<tag>; this job publishes that image,
   # multi-arch, on every release tag in parallel with install-smoke.
@@ -199,10 +199,10 @@ jobs:
             ./scripts/cosign-retry.sh sign --yes "${tag}@${DIGEST}"
           done
 
-  # ── Build + push the Leoflow task base image (runtime/Dockerfile)
+  # ── Build + push the Dexaflow task base image (runtime/Dockerfile)
   # A DAG image is `FROM ghcr.io/dexadata/leoflow-runtime:py<ver>` (ADR 0003):
   # the base ships the leoflow-agent (PID 1) and the leoflow_runtime helper, so a
-  # `leoflow compile --build` needs nothing but a registry. Before this job the
+  # `dexaflow compile --build` needs nothing but a registry. Before this job the
   # base only existed locally (built from a source checkout), which blocked
   # testing Pro without the repo (#318). One leg per supported Python so an author
   # picks the interpreter via `python_version`. Multi-arch + keyless cosign mirror
@@ -219,7 +219,7 @@ jobs:
   # stops rebuilding an EOL line the day after, so the base freezes with whatever
   # OS CVEs it has. The leg keeps being published until then because `base_image`
   # pins make a silent drop a broken build for somebody else; the schema carries
-  # the removal date and `leoflow compile` warns the author.
+  # the removal date and `dexaflow compile` warns the author.
   runtime-image:
     name: Build + push dexaflow-runtime base (py${{ matrix.python }})
     needs: release
@@ -350,7 +350,7 @@ jobs:
             sleep 10
           done
 
-      - name: Install Leoflow via the published install.sh
+      - name: Install Dexaflow via the published install.sh
         env:
           LEOFLOW_VERSION: ${{ github.ref_name }} # pin to the just-pushed tag
         run: |
@@ -364,11 +364,11 @@ jobs:
       - name: Verify the binary and managed CPython run
         run: |
           set -eu
-          leoflow version
+          dexaflow version
           "$HOME/.leoflow/python/bin/python3.11" --version
 
   # ── Cold-start smoke (#96): the actual user flow we cannot reproduce in
-  # any other gate — install fresh, run `leoflow setup`, boot `leoflow lite`,
+  # any other gate — install fresh, run `dexaflow setup`, boot `dexaflow lite`,
   # wait for /readyz to respond. Catches the class of bug where the binary
   # is installed correctly but boot fails (Postgres race / connection bugs /
   # agent port collision / etc.).
@@ -389,7 +389,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Install Leoflow via the published install.sh
+      - name: Install Dexaflow via the published install.sh
         env:
           LEOFLOW_VERSION: ${{ github.ref_name }}
         run: |
@@ -399,13 +399,13 @@ jobs:
           # passes. Verified: a 404 through that pipe gives exit 0.
           curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.sh" -o /tmp/install.sh
           sh /tmp/install.sh
-      - name: leoflow setup (non-interactive, defaults)
+      - name: dexaflow setup (non-interactive, defaults)
         run: |
           set -eu
           export PATH="$HOME/.local/bin:$PATH"
           mkdir -p /tmp/ws
-          leoflow setup --workspace /tmp/ws </dev/null
-      # Take the image download off the boot clock. `leoflow lite --postgres
+          dexaflow setup --workspace /tmp/ws </dev/null
+      # Take the image download off the boot clock. `dexaflow lite --postgres
       # docker` brings up the embedded compose (docker-compose.dev.yaml,
       # materialized under ~/.leoflow on a binary-only install), so on a fresh
       # runner the pull otherwise happens inside the poll below.
@@ -433,17 +433,17 @@ jobs:
             sleep 10
           done
           echo "::warning::could not pre-pull postgres:16; the pull will happen inside the boot budget instead"
-      - name: Boot leoflow lite and wait for /readyz
+      - name: Boot dexaflow lite and wait for /readyz
         run: |
           set -eu
           export PATH="$HOME/.local/bin:$PATH"
-          # This job stays cheap only because `leoflow setup </dev/null` above is
+          # This job stays cheap only because `dexaflow setup </dev/null` above is
           # non-interactive and persists lite_executor: subprocess. If that
-          # default ever flips to k8s, `leoflow lite` starts building a k3d
+          # default ever flips to k8s, `dexaflow lite` starts building a k3d
           # cluster inside the budget below and this job will look flaky.
           #
           # Background lite; capture stdout+stderr so we can dump on failure.
-          leoflow lite --postgres docker --port 8088 --host 127.0.0.1 >/tmp/lite.log 2>&1 &
+          dexaflow lite --postgres docker --port 8088 --host 127.0.0.1 >/tmp/lite.log 2>&1 &
           LITE_PID=$!
           # 240s, not 60. What retracted v0.4.5-rc.1 was NOT the image pull —
           # the log shows `postgres Pulled` and the container Healthy well
