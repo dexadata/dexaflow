@@ -1,0 +1,161 @@
+suite: GOMEMLIMIT derived from the container memory limit
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  # Off by default (ADR 0062): the rendered env is what it was before the knob.
+  - it: renders no GOMEMLIMIT by default
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+          any: true
+
+  # 80% of the shipped 512Mi limit, in whole MiB (Go accepts the MiB suffix).
+  - it: sets GOMEMLIMIT to 80% of the shipped memory limit when enabled
+    set:
+      goMemLimit.enabled: true
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 409MiB
+
+  - it: honors a custom percentage
+    set:
+      goMemLimit.enabled: true
+      goMemLimit.percent: 90
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 460MiB
+
+  # Every Kubernetes memory suffix an operator is likely to write, binary and
+  # decimal, plus a bare byte count.
+  - it: reads a Gi limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 2Gi
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 1638MiB
+
+  - it: reads a decimal G limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 1G
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 762MiB
+
+  - it: reads a decimal M limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 500M
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 381MiB
+
+  - it: reads a Ki limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 1048576Ki
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 819MiB
+
+  - it: reads a bare byte count
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: "1073741824"
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 819MiB
+
+  # Both split Deployments share `resources`, so both get the same limit.
+  - it: sets GOMEMLIMIT on both split Deployments
+    set:
+      goMemLimit.enabled: true
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 409MiB
+        documentIndex: 0
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 409MiB
+        documentIndex: 1
+
+  # A soft limit with nothing to be a fraction of is a guess; refuse it.
+  - it: fails the render when enabled without a memory limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: null
+    template: deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: 'goMemLimit\.enabled requires resources\.limits\.memory'
+
+  - it: fails the render on a quantity it cannot read
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 1.5Gi
+    template: deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: 'cannot read resources\.limits\.memory "1\.5Gi"'
+
+  - it: fails the render on a percentage outside 1 to 100
+    set:
+      goMemLimit.enabled: true
+      goMemLimit.percent: 0
+    template: deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: 'goMemLimit\.percent must be between 1 and 100'
