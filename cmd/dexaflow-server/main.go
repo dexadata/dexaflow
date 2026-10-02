@@ -1436,13 +1436,21 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 // server.read_timeout and server.idle_timeout (0, the default, leaves them
 // off). WriteTimeout is deliberately never set: a write deadline would cut
 // live log tails and long downloads mid-stream.
+//
+// net/http uses ReadTimeout as the idle timeout when IdleTimeout is 0, so with
+// only a read timeout set an idle 0 is passed on as negative (no idle timeout):
+// idle keep-alive connections stay open, as before, until idle_timeout is set.
 func newHTTPServer(addr string, handler http.Handler, cfg *config.ServerConfig) *http.Server {
+	idle := cfg.Server.IdleTimeout
+	if idle == 0 && cfg.Server.ReadTimeout > 0 {
+		idle = -1
+	}
 	return &http.Server{
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       cfg.Server.ReadTimeout,
-		IdleTimeout:       cfg.Server.IdleTimeout,
+		IdleTimeout:       idle,
 	}
 }
 

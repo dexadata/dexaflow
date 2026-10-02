@@ -357,7 +357,8 @@ type ServerSection struct {
 	// means no limit, as before.
 	ReadTimeout time.Duration `mapstructure:"read_timeout"`
 	// IdleTimeout closes a keep-alive connection that has been idle this long.
-	// 0 (the default) keeps idle connections open, as before.
+	// 0 (the default) keeps idle connections open, as before, even when
+	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
 	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
 }
 

@@ -9,5 +9,6 @@ body: |-
   such as `60s`) set them. The read timeout covers reading the request only:
   live log tails and other long responses keep streaming, and no write timeout
   is set. Set it above your slowest legitimate upload. Both default to `0s`, no
-  limit, as before.
+  limit, as before; an idle timeout of `0s` stays off even when a read timeout
+  is set.
 time: 2026-10-02T17:50:00.000000000-03:00
