@@ -26,7 +26,7 @@ var ErrInvalidDbtProject = errors.New("invalid dbt.project")
 //
 // Both failures are silent at compile: the path is a string until dbt is invoked
 // inside a pod, where it surfaces as "project directory does not exist" with no
-// indication that leoflow.yaml was the cause.
+// indication that dexaflow.yaml was the cause.
 func (c *LeoflowConfig) validateDbtProject() error {
 	// Both fields feed the same filepath.Join chain: project is joined onto the
 	// DAG directory, then manifest is joined onto that result. Validating only
@@ -69,14 +69,14 @@ func containedRelativePath(field, value string) error {
 		return nil
 	}
 	if filepath.IsAbs(value) {
-		return fmt.Errorf("%w: %s %q is absolute; it must be relative to the directory holding leoflow.yaml, "+
+		return fmt.Errorf("%w: %s %q is absolute; it must be relative to the directory holding dexaflow.yaml, "+
 			"because a Pro image build bakes the project at that relative path inside the image",
 			ErrInvalidDbtProject, field, value)
 	}
 	// Clean resolves any ".." before the comparison, so "transform/../analytics"
 	// is judged on what it actually points at rather than on how it is spelled.
 	if clean := filepath.Clean(value); clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%w: %s %q resolves to %q, outside the directory holding leoflow.yaml; "+
+		return fmt.Errorf("%w: %s %q resolves to %q, outside the directory holding dexaflow.yaml; "+
 			"the Docker build context cannot reach it, so it would be missing from the image",
 			ErrInvalidDbtProject, field, value, clean)
 	}

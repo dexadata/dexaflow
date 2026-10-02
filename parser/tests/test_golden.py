@@ -9,7 +9,7 @@ locks fidelity in CI without installing Airflow.
 
 Regenerate (needs an Airflow venv), per example:
     LEOFLOW_PARSER_BACKEND=airflow leoflow_parser compile \\
-        --source examples/<name>/dag.py --config examples/<name>/leoflow.yaml \\
+        --source examples/<name>/dag.py --config examples/<name>/dexaflow.yaml \\
         --output golden.json --image leoflow/<name>:golden --dag-version v1
     # then drop the "image" key.
 """
@@ -32,19 +32,19 @@ def test_compiler_matches_golden(golden_file, monkeypatch):
     """Each golden runs the parser against a real example DAG. PyYAML
     moved out of the parser at the alpha cut (handshake is now Go→JSON via
     LEOFLOW_PROJECT_CONFIG_JSON), so the test loads the example's
-    leoflow.yaml here with the dev-only PyYAML and seeds the env var."""
+    dexaflow.yaml here with the dev-only PyYAML and seeds the env var."""
     import yaml  # dev-only; not a parser runtime dep
 
     name = golden_file.stem
     example = REPO / "examples" / name
     want = json.loads(golden_file.read_text())
 
-    cfg = yaml.safe_load((example / "leoflow.yaml").read_text()) or {}
+    cfg = yaml.safe_load((example / "dexaflow.yaml").read_text()) or {}
     monkeypatch.setenv("LEOFLOW_PROJECT_CONFIG_JSON", json.dumps(cfg))
 
     got = compile_dag(
         str(example / "dag.py"),
-        str(example / "leoflow.yaml"),
+        str(example / "dexaflow.yaml"),
         image=f"leoflow/{name}:golden",
         dag_version="v1",
     )

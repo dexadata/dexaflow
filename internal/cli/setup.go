@@ -181,7 +181,7 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("resolving home directory: %w", err)
 	}
-	leoflowHome := filepath.Join(homeDir, ".leoflow")
+	leoflowHome := stateDirIn(homeDir)
 
 	r := setup.Detect(setup.Probe{
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,

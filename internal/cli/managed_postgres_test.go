@@ -77,10 +77,10 @@ func TestManagedPGPaths(t *testing.T) {
 	if herr != nil {
 		t.Fatalf("UserHomeDir: %v", herr)
 	}
-	if want := filepath.Join(home, ".leoflow", "postgres", "bin"); binDir != want {
+	if want := filepath.Join(home, ".dexaflow", "postgres", "bin"); binDir != want {
 		t.Errorf("binDir = %q, want %q", binDir, want)
 	}
-	if want := filepath.Join(home, ".leoflow", "pgdata"); dataDir != want {
+	if want := filepath.Join(home, ".dexaflow", "pgdata"); dataDir != want {
 		t.Errorf("dataDir = %q, want %q", dataDir, want)
 	}
 }

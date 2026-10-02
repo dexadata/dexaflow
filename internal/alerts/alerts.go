@@ -1,5 +1,5 @@
 // Package alerts sends native on-failure notifications (#424). The scheduler
-// resolves each leoflow.yaml alert rule's connection to an endpoint URL and calls
+// resolves each dexaflow.yaml alert rule's connection to an endpoint URL and calls
 // a Notifier — Slack incoming webhooks and generic HTTP webhooks — entirely in
 // Go, with no task pod and no Python in the hot path. Connection lookup lives in
 // the caller; this package only renders the message and performs the HTTP POST,

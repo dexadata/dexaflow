@@ -2,7 +2,7 @@
 
 The sibling of examples/postgres_load: same job, but it uses Airflow's
 PostgresHook instead of raw psycopg2. The provider is declared with one line of
-`connectors:` sugar in leoflow.yaml (no driver to remember), and the hook reads
+`connectors:` sugar in dexaflow.yaml (no driver to remember), and the hook reads
 the managed Connection `pg_target` (injected as AIRFLOW_CONN_PG_TARGET).
 
 Note the hook is imported INSIDE the task body, not at module top level: Leoflow

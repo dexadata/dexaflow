@@ -53,11 +53,11 @@ func loadPythonSupport() (pythonVersionSchema, error) {
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(leoflowSchemaJSON, &doc); err != nil {
-		return pythonVersionSchema{}, fmt.Errorf("parsing leoflow.yaml schema: %w", err)
+		return pythonVersionSchema{}, fmt.Errorf("parsing dexaflow.yaml schema: %w", err)
 	}
 	p := doc.Properties.PythonVersion
 	if len(p.Enum) == 0 {
-		return pythonVersionSchema{}, fmt.Errorf("leoflow.yaml schema declares no python_version enum")
+		return pythonVersionSchema{}, fmt.Errorf("dexaflow.yaml schema declares no python_version enum")
 	}
 	// A default that is not selectable, or one that is on its way out, would hand
 	// every author who writes no python_version at all the version we are asking
@@ -65,22 +65,22 @@ func loadPythonSupport() (pythonVersionSchema, error) {
 	// together by TestApplyDefaultsPythonVersionIsSupported.
 	if !slices.Contains(p.Enum, p.Default) {
 		return pythonVersionSchema{}, fmt.Errorf(
-			"leoflow.yaml schema: python_version default %q is not in the enum %v", p.Default, p.Enum)
+			"dexaflow.yaml schema: python_version default %q is not in the enum %v", p.Default, p.Enum)
 	}
 	if _, deprecated := p.Deprecations[p.Default]; deprecated {
 		return pythonVersionSchema{}, fmt.Errorf(
-			"leoflow.yaml schema: python_version default %q is deprecated — "+
+			"dexaflow.yaml schema: python_version default %q is deprecated — "+
 				"move the default to a supported line before deprecating it", p.Default)
 	}
 	for v, d := range p.Deprecations {
 		if !slices.Contains(p.Enum, v) {
 			return pythonVersionSchema{}, fmt.Errorf(
-				"leoflow.yaml schema deprecates python_version %q, which is not in the enum %v — "+
+				"dexaflow.yaml schema deprecates python_version %q, which is not in the enum %v — "+
 					"a deprecation note for a version nobody can select is a note nobody will read", v, p.Enum)
 		}
 		if _, err := time.Parse(time.DateOnly, d.RemoveAfter); err != nil {
 			return pythonVersionSchema{}, fmt.Errorf(
-				"leoflow.yaml schema: python_version %q has remove_after %q, want YYYY-MM-DD", v, d.RemoveAfter)
+				"dexaflow.yaml schema: python_version %q has remove_after %q, want YYYY-MM-DD", v, d.RemoveAfter)
 		}
 	}
 	return p, nil

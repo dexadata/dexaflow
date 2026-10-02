@@ -90,7 +90,7 @@ func TestWarnDeprecatedPythonDefaultPath(t *testing.T) {
 		"python_version "+d.Version+" is deprecated",
 		publishedBaseRepo+":py"+d.Version,
 		d.RemoveAfter,
-		`Fix: set python_version: "`+d.Replacement+`" in leoflow.yaml and rebuild.`,
+		`Fix: set python_version: "`+d.Replacement+`" in dexaflow.yaml and rebuild.`,
 	)
 	// The remedy for the field the author actually set must not be the other
 	// field's remedy.
@@ -130,7 +130,7 @@ func TestWarnDeprecatedPythonPinnedBaseImageNamesBaseImage(t *testing.T) {
 			mustContainAll(t, got,
 				"warning: base_image "+tc.pinned+" pins Python "+d.Version,
 				d.RemoveAfter,
-				"Fix: repoint base_image to "+tc.wantFixRef+" in leoflow.yaml and rebuild.",
+				"Fix: repoint base_image to "+tc.wantFixRef+" in dexaflow.yaml and rebuild.",
 			)
 			// The headline must not blame a field whose value is not deprecated,
 			// and the remedy must not send the author to a field that is unused.
@@ -350,7 +350,7 @@ func TestWrapWords(t *testing.T) {
 }
 
 // `leoflow validate` is the sub-second command an author runs in a loop with
-// leoflow.yaml open — the exact moment this warning is worth something, and the
+// dexaflow.yaml open — the exact moment this warning is worth something, and the
 // one entry point that open-coded its preconditions and so never warned at all.
 // Driving the real cobra command rather than calling the helper is the point:
 // the bug was in the wiring, not in the renderer.

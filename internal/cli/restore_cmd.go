@@ -50,7 +50,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	if home == "" {
 		return fmt.Errorf("could not resolve the user home directory")
 	}
-	leoflowHome := filepath.Join(home, ".leoflow")
+	leoflowHome := stateDirIn(home)
 
 	devPrintf(out, "▸ reading manifest from %s …\n", input)
 	archive, err := readBackupArchive(input)
@@ -222,7 +222,7 @@ func defaultWorkspaceDir() string {
 
 // restoreWorkspaceTree creates the workspace dir and writes every captured
 // file. Intermediate directories are created as needed so a nested layout
-// (subdir/leoflow.yaml) reproduces correctly. Existing files are
+// (subdir/dexaflow.yaml) reproduces correctly. Existing files are
 // overwritten — the operator opted in to a restore.
 func restoreWorkspaceTree(workspace string, files map[string][]byte) error {
 	if err := os.MkdirAll(workspace, 0o750); err != nil {

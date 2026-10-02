@@ -45,7 +45,7 @@ var bundledProviderModulePrefixes = []string{
 // validateOperatorProviders rejects an airflow_operator task whose provider
 // package is declared in neither connectors: nor dependencies: (and is not bundled
 // in the base image). This moves the failure from a runtime ModuleNotFoundError in
-// the task pod to compile time, with the exact leoflow.yaml line to add — ADR 0040
+// the task pod to compile time, with the exact dexaflow.yaml line to add — ADR 0040
 // A5, the import-scan promised by ADR 0038 #2 now that operators are top-level.
 func validateOperatorProviders(spec *domain.DAGSpec, cfg *domain.LeoflowConfig) error {
 	deps, err := cfg.EffectiveDependencies()
@@ -118,13 +118,13 @@ func operatorProviderHint(taskID, class string) string {
 		prefix := providerModuleRoot + strings.ReplaceAll(strings.TrimPrefix(c.PipPackage, providerPkgPrefix), "-", ".")
 		if strings.HasPrefix(class, prefix+".") {
 			return fmt.Sprintf(
-				"task %q uses operator %q whose provider is not installed; add it to leoflow.yaml:\n"+
+				"task %q uses operator %q whose provider is not installed; add it to dexaflow.yaml:\n"+
 					"    connectors: [%s]   # or dependencies: [%s]",
 				taskID, class, c.ConnectionType, c.PipPackage)
 		}
 	}
 	return fmt.Sprintf(
-		"task %q uses operator %q whose provider is not installed; add it to leoflow.yaml:\n"+
+		"task %q uses operator %q whose provider is not installed; add it to dexaflow.yaml:\n"+
 			"    dependencies: [%s]",
 		taskID, class, bestEffortProviderPackage(class))
 }

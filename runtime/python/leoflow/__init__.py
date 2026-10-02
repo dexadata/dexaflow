@@ -42,7 +42,7 @@ class _DbtGroup(BaseOperator):
 
 
 def dbt_group(name: str) -> _DbtGroup:
-    """Embed a dbt project (configured under ``leoflow.yaml`` ``dbt_groups: <name>``)
+    """Embed a dbt project (configured under ``dexaflow.yaml`` ``dbt_groups: <name>``)
     as a task group. Returns the placeholder operator for ``>>`` wiring; its
     ``task_id`` is the group name."""
     return _DbtGroup(task_id=name)

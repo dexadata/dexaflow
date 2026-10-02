@@ -108,7 +108,7 @@ with DAG("mix", schedule="@daily"):
     after = PythonOperator(task_id="post", python_callable=post)
     before >> models >> after
 PY
-cat >"$PROJ/leoflow.yaml" <<'YAML'
+cat >"$PROJ/dexaflow.yaml" <<'YAML'
 schema_version: "1.0"
 dag_id: mix
 # The adapter is declared, not installed by a hand-written Dockerfile: the
@@ -129,7 +129,7 @@ YAML
 # Pin the DAG image to the host arch (see e2e.sh): the loader defaults to
 # linux/amd64, which fails FROM an arm64 base on a Lima/dev host → ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat >>"$PROJ/leoflow.yaml" <<YAML
+cat >>"$PROJ/dexaflow.yaml" <<YAML
 # base_image: the base THIS checkout just built. Without it the generated
 # Dockerfile resolves to the published moving tag, so the test would measure the
 # last release's image instead of the code under review — wrong in either

@@ -22,10 +22,10 @@ import (
 // real embed.FS uses. Enough for the install handler to walk and decide.
 func mockExamplesFS() fs.FS {
 	return fstest.MapFS{
-		"examples/bash_pipeline/dag.py":       &fstest.MapFile{Data: []byte("print('bash')\n")},
-		"examples/bash_pipeline/leoflow.yaml": &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: bash_pipeline\n")},
-		"examples/csv_report/dag.py":          &fstest.MapFile{Data: []byte("print('csv')\n")},
-		"examples/csv_report/leoflow.yaml":    &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: csv_report\n")},
+		"examples/bash_pipeline/dag.py":        &fstest.MapFile{Data: []byte("print('bash')\n")},
+		"examples/bash_pipeline/dexaflow.yaml": &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: bash_pipeline\n")},
+		"examples/csv_report/dag.py":           &fstest.MapFile{Data: []byte("print('csv')\n")},
+		"examples/csv_report/dexaflow.yaml":    &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: csv_report\n")},
 	}
 }
 
@@ -49,7 +49,7 @@ func newWorkspaceWithProject(t *testing.T, name string) WorkspaceFS {
 	if err := os.MkdirAll(projectDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "leoflow.yaml"),
+	if err := os.WriteFile(filepath.Join(projectDir, "dexaflow.yaml"),
 		[]byte("schema_version: \"1.0\"\ndag_id: "+name+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

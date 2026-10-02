@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -66,7 +65,7 @@ func runLiteProvision(cmd *cobra.Command, install bool) error {
 
 	// Fetch the Monaco editor bundle for the Lite web editor (best-effort).
 	if home, herr := os.UserHomeDir(); herr == nil {
-		if _, mErr := setup.EnsureMonaco(ctx, nil, filepath.Join(home, ".leoflow"), func(format string, a ...any) {
+		if _, mErr := setup.EnsureMonaco(ctx, nil, stateDirIn(home), func(format string, a ...any) {
 			devPrintf(out, "  "+format+"\n", a...)
 		}); mErr != nil {
 			devPrintf(out, "  ! editor assets not fetched (%v) — web editor unavailable until re-run with network\n", mErr)

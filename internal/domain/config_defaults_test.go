@@ -8,11 +8,11 @@ import (
 // TestApplyDefaults_AllZeroValuesGetSchemaDefaults verifies that a fully zero
 // LeoflowConfig is filled with every default declared in the JSON Schema
 // (internal/domain/schemas/leoflow-yaml-schema.json). This is the single
-// source of truth for "what does Leoflow assume when leoflow.yaml is empty"
+// source of truth for "what does Leoflow assume when dexaflow.yaml is empty"
 // and replaces the scattered inline `if x == "" { x = ...}` fallbacks.
 //
 // Reason for centralization (user ask 2026-06-01): the multi-DAG workspace
-// design lets subdirs ship without a leoflow.yaml — they MUST still receive
+// design lets subdirs ship without a dexaflow.yaml — they MUST still receive
 // the same defaults, and "which value did we use?" has to be debuggable.
 func TestApplyDefaults_AllZeroValuesGetSchemaDefaults(t *testing.T) {
 	c := &LeoflowConfig{}

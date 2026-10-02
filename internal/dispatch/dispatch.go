@@ -17,7 +17,7 @@ import (
 )
 
 // reservedEnvPrefix marks env vars owned by leoflow's control plane / agent. An
-// author's task env (leoflow.yaml `env:`) must never set these: they configure
+// author's task env (dexaflow.yaml `env:`) must never set these: they configure
 // the in-pod agent's control-plane address, token transport, and (ADR 0060) the
 // external-secrets backend. An author override reaches the agent's own container
 // (task env is appended last in the pod spec), so it could redirect the agent's
@@ -30,7 +30,7 @@ const reservedEnvPrefix = "LEOFLOW_"
 const reservedEnvPrefixNew = "DEXAFLOW_"
 
 // stripReservedEnv returns a copy of env without any leoflow-reserved key, so an
-// author's leoflow.yaml env: cannot override the agent's own configuration. The
+// author's dexaflow.yaml env: cannot override the agent's own configuration. The
 // prefix match is case-insensitive (env keys are case-sensitive on Linux, but the
 // agent only ever reads the canonical uppercase form; drop any case an author
 // tries). A nil map stays nil.

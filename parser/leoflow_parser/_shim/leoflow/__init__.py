@@ -1,7 +1,7 @@
 """Leoflow authoring primitives available to a ``dag.py`` at parse time (ADR 0043).
 
 Only structure is recorded here; the heavy config (project, granularity,
-connection) lives in ``leoflow.yaml`` and is resolved by the Go compiler after
+connection) lives in ``dexaflow.yaml`` and is resolved by the Go compiler after
 parsing. A ``dag.py`` is never executed at runtime, so these stubs exist solely
 for the parser/shim.
 """
@@ -20,7 +20,7 @@ class _DbtGroup(BaseOperator):
 
 
 def dbt_group(name: str) -> _DbtGroup:
-    """Embed a dbt project (configured under ``leoflow.yaml`` ``dbt_groups: <name>``)
+    """Embed a dbt project (configured under ``dexaflow.yaml`` ``dbt_groups: <name>``)
     as a task group. Returns the placeholder operator for ``>>`` wiring; its
     ``task_id`` is the group name."""
     return _DbtGroup(task_id=name)

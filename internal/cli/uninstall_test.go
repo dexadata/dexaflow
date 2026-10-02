@@ -39,7 +39,7 @@ func TestRemoveBinariesIn(t *testing.T) {
 
 // TestResolveLiteProjectRejectsNonProjectArg covers the CLI clarity fix: an
 // explicit `leoflow lite <arg>` that is not a project (e.g. the `leoflow lite
-// uninstall` typo) fails with an actionable message, not a cryptic leoflow.yaml error.
+// uninstall` typo) fails with an actionable message, not a cryptic dexaflow.yaml error.
 func TestResolveLiteProjectRejectsNonProjectArg(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
@@ -56,7 +56,7 @@ func TestResolveLiteProjectRejectsNonProjectArg(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte("dag_id: x\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte("dag_id: x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := resolveLiteProject(cmd, []string{dir}); err != nil || got != dir {
@@ -188,5 +188,37 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An install from before the rename has its state in ~/.leoflow behind a
+// ~/.dexaflow link (config.HomeDirIn). Removing it must remove the data, not
+// just the link, and leave no link pointing at nothing.
+func TestRemoveLeoflowHomeThroughTheLegacyLink(t *testing.T) {
+	for _, purge := range []bool{true, false} {
+		home := t.TempDir()
+		legacy := filepath.Join(home, ".leoflow")
+		if err := os.MkdirAll(filepath.Join(legacy, "python"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(legacy, "config.yaml"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(home, ".dexaflow")
+		if err := os.Symlink(".leoflow", link); err != nil {
+			t.Fatal(err)
+		}
+		cmd := &cobra.Command{}
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		if err := removeLeoflowHome(cmd, link, purge); err != nil {
+			t.Fatalf("purge=%v: %v", purge, err)
+		}
+		if _, err := os.Lstat(legacy); !os.IsNotExist(err) {
+			t.Errorf("purge=%v: ~/.leoflow still exists (err=%v)", purge, err)
+		}
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			t.Errorf("purge=%v: the ~/.dexaflow link was left behind (err=%v)", purge, err)
+		}
 	}
 }

@@ -66,12 +66,12 @@ log "Scaffolding a minimal DAG project ($DAG_ID)"
 # Declare the sensor's provider so the ADR 0040 A5 compile check passes; the
 # Dockerfile below installs it into the image.
 sed -i.bak 's/^dependencies: \[\]/dependencies: [apache-airflow-providers-http]/' \
-  "$WORKDIR/$DAG_ID/leoflow.yaml" && rm -f "$WORKDIR/$DAG_ID/leoflow.yaml.bak"
+  "$WORKDIR/$DAG_ID/dexaflow.yaml" && rm -f "$WORKDIR/$DAG_ID/dexaflow.yaml.bak"
 # The config loader defaults build.platforms to linux/amd64 (the prod default);
 # on an arm64 dev/Lima host the DAG image must build for the host arch, else its
 # base-image FROM mismatches (InvalidBaseImagePlatform) and the pods ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat >> "$WORKDIR/$DAG_ID/leoflow.yaml" <<YAML
+cat >> "$WORKDIR/$DAG_ID/dexaflow.yaml" <<YAML
 build:
   platforms:
     - ${HOST_PLATFORM}
@@ -465,7 +465,7 @@ log "bash Jinja OK: greet rendered a real ds"
 log "Callback pod-path (#424): a failing @task must run its on_failure_callback IN the pod"
 CBID="cbdag"
 mkdir -p "$WORKDIR/$CBID"
-cat > "$WORKDIR/$CBID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$CBID/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: cbdag
 build:
@@ -571,7 +571,7 @@ log "callback pod-path OK: on_failure_callback ran in the pod on terminal failur
 log "system_packages + in-pod TLS (generated Dockerfile path)"
 SPID="sysdag"
 mkdir -p "$WORKDIR/$SPID"
-cat > "$WORKDIR/$SPID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$SPID/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: ${SPID}
 base_image: ${BASE_IMAGE}

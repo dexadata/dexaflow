@@ -13,7 +13,7 @@ import (
 )
 
 // TestLiteDbtBin: a Lite compile parses the manifest with the per-DAG venv's dbt
-// (~/.leoflow/dev/venvs/<dag>/bin/dbt) — the same dbt the task runs — not a system
+// (~/.dexaflow/dev/venvs/<dag>/bin/dbt) — the same dbt the task runs — not a system
 // dbt the user may not have (L1). It returns "" when the venv dbt is absent so the
 // caller falls back to PATH.
 func TestLiteDbtBin(t *testing.T) {
@@ -24,7 +24,7 @@ func TestLiteDbtBin(t *testing.T) {
 		t.Errorf("no venv yet: want empty, got %q", got)
 	}
 
-	bin := filepath.Join(home, ".leoflow", "dev", "venvs", "sales", "bin")
+	bin := filepath.Join(home, ".dexaflow", "dev", "venvs", "sales", "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}

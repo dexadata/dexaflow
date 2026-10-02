@@ -2067,7 +2067,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		sched.EnablePools()
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
-	// declared in leoflow.yaml when a run finalizes failed, resolving each rule's
+	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
 	// managed connection to its endpoint URL. Best-effort, off the tick path.
 	sched.SetAlerter(failurealert.New(
 		alerts.NewNotifier(&http.Client{Timeout: alertHTTPTimeout}),

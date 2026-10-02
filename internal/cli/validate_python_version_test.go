@@ -94,7 +94,7 @@ func TestValidateSkipWarningNamesAnInstallableInterpreter(t *testing.T) {
 		t.Errorf("warning names a nonexistent interpreter (python3.<full version>), got:\n%s", got)
 	}
 	// It must still point at the declared version itself, so the reader can
-	// connect the warning to the line in their leoflow.yaml.
+	// connect the warning to the line in their dexaflow.yaml.
 	if !strings.Contains(got, "python_version 3.99") {
 		t.Errorf("warning must quote the declared python_version, got:\n%s", got)
 	}
@@ -185,7 +185,7 @@ func TestValidateActuallyConsultsPythonVersion(t *testing.T) {
 	if _, _, err := run(t, "init", dir); err != nil {
 		t.Fatal(err)
 	}
-	cfg := filepath.Join(dir, "leoflow.yaml")
+	cfg := filepath.Join(dir, "dexaflow.yaml")
 	b, rerr := os.ReadFile(cfg)
 	if rerr != nil {
 		t.Fatal(rerr)

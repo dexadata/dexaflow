@@ -189,7 +189,7 @@ func prepareWorkspace(cmd *cobra.Command, out io.Writer, dir string) (*Workspace
 
 // resolveLiteProject picks the workspace dir for `leoflow lite`. With an
 // explicit path argument it uses that — must exist as a directory; the path
-// can be either a single-DAG project (back-compat: root holds leoflow.yaml +
+// can be either a single-DAG project (back-compat: root holds dexaflow.yaml +
 // dag.py) or a multi-DAG workspace (subdirs each with their own pair). With
 // no argument it uses the configured workspace (the directory `leoflow setup`
 // chose). Scaffolding of an empty workspace is the caller's responsibility —
@@ -199,7 +199,7 @@ func resolveLiteProject(cmd *cobra.Command, args []string) (string, error) {
 		p := args[0]
 		// An explicit argument must be an existing directory. Without this check a
 		// typo like `leoflow lite uninstall` was swallowed as a project path and
-		// failed later with a cryptic "open uninstall/leoflow.yaml". Fail clearly.
+		// failed later with a cryptic "open uninstall/dexaflow.yaml". Fail clearly.
 		info, err := os.Stat(p)
 		if err != nil || !info.IsDir() {
 			return "", fmt.Errorf("workspace path %q does not exist or is not a directory.\n"+
@@ -495,7 +495,7 @@ func resolveComposeFile(flagValue string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving home dir: %w", err)
 	}
-	dir := filepath.Join(home, ".leoflow")
+	dir := stateDirIn(home)
 	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
 		return "", fmt.Errorf("creating %s: %w", dir, mkErr)
 	}
@@ -1161,7 +1161,7 @@ func devHome() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving home dir: %w", err)
 	}
-	d := filepath.Join(h, ".leoflow", "dev")
+	d := filepath.Join(stateDirIn(h), "dev")
 	if mkerr := os.MkdirAll(d, 0o750); mkerr != nil {
 		return "", fmt.Errorf("creating dev home %s: %w", d, mkerr)
 	}
@@ -1175,7 +1175,7 @@ func devHome() (string, error) {
 // temp dir only if the home cannot be resolved.
 func liteDevDir() string {
 	if h, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(h, ".leoflow", "dev")
+		return filepath.Join(stateDirIn(h), "dev")
 	}
 	return os.TempDir()
 }
@@ -1238,7 +1238,7 @@ func leoflowManagedPython() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(h, ".leoflow", "python", "bin", "python3.11")
+	return filepath.Join(stateDirIn(h), "python", "bin", "python3.11")
 }
 
 // resolvePython3 returns a usable Python >= 3.11 with a single, unified
@@ -1996,7 +1996,7 @@ func projectDagIDs(ws *WorkspaceSpec) map[string]struct{} {
 }
 
 // workspaceWatchPaths returns the paths the mtime poller should track for a
-// given workspace: every project's leoflow.yaml (when present) and dag.py,
+// given workspace: every project's dexaflow.yaml (when present) and dag.py,
 // PLUS the workspace root itself so a new subdir appearing nudges the mtime
 // signal. Lite re-discovers projects on every reload, so a new subdir's files
 // will start being watched at the next tick after it's noticed.
@@ -2316,7 +2316,7 @@ func minorOf(v string) (int, error) {
 //
 //   - ApplyDefaults fills it with "3.11" for every config that omits it — and
 //     discovery defaults EVERY project, including directories with no
-//     leoflow.yaml at all. Enforcing there turns "no python3.11 on this host"
+//     dexaflow.yaml at all. Enforcing there turns "no python3.11 on this host"
 //     from a silent, working fallback into a hard stop, on a machine where
 //     nothing is actually inconsistent: the image is py3.11 because the same
 //     default chose it, so dev and the cluster already agree.

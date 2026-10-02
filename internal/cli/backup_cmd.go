@@ -50,7 +50,7 @@ func runBackup(cmd *cobra.Command, output string) error {
 	if home == "" {
 		return fmt.Errorf("could not resolve the user home directory")
 	}
-	leoflowHome := filepath.Join(home, ".leoflow")
+	leoflowHome := stateDirIn(home)
 	if _, err := os.Stat(leoflowHome); err != nil {
 		return fmt.Errorf("no Lite install found at %s — run `leoflow setup` first", leoflowHome)
 	}

@@ -13,7 +13,7 @@ func newTestFS(t *testing.T) (fs *FS, root string) {
 	t.Helper()
 	root = t.TempDir()
 	mustWrite(t, filepath.Join(root, "dag.py"), "print('hi')\n")
-	mustWrite(t, filepath.Join(root, "leoflow.yaml"), "name: demo\n")
+	mustWrite(t, filepath.Join(root, "dexaflow.yaml"), "name: demo\n")
 	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestTreeListsFilesRelativeAndSorted(t *testing.T) {
 		paths = append(paths, e.Path)
 	}
 	joined := strings.Join(paths, ",")
-	for _, want := range []string{"dag.py", "leoflow.yaml", "tasks", "tasks/extract.py"} {
+	for _, want := range []string{"dag.py", "dexaflow.yaml", "tasks", "tasks/extract.py"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("Tree missing %q; got %v", want, paths)
 		}

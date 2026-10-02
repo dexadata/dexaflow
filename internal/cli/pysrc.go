@@ -26,7 +26,7 @@ func pysrcRoot() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving home for pysrc: %w", err)
 	}
-	return filepath.Join(home, ".leoflow", "pysrc"), nil
+	return filepath.Join(stateDirIn(home), "pysrc"), nil
 }
 
 // parserPysrcDir returns the extracted parser-sources directory

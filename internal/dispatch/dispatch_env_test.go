@@ -3,7 +3,7 @@ package dispatch
 import "testing"
 
 // stripReservedEnv must drop every LEOFLOW_-prefixed key (case-insensitively) an
-// author put in leoflow.yaml env:, so an author cannot override the agent's own
+// author put in dexaflow.yaml env:, so an author cannot override the agent's own
 // control-plane config (#828) — e.g. LEOFLOW_CONTROL_PLANE_ADDR, LEOFLOW_AGENT_
 // INSECURE, or (ADR 0060) LEOFLOW_SECRETS_BACKEND. Non-reserved keys pass through.
 func TestStripReservedEnv(t *testing.T) {

@@ -23,7 +23,7 @@ func leoflowHome() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving home dir: %w", err)
 	}
-	return filepath.Join(h, ".leoflow"), nil
+	return stateDirIn(h), nil
 }
 
 // projectName derives a stable, per-install docker compose project name from the

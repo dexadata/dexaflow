@@ -29,7 +29,7 @@ go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow
 
 echo "==> scaffolding a multi-DAG workspace (one DAG in a subdir)"
 mkdir -p "$WS/hello"
-cat > "$WS/hello/leoflow.yaml" <<'EOF'
+cat > "$WS/hello/dexaflow.yaml" <<'EOF'
 dag_id: hello
 python_version: "3.11"
 EOF
@@ -77,7 +77,7 @@ pass "dag.json.source is byte-for-byte dag.py"
 
 echo "==> sanity: a second subdir DAG compiles independently (multi-DAG layout)"
 mkdir -p "$WS/second"
-cat > "$WS/second/leoflow.yaml" <<'EOF'
+cat > "$WS/second/dexaflow.yaml" <<'EOF'
 dag_id: second
 python_version: "3.11"
 EOF

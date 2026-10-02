@@ -75,7 +75,7 @@ func TestLeoflowHomeUnderUserHome(t *testing.T) {
 	if err != nil {
 		t.Skipf("UserHomeDir unavailable: %v", err)
 	}
-	want := filepath.Join(home, ".leoflow")
+	want := filepath.Join(home, ".dexaflow")
 	if got != want {
 		t.Errorf("leoflowHome() = %q, want %q", got, want)
 	}

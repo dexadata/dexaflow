@@ -120,9 +120,9 @@ FROM ${BASE_IMAGE}
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
 DOCKER
-# leoflow.yaml: registry: makes deploy mandatory-registry happy; build.platforms
+# dexaflow.yaml: registry: makes deploy mandatory-registry happy; build.platforms
 # matches the cluster arch.
-cat > "$WORKDIR/$DAG_ID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$DAG_ID/dexaflow.yaml" <<YAML
 dag_id: ${DAG_ID}
 python_version: "${PY_VERSION}"
 build:
@@ -228,7 +228,7 @@ FROM ${BASE_IMAGE}
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
 DOCKER2
-cat > "$WORKDIR/$TWO_STEP_ID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$TWO_STEP_ID/dexaflow.yaml" <<YAML
 dag_id: ${TWO_STEP_ID}
 python_version: "${PY_VERSION}"
 build:

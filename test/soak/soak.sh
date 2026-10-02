@@ -368,7 +368,7 @@ assert_isolation
 log "materializing the workspace"
 rm -rf "$WORKSPACE"; mkdir -p "$WORKSPACE"
 cp -R "$SOAK_DIR/dags/." "$WORKSPACE/"
-ok "$(find "$WORKSPACE" -name leoflow.yaml | wc -l | tr -d ' ') DAG projects in $WORKSPACE"
+ok "$(find "$WORKSPACE" -name dexaflow.yaml | wc -l | tr -d ' ') DAG projects in $WORKSPACE"
 
 log "starting the local HTTP fixture on 127.0.0.1:${FIXTURE_PORT}"
 "$BIN/soak-fixture" --addr "127.0.0.1:${FIXTURE_PORT}" > "$OUT_DIR/fixture.log" 2>&1 &

@@ -89,7 +89,7 @@ func managedPGPaths() (binDir, dataDir string, err error) {
 	if herr != nil {
 		return "", "", fmt.Errorf("resolving home dir: %w", herr)
 	}
-	root := filepath.Join(h, ".leoflow")
+	root := stateDirIn(h)
 	return filepath.Join(root, "postgres", "bin"), filepath.Join(root, "pgdata"), nil
 }
 
@@ -106,7 +106,7 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 	if herr != nil {
 		return fmt.Errorf("resolving home dir: %w", herr)
 	}
-	root := filepath.Join(h, ".leoflow")
+	root := stateDirIn(h)
 	binDir, err := setup.EnsurePostgres(ctx, setup.EnsureOpts{
 		Home: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Libc: detectLibc(),
 		Stat: os.Stat,

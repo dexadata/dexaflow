@@ -97,7 +97,7 @@ func TestArchiveRoundTrip(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workspace, "subdir"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "subdir", "leoflow.yaml"),
+	if err := os.WriteFile(filepath.Join(workspace, "subdir", "dexaflow.yaml"),
 		[]byte("dag_id: x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +146,8 @@ func TestArchiveRoundTrip(t *testing.T) {
 	if string(got.Workspace["dag.py"]) != "def task(): pass\n" {
 		t.Errorf("dag.py not preserved: %q", got.Workspace["dag.py"])
 	}
-	if string(got.Workspace["subdir/leoflow.yaml"]) != "dag_id: x\n" {
-		t.Errorf("subdir/leoflow.yaml not preserved: %q", got.Workspace["subdir/leoflow.yaml"])
+	if string(got.Workspace["subdir/dexaflow.yaml"]) != "dag_id: x\n" {
+		t.Errorf("subdir/dexaflow.yaml not preserved: %q", got.Workspace["subdir/dexaflow.yaml"])
 	}
 	if _, gitLeaked := got.Workspace[".git/HEAD"]; gitLeaked {
 		t.Error(".git/HEAD leaked into the archive — exclusion broken")
@@ -180,14 +180,14 @@ func TestReadBackupArchive_RejectsMissingManifest(t *testing.T) {
 // walker (#137): the restore command receives a flat path→bytes map from
 // readBackupArchive and must rebuild the workspace tree exactly, creating
 // intermediate directories as needed. Regression guard for the common
-// shape "dag/<subdir>/leoflow.yaml" — without the MkdirAll on the file's
+// shape "dag/<subdir>/dexaflow.yaml" — without the MkdirAll on the file's
 // parent, restoring a sub-project would fail with "no such file or
 // directory" on the first nested write.
 func TestRestoreWorkspaceTree_RebuildsNestedFiles(t *testing.T) {
 	dst := t.TempDir()
 	files := map[string][]byte{
 		"dag.py":                []byte("a"),
-		"subdir/leoflow.yaml":   []byte("b"),
+		"subdir/dexaflow.yaml":  []byte("b"),
 		"deeply/nested/file.go": []byte("c"),
 	}
 	if err := restoreWorkspaceTree(dst, files); err != nil {

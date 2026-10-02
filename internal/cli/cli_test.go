@@ -75,12 +75,12 @@ func TestInitCreatesValidProject(t *testing.T) {
 	if _, _, err := run(t, "init", dir); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	for _, f := range []string{"leoflow.yaml", "dag.py"} {
+	for _, f := range []string{"dexaflow.yaml", "dag.py"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("expected scaffolded %s: %v", f, err)
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "leoflow.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "dexaflow.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestInitCreatesValidProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Errorf("scaffolded leoflow.yaml is invalid: %v", err)
+		t.Errorf("scaffolded dexaflow.yaml is invalid: %v", err)
 	}
 	if cfg.DagID != "my-dag" {
 		t.Errorf("dag_id = %q, want my-dag", cfg.DagID)
@@ -108,7 +108,7 @@ func TestValidateAcceptsScaffold(t *testing.T) {
 
 func TestValidateRejectsBadConfig(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte("dag_id: \"has spaces\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte("dag_id: \"has spaces\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := run(t, "validate", dir); err == nil {
@@ -117,7 +117,7 @@ func TestValidateRejectsBadConfig(t *testing.T) {
 }
 
 // TestValidateRejectsBrokenDagPython covers issue #D8: today validate only
-// checks leoflow.yaml + that dag.py exists, so a syntactically broken dag.py
+// checks dexaflow.yaml + that dag.py exists, so a syntactically broken dag.py
 // would pass validation and only blow up at compile/run time. validate must
 // catch Python-syntax errors so a user gets a real go/no-go before push.
 //

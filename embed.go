@@ -45,7 +45,7 @@ func DevCompose() []byte { return devCompose }
 var exampleDAGs embed.FS
 
 // ExampleDAGs returns the embedded DAG examples (one subdirectory per DAG,
-// each with dag.py + leoflow.yaml). The Lite IDE's "Download examples"
+// each with dag.py + dexaflow.yaml). The Lite IDE's "Download examples"
 // button materializes them into the user's workspace under examples/, so a
 // fresh install can try every operator without a separate git checkout.
 // Root is "examples/" — the same layout as the source tree.

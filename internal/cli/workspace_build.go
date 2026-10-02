@@ -32,7 +32,7 @@ func buildTargets(projects []Project, version, sha string) (targets []buildTarge
 	for _, p := range projects {
 		if p.Config == nil || p.Config.Registry == nil ||
 			p.Config.Registry.URL == "" || p.Config.Registry.ImageName == "" {
-			skipped = append(skipped, fmt.Sprintf("%s (no registry.url/registry.image_name in its leoflow.yaml — `leoflow compile %s --image <ref> --build` builds it by hand)", p.DagID, p.Path))
+			skipped = append(skipped, fmt.Sprintf("%s (no registry.url/registry.image_name in its dexaflow.yaml — `leoflow compile %s --image <ref> --build` builds it by hand)", p.DagID, p.Path))
 			continue
 		}
 		targets = append(targets, buildTarget{
@@ -47,7 +47,7 @@ func buildTargets(projects []Project, version, sha string) (targets []buildTarge
 }
 
 // newBuildCommand builds every project in a workspace, each with the image its
-// own leoflow.yaml declares.
+// own dexaflow.yaml declares.
 //
 // `leoflow compile <dir> --image <ref> --build` has always built ONE project.
 // With several DAGs in a workspace that meant running it once per directory with

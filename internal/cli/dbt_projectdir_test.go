@@ -101,7 +101,7 @@ func TestCompiledEntrypointsAreWiredForTheRightTarget(t *testing.T) {
 				}
 			}
 			yaml := "schema_version: \"1.0\"\ndag_id: sales\nowner: t\ndbt:\n  project: analytics\n  manifest: manifest.json\n  schedule: \"@daily\"\n"
-			if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 				t.Fatal(err)
 			}
 
@@ -153,14 +153,14 @@ func TestCompiledEntrypointsAreWiredForTheRightTarget(t *testing.T) {
 // #993 conflation. Which dbt parses the manifest was gated on `local` — "the DAG
 // will run on this host" — but that is a different question from "which dbt on
 // this host is the better parser". A per-DAG venv dbt is that DAG's own, pinned
-// to the adapter its leoflow.yaml declares; PATH's is whatever the operator
+// to the adapter its dexaflow.yaml declares; PATH's is whatever the operator
 // happens to have installed. When both exist the venv one is strictly better,
 // whether the compiled artifact ends up in a pod or in a subprocess — and after
 // #993 a bare `leoflow compile` stopped being "local", so it silently lost
 // access to the venv dbt it had been using.
 func TestDbtParseBinDoesNotDependOnTheRuntimeTarget(t *testing.T) {
 	home := t.TempDir()
-	binDir := filepath.Join(home, ".leoflow", "dev", "venvs", "sales", "bin")
+	binDir := filepath.Join(home, ".dexaflow", "dev", "venvs", "sales", "bin")
 	if err := os.MkdirAll(binDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestDbtParseBinDoesNotDependOnTheRuntimeTarget(t *testing.T) {
 // before choosing a binary. This one deliberately leaves the manifest unpinned.
 func TestManifestParseUsesTheVenvDbtEvenForAnImageBoundCompile(t *testing.T) {
 	home := t.TempDir()
-	binDir := filepath.Join(home, ".leoflow", "dev", "venvs", "sales", "bin")
+	binDir := filepath.Join(home, ".dexaflow", "dev", "venvs", "sales", "bin")
 	if err := os.MkdirAll(binDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestManifestParseUsesTheVenvDbtEvenForAnImageBoundCompile(t *testing.T) {
 	}
 	// No `manifest:` — this is the path that actually runs `dbt parse`.
 	yaml := "schema_version: \"1.0\"\ndag_id: sales\nowner: t\ndbt:\n  project: analytics\n  schedule: \"@daily\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,7 +225,7 @@ func TestManifestParseUsesTheVenvDbtEvenForAnImageBoundCompile(t *testing.T) {
 	cmd.SetErr(&out)
 
 	// local:false — an IMAGE-bound compile. It must still prefer the venv dbt:
-	// that is the DAG's own, pinned to the adapter its leoflow.yaml declares.
+	// that is the DAG's own, pinned to the adapter its dexaflow.yaml declares.
 	err := runCompile(cmd, dir, compileOptions{output: filepath.Join(dir, "dag.json"), image: "reg/s:v1", dagVersion: "v1"})
 	if err == nil {
 		t.Fatal("expected the stub dbt to fail the parse")

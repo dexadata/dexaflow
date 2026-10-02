@@ -10,7 +10,7 @@ import (
 )
 
 // writeBuildProject lays down a minimal buildable project: a dag.py and a
-// leoflow.yaml with a registry, which is all DiscoverProjects needs.
+// dexaflow.yaml with a registry, which is all DiscoverProjects needs.
 func writeBuildProject(t *testing.T, ws, name, imageName string) string {
 	t.Helper()
 	dir := filepath.Join(ws, name)
@@ -21,7 +21,7 @@ func writeBuildProject(t *testing.T, ws, name, imageName string) string {
 		t.Fatal(err)
 	}
 	yaml := "dag_id: " + name + "\nregistry:\n  url: reg.io/team\n  image_name: " + imageName + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -219,7 +219,7 @@ func TestBuildCommandRepeatsSkipsInTheSummary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(noReg, "dag.py"), []byte("# dag\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(noReg, "leoflow.yaml"), []byte("dag_id: orphan\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(noReg, "dexaflow.yaml"), []byte("dag_id: orphan\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LEOFLOW_PARSER_CMD", stubParser(t, bin))

@@ -102,7 +102,7 @@ echo "==> resetting the database (migrated, empty)"
 
 echo "==> workspace: a @task that raises, with an on_failure_callback that POSTs proof"
 mkdir -p "$WS/cbdag"
-cat > "$WS/cbdag/leoflow.yaml" <<YAML
+cat > "$WS/cbdag/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: cbdag
 YAML

@@ -16,7 +16,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// TestCompileDbtProject drives `leoflow compile` on a dbt project: a leoflow.yaml
+// TestCompileDbtProject drives `leoflow compile` on a dbt project: a dexaflow.yaml
 // with a dbt block and a pre-baked manifest.json (no dbt binary needed) must
 // produce a valid dag.json with one task per folder group.
 func TestCompileDbtProject(t *testing.T) {
@@ -31,7 +31,7 @@ dbt:
   granularity: folder
   schedule: "@daily"
 `
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := os.ReadFile(filepath.Join("..", "dbt", "testdata", "manifest_wide.json"))
@@ -68,7 +68,7 @@ dbt:
 		t.Errorf("schedule = %v, want @daily", spec.Schedule)
 	}
 	if spec.Owner != "data-team" {
-		t.Errorf("owner = %q, want data-team (leoflow.yaml owner must overlay onto the dbt DAG)", spec.Owner)
+		t.Errorf("owner = %q, want data-team (dexaflow.yaml owner must overlay onto the dbt DAG)", spec.Owner)
 	}
 	if !reflect.DeepEqual(spec.Tags, []string{"analytics", "dbt"}) {
 		t.Errorf("tags = %v, want [analytics dbt]", spec.Tags)
@@ -244,7 +244,7 @@ dbt:
   manifest: manifest.json
   granularity: folder
 `
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A folder literally named "models" plus a model at the root of models/.
@@ -335,7 +335,7 @@ func TestExpandDbtGroupsWarnsOnFolderCollision(t *testing.T) {
 // removing the two lines that pass cfg.Connections/cfg.Variables into dbt.Meta
 // left every CLI test green. The failure being guarded is not a missing JSON
 // field — under ADR 0055 scoping the task pod receives NO secrets, so the DAG
-// fails inside the task, far from the leoflow.yaml that declared them.
+// fails inside the task, far from the dexaflow.yaml that declared them.
 func TestCompileDbtCarriesDeclaredSecrets(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `schema_version: "1.0"
@@ -347,7 +347,7 @@ dbt:
   manifest: manifest.json
   granularity: folder
 `
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := os.ReadFile(filepath.Join("..", "dbt", "testdata", "manifest_wide.json"))

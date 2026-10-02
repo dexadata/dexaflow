@@ -45,7 +45,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	if err != nil {
 		return fmt.Errorf("resolving home dir: %w", err)
 	}
-	root := filepath.Join(home, ".leoflow")
+	root := stateDirIn(home)
 	if _, serr := os.Stat(root); errors.Is(serr, os.ErrNotExist) {
 		devPrintf(out, "Nothing to remove: %s does not exist.\n", root)
 		return nil
@@ -166,6 +166,20 @@ func confirmDestructive(cmd *cobra.Command) bool {
 // also drops this install's Docker volume and removes the datastore; without it,
 // the datastore (managed pgdata / the Docker volume) is preserved for a reinstall.
 func removeLeoflowHome(cmd *cobra.Command, root string, purge bool) error {
+	// root may be the ~/.dexaflow link to a pre-rename ~/.leoflow
+	// (config.HomeDirIn). Work on the real directory, then drop the link, so the
+	// data goes and no dangling link stays behind.
+	if target, err := filepath.EvalSymlinks(root); err == nil && target != root {
+		if rerr := removeLeoflowHome(cmd, target, purge); rerr != nil {
+			return rerr
+		}
+		if _, serr := os.Stat(target); errors.Is(serr, os.ErrNotExist) {
+			if lerr := os.Remove(root); lerr != nil && !errors.Is(lerr, os.ErrNotExist) {
+				return fmt.Errorf("removing %s: %w", root, lerr)
+			}
+		}
+		return nil
+	}
 	stopManagedPostgres(cmd)
 	if purge {
 		// Best-effort: stop the Docker datastore and drop this install's volume
