@@ -437,8 +437,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 		runs.add(pod)
 	}
-	r.collectSettledRuns(ctx, runs)
+	// Every pod was visited: stamp the sweep before the collection, so its
+	// apiserver calls never delay the reaper's settling gate.
 	r.lastSweepCompleted.Store(r.now().UnixNano())
+	r.collectSettledRuns(ctx, runs)
 	return nil
 }
 

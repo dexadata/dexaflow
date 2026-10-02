@@ -1179,26 +1179,47 @@ func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow
 }
 
 const listSettledRunIDs = `-- name: ListSettledRunIDs :many
-SELECT id FROM dag_runs
-WHERE id = ANY($1::uuid[]) AND state IN ('success', 'failed')
+SELECT r.id, r.tenant_id FROM dag_runs r
+WHERE (r.tenant_id, r.id) IN (
+    SELECT unnest($1::uuid[]), unnest($2::uuid[]))
+  AND r.state IN ('success', 'failed')
+  AND NOT EXISTS (
+    SELECT 1 FROM task_instances ti
+    WHERE ti.dag_run_id = r.id
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
 `
 
-// Of the given run ids, those in success or failed. The reconciler asks this
-// before collecting a run's finished pods at settle time; the ids come from
-// the pods' run labels, and a run outside this set keeps its pods.
-func (q *Queries) ListSettledRunIDs(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, listSettledRunIDs, runIds)
+type ListSettledRunIDsParams struct {
+	TenantIds []pgtype.UUID `json:"tenant_ids"`
+	RunIds    []pgtype.UUID `json:"run_ids"`
+}
+
+type ListSettledRunIDsRow struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Of the given (tenant, run) pairs, the settled runs: run in success or failed
+// and no task instance outside success, failed, skipped and upstream_failed.
+// This is the same "settled" the retention janitor's LockExpiredSettledRuns
+// uses (duplicated there on purpose, keep the two identical). A run marked
+// failed while a task still runs is not settled, so the reconciler never
+// collects a pod whose outcome it may not have recorded yet. The pairs come
+// from the pods' tenant and run labels; a pair whose tenant does not own the
+// run matches nothing.
+func (q *Queries) ListSettledRunIDs(ctx context.Context, arg ListSettledRunIDsParams) ([]ListSettledRunIDsRow, error) {
+	rows, err := q.db.Query(ctx, listSettledRunIDs, arg.TenantIds, arg.RunIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []pgtype.UUID{}
+	items := []ListSettledRunIDsRow{}
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i ListSettledRunIDsRow
+		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
