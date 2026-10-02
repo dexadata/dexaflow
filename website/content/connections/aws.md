@@ -9,7 +9,7 @@ weight: 20
 description: Amazon Web Services connection
 ---
 
-Connect a task to AWS (S3, Athena, SQS, …) via a managed Leoflow Connection and
+Connect a task to AWS (S3, Athena, SQS, …) via a managed Dexaflow Connection and
 Airflow's Amazon provider hooks. The conn_type is `aws` (Airflow's name for the
 Amazon provider). Like Snowflake it has **no host:port** — credentials and region
 live in login/password + Extra.
@@ -29,8 +29,8 @@ connectors:
 
 Prefer **no stored key**: run the task pod under an IAM role (IRSA / instance
 profile / web-identity) and leave the access-key fields blank. The AWS SDK
-resolves credentials at runtime from the environment; Leoflow stores nothing.
-This is the default posture for cloud connectors — a leaked Leoflow DB never
+resolves credentials at runtime from the environment; Dexaflow stores nothing.
+This is the default posture for cloud connectors — a leaked Dexaflow DB never
 leaks AWS keys.
 
 ```text
@@ -101,13 +101,13 @@ connectors:
 1. Create the Connection in **Admin → Connections → +**, type `aws`. Either leave
    the keys blank (keyless, with a role on the pod) or fill Access Key / Secret
    Key. Set `region_name` in Extra.
-2. `leoflow lite path/to/this/dag` → trigger `s3_load`.
+2. `dexaflow lite path/to/this/dag` → trigger `s3_load`.
 3. The task log reports the put; verify the object in your bucket.
 
 ## Security notes
 
 - **Keyless beats keys.** Use IRSA (EKS) / instance profiles; rotate is automatic
-  and nothing lives in the Leoflow DB (ADR 0035).
+  and nothing lives in the Dexaflow DB (ADR 0035).
 - **Least privilege**: scope the role/policy to the exact bucket/prefix.
 - **Never `print()` the URI** — it carries the secret key.
 

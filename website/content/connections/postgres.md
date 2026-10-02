@@ -10,7 +10,7 @@ description: Postgres connection
 ---
 
 Connect a task to an external Postgres (the warehouse, an OLAP, a vendor
-DB) over a managed Leoflow Connection.
+DB) over a managed Dexaflow Connection.
 
 ## URI shape
 

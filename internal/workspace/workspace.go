@@ -1,7 +1,7 @@
 // Package workspace provides a filesystem confined to a single root directory.
 // Every operation resolves the caller-supplied path against the root and refuses
 // any path that would escape it, so it is safe to drive from an HTTP API. It
-// backs the Leoflow Lite web editor (ADR 0025); it is never the Production path.
+// backs the Dexaflow Lite web editor (ADR 0025); it is never the Production path.
 package workspace
 
 import (

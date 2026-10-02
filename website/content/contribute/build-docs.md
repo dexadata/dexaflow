@@ -2,7 +2,7 @@
 title: Build the docs
 linkTitle: Build the docs
 weight: 30
-description: Build and preview the Leoflow documentation site locally — Hugo + Docsy.
+description: Build and preview the Dexaflow documentation site locally — Hugo + Docsy.
 ---
 
 The documentation site is built with [Hugo](https://gohugo.io/) (extended) and the

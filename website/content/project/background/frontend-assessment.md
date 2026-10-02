@@ -115,7 +115,7 @@ SPA constructs URLs like `/dagRuns//taskInstances/...` when its router has
 no run_id yet (race during initial mount). Our server returns 404 (correct)
 but the symptom in the UI is "empty logs forever". Fix surface: either
 short-circuit the empty-id case server-side (200 with empty payload) or
-add a router-guard hint in the response (`X-Leoflow-Empty-Id: 1`) the SPA
+add a router-guard hint in the response (`X-Dexaflow-Empty-Id: 1`) the SPA
 can read in its query key invalidation. Likely server-side workaround only.
 
 ### Cluster B — mark-state instant feedback (#211, parts of #271)

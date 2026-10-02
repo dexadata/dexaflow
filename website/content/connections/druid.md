@@ -10,7 +10,7 @@ description: Druid connection
 ---
 
 Connect a task to an Apache Druid cluster (the `DruidDbApiHook`) over a
-managed Leoflow Connection. The query path goes through the Druid broker.
+managed Dexaflow Connection. The query path goes through the Druid broker.
 
 ## Declare the provider
 

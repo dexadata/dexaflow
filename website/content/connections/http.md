@@ -113,7 +113,7 @@ walks through Connection setup and verification.
   k3d cluster network; for host-side services use `host.k3d.internal`.
 - **Pro (Kubernetes)** typical pattern is a NetworkPolicy gating outbound
   traffic and a sidecar proxy (Envoy / Istio) for retries and mTLS. The
-  Leoflow Connection itself is unchanged.
+  Dexaflow Connection itself is unchanged.
 
 ## Tier 1 integration test
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 00-create-cluster.sh — Provision a GKE Standard cluster for testing Leoflow Pro.
+# 00-create-cluster.sh — Provision a GKE Standard cluster for testing Dexaflow Pro.
 #
 # Design (see deploy/k8s/README.md for the rationale):
 #   - GKE *Standard*, *zonal* (NOT Autopilot): we want a generic, vanilla-ish

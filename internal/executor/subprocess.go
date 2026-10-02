@@ -89,7 +89,7 @@ func resolveLitePythonForDag(venvsRoot, dagID string) string {
 }
 
 // SetWorkDir sets the working directory the agent runs in. In a task pod the
-// image's WORKDIR holds the DAG code; on a dev host `leoflow dev` points this at
+// image's WORKDIR holds the DAG code; on a dev host `dexaflow lite` points this at
 // the project directory so the agent can import the user's dag.py. Empty keeps
 // the parent process's working directory.
 func (e *SubprocessExecutor) SetWorkDir(dir string) { e.workDir = dir }

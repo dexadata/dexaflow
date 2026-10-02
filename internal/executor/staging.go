@@ -13,7 +13,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// stagingLabel marks PVCs Leoflow manages for per-run staging, so GC can find
+// stagingLabel marks PVCs Dexaflow manages for per-run staging, so GC can find
 // them without touching anything else in the namespace.
 const stagingLabel = "leoflow.io/staging"
 

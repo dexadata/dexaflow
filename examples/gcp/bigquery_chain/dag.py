@@ -1,7 +1,7 @@
-"""gcp_bigquery_chain — BigQuery operators with chaining, through Leoflow's generic
+"""gcp_bigquery_chain — BigQuery operators with chaining, through Dexaflow's generic
 operator path (ADR 0040). Demonstrates operator-to-operator XCom: ``second_job``
 consumes ``first_job``'s output (its job id) via ``{{ ti.xcom_pull('first_job') }}``,
-which Leoflow resolves like Airflow.
+which Dexaflow resolves like Airflow.
 
 Set the constants below for your environment. Credentials come from the
 ``google_cloud_platform`` Connection / ADC (see ``examples/gcp_gcs_load``);

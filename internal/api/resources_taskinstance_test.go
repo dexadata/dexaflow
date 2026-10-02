@@ -48,7 +48,7 @@ func TestServeTaskTries(t *testing.T) {
 		!strings.Contains(rec.Body.String(), "extract") {
 		t.Errorf("tries = %d (%s), want 200 with the attempt", rec.Code, rec.Body.String())
 	}
-	// A specific attempt resolves (Leoflow keeps one row per task).
+	// A specific attempt resolves (Dexaflow keeps one row per task).
 	if rec := authGet(srv, http.MethodGet, tiBase+"/extract/tries/1", ""); rec.Code != http.StatusOK {
 		t.Errorf("tries/1 = %d, want 200", rec.Code)
 	}

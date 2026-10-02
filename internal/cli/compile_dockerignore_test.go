@@ -141,7 +141,7 @@ func TestDbtArtifactsAreScopedToTheirProject(t *testing.T) {
 //   - `dbt_packages/` is where `dbt deps` installs; resolving on the build host
 //     and baking the result is reasonable and reproducible.
 //   - `profiles.yml` is the BYO-profiles pattern — ship your own, point
-//     DBT_PROFILES_DIR at it. The runtime generates one from a Leoflow
+//     DBT_PROFILES_DIR at it. The runtime generates one from a Dexaflow
 //     connection when it HAS one; the e2e has none.
 //
 // The claim that justified excluding profiles.yml ("the runtime always

@@ -87,7 +87,7 @@ def load(meta: dict) -> None:
     ).fetchall()
 
     # Real "L": load the aggregate into an EXTERNAL postgres. Prefer the managed
-    # Leoflow Connection — the agent injects it as AIRFLOW_CONN_ETL_TARGET over a
+    # Dexaflow Connection — the agent injects it as AIRFLOW_CONN_ETL_TARGET over a
     # secure gRPC pull (never in the pod spec; visible in Admin → Connections,
     # encrypted at rest). Fall back to a direct DSN for local runs.
     managed = os.environ.get("AIRFLOW_CONN_ETL_TARGET")

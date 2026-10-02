@@ -1,4 +1,4 @@
-// Package client is the typed, generated client for the Leoflow (Airflow-compatible)
+// Package client is the typed, generated client for the Dexaflow (Airflow-compatible)
 // /api/v2 surface. It is the single control-plane client shared by the CLI, the
 // MCP server, and the smoke tests (ADR 0050 D8) — no component hand-rolls HTTP
 // against /api/v2, and nothing here imports internal/ packages.

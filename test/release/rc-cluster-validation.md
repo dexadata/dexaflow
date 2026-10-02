@@ -105,15 +105,15 @@ helm install leoflow oci-or-repo/leoflow \
 ```
 
 Record: does the control plane reach `Ready`? Is `/api/v2/` + the UI reachable
-(via port-forward or the ingress)? Can you `leoflow auth login` and get a JWT?
+(via port-forward or the ingress)? Can you `dexaflow auth login` and get a JWT?
 
 ---
 
 ## §2 Smoke — the path a user actually runs
 
-1. `leoflow auth login` → JWT.
+1. `dexaflow auth login` → JWT.
 2. Register + trigger a DAG (author per
-   <https://dexaflow.dexadata.ai/author-dags/dag-authoring/>; `leoflow push` / `leoflow deploy`).
+   <https://dexaflow.dexadata.ai/author-dags/dag-authoring/>; `dexaflow push` / `dexaflow deploy`).
 3. **PASS:** every task instance reaches `success` — i.e. a real pod-per-task ran,
    its agent reported over gRPC, XCom chained. `kubectl get pods -n <taskNamespace>`
    shows one pod per task, completed.
@@ -281,7 +281,7 @@ the same carry-forward treatment for as long as #1089 stays open):
   warn.)
 - **#724 validation 400 ✔** — register a DAG version declaring an unknown
   connection. **PASS:** API returns **400** (not 500); message points at
-  `leoflow connections set`.
+  `dexaflow connections set`.
 - **#727 migration-job SA token ✔** — `kubectl get job <migrate> -o yaml`.
   **PASS:** `spec.template.spec.automountServiceAccountToken: false`.
 - **#729 managed-PG idempotent** — Lite/local, not a cloud cluster. Run the opt-in
@@ -345,7 +345,7 @@ helm upgrade leoflow ... \
   resources shows `qosClass` = **`Burstable`**, *not* the `Guaranteed` the chart
   comment used to promise; and `kubectl get pod <task> -o jsonpath='{.spec.containers[0].resources}'`
   shows **no memory request or limit at all**. Also compile a `leoflow.yaml` whose
-  `defaults.resources` sets only `cpu` — **PASS:** `leoflow compile` **fails**
+  `defaults.resources` sets only `cpu` — **PASS:** `dexaflow compile` **fails**
   naming the missing field (`missing property 'memory'`), it does not produce a
   `dag.json`.
 - **ClientIP PASS:** behind the ALB/NLB, several bad logins from **different**

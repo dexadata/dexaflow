@@ -59,7 +59,7 @@ Save.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `mysql_load` → **Trigger DAG**.

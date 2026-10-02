@@ -11,7 +11,7 @@ description: Microsoft SQL Server connection
 
 Connect a task to an external Microsoft SQL Server (Azure SQL, on-prem
 instance, or a Docker `mcr.microsoft.com/mssql/server` container) over a
-managed Leoflow Connection.
+managed Dexaflow Connection.
 
 ## URI shape
 

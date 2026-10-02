@@ -2,10 +2,10 @@
 title: Glossary
 linkTitle: Glossary
 weight: 70
-description: The core Leoflow vocabulary — DAG, Task, TaskInstance, DagRun, XCom, Executor, Agent — kept compatible with Airflow.
+description: The core Dexaflow vocabulary — DAG, Task, TaskInstance, DagRun, XCom, Executor, Agent — kept compatible with Airflow.
 ---
 
-Leoflow keeps Airflow's vocabulary so the UI and mental model are familiar. For how
+Dexaflow keeps Airflow's vocabulary so the UI and mental model are familiar. For how
 these pieces fit together at runtime, see [Core concepts](/concepts/core-concepts/).
 
 | Term | Meaning |

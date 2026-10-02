@@ -2,7 +2,7 @@
 native form.
 
 A DAG's ``params=`` are the run parameters an operator supplies at trigger time.
-Leoflow serves them to the embedded UI in Airflow's param-dict shape, so the
+Dexaflow serves them to the embedded UI in Airflow's param-dict shape, so the
 "Trigger Dag w/ config" dialog renders a generated form (with the raw JSON editor
 still one toggle away) instead of an empty config box. This example declares one
 of each shape the form handles:

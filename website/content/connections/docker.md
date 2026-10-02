@@ -10,7 +10,7 @@ description: Docker registry connection
 ---
 
 Connect a task to a Docker registry (Docker Hub, GHCR, ECR, a private
-Harbor/Nexus) over a managed Leoflow Connection. `DockerHook` authenticates
+Harbor/Nexus) over a managed Dexaflow Connection. `DockerHook` authenticates
 to the registry so the `DockerOperator` can pull/run images.
 
 ## Declare the provider

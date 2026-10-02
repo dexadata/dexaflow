@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The set of Python lines Leoflow publishes a task base image for is stated in
+# The set of Python lines Dexaflow publishes a task base image for is stated in
 # five files, and only one of them is enforced by anything.
 #
 # The enforced one is the `python_version` enum in
@@ -17,7 +17,7 @@
 # Both directions of drift fail in the same expensive place. A version in the
 # enum with no published leg is a `docker pull ... 404` inside the USER's build,
 # minutes after their compile started, naming an image they never typed. A
-# published leg missing from the enum is a `leoflow compile` that refuses a
+# published leg missing from the enum is a `dexaflow compile` that refuses a
 # perfectly good image with "value must be one of" — and the user cannot fix
 # either one, because both live in our repo.
 #
@@ -147,7 +147,7 @@ matrix = (((jobs[job_name].get("strategy") or {}).get("matrix")) or {}).get("pyt
 if not matrix:
 	fail(
 		f"{workflow_rel}'s `{job_name}` job declares no `strategy.matrix.python`.\n"
-		"Without it no base image is published at all, and every `leoflow compile`\n"
+		"Without it no base image is published at all, and every `dexaflow compile`\n"
 		"that does not override base_image fails on the pull."
 	)
 # YAML reads an unquoted 3.10 as the float 3.1, which is the exact typo this

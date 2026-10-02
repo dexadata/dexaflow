@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// The /ui endpoints below back screens Leoflow does not implement yet (dashboards,
+// The /ui endpoints below back screens Dexaflow does not implement yet (dashboards,
 // calendar, backfills, asset/team management). They are hidden from the curated
 // menu, but the SPA may still probe them, so each returns a schema-valid *empty*
 // response (the right shape, zeroed) rather than the catch-all "{}" — an array

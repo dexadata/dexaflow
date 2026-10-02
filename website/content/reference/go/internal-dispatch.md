@@ -200,7 +200,7 @@ SetSecretsBackend configures the operator's external secrets backend \(ADR 0060\
 func (d *Dispatcher) SetTaskSecret(name, mountPath string)
 ```
 
-SetTaskSecret configures a Kubernetes Secret mounted read\-only into every task pod at mountPath, so tasks can read a credential \(e.g. a GCP service\-account key referenced by a connection's key\_path\) from the cluster's secret store rather than from Leoflow \(ADR 0035\). Empty name = nothing mounted.
+SetTaskSecret configures a Kubernetes Secret mounted read\-only into every task pod at mountPath, so tasks can read a credential \(e.g. a GCP service\-account key referenced by a connection's key\_path\) from the cluster's secret store rather than from Dexaflow \(ADR 0035\). Empty name = nothing mounted.
 
 <a name="Dispatcher.SetWarmPlacer"></a>
 ### func \(\*Dispatcher\) [SetWarmPlacer](<https://github.com/dexadata/leoflow/blob/main/internal/dispatch/dispatch.go#L210>)

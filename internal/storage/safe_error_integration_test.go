@@ -80,7 +80,7 @@ func TestStorageProducesSafeErrorsForClientFacingMessages(t *testing.T) {
 		_, err := repo.RegisterDagVersion(ctx, "default", spec, hash)
 		assertSafe(t, err, domain.ErrValidation, "no_such_variable_here")
 		var safe *domain.SafeError
-		if errors.As(err, &safe) && !strings.Contains(safe.Error(), "leoflow variables set") {
+		if errors.As(err, &safe) && !strings.Contains(safe.Error(), "dexaflow variables set") {
 			t.Errorf("the message no longer tells the author how to fix it: %q", safe.Error())
 		}
 	})
@@ -98,7 +98,7 @@ func TestStorageProducesSafeErrorsForClientFacingMessages(t *testing.T) {
 		_, err := repo.RegisterDagVersion(ctx, "default", spec, hash)
 		assertSafe(t, err, domain.ErrValidation, "no_such_connection_here")
 		var safe *domain.SafeError
-		if errors.As(err, &safe) && !strings.Contains(safe.Error(), "leoflow connections set") {
+		if errors.As(err, &safe) && !strings.Contains(safe.Error(), "dexaflow connections set") {
 			t.Errorf("the message no longer tells the author how to fix it: %q", safe.Error())
 		}
 	})

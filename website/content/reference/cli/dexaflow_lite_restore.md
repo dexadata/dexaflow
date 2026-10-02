@@ -7,11 +7,11 @@ linkTitle: "lite restore"
 weight: 42
 ---
 
-Restore a Lite install from an archive produced by `leoflow lite backup`.
+Restore a Lite install from an archive produced by `dexaflow lite backup`.
 
 ### Synopsis
 
-restore reads a tar.gz produced by `leoflow lite backup`, validates the manifest against this binary (refuses an archive newer than what this binary knows about), then replays the datastore SQL and restores config and workspace.
+restore reads a tar.gz produced by `dexaflow lite backup`, validates the manifest against this binary (refuses an archive newer than what this binary knows about), then replays the datastore SQL and restores config and workspace.
 
 By default refuses to overwrite a non-empty ~/.dexaflow; pass --force to confirm.
 
@@ -37,5 +37,5 @@ dexaflow lite restore [flags]
 
 ### SEE ALSO
 
-* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Leoflow Lite locally with hot reload.
+* [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Dexaflow Lite locally with hot reload.
 

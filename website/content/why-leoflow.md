@@ -3,21 +3,21 @@
 aliases:
   - /why-leoflow.html
 # --- end AUTO redirect aliases ---
-title: Why Leoflow
+title: Why Dexaflow
 weight: 5
-description: "The five wounds Airflow won't heal, and how Leoflow heals them."
+description: "The five wounds Airflow won't heal, and how Dexaflow heals them."
 type: docs
 menu: { main: { weight: 5 } }
 ---
 
 Apache Airflow is the most deployed workflow orchestrator on earth — and the one
-that bleeds most in production. Leoflow keeps everything engineers love (the UI,
+that bleeds most in production. Dexaflow keeps everything engineers love (the UI,
 the vocabulary, the pod-per-task model) and cuts out the part that hurts: the
 **Python control plane**.
 
-## The five wounds Airflow won't heal — and how Leoflow heals them
+## The five wounds Airflow won't heal — and how Dexaflow heals them
 
-| Airflow wound | Leoflow cure |
+| Airflow wound | Dexaflow cure |
 |---|---|
 | **The scheduler that stalls** — seconds between tasks; minutes-long pipelines that should take seconds. | A **Go scheduler** (goroutines, no GIL): a tight state-machine loop, no Python re-parse tax. |
 | **The triggerer that suffocates** — past ~500 sensors the asyncio loop chokes and SLAs miss. | Go concurrency, not a single asyncio loop — backpressure-friendly by design. |
@@ -31,7 +31,7 @@ the vocabulary, the pod-per-task model) and cuts out the part that hurts: the
 - The **TaskFlow** authoring you already know. ([DAG authoring](/author-dags/dag-authoring/))
 
 ## What you gain
-- A **real dev loop** (`leoflow lite` — isolated cluster, hot reload). ([Operating modes](/concepts/editions/))
+- A **real dev loop** (`dexaflow lite` — isolated cluster, hot reload). ([Operating modes](/concepts/editions/))
 - **GitOps**: every DAG is a versioned, immutable artifact built in CI. ([Deploy](/operate/cicd-deploy/))
 - A control plane you can actually **operate** — Go, observable, no GIL.
 

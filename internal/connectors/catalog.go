@@ -1,5 +1,5 @@
 // Package connectors is the single source of truth for the Airflow connector
-// types Leoflow knows about. The catalog is GENERATED, not hand-written: an
+// types Dexaflow knows about. The catalog is GENERATED, not hand-written: an
 // offline step (scripts/gen_connectors.py) asks a real Apache Airflow install for
 // the exact connection-form metadata its UI renders (via the same
 // HookMetaService the /ui/connections/hook_meta endpoint uses) plus the pip
@@ -48,7 +48,7 @@ type Connector struct {
 	// that live in Connection.extra), each a FlexibleForm param spec.
 	ExtraFields map[string]any `json:"extra_fields"`
 	// Aliases are extra short names the `connectors:` sugar accepts on top of
-	// ConnectionType. They are a Leoflow overlay (see aliasOverlay), not part of
+	// ConnectionType. They are a Dexaflow overlay (see aliasOverlay), not part of
 	// Airflow's metadata, and exist only to smooth Airflow's asymmetric conn_type
 	// vocabulary (e.g. "gcp" for the verbose "google_cloud_platform").
 	Aliases []string `json:"-"`

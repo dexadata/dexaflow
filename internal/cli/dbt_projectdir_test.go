@@ -156,7 +156,7 @@ func TestCompiledEntrypointsAreWiredForTheRightTarget(t *testing.T) {
 // to the adapter its dexaflow.yaml declares; PATH's is whatever the operator
 // happens to have installed. When both exist the venv one is strictly better,
 // whether the compiled artifact ends up in a pod or in a subprocess — and after
-// #993 a bare `leoflow compile` stopped being "local", so it silently lost
+// #993 a bare `dexaflow compile` stopped being "local", so it silently lost
 // access to the venv dbt it had been using.
 func TestDbtParseBinDoesNotDependOnTheRuntimeTarget(t *testing.T) {
 	home := t.TempDir()

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# soak.sh: the Leoflow long-running resilience battery.
+# soak.sh: the Dexaflow long-running resilience battery.
 #
 # One command provisions everything, runs a realistic scheduled workload, asserts
 # invariants continuously, collects the evidence and tears down. It is safe to
@@ -12,7 +12,7 @@
 #   bash test/soak/soak.sh --duration 6m --faults selftest-red   # must go RED
 #
 # What it runs: test/soak/dags, six DAG projects on cron schedules, on
-# `leoflow lite` with the subprocess executor against a dedicated Postgres
+# `dexaflow lite` with the subprocess executor against a dedicated Postgres
 # container. No cloud, no cluster, no paid service. See test/soak/README.md for
 # the design, the measurements and the cost budget.
 #
@@ -138,7 +138,7 @@ die()  { printf '\033[1;31mFATAL:\033[0m %s\n' "$*" >&2; exit 2; }
 cleanup() {
   local code=$?
   log "tearing down"
-  # Resolve the control plane's children FIRST. `leoflow lite` supervises the
+  # Resolve the control plane's children FIRST. `dexaflow lite` supervises the
   # leoflow-server that actually holds the API port, the database connections and
   # the scheduler; once the supervisor is killed its child is reparented and
   # pgrep -P can no longer find it, so an orphaned server would survive the
@@ -290,7 +290,7 @@ if [ "$streak" -lt 3 ]; then
   die "soak Postgres never answered three consecutive queries (container log above, full copy in $OUT_DIR/postgres.log)"
 fi
 # The warehouse the operator leg writes into: a separate database, so the
-# workload never shares a table with Leoflow's own metadata and the two growth
+# workload never shares a table with Dexaflow's own metadata and the two growth
 # curves in the budget stay separable.
 docker exec leoflow-soak-postgres psql -U leoflow -d postgres -At -c \
   "SELECT 1 FROM pg_database WHERE datname='soak_warehouse'" 2>/dev/null | grep -q 1 \
@@ -348,13 +348,13 @@ if [ "$FRESH" = "1" ]; then
       reset_ok=1
       break
     fi
-    warn "leoflow db reset attempt $attempt failed; retrying"
+    warn "dexaflow db reset attempt $attempt failed; retrying"
     sleep 3
   done
   if [ "$reset_ok" = "0" ]; then
     tail -20 "$OUT_DIR/db-reset.log" >&2
     docker logs leoflow-soak-postgres > "$OUT_DIR/postgres.log" 2>&1
-    die "leoflow db reset failed after 5 attempts (log above, full copies in $OUT_DIR)"
+    die "dexaflow db reset failed after 5 attempts (log above, full copies in $OUT_DIR)"
   fi
   ok "database migrated and empty"
 else
@@ -448,7 +448,7 @@ print(json.dumps({"kind":k,"start":iso(s),"end":iso(e),"note":n}))
 }
 
 control_plane_pid() {
-  # `leoflow lite` supervises a leoflow-server child; the scheduler lives there,
+  # `dexaflow lite` supervises a leoflow-server child; the scheduler lives there,
   # so a fault aimed at the scheduler must find the child, not the supervisor.
   pgrep -P "$LITE_PID" -f leoflow-server 2>/dev/null | head -1
 }

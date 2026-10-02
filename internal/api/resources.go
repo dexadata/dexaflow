@@ -134,7 +134,7 @@ const (
 	detailInternal     = "the request could not be completed; see the server logs"
 )
 
-// safeDetail returns the phrase Leoflow composed for this failure, or fallback
+// safeDetail returns the phrase Dexaflow composed for this failure, or fallback
 // when the error carries no such phrase.
 //
 // The default is deny. Only a domain.SafeError — an error someone deliberately
@@ -356,7 +356,7 @@ func validRunState(s string) bool {
 func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// "~" is Airflow's wildcard for "all DAGs"; the UI home polls
-		// GET /api/v2/dags/~/dagRuns for a global run view. Leoflow has no
+		// GET /api/v2/dags/~/dagRuns for a global run view. Dexaflow has no
 		// cross-DAG run query yet, so degrade to an empty collection (200) rather
 		// than 404 (which would resolve "~" as a missing DAG). Real cross-DAG
 		// aggregation is a follow-up.

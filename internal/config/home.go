@@ -24,7 +24,7 @@ func HomeDir() (string, error) {
 
 // HomeDirIn returns the state directory under userHome. It is ~/.dexaflow,
 // except for an install from before the rename: then ~/.dexaflow is created as
-// a link to the existing ~/.dexaflow, so its data stays where it is (a running
+// a link to the existing ~/.leoflow, so its data stays where it is (a running
 // Lite holds files and mounts under it) and both paths reach it. If the link
 // cannot be created, ~/.dexaflow itself is returned, so state is never split
 // between two directories. The directory is not created here.

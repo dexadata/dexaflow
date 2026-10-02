@@ -80,7 +80,7 @@ def _partition_body(meta: dict, part: int) -> dict:
     return {"part": part, "path": dst}
 
 
-# Eight explicitly declared siblings rather than a loop-built list: Leoflow
+# Eight explicitly declared siblings rather than a loop-built list: Dexaflow
 # compiles the DAG by parsing it, and eight named task_ids keep the assertion in
 # the harness ("all eight left `scheduled` within one tick") readable against a
 # fixed set of ids instead of a generated one.

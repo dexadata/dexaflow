@@ -6,10 +6,10 @@ aliases:
 title: "Airflow operators & sensors"
 linkTitle: "Operators & sensors"
 weight: 20
-description: Use Airflow operators and sensors from your DAGs on Leoflow.
+description: Use Airflow operators and sensors from your DAGs on Dexaflow.
 ---
 
-Leoflow runs **any Apache Airflow operator or sensor** — `BigQueryInsertJobOperator`,
+Dexaflow runs **any Apache Airflow operator or sensor** — `BigQueryInsertJobOperator`,
 `S3KeySensor`, `SnowflakeOperator`, the ~1,500 operators across the provider
 ecosystem — without re-implementing a single one. It does this by keeping the
 **pod-per-task** execution model and instantiating the real Airflow class inside
@@ -42,10 +42,10 @@ flowchart TB
     DAG["dag.py<br/>(BigQueryInsertJobOperator, S3KeySensor, @task, bash…)"]
     SHIM["parser structural shim<br/>(_generic.py meta-path finder)<br/>captures __leoflow_operator_class__ + args"]
     DJ["dag.json<br/>type=airflow_operator<br/>operator_class + args"]
-    DAG -->|leoflow compile| SHIM --> DJ
+    DAG -->|dexaflow compile| SHIM --> DJ
   end
 
-  DJ -->|leoflow push| API
+  DJ -->|dexaflow push| API
 
   subgraph CP["Control plane (Go) — no Airflow import"]
     API["HTTP API /api/v2 + /ui"]

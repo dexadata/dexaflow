@@ -2,14 +2,14 @@
 title: Deploy & operate
 linkTitle: Deploy & operate
 weight: 40
-description: Take Leoflow to production — deploy from CI, run the Helm chart, upgrade, back up, and keep the scheduler resilient.
+description: Take Dexaflow to production — deploy from CI, run the Helm chart, upgrade, back up, and keep the scheduler resilient.
 cascade: { type: docs }
 menu:
   main:
     weight: 40
 ---
 
-Running Leoflow in production: promotion from Lite to Pro, the deploy pipeline, and
+Running Dexaflow in production: promotion from Lite to Pro, the deploy pipeline, and
 the day-2 operations that keep a control plane healthy.
 
 <div class="lf-cards">

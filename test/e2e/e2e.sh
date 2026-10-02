@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# End-to-end smoke test for Leoflow on a local Kubernetes cluster (k3d).
+# End-to-end smoke test for Dexaflow on a local Kubernetes cluster (k3d).
 #
 # Exercises the full pod-path: build the base + DAG images, import them into
 # k3d, run the control plane on the host against the dev Postgres/Redis
@@ -80,7 +80,7 @@ YAML
 # function). Two tasks in sequence prove pod-per-task AND cross-pod ordering:
 # each runs in its own pod whose agent reports state over gRPC.
 cat > "$WORKDIR/$DAG_ID/dag.py" <<'PY'
-"""e2edag — Leoflow pod-per-task smoke DAG."""
+"""e2edag — Dexaflow pod-per-task smoke DAG."""
 from __future__ import annotations
 
 from airflow.sdk import DAG, task

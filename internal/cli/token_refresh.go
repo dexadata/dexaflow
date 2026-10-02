@@ -19,12 +19,12 @@ const absoluteRenewWindow = 15 * time.Minute
 
 // autoRefreshToken transparently renews a near-expiry persisted session token and
 // rewrites configPath with the fresh one, so a long CLI/dev session never has to
-// `leoflow auth login` again on the hour (EKS validation aresta #5). It is the
+// `dexaflow auth login` again on the hour (EKS validation aresta #5). It is the
 // client half of the short-TTL-plus-renewal design: the access token stays
 // short-lived (good security), while a genuinely live session is kept working
 // silently.
 //
-// It is strictly best-effort. When the token is not a near-expiry Leoflow JWT, or
+// It is strictly best-effort. When the token is not a near-expiry Dexaflow JWT, or
 // the renew call fails (network, or a 401 because the session is past the
 // server's max_lifetime), the ORIGINAL token is returned unchanged and the config
 // is left untouched — the command then proceeds exactly as it does today and its

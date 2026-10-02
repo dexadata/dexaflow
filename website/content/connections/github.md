@@ -10,7 +10,7 @@ description: GitHub connection
 ---
 
 Connect a task to the GitHub API to read repos, manage issues/PRs, or
-trigger workflows over a managed Leoflow Connection. `GithubHook`
+trigger workflows over a managed Dexaflow Connection. `GithubHook`
 authenticates with a personal access token (PAT).
 
 ## Declare the provider

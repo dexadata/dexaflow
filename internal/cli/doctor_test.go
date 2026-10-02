@@ -34,7 +34,7 @@ func TestDoctorCommand(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("doctor err = %v", err)
 	}
-	if !strings.Contains(out.String(), "leoflow doctor") || !strings.Contains(out.String(), "recommended executor") {
+	if !strings.Contains(out.String(), "dexaflow doctor") || !strings.Contains(out.String(), "recommended executor") {
 		t.Errorf("doctor output unexpected:\n%s", out.String())
 	}
 }
@@ -74,7 +74,7 @@ func TestRenderDoctor(t *testing.T) {
 			"recommended executor: subprocess",
 			"needs Docker (not detected)",
 			"WSL",
-			"leoflow setup",
+			"dexaflow setup",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("output missing %q\n---\n%s", want, out)

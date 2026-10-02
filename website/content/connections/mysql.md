@@ -9,7 +9,7 @@ weight: 320
 description: MySQL / MariaDB connection
 ---
 
-Connect a task to an external MySQL or MariaDB over a managed Leoflow
+Connect a task to an external MySQL or MariaDB over a managed Dexaflow
 Connection. MariaDB uses the same `mysql` protocol, so the URI shape
 and the Python driver are identical; only the `conn_type` differs
 (`mysql` vs `mariadb`).

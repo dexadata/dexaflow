@@ -52,7 +52,7 @@ Save. The resulting `AIRFLOW_CONN_SQLITE_TARGET` env var will be
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `sqlite_load` → **Trigger DAG**.

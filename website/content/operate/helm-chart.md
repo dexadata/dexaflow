@@ -6,7 +6,7 @@ aliases:
 title: Helm chart
 linkTitle: Helm chart
 weight: 30
-description: Install and configure the Leoflow Pro control plane on Kubernetes with the official Helm chart.
+description: Install and configure the Dexaflow Pro control plane on Kubernetes with the official Helm chart.
 ---
 
 The **Pro** control plane installs on Kubernetes via the official Helm chart. The

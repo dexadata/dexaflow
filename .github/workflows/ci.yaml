@@ -280,7 +280,7 @@ jobs:
         run: bash test/e2e/lite-db-outage.sh
 
   # ─────────────────────────────────────────────────────────────────────
-  # End-to-end Lite happy path: `leoflow setup` → control plane with REAL auth
+  # End-to-end Lite happy path: `dexaflow setup` → control plane with REAL auth
   # → admin login returns a JWT (and a wrong password is rejected). Runs against
   # throwaway Postgres+Redis services, so the script's leoflow_dev reset is safe.
   # ─────────────────────────────────────────────────────────────────────
@@ -315,7 +315,7 @@ jobs:
   # Genuine binary-only install gate (#587). A built binary, a clean HOME, NO
   # repo on any path, and — deliberately — NO `PYTHONPATH` env. Every other
   # e2e job presets `PYTHONPATH: parser`, which masks the real "download the
-  # release and run it" path: `leoflow compile` must resolve the embedded
+  # release and run it" path: `dexaflow compile` must resolve the embedded
   # parser from the binary's own ~/.leoflow/pysrc extraction, and the binary
   # must extract the runtime sources the Lite venv builds from. No Postgres —
   # the bug was in resolution + extraction, not runtime state. ~15 s.
@@ -347,7 +347,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # The script runs `leoflow compile`, which spawns the parser via
+      # The script runs `dexaflow compile`, which spawns the parser via
       # `python3 -m leoflow_parser`. The repo ships the parser source under
       # parser/leoflow_parser; export PYTHONPATH so the import resolves on a
       # bare runner (no pip install, no venv, no extra setup-python action).
@@ -362,7 +362,7 @@ jobs:
         run: bash test/e2e/lite-multidag.sh
 
   # ─────────────────────────────────────────────────────────────────────
-  # Lite boot self-heal gate (#404). Two `leoflow lite` sessions share one
+  # Lite boot self-heal gate (#404). Two `dexaflow lite` sessions share one
   # external Postgres; the second's boot reconcile must deregister a DAG whose
   # files were removed and clear its orphan import error, while keeping a valid
   # DAG. Catches the regression where the watcher seeded its set-diff from the
@@ -633,15 +633,15 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$PWD/bin:$PATH"
-          # `leoflow setup` prints the admin password once; capture it.
-          PW=$(leoflow setup 2>&1 | tee /tmp/setup.log | grep -oiE 'password:[[:space:]]*[A-Za-z0-9]+' | head -1 | awk '{print $NF}')
+          # `dexaflow setup` prints the admin password once; capture it.
+          PW=$(dexaflow setup 2>&1 | tee /tmp/setup.log | grep -oiE 'password:[[:space:]]*[A-Za-z0-9]+' | head -1 | awk '{print $NF}')
           [ -n "$PW" ] || { echo "could not capture admin password"; cat /tmp/setup.log; exit 1; }
           # Register the typed-params fixture DAG alongside the scaffolded hello so
           # the trigger dialog has declared params to render its native form from.
-          # It lands in the workspace leoflow setup chose (~/leoflow by default).
-          mkdir -p "$HOME/leoflow/params_demo"
-          cp examples/params_demo/dag.py examples/params_demo/dexaflow.yaml "$HOME/leoflow/params_demo/"
-          leoflow lite --port 18080 --postgres managed --executor subprocess \
+          # It lands in the workspace dexaflow setup chose (~/dexaflow by default).
+          mkdir -p "$HOME/dexaflow/params_demo"
+          cp examples/params_demo/dag.py examples/params_demo/dexaflow.yaml "$HOME/dexaflow/params_demo/"
+          dexaflow lite --port 18080 --postgres managed --executor subprocess \
             --server-bin "$PWD/bin/leoflow-server" --agent-bin "$PWD/bin/leoflow-agent" > /tmp/lite.log 2>&1 &
           for _ in $(seq 1 60); do curl -fsS http://localhost:18080/readyz >/dev/null 2>&1 && break; sleep 3; done
           curl -fsS http://localhost:18080/readyz >/dev/null || { echo "lite did not become ready"; tail -40 /tmp/lite.log; exit 1; }
@@ -942,7 +942,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: bash test/e2e/dbt-connection-e2e.sh
 
-  # dbt-adapter-contracts (#574): the profiles.yml Leoflow emits for each cloud
+  # dbt-adapter-contracts (#574): the profiles.yml Dexaflow emits for each cloud
   # warehouse must be accepted by that warehouse's REAL dbt adapter — right field
   # names, alias resolution, required fields, auth-mode wiring — validated by
   # constructing the adapter's own Credentials from our emitted profile (no live
@@ -970,8 +970,8 @@ jobs:
       - name: Contract test (${{ matrix.adapter }})
         run: PYTHONPATH=runtime/python python -m pytest runtime/python/tests/test_dbt_adapter_contracts.py -q -k ${{ matrix.adapter }}
 
-  # deploy-e2e: the real `leoflow deploy` path on k3d with a registry the cluster
-  # pulls from (test/e2e/deploy-e2e.sh, ADR 0041). One `leoflow deploy` builds for
+  # deploy-e2e: the real `dexaflow deploy` path on k3d with a registry the cluster
+  # pulls from (test/e2e/deploy-e2e.sh, ADR 0041). One `dexaflow deploy` builds for
   # the cluster arch, pushes to a k3d-managed registry, captures the digest,
   # re-pins dag.json, registers -- then the cluster pulls the digest-pinned image
   # and runs it. Gates the build/push/digest/register glue. ~10 min.

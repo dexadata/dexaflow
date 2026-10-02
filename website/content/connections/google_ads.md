@@ -9,13 +9,13 @@ weight: 190
 description: Google Ads connection
 ---
 
-Pull reports from the Google Ads API from a managed Leoflow Connection. The
+Pull reports from the Google Ads API from a managed Dexaflow Connection. The
 OAuth material (developer token + installed-app client credentials + refresh
 token) lives entirely in **Extra**; there is no host or password field.
 
 {{% alert title="Underscore conn_type → hyphenated scheme" color="info" %}}
 `google_ads` contains an underscore, which is not a legal URI scheme (RFC
-3986). The Leoflow URI builder normalizes `_`→`-` for the scheme (delivering
+3986). The Dexaflow URI builder normalizes `_`→`-` for the scheme (delivering
 `google-ads://…`), exactly as Airflow's `Connection.get_uri()` does — and
 Airflow reverses it in `from_uri`, so the round-trip is faithful. Pinned by
 `TestGoogleAdsConnectionURIShapeIntegration` and

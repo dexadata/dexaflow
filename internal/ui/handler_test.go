@@ -48,16 +48,16 @@ func TestIndexDefaultsEmptyBasePathToRoot(t *testing.T) {
 
 // TestIndexRewritesTitleToInstanceName covers #D15: the embedded SPA's
 // <title>Airflow</title> is rewritten to the configured instance name so the
-// browser tab brands as Leoflow, not as Airflow. Empty instance name falls
-// back to "Leoflow" (matching the default Airflow instance_name behavior).
+// browser tab brands as Dexaflow, not as Airflow. Empty instance name falls
+// back to "Dexaflow" (matching the default Airflow instance_name behavior).
 func TestIndexRewritesTitleToInstanceName(t *testing.T) {
 	cases := []struct {
 		name     string
 		instance string
 		wantTag  string
 	}{
-		{"default falls back to Leoflow", "", "<title>Leoflow</title>"},
-		{"custom Lite name", "Leoflow Lite", "<title>Leoflow Lite</title>"},
+		{"default falls back to Dexaflow", "", "<title>Dexaflow</title>"},
+		{"custom Lite name", "Dexaflow Lite", "<title>Dexaflow Lite</title>"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestIndexRewritesTitleToInstanceName(t *testing.T) {
 // TestIndexInjectsClipboardFallback covers #242: the Airflow SPA's copy
 // buttons (logs, run IDs, etc.) call navigator.clipboard.writeText, which
 // throws on plain http:// LAN origins because the Clipboard API requires a
-// secure context. The Leoflow shell injects a tiny polyfill so the copy
+// secure context. The Dexaflow shell injects a tiny polyfill so the copy
 // button still works when users access Lite over `http://<host-lan-ip>:8080`.
 // The polyfill is a no-op when the native API is available, so it is always
 // injected.

@@ -20,7 +20,7 @@ func TestValidateSchedule(t *testing.T) {
 		{"@daily preset", str("@daily"), false},
 		{"@hourly preset", str("@hourly"), false},
 		// Valid Airflow non-cron schedules must register (not be blocked at compile)
-		// even though Leoflow does not cron-schedule them.
+		// even though Dexaflow does not cron-schedule them.
 		{"@once is a valid Airflow schedule", str("@once"), false},
 		{"@continuous is a valid Airflow schedule", str("@continuous"), false},
 		{"@once is case-insensitive", str("@Once"), false},

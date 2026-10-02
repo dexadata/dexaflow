@@ -10,7 +10,7 @@ description: Amazon Redshift connection
 ---
 
 Connect a task to an Amazon Redshift cluster (or Redshift Serverless) over a
-managed Leoflow Connection. Redshift speaks the Postgres wire protocol, so the
+managed Dexaflow Connection. Redshift speaks the Postgres wire protocol, so the
 Connection has the same host-bearing shape as Postgres.
 
 ## Declare the provider

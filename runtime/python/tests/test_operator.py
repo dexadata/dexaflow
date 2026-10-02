@@ -100,7 +100,7 @@ class LateRescheduleSensor(EchoOperator):
 
 
 # Named exactly as Airflow's exception: a deferrable operator suspends itself by
-# raising TaskDeferred from execute(). Leoflow has no triggerer (Phase C), so the
+# raising TaskDeferred from execute(). Dexaflow has no triggerer (Phase C), so the
 # runtime must translate it into a clear "set deferrable=False" message.
 class TaskDeferred(Exception):
     pass

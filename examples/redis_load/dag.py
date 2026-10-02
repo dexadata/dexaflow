@@ -1,6 +1,6 @@
 """redis_load — compute a small payload and write it into a Redis hash.
 
-The target URI comes from a managed Leoflow Connection injected as
+The target URI comes from a managed Dexaflow Connection injected as
 AIRFLOW_CONN_REDIS_TARGET (create it in Admin -> Connections); falls back to a
 local URI for a quick run on a developer machine.
 

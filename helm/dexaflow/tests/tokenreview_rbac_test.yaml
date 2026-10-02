@@ -47,7 +47,7 @@ tests:
           count: 1
 
   # TokenReview is cluster-scoped, so its ClusterRole/ClusterRoleBinding names are
-  # global. Two Leoflow releases in one cluster must not collide on them, so the
+  # global. Two Dexaflow releases in one cluster must not collide on them, so the
   # name carries both the release name and its namespace.
   - it: names the cluster-scoped objects per release AND namespace
     set:

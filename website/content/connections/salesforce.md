@@ -10,7 +10,7 @@ description: Salesforce connection
 ---
 
 Connect a task to a Salesforce org to run SOQL queries and read/write
-objects over a managed Leoflow Connection. `SalesforceHook` (built on
+objects over a managed Dexaflow Connection. `SalesforceHook` (built on
 `simple-salesforce`) authenticates with username + password + security
 token, or with a connected-app flow configured in `Extra`.
 

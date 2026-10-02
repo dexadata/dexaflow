@@ -1,5 +1,5 @@
 // Package observability wires structured logging, Prometheus metrics, and
-// OpenTelemetry tracing for the Leoflow control plane (ADR 0010).
+// OpenTelemetry tracing for the Dexaflow control plane (ADR 0010).
 package observability
 
 import (
