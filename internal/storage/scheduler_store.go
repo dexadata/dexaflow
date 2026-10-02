@@ -115,12 +115,15 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		return nil, fmt.Errorf("listing active runs: %w", err)
 	}
 	out := make([]scheduler.RunState, 0, len(runs))
+	s.specs.beginTick()
 	for _, run := range runs {
 		// The spec is immutable per dag_version_id (see specCache), so N active
 		// runs sharing a version decode it once, not N times. The cached spec is
 		// shared read-only: copy Tasks before applyDefaultRetries so filling a
 		// run's retry defaults never writes through the shared backing array.
-		_, cached, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		// getForTick keeps every version this tick reads cached through the
+		// next tick, so more active versions than the cache bound never thrash.
+		_, cached, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +248,7 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			continue
 		}
 		seen[run.DagVersionID] = true
-		_, spec, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		_, spec, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
