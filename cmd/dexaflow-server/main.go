@@ -56,9 +56,9 @@ import (
 
 // usage is printed for `--help`. leoflow-server takes no positional args; it is
 // configured entirely via environment and an optional LEOFLOW_CONFIG file.
-const usage = `leoflow-server — the Dexaflow control plane (HTTP API, auth, metrics, scheduler).
+const usage = `dexaflow-server — the Dexaflow control plane (HTTP API, auth, metrics, scheduler).
 
-Configured via environment variables and an optional config file (LEOFLOW_CONFIG);
+Configured via environment variables and an optional config file (DEXAFLOW_CONFIG);
 there are no positional arguments. See docs/configuration.md.
 
 Flags:
@@ -85,7 +85,7 @@ func main() {
 		return
 	}
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "leoflow-server:", err)
+		fmt.Fprintln(os.Stderr, "dexaflow-server:", err)
 		os.Exit(1)
 	}
 }

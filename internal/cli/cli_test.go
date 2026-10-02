@@ -493,7 +493,7 @@ func TestServerCommandPointsToBinary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
-	if !strings.Contains(out, "leoflow-server") {
-		t.Errorf("server output = %q, want mention of leoflow-server", out)
+	if !strings.Contains(out, "dexaflow-server") {
+		t.Errorf("server output = %q, want mention of dexaflow-server", out)
 	}
 }
