@@ -422,9 +422,9 @@ type TrustedIssuerSection struct {
 	// JWKSURL is where the issuer publishes its public signing keys: https, or
 	// http on a loopback host for local development.
 	JWKSURL string `mapstructure:"jwks_url"`
-	// Audience is the `aud` the tokens must carry for this Leoflow.
+	// Audience is the `aud` the tokens must carry for this Dexaflow.
 	Audience string `mapstructure:"audience"`
-	// TenantClaim names the string claim carrying the Leoflow tenant name.
+	// TenantClaim names the string claim carrying the Dexaflow tenant name.
 	TenantClaim string `mapstructure:"tenant_claim"`
 	// AllowedTenants lists the tenants the issuer may sign in to; "*" allows
 	// every tenant.
@@ -459,14 +459,14 @@ type AuthSection struct {
 	// Secret. Empty disables the API.
 	ServiceToken string `mapstructure:"service_token"`
 	// ExternalSignInURL hands unauthenticated UI visitors to the operator's own
-	// sign-in instead of Leoflow's page, with the requested path in a `next`
+	// sign-in instead of Dexaflow's page, with the requested path in a `next`
 	// query parameter (#1288). The operator's flow is expected to return them
-	// with a Leoflow session. Empty keeps Leoflow's page; `?local=1` reaches it
+	// with a Dexaflow session. Empty keeps Dexaflow's page; `?local=1` reaches it
 	// either way.
 	ExternalSignInURL string `mapstructure:"external_signin_url"`
 	// ExternalSignOutURL is where sign-out lands after clearing the session, so
 	// the operator can end their own session too (#1288). Empty returns to
-	// Leoflow's sign-in page.
+	// Dexaflow's sign-in page.
 	ExternalSignOutURL string `mapstructure:"external_signout_url"`
 	// DevNoAuth disables authentication entirely, treating every request as an
 	// admin. It exists ONLY for `dexaflow lite` (local, unsandboxed). It is false by
@@ -1252,7 +1252,7 @@ func tenantPinHint(c *ServerConfig) string {
 }
 
 // validatePlatformIntegration checks the settings an operator uses to serve
-// Leoflow from inside a larger platform: external sign-in and sign-out (#1288),
+// Dexaflow from inside a larger platform: external sign-in and sign-out (#1288),
 // the trusted issuer (#1284), the service API token (#1283), the home link
 // (#1290) and branding (#1289).
 func (c *ServerConfig) validatePlatformIntegration() error {
@@ -1276,7 +1276,7 @@ func (c *ServerConfig) validatePlatformIntegration() error {
 
 // validateExternalAuthURL checks one of the #1288 settings: empty, or an
 // absolute http(s) URL with a host. A relative URL would send the browser back
-// into Leoflow, where the sign-in route redirects again: a loop.
+// into Dexaflow, where the sign-in route redirects again: a loop.
 func validateExternalAuthURL(key, raw string) error {
 	if raw == "" {
 		return nil

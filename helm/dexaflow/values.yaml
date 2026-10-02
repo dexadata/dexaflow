@@ -250,7 +250,7 @@ redis:
 auth:
   # Trusted-issuer handoff (#1284): a platform that already signs its users in
   # opens a UI session for them by posting a short-lived token its own issuer
-  # signed to POST /api/v2/auth/session. Leoflow verifies it against the
+  # signed to POST /api/v2/auth/session. Dexaflow verifies it against the
   # issuer's public JWKS and signs in the existing user linked to the token's
   # subject; it never creates users or grants roles. Off until `issuer` is set.
   trustedIssuer:
@@ -260,9 +260,9 @@ auth:
     name: ""
     # -- Where the issuer publishes its public signing keys. `https`, or `http` on a loopback host.
     jwksUrl: ""
-    # -- The `aud` the tokens must carry for this Leoflow.
+    # -- The `aud` the tokens must carry for this Dexaflow.
     audience: ""
-    # -- The string claim naming the Leoflow tenant.
+    # -- The string claim naming the Dexaflow tenant.
     tenantClaim: tenant_id
     # -- Tenants the issuer may sign in to; `["*"]` allows every tenant. Required when `issuer` is set.
     allowedTenants: []
@@ -280,9 +280,9 @@ auth:
   serviceToken: ""
   # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.
   serviceTokenExistingSecret: ""
-  # -- Send UI visitors without a session to your own sign-in instead of Leoflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Leoflow session. Absolute `http(s)` URL; empty (the default) keeps Leoflow's page. `/api/v2/auth/login?local=1` still reaches Leoflow's page, so break-glass access survives an outage of your sign-in.
+  # -- Send UI visitors without a session to your own sign-in instead of Dexaflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Dexaflow session. Absolute `http(s)` URL; empty (the default) keeps Dexaflow's page. `/api/v2/auth/login?local=1` still reaches Dexaflow's page, so break-glass access survives an outage of your sign-in.
   externalSigninUrl: ""
-  # -- Where sign-out lands after clearing the Leoflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Leoflow's sign-in page.
+  # -- Where sign-out lands after clearing the Dexaflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Dexaflow's sign-in page.
   externalSignoutUrl: ""
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to

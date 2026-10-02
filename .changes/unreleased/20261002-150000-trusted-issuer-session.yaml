@@ -1,12 +1,12 @@
 kind: Added
 body: |-
   **Open a UI session from a trusted issuer's token** (#1284). A platform that
-  already signs its users in can now hand them to Leoflow without Leoflow
-  storing a password and without the platform holding Leoflow's signing
+  already signs its users in can now hand them to Dexaflow without Dexaflow
+  storing a password and without the platform holding Dexaflow's signing
   secret: configure `auth.trusted_issuer` (issuer, JWKS URL, audience, tenant
   claim, allowed tenants, allowed origins; Helm: `auth.trustedIssuer`) and post
   a short-lived token the issuer signed to `POST /api/v2/auth/session` from a
-  page on one of the allowed origins. Leoflow verifies it
+  page on one of the allowed origins. Dexaflow verifies it
   against the issuer's public keys, signs in the existing active user linked
   to the token's subject in the token's tenant, and redirects to `next`. The
   token never creates users or grants roles, carries a `jti` and opens one

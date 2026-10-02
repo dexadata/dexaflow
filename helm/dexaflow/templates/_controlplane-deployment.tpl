@@ -277,7 +277,7 @@ spec:
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}
-            # The operator's own sign-in and sign-out in place of Leoflow's
+            # The operator's own sign-in and sign-out in place of Dexaflow's
             # pages (#1288). Omitted when unset; validated at boot.
             - name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
               value: {{ . | quote }}
