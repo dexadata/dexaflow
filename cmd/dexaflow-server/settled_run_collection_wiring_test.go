@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 type stubSettledRuns struct{}
 
-func (stubSettledRuns) SettledRuns(context.Context, []string) (map[string]bool, error) {
-	return map[string]bool{}, nil
+func (stubSettledRuns) SettledRuns(context.Context, []executor.RunRef) (map[executor.RunRef]bool, error) {
+	return map[executor.RunRef]bool{}, nil
 }
 
 // The reconciler gets a settled-run checker only when the operator turned the
