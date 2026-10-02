@@ -146,7 +146,7 @@ func TestSpecCacheNotSharedMutated(t *testing.T) {
 }
 
 // TestSpecCacheBuildsTaskGraphOncePerVersion pins that the scheduler's task
-// index is built when a version is cached, not per run or per tick: every read
+// index is built once per version, not per run or per tick: every read
 // of a version returns the same graph, and it indexes that version's tasks.
 func TestSpecCacheBuildsTaskGraphOncePerVersion(t *testing.T) {
 	getter := &countingVersionGetter{spec: domain.DAGSpec{

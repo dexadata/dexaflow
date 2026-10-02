@@ -7,8 +7,8 @@ import "github.com/dexadata/dexaflow/internal/domain"
 // the planner and dispatch look tasks up in O(1) instead of scanning the list.
 //
 // A graph depends only on the task list (ids and dependencies), which is
-// immutable per dag_version, so the store builds it once when it caches a
-// version and every run of that version shares it read-only. A graph built for
+// immutable per dag_version, so the store builds it the first time the
+// scheduler reads a version and every run of that version shares it read-only. A graph built for
 // one task list must only be used with a list of the same ids in the same
 // order; PlanRun falls back to building one when RunState.Graph is nil.
 //
