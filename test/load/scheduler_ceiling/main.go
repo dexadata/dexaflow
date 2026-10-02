@@ -223,7 +223,7 @@ func measure(ctx context.Context, sched *scheduler.Scheduler, metrics *observabi
 		}
 	}
 
-	stepDownsBefore := counterTotal(reg, "leoflow_scheduler_step_downs_total")
+	stepDownsBefore := counterTotal(reg, "dexaflow_scheduler_step_downs_total")
 
 	var samples []time.Duration
 	deadline := time.Now().Add(window)
@@ -256,7 +256,7 @@ func measure(ctx context.Context, sched *scheduler.Scheduler, metrics *observabi
 		p99:       percentile(samples, 0.99),
 		max:       samples[len(samples)-1],
 		mean:      sum / time.Duration(len(samples)),
-		stepDowns: counterTotal(reg, "leoflow_scheduler_step_downs_total") - stepDownsBefore,
+		stepDowns: counterTotal(reg, "dexaflow_scheduler_step_downs_total") - stepDownsBefore,
 	}, nil
 }
 

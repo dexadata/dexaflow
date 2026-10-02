@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/dexadata/dexaflow/internal/observability"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -28,7 +29,9 @@ func ObservabilityHandler(registry *prometheus.Registry, checks map[string]Healt
 	r.GET("/healthz", livenessHandler)
 	r.GET("/readyz", readinessHandler(checks))
 	if registry != nil {
-		r.GET("/metrics", gin.WrapH(promhttp.HandlerFor(registry, promhttp.HandlerOpts{})))
+		// Every dexaflow_* family is also published under its pre-rename
+		// leoflow_* name, so existing dashboards and alerts keep working.
+		r.GET("/metrics", gin.WrapH(promhttp.HandlerFor(observability.WithLegacyNames(registry), promhttp.HandlerOpts{})))
 	}
 	return r
 }

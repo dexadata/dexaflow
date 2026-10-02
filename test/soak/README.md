@@ -103,7 +103,7 @@ was chosen over an alternative that is listed in [Rejected signals](#rejected-si
 | S3 | **The scheduler stopped being the scheduler** | `.scheduler.status` from `GET /api/v2/monitor/health`, which reads the advisory-lock leader liveness | not `healthy` outside a declared fault window |
 | S4 | **The scheduler kept its heartbeat but stopped creating work** | runs created per DAG in a rolling window, against the DAG's declared cron period | fewer than half the due runs |
 | S5 | **A tick started costing more than it used to** | wall time of `storage.SchedulerStore.ActiveRuns`, recorded against both the active-run count and the total historical row count | reported as a curve, not a threshold (see [Scalability](#3-scalability-the-shape-of-the-curve-not-the-size-of-n)) |
-| S6 | **The leader churned** | `leoflow_scheduler_step_downs_total`, scraped from the control plane's **metrics listener** (Lite: `--port + 1010`; the API port does not serve `/metrics` at all) | any non-zero value |
+| S6 | **The leader churned** | `dexaflow_scheduler_step_downs_total`, scraped from the control plane's **metrics listener** (Lite: `--port + 1010`; the API port does not serve `/metrics` at all) | any non-zero value |
 
 Plus four correctness invariants that carry no timing at all. These are wrong the
 instant they are non-zero, fault window or not:
@@ -141,7 +141,7 @@ stamped it running.
 
 ### Why the tick-cost probe is a probe and not a metric
 
-`leoflow_scheduler_loop_duration_seconds` is **declared** in
+`dexaflow_scheduler_loop_duration_seconds` is **declared** in
 `internal/observability/metrics.go` and is **never observed inside the scheduler
 loop**. `grep -rn SchedulerLoopDuration --include='*.go'` returns the metric
 definition, the metrics unit test, and `test/load/scheduler_ceiling`, which
@@ -168,8 +168,8 @@ include (the per-run advance and the dispatch enqueue).
 * **Wall-clock duration per DAG run.** Same problem as throughput, with the extra
   flaw that the long-running DAG dominates the distribution.
 * **Prometheus histogram quantiles from the metrics listener.** Attractive, but the two
-  histograms that would matter (`leoflow_scheduler_loop_duration_seconds`,
-  `leoflow_task_cold_start_seconds`) are not observed in Lite's hot path, so they
+  histograms that would matter (`dexaflow_scheduler_loop_duration_seconds`,
+  `dexaflow_task_cold_start_seconds`) are not observed in Lite's hot path, so they
   would report empty. The soak reads the three *counters* that are wired
   (`step_downs_total`, `tasks_undispatchable_total`, `dispatch_at_capacity_total`)
   and gets everything else from the database, which cannot lie about state.

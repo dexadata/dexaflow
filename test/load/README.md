@@ -74,18 +74,18 @@ delta observed during each window. The harness cleans up every DAG it created on
 exit (best-effort); a fresh `migrate up` on an empty database is always the clean
 slate.
 
-### Known limitation: `leoflow_scheduler_loop_duration_seconds` is not wired
+### Known limitation: `dexaflow_scheduler_loop_duration_seconds` is not wired
 
-The declared SLI `leoflow_scheduler_loop_duration_seconds` is **defined** in
+The declared SLI `dexaflow_scheduler_loop_duration_seconds` is **defined** in
 `internal/observability/metrics.go` but is **never `Observe`d inside the scheduler
 loop** (grep confirms: only `metrics_test.go` observes it). A `/metrics` scrape
 today would therefore report an empty histogram for it. Until that observation is
 wired into `Scheduler.tick`/`Step`, this harness times `Step` **directly** (the
 faithful equivalent) and also feeds each measured duration into the real
 histogram object, so a future scrape — or a one-line follow-up that moves the
-`Observe` into the loop — sees the same distribution. `leoflow_scheduler_step_downs_total`
+`Observe` into the loop — sees the same distribution. `dexaflow_scheduler_step_downs_total`
 **is** scraped from the live registry (it stays 0 here: leadership never churns in
-the harness). `leoflow_dispatch_queue_depth` is a dispatcher gauge and is out of
+the harness). `dexaflow_dispatch_queue_depth` is a dispatcher gauge and is out of
 scope for Experiment 1 (no dispatcher is wired).
 
 ## Adding an experiment
