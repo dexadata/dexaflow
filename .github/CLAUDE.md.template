@@ -21,8 +21,8 @@ The core insight: the **pod-per-task** execution model is correct (Airflow prove
 9. **Enterprise architecture, MVP features.** Schemas, interfaces, and middleware are enterprise-ready from day one. Implementations start simple.
 10. **Observability is not optional.** Prometheus metrics, OpenTelemetry tracing, and structured logs ship from the first commit.
 11. **Supply chain security is built-in.** govulncheck + gosec + Trivy + CodeQL run on every PR. See ADR 0014.
-12. **`leoflow.yaml` is the authoring standard.** A DAG is described by its
-    `leoflow.yaml`; the compiler generates the Dockerfile. A hand-written
+12. **`dexaflow.yaml` is the authoring standard.** A DAG is described by its
+    `dexaflow.yaml`; the compiler generates the Dockerfile. A hand-written
     Dockerfile is a supported escape hatch (ADR 0003's "Intermediate" tier), never
     the default — not in examples, not in docs, and above all not in tests. When a
     fixture reaches for `--dockerfile`, it stops exercising the path almost every
@@ -36,7 +36,7 @@ The core insight: the **pod-per-task** execution model is correct (Airflow prove
 ```
 Dev / CI                Control Plane (Go)              Worker Pod
 ─────────               ──────────────────              ──────────
-leoflow.yaml ─┐                                         ┌─ leoflow-agent (Go)
+dexaflow.yaml ─┐                                         ┌─ leoflow-agent (Go)
 dag.py        ├─► leoflow compile ─► dag.json ─► API ─► │   ↕ gRPC
 Dockerfile    ┘                              │          └─ User Python code
                                              │

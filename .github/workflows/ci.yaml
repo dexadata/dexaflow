@@ -640,7 +640,7 @@ jobs:
           # the trigger dialog has declared params to render its native form from.
           # It lands in the workspace leoflow setup chose (~/leoflow by default).
           mkdir -p "$HOME/leoflow/params_demo"
-          cp examples/params_demo/dag.py examples/params_demo/leoflow.yaml "$HOME/leoflow/params_demo/"
+          cp examples/params_demo/dag.py examples/params_demo/dexaflow.yaml "$HOME/leoflow/params_demo/"
           leoflow lite --port 18080 --postgres managed --executor subprocess \
             --server-bin "$PWD/bin/leoflow-server" --agent-bin "$PWD/bin/leoflow-agent" > /tmp/lite.log 2>&1 &
           for _ in $(seq 1 60); do curl -fsS http://localhost:18080/readyz >/dev/null 2>&1 && break; sleep 3; done
@@ -1132,7 +1132,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────
   # Examples Dockerfile drift check (#318). The Dockerfile in each
-  # examples/<name>/ is generated from leoflow.yaml by
+  # examples/<name>/ is generated from dexaflow.yaml by
   # scripts/sync-example-dockerfiles.sh. If a contributor changes the
   # YAML (python_version or dependencies) and forgets to regenerate, the
   # checked-in Dockerfile lies about what the image will run. Catch
@@ -1145,7 +1145,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check Dockerfiles are in sync with leoflow.yaml
+      - name: Check Dockerfiles are in sync with dexaflow.yaml
         run: bash scripts/sync-example-dockerfiles.sh --check
 
   # ─────────────────────────────────────────────────────────────────────

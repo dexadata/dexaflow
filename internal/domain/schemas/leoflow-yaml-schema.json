@@ -72,7 +72,7 @@
     "dag_source": {
       "type": "string",
       "default": "dag.py",
-      "description": "Path to the DAG definition file relative to leoflow.yaml."
+      "description": "Path to the DAG definition file relative to dexaflow.yaml."
     },
     "include_paths": {
       "type": "array",
