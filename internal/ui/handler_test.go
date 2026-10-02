@@ -271,7 +271,7 @@ func TestIndexInjectsEditorButtonOnlyWhenEnabled(t *testing.T) {
 }
 
 // TestIndexInjectsHomeLinkOnlyWhenSet covers #1290: an operator who serves
-// Leoflow inside a larger platform can give users a persistent way back. The
+// Dexaflow inside a larger platform can give users a persistent way back. The
 // link opens in the same tab (it is the way back, not a side trip) and is off
 // unless configured.
 func TestIndexInjectsHomeLinkOnlyWhenSet(t *testing.T) {

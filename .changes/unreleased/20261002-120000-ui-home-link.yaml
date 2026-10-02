@@ -1,7 +1,7 @@
 kind: Added
 body: |-
   **An optional link from the UI back to the platform you serve it from**
-  (#1290). Operators who run Leoflow inside an internal portal or a hosting
+  (#1290). Operators who run Dexaflow inside an internal portal or a hosting
   console can set `ui.home_link.label` and `ui.home_link.url` (Helm:
   `ui.homeLink`), and every UI page shows a small "back" pill at the
   bottom-left that opens the URL in the same tab. It is off by default. Boot

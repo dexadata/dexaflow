@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "leoflow-runtime"
 version = "0.1.0"
-description = "Leoflow task runtime: runs user callables and bridges XCom inside task containers."
+description = "Dexaflow task runtime: runs user callables and bridges XCom inside task containers."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
