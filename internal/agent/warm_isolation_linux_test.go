@@ -196,7 +196,7 @@ func TestProcStartTime(t *testing.T) {
 func TestKillProcSkipsARecycledPid(t *testing.T) {
 	for _, usePidfd := range []bool{true, false} {
 		t.Run(fmt.Sprintf("pidfd=%v", usePidfd), func(t *testing.T) {
-			cmd := exec.Command("sleep", "30")
+			cmd := exec.CommandContext(t.Context(), "sleep", "30")
 			if err := cmd.Start(); err != nil {
 				t.Fatalf("starting sleep: %v", err)
 			}

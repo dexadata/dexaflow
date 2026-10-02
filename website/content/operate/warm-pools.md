@@ -236,7 +236,10 @@ template — never from a sibling attempt.** Before each attempt the worker:
 
 The agent itself is **not dumpable**, so an attempt cannot read the worker's
 credentials out of `/proc/<agent>/environ` or `/proc/<agent>/mem` even though it
-runs as the same user.
+runs as the same user. A side effect operators should know: a non-dumpable
+process writes no core dump, so a warm agent that crashes leaves its log and exit
+code but no core file. Task processes are not affected, since `execve` makes each
+attempt dumpable again.
 
 The invariant, tested rather than best-effort: *each attempt's child forks from a
 pristine template, never from a sibling attempt; no attempt observes another

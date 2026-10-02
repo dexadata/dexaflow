@@ -8,6 +8,7 @@ body: |-
   none is left before it accepts another assignment; if one cannot be killed the
   worker exits and the pool replaces the pod. The warm agent is also no longer
   dumpable, so a task cannot read the worker's credentials from
-  `/proc/<agent>/environ` or its memory. Only warm pools are affected; dedicated
+  `/proc/<agent>/environ` or its memory; as a consequence a crashing warm agent
+  leaves no core dump. Only warm pools are affected; dedicated
   task pods are unchanged.
 time: 2026-10-02T17:10:00.000000000-03:00
