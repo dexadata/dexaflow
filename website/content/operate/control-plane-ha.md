@@ -351,22 +351,26 @@ database:
 So one pod can hold up to `maxOpenConns + 3` connections, and the cluster-wide
 ceiling is that number times the most pods that can be up at once: the HPA's
 `maxReplicas` (or `replicaCount`, or `split.api.replicaCount + 1` in split
-mode), plus one surge pod while a rolling update runs. The migration Job adds
-one short-lived connection per upgrade.
+mode), plus the surge pods a rolling update starts before it stops old ones.
+The chart sets no `maxSurge`, so Kubernetes' default of 25% of the replicas,
+rounded up, applies to each Deployment. The migration Job adds one
+short-lived connection per upgrade.
 
-With the shipped defaults and the HPA on, that is `(20 + 3) * 6 = 138`. Stock
-Postgres allows `max_connections = 100`, of which 3 are reserved for
-superusers, and managed offerings often size it from instance memory, so a
-small instance can allow fewer. When the pools reach the limit, new
+With the shipped defaults and the HPA on at `maxReplicas` 6, a rollout at full
+scale runs 6 pods plus `ceil(25% of 6) = 2` surge pods, so the worst case is
+`8 * (20 + 3) = 184` connections. Stock Postgres allows
+`max_connections = 100`, of which 3 are reserved for superusers, and managed
+offerings often size it from instance memory, so a small instance can allow
+fewer. When the pools reach the limit, new
 connections fail with `FATAL: sorry, too many clients already`: requests
 return 5xx and `/readyz` can fail across every replica at once.
 
-Keep `pods * (maxOpenConns + 3)` below the server's `max_connections` minus
-whatever else connects to it (backups, migrations, dashboards). In order of
-preference:
+Keep `pods * (maxOpenConns + 3)`, counting the surge pods, below the server's
+`max_connections` minus whatever else connects to it (backups, migrations,
+dashboards). In order of preference:
 
 1. **Lower `database.maxOpenConns`.** A replica rarely needs 20 connections in
-   flight; `10` at 6 replicas is `78`.
+   flight; `8` at 6 replicas plus 2 surge pods is `8 * (8 + 3) = 88`.
 2. **Cap `autoscaling.maxReplicas`** at what the database can serve.
 3. **Raise `max_connections`** on the server, if the instance has the memory
    for it (each connection is a backend process).
