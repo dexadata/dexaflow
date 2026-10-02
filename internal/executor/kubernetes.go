@@ -74,12 +74,6 @@ func BuildPod(req Request) *corev1.Pod {
 	if req.ImagePullPolicy != "" {
 		pullPolicy = corev1.PullPolicy(req.ImagePullPolicy)
 	}
-	// Inject gVisor and Spot configuration for Free tier
-	runtimeClass := req.Execution.RuntimeClassName
-	if req.Env["LEOFLOW_TENANT_PLAN"] == "free" {
-		runtimeClass = ptrStr("gvisor")
-	}
-
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName(req),
@@ -93,13 +87,21 @@ func BuildPod(req Request) *corev1.Pod {
 			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy:                 corev1.RestartPolicyNever,
-			SecurityContext:               buildPodSecurityContext(req.PodSecurity),
-			NodeSelector:                  req.Execution.NodeSelector,
-			Tolerations:                   buildTolerationsForPlan(req.Execution.Tolerations, req.Env["LEOFLOW_TENANT_PLAN"]),
+			RestartPolicy: corev1.RestartPolicyNever,
+			// Pod-level hardening: fsGroup for a non-root task so the kubelet makes
+			// mounted volumes group-writable by the non-root user. nil (and thus
+			// unset) when the task may run as root — see buildPodSecurityContext.
+			SecurityContext: buildPodSecurityContext(req.PodSecurity),
+			NodeSelector:    req.Execution.NodeSelector,
+			Tolerations:     buildTolerations(req.Execution.Tolerations),
+			// Placement and scheduling passthrough for a shared cluster (ADR 0054):
+			// pin/spread/prioritize task pods and run accelerator (DRA) DAGs. Each
+			// is applied verbatim from the declaration, mirroring tolerations; a
+			// value left unset stays the zero value so a DAG that declares none is
+			// byte-identical to today.
 			PriorityClassName:             req.Execution.PriorityClassName,
 			TerminationGracePeriodSeconds: req.Execution.TerminationGracePeriodSeconds,
-			RuntimeClassName:              runtimeClass,
+			RuntimeClassName:              req.Execution.RuntimeClassName,
 			TopologySpreadConstraints:     decodeStructuredSlice[corev1.TopologySpreadConstraint](req.Execution.TopologySpreadConstraints),
 			Affinity:                      buildAffinity(req.Execution.Affinity),
 			ResourceClaims:                decodeStructuredSlice[corev1.PodResourceClaim](req.Execution.ResourceClaims),
@@ -809,21 +811,4 @@ func randSuffix() string {
 		return "00000000"
 	}
 	return hex.EncodeToString(b)
-}
-
-func ptrStr(s string) *string {
-	return &s
-}
-
-func buildTolerationsForPlan(declared []map[string]any, plan string) []corev1.Toleration {
-	tols := buildTolerations(declared)
-	if plan == "free" {
-		tols = append(tols, corev1.Toleration{
-			Key:      "cloud.google.com/gke-spot",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "true",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
-	}
-	return tols
 }
