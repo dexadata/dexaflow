@@ -1,0 +1,12 @@
+kind: Security
+body: |-
+  **An XCom schema can no longer read the control plane's local files.** A
+  DAG's `xcom_schema` is compiled on the control plane when a task pushes a
+  value, and the schema compiler loaded any `$ref` it could resolve with its
+  default file loader: a `$ref` to a `file://` URL, or a relative one resolved
+  against the server's working directory, made the control plane read that
+  JSON file, and the validation error returned to the task could quote its
+  content. XCom schemas now resolve only references into themselves (such as
+  `#/$defs/...`) and the standard JSON Schema meta-schemas; any other `$ref`
+  fails the push with a schema error.
+time: 2026-10-02T21:00:00.000000000-03:00
