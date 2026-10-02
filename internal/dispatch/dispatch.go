@@ -24,6 +24,11 @@ import (
 // credential exchange or downgrade its transport (#828).
 const reservedEnvPrefix = "LEOFLOW_"
 
+// reservedEnvPrefixNew is the same reservation under the name since the rename;
+// the agent mirrors it onto reservedEnvPrefix at startup, so it is just as
+// reserved.
+const reservedEnvPrefixNew = "DEXAFLOW_"
+
 // stripReservedEnv returns a copy of env without any leoflow-reserved key, so an
 // author's leoflow.yaml env: cannot override the agent's own configuration. The
 // prefix match is case-insensitive (env keys are case-sensitive on Linux, but the
@@ -35,7 +40,8 @@ func stripReservedEnv(env map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(env))
 	for k, v := range env {
-		if strings.HasPrefix(strings.ToUpper(k), reservedEnvPrefix) {
+		upper := strings.ToUpper(k)
+		if strings.HasPrefix(upper, reservedEnvPrefix) || strings.HasPrefix(upper, reservedEnvPrefixNew) {
 			continue
 		}
 		out[k] = v

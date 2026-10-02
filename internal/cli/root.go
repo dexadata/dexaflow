@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/version"
 )
 
@@ -78,6 +79,14 @@ func NewRootCommand() *cobra.Command {
 
 // Execute runs the root command and returns a process exit code.
 func Execute() int {
+	// DEXAFLOW_* and the pre-rename LEOFLOW_* names are interchangeable, and
+	// processes this CLI starts (server, agent, parser) inherit both.
+	envReport := envcompat.MirrorProcess()
+	if stderrIsTerminal() {
+		for _, note := range envReport.Notes() {
+			fmt.Fprintln(os.Stderr, "note: "+note)
+		}
+	}
 	// Only on an interactive terminal: scripts that run `leoflow version | head -1`
 	// or parse stderr must see exactly what they saw before the rename.
 	if notice := legacyNameNotice(os.Args[0]); notice != "" && stderrIsTerminal() {
