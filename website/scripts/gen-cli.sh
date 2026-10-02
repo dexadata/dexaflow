@@ -2,7 +2,7 @@
 # Generate the CLI reference for the Hugo site from Cobra.
 #
 # Parity with the live MkDocs pipeline (.github/workflows/docs.yml), which runs
-#   go run ./cmd/leoflow gen-docs --dir docs/cli
+#   go run ./cmd/dexaflow gen-docs --dir docs/cli
 # Here the same generator writes into website/content/reference/cli/ and the raw
 # Cobra markdown is post-processed for Hugo:
 #   * a front-matter block (title / linkTitle / weight) is prepended, since
@@ -22,7 +22,7 @@ OUT_DIR="${REPO_ROOT}/website/content/reference/cli"
 
 cd "${REPO_ROOT}"
 echo "gen-cli: generating Cobra markdown into ${OUT_DIR}"
-go run ./cmd/leoflow gen-docs --dir "${OUT_DIR}"
+go run ./cmd/dexaflow gen-docs --dir "${OUT_DIR}"
 
 echo "gen-cli: post-processing for Hugo (front matter + link rewrite)"
 python3 - "${OUT_DIR}" <<'PY'

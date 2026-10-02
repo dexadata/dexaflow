@@ -16,13 +16,17 @@ import (
 // removed, while unrelated files in the same dir are left untouched.
 func TestRemoveBinariesIn(t *testing.T) {
 	dir := t.TempDir()
-	for _, n := range []string{"leoflow", "leoflow-server", "leoflow-agent", "other-tool"} {
+	all := []string{
+		"dexaflow", "dexaflow-server", "dexaflow-agent", "dexaflow-mcp",
+		"leoflow", "leoflow-server", "leoflow-agent", "leoflow-mcp",
+	}
+	for _, n := range append(all, "other-tool") {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	removeBinariesIn(&bytes.Buffer{}, dir)
-	for _, n := range []string{"leoflow", "leoflow-server", "leoflow-agent"} {
+	for _, n := range all {
 		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
 			t.Errorf("%s should have been removed", n)
 		}

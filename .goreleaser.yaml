@@ -1,4 +1,4 @@
-# GoReleaser configuration for Leoflow pre-alpha releases.
+# GoReleaser configuration for Dexaflow pre-alpha releases.
 #
 # Produces static (CGO-free) binaries for linux/darwin × amd64/arm64, bundles all
 # three binaries per platform into a single archive (so install.sh fetches the CLI,
@@ -7,16 +7,16 @@
 # image manifests), and a control-plane container image on GHCR.
 version: 2
 
-project_name: leoflow
+project_name: dexaflow
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: leoflow
-    main: ./cmd/leoflow
-    binary: leoflow
+  - id: dexaflow
+    main: ./cmd/dexaflow
+    binary: dexaflow
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -27,33 +27,33 @@ builds:
       - -X github.com/dexadata/dexaflow/internal/version.version={{ .Version }}
       - -X github.com/dexadata/dexaflow/internal/version.gitCommit={{ .Commit }}
       - -X github.com/dexadata/dexaflow/internal/version.buildDate={{ .Date }}
-  - id: leoflow-server
-    main: ./cmd/leoflow-server
-    binary: leoflow-server
+  - id: dexaflow-server
+    main: ./cmd/dexaflow-server
+    binary: dexaflow-server
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags: *ldflags
-  - id: leoflow-agent
-    main: ./cmd/leoflow-agent
-    binary: leoflow-agent
+  - id: dexaflow-agent
+    main: ./cmd/dexaflow-agent
+    binary: dexaflow-agent
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags: *ldflags
-  - id: leoflow-mcp
-    main: ./cmd/leoflow-mcp
-    binary: leoflow-mcp
+  - id: dexaflow-mcp
+    main: ./cmd/dexaflow-mcp
+    binary: dexaflow-mcp
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux, darwin]
     goarch: [amd64, arm64]
-    # leoflow-mcp carries its version in `package main` (var version), so it needs
+    # dexaflow-mcp carries its version in `package main` (var version), so it needs
     # the unqualified `main.version` ldflag — the shared *ldflags anchor targets
     # internal/version.* and would leave main.version at its "dev" default.
     ldflags:
@@ -61,12 +61,12 @@ builds:
       - -X main.version={{ .Version }}
 
 archives:
-  - id: leoflow
+  - id: dexaflow
     # One archive per platform containing all four binaries; install.sh extracts
-    # them into ~/.leoflow/bin.
-    ids: [leoflow, leoflow-server, leoflow-agent, leoflow-mcp]
+    # them and adds the pre-rename leoflow* entry points as links.
+    ids: [dexaflow, dexaflow-server, dexaflow-agent, dexaflow-mcp]
     formats: [tar.gz]
-    name_template: "leoflow_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "dexaflow_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
       - README.md
@@ -109,7 +109,7 @@ dockers:
   # supply-chain posture (ADR 0014) as leoflow-migrate and leoflow-runtime, which
   # the release workflow signs in their own jobs.
   - id: server-amd64
-    ids: [leoflow-server]
+    ids: [dexaflow-server]
     goarch: amd64
     dockerfile: deploy/Dockerfile.server.release
     image_templates:
@@ -121,7 +121,7 @@ dockers:
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.source=https://github.com/dexadata/leoflow"
   - id: server-arm64
-    ids: [leoflow-server]
+    ids: [dexaflow-server]
     goarch: arm64
     dockerfile: deploy/Dockerfile.server.release
     image_templates:

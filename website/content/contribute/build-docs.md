@@ -52,7 +52,7 @@ Each script is idempotent and documents itself in a header comment. What they do
 
 | Script | Source | Output | Notes |
 |---|---|---|---|
-| `gen-cli.sh` | `go run ./cmd/leoflow gen-docs` (Cobra) | `content/reference/cli/*.md` | Adds Hugo front matter; rewrites `.md` cross-links to pretty URLs. |
+| `gen-cli.sh` | `go run ./cmd/dexaflow gen-docs` (Cobra) | `content/reference/cli/*.md` | Adds Hugo front matter; rewrites `.md` cross-links to pretty URLs. |
 | `gen-go.sh` | `gomarkdoc` over a fixed package set | `content/reference/go/*.md` | Flattens one page per package; adds front matter. |
 | `gen-openapi.sh` | `docs/api/openapi.yaml` | `static/openapi.yaml` | Read by `static/api-reference.html` (the embedded Scalar page). |
 | `gen-python.sh` | `runtime/python` docstrings via `pdoc` | `static/python-api/` | A self-contained sidecar subsite, linked (not embedded) from `reference/python-api`. |

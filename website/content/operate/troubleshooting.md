@@ -40,7 +40,7 @@ leoflow-mcp --version
 
 | Symptom | Cause / fix |
 |---|---|
-| `command not found: leoflow` | The binary is not on `PATH` — re-run `curl … \| sh`, or open a fresh shell to pick up the install-script's PATH line. Building from source? `go install .../cmd/leoflow@latest` and add `$(go env GOPATH)/bin` to `PATH`. |
+| `command not found: leoflow` | The binary is not on `PATH` — re-run `curl … \| sh`, or open a fresh shell to pick up the install-script's PATH line. Building from source? `go install .../cmd/dexaflow@latest` and add `$(go env GOPATH)/bin` to `PATH`. |
 | `leoflow setup` says "python: none on PATH" but you have `python3.12` | Older Leoflow versions only matched literal `python3.11`. Update to the latest release — `setup` now accepts any `python3.11`+ that's on `PATH`. |
 | Install on Alpine / musl fails fetching CPython | The musl-libc relocatable CPython build can be missing system libs. `leoflow lite --postgres docker` falls back to the Docker Postgres path instead of the embedded managed one. |
 

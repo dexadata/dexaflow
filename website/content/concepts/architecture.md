@@ -76,7 +76,7 @@ only the scheduler holds pod-create and agent-facing rights. `role=all` (the
 default, and Lite's only mode) collapses both into one process, byte-for-byte the
 historical monolith. (`RoleAll`/`RoleAPI`/`RoleScheduler` +
 `ServesAPI`/`ServesScheduler` in `internal/config/server.go`; gated in
-`cmd/leoflow-server/main.go`.)
+`cmd/dexaflow-server/main.go`.)
 
 **Authentication.** The API authenticates every request with a bearer JWT
 ([ADR 0008](/project/adrs/0008-jwt-auth/)). For human login it also supports

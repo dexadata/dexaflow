@@ -1,21 +1,23 @@
-// Package cli implements the leoflow command-line interface.
+// Package cli implements the dexaflow command-line interface.
 package cli
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dexadata/dexaflow/internal/version"
 )
 
-// NewRootCommand builds the root leoflow command with its global flags and
+// NewRootCommand builds the root dexaflow command with its global flags and
 // subcommands.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "leoflow",
-		Short:         "Leoflow is a GitOps-first, container-native workflow orchestrator.",
+		Use:           "dexaflow",
+		Short:         "Dexaflow is a GitOps-first, container-native workflow orchestrator.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Setting Version makes cobra accept the `--version` flag, matching the
@@ -76,9 +78,37 @@ func NewRootCommand() *cobra.Command {
 
 // Execute runs the root command and returns a process exit code.
 func Execute() int {
+	// Only on an interactive terminal: scripts that run `leoflow version | head -1`
+	// or parse stderr must see exactly what they saw before the rename.
+	if notice := legacyNameNotice(os.Args[0]); notice != "" && stderrIsTerminal() {
+		fmt.Fprintln(os.Stderr, notice)
+	}
 	if err := NewRootCommand().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
 	return 0
+}
+
+// legacyCommandName is the CLI's name before the Dexaflow rename. Installs from
+// that time keep a `leoflow` entry point that runs this same binary.
+const legacyCommandName = "leoflow"
+
+// legacyNameNotice returns a one-line notice when the CLI was started through
+// its pre-rename name, and "" otherwise. The old name keeps working; the notice
+// only tells the user what the command is called now.
+func legacyNameNotice(argv0 string) string {
+	base := filepath.Base(strings.ReplaceAll(argv0, `\`, "/"))
+	base = strings.TrimSuffix(base, ".exe")
+	if base != legacyCommandName {
+		return ""
+	}
+	return "note: leoflow is now called dexaflow; this command keeps working under both names."
+}
+
+// stderrIsTerminal reports whether stderr is attached to a terminal rather than
+// a pipe, a file or a CI log.
+func stderrIsTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

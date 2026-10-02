@@ -122,15 +122,20 @@ func installBinDir() string {
 	return filepath.Dir(exe)
 }
 
-// removeBinariesIn deletes the leoflow binaries from dir (leoflow last — it is the
-// running process; on Linux unlinking a running binary is safe). A removal failure
+// removeBinariesIn deletes the dexaflow binaries from dir, and the leoflow-named
+// entry points older installs left there, with the CLI last (it is the running
+// process; on Linux unlinking a running binary is safe). A removal failure
 // (e.g. /usr/local/bin without sudo) is reported, not fatal, so ~/.leoflow is still
 // cleaned.
 func removeBinariesIn(out io.Writer, dir string) {
 	if dir == "" {
 		return
 	}
-	for _, name := range []string{"leoflow-server", "leoflow-agent", "leoflow"} {
+	for _, name := range []string{
+		"dexaflow-server", "dexaflow-agent", "dexaflow-mcp",
+		"leoflow-server", "leoflow-agent", "leoflow-mcp",
+		"leoflow", "dexaflow",
+	} {
 		p := filepath.Join(dir, name)
 		if _, err := os.Stat(p); err != nil {
 			continue

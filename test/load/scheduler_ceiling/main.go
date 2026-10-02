@@ -21,7 +21,7 @@
 //
 //	# 1. bring up Postgres and migrate + seed the `default` tenant
 //	docker compose -f docker-compose.dev.yaml up -d
-//	go run ./cmd/leoflow db reset --yes
+//	go run ./cmd/dexaflow db reset --yes
 //	# 2. run the experiment
 //	DATABASE_URL='postgres://leoflow:leoflow@localhost:5432/leoflow_dev?sslmode=disable' \
 //	  go run ./test/load/scheduler_ceiling --n 50,200,500,1000 --window 5s

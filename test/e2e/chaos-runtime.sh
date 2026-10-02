@@ -311,7 +311,7 @@ scenario_task_pod_kill() {
 
   # Arm the agent-lost backstop before the kill. That reaper only fires once a TI
   # has heartbeated at least once (the zero-heartbeat "do no harm" guard, ADR
-  # 0031); the agent heartbeats every 15s (cmd/leoflow-agent HeartbeatInterval).
+  # 0031); the agent heartbeats every 15s (cmd/dexaflow-agent HeartbeatInterval).
   # Killing the pod inside that first interval hits a separate, un-backstopped
   # window (the reconciler is blind to a *deleted* pod, and agent-lost skips a
   # null heartbeat) tracked in #527 — NOT what this scenario asserts. Wait one

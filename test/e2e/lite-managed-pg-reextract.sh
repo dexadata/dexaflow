@@ -57,9 +57,9 @@ export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 mkdir -p "$HOME_DIR" "$WS" "$TMP/logs"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
 start_lite() { # $1=logfile

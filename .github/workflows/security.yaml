@@ -219,7 +219,7 @@ jobs:
             -ldflags="-s -w \
               -X github.com/dexadata/dexaflow/internal/version.version=ci \
               -X github.com/dexadata/dexaflow/internal/version.gitCommit=${GITHUB_SHA}" \
-            -o dist/image-scan-context/leoflow-server ./cmd/leoflow-server
+            -o dist/image-scan-context/leoflow-server ./cmd/dexaflow-server
           go version -m dist/image-scan-context/leoflow-server | head -3
 
       # deploy/Dockerfile.server.release is the file .goreleaser.yaml points at

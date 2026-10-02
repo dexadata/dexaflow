@@ -24,10 +24,10 @@ UI_ASSETS_DIR      := internal/ui/assets
 
 # ─── Paths ───
 BIN_DIR       := bin
-CLI_BINARY    := $(BIN_DIR)/leoflow
-SERVER_BINARY := $(BIN_DIR)/leoflow-server
-AGENT_BINARY  := $(BIN_DIR)/leoflow-agent
-MCP_BINARY    := $(BIN_DIR)/leoflow-mcp
+CLI_BINARY    := $(BIN_DIR)/dexaflow
+SERVER_BINARY := $(BIN_DIR)/dexaflow-server
+AGENT_BINARY  := $(BIN_DIR)/dexaflow-agent
+MCP_BINARY    := $(BIN_DIR)/dexaflow-mcp
 
 # ─── Build metadata (embedded via internal/version) ───
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -68,10 +68,12 @@ setup: ## Install Go tools (incl. changie), Python parser, and the pre-commit ho
 .PHONY: build
 build: ## Build all binaries into ./bin
 	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(CLI_BINARY) ./cmd/leoflow
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(SERVER_BINARY) ./cmd/leoflow-server
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(AGENT_BINARY) ./cmd/leoflow-agent
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(MCP_BINARY) ./cmd/leoflow-mcp
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(CLI_BINARY) ./cmd/dexaflow
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(SERVER_BINARY) ./cmd/dexaflow-server
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(AGENT_BINARY) ./cmd/dexaflow-agent
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(MCP_BINARY) ./cmd/dexaflow-mcp
+	@# Pre-rename entry points: scripts and installs that call bin/leoflow* keep working.
+	@for b in "" -server -agent -mcp; do ln -sf "dexaflow$$b" "$(BIN_DIR)/leoflow$$b"; done
 
 .PHONY: chaos-dogfood
 chaos-dogfood: ## Pre-Lima gate (#231) — Phase 1: run all suites on the host + emit a green/red report
@@ -100,7 +102,7 @@ chaos-dogfood-docker: ## Pre-Lima gate (#231) — Phase 2a: same harness inside 
 
 .PHONY: dev-install
 dev-install: ## Install the leoflow toolchain on PATH so `leoflow dev` runs from any project
-	go install -trimpath -ldflags="$(LDFLAGS)" ./cmd/leoflow ./cmd/leoflow-server ./cmd/leoflow-agent
+	go install -trimpath -ldflags="$(LDFLAGS)" ./cmd/dexaflow ./cmd/dexaflow-server ./cmd/dexaflow-agent
 
 .PHONY: lite-redeploy
 lite-redeploy: ## Local dev loop: rebuild + (re)start `leoflow lite` with the just-built binaries

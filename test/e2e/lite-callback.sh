@@ -51,9 +51,9 @@ export HOME="$TMP/home"
 mkdir -p "$HOME"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
 echo "==> building the callback receiver (/callback -> capture)"

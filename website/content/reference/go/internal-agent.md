@@ -8,7 +8,7 @@ weight: 5
 import "github.com/dexadata/dexaflow/internal/agent"
 ```
 
-Package agent contains the worker\-side logic that runs inside the task container: building the user process command, injecting XCom inputs, reading the return value, and retry backoff. The gRPC client lives in cmd/leoflow\-agent.
+Package agent contains the worker\-side logic that runs inside the task container: building the user process command, injecting XCom inputs, reading the return value, and retry backoff. The gRPC client lives in cmd/dexaflow\-agent.
 
 ## Index
 
@@ -374,7 +374,7 @@ Two identities are kept deliberately separate:
 - StreamClient carries the worker's BOOTSTRAP identity. Register and the AwaitAssignment control stream run on it and never adopt an attempt token, so the pod's membership in the pool is stable for the worker's whole life.
 - WorkClient carries each attempt's PER\-ATTEMPT identity. Its per\-RPC credential reads AttemptTokens, which the loop swaps to the assignment's attempt\_token before running. Because attempts are strictly sequential, no two attempts' RPCs are ever in flight at once, so the swap is race\-free; and because the swap only touches AttemptTokens \(a different TokenSource / dial from the stream\), it never disturbs the already\-open bootstrap stream, whose authorization header was sent once at stream open.
 
-In production StreamClient and WorkClient are two dials of the same control plane \(see cmd/leoflow\-agent\), one bound to the bootstrap TokenSource and one to AttemptTokens. They may be the same client only in tests that don't exercise the credential.
+In production StreamClient and WorkClient are two dials of the same control plane \(see cmd/dexaflow\-agent\), one bound to the bootstrap TokenSource and one to AttemptTokens. They may be the same client only in tests that don't exercise the credential.
 
 ```go
 type WarmRunner struct {

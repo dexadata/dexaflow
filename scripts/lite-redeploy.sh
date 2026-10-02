@@ -29,9 +29,9 @@ cd "$(git rev-parse --show-toplevel)"
 
 echo "==> building binaries (linux/darwin native)…"
 mkdir -p "$BUILD_DIR" bin
-go build -trimpath -o "$BUILD_DIR/leoflow" ./cmd/leoflow &
-go build -trimpath -o "$BUILD_DIR/leoflow-server" ./cmd/leoflow-server &
-go build -trimpath -o "$BUILD_DIR/leoflow-agent" ./cmd/leoflow-agent &
+go build -trimpath -o "$BUILD_DIR/leoflow" ./cmd/dexaflow &
+go build -trimpath -o "$BUILD_DIR/leoflow-server" ./cmd/dexaflow-server &
+go build -trimpath -o "$BUILD_DIR/leoflow-agent" ./cmd/dexaflow-agent &
 wait
 
 # macOS Sequoia (14+) refuses to run a freshly-produced binary that lacks

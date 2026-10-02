@@ -32,9 +32,9 @@ export LEOFLOW_SECRET_KEY="e2e-insecure-secret-key-32bytes!"
 export LEOFLOW_LOGS_DIR="$TMP/logs"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
 echo "==> resetting the database (migrated, empty)"

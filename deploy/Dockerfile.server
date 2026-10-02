@@ -28,11 +28,11 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w \
       -X 'github.com/dexadata/dexaflow/internal/version.version=${VERSION}' \
       -X 'github.com/dexadata/dexaflow/internal/version.gitCommit=${GIT_COMMIT}'" \
-    -o /out/leoflow-server ./cmd/leoflow-server
+    -o /out/dexaflow-server ./cmd/dexaflow-server
 
 # Minimal, non-root runtime.
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/leoflow-server /leoflow-server
+COPY --from=build /out/dexaflow-server /dexaflow-server
 EXPOSE 8080 9090
 USER nonroot:nonroot
-ENTRYPOINT ["/leoflow-server"]
+ENTRYPOINT ["/dexaflow-server"]
