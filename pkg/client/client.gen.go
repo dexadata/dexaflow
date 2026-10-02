@@ -487,7 +487,7 @@ type ListDagRunsParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 
-	// Cursor Dexaflow extension. Opaque keyset cursor taken from the Dexaflow-Next-Cursor response header of the previous page. When set, offset is ignored and the page holds the rows after the cursor in the same order, at the cost of the first page whatever the depth. The response body is unchanged.
+	// Cursor Dexaflow extension. Opaque keyset cursor taken from the Dexaflow-Next-Cursor response header of the previous page. When set, offset is ignored and the page holds the rows after the cursor in the same order, at the cost of the first page whatever the depth. The response body is unchanged. With a state filter, offset paging filters the newest 10000 runs and counts total_entries within them, while cursor paging filters and counts every run of the DAG, so the two modes can report different totals for a DAG with more runs than that.
 	Cursor *Cursor                   `form:"cursor,omitempty" json:"cursor,omitempty"`
 	State  *[]ListDagRunsParamsState `form:"state,omitempty" json:"state,omitempty"`
 }
