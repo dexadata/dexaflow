@@ -120,8 +120,8 @@ type WarmPodSpec struct {
 	// execution.warm_read_only_root_filesystem). It forces a read-only root on the
 	// warm container whatever PodSecurity says, mounts the writable /tmp emptyDir,
 	// and tells the agent (warmAttemptHomeEnv) to give each attempt its own HOME
-	// and XDG dirs inside the scratch it wipes, and to sweep /tmp between
-	// attempts. On a writable root a file one attempt plants on the image would be
+	// and XDG dirs inside the scratch it wipes, and to sweep /tmp and /dev/shm
+	// around every attempt. On a writable root a file one attempt plants on the image would be
 	// executed by the next attempt on this worker.
 	ReadOnlyRootFilesystem bool
 
@@ -342,7 +342,7 @@ func warmPodEnv(spec WarmPodSpec) []corev1.EnvVar {
 
 // warmAttemptHomeEnv tells the warm agent its root filesystem is read only by
 // design (X3.2), so it must give each attempt a HOME and XDG dirs inside its
-// wiped scratch and sweep the shared /tmp between attempts.
+// wiped scratch and sweep the shared /tmp and /dev/shm around every attempt.
 const warmAttemptHomeEnv = "LEOFLOW_WARM_ATTEMPT_HOME"
 
 // mountWarmAgentTLSCA mounts the CA ConfigMap (when configured) into the warm pod

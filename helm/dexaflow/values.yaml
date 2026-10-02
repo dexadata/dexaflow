@@ -396,7 +396,7 @@ execution:
   workerIdleTtl: 5m
   # -- Cap on the TOTAL warm pods one tenant may hold across ALL its dag_versions (ADR 0058 M4). Where `maxPoolSize` bounds one version, this bounds a tenant's aggregate footprint so one team cannot pin idle pods and starve neighbours on a shared cluster. Enforced by refusing to create new warm pods, never by deleting a busy worker. Ignored while `warmPoolsEnabled` is false.
   maxWarmPodsPerTenant: 100
-  # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir between attempts, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR` and `/tmp` fails with it on. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
+  # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
   warmReadOnlyRootFilesystem: false
 
 # -- Extra environment variables appended to the control-plane container, for

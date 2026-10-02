@@ -81,12 +81,16 @@ type WarmRunner struct {
 
 	// AttemptHome is the read-only-root isolation mode (X3.2), set from
 	// LEOFLOW_WARM_ATTEMPT_HOME. Each attempt then gets its own HOME and XDG dirs
-	// under ScratchDir, and resetScratch also empties SharedTmpDir (the pod's /tmp
-	// emptyDir, the only other writable path) except for ScratchDir itself, so a
-	// generated dbt profile or a planted script there does not reach the next
-	// attempt. Off leaves HOME and /tmp exactly as before.
+	// under ScratchDir, and resetScratch also empties the writable paths a
+	// read-only root leaves: SharedTmpDir (the pod's /tmp emptyDir) except for
+	// ScratchDir itself, and SharedMemDir (/dev/shm, a pod-wide tmpfs). The sweep
+	// runs before each ack and again as soon as an attempt ends, before SlotFree,
+	// so a generated dbt profile or a planted script neither reaches the next
+	// attempt nor sits on an idle worker. Off leaves HOME, /tmp and /dev/shm
+	// exactly as before.
 	AttemptHome  bool
 	SharedTmpDir string
+	SharedMemDir string
 
 	// TerminationLogPath and HeartbeatInterval mirror the single-shot Runner's
 	// fields and are threaded into every per-attempt Runner.
@@ -480,6 +484,16 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 			"assignment", a.GetAssignmentId(), "error", aerr)
 	}
 
+	// X3.2: sweep what the attempt left (its HOME, a generated dbt profile with a
+	// connection secret, /dev/shm) now rather than at the next ack, so it does not
+	// stay on disk while the worker idles. Fail-closed like the pre-ack reset: the
+	// attempt is already reported, so tearing the worker down loses nothing.
+	if w.AttemptHome {
+		if err := w.resetScratch(); err != nil {
+			return fmt.Errorf("sweeping after assignment %q: %w", a.GetAssignmentId(), err)
+		}
+	}
+
 	// Signal availability so the control plane may dispatch the next assignment.
 	if err := stream.Send(&agentv1.WorkerMessage{
 		Msg: &agentv1.WorkerMessage_SlotFree{SlotFree: &agentv1.SlotFree{}},
@@ -507,6 +521,11 @@ func (w *WarmRunner) resetScratch() error {
 			return err
 		}
 	}
+	if w.AttemptHome && w.SharedMemDir != "" {
+		if err := sweepDir(w.SharedMemDir, ""); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(w.ScratchDir, 0o700); err != nil {
 		return fmt.Errorf("recreating scratch %q: %w", w.ScratchDir, err)
 	}
@@ -514,23 +533,31 @@ func (w *WarmRunner) resetScratch() error {
 }
 
 // sweepSharedTmp removes every entry of SharedTmpDir except the one holding
-// ScratchDir (X3.2). With a read-only root that emptyDir is the only writable
-// path outside the scratch, and the runtime writes there by default: the image
-// points DBT_PROFILES_DIR at /tmp/leoflow/dbt, and the generated profiles.yml
-// carries the connection secret. Like resetScratch it is fail-closed.
+// ScratchDir (X3.2). With a read-only root that emptyDir is writable, and the
+// runtime writes there by default: the image points DBT_PROFILES_DIR at
+// /tmp/leoflow/dbt, and the generated profiles.yml carries the connection
+// secret. Like resetScratch it is fail-closed.
 func (w *WarmRunner) sweepSharedTmp() error {
-	entries, err := os.ReadDir(w.SharedTmpDir)
+	return sweepDir(w.SharedTmpDir, w.ScratchDir)
+}
+
+// sweepDir removes every entry of dir except the one that is, or contains, keep
+// (empty keeps nothing). The dir itself stays, since it is a mount point.
+func sweepDir(dir, keep string) error {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("listing shared temp dir %q: %w", w.SharedTmpDir, err)
+		return fmt.Errorf("listing shared dir %q: %w", dir, err)
 	}
-	scratch := filepath.Clean(w.ScratchDir)
+	if keep != "" {
+		keep = filepath.Clean(keep)
+	}
 	for _, e := range entries {
-		p := filepath.Join(w.SharedTmpDir, e.Name())
-		if p == scratch || strings.HasPrefix(scratch, p+string(filepath.Separator)) {
+		p := filepath.Join(dir, e.Name())
+		if keep != "" && (p == keep || strings.HasPrefix(keep, p+string(filepath.Separator))) {
 			continue
 		}
 		if err := os.RemoveAll(p); err != nil {
-			return fmt.Errorf("removing %q from the shared temp dir: %w", p, err)
+			return fmt.Errorf("removing %q from the shared dir: %w", p, err)
 		}
 	}
 	return nil

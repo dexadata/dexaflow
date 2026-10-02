@@ -244,12 +244,14 @@ type ExecutionSection struct {
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
 	// WarmReadOnlyRootFilesystem mounts every warm worker's root filesystem read
 	// only and gives each attempt its own HOME and XDG dirs inside the scratch the
-	// worker wipes between attempts, plus a sweep of the shared /tmp emptyDir. It
-	// closes X3.2: on a writable root a file one attempt plants on the image (a
-	// module on the working directory's sys.path, a ~/.local site-packages entry)
-	// is executed by the next attempt on the same worker. Default false keeps
-	// today's writable root, since a task that writes outside $HOME, $TMPDIR and
-	// /tmp would fail with it on. Dedicated task pods are not affected; they follow
+	// worker wipes between attempts, plus a sweep of the shared /tmp emptyDir and
+	// /dev/shm before each attempt and after it ends. It closes X3.2: on a
+	// writable root a file one attempt plants on the image (a module on the
+	// working directory's sys.path, a ~/.local site-packages entry) is executed
+	// by the next attempt on the same worker. Default false keeps
+	// today's writable root, since a task that writes outside $HOME, $TMPDIR, /tmp
+	// and /dev/shm would fail with it on. It applies to warm pods created after it
+	// is turned on. Dedicated task pods are not affected; they follow
 	// executor.defaults.read_only_task_root_filesystem.
 	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
 }

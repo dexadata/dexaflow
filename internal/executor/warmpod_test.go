@@ -375,7 +375,7 @@ func TestBuildWarmPodServiceAccount(t *testing.T) {
 // root filesystem is read only even when the task-pod default leaves it writable,
 // so a file one attempt plants on the image (a module on the working directory's
 // sys.path, a ~/.local site-packages entry) cannot be executed by the next one.
-// The only writable path is the /tmp emptyDir, and the agent is told to give each
+// The writable paths left are the /tmp emptyDir and /dev/shm, and the agent is told to give each
 // attempt its own HOME and XDG dirs inside the scratch it wipes between attempts.
 func TestBuildWarmPodReadOnlyRootFilesystemIsolation(t *testing.T) {
 	spec := baseWarmSpec()

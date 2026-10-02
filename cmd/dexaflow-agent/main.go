@@ -332,9 +332,11 @@ func runWarm(ctx context.Context, streamClient agentv1.AgentServiceClient, strea
 		IdleTTL:         envSeconds("LEOFLOW_WORKER_IDLE_TTL_SECONDS"),
 		AttemptWatchdog: envSeconds("LEOFLOW_ATTEMPT_WATCHDOG_SECONDS"),
 		// Read-only root isolation (X3.2), set by BuildWarmPod: a per-attempt HOME
-		// under the scratch, and a sweep of the /tmp emptyDir the scratch lives in.
+		// under the scratch, and a sweep of the writable paths a read-only root
+		// leaves: the /tmp emptyDir the scratch lives in, and the /dev/shm tmpfs.
 		AttemptHome:  os.Getenv("LEOFLOW_WARM_ATTEMPT_HOME") == "1",
 		SharedTmpDir: filepath.Dir(scratchDir),
+		SharedMemDir: "/dev/shm",
 	}
 	if rerr := w.Run(ctx, dagVersionID); rerr != nil {
 		slog.Error("warm worker failed", "error", rerr)
