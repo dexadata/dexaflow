@@ -1,4 +1,4 @@
-# Bundles the Leoflow SQL migrations with the golang-migrate CLI, for the Helm
+# Bundles the Dexaflow SQL migrations with the golang-migrate CLI, for the Helm
 # chart's migration Job (#34/#48). Run as:
 #   migrate -path /migrations -database <url> up
 #
@@ -56,7 +56,7 @@ ARG TARGETARCH
 # and `postgresql://` schemes the Helm Job's LEOFLOW_DATABASE_URL uses; `pgx5`
 # covers the `pgx5://` scheme the Lite path uses (internal/cli/dev.go), so a DSN
 # that works in one place works in the other. Postgres is the only database
-# Leoflow supports, so no other driver is built in.
+# Dexaflow supports, so no other driver is built in.
 #
 # The version stamped into the binary is READ from the module graph rather than
 # written here, so `migrate -version` cannot drift from the version actually
@@ -98,8 +98,8 @@ RUN set -eux; \
 # shared DSN starts the server and fails this Job.
 FROM gcr.io/distroless/static-debian13:nonroot
 
-LABEL org.opencontainers.image.source="https://github.com/dexadata/leoflow"
-LABEL org.opencontainers.image.description="golang-migrate CLI plus the Leoflow SQL migrations, for the Helm migration Job"
+LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
+LABEL org.opencontainers.image.description="golang-migrate CLI plus the Dexaflow SQL migrations, for the Helm migration Job"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --from=build /out/migrate /usr/local/bin/migrate

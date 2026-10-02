@@ -49,7 +49,7 @@ func TestConnectWithRetryGivesUpAfterBudget(t *testing.T) {
 
 // TestConnectWithRetryRespectsContextCancel: if the operator hits Ctrl-C
 // during startup, the retry loop must exit immediately, not run out the full
-// budget. Otherwise a stuck `leoflow lite` ignores SIGINT for 30s.
+// budget. Otherwise a stuck `dexaflow lite` ignores SIGINT for 30s.
 func TestConnectWithRetryRespectsContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0

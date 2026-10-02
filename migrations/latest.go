@@ -14,7 +14,7 @@ var migrationFilePattern = regexp.MustCompile(`^(\d+)_.*\.up\.sql$`)
 
 // Latest returns the highest migration version embedded in this binary. It is
 // the binary's view of "newest schema I know about" — the drift detector in
-// `leoflow lite` (#136) compares it against the running database's
+// `dexaflow lite` (#136) compares it against the running database's
 // schema_migrations.version to refuse to start when the DB is ahead. An empty
 // embed (no .up.sql files) returns an error rather than 0 so a misconfigured
 // build is loud.

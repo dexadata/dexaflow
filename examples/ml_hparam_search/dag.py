@@ -18,7 +18,7 @@ receives the list of all trial outputs and reduces them into a single result.
 
 For a real workload, swap the body of `trial` for actual training (a single
 DataLoader pass, a scikit-learn fit, a transformers training step, etc.) and
-return the metrics dict that matters to you. The Leoflow contract is the
+return the metrics dict that matters to you. The Dexaflow contract is the
 same: each parameter receives its upstream's return value; a fan-in parameter
 receives the list of all upstream return values (issue #257 / xcom_input_many).
 """

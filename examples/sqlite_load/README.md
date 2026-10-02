@@ -52,7 +52,7 @@ Save. The resulting `AIRFLOW_CONN_SQLITE_TARGET` env var will be
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `sqlite_load` → **Trigger DAG**.
@@ -82,7 +82,7 @@ Expected: 20 rows. `MIN(name)` is `cat_0`, scores range 0–99.
 sqlite is a **library**, not a service. The integration test
 (`TestSQLiteConnectionURIShapeIntegration` in `internal/storage/`) runs
 on every PR without needing a Docker container — this entry is **Tier 1**
-in the [tiered pipeline](https://github.com/dexadata/leoflow/issues/162).
+in the [tiered pipeline](https://github.com/dexadata/dexaflow/issues/162).
 
 ## Related
 

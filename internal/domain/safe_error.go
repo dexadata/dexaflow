@@ -2,7 +2,7 @@ package domain
 
 import "fmt"
 
-// SafeError carries a message Leoflow composed itself, attached to one of the
+// SafeError carries a message Dexaflow composed itself, attached to one of the
 // sentinel classes above. It exists so the API boundary can tell "a phrase we
 // wrote for the caller" apart from "whatever text the failure happened to
 // carry".
@@ -49,7 +49,7 @@ func (e *SafeError) ClientMessage() string { return e.Message }
 
 // Safef builds a SafeError in class with the formatted message. The message is
 // shown to API clients verbatim, so it must contain only facts the caller
-// supplied or Leoflow chose — never a driver, filesystem, or network error.
+// supplied or Dexaflow chose — never a driver, filesystem, or network error.
 func Safef(class error, format string, a ...any) error {
 	return &SafeError{Message: fmt.Sprintf(format, a...), Class: class}
 }

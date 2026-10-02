@@ -10,7 +10,7 @@ import (
 
 // newGenDocsCommand generates the CLI reference as markdown (one file per
 // command) for the docs site. Hidden: it is a build/docs tool, not a user
-// command. Run via `leoflow gen-docs --dir docs/cli` (the docs workflow does this).
+// command. Run via `dexaflow gen-docs --dir docs/cli` (the docs workflow does this).
 func newGenDocsCommand() *cobra.Command {
 	var dir string
 	cmd := &cobra.Command{

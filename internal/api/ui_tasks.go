@@ -26,7 +26,7 @@ type timeDeltaDTO struct {
 	Microseconds int    `json:"microseconds"`
 }
 
-// taskResponseDTO is the Airflow 3.2.1 TaskResponse. Leoflow models a small
+// taskResponseDTO is the Airflow 3.2.1 TaskResponse. Dexaflow models a small
 // subset of operator attributes, so the rest are sensible defaults / null — the
 // Tasks tab renders the task_id, operator, trigger rule, retries, and downstream
 // links from real data.
@@ -65,7 +65,7 @@ type taskCollectionDTO struct {
 	TotalEntries int               `json:"total_entries"`
 }
 
-// operatorName maps a Leoflow task type to an Airflow-style operator name the UI
+// operatorName maps a Dexaflow task type to an Airflow-style operator name the UI
 // displays.
 // classRef splits a task into the (module_path, class_name) pair Airflow exposes
 // on its tasks endpoint.
@@ -165,7 +165,7 @@ func toTaskResponse(spec domain.DAGSpec, t domain.TaskSpec) taskResponseDTO {
 }
 
 // renderedFieldsFor builds the rendered_fields object the Task Details / Rendered
-// Templates tab shows: the task's templatable operator fields. Leoflow does not
+// Templates tab shows: the task's templatable operator fields. Dexaflow does not
 // render Jinja (#25), so these are the spec values — for a TaskFlow task that
 // means its entrypoint, env, and the upstream bindings it consumes (xcom_input).
 // Returns {} when the task is unknown.

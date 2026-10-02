@@ -43,13 +43,13 @@ func (p *Postgres) SchemaVersion(ctx context.Context) (version uint, dirty, exis
 func checkSchemaCurrent(dbVersion uint, exists, dirty bool, latest uint) error {
 	switch {
 	case !exists:
-		return fmt.Errorf("%w: schema_migrations is absent — migrations have not run (apply them: the Helm pre-upgrade migration Job, or `leoflow db migrate` for Lite); schema v%d is required",
+		return fmt.Errorf("%w: schema_migrations is absent — migrations have not run (apply them: the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite); schema v%d is required",
 			domain.ErrSchemaNotCurrent, latest)
 	case dirty:
 		return fmt.Errorf("%w: schema is dirty at v%d — a migration did not complete; resolve it before starting",
 			domain.ErrSchemaNotCurrent, dbVersion)
 	case dbVersion < latest:
-		return fmt.Errorf("%w: schema is at v%d but this binary requires v%d — run the pending migrations (the Helm pre-upgrade migration Job, or `leoflow db migrate` for Lite)",
+		return fmt.Errorf("%w: schema is at v%d but this binary requires v%d — run the pending migrations (the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite)",
 			domain.ErrSchemaNotCurrent, dbVersion, latest)
 	default:
 		// dbVersion >= latest. An AHEAD schema (dbVersion > latest) is NOT fatal:
@@ -103,12 +103,12 @@ func dirtyAhead(dbVersion uint, exists, dirty bool, latest uint) bool {
 func checkSchemaReady(dbVersion uint, exists, dirty bool, latest uint) error {
 	switch {
 	case !exists:
-		return fmt.Errorf("%w: schema_migrations is absent — migrations have not run (apply them: the Helm pre-upgrade migration Job, or `leoflow db migrate` for Lite); schema v%d is required",
+		return fmt.Errorf("%w: schema_migrations is absent — migrations have not run (apply them: the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite); schema v%d is required",
 			domain.ErrSchemaNotCurrent, latest)
 	case dbVersion < latest:
 		// Also covers dirty-and-behind: a migration in flight that has not yet
 		// reached what this binary needs cannot serve it either.
-		return fmt.Errorf("%w: schema is at v%d but this binary requires v%d — run the pending migrations (the Helm pre-upgrade migration Job, or `leoflow db migrate` for Lite)",
+		return fmt.Errorf("%w: schema is at v%d but this binary requires v%d — run the pending migrations (the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite)",
 			domain.ErrSchemaNotCurrent, dbVersion, latest)
 	case dirtyAhead(dbVersion, exists, dirty, latest):
 		// The whole divergence, expressed through the one predicate so the gate

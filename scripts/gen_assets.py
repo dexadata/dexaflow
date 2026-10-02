@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Leoflow icon and favicon assets from logo.png.
+"""Generate Dexaflow icon and favicon assets from logo.png.
 
 Splits the lion/pinwheel mark (top cluster) from the "leoflow" wordmark
 (bottom cluster), squares the mark, and emits PNG sizes plus favicon.ico.

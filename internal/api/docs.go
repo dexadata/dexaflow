@@ -13,11 +13,11 @@ import (
 var openAPISpec []byte
 
 // scalarHTML renders the Scalar API reference against the embedded spec,
-// themed for Leoflow (ADR 0013). The /docs route is public.
+// themed for Dexaflow (ADR 0013). The /docs route is public.
 const scalarHTML = `<!doctype html>
 <html>
   <head>
-    <title>Leoflow API Reference</title>
+    <title>Dexaflow API Reference</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
   </head>

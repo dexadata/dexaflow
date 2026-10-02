@@ -54,7 +54,7 @@ func dbtGroupProjectDirs(cfg *domain.LeoflowConfig) []string {
 // way; the cleanup removes it after the build so it never lingers in the workspace.
 const generatedDockerfileName = ".leoflow.generated.Dockerfile"
 
-// publishedBaseRepo is the published Leoflow task base image repository. A
+// publishedBaseRepo is the published Dexaflow task base image repository. A
 // yaml-driven build's generated Dockerfile defaults its FROM to this (per Python
 // version), so the produced DAG image builds anywhere — no locally-built
 // leoflow-base required and the Pro control plane can pull it. This is the real
@@ -66,7 +66,7 @@ const publishedBaseRepo = "ghcr.io/dexadata/dexaflow-runtime"
 // FROM. An explicit base_image in dexaflow.yaml wins; otherwise it defaults to the
 // published runtime base (publishedBaseRepo:py<python_version>) so the image is
 // reproducible and pullable from any builder, not just a host that ran
-// `leoflow lite` to build the local base.
+// `dexaflow lite` to build the local base.
 func resolveBaseImage(cfg *domain.LeoflowConfig) string {
 	if cfg.BaseImage != "" {
 		return cfg.BaseImage
@@ -439,7 +439,7 @@ const dockerignoreName = ".dockerignore"
 
 // dockerignoreHeader marks the block this tool appends, so a repeated merge
 // after an interrupted build does not stack identical comments.
-const dockerignoreHeader = "# added by leoflow compile --build from exclude_paths (dexaflow.yaml); removed after the build"
+const dockerignoreHeader = "# added by dexaflow compile --build from exclude_paths (dexaflow.yaml); removed after the build"
 
 // ensureDockerignore materializes exclude_paths as a .dockerignore for the
 // duration of the build, and restores the workspace afterward.
@@ -511,7 +511,7 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 		return noop, baked, nil
 	}
 	//nolint:gosec // G703: `path` is filepath.Join(dir, <const>), and dir is the
-	// project directory the operator pointed `leoflow compile` at. Writing into
+	// project directory the operator pointed `dexaflow compile` at. Writing into
 	// it is the whole point — ensureDockerfile writes the generated Dockerfile to
 	// the same place, for the same reason.
 	if werr := os.WriteFile(path, merged, 0o600); werr != nil {
@@ -554,7 +554,7 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 //     reasonable and reproducible.
 //   - `profiles.yml` is the BYO-profiles pattern: ship your own and point
 //     DBT_PROFILES_DIR at it. The runtime generates a profiles.yml from a
-//     Leoflow connection when it HAS one — it does not have one here, and
+//     Dexaflow connection when it HAS one — it does not have one here, and
 //     "the runtime always generates its own" was a claim read off a single
 //     code path rather than checked against the configurations that exist.
 //
@@ -1066,7 +1066,7 @@ func warnDroppedNegations(w io.Writer, excludes []string) {
 	// ESC survives into a value we print, and every other message in this file
 	// already quotes. An operator's terminal is not a rendering target for
 	// whatever is in a yaml.
-	fmt.Fprintf(w, "warning: exclude_paths %s %s ignored — a negation is not emitted into the block leoflow appends, because that block lands AFTER your own lines and could resurrect a path you excluded. Put the negation in your own %s, which leoflow only ever appends to.\n",
+	fmt.Fprintf(w, "warning: exclude_paths %s %s ignored — a negation is not emitted into the block Dexaflow appends, because that block lands AFTER your own lines and could resurrect a path you excluded. Put the negation in your own %s, which leoflow only ever appends to.\n",
 		quoteAll(dropped), plural(len(dropped), "was", "were"), dockerignoreName)
 }
 

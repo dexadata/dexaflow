@@ -72,7 +72,7 @@ This one costs people an afternoon because it looks like a misconfiguration.
 - **Authorization endpoint**: your pool's hosted UI domain, for example
   `https://<prefix>.auth.<region>.amazoncognito.com/oauth2/authorize`
 
-They are supposed to differ. Leoflow pins only the **issuer**, and discovers the
+They are supposed to differ. Dexaflow pins only the **issuer**, and discovers the
 authorization endpoint from the pool's discovery document, so the split is
 handled. Put the `cognito-idp` URL in `auth.oidc.issuer` and do not try to make
 the two agree.
@@ -122,7 +122,7 @@ is either the URL or the network path to it.
 
 **Every denied login writes one WARN and one audit row.** So the absence of a
 denial line is itself evidence: if a login fails and nothing was logged, the
-request never reached the callback, and the problem is in front of Leoflow.
+request never reached the callback, and the problem is in front of Dexaflow.
 
 The [audit reason table](/operate/sso-google-workspace/#when-a-login-is-denied)
 decodes the rest.

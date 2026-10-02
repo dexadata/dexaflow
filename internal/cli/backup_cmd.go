@@ -17,7 +17,7 @@ import (
 	"github.com/dexadata/dexaflow/migrations"
 )
 
-// newBackupCommand wires `leoflow lite backup`. The whole Lite install ships
+// newBackupCommand wires `dexaflow lite backup`. The whole Lite install ships
 // inside one tarball: workspace DAGs, a logical pg_dump of the managed
 // datastore, the config.yaml (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small
 // MANIFEST.json that lets restore decide whether the bundle is compatible
@@ -29,7 +29,7 @@ func newBackupCommand() *cobra.Command {
 		Short: "Snapshot the Lite install (workspace + datastore + config) into a portable archive.",
 		Long: "backup writes a tar.gz containing your workspace DAGs, a logical pg_dump " +
 			"of the managed Postgres, the config (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small " +
-			"MANIFEST.json. Pair with `leoflow lite restore` to migrate to another machine, " +
+			"MANIFEST.json. Pair with `dexaflow lite restore` to migrate to another machine, " +
 			"survive an OS reinstall, or roll back a botched pre-alpha upgrade.\n\n" +
 			"Backup only covers the managed Postgres path (the default Lite shape). " +
 			"For the Docker datastore path, capture the volume with `docker volume export` " +
@@ -52,7 +52,7 @@ func runBackup(cmd *cobra.Command, output string) error {
 	}
 	leoflowHome := stateDirIn(home)
 	if _, err := os.Stat(leoflowHome); err != nil {
-		return fmt.Errorf("no Lite install found at %s — run `leoflow setup` first", leoflowHome)
+		return fmt.Errorf("no Lite install found at %s — run `dexaflow setup` first", leoflowHome)
 	}
 	cfg := loadUserConfig(home)
 	if cfg == nil {
@@ -94,7 +94,7 @@ func runBackup(cmd *cobra.Command, output string) error {
 	return nil
 }
 
-// defaultBackupOutputPath builds the default --output path for `leoflow lite
+// defaultBackupOutputPath builds the default --output path for `dexaflow lite
 // backup` — `leoflow-backup-<UTC timestamp>.tar.gz` in the current directory.
 // Extracted from runBackup so the format is unit-testable (operators script
 // against it; a regression to local time or a different separator would
@@ -136,7 +136,7 @@ func runPgDump(cmd *cobra.Command, leoflowHome, dumpPath string) error {
 	dump := exec.CommandContext(cmd.Context(), pgDump, args...) //nolint:gosec // managed binary + fixed args; dsn comes from devDSNs
 	dump.Stderr = cmd.ErrOrStderr()
 	if err := dump.Run(); err != nil {
-		return fmt.Errorf("pg_dump failed: %w (is `leoflow lite` running?)", err)
+		return fmt.Errorf("pg_dump failed: %w (is `dexaflow lite` running?)", err)
 	}
 	return nil
 }

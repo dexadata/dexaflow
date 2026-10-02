@@ -11,7 +11,7 @@ import (
 )
 
 // TestPasswordRecoveryLoginIntegration is the end-to-end recovery flow behind
-// `leoflow lite reset-password`: after a reset, the admin must be able to LOG IN
+// `dexaflow lite reset-password`: after a reset, the admin must be able to LOG IN
 // with the new password (issue a token), and the old password must stop working.
 // This guards the real recovery scenario, not just the DB hash update.
 func TestPasswordRecoveryLoginIntegration(t *testing.T) {

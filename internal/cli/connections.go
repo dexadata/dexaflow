@@ -17,7 +17,7 @@ import (
 
 // newConnectionsCommand groups the Airflow-style Connection CRUD subcommands.
 // It is the first-class replacement for hand-rolled curl against
-// /api/v2/connections, and makes the repository's "run `leoflow connections set`"
+// /api/v2/connections, and makes the repository's "run `dexaflow connections set`"
 // hint real (#881). Secrets (password, extra) are sent on write but never echoed
 // back — reads are masked by the server and the printers omit the extra column.
 func newConnectionsCommand() *cobra.Command {

@@ -10,7 +10,7 @@ description: GoDocs for the control plane, scheduler, executor, agent, and stora
 cascade: { type: docs }
 ---
 
-Leoflow's control plane, agent, and CLI are Go. Every exported identifier carries a
+Dexaflow's control plane, agent, and CLI are Go. Every exported identifier carries a
 GoDoc (Go Report Card A+ is the quality floor), and each symbol links to its source
 on GitHub. One page per package keeps each reference a readable length.
 

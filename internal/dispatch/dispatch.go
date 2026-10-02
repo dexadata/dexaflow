@@ -223,7 +223,7 @@ func (d *Dispatcher) SetAgentTLSCAConfigMap(name string) { d.tlsCAConfigMap = na
 // SetTaskSecret configures a Kubernetes Secret mounted read-only into every task
 // pod at mountPath, so tasks can read a credential (e.g. a GCP service-account
 // key referenced by a connection's key_path) from the cluster's secret store
-// rather than from Leoflow (ADR 0035). Empty name = nothing mounted.
+// rather than from Dexaflow (ADR 0035). Empty name = nothing mounted.
 func (d *Dispatcher) SetTaskSecret(name, mountPath string) {
 	d.taskSecret, d.taskSecretPath = name, mountPath
 }

@@ -21,8 +21,8 @@ type DashboardStatsReader interface {
 // always present in the response so the UI's chart never sees a missing series.
 var dagRunStateOrder = []string{"queued", "running", "success", "failed"}
 
-// tiStateMap maps Leoflow task states onto the Airflow 3.2.1
-// TaskInstanceState members. Members Leoflow does not model (removed,
+// tiStateMap maps Dexaflow task states onto the Airflow 3.2.1
+// TaskInstanceState members. Members Dexaflow does not model (removed,
 // restarting, up_for_reschedule, deferred) are always present and zero.
 var tiStateMap = map[string]string{
 	"none":            "no_status",
@@ -109,7 +109,7 @@ func runStatesObject(counts map[string]int) gin.H {
 }
 
 // tiStatesObject builds the TaskInstanceState count object: all Airflow members
-// present and zero-filled, populated from Leoflow states via tiStateMap.
+// present and zero-filled, populated from Dexaflow states via tiStateMap.
 func tiStatesObject(counts map[string]int) gin.H {
 	out := gin.H{}
 	for _, k := range tiStateOrder {

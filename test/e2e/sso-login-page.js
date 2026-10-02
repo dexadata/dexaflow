@@ -152,7 +152,7 @@ async function signInWithPassword(page, email, password) {
       await cont.click();
       await page.waitForLoadState('domcontentloaded');
       if (!page.url().startsWith(URL_BASE)) {
-        fail(`completing the sign-on left the browser on ${page.url()}, not back on Leoflow`);
+        fail(`completing the sign-on left the browser on ${page.url()}, not back on Dexaflow`);
       }
       const me = await whoami(page);
       if (me.username !== SSO_EMAIL) {

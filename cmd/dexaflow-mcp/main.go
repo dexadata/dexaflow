@@ -1,4 +1,4 @@
-// Command leoflow-mcp runs the Leoflow Model Context Protocol server (ADR 0050).
+// Command leoflow-mcp runs the Dexaflow Model Context Protocol server (ADR 0050).
 // It speaks stdio by default (a local agent — Claude Desktop/Code — against a Lite
 // control plane) or Streamable HTTP as an optional Pro service (POST /mcp). Either
 // way it reaches the control plane only through /api/v2, carrying the caller's

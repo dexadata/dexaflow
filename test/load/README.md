@@ -1,6 +1,6 @@
 # Load tests
 
-Load/scale harnesses for Leoflow's control plane. The README calls load tests
+Load/scale harnesses for Dexaflow's control plane. The README calls load tests
 the remaining Phase 6 gap; this directory is where they land, one experiment at
 a time.
 
@@ -97,7 +97,7 @@ scope for Experiment 1 (no dispatcher is wired).
    `prometheus.NewRegistry()` you own. Do **not** modify product code.
 3. Keep it cluster-free: prefer seeding rows directly over booting executors.
    If a signal genuinely needs the full server (e.g. the SSE tailer for
-   Experiment 5), boot `leoflow lite` the way `test/e2e/lite-*.sh` does and
+   Experiment 5), boot `dexaflow lite` the way `test/e2e/lite-*.sh` does and
    scrape its `/metrics`, and say so in this table.
 4. Add a row to the _Experiments_ table above and a section here.
 5. It must `go build`, `go vet`, and `gofmt` clean, and actually run.

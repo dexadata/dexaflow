@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -123,7 +124,7 @@ type ExecutorSection struct {
 	TaskNamespace string `mapstructure:"task_namespace"`
 	// Type selects the pod-path executor: "kubernetes" (default, pod-per-task) or
 	// "subprocess" (dev only, runs the agent on the host without isolation, used
-	// by `leoflow dev`).
+	// by `dexaflow lite`).
 	Type string `mapstructure:"type"`
 	// AgentPath is the leoflow-agent binary the subprocess executor runs (dev only).
 	AgentPath string `mapstructure:"agent_path"`
@@ -148,7 +149,7 @@ type ExecutorSection struct {
 	// TaskSecretName names a Kubernetes Secret mounted (read-only) into every task
 	// pod at TaskSecretMountPath. It lets a task read a credential that lives in
 	// the cluster's secret store (e.g. a GCP service-account key) referenced by a
-	// connection's key_path — so Leoflow never stores the key itself (ADR 0035).
+	// connection's key_path — so Dexaflow never stores the key itself (ADR 0035).
 	// Empty = no secret mounted.
 	TaskSecretName string `mapstructure:"task_secret_name"`
 	// TaskSecretMountPath is where TaskSecretName is mounted in the task pod.
@@ -275,12 +276,12 @@ func (e ExecutionSection) EffectiveMinIdle(dagMinIdle int) int {
 // UISection configures the embedded Airflow UI.
 type UISection struct {
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Leoflow"; `leoflow lite` sets it to mark the environment.
+	// falls back to "Dexaflow"; `dexaflow lite` sets it to mark the environment.
 	InstanceName string `mapstructure:"instance_name"`
 	// AutoRefreshIntervalSeconds is the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Zero (the default) falls back to api.DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `leoflow lite` sets it to 1s for a snappy inner
+	// (30s, production-safe). `dexaflow lite` sets it to 1s for a snappy inner
 	// loop so the SPA reflects state changes almost immediately during dev.
 	AutoRefreshIntervalSeconds int `mapstructure:"auto_refresh_interval_seconds"`
 	// Edition marks the running edition; "lite" shows the silver LITE badge and
@@ -291,9 +292,32 @@ type UISection struct {
 	// Workspace is the DAG project directory the Lite web editor edits (ADR 0025).
 	// Empty disables the editor (Production, or Lite without one).
 	Workspace string `mapstructure:"workspace"`
-	// MonacoDir is where the pinned Monaco bundle was fetched by `leoflow setup`;
+	// MonacoDir is where the pinned Monaco bundle was fetched by `dexaflow setup`;
 	// the editor page is served Monaco from it. Empty shows a setup hint.
 	MonacoDir string `mapstructure:"monaco_dir"`
+	// HomeLink is an optional, persistent link from the UI back to the platform
+	// the operator serves Dexaflow from (#1290). Empty shows no link.
+	HomeLink HomeLinkSection `mapstructure:"home_link"`
+	// Theme is a JSON object in the shape of Airflow's `[api] theme` (#1289):
+	// `tokens` (Chakra design tokens, such as colors.brand and fonts),
+	// `globalCss`, `icon` and `icon_dark_mode`. The UI applies it through its
+	// own theming. Empty keeps the stock look.
+	Theme string `mapstructure:"theme"`
+	// FaviconURL replaces the UI's favicon. It must be http(s) or root-relative.
+	FaviconURL string `mapstructure:"favicon_url"`
+	// StylesheetURLs are extra stylesheets loaded by every UI page, typically
+	// the web fonts a theme's fonts tokens name. Each must be http(s) or
+	// root-relative.
+	StylesheetURLs []string `mapstructure:"stylesheet_urls"`
+}
+
+// HomeLinkSection is the operator's way back from the UI: a label and the
+// absolute http(s) URL it opens, in the same tab. Both are set or neither.
+type HomeLinkSection struct {
+	// Label is the link text, for example the operator's portal name.
+	Label string `mapstructure:"label"`
+	// URL is where the link goes. It must be an absolute http:// or https:// URL.
+	URL string `mapstructure:"url"`
 }
 
 // HTTPExecutorSection configures HTTP-related executor knobs.
@@ -403,7 +427,7 @@ type AuthSection struct {
 	// Leoflow's sign-in page.
 	ExternalSignOutURL string `mapstructure:"external_signout_url"`
 	// DevNoAuth disables authentication entirely, treating every request as an
-	// admin. It exists ONLY for `leoflow dev` (local, unsandboxed). It is false by
+	// admin. It exists ONLY for `dexaflow lite` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
 	// this in production (LEOFLOW_AUTH_DEV_NO_AUTH).
 	DevNoAuth bool `mapstructure:"dev_no_auth"`
@@ -479,7 +503,7 @@ type JWTSection struct {
 	// MaxLifetimeSeconds is the hard ceiling on how long a user session may be kept
 	// alive by transparent token renewal (aresta #5), measured since first login
 	// (the token's oiat claim). Past it, POST /api/v2/auth/token/renew is refused
-	// and the user must `leoflow auth login` again. The short TokenTTLSeconds still
+	// and the user must `dexaflow auth login` again. The short TokenTTLSeconds still
 	// bounds a stolen token independently; this only caps the total renewed
 	// lifetime, mirroring auth.max_attempt_credential_lifetime for agent tokens.
 	// Generous by default (24h) so a normal dev day never re-logs in mid-session; a
@@ -516,7 +540,7 @@ type OIDCSection struct {
 	// GroupsClaim is the ID-token claim carrying the user's IdP groups (default
 	// "groups"). Its values drive RoleMappings.
 	GroupsClaim string `mapstructure:"groups_claim"`
-	// RoleMappings maps an IdP group value to an existing Leoflow role name.
+	// RoleMappings maps an IdP group value to an existing Dexaflow role name.
 	// Default-DENY: a group with no mapping grants no role. Configure via a YAML
 	// config file only. The chart ships none today, so this map has no route
 	// through Helm (#1143).
@@ -536,7 +560,7 @@ type OIDCSection struct {
 	// TenantClaim selects which IdP claim identifies the tenant: "tid" (Entra) or
 	// "hd" (Google Workspace).
 	TenantClaim string `mapstructure:"tenant_claim"`
-	// TenantClaims maps a TenantClaim value to a Leoflow tenant name. A value not
+	// TenantClaims maps a TenantClaim value to a Dexaflow tenant name. A value not
 	// present here is rejected (403) — the login never falls back to "default".
 	//
 	// Decoded OUT-OF-BAND (mapstructure:"-"), not by viper: a Google Workspace
@@ -763,15 +787,20 @@ var serverDefaults = map[string]any{
 	"observability.otel.endpoint":        "localhost:4317",
 	"observability.log_level":            "info",
 	"observability.log_format":           "json",
-	"ui.instance_name":                   "Leoflow",
+	"ui.instance_name":                   "Dexaflow",
 	"ui.edition":                         "",
 	"ui.workspace":                       "",
 	"ui.monaco_dir":                      "",
+	"ui.home_link.label":                 "",
+	"ui.home_link.url":                   "",
+	"ui.theme":                           "",
+	"ui.favicon_url":                     "",
+	"ui.stylesheet_urls":                 []string{},
 	// Must appear here even though the zero value is meaningful (the handler
 	// falls back to api.DefaultUIAutoRefreshIntervalSeconds when ≤ 0): viper's
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
-	// was silently dropped, so `leoflow lite` (which exports the env var to
+	// was silently dropped, so `dexaflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
 	"ui.auto_refresh_interval_seconds": 0,
 	"auth.dev_no_auth":                 false,
@@ -919,6 +948,12 @@ func (c *ServerConfig) Validate() error {
 		return err
 	}
 	if err := validateExternalAuthURL("auth.external_signout_url", c.Auth.ExternalSignOutURL); err != nil {
+		return err
+	}
+	if err := validateHomeLink(c.UI.HomeLink); err != nil {
+		return err
+	}
+	if err := validateBranding(c.UI); err != nil {
 		return err
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
@@ -1169,7 +1204,7 @@ func tenantPinHint(c *ServerConfig) string {
 		return ""
 	}
 	return ". The tenant pin decides whether any login can succeed: a claim value that is absent or not mapped is rejected with 403 (audited as tenant_not_allowed) and never falls back to the default tenant, so without it every SSO login fails. " +
-		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Leoflow tenant. " +
+		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Dexaflow tenant. " +
 		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by LEOFLOW_CONFIG; no LEOFLOW_AUTH_OIDC_* environment variable can carry it. " +
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
 }
@@ -1187,6 +1222,91 @@ func validateExternalAuthURL(key, raw string) error {
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("%s must be an absolute http:// or https:// URL (got %q)", key, raw)
+	}
+	return nil
+}
+
+// validateHomeLink checks ui.home_link (#1290): both fields or neither, and an
+// absolute http(s) URL with a host, so a typo fails boot instead of rendering a
+// dead link and no other scheme (javascript:, data:) can reach the page.
+func validateHomeLink(l HomeLinkSection) error {
+	if l == (HomeLinkSection{}) {
+		return nil
+	}
+	if l.URL == "" {
+		return errors.New("ui.home_link.url is required when ui.home_link.label is set")
+	}
+	if strings.TrimSpace(l.Label) == "" {
+		return errors.New("ui.home_link.label is required when ui.home_link.url is set")
+	}
+	u, err := url.Parse(l.URL)
+	if err != nil {
+		return fmt.Errorf("ui.home_link.url must be a valid URL (got %q): %w", l.URL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("ui.home_link.url must start with http:// or https:// (got %q)", l.URL)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("ui.home_link.url must include a host (got %q)", l.URL)
+	}
+	return nil
+}
+
+// themeKeys are the top-level keys of a theme the Airflow 3.2.1 UI reads.
+var themeKeys = map[string]bool{"tokens": true, "globalCss": true, "icon": true, "icon_dark_mode": true}
+
+// validateBranding checks the #1289 settings: ui.theme is a JSON object with
+// only the keys the UI reads (an unknown key is almost always a typo the UI
+// would ignore in silence), and every URL, the theme's icons included, is
+// http(s) or root-relative.
+func validateBranding(u UISection) error {
+	if u.Theme != "" {
+		var theme map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(u.Theme), &theme); err != nil {
+			return fmt.Errorf("ui.theme must be a JSON object: %w", err)
+		}
+		for key, raw := range theme {
+			if !themeKeys[key] {
+				return fmt.Errorf("ui.theme has unknown key %q (the UI reads tokens, globalCss, icon, icon_dark_mode)", key)
+			}
+			if key != "icon" && key != "icon_dark_mode" {
+				continue
+			}
+			var icon string
+			if err := json.Unmarshal(raw, &icon); err != nil {
+				return fmt.Errorf("ui.theme icon %q must be a string URL", key)
+			}
+			if err := checkAssetURL(icon); err != nil {
+				return fmt.Errorf("ui.theme icon %q: %w", key, err)
+			}
+		}
+	}
+	if u.FaviconURL != "" {
+		if err := checkAssetURL(u.FaviconURL); err != nil {
+			return fmt.Errorf("ui.favicon_url: %w", err)
+		}
+	}
+	for _, sheet := range u.StylesheetURLs {
+		if err := checkAssetURL(sheet); err != nil {
+			return fmt.Errorf("ui.stylesheet_urls: %w", err)
+		}
+	}
+	return nil
+}
+
+// checkAssetURL accepts an absolute http(s) URL with a host or a root-relative
+// path ("/brand/logo.svg"). It refuses every other scheme and the
+// protocol-relative "//host" form, which would load from a host nobody named.
+func checkAssetURL(raw string) error {
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q is not a valid URL: %w", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%q must be an http(s) URL or a root-relative path", raw)
 	}
 	return nil
 }

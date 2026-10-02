@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cut a Leoflow release — one repo-owned entrypoint for the whole flow so the
+# Cut a Dexaflow release — one repo-owned entrypoint for the whole flow so the
 # steps are not re-invented (and re-broken) by hand each time (#879).
 #
 # It: preflights, prepares the chart/CHANGELOG bump on a release branch, opens the
@@ -29,7 +29,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$ROOT/helm/dexaflow/Chart.yaml"
 CHANGELOG="$ROOT/CHANGELOG.md"
-REPO="dexadata/leoflow"
+REPO="dexadata/dexaflow"
 
 # Transient CI failures that are safe to rerun — never a code signal. Matches the
 # classes seen in practice: registry rate-limits and 5xx, Go module-proxy stream

@@ -66,7 +66,7 @@ var (
 )
 
 // VerifiedIdentity is the result of a fully-checked ID token: a trustworthy
-// identity the caller may resolve to a Leoflow user and mint a session for. It
+// identity the caller may resolve to a Dexaflow user and mint a session for. It
 // is only ever returned after every H1/H4 check and the tenant pin have passed.
 type VerifiedIdentity struct {
 	// Provider is the stable provider key stored on the user row (the pinned
@@ -79,7 +79,7 @@ type VerifiedIdentity struct {
 	// EmailVerified is always true on a returned identity (a false/absent claim
 	// fails verification).
 	EmailVerified bool
-	// Tenant is the resolved Leoflow tenant name (from the tid/hd pin).
+	// Tenant is the resolved Dexaflow tenant name (from the tid/hd pin).
 	Tenant string
 	// Groups are the raw IdP group values, for group→role mapping.
 	Groups []string
@@ -243,7 +243,7 @@ func (v *Verifier) checkTimes(idToken *gooidc.IDToken, nbfUnix int64) error {
 	return nil
 }
 
-// resolveTenant maps the configured tid/hd claim value to a Leoflow tenant,
+// resolveTenant maps the configured tid/hd claim value to a Dexaflow tenant,
 // failing closed when the claim is absent or unmapped.
 func (v *Verifier) resolveTenant(idToken *gooidc.IDToken) (string, error) {
 	if v.cfg.TenantClaim == "" {

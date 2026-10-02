@@ -9,7 +9,7 @@ weight: 240
 description: IMAP connection
 ---
 
-Connect a task to an IMAP mailbox over a managed Leoflow Connection — to poll
+Connect a task to an IMAP mailbox over a managed Dexaflow Connection — to poll
 for incoming files or messages. The host, port, and credentials are encrypted
 at rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 

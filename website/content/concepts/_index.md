@@ -2,14 +2,14 @@
 title: Concepts
 linkTitle: Concepts
 weight: 50
-description: The model behind Leoflow — editions and modes, core concepts, the architecture, and UI compatibility.
+description: The model behind Dexaflow — editions and modes, core concepts, the architecture, and UI compatibility.
 cascade: { type: docs }
 menu:
   main:
     weight: 50
 ---
 
-How Leoflow works, and why it is shaped the way it is.
+How Dexaflow works, and why it is shaped the way it is.
 
 <div class="lf-cards">
   <a class="lf-card" href="/concepts/editions/">

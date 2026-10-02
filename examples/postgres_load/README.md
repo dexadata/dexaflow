@@ -24,7 +24,7 @@ example also runs in a quick demo on a developer machine.
 ### 1. Spin up a target Postgres
 
 ```sh
-docker run --rm -d --name leoflow-warehouse \
+docker run --rm -d --name dexaflow-warehouse \
   -e POSTGRES_PASSWORD=etl \
   -e POSTGRES_DB=warehouse \
   -p 55432:5432 \
@@ -54,7 +54,7 @@ Save. The UI never shows the password again — it is encrypted at rest.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `postgres_load` → **Trigger DAG**.
@@ -62,7 +62,7 @@ In the UI: open `postgres_load` → **Trigger DAG**.
 ### 4. Verify
 
 ```sh
-docker exec leoflow-warehouse psql -U postgres -d warehouse \
+docker exec dexaflow-warehouse psql -U postgres -d warehouse \
   -c "SELECT count(*), min(name), max(score) FROM example_load"
 ```
 
@@ -84,8 +84,8 @@ contract.
   (`TestConnectionDeliveryChainOfCustodyIntegration`) pins this; if a real
   run still breaks, file an issue with the password shape that triggered it.
 - **Connection lost between runs** — Connections persist across
-  `leoflow lite` restarts (they live in the managed Postgres). They survive
-  `leoflow uninstall` (without `--purge`).
+  `dexaflow lite` restarts (they live in the managed Postgres). They survive
+  `dexaflow uninstall` (without `--purge`).
 
 ## Related
 

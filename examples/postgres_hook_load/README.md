@@ -30,7 +30,7 @@ def load(rows):
     ...
 ```
 
-Leoflow parses your DAG **without providers installed** (it only needs the DAG's
+Dexaflow parses your DAG **without providers installed** (it only needs the DAG's
 shape). A provider import at the module top level therefore fails the compile —
 with an actionable message telling you to move it into the task and declare it via
 `connectors:`. Inside the `@task` body it is never executed at parse time, and at
@@ -42,7 +42,7 @@ works. See `docs/connections/index.md` → *Installing a connector's provider*.
 ### 1. Spin up a target Postgres
 
 ```sh
-docker run --rm -d --name leoflow-warehouse \
+docker run --rm -d --name dexaflow-warehouse \
   -e POSTGRES_PASSWORD=etl \
   -e POSTGRES_DB=warehouse \
   -p 55432:5432 \
@@ -70,7 +70,7 @@ clear "The conn_id `pg_target` isn't defined" error.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `postgres_hook_load` → **Trigger DAG**.
@@ -78,7 +78,7 @@ In the UI: open `postgres_hook_load` → **Trigger DAG**.
 ### 4. Verify
 
 ```sh
-docker exec leoflow-warehouse psql -U postgres -d warehouse \
+docker exec dexaflow-warehouse psql -U postgres -d warehouse \
   -c "SELECT count(*), min(name), max(score) FROM example_load"
 ```
 

@@ -6,10 +6,10 @@ aliases:
 title: "Airflow operators & sensors"
 linkTitle: "Operators & sensors"
 weight: 20
-description: Use Airflow operators and sensors from your DAGs on Leoflow.
+description: Use Airflow operators and sensors from your DAGs on Dexaflow.
 ---
 
-Leoflow runs **any Apache Airflow operator or sensor** — `BigQueryInsertJobOperator`,
+Dexaflow runs **any Apache Airflow operator or sensor** — `BigQueryInsertJobOperator`,
 `S3KeySensor`, `SnowflakeOperator`, the ~1,500 operators across the provider
 ecosystem — without re-implementing a single one. It does this by keeping the
 **pod-per-task** execution model and instantiating the real Airflow class inside
@@ -42,10 +42,10 @@ flowchart TB
     DAG["dag.py<br/>(BigQueryInsertJobOperator, S3KeySensor, @task, bash…)"]
     SHIM["parser structural shim<br/>(_generic.py meta-path finder)<br/>captures __leoflow_operator_class__ + args"]
     DJ["dag.json<br/>type=airflow_operator<br/>operator_class + args"]
-    DAG -->|leoflow compile| SHIM --> DJ
+    DAG -->|dexaflow compile| SHIM --> DJ
   end
 
-  DJ -->|leoflow push| API
+  DJ -->|dexaflow push| API
 
   subgraph CP["Control plane (Go) — no Airflow import"]
     API["HTTP API /api/v2 + /ui"]
@@ -57,7 +57,7 @@ flowchart TB
   STORE -->|"gRPC GetTaskSpec<br/>(agentrpc TaskSpec)"| AGENT
 
   subgraph POD["Task pod (DAG image)"]
-    AGENT["leoflow-agent (Go, PID 1)<br/>buildEnv: stamps DEXAFLOW_* / AIRFLOW_* env<br/>BuildCommand: picks runtime mode"]
+    AGENT["dexaflow-agent (Go, PID 1)<br/>buildEnv: stamps DEXAFLOW_* / AIRFLOW_* env<br/>BuildCommand: picks runtime mode"]
     RT["leoflow_runtime (Python)<br/>run / run_operator / run_bash"]
     SDK["Apache Airflow SDK<br/>import_string(class)(**args).execute(context)"]
     AGENT -->|"argv + env"| RT --> SDK
@@ -224,7 +224,7 @@ value from an untrusted `conf` cannot inject shell — write interpolations unqu
 
 > **Security — the auto-quoting is the native `bash` path only.** A captured
 > provider operator (`airflow_operator`) renders its `template_fields` with
-> Airflow's own Jinja, exactly as upstream Airflow does — leoflow does **not**
+> Airflow's own Jinja, exactly as upstream Airflow does — Dexaflow does **not**
 > (and cannot, without breaking non-shell operators and Airflow parity) inject
 > `shlex.quote` into that render. So if you use a provider operator that executes
 > a shell (e.g. a `BashOperator`) and template an **untrusted** value into a
@@ -239,17 +239,17 @@ value from an untrusted `conf` cannot inject shell — write interpolations unqu
 Capabilities that need scheduler/control-plane work are rejected loudly rather
 than half-running:
 
-- **Dynamic task mapping** — [#376](https://github.com/dexadata/leoflow/issues/376).
-- **Branching** — [#377](https://github.com/dexadata/leoflow/issues/377).
+- **Dynamic task mapping** — [#376](https://github.com/dexadata/dexaflow/issues/376).
+- **Branching** — [#377](https://github.com/dexadata/dexaflow/issues/377).
 
 **Reschedule-mode sensors *are* supported.** Set `mode="reschedule"` and the
 scheduler persists the next-poke time, frees the pod between pokes, and
 re-dispatches the sensor preserving its `try_number` — the idiomatic way to wait
-in leoflow (see [DAG authoring](/author-dags/dag-authoring/)).
+in Dexaflow (see [DAG authoring](/author-dags/dag-authoring/)).
 
 {{% alert title="`deferrable=True` is not supported — a conscious non-goal" color="warning" %}}
 Airflow's deferrable operators offload a wait to a shared **async triggerer** that
-runs user trigger code in a long-lived process. leoflow's control plane
+runs user trigger code in a long-lived process. Dexaflow's control plane
 deliberately runs no user code or network
 ([ADR 0048](/project/adrs/0048-no-user-code-in-control-plane/)), and pod-per-task
 plus reschedule already deliver what deferrable exists for — freeing the slot

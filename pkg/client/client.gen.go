@@ -331,7 +331,7 @@ type TaskInstance struct {
 	Duration *float32   `json:"duration,omitempty"`
 	EndDate  *time.Time `json:"end_date,omitempty"`
 
-	// FailureReason Leoflow extension (not part of the Airflow API). A short, human-readable cause for a terminal failure, recorded by whichever component observed it: the task's own report, the reconciler reading the pod (image pull, OOM, exit code), a reaper declaring the pod or agent lost, or the agent's classification of a failure that happened before it could register. It answers "why did this fail?" for an attempt that streamed no logs because its agent never started. Null when no cause was observed. Best-effort and diagnostic: it carries a classification, never a credential or a raw internal error.
+	// FailureReason Dexaflow extension (not part of the Airflow API). A short, human-readable cause for a terminal failure, recorded by whichever component observed it: the task's own report, the reconciler reading the pod (image pull, OOM, exit code), a reaper declaring the pod or agent lost, or the agent's classification of a failure that happened before it could register. It answers "why did this fail?" for an attempt that streamed no logs because its agent never started. Null when no cause was observed. Best-effort and diagnostic: it carries a classification, never a credential or a raw internal error.
 	//
 	// Example: the control plane rejected this pod's projected ServiceAccount token; check the control plane's RBAC for tokenreviews and the configured token audience.
 	FailureReason *string            `json:"failure_reason,omitempty"`
@@ -387,7 +387,7 @@ type UserCollection struct {
 	Users        *[]UserListItem `json:"users,omitempty"`
 }
 
-// UserListItem One account in the user list. Leoflow accounts are email-keyed and carry a set of RBAC roles, so this diverges from the Airflow FAB users API (username-keyed with first_name/last_name).
+// UserListItem One account in the user list. Dexaflow accounts are email-keyed and carry a set of RBAC roles, so this diverges from the Airflow FAB users API (username-keyed with first_name/last_name).
 type UserListItem struct {
 	CreatedAt time.Time `json:"created_at"`
 	Email     string    `json:"email"`

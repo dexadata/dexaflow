@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Leoflow pre-commit hook (ADR 0011 + 0012).
+# Dexaflow pre-commit hook (ADR 0011 + 0012).
 # Blocks the commit when formatting, vetting, or linting fail, or when filtered
 # unit-test coverage is below the floor. The floor is the SAME fixed threshold
 # the CI enforces — a moving baseline would let coverage ratchet downward locally

@@ -14,7 +14,7 @@ SCHEMA_PATH = Path(__file__).parents[2] / "docs" / "api" / "dag-schema.json"
 
 
 def test_cli_compile_writes_valid_dag_json(monkeypatch, tmp_path):
-    # The Leoflow Go CLI sets LEOFLOW_PROJECT_CONFIG_JSON when invoking the
+    # The Dexaflow Go CLI sets LEOFLOW_PROJECT_CONFIG_JSON when invoking the
     # parser. The --config path is preserved for error messages but is no
     # longer parsed here.
     monkeypatch.setenv("LEOFLOW_PROJECT_CONFIG_JSON", json.dumps({"dag_id": "simple_linear"}))

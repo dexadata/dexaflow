@@ -2,7 +2,7 @@
 {{/*
 Runs golang-migrate before the server starts, as a pre-install/pre-upgrade hook.
 The default image (ghcr.io/dexadata/dexaflow-migrate, built from
-deploy/Dockerfile.migrate via `make migrate-image`) bundles the Leoflow
+deploy/Dockerfile.migrate via `make migrate-image`) bundles the Dexaflow
 migrations at .Values.migrations.path. Override migrations.image to use your own,
 or set migrations.enabled=false to migrate out of band.
 */}}
@@ -44,8 +44,8 @@ spec:
       securityContext:
         {{- toYaml .Values.migrations.podSecurityContext | nindent 8 }}
       # Pod placement is INHERITED from the top-level values rather than given
-      # its own knobs (#1056). An operator who set `tolerations` said "Leoflow
-      # runs on this pool", and the migration Job is Leoflow — it was the one
+      # its own knobs (#1056). An operator who set `tolerations` said "Dexaflow
+      # runs on this pool", and the migration Job is Dexaflow — it was the one
       # workload in the chart ignoring the values every other workload honours,
       # and it is the workload that runs FIRST. On a tainted or dedicated pool
       # the hook was unschedulable: the pod sat Pending, Helm waited out the hook

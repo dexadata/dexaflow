@@ -2,7 +2,7 @@
 #
 # Phase 1's harness checks the host contract; this image makes the contract
 # pass by construction: a fresh Python 3.12 + Go toolchain + golangci-lint
-# with no Leoflow state on disk and no leoflow_parser in site-packages.
+# with no Dexaflow state on disk and no leoflow_parser in site-packages.
 #
 # Image is ~700 MB; first build ~5 min, cached after. Re-pull strategy: the
 # image tag includes the Go + golangci-lint versions so a toolchain bump

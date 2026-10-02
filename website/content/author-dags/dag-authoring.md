@@ -8,36 +8,36 @@ weight: 10
 description: "Author a DAG: dexaflow.yaml plus dag.py compiled to one immutable artifact."
 ---
 
-A Leoflow DAG is two files in a project directory, compiled into an **immutable
+A Dexaflow DAG is two files in a project directory, compiled into an **immutable
 artifact** (`dag.json` + a container image, versioned together — ADR 0003).
 
 ```
 dags/my_pipeline/
   dag.py         # real Apache Airflow SDK 3.2.x code
-  dexaflow.yaml   # Leoflow deploy config (not an Airflow file)
+  dexaflow.yaml   # Dexaflow deploy config (not an Airflow file)
 ```
 
-Scaffold one with `leoflow init dags/my_pipeline`.
+Scaffold one with `dexaflow init dags/my_pipeline`.
 
 ## Workspace layout (multi-DAG)
 
-> **Lite-specific.** The hot-reload watcher exists only in `leoflow lite` — the
+> **Lite-specific.** The hot-reload watcher exists only in `dexaflow lite` — the
 > developer-mode loop. At **runtime** Pro has no "workspace": every DAG ships as
 > its own image-and-`dag.json` pair, built by CI and registered via
-> `leoflow push dag.json`, and the control plane never sees a directory of
+> `dexaflow push dag.json`, and the control plane never sees a directory of
 > siblings. See [The development → deploy lifecycle](#the-development--deploy-lifecycle).
 >
 > The same *discovery* does run at **build** time in Pro, in one place:
-> [`leoflow build [workspace]`](/operate/cicd-deploy/) walks a directory of
+> [`dexaflow build [workspace]`](/operate/cicd-deploy/) walks a directory of
 > projects and builds each with its own `registry:`. That is a convenience for
 > the person at the keyboard — it produces the same one-image-per-DAG artifacts
 > and changes nothing about how Pro runs them.
 
-`leoflow lite` watches a **workspace** that can hold many DAGs as sibling
-subdirectories. The default workspace is `~/leoflow/` (set by `leoflow setup`).
+`dexaflow lite` watches a **workspace** that can hold many DAGs as sibling
+subdirectories. The default workspace is `~/dexaflow/` (set by `dexaflow setup`).
 
 ```
-~/leoflow/                       # workspace root
+~/dexaflow/                      # workspace root
   recurring_print/               # one DAG project per subdir
     dexaflow.yaml
     dag.py
@@ -53,12 +53,12 @@ subdirectories. The default workspace is `~/leoflow/` (set by `leoflow setup`).
 **Recommended layout (best practice, not enforced)**: name the subdirectory the
 same as the `dag_id`. The binding is by `dag_id` (yaml field, or the subdir
 basename when no yaml is present — see below), but matching names make the
-workspace navigable by humans and grep-friendly. `~/leoflow/sales_etl/` for a
+workspace navigable by humans and grep-friendly. `~/dexaflow/sales_etl/` for a
 DAG named `sales_etl`.
 
 ### Discovery rules
 
-`leoflow lite` — and `leoflow build`, which shares the same discovery — walks
+`dexaflow lite` — and `dexaflow build`, which shares the same discovery — walks
 the workspace and treats every subdirectory containing a
 `dag.py` (with or without a `dexaflow.yaml`) as a project. The scan:
 
@@ -80,7 +80,7 @@ is the debugging question.
 
 ### `dexaflow.yaml` is optional
 
-A subdir with just a `dag.py` is a valid project. Leoflow synthesizes a config
+A subdir with just a `dag.py` is a valid project. Dexaflow synthesizes a config
 with `dag_id = <subdir-basename>` and every other field filled from the schema
 defaults (see [Configuration → Defaults](/reference/configuration/#defaults)). Add a
 `dexaflow.yaml` when you need to pin a Python version, declare dependencies, set
@@ -122,7 +122,7 @@ message pointing at the replacement — use
 
 ### Supported task types
 
-Leoflow runs the common types on a **native fast path** and everything else — any
+Dexaflow runs the common types on a **native fast path** and everything else — any
 of Airflow's ~1,500 provider operators and poke-mode sensors — through a **generic
 executor**, native-first by type. Nothing is silently dropped or mistranslated.
 
@@ -167,7 +167,7 @@ Also supported:
 
 ### Provider operators & sensors (`airflow_operator`)
 
-Write the operator exactly as you would in Airflow — Leoflow captures it and runs
+Write the operator exactly as you would in Airflow — Dexaflow captures it and runs
 it in its own task pod:
 
 ```python
@@ -199,12 +199,12 @@ How it works, and the Phase-A limits:
   that logic into a `@task`.
 - Literal args are for **small constants**. A task's literal args (`@task`
   `call_args` and operator `operator_args`) ride as a **single environment
-  variable** at dispatch, which POSIX caps at ~128 KiB; `leoflow compile` rejects a
+  variable** at dispatch, which POSIX caps at ~128 KiB; `dexaflow compile` rejects a
   payload over **100 KiB** with a clear error naming the task. For large data, pass
   a **Connection** or an **external-storage** reference (S3/GCS) and fetch it inside
   the task — never a big dict/list literal.
 - The provider must be declared in `dexaflow.yaml` (`connectors:` or
-  `dependencies:`). If it isn't, `leoflow compile` fails and prints the exact line
+  `dependencies:`). If it isn't, `dexaflow compile` fails and prints the exact line
   to add — no surprise `ModuleNotFoundError` in the pod.
 - **Sensors** run in **poke mode** by default (the pod holds until the
   condition is met), or `mode="reschedule"` (ADR 0040 Phase B, #380/#389) — the
@@ -216,21 +216,21 @@ How it works, and the Phase-A limits:
 - A native task type (`bash`/`python`) always wins when it matches, so
   `BashOperator`/`HttpOperator`/`PythonOperator` keep their fast path.
 
-### Not supported — `leoflow compile` rejects these
+### Not supported — `dexaflow compile` rejects these
 
 {{% alert title="If your DAG uses any of these, compile fails — by design" color="danger" %}}
 The contract is **loud rejection, not silent mistranslation**: every
 "skipped" branch would otherwise actually execute at runtime, so a
 DAG that imports a sensor or interpolates a Jinja template is
 refused at compile with a clear error naming the construct
-([#225](https://github.com/dexadata/leoflow/issues/225)).
+([#225](https://github.com/dexadata/dexaflow/issues/225)).
 {{% /alert %}}
 
 The unsupported set, with the things Airflow users most often expect to
 "just work" called out first:
 
 - **Deferrable operators / sensors** — anything with `deferrable=True` (it suspends
-  the task onto a *trigger*) is not supported yet: Leoflow has no triggerer (ADR
+  the task onto a *trigger*) is not supported yet: Dexaflow has no triggerer (ADR
   0040 Phase C). It fails at runtime with a clear message. Pass `deferrable=False`
   — the operator runs synchronously in the pod (poke-style).
 - **Jinja templating** in `@task` — `{{ ds }}`, `{{ ti }}`, `{{ var.value.x }}`,
@@ -246,14 +246,14 @@ The unsupported set, with the things Airflow users most often expect to
 - **Virtualenv operators** (`PythonVirtualenvOperator`,
   `@task.virtualenv`) — refused because each DAG already ships as its
   own image with its own dependencies; spinning up a venv at runtime
-  is the problem Leoflow's one-image-per-DAG model already solved.
+  is the problem Dexaflow's one-image-per-DAG model already solved.
 - **Dynamic task mapping** (`.expand` / `.partial`) — refused. Static
   fan-**in** (collecting a list of task calls into a downstream task) works
   today; what does **not** work is *dynamic* fan-**out** — expanding one task
   into N parallel instances at runtime from an upstream result. That is
   tracked separately.
 - **KubernetesPodOperator** — refused; the pod is the *runtime
-  substrate* for every Leoflow task already, so wrapping a user task
+  substrate* for every Dexaflow task already, so wrapping a user task
   in another pod is redundant and adds an isolation hole.
 - **Datasets / Assets triggers** — not implemented yet; the asset
   graph is a 3.x Airflow feature on the backlog.
@@ -263,7 +263,7 @@ The unsupported set, with the things Airflow users most often expect to
 
 ## dexaflow.yaml — deploy config
 
-These are Leoflow concerns, **not** Airflow operator attributes (you cannot invent
+These are Dexaflow concerns, **not** Airflow operator attributes (you cannot invent
 kwargs on an operator — the parser imports real Airflow and would raise).
 
 ```yaml
@@ -301,7 +301,7 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
   left empty (keeps the artifact portable across clusters) — but **wholesale**:
   if a task declares any `resources` at all, even only `ephemeral_storage`, the
   platform cpu/memory default does not apply to it
-  ([#802](https://github.com/dexadata/leoflow/issues/802)).
+  ([#802](https://github.com/dexadata/dexaflow/issues/802)).
 - **`staging` is DAG-level only** — one RWX volume is shared atomically by the
   whole run, so it cannot be per-task.
 
@@ -315,26 +315,26 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 
 ```mermaid
 flowchart LR
-  I[leoflow init] --> D[leoflow lite<br/>hot-reload loop]
+  I[dexaflow init] --> D[dexaflow lite<br/>hot-reload loop]
   D -->|save & iterate| D
   D --> G[git push]
-  G --> CI[CI: leoflow compile --build --push]
-  CI --> REG[leoflow push dag.json]
+  G --> CI[CI: dexaflow compile --build --push]
+  CI --> REG[dexaflow push dag.json]
   REG --> PROD[(control plane<br/>immutable artifact)]
 ```
 
 ### 1 · Develop (fast, isolated)
 
 ```bash
-leoflow init dags/my_pipeline          # scaffold dag.py + dexaflow.yaml
-leoflow lite dags/my_pipeline           # cluster-mode: real pods on an isolated k3d
-# or: leoflow lite --executor=subprocess dags/my_pipeline   (fastest, host venv)
+dexaflow init dags/my_pipeline          # scaffold dag.py + dexaflow.yaml
+dexaflow lite dags/my_pipeline           # cluster-mode: real pods on an isolated k3d
+# or: dexaflow lite --executor=subprocess dags/my_pipeline   (fastest, host venv)
 ```
 
-Open <http://localhost:8088> — the UI is marked **Leoflow Lite** (silver
-edition badge); log in with the admin password generated by `leoflow setup`
-(or run `leoflow lite reset-password` if you misplaced it). Edit
-`dag.py`/`dexaflow.yaml` and **save**; Leoflow recompiles, re-runs the guardrails,
+Open <http://localhost:8088> — the UI is marked **Dexaflow Lite** (silver
+edition badge); log in with the admin password generated by `dexaflow setup`
+(or run `dexaflow lite reset-password` if you misplaced it). Edit
+`dag.py`/`dexaflow.yaml` and **save**; Dexaflow recompiles, re-runs the guardrails,
 and re-registers. A bad binding prints an error in the terminal **immediately**:
 
 ```text
@@ -350,8 +350,8 @@ On `git push`, CI compiles + builds + pushes the artifact. The **same** parser,
 overlay, and guardrails run as a gate, so what you tested in Lite is what ships:
 
 ```bash
-leoflow compile dags/my_pipeline --image ghcr.io/org/my_pipeline:$GIT_SHA --build --push -o dag.json
-leoflow push dag.json
+dexaflow compile dags/my_pipeline --image ghcr.io/org/my_pipeline:$GIT_SHA --build --push -o dag.json
+dexaflow push dag.json
 ```
 
 Without `-o` the artifact lands **next to the project**
@@ -372,14 +372,14 @@ shared with everyone who can pull it.
 `exclude_paths` in `dexaflow.yaml` decides what stays out. During the build it is
 materialized as a `.dockerignore` in the context — merged with your own if you
 have one, and removed afterwards, so the workspace is unchanged when the build
-ends. Your rules come first and Leoflow's last, which means `exclude_paths` has
+ends. Your rules come first and Dexaflow's last, which means `exclude_paths` has
 the final word: a `!` re-include in your `.dockerignore` cannot silently defeat
 an exclusion you declared in `dexaflow.yaml`.
 
 Each entry is written out in the forms Docker honours rather than verbatim.
 `.dockerignore` is **not** `.gitignore`: a pattern with no slash matches only at
 the context root, so `__pycache__` alone would leave every nested one in the
-image. Leoflow emits `p`, `**/p` and `p/**` for a bare name — the last of those
+image. Dexaflow emits `p`, `**/p` and `p/**` for a bare name — the last of those
 is also what lets `exclude_paths` beat an earlier `!` rule, which re-stating the
 plain pattern does not do.
 

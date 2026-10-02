@@ -10,7 +10,7 @@ description: Presto connection
 ---
 
 Connect a task to a [Presto](https://prestodb.io/) coordinator to run
-distributed SQL over a managed Leoflow Connection. Presto is the upstream
+distributed SQL over a managed Dexaflow Connection. Presto is the upstream
 project Trino forked from; the Connection shape is identical, only the
 scheme and hook differ.
 

@@ -10,7 +10,7 @@ import (
 
 // `--output` defaulted to the bare name `dag.json`, which resolves against the
 // CURRENT directory rather than the project the command was pointed at. So
-// `leoflow compile /tmp/probe --build` from a checkout overwrote that
+// `dexaflow compile /tmp/probe --build` from a checkout overwrote that
 // checkout's own tracked dag.json: the compile succeeded, the artifact it
 // printed was correct, and the damage was to a file the command was never asked
 // to touch (#1084). It is recoverable through git when the target happened to be

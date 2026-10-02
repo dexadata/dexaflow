@@ -9,7 +9,7 @@ weight: 50
 description: "Notify on run failure from dexaflow.yaml — Slack or a generic webhook, no extra task and no Python."
 ---
 
-Leoflow can **notify you when a run fails** — Slack or a generic webhook — with no
+Dexaflow can **notify you when a run fails** — Slack or a generic webhook — with no
 extra task and no Python. You declare the rules in `dexaflow.yaml`; the **scheduler
 fires them in Go** the moment a DagRun reaches the terminal `failed` state.
 
@@ -83,14 +83,14 @@ $ curl -X POST .../api/v2/connections -d '{
 {{% /tab %}}
 {{< /tabpane >}}
 
-> The webhook URL goes in `password` on purpose: Leoflow encrypts it at rest and
+> The webhook URL goes in `password` on purpose: Dexaflow encrypts it at rest and
 > hands it straight to the sender at failure time. `host`/`login`/`schema` are
 > ignored for alert connections.
 
 ## The message
 
 `message` is optional. When set, these placeholders are substituted at failure
-time; when omitted, Leoflow sends a default one-line summary.
+time; when omitted, Dexaflow sends a default one-line summary.
 
 | Placeholder        | Becomes                                             |
 | ------------------ | --------------------------------------------------- |
@@ -147,7 +147,7 @@ the terminal failure, in the control plane, for free.
 ## The Airflow `on_failure_callback`
 
 If you already write Airflow, you can also use its native **per-task**
-`on_failure_callback` — a Python callable set on the operator or `@task`. Leoflow
+`on_failure_callback` — a Python callable set on the operator or `@task`. Dexaflow
 runs it **in-process, inside the task's own pod**, on the task's **terminal**
 failure:
 
@@ -204,5 +204,5 @@ firing on the terminal **DagRun** failure) and Airflow's per-task
 `on_failure_callback` (above), which runs in the task's pod on its terminal
 failure. `on_success` / `on_retry` callbacks and SLA-miss alerts are not wired
 yet (a loud compile error, never a silent drop) — tracked in
-[#424](https://github.com/dexadata/leoflow/issues/424).
+[#424](https://github.com/dexadata/dexaflow/issues/424).
 {{% /alert %}}

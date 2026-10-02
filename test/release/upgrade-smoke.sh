@@ -17,7 +17,7 @@
 # `docker run --rm -it -e LEOFLOW_REPO=... ubuntu:24.04 bash`).
 set -eu
 
-: "${LEOFLOW_REPO:?LEOFLOW_REPO must be set (e.g. dexadata/leoflow)}"
+: "${LEOFLOW_REPO:?LEOFLOW_REPO must be set (e.g. dexadata/dexaflow)}"
 : "${LEOFLOW_VERSION:?LEOFLOW_VERSION must be set to the just-pushed tag}"
 
 fail() {
@@ -58,9 +58,10 @@ LEOFLOW_VERSION="${LEOFLOW_VERSION_FOR_INSTALL}" \
 
 # Make the binary discoverable on this shell — install.sh writes a hint to
 # rc files but we cannot rely on those in a sh-only smoke runner.
-export PATH="${HOME}/.local/bin:${HOME}/.leoflow/bin:${PATH}"
+export PATH="${HOME}/.local/bin:${HOME}/.dexaflow/bin:${HOME}/.leoflow/bin:${PATH}"
 
-# `leoflow version` prints a free-form line like:
+# `leoflow version` (the name every release answers to, before and after the
+# rename) prints a free-form line like:
 #   leoflow v0.0.1-prealpha.23 (commit abc, built ..., go1.26.3)
 # Earlier pipelines using `--output json | grep | head` silently returned
 # empty because `head -1` exits 0 even on empty input, so the `||` fallback

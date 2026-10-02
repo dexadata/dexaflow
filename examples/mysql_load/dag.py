@@ -1,6 +1,6 @@
 """mysql_load — compute rows and load them into an external MySQL/MariaDB.
 
-The target DSN comes from a managed Leoflow Connection injected as
+The target DSN comes from a managed Dexaflow Connection injected as
 AIRFLOW_CONN_MY_DB (create it in Admin → Connections); falls back to a local
 DSN for a quick demo.
 

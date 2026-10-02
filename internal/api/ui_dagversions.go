@@ -18,7 +18,7 @@ type DagVersionLister interface {
 	ListDagVersions(ctx context.Context, tenant, dagID string) ([]domain.DagVersion, error)
 }
 
-// dagVersionDTO is the Airflow 3.2.1 DAGVersionResponse. Leoflow surfaces the
+// dagVersionDTO is the Airflow 3.2.1 DAGVersionResponse. Dexaflow surfaces the
 // deployment label (git describe in prod, "dev-<ts>" in dev) as bundle_version —
 // Airflow's field for the deployed bundle's version — so a run is traceable to
 // its deployment. bundle_url is null; bundle_name is a constant.

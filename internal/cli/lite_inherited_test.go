@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestAnnounceReadyInheritedDags covers the visible half of #1104. `leoflow dev`
+// TestAnnounceReadyInheritedDags covers the visible half of #1104. `dexaflow lite`
 // keeps its state under ~/.leoflow/dev and nothing resets it, so a DAG
 // registered during a spike weeks ago is still registered: it schedules, it
 // fires, it fails, and it fails inside a session that has nothing to do with it.
@@ -61,7 +61,7 @@ func TestAnnounceReadyInheritedDags(t *testing.T) {
 		// The URL, login and project path are what people actually came for.
 		var out bytes.Buffer
 		announceReady(&out, "127.0.0.1", 8088, "admin@leoflow.local", "/ws", 2)
-		for _, want := range []string{"Leoflow Lite is ready", "login:", "project:"} {
+		for _, want := range []string{"Dexaflow Lite is ready", "login:", "project:"} {
 			if !strings.Contains(out.String(), want) {
 				t.Errorf("banner lost %q: %s", want, out.String())
 			}

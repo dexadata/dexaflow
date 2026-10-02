@@ -17,7 +17,7 @@ import (
 	"github.com/dexadata/dexaflow/migrations"
 )
 
-// newRestoreCommand wires `leoflow lite restore`. The mirror of backup:
+// newRestoreCommand wires `dexaflow lite restore`. The mirror of backup:
 // extracts the archive, sanity-checks the manifest against the binary's
 // embedded schema (refuses if backup is newer than binary — the inverse of
 // the upgrade-drift guard), then replays the SQL dump and restores config +
@@ -27,8 +27,8 @@ func newRestoreCommand() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "restore",
-		Short: "Restore a Lite install from an archive produced by `leoflow lite backup`.",
-		Long: "restore reads a tar.gz produced by `leoflow lite backup`, validates the " +
+		Short: "Restore a Lite install from an archive produced by `dexaflow lite backup`.",
+		Long: "restore reads a tar.gz produced by `dexaflow lite backup`, validates the " +
 			"manifest against this binary (refuses an archive newer than what this " +
 			"binary knows about), then replays the datastore SQL and restores config " +
 			"and workspace.\n\n" +
@@ -67,7 +67,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 		return serr
 	}
 
-	devPrintf(out, "  archive: leoflow=%s schema=%d created=%s\n",
+	devPrintf(out, "  archive: dexaflow=%s schema=%d created=%s\n",
 		archive.Manifest.LeoflowVersion, archive.Manifest.SchemaVersion,
 		archive.Manifest.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
 
@@ -105,7 +105,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	if err := runPsqlRestore(cmd.Context(), leoflowHome, archive.Dump); err != nil {
 		return err
 	}
-	devPrintln(out, "✓ restore complete — run `leoflow lite` to start.")
+	devPrintln(out, "✓ restore complete — run `dexaflow lite` to start.")
 	return nil
 }
 
@@ -168,7 +168,7 @@ func readBackupArchive(path string) (archiveContents, error) {
 		}
 	}
 	if len(manifestData) == 0 {
-		return archiveContents{}, fmt.Errorf("archive has no MANIFEST.json; is this a leoflow backup?")
+		return archiveContents{}, fmt.Errorf("archive has no MANIFEST.json; is this a dexaflow backup?")
 	}
 	manifest, merr := unmarshalManifest(manifestData)
 	if merr != nil {

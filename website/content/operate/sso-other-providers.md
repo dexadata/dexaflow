@@ -5,7 +5,7 @@ weight: 96
 description: Turn on OIDC login against an IdP other than Google Workspace, and the two settings that differ per provider.
 ---
 
-Leoflow's SSO is a single OIDC Authorization Code + PKCE flow (ADR 0057). Every
+Dexaflow's SSO is a single OIDC Authorization Code + PKCE flow (ADR 0057). Every
 issuer configures through the same `auth.oidc.*` keys documented in the
 [configuration reference](/reference/configuration/#oidc--sso-authoidc); the
 [Google Workspace page](/operate/sso-google-workspace/) is IdP-specific only
@@ -34,13 +34,13 @@ URL, scopes, role mappings, break-glass emails, JIT provisioning) means the same
 thing on every IdP. Two keys depend on which one you use:
 
 **`tenantClaim` / `tenantClaims`.** The tenant pin resolves from whatever ID
-token claim you name in `tenantClaim`: leoflow reads it as a plain string claim
+token claim you name in `tenantClaim`: Dexaflow reads it as a plain string claim
 and rejects (403, `tenant_not_allowed`) any value that is not a key in
 `tenantClaims` (`internal/oidc/verify.go`, `resolveTenant`). There is nothing
 Google-specific about the mechanism:
 
 - **Microsoft Entra ID**: set `tenantClaim: tid`. The value is the Entra tenant
-  GUID, not a domain, so `tenantClaims` maps that GUID to a Leoflow tenant name.
+  GUID, not a domain, so `tenantClaims` maps that GUID to a Dexaflow tenant name.
 - **Amazon Cognito**: see [SSO with Amazon Cognito](/operate/sso-cognito/). The
   short version is that a user-pool token carries no domain claim, so pin on
   `iss` and do not reach for `aud`, which is already validated as the audience.
@@ -57,7 +57,7 @@ Google-specific about the mechanism:
 **Group→role mapping and `groupsClaim`.** `role_mappings` matches values from
 whichever claim `auth.oidc.groups_claim` names (default `groups`). Entra
 overflows that claim past roughly 200 group memberships and returns a
-`_claim_names` pointer instead of the list; leoflow detects this and denies the
+`_claim_names` pointer instead of the list; Dexaflow detects this and denies the
 login (audited `group_claim_overage`) rather than silently treating it as "no
 groups" (`internal/oidc/verify.go`, `ErrGroupOverage`). Configure Entra app
 roles, or request the dedicated groups scope, to avoid that shape for your most

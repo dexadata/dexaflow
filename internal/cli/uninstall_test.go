@@ -38,7 +38,7 @@ func TestRemoveBinariesIn(t *testing.T) {
 }
 
 // TestResolveLiteProjectRejectsNonProjectArg covers the CLI clarity fix: an
-// explicit `leoflow lite <arg>` that is not a project (e.g. the `leoflow lite
+// explicit `dexaflow lite <arg>` that is not a project (e.g. the `dexaflow lite
 // uninstall` typo) fails with an actionable message, not a cryptic dexaflow.yaml error.
 func TestResolveLiteProjectRejectsNonProjectArg(t *testing.T) {
 	cmd := &cobra.Command{}
@@ -46,10 +46,10 @@ func TestResolveLiteProjectRejectsNonProjectArg(t *testing.T) {
 
 	if _, err := resolveLiteProject(cmd, []string{"uninstall"}); err == nil {
 		t.Fatal("a non-project argument should error")
-	} else if !strings.Contains(err.Error(), "workspace path") || !strings.Contains(err.Error(), "leoflow uninstall") {
+	} else if !strings.Contains(err.Error(), "workspace path") || !strings.Contains(err.Error(), "dexaflow uninstall") {
 		// The error must name the typo (so the user sees what was misparsed)
-		// and hint at the actual `leoflow uninstall` command so they recover
-		// quickly. Post-Phase-3 wording shifted from "no Leoflow project" to
+		// and hint at the actual `dexaflow uninstall` command so they recover
+		// quickly. Post-Phase-3 wording shifted from "no Dexaflow project" to
 		// "workspace path" since the canonical model is a workspace, not a
 		// single project.
 		t.Errorf("error should be actionable, got: %v", err)
@@ -143,7 +143,7 @@ func TestUninstallWired(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("`leoflow uninstall` should be registered on the root command")
+		t.Error("`dexaflow uninstall` should be registered on the root command")
 	}
 }
 

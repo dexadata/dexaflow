@@ -1,5 +1,5 @@
-// Package setup implements host detection and bootstrap for `leoflow setup`
-// and `leoflow doctor`: it determines the platform, which dependencies are
+// Package setup implements host detection and bootstrap for `dexaflow setup`
+// and `dexaflow doctor`: it determines the platform, which dependencies are
 // present, and which operating tier is achievable, preferring relocatable
 // downloads into ~/.dexaflow over system package managers.
 package setup
@@ -58,7 +58,7 @@ type Report struct {
 	// It is separate from PythonPath because the two answer different questions
 	// and the answers disagree on a very common machine. PythonPath answers
 	// "what can parse a dag.py", and 3.12 or 3.13 can, because the Lite parser
-	// shim is stdlib-only (ADR 0024). This field answers "will `leoflow setup`
+	// shim is stdlib-only (ADR 0024). This field answers "will `dexaflow setup`
 	// have to download a managed CPython", and only a 3.11 avoids that, because
 	// setup.EnsurePython resolves the host interpreter with LookPath("python3.11")
 	// and nothing else qualifies.
@@ -83,7 +83,7 @@ type Report struct {
 // present because it's the version the managed CPython matches, keeping
 // dev/prod parity for users on the documented path.
 //
-// This is NOT the list of Python lines Leoflow publishes a task base image for,
+// This is NOT the list of Python lines Dexaflow publishes a task base image for,
 // and it deliberately differs from it. That list is the python_version enum in
 // internal/domain/schemas/leoflow-yaml-schema.json (see
 // domain.SupportedPythonVersions), and it answers a different question: which
@@ -182,8 +182,8 @@ func detectLibc(p Probe) string {
 }
 
 // PythonCandidates returns the interpreter binary names Detect probes for, in
-// preference order. It exists so `leoflow dev` and `leoflow validate` resolve an
-// interpreter from the SAME list `leoflow setup` and `leoflow doctor` report on
+// preference order. It exists so `dexaflow lite` and `dexaflow validate` resolve an
+// interpreter from the SAME list `dexaflow setup` and `dexaflow doctor` report on
 // (#1092): the two used to disagree, so doctor could name a python3.13 that dev
 // never probed for. The slice is copied because callers are in another package
 // and a shared backing array would let one of them reorder the gate's literal.

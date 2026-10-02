@@ -32,7 +32,7 @@ func loadSchemas() (compiledSchemas, error) {
 	}
 	leoflow, err := compileSchema("dexaflow.yaml", leoflowSchemaJSON)
 	if err != nil {
-		return compiledSchemas{}, fmt.Errorf("compiling leoflow schema: %w", err)
+		return compiledSchemas{}, fmt.Errorf("compiling project schema: %w", err)
 	}
 	return compiledSchemas{dag: dag, leoflow: leoflow}, nil
 }

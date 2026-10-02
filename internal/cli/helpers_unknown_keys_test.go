@@ -17,7 +17,7 @@ import (
 // It is not hypothetical: our own flagship dbt example taught a top-level
 // `schedule:`, which is not in the schema — the real key is `dbt.schedule` — so a
 // team following the docs shipped a DAG that never ran and took five days to
-// notice. The failure has no signal at all: `leoflow validate` prints "is valid".
+// notice. The failure has no signal at all: `dexaflow validate` prints "is valid".
 func writeProject(t *testing.T, yaml string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -100,7 +100,7 @@ func TestBothLoadersRejectMalformedYAML(t *testing.T) {
 	}
 }
 
-// TestValidateAcceptsADbtOnlyProject pins #996. `leoflow validate` stat'd the
+// TestValidateAcceptsADbtOnlyProject pins #996. `dexaflow validate` stat'd the
 // DAG source unconditionally, with no cfg.Dbt branch, so a project whose DAG IS
 // the dbt project (ADR 0042) could never be validated:
 //

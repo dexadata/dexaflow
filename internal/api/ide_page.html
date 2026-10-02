@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Leoflow Lite — Editor</title>
+<title>Dexaflow Lite — Editor</title>
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
@@ -70,7 +70,7 @@
 <body>
 <header>
   <span class="badge">LITE</span>
-  <strong>Leoflow</strong> Editor
+  <strong>Dexaflow</strong> Editor
   <span class="path" id="current-path"></span>
   <span class="ctx" id="ctx" title="Where 'New file' / 'New folder' will land. Click a folder in the tree to change this; click empty space to reset.">@ workspace root</span>
   <span class="spacer"></span>
@@ -88,7 +88,7 @@
 <div id="status">ready</div>
 
 <script>
-// Minimal Leoflow Lite editor: a file tree backed by /api/v2/ide/* and a Monaco
+// Minimal Dexaflow Lite editor: a file tree backed by /api/v2/ide/* and a Monaco
 // editor served from /ide/vs (provisioned by `leoflow setup`). Same-origin, so
 // the auth cookie authenticates every request — no token handling here.
 const api = {

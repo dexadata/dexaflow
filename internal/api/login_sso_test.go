@@ -182,7 +182,7 @@ func TestLoginPageExplainsARefusedSingleSignOn(t *testing.T) {
 	// the audit log": the audit UI is behind /ui/, which needs the session they do
 	// not have, and the server log needs cluster access. The banner has to name
 	// the human who can look, not just the place.
-	if !strings.Contains(body, "administers this Leoflow") {
+	if !strings.Contains(body, "administers this Dexaflow") {
 		t.Error("the banner tells a locked-out user to consult records they cannot reach, and names nobody who can")
 	}
 	if !strings.Contains(body, "server log") {
@@ -312,7 +312,7 @@ func TestServerFailureLandsOnThePageThatDescribesIt(t *testing.T) {
 //
 // Against the same pool, OpenMetadata starts the flow on the first
 // unauthenticated request and the user lands inside with no visible login step.
-// Leoflow rendered its sign-in page and waited. Where an edge proxy has already
+// Dexaflow rendered its sign-in page and waited. Where an edge proxy has already
 // authenticated the session, that page is a screen to acknowledge for nothing.
 func TestAutoRedirectSendsTheUserStraightToTheIdP(t *testing.T) {
 	rec := loginPageRec(t, loginPageOpts{sso: true, breakGlass: true, autoRedirect: true}, "?next=/dags")

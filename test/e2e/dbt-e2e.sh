@@ -2,7 +2,7 @@
 #
 # End-to-end test for dbt support on a real Kubernetes cluster (k3d), ADR 0042.
 #
-# It compiles a real dbt project through `leoflow compile` (the dbt path: read
+# It compiles a real dbt project through `dexaflow compile` (the dbt path: read
 # manifest.json, render one task per dbt node), pushes the DAG, triggers a run,
 # and asserts the scheduler dispatches a POD PER DBT NODE whose agent runs
 # `dbt seed/run --select <node>` against a SHARED Postgres warehouse, in
@@ -166,7 +166,7 @@ export LEOFLOW_SERVER_METRICS_ADDR="0.0.0.0:${METRICS_PORT}"
 SERVER_PID=$!
 sleep 5
 
-log "Compiling the dbt project (leoflow compile, dbt path) + building the DAG image"
+log "Compiling the dbt project (dexaflow compile, dbt path) + building the DAG image"
 "$ROOT/bin/leoflow" compile "$PROJ" --image "$DAG_IMAGE" --build --dockerfile Dockerfile -o "$PROJ/dag.json"
 log "Asserting node granularity produced a task per dbt node"
 for want in 'raw' 'stg' 'mart'; do

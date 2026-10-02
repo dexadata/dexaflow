@@ -15,15 +15,15 @@ import (
 // newResetPasswordCommand resets the Lite admin password. Lite is a per-user
 // install (the database and ~/.dexaflow config belong to the user who ran it), so
 // this runs as that user — NOT root. Running it under sudo would resolve HOME to
-// /root and miss the user's config; run it as the same user as `leoflow lite`.
+// /root and miss the user's config; run it as the same user as `dexaflow lite`.
 func newResetPasswordCommand() *cobra.Command {
 	var userEmail string
 	cmd := &cobra.Command{
 		Use:   "reset-password",
-		Short: "Reset the Leoflow Lite admin password.",
+		Short: "Reset the Dexaflow Lite admin password.",
 		Long: "reset-password generates a new admin password, updates it in the Lite " +
-			"database, and shows it once. Run it as the same user as `leoflow lite` " +
-			"(no sudo). The Lite Postgres must be reachable (start `leoflow lite` if it " +
+			"database, and shows it once. Run it as the same user as `dexaflow lite` " +
+			"(no sudo). The Lite Postgres must be reachable (start `dexaflow lite` if it " +
 			"is not).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -48,7 +48,7 @@ func runResetPassword(cmd *cobra.Command, userEmail string) error {
 	ctx := cmdContext(cmd)
 	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: devDSNs().database})
 	if err != nil {
-		return fmt.Errorf("connecting to the Lite database (is Postgres up? start `leoflow lite`): %w", err)
+		return fmt.Errorf("connecting to the Lite database (is Postgres up? start `dexaflow lite`): %w", err)
 	}
 	defer pg.Close()
 
@@ -58,7 +58,7 @@ func runResetPassword(cmd *cobra.Command, userEmail string) error {
 		return fmt.Errorf("resetting password: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("no admin %q found; run `leoflow lite` once to create it", email)
+		return fmt.Errorf("no admin %q found; run `dexaflow lite` once to create it", email)
 	}
 
 	// Keep config.yaml's hash in sync (used to bootstrap a fresh database).
@@ -87,7 +87,7 @@ func runResetPassword(cmd *cobra.Command, userEmail string) error {
 }
 
 // invokingUserHome returns the home of the human who ran the command, resolving
-// SUDO_USER so `sudo leoflow lite reset-password` still finds the user's config
+// SUDO_USER so `sudo dexaflow lite reset-password` still finds the user's config
 // rather than root's.
 func invokingUserHome() string {
 	if su := os.Getenv("SUDO_USER"); su != "" {

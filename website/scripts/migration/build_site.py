@@ -76,8 +76,8 @@ def migrate_why():
     # Root-level leaf page: needs type=docs directly (no section cascade), and a
     # top-level navbar entry to sit beside Home in the IA.
     migrate_page(
-        "why-leoflow.md", "why-leoflow.md", "Why Leoflow", "Why Leoflow", 5,
-        "The five wounds Airflow won't heal, and how Leoflow heals them.",
+        "why-leoflow.md", "why-leoflow.md", "Why Dexaflow", "Why Dexaflow", 5,
+        "The five wounds Airflow won't heal, and how Dexaflow heals them.",
         {"type": "docs", "menu": "{ main: { weight: 5 } }"},
     )
 
@@ -89,7 +89,7 @@ def migrate_adrs():
         text = read(os.path.join(DOCS, src_rel))
         fm, body = C.strip_frontmatter(text)
         h1, body = C.strip_h1(body)
-        # h1 like "ADR 0001: Why Leoflow and Not ..."; linkTitle keeps the number.
+        # h1 like "ADR 0001: Why Dexaflow and Not ..."; linkTitle keeps the number.
         title = h1 or fn[:-3]
         m = re.match(r"ADR\s+(\d+):\s*(.+)", title)
         if m:

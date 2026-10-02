@@ -57,7 +57,7 @@ func toPoolDTO(p domain.Pool, u domain.PoolUsage) poolDTO {
 
 // poolBody is the POST/PATCH payload. Slots is a pointer so a PATCH that omits it
 // keeps the pool's current cap. include_deferred is accepted for Airflow-client
-// compatibility but not persisted (Leoflow has no deferred-slot accounting).
+// compatibility but not persisted (Dexaflow has no deferred-slot accounting).
 type poolBody struct {
 	Name            string `json:"name"`
 	Slots           *int   `json:"slots"`

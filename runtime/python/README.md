@@ -1,6 +1,6 @@
 # leoflow-runtime
 
-The Python helper baked into every Leoflow task base image. It runs the user's
+The Python helper baked into every Dexaflow task base image. It runs the user's
 task callable inside the container and bridges data flow with the control plane:
 
 - `python -m leoflow_runtime <module:callable>` imports and calls the task,

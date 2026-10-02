@@ -1,4 +1,4 @@
-"""Tests for the Leoflow task runner."""
+"""Tests for the Dexaflow task runner."""
 
 import itertools
 import json

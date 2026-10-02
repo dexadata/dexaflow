@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Leoflow Lite bundle installer.
+# Dexaflow Lite bundle installer.
 #
-# One-shot installer for the Leoflow Lite hands-on validation flow. Downloads
-# the latest pre-release binary (via the canonical install.sh), runs `leoflow setup`
-# `leoflow setup` (which generates the admin password — printed in CYAN on
+# One-shot installer for the Dexaflow Lite hands-on validation flow. Downloads
+# the latest pre-release binary (via the canonical install.sh), runs `dexaflow setup`
+# `dexaflow setup` (which generates the admin password — printed in CYAN on
 # the terminal, save it), drops the curated DAG bundle into the workspace,
 # and prints the next-step commands.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/bundle/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/bundle/install.sh | bash
 # or, if you cloned the repo:
 #   bash bundle/install.sh
 
@@ -21,7 +21,7 @@ else
   CYAN=''; YELLOW=''; GREEN=''; BOLD=''; RESET=''
 fi
 
-echo "${BOLD}Leoflow Lite bundle installer${RESET}"
+echo "${BOLD}Dexaflow Lite bundle installer${RESET}"
 echo
 
 # ─── 1. Detect OS / arch ────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ fi
 # the DAGs sit next to it. When piped from curl, we re-fetch them from the
 # same repo+commit the script came from (BUNDLE_REPO + BUNDLE_REF defaults
 # below; override via env if you're testing a branch).
-BUNDLE_REPO="${BUNDLE_REPO:-dexadata/leoflow}"
+BUNDLE_REPO="${BUNDLE_REPO:-dexadata/dexaflow}"
 BUNDLE_REF="${BUNDLE_REF:-main}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 if [[ -n "$SCRIPT_DIR" && -d "$SCRIPT_DIR/dags" ]]; then
@@ -82,14 +82,14 @@ fi
 # probe); make it discoverable in this shell session so the setup step below
 # finds it.
 export PATH="${HOME}/.local/bin:/usr/local/bin:$PATH"
-echo "  installed: $(leoflow version 2>&1 | head -1)"
+echo "  installed: $(dexaflow version 2>&1 | head -1)"
 
 # ─── 4. Run setup (generates admin password — captured in setup's output) ───
 echo
-echo "${BOLD}2. Running leoflow setup (generates the admin password)${RESET}"
+echo "${BOLD}2. Running dexaflow setup (generates the admin password)${RESET}"
 SETUP_LOG="$(mktemp)"
 trap 'rm -f "$SETUP_LOG"' EXIT
-if ! leoflow setup 2>&1 | tee "$SETUP_LOG"; then
+if ! dexaflow setup 2>&1 | tee "$SETUP_LOG"; then
   echo "${YELLOW}setup did not complete cleanly; check the output above${RESET}" >&2
   exit 1
 fi
@@ -100,7 +100,13 @@ fi
 PASSWORD_LINE="$(grep -E '^\s+password:' "$SETUP_LOG" | head -1 || true)"
 
 # ─── 5. Copy the DAG bundle into the workspace ──────────────────────────────
-WORKSPACE="${HOME}/leoflow"
+# The workspace `dexaflow setup` recorded; without one, the same default it
+# uses: ~/dexaflow, or the ~/leoflow of an install from before the rename.
+WORKSPACE="$(sed -n 's/^workspace: "\(.*\)"$/\1/p' "${HOME}/.dexaflow/config.yaml" 2>/dev/null | head -1)"
+if [[ -z "$WORKSPACE" ]]; then
+  WORKSPACE="${HOME}/dexaflow"
+  [[ ! -d "$WORKSPACE" && -d "${HOME}/leoflow" ]] && WORKSPACE="${HOME}/leoflow"
+fi
 mkdir -p "$WORKSPACE"
 echo
 echo "${BOLD}3. Copying the DAG bundle into ${WORKSPACE}${RESET}"
@@ -131,17 +137,17 @@ if [[ -n "$PASSWORD_LINE" ]]; then
   echo "  ${YELLOW}${PASSWORD_LINE}${RESET}"
   echo "  open:     http://localhost:8088"
   echo
-  echo "  Lost the password? Run: ${CYAN}sudo leoflow lite reset-password${RESET}"
+  echo "  Lost the password? Run: ${CYAN}sudo dexaflow lite reset-password${RESET}"
 else
   echo "${YELLOW}(setup re-ran on an existing install; the password above was preserved.)${RESET}"
-  echo "  Lost it? Run: ${CYAN}sudo leoflow lite reset-password${RESET}"
+  echo "  Lost it? Run: ${CYAN}sudo dexaflow lite reset-password${RESET}"
 fi
 echo
 echo "${BOLD}DAGs bundled in ${WORKSPACE}:${RESET}"
 ls -1 "$WORKSPACE" | sed 's/^/  - /'
 echo
-echo "${BOLD}Start Leoflow Lite:${RESET}"
-echo "  ${CYAN}leoflow lite${RESET}"
+echo "${BOLD}Start Dexaflow Lite:${RESET}"
+echo "  ${CYAN}dexaflow lite${RESET}"
 echo
 echo "  (then open http://localhost:8088 — or from your Mac host:"
-echo "   http://<host-ip>:8088 (use `leoflow lite --host 0.0.0.0`))"
+echo "   http://<host-ip>:8088 (use `dexaflow lite --host 0.0.0.0`))"

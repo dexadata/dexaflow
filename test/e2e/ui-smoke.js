@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 //
 // Headless SPA crash smoke: drives the embedded Airflow 3.2 UI of a running
-// Leoflow control plane and fails if any screen throws an uncaught error.
+// Dexaflow control plane and fails if any screen throws an uncaught error.
 //
 // It exists because the Go API tests cannot see the React layer: the connector
 // config page shipped broken (the catalog omitted standard_fields keys the SPA
@@ -11,7 +11,7 @@
 // actions path, capturing `pageerror`/console errors per step.
 //
 // Run against a live Lite:
-//   leoflow lite --port 18080 --postgres managed --executor subprocess &
+//   dexaflow lite --port 18080 --postgres managed --executor subprocess &
 //   npm i playwright-core && npx playwright install chromium     # once
 //   LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER=admin@leoflow.local \
 //     LEOFLOW_PASS=<pw> node test/e2e/ui-smoke.js

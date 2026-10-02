@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -52,15 +53,19 @@ type Dependencies struct {
 	// re-authenticate. Non-positive disables the ceiling.
 	TokenMaxLifetimeSecs int
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Leoflow"; `leoflow dev` sets it to mark the DEV environment.
+	// falls back to "Dexaflow"; `dexaflow lite` sets it to mark the DEV environment.
 	InstanceName string
 	// UIAutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `leoflow lite` sets it to ~5s for a snappy inner loop.
+	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
 	UIAutoRefreshIntervalSeconds int
+	// UITheme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
+	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
+	// JSON object at boot. Nil serves null, the stock look (#1289).
+	UITheme json.RawMessage
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
-	// request as an admin (no login). It is for `leoflow dev` only and must never
+	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
 	DevNoAuth bool
 	// Edition marks the running edition ("pro", "lite", or empty). It gates
@@ -98,7 +103,7 @@ type Dependencies struct {
 	Workspace WorkspaceFS
 
 	// MonacoDir is the directory holding the pinned Monaco bundle that
-	// `leoflow setup` fetched; the editor page is served Monaco from it. Empty or
+	// `dexaflow setup` fetched; the editor page is served Monaco from it. Empty or
 	// missing makes the page show a setup hint instead of a broken editor.
 	MonacoDir string
 
@@ -229,7 +234,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.GET("/api/v2/monitor/executor", monitorExecutorHandler(deps.ExecutorInfo))
 
 	registerResources(r, deps)
-	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds)
+	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary)

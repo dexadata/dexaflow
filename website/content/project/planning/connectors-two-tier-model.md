@@ -10,7 +10,7 @@ description: "Planning note: the two-tier connector model."
 ---
 
 > **Companion to** [`airflow-connector-compatibility.md`](/project/planning/airflow-connector-compatibility/).
-> Reviews the `google_cloud_platform` connector already shipped (ADR 0035 + `examples/gcp_gcs_load/`) against Strategy A of the compatibility study, and answers: **do we need two classes of connectors going forward (a "Leoflow-native" tier and an "Airflow-compat" tier), or can one model serve both?**
+> Reviews the `google_cloud_platform` connector already shipped (ADR 0035 + `examples/gcp_gcs_load/`) against Strategy A of the compatibility study, and answers: **do we need two classes of connectors going forward (a "Dexaflow-native" tier and an "Airflow-compat" tier), or can one model serve both?**
 >
 > **Verdict: a two-tier model is real, but it's a policy split, not a code-split.** One shim is enough; the security policy from ADR 0035 lives in a pre-processor that runs *before* the connection is handed to any Airflow-style hook.
 
@@ -20,12 +20,12 @@ description: "Planning note: the two-tier connector model."
 
 `docs/adr/0035-cloud-connector-auth-keyless-first.md` declares, accepted, on 2026-06-02:
 
-> **Leoflow is not a secrets/key manager.** It orchestrates; it does not aspire to own credential material.
+> **Dexaflow is not a secrets/key manager.** It orchestrates; it does not aspire to own credential material.
 
 Concretely for cloud connectors:
 
 - **Default:** keyless. Runtime identity (Workload Identity on GKE, ADC on Lite/subprocess).
-- **Else:** a *reference* to a platform-managed secret — `key_path` (mounted K8s Secret) or `key_secret_name` (GCP Secret Manager). **The key never enters Leoflow's DB.**
+- **Else:** a *reference* to a platform-managed secret — `key_path` (mounted K8s Secret) or `key_secret_name` (GCP Secret Manager). **The key never enters Dexaflow's DB.**
 - **`keyfile_dict`** (the cloud key stored inline in the Connection) is **accepted for Airflow compatibility but explicitly discouraged**. It's the cloud-key analog of how `postgres_conn` stores a user/password encrypted at rest (ADR 0019): pragmatic, Airflow-compatible, but not the desirable posture.
 - **Resolution order in the task:** `keyfile_dict` → `key_path` → `key_secret_name` → ADC.
 - **Field names** are short (`keyfile_dict`, `key_path`, `key_secret_name`, `project`, `scopes`); legacy `extra__google_cloud_platform__<name>` accepted as migration fallback only.
@@ -70,7 +70,7 @@ def gcs_roundtrip():
 | # | Friction | Severity |
 |---|---|---|
 | 1 | Airflow's `apache-airflow-providers-google.GCSHook` accepts `keyfile_dict` in the Connection's `extra` and **does not warn** the user that the key is now sitting in our DB. ADR 0035 calls this pattern "explicitly discouraged." | Medium — same DB-at-rest stance ADR 0019 already lives with. Not a blocker; needs a UX nudge. |
-| 2 | `key_secret_name` (GCP Secret Manager reference) is a **Leoflow extension** — the upstream GCSHook doesn't recognize the field. If a user creates a connection with `key_secret_name` set and then writes `from airflow.providers.google.cloud.hooks.gcs import GCSHook`, the hook ignores the field and tries to fall through to ADC (which may not exist), and the task fails silently. | High — silent fallback to wrong path. |
+| 2 | `key_secret_name` (GCP Secret Manager reference) is a **Dexaflow extension** — the upstream GCSHook doesn't recognize the field. If a user creates a connection with `key_secret_name` set and then writes `from airflow.providers.google.cloud.hooks.gcs import GCSHook`, the hook ignores the field and tries to fall through to ADC (which may not exist), and the task fails silently. | High — silent fallback to wrong path. |
 | 3 | `key_path` (mounted K8s Secret) **is** recognized by upstream GCSHook (as `extra__google_cloud_platform__key_path`). So that path "just works" through the shim. | Low — already compatible. |
 
 ### 2.2 Strategy A's promise was "drop-in Airflow hook imports"
@@ -101,12 +101,12 @@ The right model is **one shim** (the Strategy-A `BaseHook` + `Connection`) **wit
             └────────────────────────┬─────────────────────────┘
                                      ▼
             ┌─────────────────────────────────────────────────┐
-            │  Leoflow shim — airflow.sdk.* BaseHook           │
+            │  Dexaflow shim — airflow.sdk.* BaseHook           │
             │    Connection.get(conn_id)                       │
             └────────────────────────┬─────────────────────────┘
                                      ▼
             ┌─────────────────────────────────────────────────┐
-            │  resolveCredentials(extra) — Leoflow native      │
+            │  resolveCredentials(extra) — Dexaflow native      │
             │    1. keyfile_dict → emit as `extra__...keyfile_dict`
             │       AND log "key in DB — see ADR 0035; consider  │
             │       key_path or Workload Identity"               │
@@ -124,7 +124,7 @@ The right model is **one shim** (the Strategy-A `BaseHook` + `Connection`) **wit
             │  Upstream GCSHook (pip-installed provider)       │
             │  Reads the standard extra__google_cloud_platform │
             │  __* field names that it already supports —       │
-            │  never sees Leoflow-only fields.                  │
+            │  never sees Dexaflow-only fields.                  │
             └─────────────────────────────────────────────────┘
 ```
 
@@ -155,20 +155,20 @@ The inline helper in `examples/gcp_gcs_load/dag.py` is **the right shape for tod
 **After Strategy A.0 lands** (the shim with the GCP resolver), the example should be **rewritten in two halves**:
 
 ```python
-# Half 1 — the "compat" path: a real Airflow DAG works unchanged on Leoflow
+# Half 1 — the "compat" path: a real Airflow DAG works unchanged on Dexaflow
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 hook = GCSHook(gcp_conn_id="google_cloud_default")
 hook.upload(bucket_name="x", object_name="y", data="...")
 ```
 
 ```python
-# Half 2 — the "native" path: ergonomic, Leoflow-flavored, same wire identity
+# Half 2 — the "native" path: ergonomic, Dexaflow-flavored, same wire identity
 from leoflow_runtime.cloud.gcp import gcs_client
 client = gcs_client(conn_id="google_cloud_default")   # resolves per ADR 0035
 client.bucket("x").blob("y").upload_from_string("...")
 ```
 
-Both halves resolve credentials through the **same** ADR 0035 chain (the pre-processor). Half 1 proves Airflow compat; Half 2 demonstrates the Leoflow ergonomic surface. The user picks one — the security guarantee is identical.
+Both halves resolve credentials through the **same** ADR 0035 chain (the pre-processor). Half 1 proves Airflow compat; Half 2 demonstrates the Dexaflow ergonomic surface. The user picks one — the security guarantee is identical.
 
 ### 4.2 Go side — is `connection_probe.go` aligned?
 
@@ -208,7 +208,7 @@ The ADR 0035 generalization clause already anticipates this:
 
 **The GCP connector and ADR 0035 do casa with Strategy A — but only with a small policy seam in the shim.** Specifically:
 
-1. **One connection model** (the one Leoflow already has — 100% field-level parity with Airflow 3.X per §4 of the compatibility study).
+1. **One connection model** (the one Dexaflow already has — 100% field-level parity with Airflow 3.X per §4 of the compatibility study).
 2. **One shim** (Strategy A — ~1,200 LOC).
 3. **One ADR 0035 pre-processor** at the `BaseHook.get_connection` seam (~80 LOC + ~30 LOC per cloud) that canonicalizes `extra` to upstream-hook field names *and* fetches secret-store references *before* the upstream hook sees the Connection.
 
@@ -217,7 +217,7 @@ This gives both:
 - **Present (Airflow compat):** Existing Airflow DAGs that import `from airflow.providers.google.cloud.hooks.gcs import GCSHook` run unchanged. The user's drop-in promise holds.
 - **Future (Leoflow native):** A `leoflow_runtime.cloud.gcp.gcs_client(conn_id)` surface that delegates to the same pre-processor + chooses an ergonomic API surface. The user gets Leoflow-flavored errors, logging, observability hooks. No second hook hierarchy to maintain.
 
-The **exception** the user mentioned ("abrir uma exception para caso de integracao nao nativa") fits naturally: when an Airflow provider would otherwise force a `keyfile_dict`-style key into our DB (e.g. an obscure cloud whose only provider auth path is "store the key"), the pre-processor logs a one-time warning ("ADR 0035: this connector stores a cloud key in Leoflow's DB; see `key_path` for the recommended pattern") and proceeds. Compat preserved, security stance honored, no parallel hierarchy.
+The **exception** the user mentioned ("abrir uma exception para caso de integracao nao nativa") fits naturally: when an Airflow provider would otherwise force a `keyfile_dict`-style key into our DB (e.g. an obscure cloud whose only provider auth path is "store the key"), the pre-processor logs a one-time warning ("ADR 0035: this connector stores a cloud key in Dexaflow's DB; see `key_path` for the recommended pattern") and proceeds. Compat preserved, security stance honored, no parallel hierarchy.
 
 ## 7. Concrete next steps (before any code)
 

@@ -8,7 +8,7 @@ weight: 40
 description: Expose Variables and Connections to your task pods.
 ---
 
-Leoflow stores **Variables** and **Connections** in the control plane (connection
+Dexaflow stores **Variables** and **Connections** in the control plane (connection
 secrets encrypted at rest, AES-256-GCM — ADR 0019) and delivers them to task pods
 at runtime as environment variables, so your task reads them with the **native
 Airflow APIs** *and* as plain env (ADR 0021).
@@ -91,7 +91,7 @@ The control plane's secret-delivery policy (`auth.secret_scoping`, [ADR
   the vault — the warning counts only declared names that actually resolve, so an
   all-stale declaration counts as zero. Both receive the whole vault today and
   nothing under `enforce`
-  ([#800](https://github.com/dexadata/leoflow/issues/800)).
+  ([#800](https://github.com/dexadata/dexaflow/issues/800)).
 - **`enforce`** delivers **only** the declared subset — an undeclared name is
   not delivered, and `Variable.get`/`BaseHook.get_connection` for it comes back
   empty/missing, exactly like a declared-secrets task that requested nothing.
@@ -101,7 +101,7 @@ dependencies, matches how a deploy already warns you about missing
 *connections* (see [Deploy your first Pro DAG](/operate/first-pro-dag/#when-it-doesnt-work)),
 and is what makes the DAG portable to a tenant running `enforce` — the
 direction least-privilege delivery is headed (tracked in
-[#59](https://github.com/dexadata/leoflow/issues/59)). An operator sets the
+[#59](https://github.com/dexadata/dexaflow/issues/59)). An operator sets the
 policy cluster-wide; it is never a DAG-author setting.
 {{% /alert %}}
 
@@ -124,7 +124,7 @@ def use_secrets():
 
 Scope is global (per tenant). Delivery requires a secure agent channel (TLS, #58)
 or, in dev, the explicit `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (set by
-`leoflow lite`). Pro on Kubernetes (including GKE) **requires** TLS — the chart
+`dexaflow lite`). Pro on Kubernetes (including GKE) **requires** TLS — the chart
 ships `agentTLS.enabled: true` by default and the server refuses the insecure
 bypass; the plaintext escape hatch is Lite-only, for local iteration. See
 [ADR 0021](/project/adrs/0021-exposing-variables-connections-to-pods/).

@@ -192,7 +192,7 @@ func TestIDEPageServed(t *testing.T) {
 		t.Fatalf("/ide = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, marker := range []string{"<html", "monaco", "/api/v2/ide/tree", "Leoflow"} {
+	for _, marker := range []string{"<html", "monaco", "/api/v2/ide/tree", "Dexaflow"} {
 		if !strings.Contains(body, marker) {
 			t.Errorf("/ide page missing marker %q", marker)
 		}

@@ -1,4 +1,4 @@
-"""gcp_gcs_bucket — Google Cloud Storage operators through Leoflow's generic
+"""gcp_gcs_bucket — Google Cloud Storage operators through Dexaflow's generic
 operator path (ADR 0040). A self-contained bucket lifecycle: create -> list -> delete,
 using the real Google provider operators (not a hand-written client).
 

@@ -2,18 +2,18 @@
 
 ![Version: 0.4.8](https://img.shields.io/badge/Version-0.4.8-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.4.8](https://img.shields.io/badge/AppVersion-0.4.8-informational?style=flat-square)
 
-Leoflow control plane — a GitOps-first, container-native workflow orchestrator (Airflow 3.2.x UI/API compatible).
+Dexaflow control plane — a GitOps-first, container-native workflow orchestrator (Airflow 3.2.x UI/API compatible).
 
-Deploys the Leoflow **control plane** (`leoflow-server`) into Kubernetes for a
+Deploys the Dexaflow **control plane** (`dexaflow-server`) into Kubernetes for a
 production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 
-**Homepage:** <https://github.com/dexadata/leoflow>
+**Homepage:** <https://github.com/dexadata/dexaflow>
 
 ## What it installs
 
 | Resource | Purpose |
 |---|---|
-| Deployment | `leoflow-server` (HTTP `8080`, metrics `9090`, agent gRPC `9091`) |
+| Deployment | `dexaflow-server` (HTTP `8080`, metrics `9090`, agent gRPC `9091`) |
 | Service | ClusterIP exposing http / metrics / grpc |
 | ServiceAccount + Role/RoleBinding | lets the control plane create/watch/delete **task pods** and read their logs in `taskNamespace` |
 | ClusterRole + ClusterRoleBinding | **only** when `auth.agentTokenTransport: exchange` — `create` on `tokenreviews` (cluster-scoped API). See [Agent credential transport](#agent-credential-transport-and-warm-worker-pools) |
@@ -94,7 +94,7 @@ its own.
 > (`database.url`, `redis.url`, `auth.jwtSecret`, `secretKey`,
 > `bootstrap.password`). Credentials wired via `*.existingSecret` are **outside
 > the chart's visibility**: rotating them requires a manual
-> `kubectl rollout restart deployment/leoflow` for the change to take effect.
+> `kubectl rollout restart deployment/<release>` for the change to take effect.
 
 ## High availability
 
@@ -122,14 +122,14 @@ of defaulting into it:
 | `podAnnotations: {karpenter.sh/do-not-disrupt: "true"}` | **EKS/Karpenter-only opt-in**, not set by default: exempts the node from voluntary disruption, trading maintenance friction for eviction protection |
 
 The one-switch HA profile is
-[`examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
+[`examples/values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
 two replicas spread across nodes, task logs in object storage
 (`logs.persistence.enabled: false` + `logs.sink.provider: s3|gcs` — the
 recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
 memory sized for the object sink's per-attempt buffer, and the longer drain grace:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
   -f helm/dexaflow/examples/values-ha.yaml
 ```
 
@@ -161,7 +161,7 @@ Without the CA bundle mounted, the strongest TLS posture you can pin is
    path:
 
    ```bash
-   helm upgrade --install leoflow ./helm/dexaflow -n leoflow \
+   helm upgrade --install dexaflow ./helm/dexaflow -n leoflow \
      --set database.caConfigMap=managed-pg-ca \
      --set database.url='postgres://user:pass@cloudsql-private-ip:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
    ```
@@ -173,7 +173,7 @@ is required.
 > **Rotation note.** Kubernetes auto-updates the mounted file when the
 > ConfigMap changes, but the pgx pool keeps its existing connections until
 > they cycle. Cert rotation that invalidates the old chain may break in-flight
-> connections; rolling the pod (`kubectl rollout restart deploy/leoflow`)
+> connections; rolling the pod (`kubectl rollout restart deploy/<release>`)
 > guarantees a clean cutover.
 
 > **Redis sibling — coming next** (#312). The same pattern lands for Redis in
@@ -186,9 +186,9 @@ is required.
 The pre-install/pre-upgrade Job runs `migrate -path <path> -database <url> up`
 using the default image **`ghcr.io/dexadata/dexaflow-migrate`** (built from
 `deploy/Dockerfile.migrate`, published by `.github/workflows/release.yaml` on
-every tag), which bundles the Leoflow `migrations/` at `migrations.path`. The
+every tag), which bundles the Dexaflow `migrations/` at `migrations.path`. The
 `migrate` binary in it is golang-migrate's own CLI, compiled from the version
-pinned in Leoflow's `go.mod` onto distroless static and running as UID 65532,
+pinned in Dexaflow's `go.mod` onto distroless static and running as UID 65532,
 rather than a third-party image pulled at build time (#1039).
 Override `migrations.image` to use your own, or set `migrations.enabled=false`
 to migrate out of band.
@@ -227,14 +227,14 @@ Set `redis.caConfigMap` to a ConfigMap holding the provider CA as
 `ca.crt`:
 
 ```bash
-kubectl create configmap leoflow-redis-ca \
+kubectl create configmap dexaflow-redis-ca \
   --from-file=ca.crt=./memorystore-server-ca.pem -n leoflow
 ```
 
 ```yaml
 redis:
   url: rediss://10.0.0.5:6378/0
-  caConfigMap: leoflow-redis-ca
+  caConfigMap: dexaflow-redis-ca
 ```
 
 The chart then:
@@ -282,11 +282,11 @@ sufficient on its own:
 > pod-per-task path included, not just warm pools.
 
 The cluster-scoped objects are named `<fullname>-<namespace>-tokenreview` so two
-Leoflow releases in one cluster never collide on them.
+Dexaflow releases in one cluster never collide on them.
 
 ### `execution.warmPoolsEnabled`
 
-Warm worker pools ([ADR 0058](https://github.com/dexadata/leoflow/blob/main/docs/adr/0058-warm-worker-pools.md))
+Warm worker pools ([ADR 0058](https://github.com/dexadata/dexaflow/blob/main/docs/adr/0058-warm-worker-pools.md))
 reuse one pod across many attempts of the **same DAG version**, instead of one pod
 per attempt. Off by default: every attempt gets a dedicated pod, which is today's
 behavior.
@@ -316,7 +316,7 @@ a real cluster, and unit tests do not clear it.
 
 `extraEnv` appends raw env entries to the control-plane container, for any
 `LEOFLOW_*` setting without a first-class value (the full surface is in
-[`docs/configuration.md`](https://github.com/dexadata/leoflow/blob/main/docs/configuration.md)):
+[`docs/configuration.md`](https://github.com/dexadata/dexaflow/blob/main/docs/configuration.md)):
 
 ```yaml
 extraEnv:
@@ -366,7 +366,7 @@ auth:
     enabled: true
     issuer: "https://accounts.google.com"
     clientId: "…apps.googleusercontent.com"
-    existingSecret: leoflow-idp          # key: oidcClientSecret
+    existingSecret: dexaflow-idp          # key: oidcClientSecret
     redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
     tenantClaim: "hd"                    # `tid` on Entra
     tenantClaims:
@@ -376,7 +376,7 @@ auth:
 ```
 
 A full worked example is in
-[`examples/values-oidc-google.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
+[`examples/values-oidc-google.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
 
 Three things the chart refuses at render time rather than letting them become a
 CrashLoopBackOff whose cause is visible only in container logs: the one channel a
@@ -424,10 +424,10 @@ boot and would otherwise leave an edited tenant map sitting on disk unread.
 For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
-path is to install Bitnami's Postgres + Redis charts alongside Leoflow:
+path is to install Bitnami's Postgres + Redis charts alongside Dexaflow:
 
-- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md)
-- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/poc.yaml)
+- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md)
+- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/poc.yaml)
 
 Three `helm install`s in total. **Not for production** — see the recipe for
 the production-shaped command.
@@ -448,11 +448,11 @@ bash scripts/helm-template-checks.sh   # contract assertions (env wiring, Job ha
 
 | Name | Email | Url |
 | ---- | ------ | --- |
-| Leoflow |  |  |
+| Dexaflow |  |  |
 
 ## Source Code
 
-* <https://github.com/dexadata/leoflow>
+* <https://github.com/dexadata/dexaflow>
 
 ## Values
 
@@ -485,12 +485,12 @@ differ from what's committed.
 | auth.oidc.existingSecret | string | `""` | Name of a Secret with key `oidcClientSecret` (takes precedence over `clientSecret`). Separate from `auth.existingSecret` on purpose: the JWT signing key and the IdP client secret rotate on different schedules and are usually owned by different people. Like every `existingSecret` in this chart it is outside the `checksum/secret` annotation's visibility, so rotating it needs a manual `kubectl rollout restart`. |
 | auth.oidc.groupsClaim | string | `"groups"` | ID-token claim carrying the user's IdP groups; its values are what `roleMappings` matches on. Entra emits `groups` (object ids unless the app registration is configured to emit names); Okta emits whatever the groups claim is named in the authorization server. |
 | auth.oidc.issuer | string | `""` | The IdP's issuer URL, `https://` only (the ID token's `iss` is pinned to it, a token from any other issuer is rejected). Entra: `https://login.microsoftonline.com/<tenant-id>/v2.0`. Google Workspace: `https://accounts.google.com`. Okta: `https://<org>.okta.com`. |
-| auth.oidc.jitProvisioning | bool | `true` | Create the Leoflow user row on first successful OIDC login. ON here, unlike the server default, because OFF means no SSO login can succeed at all: a login resolves its user by `(provider, subject)` alone and the only code path that ever writes those two columns is this one, so there is no supported way to pre-provision an account an SSO login will match, and every first login is denied with a generic 403 whose reason (`no_user_jit_off`) reaches only the audit log. Turning it on is not a widening of who may log in: the tenant pin, `email_verified` and `allowedEmailDomains` decide that, and the created row carries only the roles `roleMappings`/`defaultRole` resolve, which is none by default. One case it cannot serve either way: an address that already has a LOCAL password account in the same tenant collides on the users table's unique (tenant, email) and is denied `jit_failed`, so do not create local accounts for the addresses your users sign in with. |
+| auth.oidc.jitProvisioning | bool | `true` | Create the Dexaflow user row on first successful OIDC login. ON here, unlike the server default, because OFF means no SSO login can succeed at all: a login resolves its user by `(provider, subject)` alone and the only code path that ever writes those two columns is this one, so there is no supported way to pre-provision an account an SSO login will match, and every first login is denied with a generic 403 whose reason (`no_user_jit_off`) reaches only the audit log. Turning it on is not a widening of who may log in: the tenant pin, `email_verified` and `allowedEmailDomains` decide that, and the created row carries only the roles `roleMappings`/`defaultRole` resolve, which is none by default. One case it cannot serve either way: an address that already has a LOCAL password account in the same tenant collides on the users table's unique (tenant, email) and is denied `jit_failed`, so do not create local accounts for the addresses your users sign in with. |
 | auth.oidc.redirectUrl | string | `""` | This server's callback URL as registered with the IdP; it must end in `/api/v2/auth/oidc/callback` and be reachable from the browser, not from inside the cluster. `https://` is required except on loopback hosts, so this is the ingress hostname, never the Service name. |
-| auth.oidc.roleMappings | object | `{}` | Maps an IdP group value → an existing Leoflow role name. Default-DENY: a group with no entry here grants nothing. This is one of the two keys that CANNOT travel as an env var, so the chart writes it into the mounted `config.yaml`. Keys are quoted on render, which is what lets a dotted group name (`app.admins`) survive (#826). Optional, leave empty and every user falls back to `defaultRole`. |
+| auth.oidc.roleMappings | object | `{}` | Maps an IdP group value → an existing Dexaflow role name. Default-DENY: a group with no entry here grants nothing. This is one of the two keys that CANNOT travel as an env var, so the chart writes it into the mounted `config.yaml`. Keys are quoted on render, which is what lets a dotted group name (`app.admins`) survive (#826). Optional, leave empty and every user falls back to `defaultRole`. |
 | auth.oidc.scopes | list | `["openid","email","profile"]` | OAuth scopes requested at login. The shipped three are what the flow needs; add the IdP's groups scope (Okta `groups`, Entra exposes groups without one) when `roleMappings` is used, or the `groupsClaim` arrives empty and every user resolves to zero roles. Rendered comma-joined into one env var, viper's decode hook splits it back into a list, the same mechanism `config.trustedProxies` uses. |
 | auth.oidc.tenantClaim | string | `""` | Which claim identifies the tenant: `tid` on Entra, `hd` on Google Workspace. REQUIRED with `enabled: true`, together with `tenantClaims` it is the tenant pin, and the chart refuses to render without both. |
-| auth.oidc.tenantClaims | object | `{}` | Maps each accepted `tenantClaim` VALUE → a Leoflow tenant name. REQUIRED and non-empty with `enabled: true`. A claim value that is not a key here is rejected with a generic 403 whose cause reaches only the audit log (which, in an SSO-only deployment, nobody can log in to read (#1143)) and it never falls back to the `default` tenant. This is the second key that cannot travel as an env var, so it too is written into the mounted `config.yaml` with its keys quoted: a Google `hd` value is always a dotted domain. Example: `{"example.com": "default"}`. The VALUE must name a tenant that already exists: `default` is created by the first migration and nothing in Leoflow creates another, so map to it unless you created the tenant yourself. The server checks this at boot and warns. |
+| auth.oidc.tenantClaims | object | `{}` | Maps each accepted `tenantClaim` VALUE → a Dexaflow tenant name. REQUIRED and non-empty with `enabled: true`. A claim value that is not a key here is rejected with a generic 403 whose cause reaches only the audit log (which, in an SSO-only deployment, nobody can log in to read (#1143)) and it never falls back to the `default` tenant. This is the second key that cannot travel as an env var, so it too is written into the mounted `config.yaml` with its keys quoted: a Google `hd` value is always a dotted domain. Example: `{"example.com": "default"}`. The VALUE must name a tenant that already exists: `default` is created by the first migration and nothing in Dexaflow creates another, so map to it unless you created the tenant yourself. The server checks this at boot and warns. |
 | auth.secretLivenessMode | string | `"observe"` | Secret-delivery liveness gate: `observe` (default) logs and audits a would-have-denied when the calling task instance is no longer live but still delivers the secrets; `enforce` denies. Required at `enforce` by `execution.warmPoolsEnabled` (ADR 0058 D2) — a reused pod's superseded attempt would otherwise still resolve secrets. Run `observe` first and read the audit trail before flipping. |
 | auth.secretScoping | string | `"permissive"` | Scope-by-declaration policy for secret delivery: `permissive` (default) delivers the WHOLE tenant vault to every task regardless of what its `leoflow.yaml` declares, and only logs + audits a warning when a task declared a narrower non-empty set; `enforce` delivers only the declared subset; `off` disables scoping and its warning entirely. `enforce` denies secrets to a DAG that declares NONE, which — the declaration schema being new — is most DAGs, so run `permissive` first and read the scope-warning trail before flipping. A clean trail proves only that no DAG whose declarations still RESOLVE is over-served: the warning counts only declared names that actually resolve, so it says nothing about a DAG that declares nothing, nor about one whose declared names were since deleted from the vault (an all-stale declaration counts as zero) (#800). Operator-scoped, never DAG-author-settable. |
 | auth.tokenTtlSeconds | int | `3600` | API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions. |
@@ -503,7 +503,7 @@ differ from what's committed.
 | bootstrap.existingSecret | string | `""` | Name of a Secret with key `bootstrapPassword` (takes precedence over `password`). |
 | bootstrap.password | string | `""` | Initial admin password (first install only). Leave empty to skip the bootstrap; the operator then creates the first admin out-of-band. |
 | config.agentControlPlaneAddr | string | `""` | gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods. |
-| config.cors.allowedOrigins | list | `[]` | CORS origins the API accepts (`server.cors.allowed_origins`). Leoflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list. |
+| config.cors.allowedOrigins | list | `[]` | CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list. |
 | config.logsDir | string | `"/var/log/leoflow"` | Directory inside the pod where task logs are written. Mounted from `logs.persistence` (a PVC by default) so logs survive pod restarts. Set `logs.persistence.enabled: false` to fall back to an ephemeral emptyDir (dev only). |
 | config.scheduler.enabled | bool | `true` | Run the scheduler loop. Disable only for read-only API-only replicas (rare). |
 | config.scheduler.loopIntervalMs | int | `1000` | Scheduler loop interval in milliseconds. Lower = faster reactivity, higher CPU. 1000ms is the production-tested default. |
@@ -556,7 +556,7 @@ differ from what's committed.
 | metrics.serviceMonitor.scrapeTimeout | string | `"10s"` | Prometheus scrape timeout (must be ≤ interval). |
 | migrations.enabled | bool | `true` |  |
 | migrations.image.pullPolicy | string | `"IfNotPresent"` |  |
-| migrations.image.repository | string | `"ghcr.io/dexadata/dexaflow-migrate"` | leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Leoflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64). |
+| migrations.image.repository | string | `"ghcr.io/dexadata/dexaflow-migrate"` | leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Dexaflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64). |
 | migrations.image.tag | string | `""` | Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms — use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=v0.4.0-rc.2`. |
 | migrations.path | string | `"/migrations"` | Path inside the migrate image where the SQL files live. Must match the COPY destination in `deploy/Dockerfile.migrate`. |
 | migrations.podSecurityContext.fsGroup | int | `65532` |  |
@@ -627,9 +627,14 @@ differ from what's committed.
 | taskSecret.name | string | `""` | Name of an existing Kubernetes Secret to mount into task pods. Empty = none. |
 | taskServiceAccount.annotations | object | `{}` | Annotations. GKE Workload Identity: `iam.gke.io/gcp-service-account: GSA@PROJECT.iam.gserviceaccount.com`. EKS IRSA: `eks.amazonaws.com/role-arn: ...`. |
 | taskServiceAccount.create | bool | `false` | Create a ServiceAccount in taskNamespace for task pods to run as. When true, task pods DEFAULT to this ServiceAccount (no per-DAG `execution.service_account` needed) — so keyless secret access works out of the box; a DAG may still set `execution.service_account` to override per task. NOTE: the auto-default is wired only when `create: true`. If you bring your own pre-existing SA (`create: false` + `name:`), task pods do NOT auto-default to it — reference it per-DAG via `execution.service_account: <name>` (which always works), or let the chart both create and default to it with `create: true`. |
-| taskServiceAccount.imagePullSecrets | list | `[]` | Pull secrets for private DAG images. Kubernetes auto-injects these into every task pod that runs as this SA, so a `leoflow deploy` to a private registry can be pulled (ADR 0041). Reference an existing docker-registry secret, e.g. `[{name: regcred}]`. |
+| taskServiceAccount.imagePullSecrets | list | `[]` | Pull secrets for private DAG images. Kubernetes auto-injects these into every task pod that runs as this SA, so a `dexaflow deploy` to a private registry can be pulled (ADR 0041). Reference an existing docker-registry secret, e.g. `[{name: regcred}]`. |
 | taskServiceAccount.name | string | `"leoflow-task"` | Name of the task ServiceAccount. With `create: true` it becomes the default task-pod SA; you can also reference it explicitly as `execution.service_account`. |
 | terminationGracePeriodSeconds | string | `""` | Pod `terminationGracePeriodSeconds` for the control plane. Empty (default) omits the field: Kubernetes applies its own 30s, a default install's pod spec is unchanged, and no downtime is added to a single-replica `Recreate` upgrade (a chart default would). An explicit `0` and an explicit `null` are treated the same as empty — the field is omitted and **Kubernetes' 30s applies**. The chart deliberately does NOT render a literal `0`: that means SIGKILL with no grace at all, so nothing drains — in-flight HTTP requests are cut, the dispatch pool never settles (task instances are left stuck `queued`), open agent log streams are never flushed, and any `deployment.preStopSleepSeconds` becomes unsatisfiable. If you truly want no grace, set it on the pod spec yourself; the chart's `0` means "the Kubernetes default applies". A voluntary eviction sends SIGTERM and waits this long before SIGKILL. What the grace buys is headroom for the HTTP shutdown (in-flight requests get up to 10s) and the dispatch-pool drain (in-flight dispatches settle instead of leaving task instances stuck `queued`). It does NOT decide leadership handoff — the scheduler lease is released within a tick of SIGTERM and frees anyway when the connection drops. With tasks running, open agent log streams are closed and flushed at SIGTERM and the gRPC stop is bounded (5s, then forced), so the shutdown completes within the default 30s instead of being SIGKILLed. `deployment.preStopSleepSeconds` runs INSIDE this grace and ahead of everything above, so count it in the budget. The HA profile sets `60` for drain headroom under load. |
 | tolerations | list | `[]` | Pod tolerations (standard K8s — allow scheduling on tainted nodes). |
 | topologySpreadConstraints | list | `[]` | Pod `topologySpreadConstraints` for the control plane (standard K8s schema), rendered on every control-plane Deployment. A constraint that omits `labelSelector` gets the Deployment's own selector labels, so a values file need not know the release name or role. Empty by default. Set for HA: consolidation bin-packs both replicas onto one node unless told otherwise, and two replicas on one node are one replica — a node failure takes the whole control plane, and the PDB then blocks that node's drain. Use `whenUnsatisfiable: ScheduleAnyway`, not `DoNotSchedule`: the latter leaves the second replica Pending on a single-node cluster, where the PDB then blocks every drain. |
-| ui.autoRefreshIntervalSeconds | string | `""` | How often the bundled SPA re-polls DAG, run and task-instance state, in seconds. Empty uses the server's production-safe default of 30s. It is POLLING, so this multiplies request and query load by the number of open browser tabs, not by the number of users: 5s is thirty tabs' worth of traffic at 30s, and 1s is what `leoflow lite` uses precisely because Lite is one person against a local database. Lower it when operators watch runs progress and the metadata database has room; the honest way to choose is to measure one refresh cycle against your own DAG count rather than to copy Lite (#1196). A zero or negative value is not an error and not a fast refresh: the server falls back to 30s, deliberately, so a misconfigured variable cannot drop the interval to 0 and hammer the database. |
+| ui.autoRefreshIntervalSeconds | string | `""` | How often the bundled SPA re-polls DAG, run and task-instance state, in seconds. Empty uses the server's production-safe default of 30s. It is POLLING, so this multiplies request and query load by the number of open browser tabs, not by the number of users: 5s is thirty tabs' worth of traffic at 30s, and 1s is what `dexaflow lite` uses precisely because Lite is one person against a local database. Lower it when operators watch runs progress and the metadata database has room; the honest way to choose is to measure one refresh cycle against your own DAG count rather than to copy Lite (#1196). A zero or negative value is not an error and not a fast refresh: the server falls back to 30s, deliberately, so a misconfigured variable cannot drop the interval to 0 and hammer the database. |
+| ui.faviconUrl | string | `""` | Favicon URL for the UI, http(s) or root-relative. Empty keeps the stock icon. |
+| ui.homeLink.label | string | `""` | Text of an optional link from the UI back to the platform you serve it from, such as an internal portal (#1290). Shown on every page at the bottom-left, opens in the same tab. Set it together with `url`. |
+| ui.homeLink.url | string | `""` | Absolute `http://` or `https://` URL the home link opens. Empty (the default) shows no link and renders no variable. The server refuses to boot on a URL with another scheme or with a label missing. |
+| ui.stylesheetUrls | list | `[]` | Extra stylesheets every UI page loads, typically the web fonts a `theme` names (for example a Google Fonts CSS URL). Each must be http(s) or root-relative and contain no comma, because the list travels comma-joined in `LEOFLOW_UI_STYLESHEET_URLS`. |
+| ui.theme | object | `{}` | Theme for the bundled UI, in the shape of Airflow's `[api] theme` (#1289): `tokens` (Chakra design tokens, for example `colors.brand` with shades 50 to 950 and `fonts.heading`/`fonts.body`/`fonts.mono`), `globalCss`, `icon` and `icon_dark_mode`. Rendered as compact JSON in `LEOFLOW_UI_THEME`. Empty (the default) keeps the stock look. The server refuses to boot on an unknown top-level key, or an icon that is not an http(s) URL or a root-relative path. |

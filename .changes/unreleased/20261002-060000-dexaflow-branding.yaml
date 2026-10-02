@@ -1,0 +1,8 @@
+kind: Changed
+body: |-
+  **Leoflow is now Dexaflow.** Messages, the login and IDE pages, the UI navbar,
+  the docs and the README use the new name and the `dexaflow` commands. The
+  README and a new "The name" page tell where both names come from, and keep the
+  dedication to Leonardo ([@leonardo-jas](https://github.com/leonardo-jas)),
+  after whom Leoflow was named. Everything adopted under the old name keeps
+  working; the configuration reference lists each one.

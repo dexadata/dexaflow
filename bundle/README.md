@@ -1,8 +1,8 @@
-# Leoflow Lite bundle
+# Dexaflow Lite bundle
 
-One-shot install script + curated DAG bundle for the Leoflow Lite hands-on
+One-shot install script + curated DAG bundle for the Dexaflow Lite hands-on
 validation. The installer wraps the canonical [`install.sh`](../install.sh)
-with the extra steps a fresh box needs to be productive: `leoflow setup`,
+with the extra steps a fresh box needs to be productive: `dexaflow setup`,
 the sample DAGs, and a credentials block. Works on any Linux host (VMs,
 containers, bare metal) — the alpha-validation flow runs against this same
 bundle.
@@ -10,26 +10,26 @@ bundle.
 ## Single command
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/bundle/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/bundle/install.sh | bash
 ```
 
 The script will:
 
 1. Detect Linux/arch and delegate to the canonical `install.sh` to download
-   the latest pre-release `leoflow` binary into `~/.local/bin/`.
-2. Run `leoflow setup` — which **generates the admin password and prints it
+   the latest pre-release `dexaflow` binary into `~/.local/bin/`.
+2. Run `dexaflow setup` — which **generates the admin password and prints it
    once in cyan**. SAVE IT.
-3. Drop the curated DAG bundle into `~/leoflow/` (the workspace).
+3. Drop the curated DAG bundle into the workspace (`~/dexaflow/` by default).
 4. Print the credentials block + start command.
 
 After it finishes, run:
 
 ```bash
-leoflow lite
+dexaflow lite
 ```
 
 …and open `http://localhost:8088` in your browser. If you're on a remote
-host (SSH, VM, container) expose the UI with `leoflow lite --host 0.0.0.0`.
+host (SSH, VM, container) expose the UI with `dexaflow lite --host 0.0.0.0`.
 
 ## What's bundled
 
@@ -49,13 +49,13 @@ bundled by default — they need a Connection set up first via the UI
 
 ## Credentials
 
-`leoflow setup` generates a per-instance password and prints it ONCE during
+`dexaflow setup` generates a per-instance password and prints it ONCE during
 install. There is no way to recover that exact password later — but there's
-no need to: `sudo leoflow lite reset-password` writes a new one and prints
+no need to: `sudo dexaflow lite reset-password` writes a new one and prints
 it the same way.
 
 Default email is `admin@leoflow.local` (override at install time with
-`leoflow setup --admin-email you@example.com`; the bundle script doesn't
+`dexaflow setup --admin-email you@example.com`; the bundle script doesn't
 do that — re-run `setup` after if you want a different email).
 
 ## What to look for during a hands-on validation
@@ -71,8 +71,8 @@ Specifically:
   (max sleep is 6 s), NOT take 18 s in sequence.
 - Trigger `lifecycle` from the UI. Logs visible? Status transitions correct?
   XCom values flow between the 3 tasks?
-- Try to break it — restart the host mid-run; kill the leoflow process
-  with `pkill -9 leoflow`; pull the network briefly. Recovery contract is
+- Try to break it — restart the host mid-run; kill the dexaflow process
+  with `pkill -9 dexaflow`; pull the network briefly. Recovery contract is
   in `docs/scheduler-resilience.md`.
 
 Findings → comments on the alpha-prep issues.
@@ -90,9 +90,9 @@ Findings → comments on the alpha-prep issues.
 
 The install script is **idempotent** for everything except the password:
 
-- A second `leoflow setup` preserves the existing config (and prints
+- A second `dexaflow setup` preserves the existing config (and prints
   "already configured"). The password from the first run still works.
 - DAGs are copied fresh each run; you can also drop your own DAG folders
-  into `~/leoflow/` at any time.
-- To start from a clean slate: `leoflow uninstall` (removes
-  `~/.dexaflow/`, KEEPS `~/leoflow/` workspace), then re-run this script.
+  into the workspace at any time.
+- To start from a clean slate: `dexaflow uninstall` (removes
+  `~/.dexaflow/`, KEEPS the workspace), then re-run this script.

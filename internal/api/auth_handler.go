@@ -170,7 +170,7 @@ func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSe
 }
 
 // renewTokenHandler re-mints the caller's still-valid user bearer into a fresh
-// access token, so a long CLI/dev session never has to `leoflow auth login` again
+// access token, so a long CLI/dev session never has to `dexaflow auth login` again
 // on the hour (EKS validation aresta #5). It is the server half of transparent
 // renewal: the short access-token TTL is unchanged (a stolen token still lapses
 // quickly), while max_lifetime bounds how long a session may keep renewing before
