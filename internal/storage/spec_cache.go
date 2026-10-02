@@ -9,14 +9,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 // cachedSpec is the memoized parse of one dag_versions row: the version row
-// itself plus its decoded DAGSpec. Both are treated as immutable once cached.
+// itself, its decoded DAGSpec, and the scheduler's task index over the spec's
+// tasks. All three are treated as immutable once cached.
 type cachedSpec struct {
 	version queries.DagVersion
 	spec    domain.DAGSpec
+	graph   *scheduler.TaskGraph
 }
 
 // specCache memoizes parsed DAG specs keyed by dag_version_id.
@@ -68,24 +71,52 @@ func sharedSpecCache(pg *Postgres) *specCache {
 // later call for that id from memory. The returned spec is shared and MUST NOT be
 // mutated — see the type doc.
 func (c *specCache) get(ctx context.Context, q versionGetter, versionID pgtype.UUID) (queries.DagVersion, domain.DAGSpec, error) {
+	entry, err := c.entry(ctx, q, versionID)
+	if err != nil {
+		return queries.DagVersion{}, domain.DAGSpec{}, err
+	}
+	return entry.version, entry.spec, nil
+}
+
+// getWithGraph is get for the scheduler tick: the decoded spec plus the task
+// index built over its tasks when the version was cached. Versions are
+// immutable, so the index is built once per version and shared read-only by
+// every run of it; it stays valid for a per-run copy of the spec's Tasks.
+func (c *specCache) getWithGraph(ctx context.Context, q versionGetter, versionID pgtype.UUID) (domain.DAGSpec, *scheduler.TaskGraph, error) {
+	entry, err := c.entry(ctx, q, versionID)
+	if err != nil {
+		return domain.DAGSpec{}, nil, err
+	}
+	return entry.spec, entry.graph, nil
+}
+
+// entry returns the cached entry for a dag_version_id, filling it on a cold key.
+func (c *specCache) entry(ctx context.Context, q versionGetter, versionID pgtype.UUID) (cachedSpec, error) {
 	c.mu.RLock()
 	entry, ok := c.entries[versionID]
 	c.mu.RUnlock()
 	if ok {
-		return entry.version, entry.spec, nil
+		return entry, nil
 	}
 
 	version, err := q.GetDagVersionByID(ctx, versionID)
 	if err != nil {
-		return queries.DagVersion{}, domain.DAGSpec{}, fmt.Errorf("loading dag version: %w", err)
+		return cachedSpec{}, fmt.Errorf("loading dag version: %w", err)
 	}
 	var spec domain.DAGSpec
 	if uerr := json.Unmarshal(version.Spec, &spec); uerr != nil {
-		return queries.DagVersion{}, domain.DAGSpec{}, fmt.Errorf("decoding spec: %w", uerr)
+		return cachedSpec{}, fmt.Errorf("decoding spec: %w", uerr)
 	}
+	entry = cachedSpec{version: version, spec: spec, graph: scheduler.NewTaskGraph(spec.Tasks)}
 
 	c.mu.Lock()
-	c.entries[versionID] = cachedSpec{version: version, spec: spec}
+	// A racing fill may have stored this key first; keep that entry so every
+	// reader shares one graph.
+	if prior, raced := c.entries[versionID]; raced {
+		entry = prior
+	} else {
+		c.entries[versionID] = entry
+	}
 	c.mu.Unlock()
-	return version, spec, nil
+	return entry, nil
 }
