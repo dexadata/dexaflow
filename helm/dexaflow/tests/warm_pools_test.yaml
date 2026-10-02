@@ -101,7 +101,9 @@ tests:
           content:
             name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
             value: "100"
-      - contains:
+      # Stamped only when turned on, so enabling warm pools alone renders the
+      # same env as before this knob existed.
+      - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL

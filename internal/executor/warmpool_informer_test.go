@@ -118,15 +118,21 @@ func TestWarmPodInformerSignalsLossOfAWorker(t *testing.T) {
 
 // TestWarmPodInformerCreateExpectations: a create the cache has not observed yet
 // is pending, so the reconciler does not create the same worker twice off a
-// lagging cache. It clears when the pod is observed, when the create fails, or
-// after a bounded wait, so a missed event cannot stall refill.
+// lagging cache. It clears when that pod is observed, when the create fails, or
+// after a bounded wait, so a missed event cannot stall refill; an expiry is
+// reported once so the reconciler can re-read the fleet live.
 func TestWarmPodInformerCreateExpectations(t *testing.T) {
 	cs := fake.NewClientset()
 	wi := startWarmInformer(t, cs)
+	dv1 := WarmTarget{DagVersionID: "dv-1", TenantID: "acme"}
 
-	wi.ExpectCreate("dv-1")
+	wi.BeginCreate(dv1)
 	if !wi.CreatesPending("dv-1") {
-		t.Fatal("an expected create must be pending until observed")
+		t.Fatal("a create in flight must be pending")
+	}
+	wi.EndCreate(dv1, "warm-new")
+	if !wi.CreatesPending("dv-1") {
+		t.Fatal("an accepted create must be pending until observed")
 	}
 	if wi.CreatesPending("dv-2") {
 		t.Error("expectations must be per dag_version")
@@ -138,17 +144,86 @@ func TestWarmPodInformerCreateExpectations(t *testing.T) {
 		t.Error("observing the created pod must clear the expectation")
 	}
 
-	wi.ExpectCreate("dv-1")
-	wi.CreateFailed("dv-1")
+	wi.BeginCreate(dv1)
+	wi.EndCreate(dv1, "")
 	if wi.CreatesPending("dv-1") {
 		t.Error("a failed create must clear its expectation")
 	}
 
 	now := time.Now()
 	wi.now = func() time.Time { return now }
-	wi.ExpectCreate("dv-1")
+	wi.BeginCreate(dv1)
+	wi.EndCreate(dv1, "warm-lost")
+	if wi.ExpectationExpired() {
+		t.Error("no expectation has expired yet")
+	}
 	wi.now = func() time.Time { return now.Add(warmCreateExpectationTTL + time.Second) }
 	if wi.CreatesPending("dv-1") {
 		t.Error("an expectation older than its TTL must expire")
+	}
+	if !wi.ExpectationExpired() {
+		t.Error("an expired expectation must be reported")
+	}
+	if wi.ExpectationExpired() {
+		t.Error("an expiry is reported once")
+	}
+}
+
+// TestWarmPodInformerExpectationsAreKeyedByPodName: only the pod a create
+// returned clears its expectation. Another warm pod of the same version showing
+// up (one a previous leader created, or a relist) must not, or the reconciler
+// would create again off a cache that still lacks its own pod.
+func TestWarmPodInformerExpectationsAreKeyedByPodName(t *testing.T) {
+	cs := fake.NewClientset()
+	wi := startWarmInformer(t, cs)
+	dv1 := WarmTarget{DagVersionID: "dv-1", TenantID: "acme"}
+	ctx := context.Background()
+
+	wi.BeginCreate(dv1)
+	wi.EndCreate(dv1, "warm-mine")
+	if _, err := cs.CoreV1().Pods("leoflow").Create(ctx, warmInformerPod("warm-other", "dv-1", corev1.PodPending), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !waitFor(t, func() bool { pods, _ := wi.CachedWarmPods(); return len(pods) == 1 }) {
+		t.Fatal("the cache never saw warm-other")
+	}
+	if !wi.CreatesPending("dv-1") {
+		t.Error("an unrelated pod of the same version consumed the expectation")
+	}
+	if _, err := cs.CoreV1().Pods("leoflow").Create(ctx, warmInformerPod("warm-mine", "dv-1", corev1.PodPending), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !waitFor(t, func() bool { return !wi.CreatesPending("dv-1") }) {
+		t.Error("observing warm-mine must clear its expectation")
+	}
+
+	// The watch can beat the create call's return: the pod is seen while the
+	// create is still in flight, and the name that comes back then matches it.
+	wi.BeginCreate(dv1)
+	if _, err := cs.CoreV1().Pods("leoflow").Create(ctx, warmInformerPod("warm-early", "dv-1", corev1.PodPending), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !waitFor(t, func() bool { pods, _ := wi.CachedWarmPods(); return len(pods) == 3 }) {
+		t.Fatal("the cache never saw warm-early")
+	}
+	wi.EndCreate(dv1, "warm-early")
+	if wi.CreatesPending("dv-1") {
+		t.Error("a pod observed before its create returned must still clear the expectation")
+	}
+}
+
+// TestWarmPodInformerPendingCreatesByTenant: every unobserved create counts
+// toward its tenant, across versions, for the per-tenant cap.
+func TestWarmPodInformerPendingCreatesByTenant(t *testing.T) {
+	wi := startWarmInformer(t, fake.NewClientset())
+	wi.BeginCreate(WarmTarget{DagVersionID: "dv-1", TenantID: "acme"})
+	wi.EndCreate(WarmTarget{DagVersionID: "dv-1", TenantID: "acme"}, "warm-1")
+	wi.BeginCreate(WarmTarget{DagVersionID: "dv-2", TenantID: "acme"})
+	wi.BeginCreate(WarmTarget{DagVersionID: "dv-3", TenantID: "globex"})
+	wi.EndCreate(WarmTarget{DagVersionID: "dv-3", TenantID: "globex"}, "")
+
+	got := wi.PendingCreatesByTenant()
+	if got["acme"] != 2 || got["globex"] != 0 {
+		t.Errorf("pending by tenant = %v, want acme:2 and no globex", got)
 	}
 }
