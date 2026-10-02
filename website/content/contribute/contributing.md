@@ -32,7 +32,7 @@ needed for this step, just Docker.
 
 ```bash
 git clone https://github.com/dexadata/dexaflow.git
-cd leoflow
+cd dexaflow
 docker compose --profile demo up --build
 ```
 
@@ -52,7 +52,7 @@ described in [Operating modes](/concepts/editions/).
 cp .github/CLAUDE.md.template ./CLAUDE.md  # optional (Claude Code; gitignored)
 
 make setup        # Go tools, Python parser/runtime, and the pre-commit hook
-make build        # bin/leoflow, bin/leoflow-server, bin/leoflow-agent
+make build        # bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the gates you must pass before pushing
 ```
@@ -62,7 +62,7 @@ hot-reloading stack with the silver **Lite** edition badge (see
 [Operating modes](/concepts/editions/)):
 
 ```bash
-make dev-install            # put leoflow + server + agent on your PATH
+make dev-install            # put dexaflow + server + agent on your PATH
 dexaflow lite provision           # check/provision dev dependencies
 dexaflow init dags/my_dag    # scaffold a project
 dexaflow lite dags/my_dag     # hot-reload at http://localhost:8088 (Lite edition)
@@ -126,7 +126,7 @@ code. This avoids misaligned designs and wasted effort.
 ```bash
 # 1. Fork on GitHub, then clone YOUR fork and add the upstream remote
 git clone https://github.com/<you>/leoflow.git
-cd leoflow
+cd dexaflow
 git remote add upstream https://github.com/dexadata/dexaflow.git
 
 # 2. Branch from an up-to-date main

@@ -9,7 +9,7 @@ menu:
     weight: 25
 ---
 
-`leoflow-mcp` is Dexaflow's **Model Context Protocol** server
+`dexaflow-mcp` is Dexaflow's **Model Context Protocol** server
 ([ADR 0050](/project/adrs/0050-mcp-server/)). Point an LLM agent — Claude Desktop,
 Claude Code, or any MCP client — at your control plane and it can read and reason
 about your DAGs, runs, task instances, and logs: *"which task failed in last
@@ -26,7 +26,7 @@ anything. See [the security model](#security-the-blast-radius) below.
     <span class="lf-card__badge">Start here</span>
     <span class="lf-card__icon"><i class="fa-solid fa-play"></i></span>
     <span class="lf-card__title">Run the server</span>
-    <span class="lf-card__desc">Export a token, launch <code>leoflow-mcp</code> over stdio, and you are talking MCP in two commands.</span>
+    <span class="lf-card__desc">Export a token, launch <code>dexaflow-mcp</code> over stdio, and you are talking MCP in two commands.</span>
     <span class="lf-card__more">Run it now →</span>
   </a>
   <a class="lf-card" href="#tools">
@@ -44,7 +44,7 @@ anything. See [the security model](#security-the-blast-radius) below.
   <a class="lf-card" href="#wiring-an-mcp-client-claude-desktop">
     <span class="lf-card__icon"><i class="fa-solid fa-plug"></i></span>
     <span class="lf-card__title">Wire a client</span>
-    <span class="lf-card__desc">Drop <code>leoflow-mcp</code> into Claude Desktop or Claude Code and ask <em>"list my DAGs"</em>.</span>
+    <span class="lf-card__desc">Drop <code>dexaflow-mcp</code> into Claude Desktop or Claude Code and ask <em>"list my DAGs"</em>.</span>
     <span class="lf-card__more">Connect a client →</span>
   </a>
 </div>
@@ -65,7 +65,7 @@ holds no database, Redis, or Kubernetes access of its own. Built on the official
 
 ## Running it
 
-`leoflow-mcp` ships alongside the other binaries (installed by the one-command
+`dexaflow-mcp` ships alongside the other binaries (installed by the one-command
 [install](/get-started/installation/), or `go build ./cmd/dexaflow-mcp`). It has two
 transports.
 
@@ -77,7 +77,7 @@ export DEXAFLOW_SERVER_URL=http://localhost:8088     # your Lite control plane
 export DEXAFLOW_TOKEN="$(dexaflow auth create-token \
   --server http://localhost:8088 \
   --username admin@leoflow.local --password <your-admin-password>)"
-leoflow-mcp                                          # speaks MCP over stdin/stdout
+dexaflow-mcp                                          # speaks MCP over stdin/stdout
 ```
 
 On the **stdio** transport the process token **is** the caller's identity: the
@@ -89,7 +89,7 @@ rarely run it by hand.
 {{% tab header="Streamable HTTP — the Pro service" %}}
 
 ```bash
-leoflow-mcp --transport http --listen :9099 --server https://leoflow.internal
+dexaflow-mcp --transport http --listen :9099 --server https://leoflow.internal
 ```
 
 The HTTP transport serves `POST /mcp` (plus `GET /healthz`) and is **stateless**:
@@ -155,14 +155,14 @@ construction (untrusted content, ADR 0050 D10).
 
 ## Wiring an MCP client (Claude Desktop)
 
-Add `leoflow-mcp` to your client's MCP server config. For **Claude Desktop**
+Add `dexaflow-mcp` to your client's MCP server config. For **Claude Desktop**
 (`claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
-    "leoflow": {
-      "command": "leoflow-mcp",
+    "dexaflow": {
+      "command": "dexaflow-mcp",
       "env": {
         "DEXAFLOW_SERVER_URL": "http://localhost:8088",
         "DEXAFLOW_TOKEN": "<paste a JWT from `dexaflow auth create-token`>"
@@ -172,13 +172,13 @@ Add `leoflow-mcp` to your client's MCP server config. For **Claude Desktop**
 }
 ```
 
-If `leoflow-mcp` is not on the launcher's `PATH`, use its absolute path as
-`command` (e.g. `~/.dexaflow/bin/leoflow-mcp`). Restart the client, and Dexaflow's
+If `dexaflow-mcp` is not on the launcher's `PATH`, use its absolute path as
+`command` (e.g. `~/.dexaflow/bin/dexaflow-mcp`). Restart the client, and Dexaflow's
 tools and resources appear. Start with *"list my DAGs"* or *"diagnose the latest
 failed run of `<dag_id>`"*.
 
 {{% alert title="One process, one control plane" color="info" %}}
-A single `leoflow-mcp` targets exactly one control plane (`--server`). To reach
+A single `dexaflow-mcp` targets exactly one control plane (`--server`). To reach
 several environments, add one MCP-client entry per environment — the server never
 routes by environment (ADR 0050 D4).
 {{% /alert %}}

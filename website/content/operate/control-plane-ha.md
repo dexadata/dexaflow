@@ -87,7 +87,7 @@ The chart ships a complete overlay,
 [`helm/dexaflow/examples/values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
 
 ```bash
-helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
+helm upgrade --install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -n leoflow -f values-ha.yaml
 ```
 

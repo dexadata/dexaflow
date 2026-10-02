@@ -42,7 +42,7 @@ works. See `docs/connections/index.md` → *Installing a connector's provider*.
 ### 1. Spin up a target Postgres
 
 ```sh
-docker run --rm -d --name leoflow-warehouse \
+docker run --rm -d --name dexaflow-warehouse \
   -e POSTGRES_PASSWORD=etl \
   -e POSTGRES_DB=warehouse \
   -p 55432:5432 \
@@ -78,7 +78,7 @@ In the UI: open `postgres_hook_load` → **Trigger DAG**.
 ### 4. Verify
 
 ```sh
-docker exec leoflow-warehouse psql -U postgres -d warehouse \
+docker exec dexaflow-warehouse psql -U postgres -d warehouse \
   -c "SELECT count(*), min(name), max(score) FROM example_load"
 ```
 

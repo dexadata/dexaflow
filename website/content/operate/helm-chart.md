@@ -21,7 +21,7 @@ co-versioned with the release tag — so you can install a pinned version withou
 cloning the repo:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -n leoflow --create-namespace \
   -f values.yaml
 ```
@@ -153,7 +153,7 @@ three failures — rather than Kubernetes' 1s/3.
 One of those values has a floor the chart enforces:
 
 ```console
-$ helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/dexaflow \
+$ helm upgrade --install dexaflow oci://ghcr.io/dexadata/charts/dexaflow \
     --set probes.readiness.timeoutSeconds=1
 Error: probes.readiness.timeoutSeconds=1 is below the 3s floor. [...]
 ```

@@ -123,7 +123,7 @@ the failure shows up under load and not in testing.
 ### Reading an out-of-memory failure
 
 When a limit IS set and the task exceeds it, the kernel kills the task process
-and leoflow reports:
+and Dexaflow reports:
 
 ```
 out of memory: the kernel killed this task's process. Raise the task's memory

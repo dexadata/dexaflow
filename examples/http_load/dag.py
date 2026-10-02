@@ -63,7 +63,7 @@ def call() -> dict[str, str]:
     # the Admin -> Connections UI.
     src = "managed Connection http_target" if os.environ.get("AIRFLOW_CONN_HTTP_TARGET") else "fallback URI"
     print(f"call: via {src}")
-    payload = {"name": "leoflow", "value": "42"}
+    payload = {"name": "dexaflow", "value": "42"}
     req = urllib.request.Request(
         f"{base}/anything",
         method="POST",
@@ -84,7 +84,7 @@ def call() -> dict[str, str]:
         # (docker run mccutchen/go-httpbin) and at the optional Connection.
         hint = (
             "is anything listening on the target? "
-            "Start the echo server (`docker run --rm -d --name leoflow-httpbin "
+            "Start the echo server (`docker run --rm -d --name dexaflow-httpbin "
             "-p 58080:8080 mccutchen/go-httpbin`) or configure the "
             "`http_target` Connection — see examples/http_load/README.md"
         )

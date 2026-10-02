@@ -68,7 +68,7 @@ def upload() -> None:
 
     hook = WasbHook(wasb_conn_id="wasb_default")
     print("upload: putting blob via WasbHook(wasb_default)")
-    hook.load_string("hello from leoflow", container_name="data", blob_name="hello.txt", overwrite=True)
+    hook.load_string("hello from dexaflow", container_name="data", blob_name="hello.txt", overwrite=True)
     print("upload: ok")
 
 

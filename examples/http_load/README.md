@@ -28,7 +28,7 @@ example also runs in a quick demo on a developer machine.
 ### 1. Spin up an echo server
 
 ```sh
-docker run --rm -d --name leoflow-httpbin \
+docker run --rm -d --name dexaflow-httpbin \
   -p 58080:8080 \
   mccutchen/go-httpbin
 ```
@@ -71,7 +71,7 @@ log prints `call: echo OK (N fields)`.
 To inspect raw traffic:
 
 ```sh
-docker logs leoflow-httpbin | tail
+docker logs dexaflow-httpbin | tail
 ```
 
 ## Notes that make this connector different

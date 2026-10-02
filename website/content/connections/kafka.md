@@ -55,7 +55,7 @@ def produce() -> None:
     hook = KafkaProducerHook(kafka_config_id="kafka_default")
     producer = hook.get_producer()
     print("produce: sending message to topic 'events'")
-    producer.produce("events", value=b"hello from leoflow")
+    producer.produce("events", value=b"hello from dexaflow")
     producer.flush()
     print("produce: ok")
 

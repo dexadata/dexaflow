@@ -66,7 +66,7 @@ func decideRestoreSafe(manifestSchema, embeddedSchema uint, homeAlreadyHasData, 
 	if manifestSchema > embeddedSchema {
 		return fmt.Errorf(
 			"backup was taken on a newer schema (version %d) than this binary supports (%d); "+
-				"upgrade leoflow before restoring this archive",
+				"upgrade dexaflow before restoring this archive",
 			manifestSchema, embeddedSchema,
 		)
 	}
@@ -90,7 +90,7 @@ func unmarshalManifest(data []byte) (backupManifest, error) {
 		return backupManifest{}, fmt.Errorf("backup manifest has no manifest_version field; archive is corrupt or pre-v1")
 	}
 	if m.ManifestVersion > backupManifestVersion {
-		return backupManifest{}, fmt.Errorf("backup manifest_version %d is newer than this binary supports (%d); upgrade leoflow",
+		return backupManifest{}, fmt.Errorf("backup manifest_version %d is newer than this binary supports (%d); upgrade dexaflow",
 			m.ManifestVersion, backupManifestVersion)
 	}
 	return m, nil
