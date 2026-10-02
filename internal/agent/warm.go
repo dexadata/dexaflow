@@ -168,6 +168,14 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 
 	defer w.closeRedialConn()
 
+	// Before any attempt runs in this container: non dumpable, so an attempt
+	// cannot read the agent's tokens out of /proc, and child subreaper, so an
+	// attempt's orphans stay findable by the post-attempt sweep (X3.3, X3.4).
+	// Fail-closed: a worker that cannot isolate its attempts must not serve any.
+	if err := hardenWarmProcess(); err != nil {
+		return fmt.Errorf("hardening the warm worker process: %w", err)
+	}
+
 	reconnects := 0
 	for {
 		err := w.serve(ctx, dagVersionID)
@@ -468,6 +476,16 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 		// A failed attempt is a normal, already-reported outcome. Keep serving.
 		slog.Warn("warm attempt finished with an error",
 			"assignment", a.GetAssignmentId(), "error", aerr)
+	}
+
+	// D4 isolation, part 3: no process of this attempt may outlive it. The exec
+	// runner already killed the attempt's process group; this also catches a
+	// descendant that left the group with setsid, and confirms nothing is left
+	// before SlotFree invites the next attempt. Fail-closed: a survivor ends the
+	// worker (the reconciler replaces the pod) rather than sharing it with the
+	// next attempt (X3.3).
+	if err := sweepDescendants(); err != nil {
+		return fmt.Errorf("sweeping processes after assignment %q: %w", a.GetAssignmentId(), err)
 	}
 
 	// Signal availability so the control plane may dispatch the next assignment.
