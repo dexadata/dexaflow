@@ -78,3 +78,79 @@ func TestStepFullDispatchBufferIsNotADispatchFailure(t *testing.T) {
 		t.Errorf("a deferred dispatch must leave the task scheduled, got %v", store.transitions)
 	}
 }
+
+// runRecordingDispatcher records the run of every Dispatch call and defers
+// (a full buffer) the first `defer` calls, accepting the rest.
+type runRecordingDispatcher struct {
+	runs   []string
+	defers int
+}
+
+func (d *runRecordingDispatcher) Dispatch(_ context.Context, runID, _, _ string, _ domain.TaskSpec) (executor.Disposition, error) {
+	d.runs = append(d.runs, runID)
+	if d.defers > 0 {
+		d.defers--
+		return executor.Deferred, dispatch.ErrAtCapacity
+	}
+	return executor.Dispatched, nil
+}
+
+func scheduledRun(runID, dagID string) RunState {
+	return RunState{
+		RunID: runID, DagID: dagID, State: domain.DagRunStateRunning, Tasks: linearTasks(),
+		States: map[string]domain.TaskState{"a": domain.TaskStateScheduled, "b": domain.TaskStateNone},
+	}
+}
+
+// Once the buffer refuses a dispatch, the rest of the tick offers nothing:
+// every further offer would be refused too, and only costs a lock and a
+// metric per task.
+func TestStepStopsOfferingAfterADeferredDispatch(t *testing.T) {
+	store := newFakeStore(scheduledRun("r1", "etl"), scheduledRun("r2", "sales"), scheduledRun("r3", "ops"))
+	d := &runRecordingDispatcher{defers: 1}
+	s := newScheduler(store)
+	s.SetDispatcher(d)
+
+	if err := s.Step(context.Background()); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(d.runs) != 1 {
+		t.Errorf("dispatch offers after a deferral = %v, want only the first", d.runs)
+	}
+}
+
+// A run that keeps the buffer full must not get first pick on every tick: the
+// tick after a deferral starts offering at the run after the one that was
+// deferred, so the other runs get the slots that free up.
+func TestStepRotatesPastTheDeferredRun(t *testing.T) {
+	store := newFakeStore(scheduledRun("r1", "etl"), scheduledRun("r2", "sales"), scheduledRun("r3", "ops"))
+	d := &runRecordingDispatcher{defers: 1}
+	s := newScheduler(store)
+	s.SetDispatcher(d)
+
+	if err := s.Step(context.Background()); err != nil {
+		t.Fatalf("Step 1: %v", err)
+	}
+	d.runs = nil
+	if err := s.Step(context.Background()); err != nil {
+		t.Fatalf("Step 2: %v", err)
+	}
+	want := []string{"r2", "r3", "r1"}
+	if len(d.runs) != len(want) {
+		t.Fatalf("second tick offered %v, want %v", d.runs, want)
+	}
+	for i := range want {
+		if d.runs[i] != want[i] {
+			t.Fatalf("second tick offered %v, want %v", d.runs, want)
+		}
+	}
+
+	// With no deferral the order goes back to the store's.
+	d.runs = nil
+	if err := s.Step(context.Background()); err != nil {
+		t.Fatalf("Step 3: %v", err)
+	}
+	if len(d.runs) != 3 || d.runs[0] != "r1" {
+		t.Errorf("tick after an undeferred one offered %v, want the store order starting at r1", d.runs)
+	}
+}
