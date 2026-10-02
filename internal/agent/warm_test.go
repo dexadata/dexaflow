@@ -834,3 +834,135 @@ func TestWarmWorkerExchangesBootstrapBeforeRegister(t *testing.T) {
 		t.Errorf("attempt token source = %q, want unchanged", got)
 	}
 }
+
+// homeProbeCmd is a CommandRunner double for the per-attempt HOME (X3.2). On each
+// attempt it records the HOME and XDG dirs it was handed, reports whether the
+// files an earlier attempt planted in $HOME and in the shared temp root are still
+// there, and then plants them again.
+type homeProbeCmd struct {
+	sharedTmp string
+	homes     []string
+	xdg       []map[string]string
+	sawHome   []bool
+	sawShared []bool
+}
+
+func (c *homeProbeCmd) Run(_ context.Context, _, env []string, _, _ io.Writer) (int, error) {
+	home := lastEnvValue(env, "HOME")
+	c.homes = append(c.homes, home)
+	x := map[string]string{}
+	for _, k := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		x[k] = lastEnvValue(env, k)
+	}
+	c.xdg = append(c.xdg, x)
+
+	homeFile := filepath.Join(home, ".local", "lib", "sitecustomize.py")
+	_, err := os.Stat(homeFile)
+	c.sawHome = append(c.sawHome, err == nil)
+	if mkErr := os.MkdirAll(filepath.Dir(homeFile), 0o700); mkErr == nil {
+		_ = os.WriteFile(homeFile, []byte("planted by an earlier attempt"), 0o600)
+	}
+
+	sharedFile := filepath.Join(c.sharedTmp, "leoflow", "dbt", "profiles.yml")
+	_, err = os.Stat(sharedFile)
+	c.sawShared = append(c.sawShared, err == nil)
+	if mkErr := os.MkdirAll(filepath.Dir(sharedFile), 0o700); mkErr == nil {
+		_ = os.WriteFile(sharedFile, []byte("password: from an earlier attempt"), 0o600)
+	}
+	return 0, nil
+}
+
+// TestWarmWorkerAttemptHomeIsPerAttempt is the X3.2 agent half: with AttemptHome
+// on (the warm pod runs a read-only root), each attempt gets a fresh HOME and XDG
+// dirs under the scratch the worker wipes, and whatever an attempt left in the
+// shared temp root (the /tmp emptyDir: a generated dbt profile, a planted script)
+// is gone before the next attempt starts. The worker's own scratch, which lives in
+// that same temp root, survives the sweep.
+func TestWarmWorkerAttemptHomeIsPerAttempt(t *testing.T) {
+	sharedTmp := t.TempDir()
+	scratch := filepath.Join(sharedTmp, "leoflow-warm-123")
+	stream := &fakeAssignmentStream{
+		ctx: context.Background(),
+		assignments: []*agentv1.WorkAssignment{
+			{AssignmentId: "asg-1", AttemptToken: "tok-1"},
+			{AssignmentId: "asg-2", AttemptToken: "tok-2"},
+		},
+	}
+	tokens := NewTokenSource("bootstrap")
+	client := &warmFake{fakeClient: &fakeClient{}, stream: stream, tokens: tokens, specs: warmSpecs(2)}
+	cmd := &homeProbeCmd{sharedTmp: sharedTmp}
+
+	w := &WarmRunner{
+		StreamClient:  client,
+		WorkClient:    client,
+		AttemptTokens: tokens,
+		Cmd:           cmd,
+		Hostname:      "warm-pod-1",
+		Version:       "test",
+		Env:           []string{"PATH=/usr/bin", "HOME=/home/leoflow", "XDG_CONFIG_HOME=/home/leoflow/.config"},
+		ScratchDir:    scratch,
+		AttemptHome:   true,
+		SharedTmpDir:  sharedTmp,
+	}
+	if err := w.Run(context.Background(), "dagver-1"); err != nil {
+		t.Fatalf("WarmRunner.Run: %v", err)
+	}
+	if len(cmd.homes) != 2 {
+		t.Fatalf("attempts run = %d, want 2", len(cmd.homes))
+	}
+	for i, home := range cmd.homes {
+		if !strings.HasPrefix(home, scratch+string(filepath.Separator)) {
+			t.Errorf("attempt %d HOME = %q, want it under the wiped scratch %q", i+1, home, scratch)
+		}
+		for k, v := range cmd.xdg[i] {
+			if !strings.HasPrefix(v, home+string(filepath.Separator)) {
+				t.Errorf("attempt %d %s = %q, want it under the per-attempt HOME %q", i+1, k, v, home)
+			}
+		}
+	}
+	if cmd.sawHome[1] {
+		t.Error("a file planted in HOME by attempt 1 was visible to attempt 2")
+	}
+	if cmd.sawShared[1] {
+		t.Error("a file left in the shared temp root by attempt 1 was visible to attempt 2")
+	}
+}
+
+// TestWarmWorkerKeepsHomeWithoutAttemptHome locks the default: without the
+// read-only root mode the worker leaves HOME and the shared temp root alone, as
+// it does today.
+func TestWarmWorkerKeepsHomeWithoutAttemptHome(t *testing.T) {
+	sharedTmp := t.TempDir()
+	scratch := filepath.Join(sharedTmp, "leoflow-warm-123")
+	home := t.TempDir()
+	stream := &fakeAssignmentStream{
+		ctx:         context.Background(),
+		assignments: []*agentv1.WorkAssignment{{AssignmentId: "asg-1", AttemptToken: "tok-1"}},
+	}
+	tokens := NewTokenSource("bootstrap")
+	client := &warmFake{fakeClient: &fakeClient{}, stream: stream, tokens: tokens, specs: warmSpecs(1)}
+	cmd := &homeProbeCmd{sharedTmp: sharedTmp}
+	keep := filepath.Join(sharedTmp, "baked-into-image")
+	if err := os.WriteFile(keep, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &WarmRunner{
+		StreamClient:  client,
+		WorkClient:    client,
+		AttemptTokens: tokens,
+		Cmd:           cmd,
+		Env:           []string{"PATH=/usr/bin", "HOME=" + home},
+		ScratchDir:    scratch,
+		SharedTmpDir:  sharedTmp,
+	}
+	if err := w.Run(context.Background(), "dagver-1"); err != nil {
+		t.Fatalf("WarmRunner.Run: %v", err)
+	}
+	if cmd.homes[0] != home {
+		t.Errorf("HOME = %q, want the inherited %q", cmd.homes[0], home)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("the shared temp root must be left alone without AttemptHome: %v", err)
+	}
+}

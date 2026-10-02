@@ -104,6 +104,11 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
+            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            value: "false"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
             name: LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT
             value: "exchange"
       - contains:
@@ -125,6 +130,7 @@ tests:
       execution.maxWorkerLifetime: 30m
       execution.workerIdleTtl: 90s
       execution.maxWarmPodsPerTenant: 40
+      execution.warmReadOnlyRootFilesystem: true
       auth.agentTokenTransport: exchange
       auth.secretLivenessMode: enforce
     asserts:
@@ -158,6 +164,11 @@ tests:
           content:
             name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
             value: "40"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            value: "true"
 
   # ADR 0058 D2 is a security coupling, not a preference: the server refuses to
   # boot on it, so rendering an install that cannot boot only turns a config
