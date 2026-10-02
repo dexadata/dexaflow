@@ -159,6 +159,10 @@ type Querier interface {
 	// the active flag the login gates on. Never selects password_hash.
 	GetUserByOIDCSubject(ctx context.Context, arg GetUserByOIDCSubjectParams) (GetUserByOIDCSubjectRow, error)
 	GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([]GetUserPermissionsRow, error)
+	// The per-request authz reload in ONE round trip: what GetUserByID,
+	// GetUserRoles and GetUserPermissions return, folded into a single statement.
+	// Permissions are a JSON array of distinct [action, resource] pairs.
+	GetUserPrincipalByID(ctx context.Context, id pgtype.UUID) (GetUserPrincipalByIDRow, error)
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
