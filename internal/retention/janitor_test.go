@@ -3,6 +3,7 @@ package retention
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -22,6 +23,13 @@ type fakeStore struct {
 	runCalls   []runCall
 	auditCalls []auditCall
 	countCalls int
+	purges     []purgeCall
+}
+
+type purgeCall struct {
+	tenant string
+	rows   int64
+	cutoff time.Time
 }
 
 type runCall struct {
@@ -57,6 +65,11 @@ func (f *fakeStore) DeleteAuditLog(_ context.Context, tenant string, cutoff time
 	}
 	f.auditBatches[tenant] = q[1:]
 	return q[0], nil
+}
+
+func (f *fakeStore) RecordRetentionPurge(_ context.Context, tenant string, rows int64, cutoff time.Time) error {
+	f.purges = append(f.purges, purgeCall{tenant, rows, cutoff})
+	return nil
 }
 
 func (f *fakeStore) CountEligible(context.Context, *time.Time, *time.Time) (Counts, error) {
@@ -109,9 +122,9 @@ func TestRunOnceWithNothingConfiguredTouchesNothing(t *testing.T) {
 	}
 }
 
-// Finished runs are removed tenant by tenant, in batches, until a batch removes
-// no run; the cutoff is the configured window back from now, each batch is
-// bounded, and the janitor pauses between batches.
+// Finished runs are removed in batches, one batch per tenant in turn, until a
+// batch removes nothing; the cutoff is the configured window back from now,
+// each batch is bounded, and the janitor pauses between batches.
 func TestRunOnceDeletesRunsInPausedBatchesPerTenant(t *testing.T) {
 	store := &fakeStore{
 		tenants: []string{"t1", "t2"},
@@ -133,7 +146,8 @@ func TestRunOnceDeletesRunsInPausedBatchesPerTenant(t *testing.T) {
 		t.Fatalf("counts = %+v", got)
 	}
 	wantCutoff := fixedNow.Add(-30 * 24 * time.Hour)
-	// t1: two batches with rows, then an empty one; t2: one, then an empty one.
+	// t1: two batches with rows, then an empty one; t2: one, then an empty one;
+	// the tenants take turns.
 	if len(store.runCalls) != 5 {
 		t.Fatalf("run delete calls = %d (%+v), want 5", len(store.runCalls), store.runCalls)
 	}
@@ -145,8 +159,12 @@ func TestRunOnceDeletesRunsInPausedBatchesPerTenant(t *testing.T) {
 			t.Errorf("batch bounds = (%d runs, %d rows), want (%d, 1000)", c.maxRuns, c.limit, maxRunsPerBatch)
 		}
 	}
-	if store.runCalls[0].tenant != "t1" || store.runCalls[4].tenant != "t2" {
-		t.Errorf("tenant order = %+v", store.runCalls)
+	order := make([]string, 0, len(store.runCalls))
+	for _, c := range store.runCalls {
+		order = append(order, c.tenant)
+	}
+	if got := fmt.Sprint(order); got != "[t1 t2 t1 t2 t1]" {
+		t.Errorf("tenant order = %s, want the tenants in turn", got)
 	}
 	if len(*pauses) != 3 {
 		t.Errorf("pauses = %v, want one after each non-empty batch", *pauses)
@@ -159,6 +177,29 @@ func TestRunOnceDeletesRunsInPausedBatchesPerTenant(t *testing.T) {
 	}
 	if len(store.auditCalls) != 0 {
 		t.Errorf("audit log touched with only runs configured: %+v", store.auditCalls)
+	}
+	if len(store.purges) != 0 {
+		t.Errorf("audit purge recorded without deleting audit rows: %+v", store.purges)
+	}
+}
+
+// A batch that only removed child rows (a run with more children than one
+// batch allows) is not the end: the janitor keeps going until a batch removes
+// nothing at all.
+func TestRunOnceContinuesThroughChildOnlyBatches(t *testing.T) {
+	store := &fakeStore{
+		tenants:    []string{"t1"},
+		runBatches: map[string][]Counts{"t1": {{TaskInstances: 600, TaskStateHistory: 400}, {DagRuns: 1, TaskInstances: 3}}},
+	}
+	cfg := baseConfig()
+	cfg.DagRunsDays = 30
+	j, _ := newTestJanitor(store, cfg, newFakeRecorder())
+	got, err := j.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.runCalls) != 3 || got.DagRuns != 1 || got.TaskInstances != 603 {
+		t.Fatalf("calls = %d, counts = %+v; want 3 calls deleting the whole run", len(store.runCalls), got)
 	}
 }
 
@@ -178,7 +219,7 @@ func TestRunOnceRunBatchNeverExceedsBatchSize(t *testing.T) {
 }
 
 // Audit rows are removed per tenant and for the tenant-less system rows, until
-// a batch comes back short.
+// a batch comes back short, and each purge leaves its own audit record.
 func TestRunOnceDeletesAuditLogPerTenantAndSystemRows(t *testing.T) {
 	store := &fakeStore{
 		tenants: []string{"t1"},
@@ -200,10 +241,20 @@ func TestRunOnceDeletesAuditLogPerTenantAndSystemRows(t *testing.T) {
 	if len(store.auditCalls) != 4 {
 		t.Fatalf("audit calls = %+v, want 3 for t1 and 1 for system rows", store.auditCalls)
 	}
-	if store.auditCalls[3].tenant != "" {
-		t.Errorf("last call tenant = %q, want the system rows", store.auditCalls[3].tenant)
+	if store.auditCalls[1].tenant != "" {
+		t.Errorf("second call tenant = %q, want the system rows in turn", store.auditCalls[1].tenant)
 	}
 	want := fixedNow.Add(-365 * 24 * time.Hour)
+	purged := map[string]int64{}
+	for _, p := range store.purges {
+		purged[p.tenant] += p.rows
+		if !p.cutoff.Equal(want) {
+			t.Errorf("purge cutoff = %v, want %v", p.cutoff, want)
+		}
+	}
+	if len(store.purges) != 2 || purged["t1"] != 2007 || purged[""] != 2 {
+		t.Errorf("purge records = %+v, want one per scope with its row count", store.purges)
+	}
 	if !store.auditCalls[0].cutoff.Equal(want) {
 		t.Errorf("audit cutoff = %v, want %v", store.auditCalls[0].cutoff, want)
 	}
@@ -232,11 +283,14 @@ func TestRunOnceStopsAtTheCycleCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.runCalls) != 2 {
-		t.Fatalf("run calls = %+v, want the second batch to start under budget and nothing after", store.runCalls)
+	if len(store.runCalls) != 2 || store.runCalls[1].tenant != "t2" {
+		t.Fatalf("run calls = %+v, want t1 then t2 under budget and nothing after", store.runCalls)
 	}
-	if got.Total() != 1000 {
-		t.Errorf("total = %d, want 1000", got.Total())
+	if store.runCalls[1].limit != 100 {
+		t.Errorf("second batch row limit = %d, want the 100 rows left of the budget", store.runCalls[1].limit)
+	}
+	if got.Total() != 600 {
+		t.Errorf("total = %d, want 600", got.Total())
 	}
 	if len(store.auditCalls) != 0 {
 		t.Errorf("audit batch started past the cap: %+v", store.auditCalls)
@@ -252,6 +306,48 @@ func TestRunOnceStopsAtTheCycleCap(t *testing.T) {
 	}
 	if len(store2.auditCalls) != 1 || store2.auditCalls[0].limit != 250 {
 		t.Fatalf("audit calls = %+v, want one batch shrunk to the 250-row budget", store2.auditCalls)
+	}
+}
+
+// With a run backlog larger than the cycle cap, the audit log still gets its
+// turn in every cycle instead of waiting for the runs to drain.
+func TestRunOnceGivesTheAuditLogATurnUnderTheCap(t *testing.T) {
+	batches := make([]Counts, 50)
+	for i := range batches {
+		batches[i] = Counts{DagRuns: 10, TaskInstances: 90}
+	}
+	store := &fakeStore{
+		tenants:      []string{"t1"},
+		runBatches:   map[string][]Counts{"t1": batches},
+		auditBatches: map[string][]int64{"t1": {100}},
+	}
+	cfg := baseConfig()
+	cfg.DagRunsDays = 30
+	cfg.AuditLogDays = 30
+	cfg.MaxRowsPerCycle = 500
+	j, _ := newTestJanitor(store, cfg, newFakeRecorder())
+	if _, err := j.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.auditCalls) == 0 {
+		t.Fatal("the audit log got no batch while the run backlog used the cap")
+	}
+}
+
+// A cycle that deletes resets the dry-run gauges, so a stale count does not
+// linger after dry_run is turned off.
+func TestRunOnceResetsEligibleGaugesOutsideDryRun(t *testing.T) {
+	store := &fakeStore{tenants: []string{"t1"}}
+	cfg := baseConfig()
+	cfg.DagRunsDays = 30
+	rec := newFakeRecorder()
+	rec.eligible[TableDagRuns] = 12
+	j, _ := newTestJanitor(store, cfg, rec)
+	if _, err := j.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := rec.eligible[TableDagRuns]; !ok || v != 0 {
+		t.Fatalf("eligible gauge = %v (set %v), want reset to 0", v, ok)
 	}
 }
 
@@ -280,6 +376,9 @@ func TestRunOnceDryRunOnlyCounts(t *testing.T) {
 	}
 	if rec.eligible[TableDagRuns] != 12 || rec.eligible[TableAuditLog] != 7 || len(rec.deleted) != 0 {
 		t.Errorf("metrics eligible=%v deleted=%v", rec.eligible, rec.deleted)
+	}
+	if len(store.purges) != 0 {
+		t.Errorf("dry run recorded a purge: %+v", store.purges)
 	}
 }
 

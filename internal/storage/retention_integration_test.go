@@ -96,7 +96,10 @@ func seedRetention(t *testing.T, pool *pgxpool.Pool, ctx context.Context) retent
 	recent := 24 * time.Hour
 	f := retentionFixture{tenant: tenant, otherTenant: other, runs: map[string]string{}}
 	f.runs["old_success"] = seedRun(t, pool, ctx, tenant, dag, version, "old_success", "success", &old, "success", "success")
-	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "none")
+	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "skipped")
+	// A run being cleared: still success with an old end, its task instance
+	// already reset to none. It is waiting to be scheduled, not settled.
+	f.runs["old_clearing"] = seedRun(t, pool, ctx, tenant, dag, version, "old_clearing", "success", &old, "success", "none")
 	f.runs["recent"] = seedRun(t, pool, ctx, tenant, dag, version, "recent", "success", &recent, "success")
 	f.runs["running"] = seedRun(t, pool, ctx, tenant, dag, version, "running", "running", nil, "running")
 	f.runs["old_running"] = seedRun(t, pool, ctx, tenant, dag, version, "old_running", "running", &old, "success")
@@ -126,29 +129,39 @@ func countFor(t *testing.T, pool *pgxpool.Pool, ctx context.Context, sql string,
 	return n
 }
 
-// TestRetentionDeletesOnlyExpiredSettledRunsIntegration: one call per batch
-// removes only finished runs past the cutoff, with no active task instance and
-// no live staging volume, in the asked tenant only, together with every child
-// row; everything else survives.
+// TestRetentionDeletesOnlyExpiredSettledRunsIntegration: repeated calls remove
+// only finished runs past the cutoff whose task instances are all settled
+// (none counts as unsettled) and that have no live staging volume, in the
+// asked tenant only, together with every child row; everything else survives.
+// Every call stays within its row limit, run rows included, even when one run
+// has more children than the limit.
 func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 	store, pool, ctx := openRetention(t)
 	f := seedRetention(t, pool, ctx)
 	cutoff := time.Now().Add(-30 * 24 * time.Hour)
 
-	// rowLimit 1 forces every child table through several statements.
+	// rowLimit 2 is smaller than either run's children, so a run spans
+	// several committed batches.
 	var total retention.Counts
-	for i := 0; i < 10; i++ {
-		c, err := store.DeleteFinishedRuns(ctx, f.tenant, cutoff, 1, 1)
+	calls := 0
+	for ; calls < 100; calls++ {
+		c, err := store.DeleteFinishedRuns(ctx, f.tenant, cutoff, 1, 2)
 		if err != nil {
 			t.Fatalf("DeleteFinishedRuns: %v", err)
 		}
 		if c.DagRuns > 1 {
 			t.Fatalf("batch removed %d runs, want at most maxRuns=1", c.DagRuns)
 		}
+		if c.Total() > 2 {
+			t.Fatalf("batch removed %d rows (%+v), want at most the row limit 2", c.Total(), c)
+		}
 		total = total.Add(c)
-		if c.DagRuns == 0 {
+		if c.Total() == 0 {
 			break
 		}
+	}
+	if calls < 10 {
+		t.Errorf("finished in %d calls; the row limit was not applied", calls)
 	}
 	want := retention.Counts{DagRuns: 2, TaskInstances: 5, TaskStateHistory: 10, TaskInstanceHistory: 5, XComIndex: 5}
 	if total != want {
@@ -159,7 +172,7 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 			t.Errorf("%s survived retention", name)
 		}
 	}
-	for _, name := range []string{"recent", "running", "old_running", "old_active_ti", "old_staging", "other_old"} {
+	for _, name := range []string{"recent", "running", "old_running", "old_active_ti", "old_staging", "old_clearing", "other_old"} {
 		if !runExists(t, pool, ctx, f.runs[name]) {
 			t.Errorf("%s was deleted, want it kept", name)
 		}
@@ -174,6 +187,9 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 	}
 	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_state_history h JOIN task_instances ti ON ti.id = h.task_instance_id WHERE ti.dag_run_id = $1`, f.runs["old_active_ti"]); n != 4 {
 		t.Errorf("history of a kept run = %d rows, want 4", n)
+	}
+	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instances WHERE dag_run_id = $1`, f.runs["old_clearing"]); n != 2 {
+		t.Errorf("a run being cleared lost task instances: %d left, want 2", n)
 	}
 }
 
@@ -209,6 +225,29 @@ func TestRetentionAuditLogIntegration(t *testing.T) {
 	if left := countFor(t, pool, ctx, `SELECT count(*) FROM audit_log WHERE action = $1 AND tenant_id IS NULL`, action); left != 0 {
 		t.Errorf("system rows left = %d, want 0", left)
 	}
+}
+
+// TestRetentionPurgeRecordIntegration: a purge leaves an audit entry in the
+// purged scope, which the purge itself can never select (it is new).
+func TestRetentionPurgeRecordIntegration(t *testing.T) {
+	store, pool, ctx := openRetention(t)
+	f := seedRetention(t, pool, ctx)
+	cutoff := time.Now().Add(-90 * 24 * time.Hour)
+	if err := store.RecordRetentionPurge(ctx, f.tenant, 42, cutoff); err != nil {
+		t.Fatalf("RecordRetentionPurge: %v", err)
+	}
+	if err := store.RecordRetentionPurge(ctx, "", 7, cutoff); err != nil {
+		t.Fatalf("RecordRetentionPurge system: %v", err)
+	}
+	if n := countFor(t, pool, ctx, `SELECT count(*) FROM audit_log WHERE tenant_id = $1 AND action = 'retention.purge'
+		AND resource_type = 'audit_log' AND (metadata->>'rows')::int = 42 AND metadata ? 'cutoff'`, f.tenant); n != 1 {
+		t.Errorf("tenant purge records = %d, want 1", n)
+	}
+	if n := countFor(t, pool, ctx, `SELECT count(*) FROM audit_log WHERE tenant_id IS NULL AND action = 'retention.purge'
+		AND (metadata->>'rows')::int = 7 AND occurred_at > now() - interval '1 minute'`); n < 1 {
+		t.Errorf("system purge records = %d, want at least 1", n)
+	}
+	_, _ = pool.Exec(ctx, `DELETE FROM audit_log WHERE tenant_id IS NULL AND action = 'retention.purge' AND (metadata->>'rows')::int = 7`)
 }
 
 // TestRetentionCountEligibleIntegration: the dry-run count applies the same
