@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dexadata/dexaflow/internal/agent/secretsource"
 	"github.com/dexadata/dexaflow/internal/taskoutcome"
@@ -1145,28 +1146,81 @@ func clampExit(code int) int32 {
 	return int32(code)
 }
 
+// maxLogLineBytes bounds one log line and so the partial line a logWriter
+// buffers. The control plane accepts gRPC messages up to 4 MiB, and a LogLine
+// over that limit used to end the whole log stream; the bound leaves room for
+// the message's other fields, so every line that was deliverable before is
+// still sent whole. A longer line is sent in pieces of at most this size.
+// var (not const) so tests can lower it.
+var maxLogLineBytes = 4<<20 - 4<<10
+
 // logWriter splits written bytes into newline-delimited log lines and forwards
-// each one to the sink, tagging it with its stream name and level.
+// each one to the sink, tagging it with its stream name and level. A line longer
+// than maxLogLineBytes is split, so the buffer of a stream that never writes a
+// newline stays bounded.
 type logWriter struct {
 	sink   LogSink
 	stream string
 	level  agentv1.LogLevel
 	buf    []byte
 	line   int64
+	splits int64 // extra lines produced by splitting over-long lines
 }
 
-// Write buffers p and emits every complete line it contains.
+// Write buffers p and emits every complete line it contains, then any piece of
+// the pending partial line that reached the bound.
 func (w *logWriter) Write(p []byte) (int, error) {
-	w.buf = append(w.buf, p...)
+	n := len(p)
 	for {
-		i := bytes.IndexByte(w.buf, '\n')
+		i := bytes.IndexByte(p, '\n')
 		if i < 0 {
 			break
 		}
-		w.emit(w.buf[:i])
-		w.buf = w.buf[i+1:]
+		w.buf = append(w.buf, p[:i]...)
+		w.emitLine(w.buf)
+		w.buf = w.buf[:0]
+		p = p[i+1:]
 	}
-	return len(p), nil
+	w.buf = append(w.buf, p...)
+	for len(w.buf) > maxLogLineBytes {
+		cut := splitPoint(w.buf)
+		w.emitPiece(w.buf[:cut])
+		w.buf = append(w.buf[:0], w.buf[cut:]...)
+	}
+	return n, nil
+}
+
+// emitLine emits one complete line, in pieces when it exceeds the bound.
+func (w *logWriter) emitLine(b []byte) {
+	for len(b) > maxLogLineBytes {
+		cut := splitPoint(b)
+		w.emitPiece(b[:cut])
+		b = b[cut:]
+	}
+	w.emit(b)
+}
+
+// emitPiece emits the head of an over-long line and counts the split. The first
+// split of a stream is logged; the total is logged on flush.
+func (w *logWriter) emitPiece(b []byte) {
+	if w.splits == 0 {
+		slog.Warn("task log line exceeds the line bound; sending it in pieces",
+			"stream", w.stream, "max_bytes", maxLogLineBytes)
+	}
+	w.splits++
+	w.emit(b)
+}
+
+// splitPoint returns where to cut a line longer than the bound: at the bound,
+// moved back to the start of a rune so both pieces stay valid UTF-8 (LogLine's
+// message is a proto string). Bytes that are not UTF-8 are cut at the bound.
+func splitPoint(b []byte) int {
+	for cut := maxLogLineBytes; cut > maxLogLineBytes-utf8.UTFMax && cut > 0; cut-- {
+		if utf8.RuneStart(b[cut]) {
+			return cut
+		}
+	}
+	return maxLogLineBytes
 }
 
 // flush emits any buffered line that lacked a trailing newline.
@@ -1174,6 +1228,10 @@ func (w *logWriter) flush() {
 	if len(w.buf) > 0 {
 		w.emit(w.buf)
 		w.buf = nil
+	}
+	if w.splits > 0 {
+		slog.Warn("task log lines were split at the line bound",
+			"stream", w.stream, "extra_lines", w.splits, "max_bytes", maxLogLineBytes)
 	}
 }
 
