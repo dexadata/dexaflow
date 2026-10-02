@@ -74,7 +74,7 @@ type asyncRequeue struct {
 	nextAt  time.Time
 }
 
-func (f *fakeAsyncStore) DispatchAttempts(_ context.Context, _, _ string) (int, bool, error) {
+func (f *fakeAsyncStore) DispatchAttempts(_ context.Context, _, _ string) (attempts int, active bool, err error) {
 	return f.attempts, f.active, f.readErr
 }
 

@@ -40,6 +40,17 @@ type FailureSink interface {
 	MarkTaskDispatchFailed(ctx context.Context, runID, taskID, reason string) error
 }
 
+// RetrySink is a FailureSink that can also re-offer a task whose dispatch failed
+// in a worker, given the disposition the inner dispatcher classified the error
+// as. When the sink implements it, a worker failure is handled the way the
+// scheduler handles a synchronous one (scheduler.AsyncDispatchFailures):
+// backpressure and transient errors put the task back to scheduled with a
+// backoff instead of failing it. A plain FailureSink keeps failing the task.
+type RetrySink interface {
+	FailureSink
+	HandleDispatchFailure(ctx context.Context, runID, taskID string, disp executor.Disposition, cause error) error
+}
+
 // MetricsRecorder records dispatch-pool observability signals.
 type MetricsRecorder interface {
 	RecordDispatchQueueDepth(depth int)
@@ -228,18 +239,25 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 	// would leave a `queued` TI without a runner. Hanging is bounded from two
 	// sides instead: the Kubernetes client carries a per-call timeout, and
 	// Close stops waiting after cfg.DrainTimeout (#463).
-	// The async buffer path reports any dispatch failure via the sink verbatim
-	// and does not act on classification (it never did — a queued TI whose async
-	// dispatch failed is failed, not re-offered), so the disposition is ignored
-	// here.
-	if _, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task); err != nil { //nolint:contextcheck // worker intentionally detaches from the caller's ctx
-		b.logger.Error("dispatch failed in worker",
-			"run", req.runID, "dag", req.dagID, "task", req.task.TaskID, "error", err)
-		if b.metrics != nil {
-			b.metrics.RecordDispatchInnerError()
-		}
-		b.reportFailure(req, "dispatch_failed: "+err.Error())
+	// The disposition goes to a RetrySink, which re-offers backpressure and
+	// transient errors like the synchronous path does; a plain sink fails the TI.
+	disp, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task) //nolint:contextcheck // worker intentionally detaches from the caller's ctx
+	if err == nil {
+		return
 	}
+	b.logger.Error("dispatch failed in worker",
+		"run", req.runID, "dag", req.dagID, "task", req.task.TaskID, "disposition", disp.String(), "error", err)
+	if b.metrics != nil {
+		b.metrics.RecordDispatchInnerError()
+	}
+	if rs, ok := b.sink.(RetrySink); ok {
+		if herr := rs.HandleDispatchFailure(context.Background(), req.runID, req.task.TaskID, disp, err); herr != nil { //nolint:contextcheck // worker intentionally uses a fresh context for the failure report
+			b.logger.Error("re-offering a failed dispatch",
+				"run", req.runID, "task", req.task.TaskID, "error", herr)
+		}
+		return
+	}
+	b.reportFailure(req, "dispatch_failed: "+err.Error())
 }
 
 // reportFailure marks the TI failed via the sink if one is configured. A sink
