@@ -9,7 +9,10 @@ body: |-
   control-plane memory per attempt from the whole log to one segment. The
   default stays `single`. Both layouts are always readable, so turning the
   setting on or off never hides a stored log; enable it only once every
-  replica runs this version. Independently of the layout, a flush no longer
+  replica runs this version. Before downgrading to an older version,
+  switch back to `single`: attempts already written as segments stay
+  unreadable by older versions. On S3, `segmented` needs `s3:ListBucket`
+  on the bucket so that a missing segment answers not-found. Independently of the layout, a flush no longer
   holds the buffer lock during the upload, so a slow bucket no longer stalls
   the task's log stream.
 time: 2026-10-02T17:00:00.000000000-03:00

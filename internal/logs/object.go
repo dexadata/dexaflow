@@ -123,8 +123,11 @@ func (o *ObjectSink) segmentKey(ref Ref, n int) string {
 // Open validates the ref and returns a writer that keeps the attempt's object
 // current as lines arrive (see objectWriter) and performs the last flush on Close.
 // In the segmented layout the writer starts after any segment already stored for
-// the attempt, so a second stream for the same attempt appends instead of
-// overwriting; a failed probe is logged and the writer starts at segment zero.
+// the attempt, so a second stream opened once the previous one has closed
+// appends instead of overwriting. Two writers live at the same time (a
+// reconnect before the old stream ended) can still overwrite each other's
+// segments, as they overwrite each other's object in the single layout. A failed
+// probe is logged and the writer starts at segment zero.
 func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
@@ -165,16 +168,45 @@ func (o *ObjectSink) countSegments(ref Ref) (int, error) {
 // followed by the single object, which holds the whole log of an attempt written
 // in the single layout and only the reaper's markers of a segmented one. A
 // missing log surfaces as ErrObjectNotFound.
+//
+// Each layout looks for its own shape first. The single layout GETs {try}.log
+// exactly as it did before segments existed and probes segment zero only when
+// that object is missing, so a default deployment pays no extra round trip and
+// a store that answers a missing key with something other than not-found (S3
+// returns 403 AccessDenied to a caller without s3:ListBucket) cannot fail its
+// reads. The price: a segmented attempt that also holds a reaper marker reads
+// back as the marker alone once the layout is switched back to single. The
+// segmented layout probes segment zero first and falls back to {try}.log when
+// that probe fails for any reason.
 func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
+	}
+	if o.layout != ObjectLayoutSegmented {
+		rc, err := o.store.Get(o.ctx, o.key(ref))
+		if err == nil {
+			return rc, nil
+		}
+		if !errors.Is(err, ErrObjectNotFound) {
+			return nil, fmt.Errorf("reading log object: %w", err)
+		}
+		first, serr := o.store.Get(o.ctx, o.segmentKey(ref, 0))
+		if serr != nil {
+			if !errors.Is(serr, ErrObjectNotFound) {
+				o.logger.Debug("probing log segment failed; treating the log as missing",
+					"key", o.segmentKey(ref, 0), "error", serr)
+			}
+			return nil, fmt.Errorf("reading log object: %w", err)
+		}
+		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
 	}
 	first, err := o.store.Get(o.ctx, o.segmentKey(ref, 0))
 	switch {
 	case err == nil:
 		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
 	case !errors.Is(err, ErrObjectNotFound):
-		return nil, fmt.Errorf("reading log segment: %w", err)
+		o.logger.Warn("probing log segment failed; reading the single object",
+			"key", o.segmentKey(ref, 0), "error", err)
 	}
 	rc, err := o.store.Get(o.ctx, o.key(ref))
 	if err != nil {
@@ -313,7 +345,8 @@ func (o *ObjectSink) AppendEvent(ref Ref, ev Event) error {
 // durability: everything flushed before it trips is already stored. Far above
 // any sane task log; it keeps the blast radius of a runaway task to its own
 // attempt. In the segmented layout the writer only holds the open segment and
-// its unflushed tail, so there the cap bounds what a stalled store lets pile up.
+// its unflushed tail, but the cap still counts the sealed segments, so it stays
+// the stored-size ceiling of an attempt in both layouts.
 // var (not const) so tests can lower it without buffering 128 MiB.
 var maxBufferedAttemptBytes = 128 << 20 // 128 MiB
 
@@ -404,6 +437,7 @@ type objectWriter struct {
 	stored    bool   // at least one Put succeeded (an empty attempt still Puts once)
 	lastFlush time.Time
 	segment   int // number of the open segment; always 0 in the single layout
+	sealed    int // bytes of the segments this writer sealed; counted against the attempt cap
 
 	stopOnce sync.Once
 	stop     chan struct{} // closed by stopFlusher to end the flusher
@@ -449,7 +483,7 @@ func (w *objectWriter) runFlusher(ctx context.Context) {
 func (w *objectWriter) WriteEvent(ev Event) error {
 	line := EncodeLine(ev) + "\n"
 	w.mu.Lock()
-	if len(w.buf)+len(line) > maxBufferedAttemptBytes {
+	if w.sealed+len(w.buf)+len(line) > maxBufferedAttemptBytes {
 		w.mu.Unlock()
 		return fmt.Errorf("task attempt log exceeds the %d-byte object-sink buffer cap; not buffering further lines", maxBufferedAttemptBytes)
 	}
@@ -520,10 +554,12 @@ func (w *objectWriter) flush(ctx context.Context) error {
 	if w.segmented && n >= objectSegmentBytes {
 		// Seal: keep only what arrived during the Put, in a fresh array. The old
 		// one is not reused: an earlier Put that timed out may still have its
-		// body read by the transport. Sizing it like the old one spares the next
-		// segment the regrowth.
-		w.buf = append(make([]byte, 0, cap(w.buf)), w.buf[n:]...)
+		// body read by the transport. The new array is sized for about one
+		// segment, never for whatever a burst during a slow Put grew the old one
+		// to, so later segments do not inherit that capacity.
+		w.buf = append(make([]byte, 0, max(len(w.buf)-n, min(cap(w.buf), 2*objectSegmentBytes))), w.buf[n:]...)
 		w.flushed = 0
+		w.sealed += n
 		w.segment++
 	}
 	return nil
