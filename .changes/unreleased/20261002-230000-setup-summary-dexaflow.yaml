@@ -1,0 +1,6 @@
+kind: Fixed
+body: |-
+  **`dexaflow setup` names the new commands in its closing summary.** The admin
+  banner read `LEOFLOW LITE ADMIN` and the next-step hints suggested
+  `leoflow lite`; they now say `DEXAFLOW LITE ADMIN` and `dexaflow lite`. The
+  `leoflow` command keeps working.
