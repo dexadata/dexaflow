@@ -61,9 +61,9 @@ func (f *fakeWarmPodsPG) ListWarmPods(context.Context) ([]executor.WarmPodInfo, 
 	return f.existing, nil
 }
 
-func (f *fakeWarmPodsPG) CreateWarmPod(_ context.Context, t executor.WarmTarget, _, _ string) error {
+func (f *fakeWarmPodsPG) CreateWarmPod(_ context.Context, t executor.WarmTarget, _, _ string) (string, error) {
 	f.created = append(f.created, t)
-	return nil
+	return "warm-" + t.DagVersionID, nil
 }
 
 func (f *fakeWarmPodsPG) DeleteWarmPod(_ context.Context, name string) error {

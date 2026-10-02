@@ -108,7 +108,7 @@ tests:
           content:
             name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
             value: "false"
-      - contains:
+      - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL

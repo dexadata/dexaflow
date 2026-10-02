@@ -20,7 +20,7 @@ func TestRunGatedTickerOrKickRunsOnKickWhileLeading(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go runGatedTickerOrKick(ctx, "test", ticks, kicks, leading.Load, discardLog(), func() { ran <- struct{}{} })
+	go runGatedTickerOrKick(ctx, "test", ticks, kicks, 0, leading.Load, discardLog(), func() { ran <- struct{}{} })
 
 	kicks <- struct{}{}
 	select {
@@ -36,6 +36,37 @@ func TestRunGatedTickerOrKickRunsOnKickWhileLeading(t *testing.T) {
 	}
 }
 
+// Kicks arrive in bursts (a deploy drains many workers at once); after a run,
+// the next kicked run waits out minKickGap so a burst costs one reconcile, not
+// one per event. The periodic tick is not delayed by it.
+func TestRunGatedTickerOrKickRateLimitsKicks(t *testing.T) {
+	ticks := make(chan time.Time)
+	kicks := make(chan struct{}, 1)
+	ran := make(chan time.Time, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const gap = 300 * time.Millisecond
+
+	go runGatedTickerOrKick(ctx, "test", ticks, kicks, gap, nil, discardLog(), func() { ran <- time.Now() })
+
+	kicks <- struct{}{}
+	var first time.Time
+	select {
+	case first = <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first kick did not run the cycle")
+	}
+	kicks <- struct{}{}
+	select {
+	case second := <-ran:
+		if d := second.Sub(first); d < gap-20*time.Millisecond {
+			t.Errorf("second kicked run came %v after the first, want at least %v", d, gap)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second kick never ran the cycle")
+	}
+}
+
 // A follower ignores kicks exactly as it ignores ticks: only the leader mutates
 // the warm fleet.
 func TestRunGatedTickerOrKickSkipsKickWhileFollower(t *testing.T) {
@@ -46,7 +77,7 @@ func TestRunGatedTickerOrKickSkipsKickWhileFollower(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go runGatedTickerOrKick(ctx, "test", ticks, kicks, leading.Load, discardLog(), func() { ran <- struct{}{} })
+	go runGatedTickerOrKick(ctx, "test", ticks, kicks, 0, leading.Load, discardLog(), func() { ran <- struct{}{} })
 
 	kicks <- struct{}{}
 	kicks <- struct{}{}
