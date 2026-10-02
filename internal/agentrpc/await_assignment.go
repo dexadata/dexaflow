@@ -175,6 +175,8 @@ func (s *Server) pumpWorkerMessages(stream agentv1.AgentService_AwaitAssignmentS
 		case *agentv1.WorkerMessage_Ack:
 			if binding, ok := s.warmPools.Ack(m.Ack.GetAssignmentId(), m.Ack.GetStarted()); ok {
 				s.bindWarmAttempt(stream.Context(), binding)
+				// After the bind, so the reconciler already sees this worker busy.
+				s.warmPools.claimed()
 			}
 		case *agentv1.WorkerMessage_SlotFree:
 			s.warmPools.MarkFree(identity)

@@ -50,23 +50,27 @@ func (k *KubernetesWarmPods) ListWarmPods(ctx context.Context) ([]WarmPodInfo, e
 	}
 	out := make([]WarmPodInfo, 0, len(list.Items))
 	for i := range list.Items {
-		p := &list.Items[i]
+		out = append(out, warmPodInfoOf(&list.Items[i]))
+	}
+	return out, nil
+}
+
+// warmPodInfoOf maps a warm pod to the reconciler's view of it, shared by the
+// live LIST and the WarmPodInformer cache so both read the fleet identically.
+func warmPodInfoOf(p *corev1.Pod) WarmPodInfo {
+	return WarmPodInfo{
+		Name:         p.Name,
+		DagVersionID: p.Labels[warmDagVersionLabelKey],
 		// Warm pods are RestartPolicy:Never; a Succeeded/Failed pod is a dead
 		// worker that can never serve again. Flag it so the reconciler neither
 		// counts it toward the target nor leaves it to leak.
-		terminal := p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed
-		out = append(out, WarmPodInfo{
-			Name:         p.Name,
-			DagVersionID: p.Labels[warmDagVersionLabelKey],
-			Terminal:     terminal,
-			// Tenant attribution for the per-tenant aggregate cap (M4). A pre-label
-			// pod (rolling upgrade) has no tenant label and reads "" here; the
-			// reconciler attributes it via its version when resolvable and never
-			// deletes it for the cap.
-			TenantID: p.Labels[warmTenantLabelKey],
-		})
+		Terminal: podTerminal(p),
+		// Tenant attribution for the per-tenant aggregate cap (M4). A pre-label
+		// pod (rolling upgrade) has no tenant label and reads "" here; the
+		// reconciler attributes it via its version when resolvable and never
+		// deletes it for the cap.
+		TenantID: p.Labels[warmTenantLabelKey],
 	}
-	return out, nil
 }
 
 // CreateWarmPod mints the target's warm-pod spec, builds the pod, and creates it.
@@ -75,22 +79,23 @@ func (k *KubernetesWarmPods) ListWarmPods(ctx context.Context) ([]WarmPodInfo, e
 // ownerReference to the anchor. The reconciler ensures the anchor and reads its
 // UID before any create, so both are populated on the live path; a caller that
 // passes them empty gets a bare pod, unchanged.
-func (k *KubernetesWarmPods) CreateWarmPod(ctx context.Context, t WarmTarget, anchorName, anchorUID string) error {
+func (k *KubernetesWarmPods) CreateWarmPod(ctx context.Context, t WarmTarget, anchorName, anchorUID string) (string, error) {
 	if k.newSpec == nil {
-		return fmt.Errorf("warm pod creation requires a spec builder")
+		return "", fmt.Errorf("warm pod creation requires a spec builder")
 	}
 	spec, err := k.newSpec(t)
 	if err != nil {
-		return fmt.Errorf("building warm pod spec for dag_version %s: %w", t.DagVersionID, err)
+		return "", fmt.Errorf("building warm pod spec for dag_version %s: %w", t.DagVersionID, err)
 	}
 	spec.Namespace = k.namespace
 	spec.AnchorName = anchorName
 	spec.AnchorUID = types.UID(anchorUID)
 	pod := BuildWarmPod(spec)
-	if _, err := k.clientset.CoreV1().Pods(k.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("creating warm pod for dag_version %s: %w", t.DagVersionID, err)
+	created, err := k.clientset.CoreV1().Pods(k.namespace).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("creating warm pod for dag_version %s: %w", t.DagVersionID, err)
 	}
-	return nil
+	return created.Name, nil
 }
 
 // DeleteWarmPod removes one warm worker by name.
