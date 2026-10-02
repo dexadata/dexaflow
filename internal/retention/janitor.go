@@ -73,9 +73,10 @@ func (c Counts) byTable() map[string]int64 {
 type Store interface {
 	// TenantIDs lists every tenant.
 	TenantIDs(ctx context.Context) ([]string, error)
-	// DeleteFinishedRuns removes up to maxRuns settled runs of tenant that ended
-	// before cutoff, with every child row, children first. Each statement
-	// removes at most rowLimit rows.
+	// DeleteFinishedRuns removes, in one transaction, at most rowLimit rows of
+	// up to maxRuns settled runs of tenant that ended before cutoff, run rows
+	// included, children first. A run with more children than fit is finished
+	// by later calls, each of which re-checks that the run is still eligible.
 	DeleteFinishedRuns(ctx context.Context, tenant string, cutoff time.Time, maxRuns, rowLimit int) (Counts, error)
 	// DeleteAuditLog removes up to limit audit rows of tenant older than cutoff.
 	// An empty tenant means the tenant-less system rows.
@@ -83,6 +84,9 @@ type Store interface {
 	// CountEligible counts what a cycle would delete, summed across all tenants;
 	// a nil cutoff skips that class.
 	CountEligible(ctx context.Context, runCutoff, auditCutoff *time.Time) (Counts, error)
+	// RecordRetentionPurge writes an audit entry for rows of the audit log a
+	// cycle deleted in the scope of tenant ("" is the system rows).
+	RecordRetentionPurge(ctx context.Context, tenant string, rows int64, cutoff time.Time) error
 }
 
 // Recorder receives the janitor's metrics.
@@ -130,8 +134,20 @@ type cycle struct {
 	done Counts
 }
 
+// lane is one stream of batches in a cycle: one tenant's runs, or one scope's
+// audit rows ("" is the tenant-less system rows).
+type lane struct {
+	tenant string
+	audit  bool
+	cutoff time.Time
+	done   bool
+	purged int64
+}
+
 // RunOnce runs one retention cycle and returns what it deleted, or in dry run
-// what it would delete.
+// what it would delete. The lanes (each tenant's runs, then each scope's audit
+// rows) take turns, one batch each, so under the cycle cap no tenant and no
+// class waits behind another's backlog.
 func (j *Janitor) RunOnce(ctx context.Context) (Counts, error) {
 	if !j.cfg.Enabled() {
 		return Counts{}, nil
@@ -145,28 +161,116 @@ func (j *Janitor) RunOnce(ctx context.Context) (Counts, error) {
 	if j.cfg.DryRun {
 		return j.countOnly(ctx)
 	}
+	j.resetEligible()
 	tenants, err := j.store.TenantIDs(ctx)
 	if err != nil {
 		return Counts{}, err
 	}
+	lanes := j.lanes(tenants)
 	c := &cycle{}
+	err = j.roundRobin(ctx, c, lanes)
+	j.recordPurges(ctx, lanes)
+	return c.done, err
+}
+
+func (j *Janitor) lanes(tenants []string) []*lane {
+	var out []*lane
 	if j.cfg.DagRunsDays > 0 {
 		cutoff := j.now().Add(-days(j.cfg.DagRunsDays))
-		for _, tenant := range tenants {
-			if err := j.deleteRuns(ctx, c, tenant, cutoff); err != nil {
-				return c.done, err
-			}
+		for _, t := range tenants {
+			out = append(out, &lane{tenant: t, cutoff: cutoff})
 		}
 	}
 	if j.cfg.AuditLogDays > 0 {
 		cutoff := j.now().Add(-days(j.cfg.AuditLogDays))
-		for _, tenant := range append(tenants[:len(tenants):len(tenants)], "") {
-			if err := j.deleteAudit(ctx, c, tenant, cutoff); err != nil {
-				return c.done, err
+		for _, t := range append(tenants[:len(tenants):len(tenants)], "") {
+			out = append(out, &lane{tenant: t, audit: true, cutoff: cutoff})
+		}
+	}
+	return out
+}
+
+// roundRobin gives every unfinished lane one batch per pass until all are done
+// or the cycle cap is reached.
+func (j *Janitor) roundRobin(ctx context.Context, c *cycle, lanes []*lane) error {
+	for active := true; active; {
+		active = false
+		for _, l := range lanes {
+			if l.done {
+				continue
+			}
+			if j.budget(c) <= 0 {
+				return nil
+			}
+			if err := j.gate(ctx); err != nil {
+				return err
+			}
+			n, err := j.batch(ctx, c, l)
+			if err != nil {
+				return err
+			}
+			if !l.done {
+				active = true
+			}
+			if n > 0 {
+				if err := j.sleep(ctx, j.cfg.BatchPause); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	return c.done, nil
+	return nil
+}
+
+// batch runs one bounded delete for the lane and returns the rows it removed.
+// Every batch's row limit is the batch size or what is left of the cycle cap,
+// whichever is smaller, so a cycle never deletes more than the cap.
+func (j *Janitor) batch(ctx context.Context, c *cycle, l *lane) (int64, error) {
+	limit := min(int64(j.cfg.BatchSize), j.budget(c))
+	if l.audit {
+		n, err := j.store.DeleteAuditLog(ctx, l.tenant, l.cutoff, int(limit))
+		if err != nil {
+			return 0, err
+		}
+		j.record(c, Counts{AuditLog: n})
+		l.purged += n
+		l.done = n < limit
+		return n, nil
+	}
+	got, err := j.store.DeleteFinishedRuns(ctx, l.tenant, l.cutoff, min(maxRunsPerBatch, j.cfg.BatchSize), int(limit))
+	if err != nil {
+		return 0, err
+	}
+	j.record(c, got)
+	// A batch that removed only child rows stopped at its row limit inside a
+	// run; the lane is done only when a batch finds nothing left.
+	l.done = got.Total() == 0
+	return got.Total(), nil
+}
+
+// recordPurges writes one audit entry per scope whose audit rows this cycle
+// deleted, so removing audit history is itself on the record. The entry is
+// new, so the purge that wrote it can never select it.
+func (j *Janitor) recordPurges(ctx context.Context, lanes []*lane) {
+	for _, l := range lanes {
+		if !l.audit || l.purged == 0 {
+			continue
+		}
+		if err := j.store.RecordRetentionPurge(context.WithoutCancel(ctx), l.tenant, l.purged, l.cutoff); err != nil {
+			j.logger.Error("recording retention purge in the audit log", "tenant", l.tenant, "rows", l.purged, "error", err)
+		}
+	}
+}
+
+// resetEligible zeroes the dry-run gauges, so a count from an earlier dry run
+// does not linger once the janitor deletes.
+func (j *Janitor) resetEligible() {
+	if j.rec == nil {
+		return
+	}
+	for table := range (Counts{}).byTable() {
+		j.rec.RecordRetentionEligible(table, 0)
+	}
 }
 
 func (j *Janitor) countOnly(ctx context.Context) (Counts, error) {
@@ -191,50 +295,6 @@ func (j *Janitor) countOnly(ctx context.Context) (Counts, error) {
 	j.logger.Info("retention dry run: rows eligible for deletion, summed across all tenants",
 		"dag_runs", got.DagRuns, "task_instances", got.TaskInstances, "audit_log", got.AuditLog)
 	return got, nil
-}
-
-func (j *Janitor) deleteRuns(ctx context.Context, c *cycle, tenant string, cutoff time.Time) error {
-	maxRuns := min(maxRunsPerBatch, j.cfg.BatchSize)
-	for j.budget(c) > 0 {
-		if err := j.gate(ctx); err != nil {
-			return err
-		}
-		got, err := j.store.DeleteFinishedRuns(ctx, tenant, cutoff, maxRuns, j.cfg.BatchSize)
-		if err != nil {
-			return err
-		}
-		j.record(c, got)
-		if got.DagRuns == 0 {
-			return nil
-		}
-		if err := j.sleep(ctx, j.cfg.BatchPause); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (j *Janitor) deleteAudit(ctx context.Context, c *cycle, tenant string, cutoff time.Time) error {
-	for {
-		limit := min(int64(j.cfg.BatchSize), j.budget(c))
-		if limit <= 0 {
-			return nil
-		}
-		if err := j.gate(ctx); err != nil {
-			return err
-		}
-		n, err := j.store.DeleteAuditLog(ctx, tenant, cutoff, int(limit))
-		if err != nil {
-			return err
-		}
-		j.record(c, Counts{AuditLog: n})
-		if n < limit {
-			return nil
-		}
-		if err := j.sleep(ctx, j.cfg.BatchPause); err != nil {
-			return err
-		}
-	}
 }
 
 // gate stops the cycle on cancellation or lost leadership before a batch.

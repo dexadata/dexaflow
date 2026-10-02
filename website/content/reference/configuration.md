@@ -552,21 +552,30 @@ before enabling it in production.
 
 The retention janitor deletes metadata rows past an age you choose, per data
 class. Every class is off by default (`0` days): a default install never
-deletes a row. It runs on the scheduler leader only, rechecks leadership
-before every batch, and works tenant by tenant. A settled run (`success` or
-`failed`) is eligible once it ended more than `dag_runs_days` ago and no task
-instance of it is still active and no staging volume of it is still live; it
-goes with its task instances, state history, attempt history and XCom index
-rows, children first, in one short transaction per batch of at most 100 runs.
-Active and recent runs are never touched. Each statement removes at most
-`batch_size` rows, the janitor sleeps `batch_pause` between batches, and a
-cycle stops once it deleted `max_rows_per_cycle` rows; the rest waits for the
-next cycle. Turn on `dry_run` first to see what a cycle would delete: it only
-counts (summed across all tenants), logs the counts and sets
-`dexaflow_retention_rows_eligible`. Metrics:
-`dexaflow_retention_rows_deleted_total{table}`,
+deletes a row. It runs on the scheduler leader only and rechecks leadership
+before every batch. A run is eligible once it settled (`success` or `failed`)
+more than `dag_runs_days` ago, every task instance of it is settled
+(`success`, `failed`, `skipped` or `upstream_failed`; a task in `none` is
+waiting to be scheduled, for example after a clear, so its run is kept), and
+no staging volume of it is still live. It goes with its task instances, state
+history, attempt history and XCom index rows, children first. Every batch is
+one short transaction of at most `batch_size` rows, run rows included; a run
+with more rows than that is finished by later batches, each of which checks
+again that the run is still eligible. Active and recent runs are never
+touched. The janitor sleeps `batch_pause` between batches and a cycle stops
+once it deleted `max_rows_per_cycle` rows; the rest waits for the next cycle.
+Each tenant's runs and each tenant's audit rows take turns, one batch each,
+so no tenant and neither class waits behind another's backlog. Every cycle
+that deletes audit rows writes a `retention.purge` audit entry in the same
+scope with the row count and the cutoff. Turn on `dry_run` first to see what
+a cycle would delete: it only counts (summed across all tenants), logs the
+counts and sets `dexaflow_retention_rows_eligible`, which a deleting cycle
+resets to zero. Metrics: `dexaflow_retention_rows_deleted_total{table}`,
 `dexaflow_retention_rows_eligible{table}` and
-`dexaflow_retention_cycle_duration_seconds`. The chart has no values for these
+`dexaflow_retention_cycle_duration_seconds`. What the janitor does not delete:
+task logs, which the `disk` log backend prunes after 30 days and an object
+store keeps by its bucket lifecycle policy, and the bookkeeping rows of
+staging volumes already marked deleted. The chart has no values for these
 keys; set them through `extraEnv`.
 
 | Variable | Default | Edition | Purpose |

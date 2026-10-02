@@ -37,11 +37,14 @@ func (s *RetentionStore) TenantIDs(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// DeleteFinishedRuns removes up to maxRuns of the tenant's settled runs that
-// ended before cutoff, in one transaction: the runs are locked first, then
-// their rows go children first (state and attempt history, XCom index, task
-// instances, the runs), each table in statements of at most rowLimit rows. The
-// FK cascades find nothing left to do.
+// DeleteFinishedRuns removes, in one transaction, at most rowLimit rows of up
+// to maxRuns of the tenant's settled runs that ended before cutoff, run rows
+// included. The runs are locked first (which re-checks that they are still
+// eligible), then their rows go children first: state and attempt history,
+// XCom index, task instances, and last the runs whose children are all gone.
+// When the limit runs out inside a run, the transaction commits what it
+// removed and the next call picks the run up again, so no transaction grows
+// with the size of a DAG. The FK cascades find nothing left to do.
 func (s *RetentionStore) DeleteFinishedRuns(ctx context.Context, tenant string, cutoff time.Time, maxRuns, rowLimit int) (retention.Counts, error) {
 	tid, err := parseUUID(tenant)
 	if err != nil {
@@ -62,34 +65,9 @@ func (s *RetentionStore) DeleteFinishedRuns(ctx context.Context, tenant string, 
 	if len(runs) == 0 {
 		return retention.Counts{}, nil
 	}
-	limit := int32(rowLimit) //nolint:gosec // bounded by config validation
-	var c retention.Counts
-	steps := []struct {
-		n   *int64
-		del func() (int64, error)
-	}{
-		{&c.TaskStateHistory, func() (int64, error) {
-			return qtx.DeleteTaskStateHistoryOfRuns(ctx, queries.DeleteTaskStateHistoryOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: limit})
-		}},
-		{&c.TaskInstanceHistory, func() (int64, error) {
-			return qtx.DeleteTaskInstanceHistoryOfRuns(ctx, queries.DeleteTaskInstanceHistoryOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: limit})
-		}},
-		{&c.XComIndex, func() (int64, error) {
-			return qtx.DeleteXComIndexOfRuns(ctx, queries.DeleteXComIndexOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: limit})
-		}},
-		{&c.TaskInstances, func() (int64, error) {
-			return qtx.DeleteTaskInstancesOfRuns(ctx, queries.DeleteTaskInstancesOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: limit})
-		}},
-	}
-	for _, st := range steps {
-		n, derr := drain(st.del, int64(limit))
-		if derr != nil {
-			return retention.Counts{}, derr
-		}
-		*st.n = n
-	}
-	if c.DagRuns, err = qtx.DeleteDagRunsByID(ctx, queries.DeleteDagRunsByIDParams{TenantID: tid, RunIds: runs}); err != nil {
-		return retention.Counts{}, fmt.Errorf("deleting runs: %w", err)
+	c, err := deleteRunRows(ctx, qtx, tid, runs, int32(rowLimit)) //nolint:gosec // bounded by config validation
+	if err != nil {
+		return retention.Counts{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return retention.Counts{}, fmt.Errorf("committing retention tx: %w", err)
@@ -97,19 +75,47 @@ func (s *RetentionStore) DeleteFinishedRuns(ctx context.Context, tenant string, 
 	return c, nil
 }
 
-// drain repeats a bounded delete until a statement comes back short.
-func drain(del func() (int64, error), limit int64) (int64, error) {
-	var total int64
-	for {
-		n, err := del()
-		if err != nil {
-			return total, fmt.Errorf("deleting run children: %w", err)
+// deleteRunRows spends a budget of limit rows on the locked runs, one table at
+// a time in FK order. A table that used the whole remaining budget may hold
+// more rows, so the batch stops there and leaves the rest to the next call.
+func deleteRunRows(ctx context.Context, q *queries.Queries, tid pgtype.UUID, runs []pgtype.UUID, limit int32) (retention.Counts, error) {
+	var c retention.Counts
+	steps := []struct {
+		n   *int64
+		del func(int32) (int64, error)
+	}{
+		{&c.TaskStateHistory, func(n int32) (int64, error) {
+			return q.DeleteTaskStateHistoryOfRuns(ctx, queries.DeleteTaskStateHistoryOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
+		}},
+		{&c.TaskInstanceHistory, func(n int32) (int64, error) {
+			return q.DeleteTaskInstanceHistoryOfRuns(ctx, queries.DeleteTaskInstanceHistoryOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
+		}},
+		{&c.XComIndex, func(n int32) (int64, error) {
+			return q.DeleteXComIndexOfRuns(ctx, queries.DeleteXComIndexOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
+		}},
+		{&c.TaskInstances, func(n int32) (int64, error) {
+			return q.DeleteTaskInstancesOfRuns(ctx, queries.DeleteTaskInstancesOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
+		}},
+		{&c.DagRuns, func(n int32) (int64, error) {
+			return q.DeleteDagRunsByID(ctx, queries.DeleteDagRunsByIDParams{TenantID: tid, RunIds: runs, RowLimit: n})
+		}},
+	}
+	left := limit
+	for _, st := range steps {
+		if left <= 0 {
+			break
 		}
-		total += n
-		if n < limit {
-			return total, nil
+		n, err := st.del(left)
+		if err != nil {
+			return retention.Counts{}, fmt.Errorf("deleting expired run rows: %w", err)
+		}
+		*st.n = n
+		left -= int32(n) //nolint:gosec // n <= left, an int32
+		if left <= 0 {
+			break
 		}
 	}
+	return c, nil
 }
 
 // DeleteAuditLog removes up to limit of the tenant's audit rows older than
@@ -133,6 +139,25 @@ func (s *RetentionStore) DeleteAuditLog(ctx context.Context, tenant string, cuto
 		return 0, fmt.Errorf("deleting audit rows: %w", err)
 	}
 	return n, nil
+}
+
+// RecordRetentionPurge writes an audit entry recording that a retention cycle
+// deleted rows audit rows older than cutoff in the tenant's scope; an empty
+// tenant is the system rows.
+func (s *RetentionStore) RecordRetentionPurge(ctx context.Context, tenant string, rows int64, cutoff time.Time) error {
+	var tid pgtype.UUID
+	if tenant != "" {
+		var err error
+		if tid, err = parseUUID(tenant); err != nil {
+			return fmt.Errorf("tenant id: %w", err)
+		}
+	}
+	if err := s.q.RecordRetentionPurge(ctx, queries.RecordRetentionPurgeParams{
+		TenantID: tid, Rows: rows, Cutoff: pgtype.Timestamptz{Time: cutoff, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("recording retention purge: %w", err)
+	}
+	return nil
 }
 
 // CountEligible counts what a cycle would delete, without deleting. A nil

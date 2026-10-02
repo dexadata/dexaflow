@@ -31,7 +31,7 @@ WHERE r.state IN ('success', 'failed')
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'none'))
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
   AND NOT EXISTS (
     SELECT 1 FROM staging_volumes s
     WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
@@ -53,16 +53,23 @@ func (q *Queries) CountExpiredSettledRuns(ctx context.Context, cutoff pgtype.Tim
 
 const deleteDagRunsByID = `-- name: DeleteDagRunsByID :execrows
 DELETE FROM dag_runs
-WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+WHERE id IN (
+  SELECT r.id FROM dag_runs r
+  WHERE r.tenant_id = $1 AND r.id = ANY($2::uuid[])
+    AND NOT EXISTS (SELECT 1 FROM task_instances ti WHERE ti.dag_run_id = r.id)
+    AND NOT EXISTS (SELECT 1 FROM xcom_index x WHERE x.dag_run_id = r.id)
+  LIMIT $3)
 `
 
 type DeleteDagRunsByIDParams struct {
 	TenantID pgtype.UUID   `json:"tenant_id"`
 	RunIds   []pgtype.UUID `json:"run_ids"`
+	RowLimit int32         `json:"row_limit"`
 }
 
+// Removes the locked runs whose children are all gone, up to row_limit.
 func (q *Queries) DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteDagRunsByID, arg.TenantID, arg.RunIds)
+	result, err := q.db.Exec(ctx, deleteDagRunsByID, arg.TenantID, arg.RunIds, arg.RowLimit)
 	if err != nil {
 		return 0, err
 	}
@@ -240,7 +247,7 @@ WHERE r.tenant_id = $1
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'none'))
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
   AND NOT EXISTS (
     SELECT 1 FROM staging_volumes s
     WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
@@ -256,9 +263,15 @@ type LockExpiredSettledRunsParams struct {
 }
 
 // A tenant's runs that settled (success or failed) before the cutoff, oldest
-// first, that no task instance still holds active and no live staging volume
-// still points at. Any task state outside the settled set counts as active, so
-// a state added later is kept rather than deleted. FOR UPDATE makes a clear or
+// first, whose task instances are all settled and that no live staging volume
+// still points at. "Settled" is the predicate the pod reconciler's settled-run
+// collection uses too: run in success or failed, and no task instance outside
+// success, failed, skipped and upstream_failed. none is unsettled on purpose:
+// it is a task a clear just reset, waiting to be scheduled, while the run row
+// still says success until the clear reopens it. Any state added later counts
+// as unsettled, so it is kept rather than deleted. The janitor calls this once
+// per batch, so a run whose children span several batches is re-checked each
+// time. FOR UPDATE makes a clear or
 // rerun of the same run wait for the batch to commit; SKIP LOCKED lets the
 // janitor pass over a run another transaction holds instead of waiting on it.
 func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error) {
@@ -279,4 +292,23 @@ func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSet
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordRetentionPurge = `-- name: RecordRetentionPurge :exec
+INSERT INTO audit_log (tenant_id, action, resource_type, metadata)
+VALUES ($1, 'retention.purge', 'audit_log',
+        jsonb_build_object('table', 'audit_log', 'rows', $2::bigint, 'cutoff', $3::timestamptz))
+`
+
+type RecordRetentionPurgeParams struct {
+	TenantID pgtype.UUID        `json:"tenant_id"`
+	Rows     int64              `json:"rows"`
+	Cutoff   pgtype.Timestamptz `json:"cutoff"`
+}
+
+// One audit entry per scope a retention cycle purged audit rows from, so the
+// purge itself is on the record. tenant_id NULL is the system rows.
+func (q *Queries) RecordRetentionPurge(ctx context.Context, arg RecordRetentionPurgeParams) error {
+	_, err := q.db.Exec(ctx, recordRetentionPurge, arg.TenantID, arg.Rows, arg.Cutoff)
+	return err
 }

@@ -93,6 +93,7 @@ type Querier interface {
 	DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, error)
 	// Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
 	DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error)
+	// Removes the locked runs whose children are all gone, up to row_limit.
 	DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
@@ -350,9 +351,15 @@ type Querier interface {
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
 	// A tenant's runs that settled (success or failed) before the cutoff, oldest
-	// first, that no task instance still holds active and no live staging volume
-	// still points at. Any task state outside the settled set counts as active, so
-	// a state added later is kept rather than deleted. FOR UPDATE makes a clear or
+	// first, whose task instances are all settled and that no live staging volume
+	// still points at. "Settled" is the predicate the pod reconciler's settled-run
+	// collection uses too: run in success or failed, and no task instance outside
+	// success, failed, skipped and upstream_failed. none is unsettled on purpose:
+	// it is a task a clear just reset, waiting to be scheduled, while the run row
+	// still says success until the clear reopens it. Any state added later counts
+	// as unsettled, so it is kept rather than deleted. The janitor calls this once
+	// per batch, so a run whose children span several batches is re-checked each
+	// time. FOR UPDATE makes a clear or
 	// rerun of the same run wait for the batch to commit; SKIP LOCKED lets the
 	// janitor pass over a run another transaction holds instead of waiting on it.
 	LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error)
@@ -426,6 +433,9 @@ type Querier interface {
 	// a row that has since progressed. try_number is untouched: this is infra, not a
 	// task failure.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
+	// One audit entry per scope a retention cycle purged audit rows from, so the
+	// purge itself is on the record. tenant_id NULL is the system rows.
+	RecordRetentionPurge(ctx context.Context, arg RecordRetentionPurgeParams) error
 	RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error
 	// Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
 	// (dag_run_id, task_id, try_number) tuple to match the agent's identity. The
