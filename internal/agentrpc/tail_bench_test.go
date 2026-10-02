@@ -43,11 +43,11 @@ func benchRedisTailer(b *testing.B) *logs.RedisTailer {
 
 // BenchmarkStreamLogsLineNoTail is the per-line cost of StreamLogs for an
 // attempt nobody is tailing, against a real Redis: store the line and offer it
-// to the live tail.
+// to the live tail, with logs.tail.publish set to on_demand.
 func BenchmarkStreamLogsLineNoTail(b *testing.B) {
 	tailer := benchRedisTailer(b)
 	ref := logs.Ref{TenantID: "t", DagID: "d", RunID: "bench", TaskID: "task", TryNumber: 1}
-	gate := newTailGate(tailer, ref, time.Now)
+	gate := newTailGate(tailer, ref, time.Now, true)
 	publish := func(line string) { gate.publish(context.Background(), line) }
 	line := &agentv1.LogLine{Time: timestamppb.Now(), Message: "INFO processed batch 42 of 1000 in 12ms", Stream: "stdout"}
 	b.ReportAllocs()
