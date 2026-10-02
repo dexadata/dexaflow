@@ -40,10 +40,13 @@ func IsPodLostCandidate(c PodLostCandidate, grace time.Duration, now time.Time) 
 // The full scheduler.Store embeds this interface so production wires through one
 // type; unit tests fake just this surface.
 type PodLostReapStore interface {
-	// ListRunningTasks returns every `running` TI with the timestamp it entered
-	// running, so the reaper applies the grace period in Go and the SQL stays
-	// simple.
-	ListRunningTasks(ctx context.Context) ([]PodLostCandidate, error)
+	// ListRunningTasks returns the `running` TIs that have been running for at
+	// least grace, with the timestamp each entered running. Warm-pool attempts
+	// are excluded: they have no per-task pod, so a presence check would always
+	// read them as lost, and the warm-worker-lost reaper owns them. The grace
+	// filter is applied before the store's per-tick limit, so attempts still
+	// inside it never take the slots of those the reaper can act on.
+	ListRunningTasks(ctx context.Context, grace time.Duration) ([]PodLostCandidate, error)
 	// MarkTaskPodLost transitions one TI to `failed` with
 	// error_message='pod_lost'. The WHERE state='running' guard makes this
 	// idempotent. It returns whether a row was actually updated: false means a
@@ -125,7 +128,7 @@ func (r *podLostReaper) run(ctx context.Context) error {
 	// therefore narrowed to a state no timing can fake — no pod object for the
 	// attempt at all. A finished pod is still a present pod, and stays the
 	// reconciler's, valve open or shut.
-	candidates, err := r.store.ListRunningTasks(ctx)
+	candidates, err := r.store.ListRunningTasks(ctx, r.grace)
 	if err != nil {
 		return err
 	}

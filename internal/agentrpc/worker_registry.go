@@ -361,3 +361,12 @@ func (r *WorkerRegistry) dagVersionOf(identity string) string {
 	}
 	return ""
 }
+
+func (r *WorkerRegistry) podNameOf(identity string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if w, ok := r.workers[identity]; ok {
+		return w.podName
+	}
+	return ""
+}
