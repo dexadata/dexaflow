@@ -1076,7 +1076,9 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 // does not abort the tick. A dispatch failure is infrastructure, not a task
 // failure, so it never consumes the task's try_number.
 //
-// Cluster backpressure (a ResourceQuota 403 or an APF 429) is split out first
+// A Deferred dispatch (the buffered dispatch queue was full) is split out first:
+// nothing was attempted, so nothing is recorded and the next tick re-offers it.
+// Cluster backpressure (a ResourceQuota 403 or an APF 429) is split out next
 // (ADR 0053): it is retriable-forever, so it is backed off WITHOUT touching the
 // dispatch-attempt counter and can never reach the dispatch_failed give-up below.
 // Dexaflow holds the task and re-offers it until the cluster has room, rather than
@@ -1085,6 +1087,15 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 // arrives typed over the seam (ADR 0051 Phase 4), so the scheduler never inspects
 // Kubernetes error types itself.
 func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, taskID string, disp executor.Disposition, cause error) error {
+	if disp == executor.Deferred {
+		// The dispatch never left the control plane (the buffered dispatch queue
+		// is full or draining). Leave the task scheduled and write nothing: the
+		// next tick re-offers it, and local backpressure must never spend the
+		// dispatch-attempt budget or drive the task to dispatch_failed.
+		s.logger.Debug("dispatch deferred; buffer at capacity, re-offering next tick",
+			"run", run.RunID, "task", taskID, "error", cause)
+		return nil
+	}
 	if disp == executor.Backpressure {
 		return s.backoffBackpressure(ctx, run, taskID, cause)
 	}

@@ -14,9 +14,9 @@ import (
 )
 
 // ErrAtCapacity is returned by BufferedDispatcher.Dispatch when the buffered
-// queue cannot accept another request. The scheduler treats it exactly like a
-// transient inner-dispatcher error: log + metric + leave the TI scheduled so
-// the next tick re-tries. It is the backpressure signal that bounds tick
+// queue cannot accept another request. It travels with executor.Deferred: the
+// scheduler leaves the TI scheduled so a later tick re-tries, without counting
+// it as a failed dispatch. It is the backpressure signal that bounds tick
 // latency under load (ADR 0031: tick rate decoupled from executor latency).
 var ErrAtCapacity = errors.New("dispatch buffer at capacity; will retry next tick")
 
@@ -126,10 +126,10 @@ func NewBuffered(inner Inner, sink FailureSink, logger *slog.Logger, metrics Met
 // Dispatch hands a task off to the inner dispatcher. In passthrough mode the
 // inner call happens inline. In buffered mode the request is enqueued non-
 // blockingly: success returns (Dispatched, nil) immediately (the scheduler then
-// records the TI as `queued`); a full or closed channel returns (Rejected,
-// ErrAtCapacity). Rejected preserves today's behavior exactly: ErrAtCapacity is
-// a plain error, which the old scheduler classified as permanent — the bounded
-// path that leaves the TI scheduled for the next tick.
+// records the TI as `queued`); a full or closed channel returns (Deferred,
+// ErrAtCapacity). Deferred tells the scheduler nothing was attempted, so the TI
+// stays scheduled for a later tick without touching its dispatch-attempt budget
+// (review item S2: a full buffer is backpressure, not a dispatch failure).
 func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID string, task domain.TaskSpec) (executor.Disposition, error) {
 	if b.queue == nil {
 		return b.inner.Dispatch(ctx, runID, dagID, dagVersionID, task)
@@ -143,7 +143,7 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 		if b.metrics != nil {
 			b.metrics.RecordDispatchAtCapacity()
 		}
-		return executor.Rejected, ErrAtCapacity
+		return executor.Deferred, ErrAtCapacity
 	}
 	select {
 	case b.queue <- dispatchRequest{runID: runID, dagID: dagID, dagVersionID: dagVersionID, task: task}:
@@ -155,7 +155,7 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 		if b.metrics != nil {
 			b.metrics.RecordDispatchAtCapacity()
 		}
-		return executor.Rejected, ErrAtCapacity
+		return executor.Deferred, ErrAtCapacity
 	}
 }
 

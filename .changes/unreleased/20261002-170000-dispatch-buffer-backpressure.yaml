@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **A full dispatch buffer no longer counts as a failed dispatch.** With
+  buffered dispatch on (`scheduler.dispatch.buffer_size` above 0), a task
+  offered while the queue was full was charged a dispatch attempt and backed
+  off, and a large fan out could exhaust the budget and fail tasks as
+  `dispatch_failed` although nothing had been sent to Kubernetes. A full (or
+  draining) buffer is now treated as backpressure: the task stays scheduled
+  and is offered again on the next tick, with no attempt charged and no
+  backoff. `dexaflow_dispatch_at_capacity_total` still counts each refusal.
+time: 2026-10-02T17:00:00.000000000-03:00
