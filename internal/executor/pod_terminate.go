@@ -40,7 +40,7 @@ import (
 // Tolerates NotFound.
 func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, runID, taskID string, tryNumber int) error {
 	selector := fmt.Sprintf("leoflow.io/run-id=%s,leoflow.io/task-id=%s,leoflow.io/try-number=%s",
-		sanitizeLabel(runID), sanitizeLabel(taskID), strconv.Itoa(tryNumber))
+		labelValue(runID), labelValue(taskID), strconv.Itoa(tryNumber))
 	return e.deletePodsBySelector(ctx, selector)
 }
 
@@ -62,7 +62,7 @@ func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, runID, taskID st
 // a reaper only ever preserves a poke pod for an attempt it has just made
 // terminal. Tolerates NotFound.
 func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) error {
-	selector := fmt.Sprintf("leoflow.io/run-id=%s", sanitizeLabel(runID))
+	selector := fmt.Sprintf("leoflow.io/run-id=%s", labelValue(runID))
 	return e.deletePodsBySelector(ctx, selector)
 }
 
@@ -170,7 +170,7 @@ func terminalForTeardown(pod *corev1.Pod) bool {
 // attempt the reaper is about to fail is the correct liveness question.
 func (e *KubernetesExecutor) TaskPodPresence(ctx context.Context, runID, taskID string, tryNumber int) (PodPresence, error) {
 	selector := fmt.Sprintf("leoflow.io/run-id=%s,leoflow.io/task-id=%s,leoflow.io/try-number=%s",
-		sanitizeLabel(runID), sanitizeLabel(taskID), strconv.Itoa(tryNumber))
+		labelValue(runID), labelValue(taskID), strconv.Itoa(tryNumber))
 	pods, err := e.clientset.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		// PodPresenceLive is the zero value on purpose: a caller that drops the
