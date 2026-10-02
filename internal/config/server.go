@@ -349,6 +349,11 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// MaxPageLimit caps the `limit` a list endpoint accepts, and the
+	// `dag_runs_limit` of /ui/dags; a larger value is served as the cap, like
+	// Airflow's [api] maximum_page_limit. 0 (the default, ADR 0062 gate) keeps
+	// today's behavior: no cap.
+	MaxPageLimit int `mapstructure:"max_page_limit"`
 }
 
 // Server roles (ADR 0049).
@@ -864,6 +869,8 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
+	"server.max_page_limit": 0,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
