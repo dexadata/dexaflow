@@ -98,7 +98,7 @@ With the cluster + cert-manager up, the Pro install:
 3. Issues the agent gRPC server cert via **cert-manager** (self-signed root CA →
    server leaf, SANs for `leoflow.leoflow.svc.cluster.local`), and publishes the
    CA as a `ConfigMap` for `agentTLS.caConfigMap`.
-4. `helm upgrade --install` from `helm/leoflow`, pinning `image.tag` +
+4. `helm upgrade --install` from `helm/dexaflow`, pinning `image.tag` +
    `migrations.image.tag` (default `v0.0.1-prealpha.28`).
 
 Open the UI after install:

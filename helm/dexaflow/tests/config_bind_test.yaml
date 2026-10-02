@@ -1,0 +1,172 @@
+suite: control-plane env for trusted proxies + executor resource defaults (#725)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+# The chart always deploys the Pro edition and refuses to render without agent
+# TLS (#459), so every case needs a cert pair.
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: no LEOFLOW_SERVER_TRUSTED_PROXIES env when config.trustedProxies is unset (default trust-none)
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_TRUSTED_PROXIES
+          any: true
+
+  - it: config.trustedProxies renders a comma-joined LEOFLOW_SERVER_TRUSTED_PROXIES env (viper splits it into a list)
+    template: deployment.yaml
+    set:
+      config.trustedProxies:
+        - 10.0.0.0/8
+        - 192.168.1.1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_TRUSTED_PROXIES
+            value: 10.0.0.0/8,192.168.1.1
+
+  - it: no executor resource-default env when executor.defaults.resources is unset
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
+          any: true
+
+  - it: executor.defaults.resources renders CPU + memory default env vars
+    template: deployment.yaml
+    set:
+      executor.defaults.resources.cpu: 250m
+      executor.defaults.resources.memory: 256Mi
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
+            value: 250m
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
+            value: 256Mi
+
+  - it: no executor staging-default env when executor.defaults.staging is unset
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
+          any: true
+
+  - it: executor.defaults.staging renders size + storageClass default env vars (#743)
+    template: deployment.yaml
+    set:
+      executor.defaults.staging.size: 10Gi
+      executor.defaults.staging.storageClass: efs-rwx
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
+            value: 10Gi
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
+            value: efs-rwx
+
+  # config.cors.allowedOrigins shipped in values.yaml documented as the API's CORS
+  # policy, and no template ever read it (#1144). The chart said the default was
+  # ["*"] while the server used its own ["http://localhost:8080"], so the chart
+  # documented a security-relevant default that was wrong in both directions.
+  #
+  # The default is now [] rather than ["*"]: rendering the old documented default
+  # would have widened CORS to every origin on the next `helm upgrade` for every
+  # existing install, which is a silent loosening nobody asked for. Empty renders
+  # nothing and leaves the server default exactly as it is today.
+  - it: no LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS env by default (server keeps its own default)
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS
+          any: true
+
+  - it: config.cors.allowedOrigins renders a comma-joined LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS env
+    template: deployment.yaml
+    set:
+      config.cors.allowedOrigins:
+        - https://app.example.com
+        - https://admin.example.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS
+            value: https://app.example.com,https://admin.example.com
+          any: true
+
+  # `["*"]` was the documented default of this key while no template read it, so
+  # it is the one value an existing install is most likely to be carrying: anyone
+  # who started from `helm show values` has it verbatim in their own values file
+  # while actually running the server default (http://localhost:8080). Rendering
+  # it would take that deployment to "every origin allowed" on the next upgrade
+  # with nothing in their values changing to show for it. Refuse at render time
+  # instead, which is the only channel a GitOps sync surfaces (NOTES.txt is not
+  # rendered by Argo CD), and point at extraEnv for the deliberate case.
+  - it: config.cors.allowedOrigins containing "*" fails the render
+    template: deployment.yaml
+    set:
+      config.cors.allowedOrigins:
+        - "*"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'config\.cors\.allowedOrigins must not contain "\*"'
+
+  - it: the wildcard guard also catches "*" mixed into a list of real origins
+    template: deployment.yaml
+    set:
+      config.cors.allowedOrigins:
+        - https://app.example.com
+        - "*"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'config\.cors\.allowedOrigins must not contain "\*"'
+
+  # `--set config.cors.allowedOrigins=*` yields a bare string, not a list. sprig's
+  # `join` accepts a scalar and returns it unchanged, so this shape reaches the
+  # env var as a working wildcard: the guard has to normalise before it looks.
+  - it: the wildcard guard is not bypassed by a scalar value
+    template: deployment.yaml
+    set:
+      config.cors.allowedOrigins: "*"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'config\.cors\.allowedOrigins must not contain "\*"'

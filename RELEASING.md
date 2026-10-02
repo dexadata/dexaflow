@@ -18,7 +18,7 @@ no user-facing change (release-prep, chore, dependabot, docs-only) carries the
 
 1. **Preflight** — required tools, clean tree, on `main`, version validated,
    rc-vs-GA detected from the `-rc.N` suffix.
-2. **Prepare** — a `release/<tag>` branch: bump `helm/leoflow/Chart.yaml`
+2. **Prepare** — a `release/<tag>` branch: bump `helm/dexaflow/Chart.yaml`
    `version`+`appVersion` in lockstep (ADR 0028), regenerate the chart README with
    `helm-docs`, and for a **GA** move `CHANGELOG [Unreleased]` to `[X.Y.Z] - <date>`
    with a fresh empty `[Unreleased]` (an **rc** keeps `[Unreleased]`). Run every

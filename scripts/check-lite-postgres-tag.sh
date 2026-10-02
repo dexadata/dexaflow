@@ -20,7 +20,7 @@
 # Scope is deliberately narrow. Three other Postgres tags in this tree are NOT
 # this fact and must not be dragged into it: docker-compose.yml runs 17-alpine
 # for the Pro stack, the e2e scripts run their own warehouse container for dbt,
-# and helm/leoflow ships an evaluation datastore. Nothing says those should
+# and helm/dexaflow ships an evaluation datastore. Nothing says those should
 # track Lite's, and a gate that forced them to would be inventing a policy
 # rather than catching drift.
 #

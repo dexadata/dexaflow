@@ -337,11 +337,11 @@ Deploying the control plane itself (Helm chart, published `leoflow-server`/
 `leoflow-migrate` images, TLS on the agent channel, keyless cloud auth) is the
 **Pro** track. One command installs the chart with auto-generated TLS and no
 cert-manager — from its published OCI artifact
-(`helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION>`),
+(`helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION>`),
 or from source on `main` for the bleeding edge
-(`helm install lf ./helm/leoflow …`). See [Install Pro](/get-started/installation/#install-pro).
+(`helm install lf ./helm/dexaflow …`). See [Install Pro](/get-started/installation/#install-pro).
 The chart is installable today and in validation — see the
-[Helm chart](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md), the reproducible
+[Helm chart](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md), the reproducible
 [Kubernetes test setup](https://github.com/dexadata/leoflow/blob/main/deploy/k8s/README.md)
 (the `deploy/k8s` recipe is cloud-portable — it runs unchanged on EKS / GKE / AKS),
 [Operating modes](/concepts/editions/),

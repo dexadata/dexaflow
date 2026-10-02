@@ -1,0 +1,44 @@
+suite: chart name since the rename (dexaflow) and before it (leoflow)
+templates:
+  # secret.yaml is in scope only so the deployment's checksum annotation
+  # resolves its include; the assertions are on the Deployment.
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: lf
+  namespace: lf
+set:
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: lf-tls
+  agentTLS.caConfigMap: lf-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  secretKey: 0123456789abcdef0123456789abcdef
+tests:
+  - it: a new install of the dexaflow chart names its resources after it
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lf-dexaflow
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: dexaflow
+
+  # An install from before the rename was made with the chart named leoflow.
+  # charts/leoflow, the same templates published under that name, renders it
+  # unchanged; nameOverride is the same switch for the dexaflow chart. Selector
+  # labels are immutable on a Deployment, so this is what makes an in-place
+  # upgrade possible.
+  - it: the pre-rename naming is reproduced exactly
+    template: deployment.yaml
+    set:
+      nameOverride: leoflow
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lf-leoflow
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: leoflow

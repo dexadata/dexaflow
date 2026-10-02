@@ -225,7 +225,7 @@ gRPC channel stays **mandatory**, the chart just mints a stable self-signed CA
 external Postgres and Redis and go:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
+helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
@@ -259,7 +259,7 @@ Publish the provider's CA bundle as a ConfigMap with the key `ca.crt`, point
 kubectl create namespace leoflow
 kubectl -n leoflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
 
-helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
+helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.caConfigMap=rds-ca \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
@@ -300,13 +300,13 @@ Installing the chart straight from a checkout of **`main`** is the
 changes that have merged to `main` but not yet been cut into a release. The
 OCI-chart and auto-generated-TLS features are live in released charts too, so
 this is only needed when you want `main`. Same required values, from the
-`helm/leoflow` directory in the repo:
+`helm/dexaflow` directory in the repo:
 
 ```bash
 git clone --depth 1 https://github.com/dexadata/leoflow   # current main
 cd leoflow
 
-helm install lf ./helm/leoflow -n leoflow --create-namespace \
+helm install lf ./helm/dexaflow -n leoflow --create-namespace \
   --set image.tag=v0.4.0-rc.2 \
   --set migrations.image.tag=v0.4.0-rc.2 \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
@@ -358,7 +358,7 @@ agent TLS, above).
 
 Managed services are first-class — RDS / Cloud SQL / Azure Database for
 Postgres on the SQL side; ElastiCache / Memorystore / Azure Cache for Redis.
-See the chart's [Datastore compatibility](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md#datastore-compatibility)
+See the chart's [Datastore compatibility](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)
 table for tested versions; managed providers that present a per-instance or
 provider-specific CA expose a `caConfigMap` knob (Postgres and Redis sides
 respectively) for verified TLS.
@@ -381,7 +381,7 @@ For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job. The supported PoC path is to install plain Postgres + Redis
 manifests alongside the chart, then point Leoflow at the in-cluster
-Services. Recipe: [`helm/leoflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/leoflow/examples/README.md).
+Services. Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md).
 **Not for production.**
 {{% /alert %}}
 
@@ -521,7 +521,7 @@ plus `leoflow` and `leoflow-agent` binaries) are published by
 
 ```bash
 # Verify the server image at a release tag.
-cosign verify ghcr.io/dexadata/leoflow-server:v0.4.8 \
+cosign verify ghcr.io/dexadata/dexaflow-server:v0.4.8 \
   --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/leoflow' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

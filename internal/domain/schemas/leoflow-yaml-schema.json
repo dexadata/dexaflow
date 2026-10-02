@@ -25,7 +25,7 @@
 
     "python_version": {
       "type": "string",
-      "description": "Python line of the published task base image (ghcr.io/dexadata/leoflow-runtime:py<version>). This enum is the single source of truth for which base images the release publishes; scripts/check-python-runtime-matrix.sh fails when the release matrix, the Makefile, runtime/Dockerfile or the configuration reference disagree with it. 3.10 is deprecated and stops being published after its 2026-10-31 upstream EOL.",
+      "description": "Python line of the published task base image (ghcr.io/dexadata/dexaflow-runtime:py<version>). This enum is the single source of truth for which base images the release publishes; scripts/check-python-runtime-matrix.sh fails when the release matrix, the Makefile, runtime/Dockerfile or the configuration reference disagree with it. 3.10 is deprecated and stops being published after its 2026-10-31 upstream EOL.",
       "enum": ["3.10", "3.11", "3.12", "3.13"],
       "default": "3.11",
       "x-leoflow-python-deprecations": {
@@ -39,7 +39,7 @@
     },
     "base_image": {
       "type": "string",
-      "description": "Override the image the DAG is built FROM. Default: the published Leoflow task base for python_version (ghcr.io/dexadata/leoflow-runtime:py<python_version>, pinned to the CLI's release tag). Setting this makes python_version unused for the FROM, so a pin to a deprecated py<line> tag is not fixed by changing python_version — repoint this field. Pinning also freezes the interpreter and OS packages at whatever the base carried the day you pinned it (ADR 0003)."
+      "description": "Override the image the DAG is built FROM. Default: the published Leoflow task base for python_version (ghcr.io/dexadata/dexaflow-runtime:py<python_version>, pinned to the CLI's release tag). Setting this makes python_version unused for the FROM, so a pin to a deprecated py<line> tag is not fixed by changing python_version — repoint this field. Pinning also freezes the interpreter and OS packages at whatever the base carried the day you pinned it (ADR 0003)."
     },
     "dependencies": {
       "type": "array",

@@ -6,7 +6,7 @@
 #   cmd/dexaflow-server/main.go     podInformerSyncTimeout how long the informer warm-up may spend
 #   cmd/dexaflow-server/main.go     oidcDiscoveryTimeout   how long IdP discovery may spend
 #   cmd/dexaflow-server/main.go     oidcNameCheckTimeout   how long the OIDC name lookups may spend
-#   helm/leoflow/values.yaml       probes.startup.*       what the kubelet actually allows
+#   helm/dexaflow/values.yaml       probes.startup.*       what the kubelet actually allows
 #
 # The invariant is
 #   startup budget >= (2 * pgStartupBudget) + podInformerSyncTimeout
@@ -189,4 +189,4 @@ self_test() {
 [ "${1:-}" = "--self-test" ] && { self_test; exit $?; }
 
 cd "$(dirname "$0")/.."
-check "${1:-internal/storage/postgres.go}" "${2:-cmd/dexaflow-server/main.go}" "${3:-helm/leoflow/values.yaml}"
+check "${1:-internal/storage/postgres.go}" "${2:-cmd/dexaflow-server/main.go}" "${3:-helm/dexaflow/values.yaml}"

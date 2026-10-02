@@ -83,7 +83,7 @@ Findings → comments on the alpha-prep issues.
   hands-on pass.
 - Not a multi-user install — Lite is single-admin by design (see
   `docs/editions.md`).
-- Not a Pro install — Pro is the Helm chart (`helm/leoflow/`), a separate
+- Not a Pro install — Pro is the Helm chart (`helm/dexaflow/`), a separate
   rollout.
 
 ## Re-running

@@ -1,0 +1,230 @@
+suite: control-plane split into api + scheduler Deployments (ADR 0049)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+# Every case needs the mandatory Pro cert pair (the chart refuses to render
+# without agent TLS, #459) and external datastores.
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  # --- Default (split OFF): one "all" Deployment, byte-identical shape to pre-0049.
+  - it: renders a single Deployment with no role env or component label when split is off
+    template: deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: leoflow
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_ROLE
+            value: all
+      # The selector must NOT gain a component label — it is immutable, and adding
+      # one would break `helm upgrade` from a pre-split install.
+      - notExists:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+
+  # --- Split ON: two Deployments. Logs PVC must be RWX (both roles share it).
+  - it: renders two Deployments (api + scheduler) when split.enabled
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: the api Deployment serves the HTTP API — role=api, http+metrics ports, http probes, active-active
+    template: deployment.yaml
+    documentIndex: 0
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      split.api.replicaCount: 4
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-api
+      - equal:
+          path: spec.replicas
+          value: 4
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: api
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/component"]
+          value: api
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_ROLE
+            value: api
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8080
+      # The api serves no agent gRPC — that endpoint belongs to the scheduler.
+      - notContains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: grpc
+            containerPort: 9091
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: http
+
+  - it: the scheduler Deployment is a single leader — role=scheduler, grpc+metrics ports, health probed on the metrics port (no HTTP API)
+    template: deployment.yaml
+    documentIndex: 1
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      # Even if an operator bumps this, the scheduler stays a single leader (ADR 0009).
+      split.scheduler.replicaCount: 5
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: scheduler
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_ROLE
+            value: scheduler
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: grpc
+            containerPort: 9091
+      # The scheduler serves no HTTP API, so it exposes no http port …
+      - notContains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8080
+      # … and its kubelet probes hit /healthz + /readyz on the metrics port
+      # (served by api.ObservabilityHandler in every role).
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: metrics
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: metrics
+
+  # Task pods must dial the scheduler Service for the agent gRPC — not the bare
+  # fullname (which is the api Service in split mode and serves no gRPC). The
+  # helper derives this from leoflow.roleName, the same source the scheduler
+  # Service name uses, so the two always agree even under the 63-char truncation.
+  - it: task pods are told to dial the scheduler Service for the agent gRPC
+    template: deployment.yaml
+    documentIndex: 0
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR
+            value: leoflow-scheduler.NAMESPACE.svc.cluster.local:9091
+          # helm-unittest renders release namespace as "NAMESPACE" in tests.
+
+  # --- #726: the gRPC TLS private key belongs only to the role that runs the
+  # agent gRPC server (scheduler). The api role never builds a gRPC server
+  # (startAgentGRPC is reached only from the scheduler side), so handing its
+  # internet-facing pod tls.key widens the blast radius ADR 0049 set out to
+  # shrink. The env vars must STAY on both roles though — the Pro boot guard
+  # (guardTLSForEdition) only checks both strings are non-empty and never reads
+  # the files, so scoping the env would CrashLoopBackOff the api pod. Scope only
+  # the volume + volumeMount.
+  - it: the api Deployment keeps both gRPC TLS env vars but never mounts the private key (#726)
+    template: deployment.yaml
+    documentIndex: 0
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-api
+      # The boot guard must still pass: both env vars present so the Pro edition
+      # boots (guardTLSForEdition only asserts the strings are non-empty).
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_GRPC_TLS_CERT
+            value: /etc/leoflow/grpc-tls/tls.crt
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_GRPC_TLS_KEY
+            value: /etc/leoflow/grpc-tls/tls.key
+      # …but the private key never reaches this pod: no grpc-tls volume or mount.
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          any: true
+          content:
+            name: grpc-tls
+      - notContains:
+          path: spec.template.spec.volumes
+          any: true
+          content:
+            name: grpc-tls
+
+  - it: the scheduler Deployment still mounts the gRPC TLS key it actually serves (#726)
+    template: deployment.yaml
+    documentIndex: 1
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: grpc-tls
+            mountPath: /etc/leoflow/grpc-tls
+            readOnly: true
+      # The scheduler mounts the whole cert Secret (tls.crt + tls.key) — it runs
+      # the agent gRPC server and needs the private key.
+      - contains:
+          path: spec.template.spec.volumes
+          any: true
+          content:
+            name: grpc-tls
+
+  # --- Split with the default ReadWriteOnce logs PVC must fail loudly: the
+  # scheduler writes logs and the api replicas read them from the SAME PVC, so
+  # >=2 pods mount it at once and RWO can never satisfy that (#282 generalized).
+  - it: fails when split.enabled with a ReadWriteOnce logs PVC (shared by both roles)
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.enabled: true
+      logs.persistence.accessMode: ReadWriteOnce
+    asserts:
+      - failedTemplate:
+          errorMessage: "more than one control-plane pod would mount the logs PVC (replicaCount > 1, autoscaling.maxReplicas > 1, or split.enabled), but logs.persistence.accessMode=ReadWriteOnce attaches the volume to a single node/pod: the extra pods hang in ContainerCreating with a Multi-Attach error while the install reports success. HA needs a log store every replica can write. Recommended: set logs.persistence.enabled=false and ship task logs to object storage (logs.sink.provider=s3|gcs with logs.sink.bucket). Alternative: logs.persistence.accessMode=ReadWriteMany on an RWX StorageClass (EFS, Filestore, Azure Files, NFS, CephFS, Longhorn-rwx). Or keep a single replica. See helm/dexaflow/examples/values-ha.yaml."

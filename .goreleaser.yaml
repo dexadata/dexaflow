@@ -106,13 +106,17 @@ dockers:
   #
   # Signed keyless by the `docker_signs:` block below — both manifest tags, by
   # digest — so the control-plane image the Helm chart deploys carries the same
-  # supply-chain posture (ADR 0014) as leoflow-migrate and leoflow-runtime, which
+  # supply-chain posture (ADR 0014) as dexaflow-migrate and dexaflow-runtime, which
   # the release workflow signs in their own jobs.
   - id: server-amd64
     ids: [dexaflow-server]
     goarch: amd64
     dockerfile: deploy/Dockerfile.server.release
     image_templates:
+      - "ghcr.io/dexadata/dexaflow-server:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-server:v{{ .Version }}-amd64"
+      # Pre-rename name, same image: values files that pin
+      # image.repository: .../leoflow-server keep pulling new releases.
       - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-amd64"
       - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-amd64"
     build_flag_templates:
@@ -125,6 +129,10 @@ dockers:
     goarch: arm64
     dockerfile: deploy/Dockerfile.server.release
     image_templates:
+      - "ghcr.io/dexadata/dexaflow-server:{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/dexaflow-server:v{{ .Version }}-arm64"
+      # Pre-rename name, same image: values files that pin
+      # image.repository: .../leoflow-server keep pulling new releases.
       - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-arm64"
       - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-arm64"
     build_flag_templates:
@@ -134,12 +142,21 @@ dockers:
       - "--label=org.opencontainers.image.source=https://github.com/dexadata/leoflow"
 
 docker_manifests:
+  - name_template: "ghcr.io/dexadata/dexaflow-server:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-server:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-server:{{ .Version }}-arm64"
+  # `v`-prefixed manifest pointing at the same per-arch images. Pulls of
+  # `:v0.0.1-prealpha.N` and `:0.0.1-prealpha.N` resolve to identical digests.
+  - name_template: "ghcr.io/dexadata/dexaflow-server:v{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-server:v{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-server:v{{ .Version }}-arm64"
+  # The same two manifests under the pre-rename image name.
   - name_template: "ghcr.io/dexadata/leoflow-server:{{ .Version }}"
     image_templates:
       - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-amd64"
       - "ghcr.io/dexadata/leoflow-server:{{ .Version }}-arm64"
-  # `v`-prefixed manifest pointing at the same per-arch images. Pulls of
-  # `:v0.0.1-prealpha.N` and `:0.0.1-prealpha.N` resolve to identical digests.
   - name_template: "ghcr.io/dexadata/leoflow-server:v{{ .Version }}"
     image_templates:
       - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-amd64"

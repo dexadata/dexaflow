@@ -27,7 +27,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHART="$ROOT/helm/leoflow/Chart.yaml"
+CHART="$ROOT/helm/dexaflow/Chart.yaml"
 CHANGELOG="$ROOT/CHANGELOG.md"
 REPO="dexadata/leoflow"
 
@@ -316,9 +316,9 @@ self_test() {
     export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
     cd "$rt" && git -c init.defaultBranch=main init -q . &&
     git config user.email t@example.invalid && git config user.name tester &&
-    mkdir -p helm/leoflow && printf 'version: 9.9.8\nappVersion: "9.9.8"\n' >helm/leoflow/Chart.yaml &&
+    mkdir -p helm/dexaflow && printf 'version: 9.9.8\nappVersion: "9.9.8"\n' >helm/dexaflow/Chart.yaml &&
     git add -A && git commit -qm base &&
-    printf 'version: 9.9.9\nappVersion: "9.9.9"\n' >helm/leoflow/Chart.yaml &&
+    printf 'version: 9.9.9\nappVersion: "9.9.9"\n' >helm/dexaflow/Chart.yaml &&
     git add -A && git commit -qm "release: prepare v9.9.9" &&
     echo one >a.txt && git add -A && git commit -qm "unrelated one" &&
     echo two >b.txt && git add -A && git commit -qm "unrelated two" &&
@@ -608,7 +608,7 @@ resume_target() { # <chart-version> <tag>
   [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = false ] ||
     die "--resume: this is a shallow clone — rev-list is truncated here, so the walk would tag the wrong commit (at depth 1, silently the tip). Run: git fetch --unshallow"
   tip="$(git rev-parse origin/main 2>/dev/null)" || die "--resume: cannot resolve origin/main"
-  on_tip="$(git show "${tip}:helm/leoflow/Chart.yaml" 2>/dev/null | awk '/^version:/{print $2; exit}')"
+  on_tip="$(git show "${tip}:helm/dexaflow/Chart.yaml" 2>/dev/null | awk '/^version:/{print $2; exit}')"
   [ -n "$on_tip" ] || die "--resume: no Chart.yaml version at ${tip:0:8}"
   [ "$on_tip" = "$cv" ] || die "--resume: main carries chart $on_tip, not $cv — main does not hold a prepared $tag."
 
@@ -618,8 +618,8 @@ resume_target() { # <chart-version> <tag>
   # Measured on this repo: three commits carried 0.4.5-rc.2, and the tip was two
   # unrelated PRs ahead of the prepare commit the tag belongs on. Walk back to
   # the commit that INTRODUCED cv — the same sha the non-resume path produces.
-  for c in $(git rev-list origin/main -- helm/leoflow/Chart.yaml); do
-    v="$(git show "${c}:helm/leoflow/Chart.yaml" | awk '/^version:/{print $2; exit}')"
+  for c in $(git rev-list origin/main -- helm/dexaflow/Chart.yaml); do
+    v="$(git show "${c}:helm/dexaflow/Chart.yaml" | awk '/^version:/{print $2; exit}')"
     [ "$v" = "$cv" ] || break
     intro="$c"
   done
@@ -951,7 +951,7 @@ main() {
   # Re-cut guard: the target version must differ from what main already carries,
   # so `--yes` with a fat-fingered or already-released version can't silently
   # re-cut the current line.
-  local cur; cur="$(git show origin/main:helm/leoflow/Chart.yaml | awk '/^version:/{print $2; exit}')"
+  local cur; cur="$(git show origin/main:helm/dexaflow/Chart.yaml | awk '/^version:/{print $2; exit}')"
   [ "$cv" != "$cur" ] || die "chart on main is already $cur — nothing to cut (re-cut of the same version?)"
 
   local branch="release/$tag"
@@ -978,7 +978,7 @@ main() {
   # plain `git add <dir>` stages additions but not removals: the prepare PR
   # would merge the entries into the CHANGELOG and leave every fragment behind,
   # to be folded in a second time at the next cut.
-  git add helm/leoflow/Chart.yaml helm/leoflow/README.md CHANGELOG.md
+  git add helm/dexaflow/Chart.yaml helm/dexaflow/README.md CHANGELOG.md
   git add -A .changes 2>/dev/null || true
   git commit -q -m "release: prepare $tag" || die "nothing to commit (already prepared?)"
   git push -u origin "$branch" -q || die "pushing $branch failed"
@@ -995,7 +995,7 @@ main() {
   log "PR #$pr merged"
   sleep 8; git fetch origin main -q
   sha="$(git rev-parse origin/main)"
-  [ "$(git show "$sha:helm/leoflow/Chart.yaml" | awk '/^version:/{print $2;exit}')" = "$cv" ] || die "guard: Chart at $sha is not $cv"
+  [ "$(git show "$sha:helm/dexaflow/Chart.yaml" | awk '/^version:/{print $2;exit}')" = "$cv" ] || die "guard: Chart at $sha is not $cv"
   fi
 
   log "main CI on merge commit ${sha:0:8}"

@@ -21,7 +21,7 @@ func TestReleaseBaseTag(t *testing.T) {
 }
 
 func TestBaseImageRef(t *testing.T) {
-	const repo = "ghcr.io/dexadata/leoflow-runtime"
+	const repo = "ghcr.io/dexadata/dexaflow-runtime"
 	cases := map[string]string{
 		// GoReleaser stamps the CLI version WITHOUT the leading v; the published base
 		// tag ALWAYS has it. Both forms must resolve to the same py<ver>-v<X> tag.

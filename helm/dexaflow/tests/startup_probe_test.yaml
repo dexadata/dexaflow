@@ -1,0 +1,119 @@
+suite: startup probe (a slow boot must not be a restart loop)
+templates:
+  # secret.yaml is in scope so the deployment's checksum/secret include resolves;
+  # helm-unittest only loads the templates named here.
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  # #1083 was a boot-path dependency that withheld the HTTP listener. Liveness
+  # and readiness both point at that listener, so the kubelet's answer to a slow
+  # boot was to restart the container, which is the wrong one: each cycle was
+  # recorded as `Completed exit=0` and the cause was never surfaced. A
+  # startupProbe suppresses liveness and readiness until boot finishes, so a slow
+  # boot becomes "not ready" instead of "killed and restarted", and only a boot
+  # that exceeds the whole budget restarts.
+  - it: renders a startupProbe on the same endpoint liveness uses
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          value: http
+
+  - it: the startup budget is larger than the liveness budget it replaces
+    template: deployment.yaml
+    # The whole point. With liveness at 10 + 3*20 = 70s, a startup budget at or
+    # below that would leave the restart loop exactly where it was. 5 * 36 = 180s
+    # is sized from the server's own boot bounds: the Postgres connect retry is
+    # 30s and runs twice (request pool + probe pool), the pod-informer warm-up is
+    # bounded at 10s (#1141), and cloud credential detection and OIDC discovery
+    # sit on top of those with no bound of their own.
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.periodSeconds
+          value: 5
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.failureThreshold
+          value: 36
+
+  - it: the scheduler role probes the port it actually serves
+    set:
+      split.enabled: true
+      # The chart refuses split unless every replica can read the same task logs,
+      # so the split case has to satisfy that guard before it can assert anything
+      # about probes. Same shape ha_posture_test.yaml uses.
+      logs.persistence.accessMode: ReadWriteMany
+    template: deployment.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          value: metrics
+
+  - it: can be turned off for an operator who wants the old behaviour
+    template: deployment.yaml
+    set:
+      probes.startup.enabled: false
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].startupProbe
+
+  # The case above pins the shipped numbers, which is not the same as pinning the
+  # invariant: 5 * 24 could become 10 * 12 harmlessly, and an operator's
+  # `--set probes.startup.failureThreshold=3` breaks it without touching a
+  # default. The property is what matters, so the render enforces it.
+  - it: refuses a startup budget that does not exceed the liveness budget
+    template: deployment.yaml
+    set:
+      probes.startup.failureThreshold: 3
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            probes.startup gives boot a budget of 15s (periodSeconds 5 *
+            failureThreshold 3), which is not more than the 70s the liveness probe
+            would have allowed (initialDelaySeconds 10 + periodSeconds 20 *
+            failureThreshold 3). The startup gate exists to give a slow boot MORE
+            room than liveness did: at or below the liveness budget it only
+            changes which probe kills the container, and the restart loop leoflow
+            hit in #1083 stays exactly where it was. Raise
+            probes.startup.failureThreshold or probes.startup.periodSeconds, or
+            set probes.startup.enabled=false to hand the boot back to liveness
+            deliberately.
+
+  - it: does not apply the budget rule to an install that turned the gate off
+    template: deployment.yaml
+    set:
+      probes.startup.enabled: false
+      probes.startup.failureThreshold: 3
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].startupProbe
+
+  # The gate has to render on BOTH split roles. Without this the only split
+  # coverage is documentIndex 1, so a `(ne .role "api")` slipped into the
+  # condition would take the gate off the internet-facing Deployment with every
+  # case still green.
+  - it: renders on the split api role too, not only the scheduler
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    template: deployment.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-api
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          value: http

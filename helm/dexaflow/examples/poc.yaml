@@ -1,0 +1,44 @@
+# Leoflow Helm values for evaluating the chart end-to-end on a single
+# Kubernetes cluster, using PLAIN OFFICIAL postgres + redis images as
+# ephemeral datastores (kubectl apply, no Bitnami chart).
+#
+# NOT FOR PRODUCTION. The minimal manifests in the companion README are
+# configured for evaluation (no persistence, no HA, no auth on Redis). For
+# real deploys, point database.url / redis.url at managed services (RDS,
+# ElastiCache, CloudSQL, Memorystore, your own HA cluster) and drop the
+# kubectl-apply step entirely.
+#
+# Companion recipe: helm/dexaflow/examples/README.md walks through the
+# datastores + helm install + verification.
+
+# Datastore endpoints — must match the Service names declared in the
+# README's `kubectl apply` step (deliberately the same names the old
+# Bitnami recipe used so existing installs upgrade in place).
+#
+# Tested against:
+#   postgres:16-alpine  (Service: pg-postgresql)
+#   redis:7-alpine      (Service: redis-master)
+database:
+  url: postgres://leoflow:leoflow-poc@pg-postgresql:5432/leoflow?sslmode=disable
+redis:
+  url: redis://redis-master:6379/0
+
+# Fixture credentials. Replace before any real use, even for a temporary
+# demo on a shared cluster.
+#
+# secretKey: MUST be exactly 32 raw bytes (or 64-char hex / base64-encoded
+# 32 bytes). The string below is verified at exactly 32 bytes so the AES-
+# 256-GCM init in the server succeeds out-of-the-box; without that, the
+# server logs a warning and the Connections API returns 503 — the recipe's
+# Connection-management evaluation fails silently. Generate a real key
+# with `openssl rand -hex 32` (64 hex chars = 32 bytes). NOT -hex 16: that
+# emits 32 chars, taken as 32 RAW bytes — 128 bits of entropy, silently.
+auth:
+  jwtSecret: leoflow-poc-jwt-please-replace-32B
+secretKey: leoflow-poc-replace-with-32B-key
+bootstrap:
+  password: leoflow-poc-admin
+
+# Single replica for evaluation. The scheduler leader-elects, so replicaCount
+# > 1 is HA-safe in production — but a single replica keeps the PoC light.
+replicaCount: 1

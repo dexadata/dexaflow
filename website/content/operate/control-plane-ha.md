@@ -84,10 +84,10 @@ Postgres advisory lock — and the API serves **active-active** from every repli
 ### One switch: the HA profile
 
 The chart ships a complete overlay,
-[`helm/leoflow/examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/examples/values-ha.yaml):
+[`helm/dexaflow/examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
 
 ```bash
-helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <x.y.z> \
+helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -n leoflow -f values-ha.yaml
 ```
 
@@ -284,7 +284,7 @@ Recommended: set logs.persistence.enabled=false and ship task logs to object
 storage (logs.sink.provider=s3|gcs with logs.sink.bucket). Alternative:
 logs.persistence.accessMode=ReadWriteMany on an RWX StorageClass (EFS, Filestore,
 Azure Files, NFS, CephFS, Longhorn-rwx). Or keep a single replica. See
-helm/leoflow/examples/values-ha.yaml.
+helm/dexaflow/examples/values-ha.yaml.
 ```
 
 Safe-by-default means exactly this: HA can never silently deploy onto a volume

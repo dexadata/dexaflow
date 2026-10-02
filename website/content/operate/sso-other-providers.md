@@ -81,5 +81,5 @@ The callback (`.../api/v2/auth/oidc/callback`) must be registered with the IdP
 exactly as configured in `auth.oidc.redirectUrl`: the browser's URL for the
 control plane, `https://`, never the in-cluster Service name. This is identical
 across every IdP; see the worked example in
-`helm/leoflow/examples/values-oidc-google.yaml` for the shape of the values
+`helm/dexaflow/examples/values-oidc-google.yaml` for the shape of the values
 file (swap `issuer`, `tenantClaim` and `tenantClaims` for your provider).

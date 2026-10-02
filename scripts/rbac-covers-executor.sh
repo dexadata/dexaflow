@@ -22,7 +22,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 EXEC_DIR="internal/executor"
-CHART="helm/leoflow"
+CHART="helm/dexaflow"
 fail=0
 
 # Go clientset method -> Kubernetes RBAC resource name.

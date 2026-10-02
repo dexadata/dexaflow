@@ -439,7 +439,7 @@ passes with the CNI doing nothing at all.
 
 Turning warm pools on is not one flag. The chart refuses to render without
 `auth.agentTokenTransport=exchange` **and** `auth.secretLivenessMode=enforce`
-(`helm/leoflow/templates/deployment.yaml:199-201`), and the server enforces the
+(`helm/dexaflow/templates/deployment.yaml:199-201`), and the server enforces the
 same coupling at boot, so an install that moved one would CrashLoopBackOff. The
 reason is a real invariant (ADR 0058 D2): a warm pod outlives the attempt it was
 created for, so a credential that outlives an attempt would let a superseded

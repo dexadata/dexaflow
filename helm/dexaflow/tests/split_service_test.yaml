@@ -1,0 +1,66 @@
+suite: split Services route each role's ports to its own pods (ADR 0049)
+templates:
+  - service.yaml
+release:
+  name: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  split.enabled: true
+tests:
+  - it: renders two Services when split.enabled
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: the api Service exposes http + metrics and selects only api pods
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-api
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: api
+      - contains:
+          path: spec.ports
+          content:
+            name: http
+            port: 8080
+            targetPort: http
+            protocol: TCP
+      # The api serves no gRPC — that port belongs to the scheduler Service.
+      - notContains:
+          path: spec.ports
+          content:
+            name: grpc
+            port: 9091
+            targetPort: grpc
+            protocol: TCP
+
+  - it: the scheduler Service exposes grpc + metrics and selects only scheduler pods
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: scheduler
+      # Task pods dial this Service's gRPC to report state (agentControlPlaneAddr).
+      - contains:
+          path: spec.ports
+          content:
+            name: grpc
+            port: 9091
+            targetPort: grpc
+            protocol: TCP
+      # The scheduler serves no HTTP API, so its Service exposes no http port.
+      - notContains:
+          path: spec.ports
+          content:
+            name: http
+            port: 8080
+            targetPort: http
+            protocol: TCP

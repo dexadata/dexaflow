@@ -11,7 +11,7 @@
 #   bash scripts/helm-template-checks.sh
 set -euo pipefail
 
-CHART="helm/leoflow"
+CHART="helm/dexaflow"
 if [ ! -f "$CHART/Chart.yaml" ]; then
   echo "helm-template-checks: $CHART not found; run from the repo root" >&2
   exit 2
@@ -90,13 +90,13 @@ expect_in_job 'runAsNonRoot: true' "runAsNonRoot:true (restricted PSA gate)"
 expect_in_job 'runAsUser: 65532'   "runAsUser:65532 (distroless nonroot UID)"
 
 # Regression guard for PR #171: the PoC values fixture (the recipe in
-# helm/leoflow/examples/) shipped with a 34-byte secretKey, which
+# helm/dexaflow/examples/) shipped with a 34-byte secretKey, which
 # silently broke ParseKey (AES-256 requires exactly 32 bytes) and made
 # Connection management 503 for anyone following the recipe verbatim.
-# Validate every YAML fixture under helm/leoflow/examples/ that sets
+# Validate every YAML fixture under helm/dexaflow/examples/ that sets
 # `secretKey:` so a future fixture edit can't repeat the same class of
 # bug. The check is plain bash — no python / yq dependency.
-for fixture in helm/leoflow/examples/*.yaml; do
+for fixture in helm/dexaflow/examples/*.yaml; do
   [ -f "$fixture" ] || continue
   # `|| true` because the script runs under `set -o pipefail` and grep exits 1 when
   # a fixture legitimately sets no secretKey (an SSO example needs none): without it

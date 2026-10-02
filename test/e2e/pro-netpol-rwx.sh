@@ -80,7 +80,7 @@ kubectl -n "$NS" create configmap leoflow-agent-ca --from-file=ca.crt=/tmp/a.crt
 
 # ── helm install: split + RWX shared logs + netpol scoped to a probe label ──────
 log "helm install split.enabled=true, RWX logs (NFS), netpol ingress scoped to a label"
-helm install leoflow helm/leoflow -n "$NS" \
+helm install leoflow helm/dexaflow -n "$NS" --set nameOverride=leoflow \
   --set image.repository=leoflow-server --set image.tag=ci --set image.pullPolicy=IfNotPresent \
   --set migrations.image.repository=leoflow-migrate --set migrations.image.tag=ci --set migrations.image.pullPolicy=IfNotPresent \
   --set database.url='postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable' \

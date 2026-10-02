@@ -37,7 +37,7 @@
 | [DAG authoring](https://dexaflow.dexadata.ai/author-dags/dag-authoring/) · [Variables & Connections](https://dexaflow.dexadata.ai/author-dags/variables-connections/) | write a DAG; the Lite → deploy lifecycle |
 | [**Map-reduce for ML**](https://dexaflow.dexadata.ai/author-dags/map-reduce/) | fan-out + reduce as a Python list comprehension |
 | [CI/CD & deploy examples](https://dexaflow.dexadata.ai/operate/cicd-deploy/) | GitHub Actions · GitLab · Cloud Build/Run · generic |
-| [Helm chart](helm/leoflow/README.md) | Pro install: values reference, hardening, PoC recipe |
+| [Helm chart](helm/dexaflow/README.md) | Pro install: values reference, hardening, PoC recipe |
 | [HTTP API (Scalar)](https://dexaflow.dexadata.ai/api-reference.html) · [Go packages](https://dexaflow.dexadata.ai/reference/go/) · [MCP server](https://dexaflow.dexadata.ai/reference/mcp/) | API references & the LLM-agent surface |
 | [Concepts & glossary](https://dexaflow.dexadata.ai/concepts/core-concepts/) · [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/) · [ADRs](https://dexaflow.dexadata.ai/project/adrs/) | the model, the *why*, and every major decision |
 | [Troubleshooting](https://dexaflow.dexadata.ai/operate/troubleshooting/) · [Security policy](SECURITY.md) | when things break; how to report a vulnerability |
@@ -101,7 +101,7 @@ Postgres 13+ and Redis 6+ are required (the chart fails the install otherwise �
 embedded datastores are Lite-only). Managed datastores work out of the box
 (Cloud SQL / RDS / Memorystore / ElastiCache / Azure Cache), with optional
 `caConfigMap` knobs for verified TLS. See the
-**[chart docs](helm/leoflow/README.md)**.
+**[chart docs](helm/dexaflow/README.md)**.
 
 Full guide for both tracks → **[Installation](https://dexaflow.dexadata.ai/get-started/installation/)**.
 
@@ -181,7 +181,7 @@ leoflow compile .              # generates Dockerfile, builds image, produces da
 leoflow push ./dag.json        # registers with the control plane
 ```
 
-That is the entire developer surface. The CLI builds the image on the published Leoflow task base (`ghcr.io/dexadata/leoflow-runtime:py3.11`, selected by `python_version`), pushes to your registry, and registers a versioned DAG. The Airflow UI shows it at the next refresh.
+That is the entire developer surface. The CLI builds the image on the published Leoflow task base (`ghcr.io/dexadata/dexaflow-runtime:py3.11`, selected by `python_version`), pushes to your registry, and registers a versioned DAG. The Airflow UI shows it at the next refresh.
 
 ## Native map-reduce for ML/AI
 
@@ -362,7 +362,7 @@ TOKEN=$(./bin/leoflow auth create-token --username admin@leoflow.local --passwor
 ./bin/leoflow push my-dag/dag.json --token "$TOKEN"
 ```
 
-> **Two dev environments.** `make dev-up` runs Postgres + Redis as plain Docker containers on the host for a fast inner loop (control plane on the host). For full in-cluster execution (control plane and dependencies on a local Kubernetes cluster, mirroring production and exercising real task pods), the [Helm chart](helm/leoflow/README.md) is installable on any K8s cluster — chart-test CI gates every change with `helm lint` + `helm-unittest` (41 tests) + kind install/upgrade smoke. Task execution is on Kubernetes only (ADR 0015); the host containers are dev dependencies, not the execution path.
+> **Two dev environments.** `make dev-up` runs Postgres + Redis as plain Docker containers on the host for a fast inner loop (control plane on the host). For full in-cluster execution (control plane and dependencies on a local Kubernetes cluster, mirroring production and exercising real task pods), the [Helm chart](helm/dexaflow/README.md) is installable on any K8s cluster — chart-test CI gates every change with `helm lint` + `helm-unittest` (41 tests) + kind install/upgrade smoke. Task execution is on Kubernetes only (ADR 0015); the host containers are dev dependencies, not the execution path.
 
 > The Airflow 3.2.1 UI ships embedded in the server and is served at `/` (see the one-command demo above and `docs/ui-compatibility.md`). The Scalar API reference is at `/docs`. Load tests are the remaining Phase 6 work.
 
