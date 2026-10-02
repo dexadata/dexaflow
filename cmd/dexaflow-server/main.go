@@ -629,11 +629,11 @@ type oidcNameChecker interface {
 // are the shapes that are correct and still cannot work, because the name is
 // fine and the row is missing:
 //
-//   - a tenant_claims VALUE naming a tenant that does not exist. Nothing in this
-//     project creates a tenant: INSERT INTO tenants appears once, in migration
-//     001, creating "default". No API, CLI, chart setting or later migration
-//     adds another. So any other name denies every login carrying that claim
-//     value, and no supported action makes it start working.
+//   - a tenant_claims VALUE naming a tenant that does not exist. The
+//     migrations create only "default" (INSERT INTO tenants appears once, in
+//     001); any other tenant exists only once an operator creates it, through
+//     the service API (PUT /api/v2/service/tenants/{name}, #1283). Until then
+//     every login carrying that claim value is denied.
 //   - a default_role or role_mappings value naming a role that does not exist
 //     for the resolved tenant. The ladder (viewer, editor, operator, admin) is
 //     seeded for "default" alone. This one matters because "set default_role to
@@ -676,9 +676,9 @@ func oidcNameWarnings(ctx context.Context, ck oidcNameChecker, c config.AuthSect
 		case !ok:
 			out = append(out, configWarning{
 				Msg: tenantsKey + " maps " + quotedList(claims) + " to the tenant " + quoted(tenant) +
-					", which does not exist. Every login carrying those claim values is denied, and nothing in Dexaflow " +
-					"creates a tenant: the only one is " + quoted("default") + ", created by the first migration. " +
-					"Map them to " + quoted("default") + " unless you created this tenant yourself",
+					", which does not exist. Every login carrying those claim values is denied. The migrations create only " +
+					quoted("default") + "; create " + quoted(tenant) + " through the service API " +
+					"(PUT /api/v2/service/tenants/" + tenant + ", enabled by auth.service_token), or map them to " + quoted("default"),
 				Key:        tenantsKey,
 				Value:      tenant,
 				MissingKey: tenantsKey,
@@ -1420,6 +1420,11 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Operator service API (#1283): off unless auth.service_token is set.
+		ServiceToken:   cfg.Auth.ServiceToken,
+		ServiceTenants: repo,
+		// The service API links users only in tenants the issuer may sign in to.
+		ServiceAllowedTenants: cfg.Auth.TrustedIssuer.AllowedTenants,
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 	})

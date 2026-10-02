@@ -276,6 +276,10 @@ auth:
   existingSecret: ""
   # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
   tokenTtlSeconds: 3600
+  # -- Bearer token for the operator service API under `/api/v2/service/` (#1283), which creates tenants (with the built-in roles and default pool) and links passwordless users to `trustedIssuer`. At least 32 characters; generate with `openssl rand -base64 48`. Stored in the chart Secret. It is a root-level credential: whoever holds it can create tenants and grant any role, admin included, in every tenant `trustedIssuer.allowedTenants` covers. Rotate it by changing the Secret and restarting. Empty (the default) leaves the service API off.
+  serviceToken: ""
+  # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.
+  serviceTokenExistingSecret: ""
   # -- Send UI visitors without a session to your own sign-in instead of Leoflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Leoflow session. Absolute `http(s)` URL; empty (the default) keeps Leoflow's page. `/api/v2/auth/login?local=1` still reaches Leoflow's page, so break-glass access survives an outage of your sign-in.
   externalSigninUrl: ""
   # -- Where sign-out lands after clearing the Leoflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Leoflow's sign-in page.
@@ -349,7 +353,7 @@ auth:
     defaultRole: ""
     # -- Which claim identifies the tenant: `tid` on Entra, `hd` on Google Workspace. REQUIRED with `enabled: true`, together with `tenantClaims` it is the tenant pin, and the chart refuses to render without both.
     tenantClaim: ""
-    # -- Maps each accepted `tenantClaim` VALUE → a Dexaflow tenant name. REQUIRED and non-empty with `enabled: true`. A claim value that is not a key here is rejected with a generic 403 whose cause reaches only the audit log (which, in an SSO-only deployment, nobody can log in to read (#1143)) and it never falls back to the `default` tenant. This is the second key that cannot travel as an env var, so it too is written into the mounted `config.yaml` with its keys quoted: a Google `hd` value is always a dotted domain. Example: `{"example.com": "default"}`. The VALUE must name a tenant that already exists: `default` is created by the first migration and nothing in Dexaflow creates another, so map to it unless you created the tenant yourself. The server checks this at boot and warns.
+    # -- Maps each accepted `tenantClaim` VALUE → a Dexaflow tenant name. REQUIRED and non-empty with `enabled: true`. A claim value that is not a key here is rejected with a generic 403 whose cause reaches only the audit log (which, in an SSO-only deployment, nobody can log in to read (#1143)) and it never falls back to the `default` tenant. This is the second key that cannot travel as an env var, so it too is written into the mounted `config.yaml` with its keys quoted: a Google `hd` value is always a dotted domain. Example: `{"example.com": "default"}`. The VALUE must name a tenant that already exists: the first migration creates `default`, and any other must be created through the service API (`PUT /api/v2/service/tenants/<name>`, enabled by `auth.serviceToken`) before it can be mapped. The server checks this at boot and warns.
     tenantClaims: {}
     # -- Login-level email-domain allowlist layered ON TOP of the tenant pin, not a replacement for it. Checked only after the pin and `email_verified` have passed, so the domain is trustworthy by then. Empty (the default) imposes no extra restriction. It gates EVERY OIDC login, not only JIT-provisioned ones. Rendered comma-joined, omitted when empty.
     allowedEmailDomains: []

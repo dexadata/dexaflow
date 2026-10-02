@@ -100,11 +100,11 @@ func oidcAuthFor(mut func(*config.AuthSection)) config.AuthSection {
 // this family: names that are syntactically fine, pass every config gate, and
 // refer to rows that do not exist.
 //
-// Nothing in this project creates a tenant. INSERT INTO tenants appears exactly
-// once, in migration 001, creating "default"; no API, CLI, chart setting or
-// later migration adds another. So a tenant_claims entry mapping a claim value
-// to any other name boots green and denies every login carrying it, behind the
-// same generic 403 as everything else. The role ladder is seeded for "default"
+// The migrations create only "default": INSERT INTO tenants appears exactly
+// once, in migration 001. Any other tenant exists only after an operator
+// creates it through the service API (#1283). So a tenant_claims entry mapping
+// a claim value to a name nobody created boots green and denies every login
+// carrying it, behind the same generic 403 as everything else. The role ladder is seeded for "default"
 // alone, so a typo in default_role does the same.
 //
 // Both are checkable at boot: Postgres is already connected and its schema
@@ -120,7 +120,7 @@ func TestNameWarningsCatchAConfigurationNothingCanSatisfy(t *testing.T) {
 			a.OIDC.TenantClaims = map[string]string{"corp.example": "acme"}
 		}))
 		if len(w) == 0 {
-			t.Fatal("no warning: every login carrying that claim value is denied, and nothing in this project can create the tenant")
+			t.Fatal("no warning: every login carrying that claim value is denied until someone creates the tenant")
 		}
 		if !strings.Contains(w[0].Msg, "acme") || !strings.Contains(w[0].Msg, "corp.example") {
 			t.Errorf("the warning names neither the tenant nor the claim value it is mapped from: %s", w[0].Msg)

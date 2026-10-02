@@ -1986,3 +1986,74 @@ func (r *Repository) ClearImportError(ctx context.Context, tenant, filename stri
 	}
 	return nil
 }
+
+// EnsureTenant creates the tenant name with the built-in roles, their
+// permissions and the default pool copied from the "default" tenant, all in
+// one transaction (#1283). It is idempotent: for an existing tenant it fills in
+// anything missing and reports created=false.
+func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string) (created bool, err error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("beginning ensure-tenant tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	n, err := qtx.InsertTenantIfMissing(ctx, queries.InsertTenantIfMissingParams{Name: name, DisplayName: strPtr(displayName)})
+	if err != nil {
+		return false, fmt.Errorf("inserting tenant: %w", err)
+	}
+	t, err := qtx.GetTenantByName(ctx, name)
+	if err != nil {
+		return false, fmt.Errorf("loading tenant: %w", err)
+	}
+	if err := qtx.CopyDefaultSystemRoles(ctx, t.ID); err != nil {
+		return false, fmt.Errorf("seeding roles: %w", err)
+	}
+	if err := qtx.CopyDefaultRolePermissions(ctx, t.ID); err != nil {
+		return false, fmt.Errorf("seeding role permissions: %w", err)
+	}
+	if err := qtx.InsertDefaultPool(ctx, t.ID); err != nil {
+		return false, fmt.Errorf("seeding default pool: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("committing ensure-tenant tx: %w", err)
+	}
+	return n > 0, nil
+}
+
+// TenantRolePermissions lists a tenant's built-in role grants as
+// "role:action:resource", so a caller can compare two tenants' ladders.
+func (r *Repository) TenantRolePermissions(ctx context.Context, tenant string) ([]string, error) {
+	return r.q.ListTenantRolePermissions(ctx, tenant)
+}
+
+// TenantHasDefaultPool reports whether the tenant has its default pool.
+func (r *Repository) TenantHasDefaultPool(ctx context.Context, tenant string) (bool, error) {
+	return r.q.TenantHasDefaultPool(ctx, tenant)
+}
+
+// EnsureIssuerUser makes sure a passwordless user linked to (provider,
+// subject) exists in tenant with exactly roles (#1283). A new user is created
+// with them; an existing one keeps its id and gets its roles reconciled. A
+// subject already linked in another tenant is domain.ErrConflict, an unknown
+// tenant domain.ErrNotFound and an unknown role domain.ErrValidation.
+func (r *Repository) EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error) {
+	existing, _, err := r.FindUserByOIDCSubject(ctx, provider, subject)
+	switch {
+	case errors.Is(err, auth.ErrUserNotFound):
+		if _, terr := r.tenantID(ctx, tenant); terr != nil {
+			return nil, false, terr
+		}
+		u, cerr := r.CreateOIDCUser(ctx, tenant, email, provider, subject, roles)
+		return u, cerr == nil, cerr
+	case err != nil:
+		return nil, false, err
+	case existing.TenantID != tenant:
+		return nil, false, domain.Safef(domain.ErrConflict, "subject is already linked in another tenant")
+	}
+	if err := r.ReconcileUserRoles(ctx, existing.ID, roles); err != nil {
+		return nil, false, err
+	}
+	existing.Roles = roles
+	return existing, false, nil
+}

@@ -832,3 +832,42 @@ func TestValidateTrustedIssuer(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadServerReadsServiceTokenFromEnv locks the #1283 key: off by default,
+// bound from the environment like the JWT secret.
+func TestLoadServerReadsServiceTokenFromEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Auth.ServiceToken != "" {
+		t.Fatalf("default service token = %q (%v), want empty", c.Auth.ServiceToken, err)
+	}
+	t.Setenv("LEOFLOW_AUTH_SERVICE_TOKEN", "a-service-token-of-at-least-32-chars")
+	c, err = LoadServer("", nil)
+	if err != nil || c.Auth.ServiceToken != "a-service-token-of-at-least-32-chars" {
+		t.Errorf("service token = %q (%v), want the value from the environment", c.Auth.ServiceToken, err)
+	}
+}
+
+// TestValidateServiceToken refuses a short service token: it is a bearer
+// credential that can create tenants and users.
+func TestValidateServiceToken(t *testing.T) {
+	cases := map[string]struct {
+		token   string
+		wantErr bool
+	}{
+		"unset":  {"", false},
+		"long":   {strings.Repeat("x", 32), false},
+		"short":  {"too-short", true},
+		"spaces": {strings.Repeat(" ", 40), true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.ServiceToken = tc.token
+			err := c.Validate()
+			if (err != nil) != tc.wantErr || (err != nil && !strings.Contains(err.Error(), "auth.service_token")) {
+				t.Errorf("Validate() = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -1,0 +1,63 @@
+suite: service API token reaches the chart through a Secret (#1283)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: an inline token goes into the chart Secret and the env reads it from there
+    set:
+      auth.serviceToken: a-service-token-of-at-least-32-characters
+    asserts:
+      - template: secret.yaml
+        documentIndex: 0
+        equal:
+          path: stringData.serviceToken
+          value: a-service-token-of-at-least-32-characters
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_SERVICE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: leoflow-credentials
+                key: serviceToken
+
+  - it: an existing Secret is read directly and nothing is inlined
+    set:
+      auth.serviceTokenExistingSecret: my-service-token
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_SERVICE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: my-service-token
+                key: serviceToken
+      - template: secret.yaml
+        documentIndex: 0
+        notExists:
+          path: stringData.serviceToken
+
+  - it: renders no variable when neither is set, so the service API stays off
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_SERVICE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: leoflow-credentials
+                key: serviceToken

@@ -453,6 +453,11 @@ type AuthSection struct {
 	// UI session for them with a token its own issuer signed (#1284). Empty
 	// Issuer disables it.
 	TrustedIssuer TrustedIssuerSection `mapstructure:"trusted_issuer"`
+	// ServiceToken enables the operator service API under /api/v2/service/
+	// (#1283), which creates tenants and links users to the trusted issuer. It
+	// is the bearer credential for that API: at least 32 characters, kept in a
+	// Secret. Empty disables the API.
+	ServiceToken string `mapstructure:"service_token"`
 	// ExternalSignInURL hands unauthenticated UI visitors to the operator's own
 	// sign-in instead of Leoflow's page, with the requested path in a `next`
 	// query parameter (#1288). The operator's flow is expected to return them
@@ -841,6 +846,7 @@ var serverDefaults = map[string]any{
 	// poll every 1s) was actually running at the 30s production default.
 	"ui.auto_refresh_interval_seconds":         0,
 	"auth.dev_no_auth":                         false,
+	"auth.service_token":                       "",
 	"auth.trusted_issuer.name":                 "",
 	"auth.trusted_issuer.issuer":               "",
 	"auth.trusted_issuer.jwks_url":             "",
@@ -1247,7 +1253,8 @@ func tenantPinHint(c *ServerConfig) string {
 
 // validatePlatformIntegration checks the settings an operator uses to serve
 // Leoflow from inside a larger platform: external sign-in and sign-out (#1288),
-// the trusted issuer (#1284), the home link (#1290) and branding (#1289).
+// the trusted issuer (#1284), the service API token (#1283), the home link
+// (#1290) and branding (#1289).
 func (c *ServerConfig) validatePlatformIntegration() error {
 	if err := validateExternalAuthURL("auth.external_signin_url", c.Auth.ExternalSignInURL); err != nil {
 		return err
@@ -1257,6 +1264,9 @@ func (c *ServerConfig) validatePlatformIntegration() error {
 	}
 	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
 		return err
+	}
+	if t := c.Auth.ServiceToken; t != "" && len(strings.TrimSpace(t)) < 32 {
+		return errors.New("auth.service_token must be at least 32 characters (generate one with `openssl rand -base64 48`)")
 	}
 	if err := validateHomeLink(c.UI.HomeLink); err != nil {
 		return err
