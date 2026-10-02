@@ -1,0 +1,21 @@
+-- Index the dag_runs.dag_version_id foreign key (performance item D2).
+--
+-- Deleting a DAG cascades to its versions, and for every deleted version the
+-- foreign key check looks for dag_runs rows still pointing at it. With no
+-- index on dag_version_id each check scanned dag_runs: 4.8 s to delete a DAG
+-- with 51 versions at 1M runs, all of it trigger time.
+--
+-- CONCURRENTLY so the build does not block writes to dag_runs. It cannot run
+-- inside a transaction, so this file holds this one statement and no
+-- BEGIN/COMMIT: golang-migrate sends the file as a single simple-protocol
+-- statement, which Postgres runs outside any transaction block.
+--
+-- If the build is interrupted (pod evicted, connection lost), Postgres leaves
+-- an INVALID index behind and golang-migrate marks version 27 dirty. IF NOT
+-- EXISTS would then skip the rebuild and keep the invalid index, so drop it
+-- before retrying:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_version;
+--   migrate -path migrations -database "$DATABASE_URL" force 26
+--   migrate -path migrations -database "$DATABASE_URL" up
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dag_runs_version ON dag_runs (dag_version_id);
