@@ -30,15 +30,15 @@ Pass the release tag **without** the leading `v` (tag `v0.4.0` → `--version 0.
 the chart `version`/`appVersion` move in lockstep with the tag, so this also pins
 the control-plane image. Installing from a source checkout
 (`helm install ./helm/dexaflow`) is still supported for unreleased branches — see
-the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#quick-start)
+the [chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#quick-start)
 for both paths and the full values surface.
 
 {{% alert title="Reference lives with the chart" color="info" %}}
 This operator-journey page is the entry point; the exhaustive values reference is
 maintained **alongside the chart source** so it never drifts from `values.yaml`:
 
-**[→ Helm chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md)**
-(including the [datastore compatibility matrix](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)).
+**[→ Helm chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md)**
+(including the [datastore compatibility matrix](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)).
 
 A first-class values reference on this site is a TODO for a later migration phase.
 {{% /alert %}}

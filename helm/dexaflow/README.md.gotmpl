@@ -122,7 +122,7 @@ of defaulting into it:
 | `podAnnotations: {karpenter.sh/do-not-disrupt: "true"}` | **EKS/Karpenter-only opt-in**, not set by default: exempts the node from voluntary disruption, trading maintenance friction for eviction protection |
 
 The one-switch HA profile is
-[`examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
+[`examples/values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
 two replicas spread across nodes, task logs in object storage
 (`logs.persistence.enabled: false` + `logs.sink.provider: s3|gcs` — the
 recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
@@ -286,7 +286,7 @@ Dexaflow releases in one cluster never collide on them.
 
 ### `execution.warmPoolsEnabled`
 
-Warm worker pools ([ADR 0058](https://github.com/dexadata/leoflow/blob/main/docs/adr/0058-warm-worker-pools.md))
+Warm worker pools ([ADR 0058](https://github.com/dexadata/dexaflow/blob/main/docs/adr/0058-warm-worker-pools.md))
 reuse one pod across many attempts of the **same DAG version**, instead of one pod
 per attempt. Off by default: every attempt gets a dedicated pod, which is today's
 behavior.
@@ -316,7 +316,7 @@ a real cluster, and unit tests do not clear it.
 
 `extraEnv` appends raw env entries to the control-plane container, for any
 `LEOFLOW_*` setting without a first-class value (the full surface is in
-[`docs/configuration.md`](https://github.com/dexadata/leoflow/blob/main/docs/configuration.md)):
+[`docs/configuration.md`](https://github.com/dexadata/dexaflow/blob/main/docs/configuration.md)):
 
 ```yaml
 extraEnv:
@@ -376,7 +376,7 @@ auth:
 ```
 
 A full worked example is in
-[`examples/values-oidc-google.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
+[`examples/values-oidc-google.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
 
 Three things the chart refuses at render time rather than letting them become a
 CrashLoopBackOff whose cause is visible only in container logs: the one channel a
@@ -426,8 +426,8 @@ chart deliberately won't fall back to embedded datastores — that's Lite's
 job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
 path is to install Bitnami's Postgres + Redis charts alongside Dexaflow:
 
-- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md)
-- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/poc.yaml)
+- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md)
+- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/poc.yaml)
 
 Three `helm install`s in total. **Not for production** — see the recipe for
 the production-shaped command.

@@ -234,7 +234,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install leoflow
-        run: curl -fsSL https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 -o /usr/local/bin/leoflow && chmod +x /usr/local/bin/leoflow
+        run: curl -fsSL https://github.com/dexadata/dexaflow/releases/latest/download/leoflow-linux-amd64 -o /usr/local/bin/leoflow && chmod +x /usr/local/bin/leoflow
       - name: Bootstrap the parser (uses the BYO Python from above)
         run: dexaflow setup
       - name: Compile + build + push image
@@ -264,7 +264,7 @@ deploy_dag:
     IMAGE: $CI_REGISTRY_IMAGE/my_pipeline:$CI_COMMIT_SHA
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - wget -qO /usr/local/bin/leoflow https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 && chmod +x /usr/local/bin/leoflow
+    - wget -qO /usr/local/bin/leoflow https://github.com/dexadata/dexaflow/releases/latest/download/leoflow-linux-amd64 && chmod +x /usr/local/bin/leoflow
     - dexaflow setup        # extracts the parser into ~/.dexaflow/ using the python3 from before_script
     - dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
     - dexaflow push dag.json --server "$DEXAFLOW_SERVER"   # DEXAFLOW_TOKEN from CI vars
@@ -285,7 +285,7 @@ steps:
         # BYO Python — Cloud Builders' docker image is Debian; install python3.
         # See #python-on-the-runner for the rationale.
         apt-get update -qq && apt-get install -y --no-install-recommends python3
-        curl -fsSL https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 -o /usr/bin/leoflow && chmod +x /usr/bin/leoflow
+        curl -fsSL https://github.com/dexadata/dexaflow/releases/latest/download/leoflow-linux-amd64 -o /usr/bin/leoflow && chmod +x /usr/bin/leoflow
         dexaflow setup    # extracts the parser into ~/.dexaflow/ using the python3 just installed
         IMAGE="$_REGION-docker.pkg.dev/$PROJECT_ID/dags/my_pipeline:$SHORT_SHA"
         dexaflow compile dags/my_pipeline --image "$$IMAGE" --build --push -o dag.json
@@ -341,8 +341,8 @@ cert-manager — from its published OCI artifact
 or from source on `main` for the bleeding edge
 (`helm install lf ./helm/dexaflow …`). See [Install Pro](/get-started/installation/#install-pro).
 The chart is installable today and in validation — see the
-[Helm chart](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md), the reproducible
-[Kubernetes test setup](https://github.com/dexadata/leoflow/blob/main/deploy/k8s/README.md)
+[Helm chart](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md), the reproducible
+[Kubernetes test setup](https://github.com/dexadata/dexaflow/blob/main/deploy/k8s/README.md)
 (the `deploy/k8s` recipe is cloud-portable — it runs unchanged on EKS / GKE / AKS),
 [Operating modes](/concepts/editions/),
 and the [Roadmap](/project/roadmap/). The product proves itself in **Lite** first.

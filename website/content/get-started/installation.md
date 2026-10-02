@@ -29,7 +29,7 @@ One command installs Dexaflow Lite and bootstraps everything it needs — **no
 sudo, no system Python, no package manager**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh
 ```
 
 That script downloads the release archive for your OS/architecture, verifies
@@ -125,7 +125,7 @@ automatically. To verify the signature yourself:
 cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/leoflow' \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 ```
@@ -166,7 +166,7 @@ $ leoflow-mcp --version      # MCP server (see the MCP guide)
 
 | Variable | Effect |
 |---|---|
-| `DEXAFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/leoflow/releases) for the current tag. |
+| `DEXAFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/dexaflow/releases) for the current tag. |
 | `DEXAFLOW_NO_SETUP=1` | install binaries only; run `dexaflow setup` yourself later |
 | `DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin` | where to put the binaries |
 
@@ -240,7 +240,7 @@ Using RDS or Cloud SQL? Their certificates are signed by a CA the system trust
 store does not carry, so read [private CA](#if-your-postgres-uses-a-private-ca-rds-cloud-sql)
 below before running this.
 `--version` takes the chart version — the
-[latest release](https://github.com/dexadata/leoflow/releases) tag with the
+[latest release](https://github.com/dexadata/dexaflow/releases) tag with the
 leading `v` stripped (per SemVer2).
 
 #### If your Postgres uses a private CA (RDS, Cloud SQL)
@@ -303,7 +303,7 @@ this is only needed when you want `main`. Same required values, from the
 `helm/dexaflow` directory in the repo:
 
 ```bash
-git clone --depth 1 https://github.com/dexadata/leoflow   # current main
+git clone --depth 1 https://github.com/dexadata/dexaflow   # current main
 cd leoflow
 
 helm install lf ./helm/dexaflow -n leoflow --create-namespace \
@@ -319,7 +319,7 @@ helm install lf ./helm/dexaflow -n leoflow --create-namespace \
 The chart auto-generates the agent TLS cert regardless of image version, so
 this works on `main` today. Pin `--set image.tag` / `--set migrations.image.tag`
 to a published release tag (`v0.4.0-rc.2` shown — see the
-[releases](https://github.com/dexadata/leoflow/releases)); from a source
+[releases](https://github.com/dexadata/dexaflow/releases)); from a source
 checkout the image tags are not baked in, so set them explicitly. Add
 `--branch <TAG>` to the clone to install the chart at a specific tag instead of
 `main`.
@@ -358,7 +358,7 @@ agent TLS, above).
 
 Managed services are first-class — RDS / Cloud SQL / Azure Database for
 Postgres on the SQL side; ElastiCache / Memorystore / Azure Cache for Redis.
-See the chart's [Datastore compatibility](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)
+See the chart's [Datastore compatibility](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)
 table for tested versions; managed providers that present a per-instance or
 provider-specific CA expose a `caConfigMap` knob (Postgres and Redis sides
 respectively) for verified TLS.
@@ -381,7 +381,7 @@ For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job. The supported PoC path is to install plain Postgres + Redis
 manifests alongside the chart, then point Dexaflow at the in-cluster
-Services. Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md).
+Services. Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md).
 **Not for production.**
 {{% /alert %}}
 
@@ -486,7 +486,7 @@ then flip. Note what the observation period can and cannot tell you — the
 scope-warning trail covers only DAGs whose declarations still resolve, so it
 sees neither a DAG that declares nothing nor one whose declared names have since
 been deleted from the vault
-([#800](https://github.com/dexadata/leoflow/issues/800)).
+([#800](https://github.com/dexadata/dexaflow/issues/800)).
 {{% /alert %}}
 
 {{% alert title="The agent channel is server TLS, not mutual mTLS" color="info" %}}
@@ -522,7 +522,7 @@ plus `leoflow` and `leoflow-agent` binaries) are published by
 ```bash
 # Verify the server image at a release tag.
 cosign verify ghcr.io/dexadata/dexaflow-server:v0.4.8 \
-  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/leoflow' \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

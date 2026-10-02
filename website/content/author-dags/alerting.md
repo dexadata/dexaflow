@@ -204,5 +204,5 @@ firing on the terminal **DagRun** failure) and Airflow's per-task
 `on_failure_callback` (above), which runs in the task's pod on its terminal
 failure. `on_success` / `on_retry` callbacks and SLA-miss alerts are not wired
 yet (a loud compile error, never a silent drop) — tracked in
-[#424](https://github.com/dexadata/leoflow/issues/424).
+[#424](https://github.com/dexadata/dexaflow/issues/424).
 {{% /alert %}}

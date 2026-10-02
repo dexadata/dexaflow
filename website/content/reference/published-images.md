@@ -83,7 +83,7 @@ by digest, so both tag shapes are covered:
 
 ```bash
 cosign verify ghcr.io/dexadata/dexaflow-server:0.4.8 \
-  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/leoflow/.*' \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
