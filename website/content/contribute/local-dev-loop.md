@@ -14,7 +14,7 @@ Working on Dexaflow from source has **two inner loops**, and you pick by what yo
 changed:
 
 - **Iterating on a DAG** (Python/YAML) — use the
-  [`dexaflow lite` hot-reload loop](#the-leoflow-lite-hot-reload-loop): save a file,
+  [`dexaflow lite` hot-reload loop](#the-dexaflow-lite-hot-reload-loop): save a file,
   the watcher recompiles and registers a new version in seconds.
 - **Iterating on the control plane, agent, or CLI** (Go) — use
   [`make lite-redeploy`](#redeploying-go-changes-make-lite-redeploy): it rebuilds all
@@ -41,7 +41,7 @@ dexaflow lite dags/my_dag    # hot-reload at http://localhost:8088 (marked LITE)
 ```
 
 {{% alert title="Login" color="info" %}}
-If you ran [`dexaflow setup`](/get-started/installation/#what-leoflow-setup-does) (the
+If you ran [`dexaflow setup`](/get-started/installation/#what-dexaflow-setup-does) (the
 end-user installer does), Lite enforces a real **admin login** — recover it
 with `dexaflow lite reset-password`. A bare source checkout without that
 config falls back to no-auth (loopback only) with a warning, for a quick loop.

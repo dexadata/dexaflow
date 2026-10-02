@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh |
 
 That script downloads the release archive for your OS/architecture, verifies
 its SHA-256 against the signed checksums, installs the binaries to
-`~/.dexaflow/bin`, and then runs [`dexaflow setup`](#what-leoflow-setup-does).
+`~/.dexaflow/bin`, and then runs [`dexaflow setup`](#what-dexaflow-setup-does).
 
 ### What you need
 
@@ -55,7 +55,7 @@ gate. So:
 Docker, when present, is only the engine that **hosts the local k3d cluster** —
 it is never an executor itself. `dexaflow setup` **detects what's present and
 picks the highest path available**; without Docker it uses subprocess. Run
-[`dexaflow doctor`](#leoflow-doctor) anytime to see where you stand, and see
+[`dexaflow doctor`](#dexaflow-doctor) anytime to see where you stand, and see
 [Choosing an executor](/contribute/local-dev-loop/#choosing-an-executor) for the trade-offs.
 
 ### What `dexaflow setup` does

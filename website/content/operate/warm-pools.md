@@ -425,7 +425,7 @@ silent correction.
 The related auth knobs — `agent_token_transport`, `secret_liveness_mode`,
 `secret_scoping`, `max_attempt_credential_lifetime` — are documented on the
 [Agent credential transport](/operate/agent-credential-transport/) page and in the
-[Configuration reference](/reference/configuration/#server-environment-leoflow_).
+[Configuration reference](/reference/configuration/#server-environment-dexaflow_).
 
 ## See also
 

@@ -25,8 +25,8 @@
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/dexadata/dexaflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/dexadata/dexaflow)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13068/badge)](https://www.bestpractices.dev/projects/13068)
 
-[![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#leoflow-lite)
-[![Edition: Pro](https://img.shields.io/badge/edition-Pro-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#leoflow-pro-chart-installable)
+[![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-lite)
+[![Edition: Pro](https://img.shields.io/badge/edition-Pro-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-pro-chart-installable)
 
 ---
 

@@ -170,7 +170,7 @@ resolve, so neither a DAG that declares nothing nor a DAG whose declared names
 were since deleted from the vault ever appears in it
 ([#800](https://github.com/dexadata/dexaflow/issues/800)). All are
 operator-scoped and documented in the
-[Configuration reference](/reference/configuration/#server-environment-leoflow_).
+[Configuration reference](/reference/configuration/#server-environment-dexaflow_).
 
 ## See also
 
