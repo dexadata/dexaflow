@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"html"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -219,19 +220,46 @@ func (s *Server) StaticHandler() http.Handler {
 		h := w.Header()
 		h.Set("Cache-Control", cacheControl(r.URL.Path))
 		h.Set("Content-Type", entry.contentType)
-		body, etag := entry.identity, entry.etag
 		if entry.gzip != nil {
 			h.Add("Vary", "Accept-Encoding")
 			if acceptsGzip(r) {
-				body, etag = entry.gzip, entry.gzipETag
 				h.Set("Content-Encoding", "gzip")
+				h.Set("ETag", entry.gzipETag)
+				// The payload is the pinned, compile-time-embedded SPA bundle served
+				// with an explicit Content-Type: a trusted static asset, not user input.
+				http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(entry.gzip))
+				return
 			}
 		}
-		h.Set("ETag", etag)
-		// The payload is the pinned, compile-time-embedded SPA bundle served with
-		// an explicit Content-Type: a trusted static asset, not user input.
-		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
+		h.Set("ETag", entry.etag)
+		s.serveIdentity(w, r, name)
 	})
+}
+
+// serveIdentity streams a file uncompressed straight from the asset filesystem.
+// The embedded bundle already lives in the binary, so no heap copy is kept for
+// it; an embedded file is an io.ReadSeeker, which gives Range support.
+func (s *Server) serveIdentity(w http.ResponseWriter, r *http.Request, name string) {
+	f, err := s.fsys.Open(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			slog.Debug("ui static close failed", "name", name, "err", cerr)
+		}
+	}()
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		data, rerr := io.ReadAll(f)
+		if rerr != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		rs = bytes.NewReader(data)
+	}
+	http.ServeContent(w, r, name, time.Time{}, rs)
 }
 
 // Precompress reads and gzips every compressible file of the bundle up front, so
@@ -256,21 +284,20 @@ func (s *Server) Precompress() {
 
 // staticCache holds the served form of every static file built so far. A name
 // whose read fails is removed again, so unknown paths cannot grow the cache and
-// its size is bounded by the bundle (about 10 MB raw plus 3 MB gzipped for the
-// pinned Airflow UI).
+// its size is bounded by the gzipped bundle (about 3 MB for the pinned Airflow
+// UI): the raw bytes are not kept, identity is streamed from the bundle.
 type staticCache struct {
 	fsys    fs.FS
 	entries sync.Map // name -> *staticEntry
 }
 
-// staticEntry is one file ready to serve: its bytes, the gzip encoding when the
+// staticEntry is one file ready to serve: its type, the gzip encoding when the
 // type is compressible, and a strong ETag per encoding. once guards the build so
 // concurrent first requests compress the file a single time.
 type staticEntry struct {
 	once        sync.Once
 	err         error
 	contentType string
-	identity    []byte
 	etag        string
 	gzip        []byte
 	gzipETag    string
@@ -303,7 +330,6 @@ func (e *staticEntry) build(fsys fs.FS, name string) {
 	sum := sha256.Sum256(data)
 	tag := hex.EncodeToString(sum[:16])
 	e.contentType = contentType(name, data)
-	e.identity = data
 	e.etag = `"` + tag + `"`
 	if compressible(name) {
 		if gz, gerr := gzipBytes(data); gerr == nil {
@@ -354,7 +380,9 @@ func gzipBytes(data []byte) ([]byte, error) {
 	if err := gz.Close(); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	// Clone so the cache holds exactly the compressed bytes, not the slack the
+	// buffer grew while writing.
+	return bytes.Clone(buf.Bytes()), nil
 }
 
 // Index writes the SPA shell with <base href> set to basePath, so the bundled
