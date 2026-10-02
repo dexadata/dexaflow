@@ -33,6 +33,14 @@ resolve_install_dir() {
 	esac
 	printf '%s' "${HOME}/.dexaflow/bin"
 }
+# An install from before the rename keeps its state, and possibly its binaries,
+# in ~/.leoflow. Make ~/.dexaflow a link to it (as the binaries themselves do,
+# config.HomeDirIn) so an upgrade lands in the same directory that is already on
+# PATH, instead of a new copy shadowed by the old one.
+if [ -d "${HOME}/.leoflow" ] && [ ! -e "${HOME}/.dexaflow" ] && [ ! -L "${HOME}/.dexaflow" ]; then
+	ln -s .leoflow "${HOME}/.dexaflow" 2>/dev/null || true
+fi
+
 INSTALL_DIR="$(resolve_install_dir)"
 
 info() { printf '\033[36m==>\033[0m %s\n' "$1"; }

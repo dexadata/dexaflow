@@ -48,7 +48,7 @@ PF_PID=""
 SM_VAR_REGION="eu-west-external-99"
 SM_CONN_WAREHOUSE="postgres://svc:pw@warehouse.internal:5432/analytics"
 # LocalStack's in-cluster address the POD-SIDE resolver dials (cluster DNS).
-LOCALSTACK_ENDPOINT="http://localstack.leoflow.svc.cluster.local:4566"
+LOCALSTACK_ENDPOINT="http://localstack.dexaflow.svc.cluster.local:4566"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 dump_pods() {

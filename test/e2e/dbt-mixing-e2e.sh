@@ -11,7 +11,7 @@
 #
 # Requirements: k3d, kubectl, docker, jq, curl, dbt, python3, `make build`, dev DB.
 # On Linux/CI: LEOFLOW_E2E_HOST_ADDR=host.k3d.internal and PYTHONPATH=parser. A
-# stale ~/.leoflow parser cache (issue #400) can be bypassed with
+# stale ~/.dexaflow parser cache (issue #400) can be bypassed with
 # LEOFLOW_E2E_PARSER_CMD.
 set -euo pipefail
 

@@ -73,8 +73,8 @@ kubectl -n "$NS" rollout status deploy/postgres --timeout=150s
 kubectl -n "$NS" rollout status deploy/redis --timeout=150s
 kubectl -n "$NS" exec deploy/postgres -- pg_isready -U leoflow -d leoflow -t 60 >/dev/null
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout /tmp/a.key -out /tmp/a.crt \
-  -subj "/CN=leoflow.leoflow.svc.cluster.local" \
-  -addext "subjectAltName=DNS:leoflow-scheduler,DNS:leoflow.leoflow.svc.cluster.local" >/dev/null 2>&1
+  -subj "/CN=leoflow.dexaflow.svc.cluster.local" \
+  -addext "subjectAltName=DNS:leoflow-scheduler,DNS:leoflow.dexaflow.svc.cluster.local" >/dev/null 2>&1
 kubectl -n "$NS" create secret tls leoflow-agent-tls --cert=/tmp/a.crt --key=/tmp/a.key >/dev/null
 kubectl -n "$NS" create configmap leoflow-agent-ca --from-file=ca.crt=/tmp/a.crt >/dev/null
 

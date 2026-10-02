@@ -111,7 +111,7 @@ migrate -path migrations -database "$DB_URL" up >/dev/null 2>&1 || die "applying
 echo "==> leoflow setup"
 SETUP_OUT="$(HOME="$HOME_DIR" LEOFLOW_DATABASE_URL="$DB_URL" "$HOME_DIR/leoflow" setup --workspace "$HOME_DIR/ws" </dev/null 2>&1)"
 PW="$(printf '%s\n' "$SETUP_OUT" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
-HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.leoflow/config.yaml")"
+HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
 [ -n "$PW" ] && [ -n "$HASH" ] || die "setup did not produce an admin password/hash"
 
 echo "==> starting the control plane with REAL auth"

@@ -45,7 +45,7 @@ trap cleanup EXIT
 export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 export LEOFLOW_DATABASE_URL="$DB_URL"
 export LEOFLOW_LOGS_DIR="$TMP/logs"
-# Isolate HOME so Lite reads no ~/.leoflow/config.yaml admin hash and falls back
+# Isolate HOME so Lite reads no ~/.dexaflow/config.yaml admin hash and falls back
 # to no-auth loopback, so the API is reachable without a token.
 export HOME="$TMP/home"
 mkdir -p "$HOME"
