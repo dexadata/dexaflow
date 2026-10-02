@@ -44,6 +44,12 @@ type fakeClient struct {
 	conns              map[string]string
 	getVarsErr         error
 	getConnsErr        error
+	// batchErr, when set, makes FetchXComBatch fail with it (Unimplemented plays
+	// an older control plane). deferred names upstreams the batch defers.
+	batchErr   error
+	deferred   map[string]bool
+	batchCalls int
+	fetchCalls int
 }
 
 func (f *fakeClient) GetVariables(context.Context, *agentv1.GetVariablesRequest, ...grpc.CallOption) (*agentv1.GetVariablesResponse, error) {
@@ -84,6 +90,7 @@ func (f *fakeClient) AwaitAssignment(context.Context, ...grpc.CallOption) (grpc.
 }
 
 func (f *fakeClient) FetchXCom(_ context.Context, in *agentv1.FetchXComRequest, _ ...grpc.CallOption) (*agentv1.FetchXComResponse, error) {
+	f.fetchCalls++
 	if f.fetchXComErr != nil {
 		return nil, f.fetchXComErr
 	}
@@ -91,6 +98,30 @@ func (f *fakeClient) FetchXCom(_ context.Context, in *agentv1.FetchXComRequest, 
 		return resp, nil
 	}
 	return nil, status.Error(codes.NotFound, "no xcom for "+in.GetUpstreamTaskId())
+}
+
+func (f *fakeClient) FetchXComBatch(_ context.Context, in *agentv1.FetchXComBatchRequest, _ ...grpc.CallOption) (*agentv1.FetchXComBatchResponse, error) {
+	f.batchCalls++
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
+	if f.fetchXComErr != nil {
+		return nil, f.fetchXComErr
+	}
+	resp := &agentv1.FetchXComBatchResponse{}
+	for _, it := range in.GetItems() {
+		item := &agentv1.FetchXComBatchItem{UpstreamTaskId: it.GetUpstreamTaskId(), Key: it.GetKey()}
+		if v, ok := f.xcom[it.GetUpstreamTaskId()]; ok {
+			item.Found = true
+			if f.deferred[it.GetUpstreamTaskId()] {
+				item.Deferred = true
+			} else {
+				item.Value = v.GetValue()
+			}
+		}
+		resp.Items = append(resp.Items, item)
+	}
+	return resp, nil
 }
 
 func (f *fakeClient) PushXCom(_ context.Context, in *agentv1.PushXComRequest, _ ...grpc.CallOption) (*agentv1.PushXComResponse, error) {
