@@ -720,9 +720,11 @@ one makes the GC work harder near the ceiling instead.
 
 The fraction is computed here because the downward API cannot: a
 resourceFieldRef on limits.memory yields the whole limit, and its divisor must
-be a unit (1, 1Ki, 1Mi, ...), not a ratio. Only whole-number quantities are
-read; anything else fails the render with the way out, rather than shipping a
-guess.
+be a unit (1, 1Ki, 1Mi, ...), not a ratio. Any Kubernetes byte quantity is
+read: a whole or decimal number (1, 1.5, .5) with a binary suffix (Ki to Ei),
+a decimal suffix (k to E) or a decimal exponent (1e9, 2.5E8). Milli and
+smaller suffixes (m, u, n) and signs are refused, as is anything else: the
+render fails with the way out rather than shipping a guess.
 */}}
 {{- define "leoflow.goMemLimit" -}}
 {{- $pct := .Values.goMemLimit.percent -}}
@@ -738,13 +740,23 @@ guess.
 {{- if not $raw -}}
 {{- fail "goMemLimit.enabled requires resources.limits.memory: GOMEMLIMIT is a fraction of the container limit" -}}
 {{- end -}}
-{{- if not (regexMatch "^[0-9]+(Ki|Mi|Gi|Ti|k|M|G|T)?$" $raw) -}}
-{{- fail (printf "goMemLimit: cannot read resources.limits.memory %q; use a whole number with a Ki, Mi, Gi, Ti, k, M, G or T suffix, or leave goMemLimit off and set GOMEMLIMIT through extraEnv" $raw) -}}
+{{- $quantity := "^([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|[eE][+-]?[0-9]{1,2})?$" -}}
+{{- if not (regexMatch $quantity $raw) -}}
+{{- fail (printf "goMemLimit: cannot read resources.limits.memory %q; use a number (1, 1.5, .5) with a Ki, Mi, Gi, Ti, Pi, Ei, k, M, G, T, P or E suffix or a decimal exponent (1e9), or leave goMemLimit off and set GOMEMLIMIT through extraEnv" $raw) -}}
 {{- end -}}
-{{- $n := int64 (regexReplaceAll "[^0-9]" $raw "") -}}
-{{- $unit := regexReplaceAll "^[0-9]+" $raw "" -}}
-{{- $scale := get (dict "" 1 "k" 1000 "M" 1000000 "G" 1000000000 "T" 1000000000000 "Ki" 1024 "Mi" 1048576 "Gi" 1073741824 "Ti" 1099511627776) $unit -}}
-{{- $mib := div (mul $n $scale (int $pct)) 104857600 -}}
+{{- $num := regexFind "^([0-9]+(\\.[0-9]*)?|\\.[0-9]+)" $raw -}}
+{{- $unit := trimPrefix $num $raw -}}
+{{- $bytes := float64 (printf "0%s" $num) -}}
+{{- if regexMatch "^[eE][+-]?[0-9]" $unit -}}
+{{- $exp := int (substr 1 -1 $unit | trimPrefix "+") -}}
+{{- range until (int (max $exp (sub 0 $exp))) -}}
+{{- if gt $exp 0 -}}{{- $bytes = mulf $bytes 10 -}}{{- else -}}{{- $bytes = divf $bytes 10 -}}{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- $scale := get (dict "" 1 "k" 1e3 "M" 1e6 "G" 1e9 "T" 1e12 "P" 1e15 "E" 1e18 "Ki" 1024 "Mi" 1048576 "Gi" 1073741824 "Ti" 1099511627776 "Pi" 1125899906842624 "Ei" 1152921504606846976) $unit -}}
+{{- $bytes = mulf $bytes $scale -}}
+{{- end -}}
+{{- $mib := int64 (floor (divf (mulf $bytes (int $pct)) 104857600)) -}}
 {{- if lt $mib 1 -}}
 {{- fail (printf "goMemLimit: %d%% of resources.limits.memory %q is below 1MiB" (int $pct) $raw) -}}
 {{- end -}}
