@@ -395,15 +395,17 @@ type DatabaseSection struct {
 	MaxIdleConns int    `mapstructure:"max_idle_conns"`
 	// SchedulerMaxConns, when positive, gives the scheduler loop, its reapers
 	// and its janitors a pool of their own with this many connections, so API
-	// traffic that saturates the main pool cannot stall a scheduler tick. 0 (the
-	// default) keeps them on the main pool.
+	// traffic that saturates the main pool cannot stall a scheduler tick. Only
+	// a process with scheduler.enabled opens it. 0 (the default) keeps them on
+	// the main pool.
 	SchedulerMaxConns int `mapstructure:"scheduler_max_conns"`
 	// StatementTimeoutMS, when positive, sets statement_timeout on every
 	// connection of the main pool, which serves the API. It is never applied to
 	// the leader election pool (its session holds the scheduler's advisory
-	// lock), the health pool or the scheduler pool. Without a scheduler pool the
-	// scheduler shares the main pool and so the timeout too. 0 (the default)
-	// sets nothing.
+	// lock), the health pool or the scheduler pool, and the few writes that
+	// cascade over a DAG's history lift it for their own transaction. Without a
+	// scheduler pool the scheduler shares the main pool and so the timeout too.
+	// 0 (the default) sets nothing.
 	StatementTimeoutMS int `mapstructure:"statement_timeout_ms"`
 	// ConnMaxLifetimeJitterMS, when positive, adds up to this much random time
 	// to each connection's lifetime in the main, scheduler and health pools, so

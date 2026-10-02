@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/config"
@@ -83,17 +84,54 @@ func poolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 // from. It is poolConfig plus database.statement_timeout_ms, which belongs on
 // this pool alone: the leader pool's session holds the scheduler advisory lock,
 // the health pool must answer probes, and the scheduler pool runs maintenance
-// that is allowed to take its time. Set as a startup parameter, the timeout is
-// in force from the first statement of every connection and survives RESET ALL.
+// that is allowed to take its time.
+//
+// The timeout is set with SET as each connection opens, before the pool hands
+// it out, rather than sent as a startup parameter: PgBouncer rejects startup
+// parameters it does not track ("unsupported startup parameter") unless they
+// are listed in ignore_startup_parameters, which then drops them silently.
+// A session SET holds for a direct connection and for PgBouncer in session
+// mode; in transaction mode use a per role setting (ALTER ROLE ... SET
+// statement_timeout) instead and leave the key at 0.
 func mainPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	pc, err := poolConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 	if cfg.StatementTimeoutMS > 0 {
-		pc.ConnConfig.RuntimeParams["statement_timeout"] = strconv.Itoa(cfg.StatementTimeoutMS)
+		set := "SET statement_timeout = " + strconv.Itoa(cfg.StatementTimeoutMS)
+		pc.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+			if _, err := conn.Exec(ctx, set); err != nil {
+				return fmt.Errorf("setting statement_timeout: %w", err)
+			}
+			return nil
+		}
 	}
 	return pc, nil
+}
+
+// withoutStatementTimeout runs fn in a transaction with statement_timeout
+// lifted, for the few writes whose cost grows with the data they cascade
+// over (deleting a DAG, clearing its history, purging expired XCom rows) and
+// that must not be cut by database.statement_timeout_ms on the main pool.
+// SET LOCAL ends with the transaction, so the connection goes back to the
+// pool with the pool's timeout.
+func withoutStatementTimeout(ctx context.Context, pool txBeginner, q *queries.Queries, fn func(*queries.Queries) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return fmt.Errorf("lifting statement_timeout: %w", err)
+	}
+	if err := fn(q.WithTx(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	return nil
 }
 
 // schedulerPoolConfig builds the config of the scheduler's dedicated pool,

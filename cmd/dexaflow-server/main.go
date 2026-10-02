@@ -1125,7 +1125,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// when database.scheduler_max_conns is set, so API traffic cannot starve
 	// them; unset, schedPG is pg and nothing changes. The agent gRPC handlers
 	// above stay on the main pool with the repository they share with the API.
-	schedPG, releaseSchedPG, perr := pg.ForScheduler(ctx, cfg.Database)
+	schedPG, releaseSchedPG, perr := pg.ForScheduler(ctx, schedulerDatabase(cfg))
 	if perr != nil {
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
 		return nil, false, nil, fmt.Errorf("scheduler pool: %w", perr)
@@ -1734,6 +1734,18 @@ func startCleanup(ctx context.Context, idx *storage.XComIndex, sink logs.Sink, d
 			}
 		}
 	}()
+}
+
+// schedulerDatabase is the database section the scheduler side opens its
+// pool from. The dedicated pool (database.scheduler_max_conns) is only for a
+// process that runs the scheduler loop; with scheduler.enabled=false the
+// janitors stay on the main pool and no extra connections are opened.
+func schedulerDatabase(cfg *config.ServerConfig) config.DatabaseSection {
+	db := cfg.Database
+	if !cfg.Scheduler.Enabled {
+		db.SchedulerMaxConns = 0
+	}
+	return db
 }
 
 // lowDisk reports whether free is below the threshold (both in bytes).

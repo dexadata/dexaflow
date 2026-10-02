@@ -237,9 +237,9 @@ database:
   maxOpenConns: 20
   # -- Max idle DB connections kept in the pool. Should be ≤ `maxOpenConns`.
   maxIdleConns: 5
-  # -- Size of a dedicated pool for the scheduler loop, its reapers and janitors, so API traffic that holds every `maxOpenConns` connection cannot stall a scheduler tick. Counts on top of `maxOpenConns` per replica that runs the scheduler. 0 (default) keeps them on the main pool.
+  # -- Size of a dedicated pool for the scheduler loop, its reapers and janitors, so API traffic that holds every `maxOpenConns` connection cannot stall a scheduler tick. Counts on top of `maxOpenConns`, and is opened only by a replica that runs the scheduler (`config.scheduler.enabled`). 0 (default) keeps them on the main pool.
   schedulerMaxConns: 0
-  # -- `statement_timeout` in milliseconds for the main pool, which serves the API (30000 is a reasonable bound). Never applied to the leader election connection, the health checks, the scheduler pool or migrations. Without `schedulerMaxConns` the scheduler shares the main pool and so this timeout. 0 (default) sets none.
+  # -- `statement_timeout` in milliseconds for the main pool, which serves the API (30000 is a reasonable bound). Never applied to the leader election connection, the health checks, the scheduler pool or migrations; deleting a DAG, clearing its history and the XCom janitor lift it for their own transaction. Without `schedulerMaxConns` the scheduler shares the main pool and so this timeout, so set both together. Applied with `SET` after each connection opens, so it works through PgBouncer in session mode; in transaction mode set `statement_timeout` on the database role instead and leave this at 0. 0 (default) sets none.
   statementTimeoutMs: 0
   # -- Random extra lifetime, in milliseconds, added to each pooled connection so replicas started together do not all reconnect at once. 0 (default) adds none.
   connMaxLifetimeJitterMs: 0
