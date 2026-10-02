@@ -556,7 +556,7 @@ before enabling it in production.
 | `DEXAFLOW_OBSERVABILITY_LOG_FORMAT` | `json` | both | Control-plane log format: `json` (default) or `text`. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENABLED` | `true` | both | Enable OpenTelemetry trace export. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENDPOINT` | `localhost:4317` | both | OTLP collector endpoint (when OTel is enabled). |
-| `DEXAFLOW_OBSERVABILITY_OTEL_SAMPLE_RATIO` | `1` | both | Share of new root traces kept, from `0` to `1`. A request inside an already sampled trace (incoming `traceparent`) follows its parent. `1` traces every request; other values outside the range fail boot. |
+| `DEXAFLOW_OBSERVABILITY_OTEL_SAMPLE_RATIO` | `1` | both | Share of request traces kept, from `0` to `1`. An incoming `traceparent` header is not propagated, so every request starts its own trace and is sampled at this ratio; spans within a request follow its decision. `1` traces every request; other values outside the range fail boot. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_SKIP_PROBE_SPANS` | `false` | both | When `true`, no spans are recorded for `/healthz`, `/readyz` and `/static/*`. Their HTTP metrics are still recorded. |
 
 ### UI (`ui.*`)

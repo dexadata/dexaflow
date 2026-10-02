@@ -8,7 +8,9 @@ import (
 )
 
 // newSampler builds the trace sampler. ratio is the share of new root traces
-// kept; a request inside an already sampled trace follows its parent. With
+// kept; a child span follows its parent's decision. No propagator is
+// installed, so every request is a new root and an incoming traceparent does
+// not force sampling. With
 // skipProbes, health probes and static assets are dropped before recording.
 // ratio 1 without skipProbes matches the SDK default sampler.
 func newSampler(ratio float64, skipProbes bool) sdktrace.Sampler {

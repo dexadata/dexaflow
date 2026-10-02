@@ -681,8 +681,10 @@ type ObservabilitySection struct {
 type OTelSection struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Endpoint string `mapstructure:"endpoint"`
-	// SampleRatio is the share of new root traces kept (1 keeps every trace).
-	// A request inside an already sampled trace follows its parent.
+	// SampleRatio is the share of request traces kept (1 keeps every trace).
+	// No propagator is installed, so an incoming traceparent is ignored and
+	// every request starts a new root trace; spans within a request follow
+	// its root's decision.
 	SampleRatio float64 `mapstructure:"sample_ratio"`
 	// SkipProbeSpans drops spans for /healthz, /readyz and /static/*. Off by
 	// default (ADR 0062), so every request is traced as before.
