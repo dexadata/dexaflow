@@ -66,9 +66,14 @@ type warmFake struct {
 	specs       []*agentv1.TaskSpec
 	specIdx     int
 	tokenAtSpec []string
+	// streamOverride, when set, is returned by AwaitAssignment instead of stream.
+	streamOverride grpc.BidiStreamingClient[agentv1.WorkerMessage, agentv1.WorkAssignment]
 }
 
 func (c *warmFake) AwaitAssignment(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[agentv1.WorkerMessage, agentv1.WorkAssignment], error) {
+	if c.streamOverride != nil {
+		return c.streamOverride, nil
+	}
 	return c.stream, nil
 }
 
@@ -965,4 +970,136 @@ func TestWarmWorkerKeepsHomeWithoutAttemptHome(t *testing.T) {
 	if _, err := os.Stat(keep); err != nil {
 		t.Errorf("the shared temp root must be left alone without AttemptHome: %v", err)
 	}
+}
+
+// shmProbeCmd plants a file in the pod's shared memory dir on every attempt and
+// records whether the previous attempt's file was still there.
+type shmProbeCmd struct {
+	shm    string
+	sawShm []bool
+}
+
+func (c *shmProbeCmd) Run(_ context.Context, _, _ []string, _, _ io.Writer) (int, error) {
+	f := filepath.Join(c.shm, "sem.planted")
+	_, err := os.Stat(f)
+	c.sawShm = append(c.sawShm, err == nil)
+	_ = os.WriteFile(f, []byte("from an earlier attempt"), 0o600)
+	return 0, nil
+}
+
+// TestWarmWorkerAttemptHomeSweepsSharedMemory: /dev/shm is a pod-wide tmpfs that
+// stays writable on a read-only root, so in the X3.2 mode it is swept between
+// attempts like the /tmp emptyDir.
+func TestWarmWorkerAttemptHomeSweepsSharedMemory(t *testing.T) {
+	sharedTmp := t.TempDir()
+	shm := t.TempDir()
+	stream := &fakeAssignmentStream{
+		ctx: context.Background(),
+		assignments: []*agentv1.WorkAssignment{
+			{AssignmentId: "asg-1", AttemptToken: "tok-1"},
+			{AssignmentId: "asg-2", AttemptToken: "tok-2"},
+		},
+	}
+	tokens := NewTokenSource("bootstrap")
+	client := &warmFake{fakeClient: &fakeClient{}, stream: stream, tokens: tokens, specs: warmSpecs(2)}
+	cmd := &shmProbeCmd{shm: shm}
+	w := &WarmRunner{
+		StreamClient:  client,
+		WorkClient:    client,
+		AttemptTokens: tokens,
+		Cmd:           cmd,
+		Env:           []string{"PATH=/usr/bin"},
+		ScratchDir:    filepath.Join(sharedTmp, "leoflow-warm-123"),
+		AttemptHome:   true,
+		SharedTmpDir:  sharedTmp,
+		SharedMemDir:  shm,
+	}
+	if err := w.Run(context.Background(), "dagver-1"); err != nil {
+		t.Fatalf("WarmRunner.Run: %v", err)
+	}
+	if len(cmd.sawShm) != 2 {
+		t.Fatalf("attempts run = %d, want 2", len(cmd.sawShm))
+	}
+	if cmd.sawShm[1] {
+		t.Error("a file planted in the shared memory dir by attempt 1 was visible to attempt 2")
+	}
+}
+
+// slotFreeProbeStream checks, at the moment the worker reports SlotFree, whether
+// the files an attempt left behind are still on disk.
+type slotFreeProbeStream struct {
+	*fakeAssignmentStream
+	paths    []string
+	leftover []string
+}
+
+func (s *slotFreeProbeStream) Send(m *agentv1.WorkerMessage) error {
+	if m.GetSlotFree() != nil {
+		for _, p := range s.paths {
+			if _, err := os.Stat(p); err == nil {
+				s.leftover = append(s.leftover, p)
+			}
+		}
+	}
+	return s.fakeAssignmentStream.Send(m)
+}
+
+// TestWarmWorkerAttemptHomeSweepsBeforeSlotFree: in the X3.2 mode the worker
+// sweeps as soon as an attempt ends, before it reports SlotFree, so a generated
+// dbt profile or a HOME dotfile does not sit on an idle worker until the next
+// assignment arrives.
+func TestWarmWorkerAttemptHomeSweepsBeforeSlotFree(t *testing.T) {
+	sharedTmp := t.TempDir()
+	shm := t.TempDir()
+	scratch := filepath.Join(sharedTmp, "leoflow-warm-123")
+	inner := &fakeAssignmentStream{
+		ctx:         context.Background(),
+		assignments: []*agentv1.WorkAssignment{{AssignmentId: "asg-1", AttemptToken: "tok-1"}},
+	}
+	stream := &slotFreeProbeStream{
+		fakeAssignmentStream: inner,
+		paths: []string{
+			filepath.Join(sharedTmp, "leoflow", "dbt", "profiles.yml"),
+			filepath.Join(scratch, "home", ".local", "lib", "sitecustomize.py"),
+			filepath.Join(shm, "sem.planted"),
+		},
+	}
+	tokens := NewTokenSource("bootstrap")
+	client := &warmFake{fakeClient: &fakeClient{}, stream: inner, streamOverride: stream, tokens: tokens, specs: warmSpecs(1)}
+	home := &homeProbeCmd{sharedTmp: sharedTmp}
+	shmCmd := &shmProbeCmd{shm: shm}
+	w := &WarmRunner{
+		StreamClient:  client,
+		WorkClient:    client,
+		AttemptTokens: tokens,
+		Cmd:           multiCmd{home, shmCmd},
+		Env:           []string{"PATH=/usr/bin"},
+		ScratchDir:    scratch,
+		AttemptHome:   true,
+		SharedTmpDir:  sharedTmp,
+		SharedMemDir:  shm,
+	}
+	if err := w.Run(context.Background(), "dagver-1"); err != nil {
+		t.Fatalf("WarmRunner.Run: %v", err)
+	}
+	if len(home.homes) != 1 {
+		t.Fatalf("attempts run = %d, want 1", len(home.homes))
+	}
+	if len(stream.leftover) != 0 {
+		t.Errorf("files still on disk at SlotFree: %v", stream.leftover)
+	}
+}
+
+// multiCmd runs each CommandRunner in turn, returning the last exit code.
+type multiCmd []CommandRunner
+
+func (m multiCmd) Run(ctx context.Context, argv, env []string, stdout, stderr io.Writer) (int, error) {
+	code := 0
+	for _, c := range m {
+		var err error
+		if code, err = c.Run(ctx, argv, env, stdout, stderr); err != nil {
+			return code, err
+		}
+	}
+	return code, nil
 }
