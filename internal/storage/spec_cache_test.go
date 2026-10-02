@@ -142,3 +142,39 @@ func TestSpecCacheNotSharedMutated(t *testing.T) {
 			*again.Tasks[0].Retries)
 	}
 }
+
+// TestSpecCacheBuildsTaskGraphOncePerVersion pins that the scheduler's task
+// index is built when a version is cached, not per run or per tick: every read
+// of a version returns the same graph, and it indexes that version's tasks.
+func TestSpecCacheBuildsTaskGraphOncePerVersion(t *testing.T) {
+	getter := &countingVersionGetter{spec: domain.DAGSpec{
+		DagID: "etl",
+		Tasks: []domain.TaskSpec{
+			{TaskID: "extract"},
+			{TaskID: "load", DependsOn: []string{"extract"}},
+		},
+	}}
+	cache := newSpecCache()
+	ctx := context.Background()
+	v := versionUUID(0x55)
+
+	_, first, err := cache.getWithGraph(ctx, getter, v)
+	if err != nil {
+		t.Fatalf("getWithGraph: %v", err)
+	}
+	spec, again, err := cache.getWithGraph(ctx, getter, v)
+	if err != nil {
+		t.Fatalf("getWithGraph again: %v", err)
+	}
+	if first == nil || first != again {
+		t.Fatalf("graph must be built once and shared, got %p then %p", first, again)
+	}
+	for i, task := range spec.Tasks {
+		if got, ok := first.Lookup(task.TaskID); !ok || got != i {
+			t.Errorf("Lookup(%q) = %d, %v; want %d, true", task.TaskID, got, ok, i)
+		}
+	}
+	if getter.calls[v] != 1 {
+		t.Errorf("version fetched %d times, want 1", getter.calls[v])
+	}
+}
