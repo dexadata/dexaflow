@@ -254,6 +254,10 @@ auth:
   existingSecret: ""
   # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
   tokenTtlSeconds: 3600
+  # -- Send UI visitors without a session to your own sign-in instead of Leoflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Leoflow session. Absolute `http(s)` URL; empty (the default) keeps Leoflow's page. `/api/v2/auth/login?local=1` still reaches Leoflow's page, so break-glass access survives an outage of your sign-in.
+  externalSigninUrl: ""
+  # -- Where sign-out lands after clearing the Leoflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Leoflow's sign-in page.
+  externalSignoutUrl: ""
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
   # fetch (ADR 0055). All three ship on the value that is byte-for-byte today's

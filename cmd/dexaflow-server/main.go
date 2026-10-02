@@ -1385,12 +1385,14 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 
 		// OIDC/SSO login flow (nil in JWT mode → routes not registered). The repo
 		// resolves/JIT-provisions identities and records auth-event audit.
-		OIDCFlow:     oidcFlow,
-		OIDCEnabled:  cfg.Auth.Provider == config.AuthProviderOIDC,
-		OIDCSettings: cfg.Auth.OIDC,
-		OIDCUsers:    repo,
-		AuthAudit:    repo,
-		JWTSecret:    cfg.Auth.JWT.Secret,
+		OIDCFlow:           oidcFlow,
+		OIDCEnabled:        cfg.Auth.Provider == config.AuthProviderOIDC,
+		OIDCSettings:       cfg.Auth.OIDC,
+		ExternalSignInURL:  cfg.Auth.ExternalSignInURL,
+		ExternalSignOutURL: cfg.Auth.ExternalSignOutURL,
+		OIDCUsers:          repo,
+		AuthAudit:          repo,
+		JWTSecret:          cfg.Auth.JWT.Secret,
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 	})

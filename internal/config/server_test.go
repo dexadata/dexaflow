@@ -687,3 +687,57 @@ func TestValidateUIBranding(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadServerReadsExternalAuthURLsFromEnv locks that both #1288 keys bind
+// from the environment and default to empty (Leoflow's own pages).
+func TestLoadServerReadsExternalAuthURLsFromEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Auth.ExternalSignInURL != "" || c.Auth.ExternalSignOutURL != "" {
+		t.Fatalf("defaults = %q / %q, want empty", c.Auth.ExternalSignInURL, c.Auth.ExternalSignOutURL)
+	}
+
+	t.Setenv("LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL", "https://portal.example.com/engine")
+	t.Setenv("LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL", "https://portal.example.com/signout")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Auth.ExternalSignInURL != "https://portal.example.com/engine" || c.Auth.ExternalSignOutURL != "https://portal.example.com/signout" {
+		t.Errorf("Auth external URLs = %q / %q, want the values from the environment", c.Auth.ExternalSignInURL, c.Auth.ExternalSignOutURL)
+	}
+}
+
+// TestValidateExternalAuthURLs covers the boot checks: absolute http(s) URLs
+// with a host, so neither setting can become a script URL or a relative
+// redirect back into Leoflow that loops.
+func TestValidateExternalAuthURLs(t *testing.T) {
+	cases := []struct {
+		name            string
+		signIn, signOut string
+		wantErr         string
+	}{
+		{"unset", "", "", ""},
+		{"both https", "https://portal.example.com/engine", "https://portal.example.com/signout", ""},
+		{"loopback http", "http://localhost:3000/engine", "", ""},
+		{"relative sign-in", "/api/v2/auth/login", "", "auth.external_signin_url"},
+		{"javascript sign-out", "", "javascript:alert(1)", "auth.external_signout_url"},
+		{"no host", "https:///engine", "", "auth.external_signin_url"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.ExternalSignInURL, c.Auth.ExternalSignOutURL = tc.signIn, tc.signOut
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
