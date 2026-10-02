@@ -13,11 +13,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/migrations"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestSchemaReadyAgainstLiveDatabase exercises the readiness schema assertion

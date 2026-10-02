@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/dexadata/dexaflow/internal/agentrpc"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 )
 

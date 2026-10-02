@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // errTransient is a non-stale store error: the "DB blip" case that must neither

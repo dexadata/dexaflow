@@ -50,7 +50,6 @@ import (
 	"github.com/dexadata/dexaflow/internal/version"
 	"github.com/dexadata/dexaflow/internal/workspace"
 	"github.com/dexadata/dexaflow/internal/xcom"
-	"github.com/dexadata/dexaflow/pkg/hooks"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
@@ -1330,11 +1329,6 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		UIAutoRefreshIntervalSeconds: cfg.UI.AutoRefreshIntervalSeconds,
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
-
-		UsageMeter:     hooks.NoOpMeter{},
-		TenantResolver: hooks.DefaultResolver{},
-		AuditSink:      hooks.NoOpSink{},
-		QuotaEnforcer:  hooks.NoOpEnforcer{},
 
 		Dags:            repo,
 		DagRuns:         repo,

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/migrations"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // SchemaVersion reads the applied migration version from golang-migrate's
