@@ -129,7 +129,7 @@ func versionHandler() gin.HandlerFunc {
 func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		runs, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), limit, offset)
+		runs, err := listDagRunsPage(c, repo, c.Param("dag_id"), limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -147,7 +147,7 @@ func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 // (not 404) — the SPA renders an empty header rather than erroring.
 func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		runs, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), 1, 0)
+		runs, err := listDagRunsPage(c, repo, c.Param("dag_id"), 1, 0)
 		if err != nil {
 			handleRepoError(c, err)
 			return
