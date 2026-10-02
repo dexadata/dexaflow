@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"time"
@@ -317,9 +316,8 @@ func (w *WarmRunner) connect(ctx context.Context, dagVersionID string) (agentv1.
 // backoffSleep waits a jittered exponential backoff before reconnect n (1-based),
 // capped at maxBackoff, returning ctx.Err() if ctx is canceled first (so a SIGTERM
 // during backoff exits cleanly). The doubling loop stops once the cap is reached so
-// a large n can never overflow the shift. Full jitter (a uniform draw in [d/2, d])
-// spreads a fleet's reconnects so they do not stampede the leader in lockstep;
-// math/rand is fine here — this is backoff jitter, nothing security-relevant.
+// a large n can never overflow the shift. jitterDelay (a uniform draw in [d/2, d])
+// spreads a fleet's reconnects so they do not stampede the leader in lockstep.
 func (w *WarmRunner) backoffSleep(ctx context.Context, base, maxBackoff time.Duration, n int) error {
 	d := base
 	for i := 1; i < n && d < maxBackoff; i++ {
@@ -328,10 +326,7 @@ func (w *WarmRunner) backoffSleep(ctx context.Context, base, maxBackoff time.Dur
 	if d <= 0 || d > maxBackoff {
 		d = maxBackoff
 	}
-	if half := d / 2; half > 0 {
-		d = half + time.Duration(mathrand.Int64N(int64(half)+1)) //nolint:gosec // G404: backoff jitter, not security-relevant
-	}
-	timer := time.NewTimer(d)
+	timer := time.NewTimer(jitterDelay(d))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
