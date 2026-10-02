@@ -672,9 +672,18 @@ type DispatchSection struct {
 
 // ObservabilitySection configures logging, metrics, and tracing.
 type ObservabilitySection struct {
-	OTel      OTelSection `mapstructure:"otel"`
-	LogLevel  string      `mapstructure:"log_level"`
-	LogFormat string      `mapstructure:"log_format"`
+	OTel      OTelSection    `mapstructure:"otel"`
+	LogLevel  string         `mapstructure:"log_level"`
+	LogFormat string         `mapstructure:"log_format"`
+	Metrics   MetricsSection `mapstructure:"metrics"`
+}
+
+// MetricsSection configures the Prometheus scrape.
+type MetricsSection struct {
+	// DropLegacyNames stops publishing every dexaflow_* family a second time
+	// under its pre-rename leoflow_* name. Off by default (ADR 0062 gate), so
+	// dashboards and alerts written against the old names keep working.
+	DropLegacyNames bool `mapstructure:"drop_legacy_names"`
 }
 
 // OTelSection configures OpenTelemetry export.
@@ -864,6 +873,8 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
+	"observability.metrics.drop_legacy_names": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
