@@ -485,6 +485,10 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_EXECUTOR_AGENT_PATH` | `leoflow-agent` | dev-only | The agent binary the subprocess executor runs (`leoflow-agent`, a link to `dexaflow-agent`, so agents from before the rename are found too). |
 | `DEXAFLOW_EXECUTOR_SUBPROCESS_WORKDIR` | _(empty)_ | dev-only | Working directory the subprocess executor runs the agent in (so it can import the project's `dag.py`). Empty keeps the server's working directory. |
 | `DEXAFLOW_EXECUTOR_HTTP_USER_AGENT` | `leoflow/0.1` | both | Default `User-Agent` header for HTTP requests a task image may make on the platform's behalf. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS` | `5` | Pro | Client-side request rate (queries per second) of the Kubernetes client that creates task pods. The agent token exchange builds its own client with the same limits. `5` is client-go's default; a 1,000-task fan out at 5 QPS takes over three minutes just to create pods, so a large deployment raises it (for example `50`). Non-positive falls back to `5`. Helm: `executor.kubeClient.qps`. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_BURST` | `10` | Pro | Burst of the same client's token bucket. Non-positive falls back to `10`. Helm: `executor.kubeClient.burst`. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS` | `0` | Pro | When above `0`, maintenance work (pod informer, reconciler, reapers, staging GC, warm pool reconciler) gets its own Kubernetes client and rate limiter at this QPS, so a maintenance burst cannot starve pod creation. `0` keeps maintenance on the dispatch client, one shared budget. Set it whenever you raise `KUBE_CLIENT_QPS`. Helm: `executor.kubeClient.maintenanceQps`. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST` | `0` | Pro | Burst of the separate maintenance client. Ignored while `KUBE_CLIENT_MAINTENANCE_QPS` is `0`; non-positive falls back to `10`. Helm: `executor.kubeClient.maintenanceBurst`. |
 
 ### Executor task defaults (`executor.defaults.*`)
 
