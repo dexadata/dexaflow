@@ -476,7 +476,7 @@ const taskSecretVolumeName = "leoflow-task-secret"
 // mountTaskSecret mounts an operator-configured Kubernetes Secret (when set)
 // read-only into the task pod at req.TaskSecretMountPath. This is how a task
 // reads a credential that lives in the cluster's secret store — e.g. a GCP
-// service-account key a connection references by key_path — so Leoflow never
+// service-account key a connection references by key_path — so Dexaflow never
 // stores the key itself (ADR 0035).
 func mountTaskSecret(pod *corev1.Pod, req Request) {
 	if req.TaskSecretName == "" || req.TaskSecretMountPath == "" {
@@ -681,8 +681,8 @@ func buildAffinity(m map[string]any) *corev1.Affinity {
 	return nil
 }
 
-// mergeMetadata overlays operator-declared labels or annotations onto Leoflow's
-// own pod metadata, but Leoflow's keys always win a collision: the leoflow.io/*
+// mergeMetadata overlays operator-declared labels or annotations onto Dexaflow's
+// own pod metadata, but Dexaflow's keys always win a collision: the leoflow.io/*
 // identity labels and the task-instance-id annotation are load-bearing (the
 // reconciler and terminate path select on them), so a DAG cannot shadow them. The
 // own map is mutated in place; a nil declared map is a no-op.

@@ -95,7 +95,7 @@ func warnDeprecatedPython(w io.Writer, cfg *domain.LeoflowConfig) {
 	writeWrapped(&b, d.Reason, true)
 	writeWrapped(&b, deprecationRemedy(hit, d), true)
 	// Deliberately unchecked: a warning that can abort the compile is not a
-	// warning. A closed pipe (`leoflow compile | head`) must not turn a correct
+	// warning. A closed pipe (`dexaflow compile | head`) must not turn a correct
 	// dag.json into a non-zero exit.
 	_, _ = io.WriteString(w, b.String()) //nolint:errcheck // advisory output; a write failure must not fail the compile
 }

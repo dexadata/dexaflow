@@ -85,7 +85,7 @@ func newCompileCommand() *cobra.Command {
 //
 // The flag used to default to the bare name `dag.json`, which resolves against
 // the CURRENT directory rather than the project the command was pointed at. So
-// `leoflow compile /tmp/probe` run from a checkout overwrote that checkout's own
+// `dexaflow compile /tmp/probe` run from a checkout overwrote that checkout's own
 // tracked dag.json: the compile succeeded, the artifact it printed was correct,
 // and the damage was to a file the command was never asked to touch (#1084).
 //
@@ -149,7 +149,7 @@ func checkOutputWritable(output string) error {
 // Grouped rather than inlined so every entry point gets all three by
 // construction. warnDeprecatedPython landing on only the dag.py branch would
 // leave every dbt project silently on a base image that stops being rebuilt,
-// and `leoflow validate` open-coding the first two checks is how it spent this
+// and `dexaflow validate` open-coding the first two checks is how it spent this
 // PR's first round never warning at all — validate is the sub-second command an
 // author runs in a loop with dexaflow.yaml open, which is the exact moment the
 // warning is worth something.
@@ -597,7 +597,7 @@ func resolveDockerfileName(cmd *cobra.Command, o compileOptions, cfg *domain.Leo
 	return o.dockerfile
 }
 
-// compileSummary formats the success line for `leoflow compile`. When image is
+// compileSummary formats the success line for `dexaflow compile`. When image is
 // empty it renders `no image` instead of `image ` to avoid the dangling-comma
 // artifact reported as #D10 in the dogfood audit (#212).
 func compileSummary(src, out, image, version string) string {
@@ -815,7 +815,7 @@ func parserErrorSummary(stderr string) string {
 	return last
 }
 
-// overlayProject writes the dexaflow.yaml Leoflow-specific config (staging,
+// overlayProject writes the dexaflow.yaml Dexaflow-specific config (staging,
 // on-failure alerts, and per-task overrides) onto the produced dag.json. These
 // are deployment concerns, not Airflow DAG attributes, so the parser does not
 // emit them (ADR 0022, 0023; #424).

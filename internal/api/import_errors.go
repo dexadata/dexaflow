@@ -23,7 +23,7 @@ type ImportErrorStore interface {
 }
 
 // importErrorDTO is the Airflow 3.2.1 ImportErrorResponse. import_error_id is an
-// integer in Airflow; Leoflow keys rows by UUID, so the DTO derives a stable
+// integer in Airflow; Dexaflow keys rows by UUID, so the DTO derives a stable
 // integer id from the filename for the UI's list key.
 type importErrorDTO struct {
 	ImportErrorID uint32  `json:"import_error_id"`
@@ -48,7 +48,7 @@ func toImportErrorDTO(e domain.ImportError) importErrorDTO {
 	}
 }
 
-// importErrorBody is the push payload used by the dev watcher (Leoflow extension).
+// importErrorBody is the push payload used by the dev watcher (Dexaflow extension).
 type importErrorBody struct {
 	Filename   string `json:"filename"`
 	StackTrace string `json:"stack_trace"`
@@ -113,7 +113,7 @@ func clearImportErrorHandler(store ImportErrorStore) gin.HandlerFunc {
 
 // registerImportErrors mounts the import-error feed. With no store it serves a
 // schema-valid empty collection (the UI degrades gracefully). With a store, the
-// public GET feed is real and the write verbs (Leoflow extensions, used by the
+// public GET feed is real and the write verbs (Dexaflow extensions, used by the
 // dev watcher) upsert/clear entries by filename.
 func registerImportErrors(r gin.IRouter, store ImportErrorStore) {
 	if store == nil {

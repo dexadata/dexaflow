@@ -111,10 +111,10 @@ func seedDeclaredConnections(ctx context.Context, cmd *cobra.Command, ws *Worksp
 	for _, conn := range seed {
 		resp, cerr := c.CreateConnectionWithResponse(ctx, connectionBody(conn))
 		if cerr != nil || resp.StatusCode() >= 300 {
-			devPrintf(cmd.OutOrStdout(), "  (warning) could not seed connection %q from the environment; define it with `leoflow connections set %s`\n", conn.ConnID, conn.ConnID)
+			devPrintf(cmd.OutOrStdout(), "  (warning) could not seed connection %q from the environment; define it with `dexaflow connections set %s`\n", conn.ConnID, conn.ConnID)
 			continue
 		}
-		devPrintf(cmd.OutOrStdout(), "▸ seeded connection %q from AIRFLOW_CONN_%s (value not shown; `leoflow connections set` overrides it)\n",
+		devPrintf(cmd.OutOrStdout(), "▸ seeded connection %q from AIRFLOW_CONN_%s (value not shown; `dexaflow connections set` overrides it)\n",
 			conn.ConnID, strings.ToUpper(conn.ConnID))
 	}
 	for _, s := range skipped {

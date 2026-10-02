@@ -1,4 +1,4 @@
-// Package xcom implements the Leoflow XCom subsystem: small typed payloads
+// Package xcom implements the Dexaflow XCom subsystem: small typed payloads
 // passed between tasks, stored in Redis with a hard size limit and a TTL, with
 // metadata indexed in Postgres for retrieval (ADR 0006).
 package xcom

@@ -16,7 +16,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// TestCompileDbtProject drives `leoflow compile` on a dbt project: a dexaflow.yaml
+// TestCompileDbtProject drives `dexaflow compile` on a dbt project: a dexaflow.yaml
 // with a dbt block and a pre-baked manifest.json (no dbt binary needed) must
 // produce a valid dag.json with one task per folder group.
 func TestCompileDbtProject(t *testing.T) {

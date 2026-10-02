@@ -809,7 +809,7 @@ func taskPools(run RunState) map[string]string {
 }
 
 // alertMaxAttempts bounds how many times one failure episode may be sent before
-// Leoflow gives up. A failed run stays failed forever, so without a ceiling a dead
+// Dexaflow gives up. A failed run stays failed forever, so without a ceiling a dead
 // alert endpoint is retried once per scheduler tick for the life of the run — the
 // alert path would DoS the very endpoint it is trying to reach. Five attempts
 // spread over the backoff below survives a restart or a brief outage of the
@@ -1079,7 +1079,7 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 // Cluster backpressure (a ResourceQuota 403 or an APF 429) is split out first
 // (ADR 0053): it is retriable-forever, so it is backed off WITHOUT touching the
 // dispatch-attempt counter and can never reach the dispatch_failed give-up below.
-// Leoflow holds the task and re-offers it until the cluster has room, rather than
+// Dexaflow holds the task and re-offers it until the cluster has room, rather than
 // failing the user's task because the cluster asked it to slow down. The
 // disposition that split is decided on is classified on the execution layer and
 // arrives typed over the seam (ADR 0051 Phase 4), so the scheduler never inspects

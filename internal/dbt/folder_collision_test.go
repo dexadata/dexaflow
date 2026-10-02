@@ -33,7 +33,7 @@ func manifestOf(nodes map[string][]string) []byte {
 // into ONE task with their dependencies combined.
 //
 // dbt still orders the models inside that task, so the data is not wrong. What
-// is lost is Leoflow-level parallelism and per-model failure isolation, silently
+// is lost is Dexaflow-level parallelism and per-model failure isolation, silently
 // and with no way to notice: the author sees one task named after a folder and
 // no indication that a root-level model was folded into it.
 func TestFolderGroupCollisionIsAnnouncedLoudly(t *testing.T) {

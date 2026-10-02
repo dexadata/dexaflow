@@ -13,7 +13,7 @@ func newServerCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(),
-				"The Leoflow control plane runs as the 'leoflow-server' binary, not via this CLI.\n"+
+				"The Dexaflow control plane runs as the 'leoflow-server' binary, not via this CLI.\n"+
 					"Run it directly (e.g. ./bin/leoflow-server) with LEOFLOW_* configuration.")
 			return err
 		},

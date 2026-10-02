@@ -17,7 +17,7 @@ import (
 
 // idePageHTML is the self-contained editor page (a file tree + a Monaco editor
 // loaded from /ide/vs). It is a few KB; Monaco itself is fetched once by
-// `leoflow setup` and served from disk, so the binary stays light (ADR 0025).
+// `dexaflow setup` and served from disk, so the binary stays light (ADR 0025).
 //
 //go:embed ide_page.html
 var idePageHTML []byte
@@ -77,7 +77,7 @@ type ideInstallExamplesResp struct {
 	// because a workspace root project of the same name already exists.
 	// Lite's multi-DAG discovery refuses duplicate dag_ids at boot, so
 	// installing the colliding example would silently produce a workspace
-	// that the next `leoflow lite` boot rejects. Reporting this lets the
+	// that the next `dexaflow lite` boot rejects. Reporting this lets the
 	// IDE surface a "Skipped: bash_pipeline (already exists)" hint
 	// instead of leaving the user to discover the collision at startup.
 	// See alpha-prep issue #298 (sub-item: IDE dup-detect).
@@ -88,7 +88,7 @@ type ideInstallExamplesResp struct {
 // editor page, and the Monaco assets. When fs is nil — Production, or Lite
 // without a workspace configured — nothing is registered, so the editor is
 // unavailable (404). Reads require read:dag and mutations write:dag, since the
-// workspace holds DAG source. monacoDir is where `leoflow setup` placed the
+// workspace holds DAG source. monacoDir is where `dexaflow setup` placed the
 // pinned Monaco bundle; when empty or absent the page shows a setup hint.
 // examples, when non-nil, backs the "Download examples" button — typically the
 // embedded examples.FS shipped by package leoflow.
@@ -122,7 +122,7 @@ func idePageHandler() gin.HandlerFunc {
 // vs/ subdirectory (dir/vs/loader.js, …), and requests come in under /ide/vs/,
 // so stripping /ide/ maps /ide/vs/<f> to dir/vs/<f>. When dir is empty or a file
 // is missing it returns 404, which the page reads as "Monaco not provisioned"
-// and shows a `leoflow setup` hint. http.Dir confines reads to dir.
+// and shows a `dexaflow setup` hint. http.Dir confines reads to dir.
 func monacoHandler(dir string) gin.HandlerFunc {
 	if dir == "" {
 		return func(c *gin.Context) { c.Status(http.StatusNotFound) }

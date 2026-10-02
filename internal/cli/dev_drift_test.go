@@ -6,7 +6,7 @@ import (
 )
 
 // TestDecideSchemaDrift pins the drift detector's decision (#136). The startup
-// path of `leoflow lite` relies on this to refuse to run an older binary
+// path of `dexaflow lite` relies on this to refuse to run an older binary
 // against a database a newer binary has already upgraded — the alternative
 // (silent reads/writes under a stale schema) is data corruption.
 func TestDecideSchemaDrift(t *testing.T) {

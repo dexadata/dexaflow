@@ -598,7 +598,7 @@ func TestK3dImportStubbed(t *testing.T) {
 	}
 }
 
-// resolveBinary used to consult PATH before anything else, so `leoflow lite` ran
+// resolveBinary used to consult PATH before anything else, so `dexaflow lite` ran
 // whatever leoflow-server happened to be installed first — however old. A
 // validation run against v0.1.2-rc.1 spent its first boot exercising a
 // v0.1.0-rc.4 server that predated every feature under test, and only noticed

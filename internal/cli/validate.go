@@ -95,7 +95,7 @@ func validateEnforcedPythonVersion(cfg *domain.LeoflowConfig) string {
 // syntax errors before push (issue #D8: validate used to lie about a broken
 // dag.py). The check is best-effort: when no Python interpreter is reachable
 // (managed or system), we warn instead of failing, because a fresh install that
-// has not yet run `leoflow setup` should still be able to lint its dexaflow.yaml.
+// has not yet run `dexaflow setup` should still be able to lint its dexaflow.yaml.
 func checkDagPythonSyntax(cmd *cobra.Command, dagPath string, cfg *domain.LeoflowConfig) error {
 	// A declared python_version is the author's statement about the interpreter
 	// their DAG runs on, and the cluster honors it through the task base image.
@@ -110,14 +110,14 @@ func checkDagPythonSyntax(cmd *cobra.Command, dagPath string, cfg *domain.Leoflo
 	// host python3.11/python3 that reports >= 3.11. A present-but-unsupported
 	// interpreter is a hard error (validate must not lint under 3.9 a DAG that
 	// will run under 3.11), while no interpreter at all is a soft skip so a fresh
-	// install that has not run `leoflow setup` can still lint its dexaflow.yaml.
+	// install that has not run `dexaflow setup` can still lint its dexaflow.yaml.
 	py, err := resolvePython3(cmd.Context(), leoflowManagedPython(), exec.LookPath, pythonVersion)
 	if err != nil {
 		return err
 	}
 	if py == "" {
 		if _, werr := fmt.Fprintln(cmd.ErrOrStderr(),
-			"warning: skipping dag.py syntax check (no python3 found; run `leoflow setup` to provision one)"); werr != nil {
+			"warning: skipping dag.py syntax check (no python3 found; run `dexaflow setup` to provision one)"); werr != nil {
 			return werr
 		}
 		return nil
@@ -157,7 +157,7 @@ func warnSyntaxCheckSkipped(cmd *cobra.Command, wantVersion string, want int, fo
 	// that was never published.
 	_, werr := fmt.Fprintf(cmd.ErrOrStderr(),
 		"warning: skipping dag.py syntax check: this project declares python_version %s and no python3.%d is reachable here%s "+
-			"(run `leoflow setup`, or install python3.%d). Checking under an older interpreter would report %s syntax "+
+			"(run `dexaflow setup`, or install python3.%d). Checking under an older interpreter would report %s syntax "+
 			"as an error in your code.\n",
 		wantVersion, want, found, want, wantVersion)
 	return werr
@@ -168,7 +168,7 @@ func warnSyntaxCheckSkipped(cmd *cobra.Command, wantVersion string, want int, fo
 //
 // The fallback is asymmetric, per syntaxCheckIsTrustworthy, and the reason it
 // exists at all is that skipping outright would have been a bigger bug than
-// #1094. `leoflow init` writes python_version explicitly, so EVERY scaffolded
+// #1094. `dexaflow init` writes python_version explicitly, so EVERY scaffolded
 // project takes this path, and most hosts carry a python3 newer than the 3.11
 // it writes. Skipping whenever the exact minor is missing would have stopped
 // validate catching a broken dag.py for most users, which is the entire reason

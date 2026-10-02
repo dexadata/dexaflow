@@ -14,14 +14,14 @@ import (
 
 // newDoctorCommand reports the host platform, which dependencies are present,
 // and the highest achievable operating tier — the diagnostic companion to
-// `leoflow setup`.
+// `dexaflow setup`.
 func newDoctorCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Report host platform, dependencies, and the achievable operating tier.",
 		Long: "doctor inspects the host (OS, architecture, libc), checks for Python 3.11, " +
 			"Docker, k3d, and kubectl, and reports which operating tier is achievable. " +
-			"It changes nothing; run `leoflow setup` to bootstrap.",
+			"It changes nothing; run `dexaflow setup` to bootstrap.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			r := setup.Detect(setup.Probe{
@@ -48,16 +48,16 @@ func renderDoctor(w io.Writer, r setup.Report) {
 	if r.Libc != "" {
 		plat += " (" + r.Libc + ")"
 	}
-	p("leoflow doctor\n\n")
+	p("dexaflow doctor\n\n")
 	p("  platform      %s\n", plat)
-	p("  python 3.11+  %s\n", found(r.PythonAvailable, r.PythonPath, "no python3.11/3.12/3.13 on PATH; will download a relocatable CPython 3.11 on `leoflow setup`"))
+	p("  python 3.11+  %s\n", found(r.PythonAvailable, r.PythonPath, "no python3.11/3.12/3.13 on PATH; will download a relocatable CPython 3.11 on `dexaflow setup`"))
 	// Said separately, because the line above answers a different question than
 	// the one the reader is about to act on. It reports what can PARSE a dag.py,
-	// where 3.12 and 3.13 qualify; `leoflow setup` resolves its interpreter with
+	// where 3.12 and 3.13 qualify; `dexaflow setup` resolves its interpreter with
 	// LookPath("python3.11") and nothing else, so a host with only 3.12 sees a
 	// green line and then a download it was not told about (#1224).
 	if r.PythonAvailable && r.Python311Path == "" {
-		p("                but `leoflow setup` needs python3.11 specifically and will download a managed CPython 3.11 (needs outbound network). Install python3.11 to avoid it.\n")
+		p("                but `dexaflow setup` needs python3.11 specifically and will download a managed CPython 3.11 (needs outbound network). Install python3.11 to avoid it.\n")
 	}
 	p("  docker        %s\n", found(r.Docker, "found", "not found"))
 	p("  k3d           %s\n", found(r.K3d, "found", "not found (fetched on demand for the k8s tier)"))
@@ -74,7 +74,7 @@ func renderDoctor(w io.Writer, r setup.Report) {
 		p("\n  WARNING: this directory is under /mnt (WSL). Keep your project in the WSL\n")
 		p("  native filesystem (~/...) so `leoflow dev` hot-reload (inotify) works.\n")
 	}
-	p("\n  next: run `leoflow setup` to bootstrap the managed runtime.\n")
+	p("\n  next: run `dexaflow setup` to bootstrap the managed runtime.\n")
 }
 
 // found renders a present/absent line: when present it shows detail (a path or

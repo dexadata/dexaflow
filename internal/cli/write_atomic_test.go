@@ -78,7 +78,7 @@ func TestWriteLiteConfigNeverWritesAnEmptyKey(t *testing.T) {
 
 // A temp file plus rename creates a NEW inode, owned by whoever runs the
 // command, where os.WriteFile rewrote the same inode and kept its owner. The
-// installer prints `sudo leoflow lite reset-password`, so a root-run rewrite of
+// installer prints `sudo dexaflow lite reset-password`, so a root-run rewrite of
 // a user's config is a documented path: leaving it root-owned locks the user
 // out of their own install and orphans every connection.
 //

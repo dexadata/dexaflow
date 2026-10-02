@@ -29,7 +29,7 @@ func apiStatusError(status int, body []byte) error {
 // against the real command tree — the first version of this hint printed
 // "leoflow login", which does not exist (the command is under `auth`), and the
 // test asserted that same wrong literal, so the test locked the defect in.
-const loginCommandPath = "leoflow auth login"
+const loginCommandPath = "dexaflow auth login"
 
 // tokenServerHint turns a bare 401 into something actionable when the token was
 // read from the config file and the command is talking to a DIFFERENT control

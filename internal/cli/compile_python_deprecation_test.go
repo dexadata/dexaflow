@@ -263,7 +263,7 @@ func TestWarnDeprecatedPythonRespectsItsDeclaredWidth(t *testing.T) {
 	}
 }
 
-// errWriter fails every write, standing in for a closed pipe (`leoflow compile
+// errWriter fails every write, standing in for a closed pipe (`dexaflow compile
 // | head`) or a full disk.
 type errWriter struct{}
 
@@ -349,7 +349,7 @@ func TestWrapWords(t *testing.T) {
 	}
 }
 
-// `leoflow validate` is the sub-second command an author runs in a loop with
+// `dexaflow validate` is the sub-second command an author runs in a loop with
 // dexaflow.yaml open — the exact moment this warning is worth something, and the
 // one entry point that open-coded its preconditions and so never warned at all.
 // Driving the real cobra command rather than calling the helper is the point:

@@ -72,7 +72,7 @@ func everyN(field string) (int, bool) {
 }
 
 // dagDetailsDTO is the Airflow 3.2.1 DAGDetailsResponse. As with the DAG list,
-// every spec-required field is present; values Leoflow does not yet model are
+// every spec-required field is present; values Dexaflow does not yet model are
 // null or sensible defaults. See docs/ui-compatibility.md.
 type dagDetailsDTO struct {
 	DagID                       string           `json:"dag_id"`
@@ -174,7 +174,7 @@ func toDagDetailsDTO(d domain.DAG) dagDetailsDTO {
 	}
 }
 
-// paramsToAirflowDict reshapes Leoflow's stored declared params
+// paramsToAirflowDict reshapes Dexaflow's stored declared params
 // (map[name]{default, schema}) into the Airflow 3.2.1 serialized param-dict the
 // trigger dialog's flexible form renders from: {name: {value, schema,
 // description}}. Three transforms carry the whole feature:

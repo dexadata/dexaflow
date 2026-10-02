@@ -10,7 +10,7 @@ type DagStats struct {
 }
 
 // HistoricalMetrics holds run- and task-instance counts grouped by state over a
-// time window, keyed by the Leoflow state name (e.g. "success", "up_for_retry").
+// time window, keyed by the Dexaflow state name (e.g. "success", "up_for_retry").
 type HistoricalMetrics struct {
 	RunStates map[string]int
 	TIStates  map[string]int

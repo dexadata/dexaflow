@@ -20,7 +20,7 @@ import (
 const pysrcMarker = ".leoflow-pysrc-checksum"
 
 // pysrcRoot returns the extracted Python-sources root (~/.dexaflow/pysrc) that
-// `leoflow setup` writes and the parser runs from.
+// `dexaflow setup` writes and the parser runs from.
 func pysrcRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -105,9 +105,9 @@ func pythonSourcesChecksum() (string, error) {
 
 // ensurePysrcIn re-extracts the bundled parser+runtime under dir when they are
 // missing or have drifted from this binary's embedded copy — the binary-upgrade
-// case (#239). Without it, `leoflow compile` runs against a stale parser after a
+// case (#239). Without it, `dexaflow compile` runs against a stale parser after a
 // manual binary swap (e.g. one predating dbt support), failing with a confusing
-// "not supported by Leoflow" error instead of self-healing. The checksum guards
+// "not supported by Dexaflow" error instead of self-healing. The checksum guards
 // against re-extracting on every call.
 func ensurePysrcIn(dir string, logf func(format string, args ...any)) error {
 	want, err := pythonSourcesChecksum()
@@ -132,7 +132,7 @@ func ensurePysrcIn(dir string, logf func(format string, args ...any)) error {
 }
 
 // ensurePysrc self-heals ~/.dexaflow/pysrc before compile runs the parser, so a
-// binary upgrade never leaves `leoflow compile` on a stale parser. Best-effort: a
+// binary upgrade never leaves `dexaflow compile` on a stale parser. Best-effort: a
 // failure is logged and compile proceeds with whatever is on disk (its own error
 // surfaces if the parser truly cannot run), so this never blocks a working setup.
 func ensurePysrc(cmd *cobra.Command) {

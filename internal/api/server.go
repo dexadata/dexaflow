@@ -52,12 +52,12 @@ type Dependencies struct {
 	// re-authenticate. Non-positive disables the ceiling.
 	TokenMaxLifetimeSecs int
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Leoflow"; `leoflow dev` sets it to mark the DEV environment.
+	// falls back to "Dexaflow"; `leoflow dev` sets it to mark the DEV environment.
 	InstanceName string
 	// UIAutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `leoflow lite` sets it to ~5s for a snappy inner loop.
+	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
 	UIAutoRefreshIntervalSeconds int
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
 	// request as an admin (no login). It is for `leoflow dev` only and must never
@@ -98,7 +98,7 @@ type Dependencies struct {
 	Workspace WorkspaceFS
 
 	// MonacoDir is the directory holding the pinned Monaco bundle that
-	// `leoflow setup` fetched; the editor page is served Monaco from it. Empty or
+	// `dexaflow setup` fetched; the editor page is served Monaco from it. Empty or
 	// missing makes the page show a setup hint instead of a broken editor.
 	MonacoDir string
 

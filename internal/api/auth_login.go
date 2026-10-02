@@ -13,7 +13,7 @@ import (
 // Upstream this redirects into the simple-auth-manager login SPA, which POSTs
 // credentials to /auth/token and stores the returned JWT in the "_token" cookie
 // (path /) that the rest of the UI reads. Rather than embed that second SPA,
-// Leoflow serves a minimal login page honoring the same contract: it POSTs
+// Dexaflow serves a minimal login page honoring the same contract: it POSTs
 // /auth/token and returns to `next`. See docs/ui-compatibility.md and ADR 0018.
 //
 // The cookie itself is the response's, not the page's: /auth/token sets it
@@ -27,7 +27,7 @@ import (
 var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leoflow — Sign in</title>
+<title>Dexaflow — Sign in</title>
 <style>
  body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;
    min-height:100vh;align-items:center;justify-content:center;margin:0}
@@ -48,12 +48,12 @@ var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype htm
  code{font-size:.72rem;color:#cbd5e1}
 </style></head><body>
 <form id="f" autocomplete="on">
- <h1>Sign in to Leoflow</h1>
-{{ if .SSOFailed }} <p class="ssoerr" role="alert">Leoflow could not complete the sign-in on its side, so you are
+ <h1>Sign in to Dexaflow</h1>
+{{ if .SSOFailed }} <p class="ssoerr" role="alert">Dexaflow could not complete the sign-in on its side, so you are
  not signed in. Nothing you did is wrong and nothing is misconfigured for you: try again. If it keeps
- happening, tell whoever administers this Leoflow, the error is in the control plane's server log.</p>
+ happening, tell whoever administers this Dexaflow, the error is in the control plane's server log.</p>
 {{ end }}{{ if .SSORefused }} <p class="ssoerr" role="alert">Single sign-on did not complete, so you are not signed in.
- Try again. If it keeps failing, ask whoever administers this Leoflow: the reason is recorded in
+ Try again. If it keeps failing, ask whoever administers this Dexaflow: the reason is recorded in
  the control plane's server log and audit trail, and is deliberately not shown here.</p>
 {{ end }}{{ if .SSO }} <a class="sso" href="/api/v2/auth/oidc/login?next={{ .NextQuery }}">Sign in with single sign-on</a>
 {{ end }}

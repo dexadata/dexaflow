@@ -9,7 +9,7 @@ import (
 
 // LeoflowConfig is the developer-facing project configuration parsed from
 // dexaflow.yaml. It mirrors docs/api/leoflow-yaml-schema.json and is consumed
-// by `leoflow compile` to build an image and emit a DAGSpec.
+// by `dexaflow compile` to build an image and emit a DAGSpec.
 type LeoflowConfig struct {
 	SchemaVersion string   `json:"schema_version,omitempty" yaml:"schema_version,omitempty"`
 	DagID         string   `json:"dag_id" yaml:"dag_id"`
@@ -41,11 +41,11 @@ type LeoflowConfig struct {
 	Registry       *RegistryConfig `json:"registry,omitempty" yaml:"registry,omitempty"`
 	Defaults       *ConfigDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
 	// Staging requests the opt-in per-DAG-run shared volume (ADR 0022). It is a
-	// Leoflow deployment concern (not an Airflow DAG attribute), so it lives in
+	// Dexaflow deployment concern (not an Airflow DAG attribute), so it lives in
 	// dexaflow.yaml and the compiler overlays it onto the produced dag.json.
 	Staging *StagingConfig `json:"staging,omitempty" yaml:"staging,omitempty"`
 	// Dbt declares a dbt project as the DAG source (ADR 0042). Its presence routes
-	// `leoflow compile` to the dbt renderer instead of the Python parser.
+	// `dexaflow compile` to the dbt renderer instead of the Python parser.
 	Dbt *DbtConfig `json:"dbt,omitempty" yaml:"dbt,omitempty"`
 	// DbtGroups configures dbt projects embedded as task groups in a dag.py (ADR
 	// 0043), keyed by the name passed to `dbt_group(name)`. Schedule does not apply
@@ -57,7 +57,7 @@ type LeoflowConfig struct {
 	Tasks map[string]*TaskConfig `json:"tasks,omitempty" yaml:"tasks,omitempty"`
 	// Alerts declares native on-failure alerting (#424): the scheduler fires the
 	// listed rules when a DagRun reaches the terminal failed state, in Go, with no
-	// task pod and no Python in the hot path. A Leoflow deployment concern (not an
+	// task pod and no Python in the hot path. A Dexaflow deployment concern (not an
 	// Airflow DAG attribute), so it lives in dexaflow.yaml and the compiler overlays
 	// it onto the produced dag.json.
 	Alerts *AlertsConfig `json:"alerts,omitempty" yaml:"alerts,omitempty"`
@@ -79,7 +79,7 @@ type AlertRule struct {
 	// Type is the channel: "slack" (Slack incoming webhook) or "webhook" (a generic
 	// HTTP POST, e.g. PagerDuty/Opsgenie/Teams). Validated by the schema enum.
 	Type string `json:"type" yaml:"type"`
-	// Conn is the managed Leoflow connection id holding the endpoint (and secret).
+	// Conn is the managed Dexaflow connection id holding the endpoint (and secret).
 	Conn string `json:"conn" yaml:"conn"`
 	// Message is the optional notification body; it is templated at fire time with
 	// run context ({{dag}}, {{run_id}}, {{task}}, …). Empty uses a default summary.
@@ -88,7 +88,7 @@ type AlertRule struct {
 
 // DbtConfig declares a dbt project as the DAG source (ADR 0042). The compiler
 // reads the project's manifest.json and renders one task per dbt node (or per
-// group), so a dbt project becomes a Leoflow DAG with no Cosmos or Airflow.
+// group), so a dbt project becomes a Dexaflow DAG with no Cosmos or Airflow.
 type DbtConfig struct {
 	// Project is the directory containing dbt_project.yml.
 	Project string `json:"project,omitempty" yaml:"project,omitempty"`
@@ -103,7 +103,7 @@ type DbtConfig struct {
 	// "0 6 * * *"). dbt carries no schedule, so it is declared here; empty means
 	// an unscheduled DAG (run on demand).
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
-	// Connection is a managed Leoflow connection id (ADR 0043 #2). When set, the
+	// Connection is a managed Dexaflow connection id (ADR 0043 #2). When set, the
 	// dbt task generates its profiles.yml from the connection delivered to the pod
 	// instead of a profiles.yml baked into the image — use one or the other.
 	Connection string `json:"connection,omitempty" yaml:"connection,omitempty"`
@@ -115,7 +115,7 @@ type DbtConfig struct {
 // TaskConfig holds the dexaflow.yaml per-task overrides bound by task_id (ADR
 // 0023). Every field is optional; a set field overrides the value compiled from
 // the DAG (most specific wins: task override > DAG default_args). These are
-// Leoflow deployment concerns, not Airflow operator attributes.
+// Dexaflow deployment concerns, not Airflow operator attributes.
 type TaskConfig struct {
 	Retries                 *int              `json:"retries,omitempty" yaml:"retries,omitempty"`
 	RetryDelaySeconds       *int              `json:"retry_delay_seconds,omitempty" yaml:"retry_delay_seconds,omitempty"`

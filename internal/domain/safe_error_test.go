@@ -36,7 +36,7 @@ func TestSafefErrorTextMatchesTheOldWrapping(t *testing.T) {
 }
 
 // TestClientMessageIsTheComposedTextOnly is what the API boundary reads: the
-// message Leoflow composed, without the sentinel's own wording appended.
+// message Dexaflow composed, without the sentinel's own wording appended.
 func TestClientMessageIsTheComposedTextOnly(t *testing.T) {
 	var se *SafeError
 	if !errors.As(Safef(ErrConflict, "dag %q is at max_active_runs cap of %d", "etl", 3), &se) {

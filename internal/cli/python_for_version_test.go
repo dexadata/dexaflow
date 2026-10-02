@@ -318,17 +318,17 @@ func TestDagVenvKeptWhenPyvenvCfgUnreadable(t *testing.T) {
 }
 
 // TestInstallHintOnlyOffersSetupForTheVersionItInstalls guards an error message
-// that used to send the user around a loop it cannot end: `leoflow setup`
+// that used to send the user around a loop it cannot end: `dexaflow setup`
 // provisions exactly one minor — the managed build's — so offering it to someone
 // who asked for 3.13 means setup succeeds, 3.13 is still missing, and the same
 // error comes back.
 func TestInstallHintOnlyOffersSetupForTheVersionItInstalls(t *testing.T) {
-	if got := installHint(minPythonMinor); !strings.Contains(got, "leoflow setup") {
-		t.Errorf("installHint(3.%d) = %q, want it to offer `leoflow setup` — that is the version setup installs", minPythonMinor, got)
+	if got := installHint(minPythonMinor); !strings.Contains(got, "dexaflow setup") {
+		t.Errorf("installHint(3.%d) = %q, want it to offer `dexaflow setup` — that is the version setup installs", minPythonMinor, got)
 	}
 	got := installHint(minPythonMinor + 2)
-	if strings.Contains(got, "leoflow setup") {
-		t.Errorf("installHint(3.%d) = %q, must not offer `leoflow setup`: setup only ever provisions 3.%d", minPythonMinor+2, got, minPythonMinor)
+	if strings.Contains(got, "dexaflow setup") {
+		t.Errorf("installHint(3.%d) = %q, must not offer `dexaflow setup`: setup only ever provisions 3.%d", minPythonMinor+2, got, minPythonMinor)
 	}
 	if !strings.Contains(got, fmt.Sprintf("3.%d", minPythonMinor+2)) {
 		t.Errorf("installHint = %q, want it to name the version the user actually needs", got)

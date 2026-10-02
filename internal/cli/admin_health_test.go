@@ -77,7 +77,7 @@ func TestFetchAdminHealthNon200IsError(t *testing.T) {
 }
 
 // TestAdminHealthCommandExitsNonZero pins the post-deploy smoke-test contract:
-// an unhealthy control plane makes `leoflow admin health` return an error (a
+// an unhealthy control plane makes `dexaflow admin health` return an error (a
 // non-zero process exit) while still printing the compact report.
 func TestAdminHealthCommandExitsNonZero(t *testing.T) {
 	srv := healthServer(t, "unhealthy")

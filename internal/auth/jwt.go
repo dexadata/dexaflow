@@ -20,7 +20,7 @@ const DevTokenSubject = "leoflow-dev"
 // from agent identity tokens (see audienceAgent).
 const audienceUser = "leoflow-user"
 
-// jwtClaims is the Leoflow JWT payload.
+// jwtClaims is the Dexaflow JWT payload.
 type jwtClaims struct {
 	TenantID string   `json:"tenant_id"`
 	Email    string   `json:"email,omitempty"`
@@ -178,7 +178,7 @@ func (a *JWTAuthenticator) mintUserToken(user *User, ttl time.Duration, origin t
 // audience, HS256). It is the server half of transparent CLI token renewal (EKS
 // validation aresta #5): the short access-token TTL still bounds a stolen token,
 // while renewal keeps a genuinely live session working so a long dev session
-// never has to `leoflow auth login` again on the hour. It is modeled directly on
+// never has to `dexaflow auth login` again on the hour. It is modeled directly on
 // RenewAgentToken.
 //
 // The session's original login time is preserved across every renewal (the oiat
