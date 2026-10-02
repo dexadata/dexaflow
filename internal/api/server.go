@@ -14,7 +14,6 @@ import (
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/oidc"
-	"github.com/dexadata/dexaflow/pkg/hooks"
 )
 
 // UIServer serves the embedded single-page app: static assets and an
@@ -28,12 +27,6 @@ type UIServer interface {
 
 // Dependencies bundles everything the HTTP server needs.
 type Dependencies struct {
-	// Hooks for Cloud SaaS injection
-	UsageMeter     hooks.UsageMeter
-	TenantResolver hooks.TenantResolver
-	AuditSink      hooks.AuditSink
-	QuotaEnforcer  hooks.QuotaEnforcer
-
 	Logger        *slog.Logger
 	Authenticator auth.Authenticator
 	RateLimiter   *auth.RateLimiter
