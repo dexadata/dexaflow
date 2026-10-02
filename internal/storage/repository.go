@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,6 +36,9 @@ type Repository struct {
 	pool        txBeginner
 	cipher      secrets.Cipher
 	extCoverage externalSecretCoverage
+	// tenants caches tenant name -> id (see tenantID). Bounded by the number
+	// of tenants that exist, since only successful lookups are stored.
+	tenants *sync.Map
 }
 
 // externalSecretCoverage reports whether a declared name is served by a
@@ -49,7 +53,7 @@ type externalSecretCoverage interface {
 
 // NewRepository builds a Repository backed by the given Postgres connection.
 func NewRepository(pg *Postgres) *Repository {
-	return &Repository{q: pg.Queries, pool: pg.Pool}
+	return &Repository{q: pg.Queries, pool: pg.Pool, tenants: &sync.Map{}}
 }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
@@ -98,10 +102,24 @@ func mapConflict(err error) error {
 	return err
 }
 
+// tenantID resolves a tenant name to its id. Nearly every repository method
+// starts with it, so a resolved id is cached for the life of the process: a
+// tenant is never renamed or deleted (no query does either), so name -> id
+// cannot change. A miss is not cached, so a tenant created later is found.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
+	if r.tenants != nil {
+		if id, ok := r.tenants.Load(name); ok {
+			if uid, ok := id.(pgtype.UUID); ok {
+				return uid, nil
+			}
+		}
+	}
 	t, err := r.q.GetTenantByName(ctx, name)
 	if err != nil {
 		return pgtype.UUID{}, mapNotFound(err)
+	}
+	if r.tenants != nil {
+		r.tenants.Store(name, t.ID)
 	}
 	return t.ID, nil
 }
@@ -147,24 +165,22 @@ func (r *Repository) FindUserByID(ctx context.Context, id string) (*auth.User, b
 	if err != nil {
 		return nil, false, auth.ErrUserNotFound
 	}
-	row, err := r.q.GetUserByID(ctx, uid)
+	// One round trip: this runs on every authenticated request, so the user,
+	// its roles and its permissions come back from a single statement.
+	row, err := r.q.GetUserPrincipalByID(ctx, uid)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, auth.ErrUserNotFound
 		}
 		return nil, false, fmt.Errorf("loading user by id: %w", err)
 	}
-	roles, err := r.q.GetUserRoles(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading roles: %w", err)
+	var perms [][2]string
+	if err := json.Unmarshal(row.Permissions, &perms); err != nil {
+		return nil, false, fmt.Errorf("decoding permissions: %w", err)
 	}
-	perms, err := r.q.GetUserPermissions(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading permissions: %w", err)
-	}
-	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: roles}
+	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: row.Roles}
 	for _, p := range perms {
-		user.Permissions = append(user.Permissions, auth.Permission{Action: p.Action, Resource: p.Resource})
+		user.Permissions = append(user.Permissions, auth.Permission{Action: p[0], Resource: p[1]})
 	}
 	return user, row.IsActive, nil
 }
