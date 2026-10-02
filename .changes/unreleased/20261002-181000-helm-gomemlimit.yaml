@@ -1,0 +1,4 @@
+kind: Added
+body: |-
+  Helm: `goMemLimit.enabled` (default `false`) renders `GOMEMLIMIT` on the control-plane container as `goMemLimit.percent` (default `80`) of `resources.limits.memory`, so the Go GC collects harder near the container limit instead of being OOM-killed. The render fails when the limit is missing or not a whole-number quantity.
+time: 2026-10-02T18:10:00.000000000-03:00

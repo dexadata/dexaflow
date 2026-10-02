@@ -710,3 +710,43 @@ copies that could drift apart on a partial upgrade.
 {{- define "leoflow.oidcConfigMapName" -}}
 {{- printf "%s-oidc" (include "leoflow.fullname" .) -}}
 {{- end -}}
+
+{{/*
+GOMEMLIMIT for the control-plane container: goMemLimit.percent of
+resources.limits.memory, in whole MiB. The Go runtime does not read the cgroup
+limit on its own; without this variable the GC paces on heap growth alone, so a
+burst can be OOM-killed before a collection runs. A soft limit below the hard
+one makes the GC work harder near the ceiling instead.
+
+The fraction is computed here because the downward API cannot: a
+resourceFieldRef on limits.memory yields the whole limit, and its divisor must
+be a unit (1, 1Ki, 1Mi, ...), not a ratio. Only whole-number quantities are
+read; anything else fails the render with the way out, rather than shipping a
+guess.
+*/}}
+{{- define "leoflow.goMemLimit" -}}
+{{- $pct := .Values.goMemLimit.percent -}}
+{{- if not (regexMatch "^[0-9]+$" (toString $pct)) -}}
+{{- fail (printf "goMemLimit.percent must be between 1 and 100 (got %v)" $pct) -}}
+{{- end -}}
+{{- if or (lt (int $pct) 1) (gt (int $pct) 100) -}}
+{{- fail (printf "goMemLimit.percent must be between 1 and 100 (got %v)" $pct) -}}
+{{- end -}}
+{{- $raw := dig "limits" "memory" "" (.Values.resources | default dict) -}}
+{{- if kindIs "float64" $raw -}}{{- $raw = printf "%.0f" $raw -}}{{- end -}}
+{{- $raw = toString $raw -}}
+{{- if not $raw -}}
+{{- fail "goMemLimit.enabled requires resources.limits.memory: GOMEMLIMIT is a fraction of the container limit" -}}
+{{- end -}}
+{{- if not (regexMatch "^[0-9]+(Ki|Mi|Gi|Ti|k|M|G|T)?$" $raw) -}}
+{{- fail (printf "goMemLimit: cannot read resources.limits.memory %q; use a whole number with a Ki, Mi, Gi, Ti, k, M, G or T suffix, or leave goMemLimit off and set GOMEMLIMIT through extraEnv" $raw) -}}
+{{- end -}}
+{{- $n := int64 (regexReplaceAll "[^0-9]" $raw "") -}}
+{{- $unit := regexReplaceAll "^[0-9]+" $raw "" -}}
+{{- $scale := get (dict "" 1 "k" 1000 "M" 1000000 "G" 1000000000 "T" 1000000000000 "Ki" 1024 "Mi" 1048576 "Gi" 1073741824 "Ti" 1099511627776) $unit -}}
+{{- $mib := div (mul $n $scale (int $pct)) 104857600 -}}
+{{- if lt $mib 1 -}}
+{{- fail (printf "goMemLimit: %d%% of resources.limits.memory %q is below 1MiB" (int $pct) $raw) -}}
+{{- end -}}
+{{- printf "%dMiB" $mib -}}
+{{- end -}}
