@@ -41,7 +41,7 @@ func TestObserveExposesRouteToSampler(t *testing.T) {
 	r := gin.New()
 	r.Use(Observe(nil, tp.Tracer("test")))
 	r.GET("/healthz", func(c *gin.Context) { c.Status(http.StatusOK) })
-	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", http.NoBody))
 
 	if len(sampler.routes) != 1 || sampler.routes[0] != "/healthz" {
 		t.Fatalf("sampler saw routes %v, want [/healthz]", sampler.routes)

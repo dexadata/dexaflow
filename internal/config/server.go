@@ -681,6 +681,12 @@ type ObservabilitySection struct {
 type OTelSection struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Endpoint string `mapstructure:"endpoint"`
+	// SampleRatio is the share of new root traces kept (1 keeps every trace).
+	// A request inside an already sampled trace follows its parent.
+	SampleRatio float64 `mapstructure:"sample_ratio"`
+	// SkipProbeSpans drops spans for /healthz, /readyz and /static/*. Off by
+	// default (ADR 0062), so every request is traced as before.
+	SkipProbeSpans bool `mapstructure:"skip_probe_spans"`
 }
 
 // serverDefaults lists every leaf key with its default so that AutomaticEnv and
@@ -864,6 +870,9 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Trace sampling gates (ADR 0062): the defaults trace every request.
+	"observability.otel.sample_ratio":     1.0,
+	"observability.otel.skip_probe_spans": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
