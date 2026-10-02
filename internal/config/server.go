@@ -159,6 +159,29 @@ type ExecutorSection struct {
 	// DAG artifact left empty (ADR 0023, layer L0). They never override a value
 	// baked into dag.json, keeping the artifact portable across clusters.
 	Defaults PlatformDefaultsSection `mapstructure:"defaults"`
+	// KubeClient sets the client-side rate limits of the control plane's
+	// Kubernetes clients.
+	KubeClient KubeClientSection `mapstructure:"kube_client"`
+}
+
+// KubeClientSection sets the client-side rate limits (client-go token buckets)
+// of the control plane's Kubernetes clients. The dispatch client creates task
+// pods; the agent token exchange builds its own client with the same limits.
+// Maintenance work (pod informer, reconciler, reapers, staging GC, warm pool
+// reconciler) shares the dispatch client unless MaintenanceQPS is set, in which
+// case it gets a separate client and token bucket so a maintenance burst cannot
+// starve pod creation.
+type KubeClientSection struct {
+	// QPS and Burst limit the dispatch client. Defaults are client-go's own
+	// (5 and 10); a non-positive value falls back to them.
+	QPS   float64 `mapstructure:"qps"`
+	Burst int     `mapstructure:"burst"`
+	// MaintenanceQPS and MaintenanceBurst limit a separate maintenance client.
+	// 0 (default) keeps maintenance on the dispatch client, one shared budget as
+	// before. A non-positive burst with a positive QPS falls back to client-go's
+	// default burst.
+	MaintenanceQPS   float64 `mapstructure:"maintenance_qps"`
+	MaintenanceBurst int     `mapstructure:"maintenance_burst"`
 }
 
 // PlatformDefaultsSection configures the lowest-precedence (L0) task defaults,
@@ -789,6 +812,12 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_name":             "",
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// client-go's own defaults on one shared client, so an unconfigured install
+	// keeps its effective apiserver budget.
+	"executor.kube_client.qps":               5.0,
+	"executor.kube_client.burst":             10,
+	"executor.kube_client.maintenance_qps":   0.0,
+	"executor.kube_client.maintenance_burst": 0,
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE /
 	// _STORAGE_CLASS (the env-only Helm override path, #743, same class as #725).
 	// Empty leaves the L0 default unset, so a staging PVC inherits the cluster's
