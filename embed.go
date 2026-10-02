@@ -1,4 +1,4 @@
-// Package leoflow embeds the Python parser and runtime package sources so a
+// Package dexaflow embeds the Python parser and runtime package sources so a
 // binary-only install (no source checkout) can provision them. The dev source
 // trees under parser/ and runtime/python/ remain the canonical copies; this
 // embed reads them directly at build time, so there is no duplicated source.
@@ -9,12 +9,13 @@
 // README.md (what pip needs) so the dev-only test fixtures and dot-caches
 // (.pytest_cache, .ruff_cache, .coverage) are not embedded. Build from a clean
 // tree (no __pycache__) so stale bytecode is not embedded.
-package leoflow
+package dexaflow
 
 import "embed"
 
-// Four patterns across two directives, and runtime/python/leoflow has to be its
-// own: all:runtime/python/leoflow_runtime cannot match it. Omitting it is silent
+// Five patterns across two directives, and runtime/python/dexaflow and
+// runtime/python/leoflow (its pre-rename re-export) each have to be their own:
+// all:runtime/python/leoflow_runtime cannot match them. Omitting it is silent
 // — hatchling ships a wheel without a `packages` entry whose directory is absent,
 // no error and no warning, so a binary-only Lite install would build every
 // per-DAG venv from a pysrc tree with no authoring package in it (#17). The all:
@@ -25,7 +26,7 @@ import "embed"
 // ~/.dexaflow/pysrc reaches $HOME's. embed_test.go asserts each of these arrives.
 //
 //go:embed all:parser/leoflow_parser parser/pyproject.toml parser/README.md
-//go:embed all:runtime/python/leoflow_runtime all:runtime/python/leoflow runtime/python/pyproject.toml runtime/python/README.md runtime/python/.gitignore
+//go:embed all:runtime/python/leoflow_runtime all:runtime/python/dexaflow all:runtime/python/leoflow runtime/python/pyproject.toml runtime/python/README.md runtime/python/.gitignore
 var pythonSources embed.FS
 
 // PythonSources returns the embedded parser and runtime package sources, rooted

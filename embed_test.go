@@ -1,4 +1,4 @@
-package leoflow
+package dexaflow
 
 import (
 	"io/fs"
@@ -61,6 +61,18 @@ func TestEmbeddedAssetsPresent(t *testing.T) {
 		}
 		if !slices.Contains(names, "__init__.py") {
 			t.Fatalf("runtime/python/leoflow has no __init__.py (got %v) — go:embed pattern stale; the `all:` prefix is required because the file starts with _", names)
+		}
+	})
+
+	// Since the rename the authoring package is `dexaflow`, and `leoflow` is a
+	// re-export of it. Both directories have to travel: a pysrc without dexaflow
+	// builds a venv where `leoflow` itself fails to import.
+	t.Run("PythonSources contains the dexaflow authoring package", func(t *testing.T) {
+		if _, err := fs.Stat(PythonSources(), "runtime/python/dexaflow/__init__.py"); err != nil {
+			t.Fatalf("runtime/python/dexaflow/__init__.py is not embedded (%v): go:embed pattern stale", err)
+		}
+		if _, err := fs.Stat(PythonSources(), "parser/leoflow_parser/_shim/dexaflow/__init__.py"); err != nil {
+			t.Fatalf("the parser's dexaflow shim is not embedded (%v)", err)
 		}
 	})
 

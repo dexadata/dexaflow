@@ -48,7 +48,7 @@ Embed the dbt project between your operators with `dbt_group("<name>")`:
 
 ```python
 # sales/dag.py
-from leoflow import dbt_group
+from dexaflow import dbt_group
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import DAG
 

@@ -25,7 +25,7 @@ dev = [
 # Two packages: the task runtime, and the `leoflow` authoring names a user's
 # dag.py imports at the top of the file — runner.py re-imports that module in
 # every python task pod, so they have to resolve there too (#17).
-packages = ["leoflow_runtime", "leoflow"]
+packages = ["leoflow_runtime", "dexaflow", "leoflow"]
 
 [tool.ruff]
 line-length = 100

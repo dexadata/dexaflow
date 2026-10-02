@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	leoflow "github.com/dexadata/dexaflow"
+	dexaflow "github.com/dexadata/dexaflow"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/setup"
 )
@@ -263,7 +263,7 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 	}
 
 	pysrcDir := filepath.Join(leoflowHome, "pysrc")
-	if exErr := setup.ExtractFS(leoflow.PythonSources(), pysrcDir); exErr != nil {
+	if exErr := setup.ExtractFS(dexaflow.PythonSources(), pysrcDir); exErr != nil {
 		return "", fmt.Errorf("extracting embedded Python sources: %w", exErr)
 	}
 	_, _ = fmt.Fprintf(out, "  sources    extracted parser + runtime to %s\n", pysrcDir) //nolint:errcheck // best-effort terminal output

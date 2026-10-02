@@ -591,6 +591,7 @@ the current one wins.
 | `DEXAFLOW_*` variables | `LEOFLOW_*` variables | The `DEXAFLOW_*` value is used; a conflict is logged. Every binary mirrors one prefix onto the other at startup, so processes it starts see both. |
 | `~/.dexaflow` | `~/.leoflow` | An existing `~/.leoflow` is kept in place and `~/.dexaflow` becomes a link to it, so nothing is moved. |
 | `dexaflow`, `dexaflow-server`, `dexaflow-agent`, `dexaflow-mcp` | `leoflow`, `leoflow-server`, `leoflow-agent`, `leoflow-mcp` | The installer and `make build` add the old names as links to the new binaries. |
+| `from dexaflow import ...` in a `dag.py` | `from leoflow import ...` | `leoflow` is a re-export of `dexaflow`; both names refer to the same objects. |
 | `dexaflow_*` metrics | `leoflow_*` metrics | The `/metrics` endpoint publishes every family under both names with the same values, so existing dashboards, alerts and recording rules keep working. Each family therefore appears twice in a scrape. |
 
 A few internal names keep the old spelling on purpose, because renaming them
@@ -599,4 +600,6 @@ would break running installations: the Postgres database names (`leoflow`,
 annotations on task pods, the `LEOFLOW_*` variables the control plane passes
 to task pods (agents built before the rename only read those), and the
 OpenTelemetry service name `leoflow-server` (traces stay continuous across the
-upgrade).
+upgrade), and the internal Python modules `leoflow_runtime` and `leoflow_parser`
+(task images built before the rename run the former, and existing `config.yaml`
+files name the latter in `parser_cmd`).

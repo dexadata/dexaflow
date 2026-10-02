@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	leoflow "github.com/dexadata/dexaflow"
+	dexaflow "github.com/dexadata/dexaflow"
 	"github.com/dexadata/dexaflow/internal/setup"
 )
 
@@ -82,14 +82,14 @@ func withParserPythonPath(env []string) []string {
 // without re-extracting on every invocation.
 func pythonSourcesChecksum() (string, error) {
 	h := sha256.New()
-	err := fs.WalkDir(leoflow.PythonSources(), ".", func(p string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(dexaflow.PythonSources(), ".", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
 			return nil
 		}
-		b, rerr := fs.ReadFile(leoflow.PythonSources(), p)
+		b, rerr := fs.ReadFile(dexaflow.PythonSources(), p)
 		if rerr != nil {
 			return rerr
 		}
@@ -120,7 +120,7 @@ func ensurePysrcIn(dir string, logf func(format string, args ...any)) error {
 	if statErr == nil && strings.TrimSpace(string(cur)) == want {
 		return nil
 	}
-	if exErr := setup.ExtractFS(leoflow.PythonSources(), dir); exErr != nil {
+	if exErr := setup.ExtractFS(dexaflow.PythonSources(), dir); exErr != nil {
 		return fmt.Errorf("refreshing bundled parser sources under %s: %w", dir, exErr)
 	}
 	//nolint:errcheck // a failed marker write just re-extracts next time; not fatal

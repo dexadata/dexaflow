@@ -1,0 +1,16 @@
+kind: Changed
+body: |-
+  **DAGs import the authoring names from `dexaflow`, and `from leoflow import
+  dbt_group` keeps working.** The package a `dag.py` imports at its top is now
+  `dexaflow`, at parse time and inside task images and Lite venvs alike.
+  `leoflow` is a re-export of it, not a copy: `leoflow.dbt_group is
+  dexaflow.dbt_group`, so DAGs written before the rename compile and run
+  unchanged, and the two can never drift apart.
+
+  A Lite venv built before this release has no `dexaflow` package; the
+  freshness check now probes for it, so the venv is rebuilt once on the next
+  `dexaflow lite` instead of every `from dexaflow import ...` failing in the pod.
+
+  The internal modules `leoflow_runtime` and `leoflow_parser` keep their names:
+  agents in already built task images run `python -m leoflow_runtime`, and the
+  `parser_cmd` in existing `config.yaml` files names `leoflow_parser`.
