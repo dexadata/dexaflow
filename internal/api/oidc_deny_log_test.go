@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/dexadata/dexaflow/internal/oidc"
+	"github.com/gin-gonic/gin"
 )
 
 func denyLog(t *testing.T, run func(d oidcDeps, c *gin.Context)) string {
