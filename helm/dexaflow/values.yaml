@@ -128,6 +128,13 @@ executor:
       size: ""
       # -- Default staging PVC StorageClass (e.g. the cluster's RWX class). Empty = cluster default.
       storageClass: ""
+  # -- Collect a settled run's finished task pods as soon as every outcome is
+  # recorded, in one DeleteCollection by the run's label, instead of one delete
+  # per pod after the 10 minute grace period. Off by default, so finished pods
+  # stay inspectable with kubectl for the grace period. Uses the
+  # `deletecollection` verb the executor Role grants; without it the server
+  # deletes the pods one by one.
+  collectSettledRunPods: false
 
 # -- Ports the leoflow-server listens on. http: API + UI, metrics: Prometheus
 # /metrics, grpc: agent ↔ control plane channel (task pods dial back here).

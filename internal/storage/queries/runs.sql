@@ -1007,3 +1007,10 @@ UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
     next_dispatch_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
+
+-- name: ListSettledRunIDs :many
+-- Of the given run ids, those in success or failed. The reconciler asks this
+-- before collecting a run's finished pods at settle time; the ids come from
+-- the pods' run labels, and a run outside this set keeps its pods.
+SELECT id FROM dag_runs
+WHERE id = ANY(sqlc.arg(run_ids)::uuid[]) AND state IN ('success', 'failed');

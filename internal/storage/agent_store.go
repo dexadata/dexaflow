@@ -428,3 +428,27 @@ func latestTry(tis []queries.TaskInstance, taskID string) (queries.TaskInstance,
 	}
 	return best, found
 }
+
+// SettledRuns reports which of the given runs are settled (success or failed),
+// for the reconciler's settled-run pod collection. An id that is not a UUID or
+// names no settled run is left out, so its pods are never collected early.
+func (s *ExecutionStore) SettledRuns(ctx context.Context, runIDs []string) (map[string]bool, error) {
+	ids := make([]pgtype.UUID, 0, len(runIDs))
+	for _, id := range runIDs {
+		if u, err := parseUUID(id); err == nil {
+			ids = append(ids, u)
+		}
+	}
+	out := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.ListSettledRunIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("listing settled runs: %w", err)
+	}
+	for _, id := range rows {
+		out[uuidToString(id)] = true
+	}
+	return out, nil
+}

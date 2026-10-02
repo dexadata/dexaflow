@@ -290,6 +290,10 @@ type Querier interface {
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
 	// "may this DAG take another active run?" (max_active_runs, see #200).
 	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
+	// Of the given run ids, those in success or failed. The reconciler asks this
+	// before collecting a run's finished pods at settle time; the ids come from
+	// the pods' run labels, and a run outside this set keeps its pods.
+	ListSettledRunIDs(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	// Lists every TI currently in `queued` alongside its queued_at timestamp for
 	// the dispatch-lost reaper (#202). The reaper applies the threshold per
 	// candidate so the SQL stays simple and the decision is purely in Go. The

@@ -159,6 +159,13 @@ type ExecutorSection struct {
 	// DAG artifact left empty (ADR 0023, layer L0). They never override a value
 	// baked into dag.json, keeping the artifact portable across clusters.
 	Defaults PlatformDefaultsSection `mapstructure:"defaults"`
+	// CollectSettledRunPods deletes a settled run's finished task pods as soon
+	// as the reconciler has recorded every outcome, in one DeleteCollection by
+	// the run's label instead of one delete per pod after the grace period. It
+	// needs the deletecollection verb on pods (the chart grants it) and falls
+	// back to per-pod deletes without it. Off by default: finished pods stay for
+	// the grace period, so they can be inspected with kubectl.
+	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
 }
 
 // PlatformDefaultsSection configures the lowest-precedence (L0) task defaults,
@@ -788,6 +795,7 @@ var serverDefaults = map[string]any{
 	"executor.task_service_account":         "",
 	"executor.task_secret_name":             "",
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
+	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE /
 	// _STORAGE_CLASS (the env-only Helm override path, #743, same class as #725).

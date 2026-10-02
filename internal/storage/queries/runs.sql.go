@@ -1178,6 +1178,34 @@ func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow
 	return items, nil
 }
 
+const listSettledRunIDs = `-- name: ListSettledRunIDs :many
+SELECT id FROM dag_runs
+WHERE id = ANY($1::uuid[]) AND state IN ('success', 'failed')
+`
+
+// Of the given run ids, those in success or failed. The reconciler asks this
+// before collecting a run's finished pods at settle time; the ids come from
+// the pods' run labels, and a run outside this set keeps its pods.
+func (q *Queries) ListSettledRunIDs(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listSettledRunIDs, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStaleQueuedTaskInstances = `-- name: ListStaleQueuedTaskInstances :many
 SELECT ti.id AS task_instance_id,
        ti.dag_run_id,
