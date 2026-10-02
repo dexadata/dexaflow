@@ -312,8 +312,10 @@ type UISection struct {
 	StylesheetURLs []string `mapstructure:"stylesheet_urls"`
 	// ETagRevalidation lets the browser revalidate the UI routes that compute
 	// an ETag (the grid's task summaries) with "private, no-cache" instead of
-	// no-store, so an unchanged grid poll is answered 304. Off by default
-	// (ADR 0062 gate): every UI route keeps no-store.
+	// no-store, so an unchanged grid poll is answered 304. The browser then
+	// keeps the last grid body in its private cache after logout, revalidated
+	// before any use. Off by default (ADR 0062 gate): every UI route keeps
+	// no-store.
 	ETagRevalidation bool `mapstructure:"etag_revalidation"`
 }
 

@@ -8,7 +8,9 @@ body: |-
   answers `private, no-cache` with `Vary: Authorization, Cookie`, so an
   unchanged grid gets `304 Not Modified`. Each revalidation still goes through
   authentication and authorization, so a revoked session gets `401`, never a
-  cached grid. The default keeps `no-store` everywhere.
+  cached grid. The browser does keep the last grid body in its private cache
+  after logout, revalidated before any use. The default keeps `no-store`
+  everywhere.
 
   The ETag fingerprint itself is now an order-independent hash computed in one
   pass with no allocation (it used to build, sort and join one string per task
