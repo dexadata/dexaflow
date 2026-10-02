@@ -25,12 +25,12 @@ pods, so no pod-based reaper applies and the loop is not started.
 
 | Failure mode | Detected by | Default SLA | What happens |
 |---|---|---|---|
-| **Task code wedged past its declared `execution_timeout_seconds`** | **Agent itself** ([#194](https://github.com/dexadata/leoflow/issues/194)) | **`execution_timeout_seconds`** (per-task) | **TI failed with `execution_timeout: task exceeded N`. Retries kick in if budget remains.** |
-| Agent process crashed mid-task (TI in `running`, no heartbeat) | TI heartbeat reaper ([#128](https://github.com/dexadata/leoflow/issues/128)) | **90 s** | TI failed with `agent_lost`; the TI's pod is deleted so a partitioned-but-alive container stops — unless it has already reached a terminal phase, in which case it is left for the reconciler (see teardown below). Retries kick in if budget remains. |
-| Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/leoflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
+| **Task code wedged past its declared `execution_timeout_seconds`** | **Agent itself** ([#194](https://github.com/dexadata/dexaflow/issues/194)) | **`execution_timeout_seconds`** (per-task) | **TI failed with `execution_timeout: task exceeded N`. Retries kick in if budget remains.** |
+| Agent process crashed mid-task (TI in `running`, no heartbeat) | TI heartbeat reaper ([#128](https://github.com/dexadata/dexaflow/issues/128)) | **90 s** | TI failed with `agent_lost`; the TI's pod is deleted so a partitioned-but-alive container stops — unless it has already reached a terminal phase, in which case it is left for the reconciler (see teardown below). Retries kick in if budget remains. |
+| Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/dexaflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
-| Run stuck `running` with no active TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/leoflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
+| Run stuck `running` with no active TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
 
 Every SLA above is a floor: the reapers run every **30 s**, so detection lands
 up to one cycle after the threshold elapses. Worst case end-to-end: a mid-tick
@@ -229,7 +229,7 @@ anything:
   threshold AND, on Kubernetes, confirmation that no live pod for the TI
   exists. If a pod for the TI is `Pending`/`Running`, the dispatch actually
   landed and the node is just slow to pull the image (a cold-node false
-  positive, [#461](https://github.com/dexadata/leoflow/issues/461)) — the
+  positive, [#461](https://github.com/dexadata/dexaflow/issues/461)) — the
   reaper defers. If pod liveness can't be determined (K8s API error), it also
   defers. A TI without a `queued_at` stamp is too poorly observed to reap.
 - **Pod-lost reaper** — requires a `running` TI past its 60 s liveness floor
@@ -251,7 +251,7 @@ anything:
 Failing a TI in the metadatabase is not enough on its own: a reaped task's
 pod can still be running user code, which breaks at-most-once execution if
 that work commits or a retry runs it again
-([#474](https://github.com/dexadata/leoflow/issues/474)). So, **after** the
+([#474](https://github.com/dexadata/dexaflow/issues/474)). So, **after** the
 durable DB transition, each reaper tears the pod down:
 
 - The **heartbeat** and **dispatch-lost** reapers delete exactly the reaped
@@ -261,7 +261,7 @@ durable DB transition, each reaper tears the pod down:
 - The **orphan-run** reaper deletes every pod of the abandoned run (the
   run-id is unique per run, so no other run's pod can match).
 - **A pod that already reached a terminal phase (`Succeeded`/`Failed`) is
-  skipped, not deleted** ([#928](https://github.com/dexadata/leoflow/issues/928)).
+  skipped, not deleted** ([#928](https://github.com/dexadata/dexaflow/issues/928)).
   It has no container left to stop, so deleting it would buy nothing and cost
   the durable outcome record on its termination message — the only evidence the
   reconciler can settle the attempt from
@@ -283,7 +283,7 @@ durable DB transition, each reaper tears the pod down:
   row — with `should_terminate`, so a reaped-but-still-alive pod that we
   couldn't delete (e.g. during a K8s API outage) cancels its own work. The
   "stale" test is exactly the source-state + `try_number` guard the state
-  write already uses ([#467](https://github.com/dexadata/leoflow/issues/467)):
+  write already uses ([#467](https://github.com/dexadata/dexaflow/issues/467)):
   the report applies for the live, matching attempt, so a live execution is
   never told to stop.
 
@@ -328,7 +328,7 @@ your Prometheus dashboard:
 |---|---|
 | `agent_lost` | TI failed by the heartbeat reaper |
 | `dispatch_lost` | TI failed by the dispatch-lost reaper |
-| `dispatch_lost_deferred` | Dispatch-lost skipped because the TI's pod is live (slow start, [#461](https://github.com/dexadata/leoflow/issues/461)) — a healthy signal, not a fault |
+| `dispatch_lost_deferred` | Dispatch-lost skipped because the TI's pod is live (slow start, [#461](https://github.com/dexadata/dexaflow/issues/461)) — a healthy signal, not a fault |
 | `pod_lost` | TI failed by the pod-lost reaper (no pod at all for the attempt) |
 | `pod_lost_terminal_pod_defer` | Pod-lost skipped because the attempt's pod is still there in a terminal phase — the reconciler settles it from its termination log; reaping would delete that evidence. Healthy as a *transient*. Sustained past two maintenance cycles means the reconciler is not settling and those task instances are stranded `running`, not about to settle: correlate with `reap_settling_valve_open` and `pod_lost_pod_query_error` |
 | `warm_worker_lost` | TI failed by the warm-worker-lost reaper (its warm worker is gone) |

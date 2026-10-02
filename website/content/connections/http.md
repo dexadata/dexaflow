@@ -99,10 +99,10 @@ example DAG doesn't cover this, see the Python `ssl` docs.
 
 ## Example DAG
 
-[`examples/http_load`](https://github.com/dexadata/leoflow/tree/main/examples/http_load) calls a local `go-httpbin`
+[`examples/http_load`](https://github.com/dexadata/dexaflow/tree/main/examples/http_load) calls a local `go-httpbin`
 echo server and asserts the JSON round-trips. Stdlib only — no `requests`
 dep. The example's
-[README](https://github.com/dexadata/leoflow/tree/main/examples/http_load/README.md)
+[README](https://github.com/dexadata/dexaflow/tree/main/examples/http_load/README.md)
 walks through Connection setup and verification.
 
 ## Lite vs Pro caveats
@@ -124,7 +124,7 @@ round-trip — without standing up a real HTTP server. The example DAG is
 the operator's manual verification step.
 
 Tier 1 cost is zero — no service container needed (see
-[#162](https://github.com/dexadata/leoflow/issues/162)).
+[#162](https://github.com/dexadata/dexaflow/issues/162)).
 
 ## Troubleshooting
 

@@ -98,7 +98,7 @@ const (
 ```
 
 <a name="DefaultConfigFile"></a>
-## func [DefaultConfigFile](<https://github.com/dexadata/leoflow/blob/main/internal/config/config.go#L69>)
+## func [DefaultConfigFile](<https://github.com/dexadata/dexaflow/blob/main/internal/config/config.go#L69>)
 
 ```go
 func DefaultConfigFile() (string, error)
@@ -107,7 +107,7 @@ func DefaultConfigFile() (string, error)
 DefaultConfigFile returns the default configuration file path, \~/.leoflow/config.yaml.
 
 <a name="PersistSession"></a>
-## func [PersistSession](<https://github.com/dexadata/leoflow/blob/main/internal/config/persist.go#L16>)
+## func [PersistSession](<https://github.com/dexadata/dexaflow/blob/main/internal/config/persist.go#L16>)
 
 ```go
 func PersistSession(path, serverURL, token string) error
@@ -116,7 +116,7 @@ func PersistSession(path, serverURL, token string) error
 PersistSession writes the control\-plane server URL and auth token into the config file at path, preserving any other keys already there \(e.g. the Lite settings written by \`dexaflow setup\`\). It creates the file and its parent directory when absent, and keeps the file at 0600 because the token is a secret. An empty path is an error: the caller must resolve the target first.
 
 <a name="AuthSection"></a>
-## type [AuthSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L379-L438>)
+## type [AuthSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L379-L438>)
 
 AuthSection configures authentication.
 
@@ -184,7 +184,7 @@ type AuthSection struct {
 ```
 
 <a name="CORSSection"></a>
-## type [CORSSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L353-L355>)
+## type [CORSSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L353-L355>)
 
 CORSSection configures cross\-origin access.
 
@@ -195,7 +195,7 @@ type CORSSection struct {
 ```
 
 <a name="Config"></a>
-## type [Config](<https://github.com/dexadata/leoflow/blob/main/internal/config/config.go#L32-L65>)
+## type [Config](<https://github.com/dexadata/dexaflow/blob/main/internal/config/config.go#L32-L65>)
 
 Config holds the developer CLI configuration.
 
@@ -237,7 +237,7 @@ type Config struct {
 ```
 
 <a name="Load"></a>
-### func [Load](<https://github.com/dexadata/leoflow/blob/main/internal/config/config.go#L80>)
+### func [Load](<https://github.com/dexadata/dexaflow/blob/main/internal/config/config.go#L80>)
 
 ```go
 func Load(configFile string, flags *pflag.FlagSet) (*Config, error)
@@ -246,7 +246,7 @@ func Load(configFile string, flags *pflag.FlagSet) (*Config, error)
 Load assembles configuration from defaults, the given file \(when non\-empty\), LEOFLOW\_\* environment variables, and the provided flag set, in increasing order of precedence. A nil flag set or empty file path is ignored.
 
 <a name="DatabaseSection"></a>
-## type [DatabaseSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L358-L362>)
+## type [DatabaseSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L358-L362>)
 
 DatabaseSection configures the Postgres connection pool.
 
@@ -259,7 +259,7 @@ type DatabaseSection struct {
 ```
 
 <a name="DispatchSection"></a>
-## type [DispatchSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L547-L555>)
+## type [DispatchSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L547-L555>)
 
 DispatchSection sizes the BufferedDispatcher \(\#127\). BufferSize=0 keeps the scheduler tick synchronous with the inner dispatcher — the right shape for Lite \(subprocess fork is microseconds\). BufferSize\>0 enables the worker pool — the right shape for Pro \(Kubernetes API calls add real latency\). The defaults are set per\-edition by configsetup so the user does not have to think about this; an operator can still tune the knobs.
 
@@ -276,7 +276,7 @@ type DispatchSection struct {
 ```
 
 <a name="ExecutionSection"></a>
-## type [ExecutionSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L194-L234>)
+## type [ExecutionSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L194-L234>)
 
 ExecutionSection configures warm worker pools — Pro\-gated N:1 pod reuse \(ADR 0058\). Every field is operator\-set \(never DAG\-author\-set\), consistent with the secret\-scoping stance: whether a pod may be reused across attempts is an operator's security decision, not a DAG author's. All fields default to a byte\-for\-byte no\-op — warm pools OFF means dedicated pod\-per\-task, today's behavior — and are read for runtime behavior only in a later brick; N1a introduces the knobs plus the fail\-closed boot guard \(validateExecution\).
 
@@ -325,7 +325,7 @@ type ExecutionSection struct {
 ```
 
 <a name="ExecutionSection.EffectiveMinIdle"></a>
-### func \(ExecutionSection\) [EffectiveMinIdle](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L248>)
+### func \(ExecutionSection\) [EffectiveMinIdle](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L248>)
 
 ```go
 func (e ExecutionSection) EffectiveMinIdle(dagMinIdle int) int
@@ -338,7 +338,7 @@ EffectiveMinIdle resolves the warm\-worker target for one dag\_version under mod
 - The resolved value is clamped to \[0, max\_pool\_size\] so an author can never provision more warmth than the operator's per\-version cap allows, and a nonsensical negative never underflows.
 
 <a name="ExecutorSection"></a>
-## type [ExecutorSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L108-L151>)
+## type [ExecutorSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L108-L151>)
 
 ExecutorSection configures how tasks are executed.
 
@@ -390,7 +390,7 @@ type ExecutorSection struct {
 ```
 
 <a name="HTTPExecutorSection"></a>
-## type [HTTPExecutorSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L291-L295>)
+## type [HTTPExecutorSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L291-L295>)
 
 HTTPExecutorSection configures HTTP\-related executor knobs.
 
@@ -403,7 +403,7 @@ type HTTPExecutorSection struct {
 ```
 
 <a name="JWTSection"></a>
-## type [JWTSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L441-L454>)
+## type [JWTSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L441-L454>)
 
 JWTSection configures JWT issuance and validation.
 
@@ -425,7 +425,7 @@ type JWTSection struct {
 ```
 
 <a name="LogsSection"></a>
-## type [LogsSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L58-L70>)
+## type [LogsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L58-L70>)
 
 LogsSection configures task log shipping.
 
@@ -446,7 +446,7 @@ type LogsSection struct {
 ```
 
 <a name="OIDCSection"></a>
-## type [OIDCSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L465-L532>)
+## type [OIDCSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L465-L532>)
 
 OIDCSection configures the OIDC/SSO login flow \(Authorization Code \+ PKCE\). It is read only when auth.provider is "oidc", which is Pro\-gated and fails boot closed unless Issuer, ClientID, and RedirectURL are all set.
 
@@ -525,7 +525,7 @@ type OIDCSection struct {
 ```
 
 <a name="OTelSection"></a>
-## type [OTelSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L565-L568>)
+## type [OTelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L565-L568>)
 
 OTelSection configures OpenTelemetry export.
 
@@ -537,7 +537,7 @@ type OTelSection struct {
 ```
 
 <a name="ObjectLogSection"></a>
-## type [ObjectLogSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L81-L105>)
+## type [ObjectLogSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L81-L105>)
 
 ObjectLogSection configures the object\-store log backend for both the "s3" and "gcs" providers. Auth is keyless\-first \(ADR 0035\): leave the credential fields empty to use the ambient chain — IRSA / instance profile for S3, GKE Workload Identity \(ADC\) for GCS. Static keys and credential files are a discouraged escape hatch for dev and clusters without an identity broker.
 
@@ -572,7 +572,7 @@ type ObjectLogSection struct {
 ```
 
 <a name="ObservabilitySection"></a>
-## type [ObservabilitySection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L558-L562>)
+## type [ObservabilitySection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L558-L562>)
 
 ObservabilitySection configures logging, metrics, and tracing.
 
@@ -585,7 +585,7 @@ type ObservabilitySection struct {
 ```
 
 <a name="PlatformDefaultsSection"></a>
-## type [PlatformDefaultsSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L155-L185>)
+## type [PlatformDefaultsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L155-L185>)
 
 PlatformDefaultsSection configures the lowest\-precedence \(L0\) task defaults, applied at dispatch to fill gaps the DAG left empty \(ADR 0023\).
 
@@ -624,7 +624,7 @@ type PlatformDefaultsSection struct {
 ```
 
 <a name="RedisSection"></a>
-## type [RedisSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L365-L376>)
+## type [RedisSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L365-L376>)
 
 RedisSection configures the Redis connection.
 
@@ -644,7 +644,7 @@ type RedisSection struct {
 ```
 
 <a name="SchedulerSection"></a>
-## type [SchedulerSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L535-L539>)
+## type [SchedulerSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L535-L539>)
 
 SchedulerSection configures the scheduler loop.
 
@@ -657,7 +657,7 @@ type SchedulerSection struct {
 ```
 
 <a name="SecretsSection"></a>
-## type [SecretsSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L45-L55>)
+## type [SecretsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L45-L55>)
 
 SecretsSection configures the external secrets backend \(ADR 0060\). When Backend is set, a Connection/Variable a DAG declares can be resolved pod\-side from the provider store under the pod's keyless identity instead of the leoflow vault. Empty \(the default\) keeps the vault as the only source — byte\-identical to pre\-0060. This is operator\-only config: it is delivered to the pod as LEOFLOW\_SECRETS\_\* env, which an author's task env can never set \(\#828\).
 
@@ -676,7 +676,7 @@ type SecretsSection struct {
 ```
 
 <a name="ServerConfig"></a>
-## type [ServerConfig](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L21-L37>)
+## type [ServerConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L21-L37>)
 
 ServerConfig is the full configuration for the leoflow\-server control plane. It mirrors the nested YAML described in the Phase 2 prompt.
 
@@ -701,7 +701,7 @@ type ServerConfig struct {
 ```
 
 <a name="LoadServer"></a>
-### func [LoadServer](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L727>)
+### func [LoadServer](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L727>)
 
 ```go
 func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error)
@@ -710,7 +710,7 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error)
 LoadServer assembles the server configuration from defaults, the given file, LEOFLOW\_\* environment variables, and flags, in increasing precedence.
 
 <a name="ServerConfig.Validate"></a>
-### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L835>)
+### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L835>)
 
 ```go
 func (c *ServerConfig) Validate() error
@@ -719,7 +719,7 @@ func (c *ServerConfig) Validate() error
 Validate reports configuration errors that must abort startup.
 
 <a name="ServerSection"></a>
-## type [ServerSection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L298-L318>)
+## type [ServerSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L298-L318>)
 
 ServerSection configures the HTTP, metrics, and agent gRPC listeners.
 
@@ -748,7 +748,7 @@ type ServerSection struct {
 ```
 
 <a name="ServerSection.EffectiveRole"></a>
-### func \(ServerSection\) [EffectiveRole](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L332>)
+### func \(ServerSection\) [EffectiveRole](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L332>)
 
 ```go
 func (s ServerSection) EffectiveRole() string
@@ -757,7 +757,7 @@ func (s ServerSection) EffectiveRole() string
 EffectiveRole returns the configured role, defaulting empty to RoleAll so an unset role \(Lite, and every pre\-0049 deployment\) keeps the monolith behavior.
 
 <a name="ServerSection.ServesAPI"></a>
-### func \(ServerSection\) [ServesAPI](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L340>)
+### func \(ServerSection\) [ServesAPI](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L340>)
 
 ```go
 func (s ServerSection) ServesAPI() bool
@@ -766,7 +766,7 @@ func (s ServerSection) ServesAPI() bool
 ServesAPI reports whether this process runs the HTTP API \+ UI.
 
 <a name="ServerSection.ServesScheduler"></a>
-### func \(ServerSection\) [ServesScheduler](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L347>)
+### func \(ServerSection\) [ServesScheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L347>)
 
 ```go
 func (s ServerSection) ServesScheduler() bool
@@ -775,7 +775,7 @@ func (s ServerSection) ServesScheduler() bool
 ServesScheduler reports whether this process runs the scheduler, dispatch, and the agent gRPC endpoint.
 
 <a name="UISection"></a>
-## type [UISection](<https://github.com/dexadata/leoflow/blob/main/internal/config/server.go#L267-L288>)
+## type [UISection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L267-L288>)
 
 UISection configures the embedded Airflow UI.
 

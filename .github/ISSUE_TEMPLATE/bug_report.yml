@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for filing a bug! Please search
-        [existing issues](https://github.com/dexadata/leoflow/issues) first to
+        [existing issues](https://github.com/dexadata/dexaflow/issues) first to
         avoid duplicates.
   - type: textarea
     id: what-happened

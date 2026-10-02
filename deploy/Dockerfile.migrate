@@ -98,7 +98,7 @@ RUN set -eux; \
 # shared DSN starts the server and fails this Job.
 FROM gcr.io/distroless/static-debian13:nonroot
 
-LABEL org.opencontainers.image.source="https://github.com/dexadata/leoflow"
+LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
 LABEL org.opencontainers.image.description="golang-migrate CLI plus the Leoflow SQL migrations, for the Helm migration Job"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 

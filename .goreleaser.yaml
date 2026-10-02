@@ -123,7 +123,7 @@ dockers:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.source=https://github.com/dexadata/leoflow"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
   - id: server-arm64
     ids: [dexaflow-server]
     goarch: arm64
@@ -139,7 +139,7 @@ dockers:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.source=https://github.com/dexadata/leoflow"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
 
 docker_manifests:
   - name_template: "ghcr.io/dexadata/dexaflow-server:{{ .Version }}"

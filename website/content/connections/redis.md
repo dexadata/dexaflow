@@ -79,9 +79,9 @@ planned follow-up; for now, `redis` + Extra is the supported path.
 
 ## Example DAG
 
-[`examples/redis_load`](https://github.com/dexadata/leoflow/tree/main/examples/redis_load) writes 20 hash fields under
+[`examples/redis_load`](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load) writes 20 hash fields under
 `leoflow:example_load` using `redis-py`. The example's
-[README](https://github.com/dexadata/leoflow/tree/main/examples/redis_load/README.md)
+[README](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load/README.md)
 walks through Connection setup and verification with `redis-cli HGETALL`.
 
 ## Lite vs Pro caveats
@@ -101,7 +101,7 @@ Redis is included in `TestConnectionDeliveryChainOfCustodyIntegration`
 (the table-driven SQL-family test in `internal/storage/`). It runs on
 every PR with no extra service container — Redis is already a CI service
 for the Dexaflow control plane (see `.github/workflows/ci.yaml`), so the
-Tier 1 cost is zero (see [#162](https://github.com/dexadata/leoflow/issues/162)).
+Tier 1 cost is zero (see [#162](https://github.com/dexadata/dexaflow/issues/162)).
 
 ## Troubleshooting
 

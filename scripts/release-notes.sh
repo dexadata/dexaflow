@@ -25,7 +25,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHANGELOG="${LEOFLOW_CHANGELOG:-$ROOT/CHANGELOG.md}"
-REPO_URL="https://github.com/dexadata/leoflow"
+REPO_URL="https://github.com/dexadata/dexaflow"
 
 # section <changelog-file> <heading>: print the body under `## <heading>`, up to
 # the next `## ` heading. A pure filter, so the self-test needs no git and no
@@ -136,7 +136,7 @@ on-disk shape may still evolve between minor versions; \`-rc.N\` tags are releas
 candidates gated by the E2E suite. Install **this exact release** with:
 
 \`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/${tag}/install.sh | LEOFLOW_VERSION=${tag} sh
+curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/${tag}/install.sh | LEOFLOW_VERSION=${tag} sh
 \`\`\`
 
 > A bare \`curl … | sh\` installs the latest **stable** release (\`/releases/latest\`

@@ -14,7 +14,7 @@ Python pain. Native map-reduce for ML/AI: fan-out + reduce as a list comprehensi
 <a class="btn btn-lg btn-secondary me-3 mb-4" href="/why-leoflow/">
   Why Dexaflow <i class="fas fa-heart ms-2"></i>
 </a>
-<a class="btn btn-lg btn-secondary me-3 mb-4" href="https://github.com/dexadata/leoflow">
+<a class="btn btn-lg btn-secondary me-3 mb-4" href="https://github.com/dexadata/dexaflow">
   GitHub <i class="fab fa-github ms-2"></i>
 </a>
 {{% /blocks/cover %}}

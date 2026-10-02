@@ -20,7 +20,7 @@ anywhere someone is speaking for the project.
 
 ## Reporting
 
-Open a [private report](https://github.com/dexadata/leoflow/security/advisories/new)
+Open a [private report](https://github.com/dexadata/dexaflow/security/advisories/new)
 or contact [@neochaotic](https://github.com/neochaotic) directly. Reports stay
 between us. This is a single-maintainer project, so there is no independent
 appeal — if the problem is with me, that is worth knowing before you invest

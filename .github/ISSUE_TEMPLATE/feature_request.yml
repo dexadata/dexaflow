@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         For open-ended ideas or design questions, consider
-        [Discussions](https://github.com/dexadata/leoflow/discussions) instead.
+        [Discussions](https://github.com/dexadata/dexaflow/discussions) instead.
   - type: textarea
     id: problem
     attributes:

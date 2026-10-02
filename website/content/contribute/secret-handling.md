@@ -9,8 +9,8 @@ If your change reads, writes, delivers, or displays a **secret** — a connectio
 URI, a generated `profiles.yml`, a keyfile, a token, an API key — it is bound by
 the two invariants in [ADR 0061](/project/adrs/0061-secret-locality/). This page
 is the practical how-to. Both rules exist because the same leak has happened three
-times ([#882](https://github.com/dexadata/leoflow/issues/882),
-[PR #867](https://github.com/dexadata/leoflow/pull/867) (field report #11),
+times ([#882](https://github.com/dexadata/dexaflow/issues/882),
+[PR #867](https://github.com/dexadata/dexaflow/pull/867) (field report #11),
 GHSA-3r74-9w27-v32f) — each avoidable.
 
 ## Rule 1 — Private locality: never write a secret where it could be committed

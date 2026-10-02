@@ -31,13 +31,13 @@ upgrading; that is the caveat, not an unsupported edition.
 | | **Lite** | **Pro** |
 |---|---|---|
 | Status | **Supported** — single host | **In validation** — Helm on Kubernetes (tested against GKE; pin a tag) |
-| Install | one command (`curl … \| sh`) on one machine | [Helm chart](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md) on your cluster |
+| Install | one command (`curl … \| sh`) on one machine | [Helm chart](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md) on your cluster |
 | Command | `dexaflow lite` | the deployed control plane |
 | Auth | a single local **admin** login (password shown once at setup) | enterprise: SSO/OIDC, full RBAC, multi-tenant |
 | Executors | a local **k3d** mini-cluster (real pods, **requires Docker** to host the cluster) or **subprocess** (dev-only, unsandboxed, no Docker) | **Kubernetes only**, at scale |
 | Deploy | edit + hot-reload | GitOps: `dexaflow compile` in CI → immutable image + `dag.json` |
 | Intended use | local, small, or **light production** projects on a **trusted/internal network** | teams and production workloads at scale |
-| Datastores | **Postgres, auto-selected** (Docker `postgres:16` or embedded managed); **no Redis** — see [below](#datastore-auto-selected-no-redis) | **external** managed Postgres + Redis ([versions](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)) |
+| Datastores | **Postgres, auto-selected** (Docker `postgres:16` or embedded managed); **no Redis** — see [below](#datastore-auto-selected-no-redis) | **external** managed Postgres + Redis ([versions](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)) |
 
 ## Runtime modes (Lite · Pro · Demo)
 
@@ -132,7 +132,7 @@ active validation** — tested against GKE, not yet certified for production. Pi
 specific tag and read the release notes before upgrading (pre-1.0, breaking changes
 ship between minor versions with a migration note, ADR 0037).
 
-Install via the **[Helm chart](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md)**
+Install via the **[Helm chart](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md)**
 (chart-test gated, multi-arch images published per release, signed with cosign).
 Hardening templates ship as opt-in toggles: HPA + NetworkPolicy + ServiceMonitor;
 the PodDisruptionBudget turns itself on when the control plane runs more than one
