@@ -1,0 +1,39 @@
+suite: trusted issuer reaches the chart (#1284)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders every key when an issuer is set
+    set:
+      auth.trustedIssuer.issuer: https://portal.example.com
+      auth.trustedIssuer.name: portal
+      auth.trustedIssuer.jwksUrl: https://portal.example.com/jwks
+      auth.trustedIssuer.audience: leoflow-engine
+      auth.trustedIssuer.allowedTenants: ["acme", "globex"]
+      auth.trustedIssuer.maxLifetimeSeconds: 300
+      auth.trustedIssuer.allowedOrigins: ["https://portal.example.com"]
+    template: deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ISSUER, value: https://portal.example.com}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_NAME, value: portal}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL, value: https://portal.example.com/jwks}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE, value: leoflow-engine}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM, value: tenant_id}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS, value: "acme,globex"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS, value: "300"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS, value: "https://portal.example.com"}}
+
+  - it: renders none of them when no issuer is set
+    template: deployment.yaml
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM, value: tenant_id}}

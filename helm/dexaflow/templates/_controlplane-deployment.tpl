@@ -286,6 +286,28 @@ spec:
             - name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .ctx.Values.auth.trustedIssuer }}
+            {{- if .issuer }}
+            # Trusted-issuer handoff (#1284). Rendered as a block only when an
+            # issuer is set; the server validates the whole section at boot.
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ISSUER
+              value: {{ .issuer | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_NAME
+              value: {{ .name | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL
+              value: {{ .jwksUrl | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE
+              value: {{ .audience | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM
+              value: {{ .tenantClaim | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS
+              value: {{ join "," .allowedTenants | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS
+              value: {{ .maxLifetimeSeconds | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS
+              value: {{ join "," .allowedOrigins | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT
               value: {{ .ctx.Values.observability.logFormat | quote }}
             - name: LEOFLOW_OBSERVABILITY_LOG_LEVEL
