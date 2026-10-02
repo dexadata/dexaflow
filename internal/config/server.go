@@ -32,6 +32,7 @@ type ServerConfig struct {
 	Observability ObservabilitySection `mapstructure:"observability"`
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
+	Retention     RetentionSection     `mapstructure:"retention"`
 	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
 	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
 	// writes.
@@ -670,6 +671,70 @@ type DispatchSection struct {
 	Workers int `mapstructure:"workers"`
 }
 
+// RetentionSection configures the leader-only retention janitor, which deletes
+// metadata rows past a per-class age. Every class is off by default (0 days):
+// nothing is ever deleted unless the operator configures a window. The pacing
+// knobs keep each statement small and each cycle bounded.
+type RetentionSection struct {
+	// DagRunsDays deletes finished (success or failed) dag runs, with their task
+	// instances, attempt history, state history and XCom index rows, once they
+	// ended more than this many days ago. 0 (default) keeps every run.
+	DagRunsDays int `mapstructure:"dag_runs_days"`
+	// AuditLogDays deletes audit log entries older than this many days. 0
+	// (default) keeps the whole audit log.
+	AuditLogDays int `mapstructure:"audit_log_days"`
+	// DryRun only counts the rows a cycle would delete, logs the counts and
+	// exports them as gauges, and deletes nothing.
+	DryRun bool `mapstructure:"dry_run"`
+	// Interval is how often a cycle runs. Default 1h.
+	Interval time.Duration `mapstructure:"interval"`
+	// BatchSize caps the rows one DELETE statement removes. Default 1000.
+	BatchSize int `mapstructure:"batch_size"`
+	// BatchPause is the sleep between two batches, so the janitor never holds
+	// the database busy. Default 100ms.
+	BatchPause time.Duration `mapstructure:"batch_pause"`
+	// MaxRowsPerCycle stops a cycle from starting another batch once this many
+	// rows were deleted; the rest waits for the next cycle. Default 100000.
+	MaxRowsPerCycle int `mapstructure:"max_rows_per_cycle"`
+}
+
+// maxRetentionBatchSize bounds retention.batch_size: a batch is meant to be
+// small, and a value in the hundreds of thousands is the unbounded DELETE the
+// janitor exists to avoid.
+const maxRetentionBatchSize = 50000
+
+// Enabled reports whether any retention class is configured.
+func (r RetentionSection) Enabled() bool {
+	return r.DagRunsDays > 0 || r.AuditLogDays > 0
+}
+
+// Validate rejects a negative window always, and pacing that would make the
+// janitor unbounded or a busy loop when a class is on.
+func (r RetentionSection) Validate() error {
+	if r.DagRunsDays < 0 {
+		return fmt.Errorf("retention.dag_runs_days must be >= 0 (got %d); 0 keeps every run", r.DagRunsDays)
+	}
+	if r.AuditLogDays < 0 {
+		return fmt.Errorf("retention.audit_log_days must be >= 0 (got %d); 0 keeps the whole audit log", r.AuditLogDays)
+	}
+	if !r.Enabled() {
+		return nil
+	}
+	if r.BatchSize < 1 || r.BatchSize > maxRetentionBatchSize {
+		return fmt.Errorf("retention.batch_size must be between 1 and %d (got %d)", maxRetentionBatchSize, r.BatchSize)
+	}
+	if r.BatchPause < 0 {
+		return fmt.Errorf("retention.batch_pause must be >= 0 (got %v)", r.BatchPause)
+	}
+	if r.Interval <= 0 {
+		return fmt.Errorf("retention.interval must be > 0 (got %v)", r.Interval)
+	}
+	if r.MaxRowsPerCycle < 1 {
+		return fmt.Errorf("retention.max_rows_per_cycle must be >= 1 (got %d)", r.MaxRowsPerCycle)
+	}
+	return nil
+}
+
 // ObservabilitySection configures logging, metrics, and tracing.
 type ObservabilitySection struct {
 	OTel      OTelSection `mapstructure:"otel"`
@@ -864,6 +929,15 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Retention (the leader-only janitor). Every class ships off: nothing is
+	// deleted until an operator sets a window. The pacing values apply once one is.
+	"retention.dag_runs_days":      0,
+	"retention.audit_log_days":     0,
+	"retention.dry_run":            false,
+	"retention.interval":           "1h",
+	"retention.batch_size":         1000,
+	"retention.batch_pause":        "100ms",
+	"retention.max_rows_per_cycle": 100000,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -993,6 +1067,9 @@ func (c *ServerConfig) Validate() error {
 		return err
 	}
 	if err := c.validateExecution(); err != nil {
+		return err
+	}
+	if err := c.Retention.Validate(); err != nil {
 		return err
 	}
 	if err := c.validatePlatformIntegration(); err != nil {
