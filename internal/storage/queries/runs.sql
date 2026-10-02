@@ -29,8 +29,26 @@ SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
 WHERE r.dag_id = $1
-ORDER BY r.logical_date DESC
+ORDER BY r.logical_date DESC, r.run_id DESC
 LIMIT $2 OFFSET $3;
+
+-- name: ListDagRunsByDagAfter :many
+-- Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
+-- cursor (logical_date, run_id) in the same order, so a deep page costs the
+-- same as the first. run_id is unique per DAG, so it makes the order total. An
+-- empty states array keeps every state.
+SELECT r.*, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.dag_id = sqlc.arg(dag_id)
+  AND (cardinality(sqlc.arg(states)::text[]) = 0 OR r.state::text = ANY(sqlc.arg(states)::text[]))
+  AND (r.logical_date, r.run_id) < (sqlc.arg(after_logical_date)::timestamptz, sqlc.arg(after_run_id)::text)
+ORDER BY r.logical_date DESC, r.run_id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: CountDagRunsByDagStates :one
+SELECT count(*) FROM dag_runs
+WHERE dag_id = sqlc.arg(dag_id) AND state::text = ANY(sqlc.arg(states)::text[]);
 
 -- name: DeleteDagRun :execrows
 -- Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).

@@ -103,6 +103,8 @@ func CORS(allowed []string) gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type")
+			// Paging headers a cross-origin client needs to walk a list.
+			c.Header("Access-Control-Expose-Headers", "Link,"+nextCursorHeader)
 		}
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
