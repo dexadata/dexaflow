@@ -105,6 +105,10 @@ func (f *fakeClient) FetchXComBatch(_ context.Context, in *agentv1.FetchXComBatc
 	if f.batchErr != nil {
 		return nil, f.batchErr
 	}
+	// The control plane refuses a batch over its item bound.
+	if len(in.GetItems()) > 256 {
+		return nil, status.Errorf(codes.InvalidArgument, "at most 256 xcom values per batch, got %d", len(in.GetItems()))
+	}
 	if f.fetchXComErr != nil {
 		return nil, f.fetchXComErr
 	}

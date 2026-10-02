@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -108,6 +109,27 @@ func TestBuildEnvBatchErrorKeepsPerValueErrors(t *testing.T) {
 	_, err := (&Runner{Client: f}).buildEnv(context.Background(), batchSpec())
 	if err == nil || !strings.Contains(err.Error(), "control plane gone") {
 		t.Errorf("buildEnv error = %v, want the FetchXCom error", err)
+	}
+}
+
+// TestBuildEnvChunksLargeFanIn: a fan-in over more upstreams than one batch
+// may carry is read in several batches instead of failing the batch and
+// falling back to one FetchXCom per upstream.
+func TestBuildEnvChunksLargeFanIn(t *testing.T) {
+	f := &fakeClient{xcom: map[string]*agentv1.FetchXComResponse{}}
+	members := make([]string, 300)
+	for i := range members {
+		members[i] = fmt.Sprintf("up%03d", i)
+		f.xcom[members[i]] = &agentv1.FetchXComResponse{Value: []byte(fmt.Sprintf("%d", i))}
+	}
+	spec := &agentv1.TaskSpec{Operator: "python", XcomInputMapping: map[string]*agentv1.XComUpstreams{
+		"all": {TaskIds: members},
+	}}
+	if _, err := (&Runner{Client: f}).buildEnv(context.Background(), spec); err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	if f.batchCalls != 2 || f.fetchCalls != 0 {
+		t.Errorf("calls = %d batch + %d single, want 2 + 0", f.batchCalls, f.fetchCalls)
 	}
 }
 

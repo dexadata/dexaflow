@@ -3,6 +3,7 @@ package agentrpc
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/xcom"
@@ -16,6 +17,7 @@ type batchXCom struct {
 	fakeXCom
 	batches int
 	fetches int
+	read    int // keys read through FetchMany
 }
 
 func (x *batchXCom) Fetch(ctx context.Context, key xcom.Key) (xcom.Entry, error) {
@@ -25,6 +27,7 @@ func (x *batchXCom) Fetch(ctx context.Context, key xcom.Key) (xcom.Entry, error)
 
 func (x *batchXCom) FetchMany(_ context.Context, keys []xcom.Key) ([]xcom.Result, error) {
 	x.batches++
+	x.read += len(keys)
 	out := make([]xcom.Result, len(keys))
 	for i, k := range keys {
 		out[i].Entry, out[i].Found = x.entries[k.String()]
@@ -178,5 +181,43 @@ func TestFetchXComBatchDefersPastTheBudget(t *testing.T) {
 	}
 	if deferred == 0 || total > xcomBatchBudgetBytes {
 		t.Errorf("delivered %d bytes with %d deferred, want at most %d bytes and some deferred", total, deferred, xcomBatchBudgetBytes)
+	}
+}
+
+// TestFetchXComBatchStopsReadingPastTheBudget: the control plane reads the
+// batch in chunks and stops once the response budget is spent, so a fan-in of
+// large values never loads every value only to defer most of them. Keys past
+// the budget are returned deferred without being read.
+func TestFetchXComBatchStopsReadingPastTheBudget(t *testing.T) {
+	big := bytes.Repeat([]byte("x"), xcom.MaxSizeBytes)
+	entries := map[string]xcom.Entry{}
+	store := &fakeStore{spec: TaskSpec{XComInputMapping: map[string][]string{}}}
+	req := &agentv1.FetchXComBatchRequest{}
+	for i := 0; i < maxXComBatchItems; i++ {
+		task := fmt.Sprintf("up%03d", i)
+		store.spec.XComInputMapping[task] = []string{task}
+		entries["xcom:acme:etl:run-1:"+task+":return_value"] = xcom.Entry{Value: big, SizeBytes: len(big)}
+		req.Items = append(req.Items, &agentv1.FetchXComRequest{UpstreamTaskId: task})
+	}
+	x := &batchXCom{fakeXCom: fakeXCom{entries: entries}}
+	srv, a := newServerX(store, x)
+	resp, err := srv.FetchXComBatch(ctxWithToken(t, a), req)
+	if err != nil {
+		t.Fatalf("FetchXComBatch: %v", err)
+	}
+	if limit := xcomBatchBudgetBytes/xcom.MaxSizeBytes + xcomBatchChunk; x.read > limit {
+		t.Errorf("read %d of %d keys, want at most %d (the budget plus one chunk)", x.read, len(req.Items), limit)
+	}
+	delivered := 0
+	for i, it := range resp.GetItems() {
+		if it.GetUpstreamTaskId() != req.Items[i].GetUpstreamTaskId() {
+			t.Fatalf("item %d is %q, want request order", i, it.GetUpstreamTaskId())
+		}
+		if !it.GetDeferred() {
+			delivered++
+		}
+	}
+	if delivered != xcomBatchBudgetBytes/xcom.MaxSizeBytes {
+		t.Errorf("delivered %d values, want the %d that fit the budget", delivered, xcomBatchBudgetBytes/xcom.MaxSizeBytes)
 	}
 }
