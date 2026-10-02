@@ -571,6 +571,7 @@ before enabling it in production.
 | `DEXAFLOW_UI_THEME` | _(empty)_ | both | Theme for the UI as a JSON object, the same shape as Airflow's `[api] theme`: `tokens` (Chakra design tokens such as `colors.brand` and `fonts`), `globalCss`, `icon`, `icon_dark_mode`. Served in `/ui/config`, so the UI applies it through its own theming. Boot fails on invalid JSON, an unknown top-level key, or an icon that is not http(s) or root-relative. Helm: `ui.theme` (YAML, rendered as JSON). See [Branding the UI](#branding-the-ui). |
 | `DEXAFLOW_UI_FAVICON_URL` | _(empty)_ | both | Favicon for the UI, http(s) or root-relative. Empty keeps the stock icon. Helm: `ui.faviconUrl`. |
 | `DEXAFLOW_UI_STYLESHEET_URLS` | _(empty)_ | both | Comma-separated stylesheets every UI page loads in `<head>`, typically the web fonts a theme names. Each must be http(s) or root-relative and contain no comma. Helm: `ui.stylesheetUrls`. |
+| `DEXAFLOW_UI_ETAG_REVALIDATION` | `false` | both | Lets the browser revalidate the grid's task summaries (`/ui/grid/ti_summaries/*`), the one UI route that computes an `ETag`: that route answers `Cache-Control: private, no-cache` with `Vary: Authorization, Cookie` instead of `no-store`, so an unchanged poll gets `304 Not Modified` and no body. Every revalidation still runs authentication and authorization. Off keeps `no-store` on every UI route. Helm: set it through `extraEnv`. |
 
 ### Branding the UI
 
