@@ -44,9 +44,26 @@ type WarmPodInformer struct {
 	stopCh    chan struct{}
 	stopOnce  sync.Once
 
-	mu      sync.Mutex
-	pending map[string][]time.Time // dag_version -> unobserved creates, oldest first
-	now     func() time.Time
+	// Create expectations (see WarmPodCache). inflight counts creates issued but
+	// not returned, per dag_version label and per tenant; expected holds accepted
+	// creates by pod name until the pod is observed; early holds pods observed
+	// while a create of their version was in flight, so a watch event that beats
+	// the create call is still matched to it; expired latches an expectation
+	// that timed out unobserved until the reconciler reads it.
+	mu             sync.Mutex
+	inflight       map[string]int
+	inflightTenant map[string]int
+	expected       map[string]createExpectation
+	early          map[string]time.Time
+	expired        bool
+	now            func() time.Time
+}
+
+// createExpectation is one accepted create the cache has not observed yet.
+type createExpectation struct {
+	versionLabel string
+	tenant       string
+	at           time.Time
 }
 
 // NewWarmPodInformer builds the warm-pod informer for namespace. It does not
@@ -62,20 +79,23 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 	)
 	pods := factory.Core().V1().Pods()
 	w := &WarmPodInformer{
-		factory:   factory,
-		informer:  pods.Informer(),
-		lister:    pods.Lister(),
-		namespace: namespace,
-		changes:   make(chan struct{}, 1),
-		stopCh:    make(chan struct{}),
-		pending:   map[string][]time.Time{},
-		now:       time.Now,
+		factory:        factory,
+		informer:       pods.Informer(),
+		lister:         pods.Lister(),
+		namespace:      namespace,
+		changes:        make(chan struct{}, 1),
+		stopCh:         make(chan struct{}),
+		inflight:       map[string]int{},
+		inflightTenant: map[string]int{},
+		expected:       map[string]createExpectation{},
+		early:          map[string]time.Time{},
+		now:            time.Now,
 	}
 	if _, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			// A create we were waiting for landed: the reconcile it held back
 			// can run now.
-			if p, ok := obj.(*corev1.Pod); ok && w.observed(p.Labels[warmDagVersionLabelKey]) {
+			if p, ok := obj.(*corev1.Pod); ok && w.observed(p.Name, p.Labels[warmDagVersionLabelKey]) {
 				w.Kick()
 			}
 		},
@@ -86,7 +106,14 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 				w.Kick()
 			}
 		},
-		DeleteFunc: func(any) { w.Kick() },
+		DeleteFunc: func(obj any) {
+			// A pod deleted before the watch reported its add never will be:
+			// drop its expectation with it.
+			if p, ok := podOf(obj); ok {
+				w.forget(p.Name)
+			}
+			w.Kick()
+		},
 	}); err != nil {
 		return nil, fmt.Errorf("registering warm pod event handler: %w", err)
 	}
@@ -140,50 +167,134 @@ func (w *WarmPodInformer) CachedWarmPods() ([]WarmPodInfo, bool) {
 	return out, true
 }
 
-// ExpectCreate records a create about to be issued for dagVersionID, before the
-// call so a watch event that beats the caller is still matched.
-func (w *WarmPodInformer) ExpectCreate(dagVersionID string) {
+// BeginCreate records a create about to be issued for t, before the call so a
+// watch event that beats the caller is still matched.
+func (w *WarmPodInformer) BeginCreate(t WarmTarget) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.pending[sanitizeLabel(dagVersionID)] = append(w.pending[sanitizeLabel(dagVersionID)], w.now())
+	w.inflight[sanitizeLabel(t.DagVersionID)]++
+	w.inflightTenant[t.TenantID]++
 }
 
-// CreateFailed withdraws one expectation after a create the apiserver rejected.
-func (w *WarmPodInformer) CreateFailed(dagVersionID string) {
-	_ = w.observed(sanitizeLabel(dagVersionID))
+// EndCreate records that the create BeginCreate announced returned, with the
+// created pod's name, or "" when it failed (no expectation is kept). A pod the
+// watch already reported is matched here and leaves no expectation behind.
+func (w *WarmPodInformer) EndCreate(t WarmTarget, podName string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	key := sanitizeLabel(t.DagVersionID)
+	w.inflight[key]--
+	if w.inflight[key] <= 0 {
+		delete(w.inflight, key)
+	}
+	w.inflightTenant[t.TenantID]--
+	if w.inflightTenant[t.TenantID] <= 0 {
+		delete(w.inflightTenant, t.TenantID)
+	}
+	if podName == "" {
+		return
+	}
+	if _, seen := w.early[podName]; seen {
+		delete(w.early, podName)
+		return
+	}
+	w.expected[podName] = createExpectation{versionLabel: key, tenant: t.TenantID, at: w.now()}
 }
 
-// CreatesPending reports whether dagVersionID has creates the cache has not
-// observed yet (younger than warmCreateExpectationTTL).
+// CreatesPending reports whether dagVersionID has a create in flight or one the
+// cache has not observed yet (younger than warmCreateExpectationTTL).
 func (w *WarmPodInformer) CreatesPending(dagVersionID string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.pruneLocked()
 	key := sanitizeLabel(dagVersionID)
-	live := w.pending[key][:0]
-	for _, at := range w.pending[key] {
-		if w.now().Sub(at) < warmCreateExpectationTTL {
-			live = append(live, at)
+	if w.inflight[key] > 0 {
+		return true
+	}
+	for _, e := range w.expected {
+		if e.versionLabel == key {
+			return true
 		}
 	}
-	if len(live) == 0 {
-		delete(w.pending, key)
-		return false
-	}
-	w.pending[key] = live
-	return true
+	return false
 }
 
-// observed consumes the oldest expectation of a (sanitized) dag_version label
-// and reports whether there was one.
-func (w *WarmPodInformer) observed(versionLabel string) bool {
+// PendingCreatesByTenant counts, per tenant, the creates in flight or not yet
+// observed, across every dag_version.
+func (w *WarmPodInformer) PendingCreatesByTenant() map[string]int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	q := w.pending[versionLabel]
-	if len(q) == 0 {
-		return false
+	w.pruneLocked()
+	out := make(map[string]int, len(w.inflightTenant))
+	for tenant, n := range w.inflightTenant {
+		out[tenant] += n
 	}
-	w.pending[versionLabel] = q[1:]
-	return true
+	for _, e := range w.expected {
+		out[e.tenant]++
+	}
+	return out
+}
+
+// ExpectationExpired reports whether an expectation timed out unobserved since
+// the last call, and clears the latch.
+func (w *WarmPodInformer) ExpectationExpired() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pruneLocked()
+	e := w.expired
+	w.expired = false
+	return e
+}
+
+// pruneLocked drops expectations and early sightings older than
+// warmCreateExpectationTTL, latching expired when an expectation goes. w.mu held.
+func (w *WarmPodInformer) pruneLocked() {
+	now := w.now()
+	for name, e := range w.expected {
+		if now.Sub(e.at) >= warmCreateExpectationTTL {
+			delete(w.expected, name)
+			w.expired = true
+		}
+	}
+	for name, at := range w.early {
+		if now.Sub(at) >= warmCreateExpectationTTL {
+			delete(w.early, name)
+		}
+	}
+}
+
+// observed matches an added pod to its create expectation and reports whether
+// it was one. A pod whose create is still in flight for its version is kept as
+// an early sighting for EndCreate; any other pod is unrelated and consumes
+// nothing.
+func (w *WarmPodInformer) observed(podName, versionLabel string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, ok := w.expected[podName]; ok {
+		delete(w.expected, podName)
+		return true
+	}
+	if w.inflight[versionLabel] > 0 {
+		w.early[podName] = w.now()
+	}
+	return false
+}
+
+// forget drops any expectation or early sighting of a deleted pod.
+func (w *WarmPodInformer) forget(podName string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.expected, podName)
+	delete(w.early, podName)
+}
+
+// podOf unwraps a delete notification, which may be a tombstone.
+func podOf(obj any) (*corev1.Pod, bool) {
+	if t, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = t.Obj
+	}
+	p, ok := obj.(*corev1.Pod)
+	return p, ok
 }
 
 // podTerminal reports whether a pod reached Succeeded or Failed. Warm pods are
