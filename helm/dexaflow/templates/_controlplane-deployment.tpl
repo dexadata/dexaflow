@@ -529,6 +529,8 @@ spec:
             - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
               value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
+            - name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+              value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:

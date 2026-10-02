@@ -352,6 +352,13 @@ type ExecutionSection struct {
 	// is turned on. Dedicated task pods are not affected; they follow
 	// executor.defaults.read_only_task_root_filesystem.
 	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
+	// WarmPoolEventRefill makes warm-pool refill event driven: the reconciler
+	// reads the fleet from a dedicated warm-pod informer instead of a LIST per
+	// tick, reacts at once to a worker being deleted, failing or claimed, and
+	// issues replacement creates concurrently (bounded). Default false keeps
+	// today's 30s polling with a LIST and serial creates. The failover reapers
+	// and the drained-anchor delete keep their live reads either way.
+	WarmPoolEventRefill bool `mapstructure:"warm_pool_event_refill"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -1146,6 +1153,9 @@ var serverDefaults = map[string]any{
 	"execution.warm_read_only_root_filesystem": false,
 	"execution.source_mode.enabled":            false,
 	"execution.source_mode.image":              "",
+	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
+	"execution.warm_pool_event_refill": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
