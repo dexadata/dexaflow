@@ -133,7 +133,7 @@ type Dependencies struct {
 	OIDCSettings config.OIDCSection
 	// ExternalSignInURL and ExternalSignOutURL are auth.external_signin_url and
 	// auth.external_signout_url (#1288): the operator's own sign-in and
-	// sign-out, used in place of Leoflow's pages. Empty keeps Leoflow's.
+	// sign-out, used in place of Dexaflow's pages. Empty keeps Dexaflow's.
 	ExternalSignInURL  string
 	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).

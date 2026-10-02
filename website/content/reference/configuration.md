@@ -381,13 +381,13 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER` | _(empty)_ | both | Turns on the [trusted-issuer handoff](#trusted-issuer-handoff): a platform that already authenticates its users opens a UI session for them by posting a token its own issuer signed. The exact `iss` of those tokens. Empty disables it and the endpoint does not exist. Helm: `auth.trustedIssuer.issuer`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME` | _(empty)_ | both | Name of the trusted issuer, 1-40 lowercase letters, digits or `-`. Users the issuer may sign in are linked under `issuer:<name>`, so keep it stable once users exist. Helm: `auth.trustedIssuer.name`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key, so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Leoflow. Helm: `auth.trustedIssuer.audience`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Leoflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Dexaflow. Helm: `auth.trustedIssuer.audience`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Dexaflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS` | _(empty)_ | both | Comma-separated tenants the issuer may sign in to; `*` allows every tenant, for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a handoff token may have, its replay window. `0` uses 120 seconds; at most 600. Helm: `auth.trustedIssuer.maxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
-| `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Leoflow's page, for a Leoflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Leoflow session. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Leoflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
-| `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Leoflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
+| `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
+| `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
 | `DEXAFLOW_AUTH_DEV_NO_AUTH` | `false` | dev-only | Legacy escape hatch — bypasses auth entirely, treating every request as admin. Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite uses a real admin login generated by `dexaflow setup`; set this only for ephemeral test scaffolds. |
 
@@ -611,9 +611,9 @@ rule, and holds only as long as the bundle keeps the selector it targets.
 
 ### Trusted-issuer handoff
 
-When Leoflow is part of a larger platform that already signs its users in,
-the platform can open a Leoflow UI session for them without Leoflow storing a
-password and without the platform holding Leoflow's signing secret:
+When Dexaflow is part of a larger platform that already signs its users in,
+the platform can open a Dexaflow UI session for them without Dexaflow storing a
+password and without the platform holding Dexaflow's signing secret:
 
 1. The platform's issuer signs a short-lived JWT with its own key, carrying
    `iss`, `aud`, `sub`, `iat`, `exp`, a unique `jti`, the tenant claim and,
@@ -622,19 +622,19 @@ password and without the platform holding Leoflow's signing secret:
    field `token`, with the page to open as `next` (a same-origin path), from a
    page on one of `allowed_origins`. An auto-submitting form is the usual way,
    because a token in a URL ends up in logs and history.
-3. Leoflow verifies the token, finds the active user linked to
+3. Dexaflow verifies the token, finds the active user linked to
    (`issuer:<name>`, `sub`) in the token's tenant, sets the same session cookie
    a password or SSO login sets, and redirects to `next` with `303`.
 
 The token never creates a user and never grants roles: the user must already
-exist and be linked to the issuer, and its roles are the ones Leoflow holds.
+exist and be linked to the issuer, and its roles are the ones Dexaflow holds.
 Refusals set no cookie and answer `400` (no token), `401` (token rejected),
 `403` (origin not allowed, or no active linked user in that tenant) or `500`, with the reason in the
 server log and the audit trail (`issuer.login.success` /
 `issuer.login.failure`), never in the response.
 
 Only pages on `allowed_origins` can post a handoff: browsers send `Origin` on
-every cross-site form post, and Leoflow refuses any other, so a page elsewhere
+every cross-site form post, and Dexaflow refuses any other, so a page elsewhere
 cannot sign a visitor in as someone else. A token must also have been issued
 no later than a minute from now and live no longer than
 `max_lifetime_seconds` (120 seconds unless set, at most 600). Each token opens
@@ -645,7 +645,7 @@ window. Mint each token right before posting it, and never put one in a URL.
 
 ### Operator service API
 
-An operator that serves several organizations from one Leoflow (a hosting
+An operator that serves several organizations from one Dexaflow (a hosting
 provider, an internal platform team) creates tenants and their users from its
 own automation instead of writing to the database. With `auth.service_token`
 set, two idempotent endpoints accept `Authorization: Bearer <service token>`;

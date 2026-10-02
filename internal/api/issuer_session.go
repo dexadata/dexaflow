@@ -55,9 +55,9 @@ type issuerSessionDeps struct {
 // next, kept on this origin.
 //
 // It never creates a user and never takes roles from the token: the user must
-// already be linked to the issuer, and its roles are the ones Leoflow holds.
+// already be linked to the issuer, and its roles are the ones Dexaflow holds.
 // Refusals set no cookie, answer with a status that says which side is wrong
-// (401 token, 403 user or origin, 500 Leoflow), and log the reason
+// (401 token, 403 user or origin, 500 Dexaflow), and log the reason
 // server-side only.
 //
 // The post must come from one of the operator's origins. Without that, any
@@ -121,7 +121,7 @@ func (d issuerSessionDeps) resolve(c *gin.Context, id *issuer.Identity) (*auth.U
 		return refuse("user_inactive")
 	case user.TenantID != id.Tenant:
 		// The subject is linked in another tenant than the token names. Opening a
-		// session in either would let the issuer's claim and Leoflow's record
+		// session in either would let the issuer's claim and Dexaflow's record
 		// disagree about where this person works, so neither wins.
 		return refuse("tenant_mismatch")
 	}
