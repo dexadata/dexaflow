@@ -40,11 +40,11 @@ run_step() {
 }
 
 # --- helpers wrapping the checks that need composition -----------------------
-helm_lint()        { helm lint helm/leoflow "${HELM_SET[@]}"; }
+helm_lint()        { helm lint helm/dexaflow "${HELM_SET[@]}"; }
 helm_docs_fresh()  {
   command -v helm-docs >/dev/null || { echo "helm-docs not installed"; return 1; }
-  helm-docs -c helm/leoflow >/dev/null 2>&1
-  git diff --exit-code -- helm/leoflow/README.md
+  helm-docs -c helm/dexaflow >/dev/null 2>&1
+  git diff --exit-code -- helm/dexaflow/README.md
 }
 ui_smoke() {
   # A real ui-smoke failure must surface as FAIL; only a MISSING node is skipped.
@@ -108,7 +108,7 @@ run_step "govulncheck (make vuln)"                 make vuln
 
 # --- Helm gates --------------------------------------------------------------
 run_step "helm lint"                     helm_lint
-run_step "helm unittest"                 helm unittest helm/leoflow
+run_step "helm unittest"                 helm unittest helm/dexaflow
 run_step "helm-template-checks.sh"       bash scripts/helm-template-checks.sh
 run_step "rbac-covers-executor.sh"       bash scripts/rbac-covers-executor.sh
 run_step "check-dependabot-dirs.sh"      bash scripts/check-dependabot-dirs.sh

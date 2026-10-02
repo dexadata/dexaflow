@@ -21,7 +21,7 @@ import (
 // Every selector below reuses the exact label scheme BuildPod stamps
 // (leoflow.io/run-id, /task-id, /try-number). Deletion is by List-then-Delete,
 // not DeleteCollection: the executor Role grants the `list` and `delete` verbs
-// but NOT `deletecollection` (helm/leoflow/templates/rbac.yaml), so a
+// but NOT `deletecollection` (helm/dexaflow/templates/rbac.yaml), so a
 // DeleteCollection call would 403 in production. NotFound is always tolerated —
 // a pod may have been garbage-collected between the list and the delete.
 //
@@ -111,7 +111,7 @@ func (e *KubernetesExecutor) deletePodsBySelector(ctx context.Context, selector 
 // carries the attempt's durable outcome record (ADR 0052); the reconciler is the
 // designated deleter of those — it settles each one and then garbage-collects it
 // on age, which is the "reconciler-as-deleter" the RBAC comment names
-// (helm/leoflow/templates/rbac.yaml).
+// (helm/dexaflow/templates/rbac.yaml).
 //
 // The invariant is ONE-DIRECTIONAL, and stating it as an equality would be
 // false: everything this preserves, classifyPod will settle and collect, so

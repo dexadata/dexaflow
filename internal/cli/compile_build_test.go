@@ -19,13 +19,13 @@ func TestResolveBaseImageExplicitWins(t *testing.T) {
 }
 
 // TestResolveBaseImageDefaultsToPublishedBase verifies the base image defaults to
-// the PUBLISHED runtime base (ghcr.io/dexadata/leoflow-runtime:py<version>) when
+// the PUBLISHED runtime base (ghcr.io/dexadata/dexaflow-runtime:py<version>) when
 // base_image is unset, so a yaml-driven build produces an image that builds
 // anywhere — no locally-built leoflow-base needed.
 func TestResolveBaseImageDefaultsToPublishedBase(t *testing.T) {
 	cfg := &domain.LeoflowConfig{PythonVersion: "3.11"}
-	if got := resolveBaseImage(cfg); got != "ghcr.io/dexadata/leoflow-runtime:py3.11" {
-		t.Errorf("resolveBaseImage() = %q, want ghcr.io/dexadata/leoflow-runtime:py3.11", got)
+	if got := resolveBaseImage(cfg); got != "ghcr.io/dexadata/dexaflow-runtime:py3.11" {
+		t.Errorf("resolveBaseImage() = %q, want ghcr.io/dexadata/dexaflow-runtime:py3.11", got)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestGeneratedDockerfileLayers(t *testing.T) {
 		t.Fatalf("generatedDockerfile() error = %v", err)
 	}
 	for _, want := range []string{
-		"FROM ghcr.io/dexadata/leoflow-runtime:py3.11",
+		"FROM ghcr.io/dexadata/dexaflow-runtime:py3.11",
 		"apt-get install",
 		"git",
 		"pip install",
@@ -198,7 +198,7 @@ func TestEnsureDockerfileGeneratesWhenAbsent(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("reading generated Dockerfile: %v", readErr)
 	}
-	if !strings.Contains(string(data), "FROM ghcr.io/dexadata/leoflow-runtime:py3.11") {
+	if !strings.Contains(string(data), "FROM ghcr.io/dexadata/dexaflow-runtime:py3.11") {
 		t.Errorf("generated Dockerfile missing FROM line:\n%s", data)
 	}
 	cleanup()

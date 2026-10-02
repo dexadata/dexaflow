@@ -112,7 +112,7 @@ COPY migrations/*.sql /migrations/
 
 # 65532 numerically, not `nonroot` by name: a PodSecurity `restricted` namespace
 # verifies runAsNonRoot against the image's user and the kubelet can only
-# resolve a numeric UID. This is the UID helm/leoflow/values.yaml pins for the
+# resolve a numeric UID. This is the UID helm/dexaflow/values.yaml pins for the
 # migration Job, and the migrations are world-readable, so the Job's
 # readOnlyRootFilesystem + drop-ALL posture needs no change.
 USER 65532:65532

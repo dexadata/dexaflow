@@ -16,12 +16,12 @@ with cosign. It runs on any cluster with an external Postgres + Redis.
 ## Install from the published OCI chart
 
 Every release tag publishes the chart as a **cosign-signed OCI artifact** to
-`oci://ghcr.io/dexadata/charts/leoflow` ([ADR 0028](/project/adrs/0028-release-versioning-two-editions/)),
+`oci://ghcr.io/dexadata/charts/dexaflow` ([ADR 0028](/project/adrs/0028-release-versioning-two-editions/)),
 co-versioned with the release tag — so you can install a pinned version without
 cloning the repo:
 
 ```bash
-helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <x.y.z> \
+helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -n leoflow --create-namespace \
   -f values.yaml
 ```
@@ -29,16 +29,16 @@ helm install leoflow oci://ghcr.io/dexadata/charts/leoflow --version <x.y.z> \
 Pass the release tag **without** the leading `v` (tag `v0.4.0` → `--version 0.4.0`):
 the chart `version`/`appVersion` move in lockstep with the tag, so this also pins
 the control-plane image. Installing from a source checkout
-(`helm install ./helm/leoflow`) is still supported for unreleased branches — see
-the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md#quick-start)
+(`helm install ./helm/dexaflow`) is still supported for unreleased branches — see
+the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#quick-start)
 for both paths and the full values surface.
 
 {{% alert title="Reference lives with the chart" color="info" %}}
 This operator-journey page is the entry point; the exhaustive values reference is
 maintained **alongside the chart source** so it never drifts from `values.yaml`:
 
-**[→ Helm chart README](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md)**
-(including the [datastore compatibility matrix](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md#datastore-compatibility)).
+**[→ Helm chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md)**
+(including the [datastore compatibility matrix](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)).
 
 A first-class values reference on this site is a TODO for a later migration phase.
 {{% /alert %}}
@@ -153,7 +153,7 @@ three failures — rather than Kubernetes' 1s/3.
 One of those values has a floor the chart enforces:
 
 ```console
-$ helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/leoflow \
+$ helm upgrade --install leoflow oci://ghcr.io/dexadata/charts/dexaflow \
     --set probes.readiness.timeoutSeconds=1
 Error: probes.readiness.timeoutSeconds=1 is below the 3s floor. [...]
 ```

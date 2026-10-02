@@ -1,0 +1,44 @@
+suite: task namespace — server env matches the RBAC-granted namespace (#480)
+templates:
+  - deployment.yaml
+  - rbac.yaml
+  - secret.yaml
+release:
+  name: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  # An operator using a namespace that is NOT the old hardcoded "leoflow".
+  taskNamespace: data-platform
+tests:
+  - it: the control plane is told to act on the same namespace the RBAC is granted in
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: data-platform
+
+  - it: the executor Role lives in that namespace
+    template: rbac.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: data-platform
+
+  - it: the RoleBinding lives in that namespace
+    template: rbac.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: data-platform

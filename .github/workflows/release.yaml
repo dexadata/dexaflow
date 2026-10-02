@@ -124,7 +124,7 @@ jobs:
   # simpler shape, and it builds the same file the blocking Trivy gate in
   # security.yaml scans on every PR.
   migrate-image:
-    name: Build + push leoflow-migrate image
+    name: Build + push dexaflow-migrate image
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -153,7 +153,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-migrate
+          # Published under its name since the rename and its pre-rename
+          # name: one build, both tags, same digest, both signed below.
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-migrate
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-migrate
           # ref,event=tag stamps the tag verbatim (v0.0.1-prealpha.N); the
           # semver pattern strips the leading `v` so users pinning by version
           # (0.0.1-prealpha.N) work too. Server publishes BOTH forms from
@@ -217,7 +221,7 @@ jobs:
   # pins make a silent drop a broken build for somebody else; the schema carries
   # the removal date and `leoflow compile` warns the author.
   runtime-image:
-    name: Build + push leoflow-runtime base (py${{ matrix.python }})
+    name: Build + push dexaflow-runtime base (py${{ matrix.python }})
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -250,7 +254,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
+          # Published under its name since the rename and its pre-rename
+          # name: one build, both tags, same digest, both signed below.
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
           # Two tags per Python line: an immutable per-release pin
           # (py3.11-v0.0.2-rc.1) and a moving line tag (py3.11) the docs and the
           # generated DAG Dockerfile default to. No bare `:latest` — the tag must
@@ -539,7 +547,7 @@ jobs:
   # Verifying the `:v<tag>` manifest is sufficient: it and the un-prefixed
   # `:<version>` manifest resolve to the same digest, and both were signed.
   verify-server-signature:
-    name: Verify leoflow-server image signature
+    name: Verify dexaflow-server image signature
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -559,9 +567,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: cosign verify leoflow-server
+      - name: cosign verify dexaflow-server
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-server:${{ github.ref_name }}
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-server:${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail

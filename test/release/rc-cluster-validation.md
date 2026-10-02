@@ -26,12 +26,12 @@ the issue they name closes.
 | CNI | `<AWS VPC CNI / GKE Dataplane V2 / Calico>` — note it, §5 depends on it |
 | Node provisioning | (managed node group / Karpenter / GKE node pool?) |
 | GKE mode | `<Standard / Autopilot>` — Autopilot mutates pod specs; see §5 |
-| Server image | `ghcr.io/dexadata/leoflow-server:<tag>` |
+| Server image | `ghcr.io/dexadata/dexaflow-server:<tag>` |
 | Date / operator | `<date>` / `<who>` |
 
 Links: release <https://github.com/dexadata/leoflow/releases/tag/TAG> ·
 Helm guide <https://dexaflow.dexadata.ai/operate/helm-chart/> ·
-chart README (full values) <https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md> ·
+chart README (full values) <https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md> ·
 install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 
 ---
@@ -44,7 +44,7 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
   compatibility" for the exact secret/URL value keys; do not guess them).
 - A container registry the cluster can pull from for **your DAG images**
   (ECR / Artifact Registry).
-  The control-plane image comes from `ghcr.io/dexadata/leoflow-server:<rc>`.
+  The control-plane image comes from `ghcr.io/dexadata/dexaflow-server:<rc>`.
 - **Cloud identity** for keyless auth, to annotate the ServiceAccounts: EKS
   **IRSA** (`eks.amazonaws.com/role-arn`) or GKE **Workload Identity**
   (`iam.gke.io/gcp-service-account`) — see §4.2/#728 and §5.
@@ -57,10 +57,10 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 ## §1 Install (Helm / Pro)
 
 > **Before the tag is cut (maintainer preflight).** The chart `version` and
-> `appVersion` in `helm/leoflow/Chart.yaml` must equal the release tag (minus the
+> `appVersion` in `helm/dexaflow/Chart.yaml` must equal the release tag (minus the
 > leading `v`) **before** you `git tag` — ADR 0028 keeps them in lockstep, and the
 > image tags default to `.Chart.AppVersion`, so a stale Chart.yaml makes a default
-> `helm install ./helm/leoflow` pull the **previous** release's images (this bit
+> `helm install ./helm/dexaflow` pull the **previous** release's images (this bit
 > `v0.4.0-rc.3`, which shipped with Chart.yaml still on `rc.2` — arestas #3).
 > Bump both keys, then verify with:
 >
@@ -72,7 +72,7 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 > `.github/workflows/helm-release.yaml`, so a cut with a stale chart fails the
 > Helm chart release job rather than shipping wrong image defaults. Once tagged,
 > install the **published OCI chart** (`--version` = tag without the `v`) rather
-> than a source checkout — see the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/leoflow/README.md#quick-start).
+> than a source checkout — see the [chart README](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/README.md#quick-start).
 
 Confirmed chart value keys used below (defaults in parens) — see the chart README
 for the datastore/secret keys this runbook intentionally does not spell out:
@@ -412,7 +412,7 @@ placeholders for the database, Redis and secrets that would repoint the control
 plane at a nonexistent Postgres:
 
 ```bash
-helm upgrade leoflow ... -f <your-values>.yaml -f helm/leoflow/examples/values-ha.yaml
+helm upgrade leoflow ... -f <your-values>.yaml -f helm/dexaflow/examples/values-ha.yaml
 kubectl get pdb -n <ns> -l app.kubernetes.io/instance=leoflow
 ```
 
@@ -465,7 +465,7 @@ bound what a green here means:
   named here at all.
 - It runs the control plane as **host processes** from `bin/leoflow-server` on a
   k3d cluster it creates and deletes. So it validates **the tree at the RC tag**,
-  not `ghcr.io/dexadata/leoflow-server:<rc>`. Check out the tag and build
+  not `ghcr.io/dexadata/dexaflow-server:<rc>`. Check out the tag and build
   before running it, and record that the published image is not what was
   exercised.
 

@@ -14,7 +14,7 @@
 # coupling at boot, so an install that changed only one would CrashLoopBackOff
 # rather than run:
 #
-#   helm/leoflow/templates/deployment.yaml:199-201
+#   helm/dexaflow/templates/deployment.yaml:199-201
 #     "execution.warmPoolsEnabled requires auth.agentTokenTransport=exchange
 #      AND auth.secretLivenessMode=enforce"
 #
@@ -135,7 +135,7 @@ arm_values() { # <arm>  -> three --set arguments
 
 # arm_is_renderable encodes the chart's own refusal, so a bad arm definition is
 # caught by the self-test instead of by a failed helm upgrade on a paid cluster.
-# The rule is at helm/leoflow/templates/deployment.yaml:199-201.
+# The rule is at helm/dexaflow/templates/deployment.yaml:199-201.
 arm_is_renderable() { # <warm> <transport> <liveness>
   local warm="$1" transport="$2" liveness="$3"
   [ "$warm" != "true" ] && return 0
@@ -250,13 +250,13 @@ PY
   # the day the chart's coupling changes, this fails here rather than during a
   # paid run. Skipped loudly when helm is absent, because a gate that silently
   # stops running is the defect it was meant to prevent.
-  if command -v helm >/dev/null 2>&1 && [ -d "$EXP_REPO_ROOT/helm/leoflow" ]; then
+  if command -v helm >/dev/null 2>&1 && [ -d "$EXP_REPO_ROOT/helm/dexaflow" ]; then
     local w t l expect got
     for w in true false; do
       for t in envvar exchange; do
         for l in observe enforce; do
           if arm_is_renderable "$w" "$t" "$l"; then expect=RENDERS; else expect=REFUSED; fi
-          if helm template leoflow "$EXP_REPO_ROOT/helm/leoflow" \
+          if helm template leoflow "$EXP_REPO_ROOT/helm/dexaflow" \
                --set "database.url=postgres://x" --set "redis.url=redis://x" \
                --set-string auth.jwtSecret=a --set-string bootstrap.password=b \
                --set "execution.warmPoolsEnabled=$w" \
@@ -854,7 +854,7 @@ cat <<ARMS
 
   Turning warm pools on is not a one-flag change. The chart refuses to render
   without agentTokenTransport=exchange AND secretLivenessMode=enforce
-  (helm/leoflow/templates/deployment.yaml:199-201), and the server enforces the
+  (helm/dexaflow/templates/deployment.yaml:199-201), and the server enforces the
   same coupling at boot. Any two-arm comparison across that bundle cannot
   attribute a difference to warm pools, which is why arm A' exists.
 

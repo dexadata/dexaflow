@@ -113,7 +113,7 @@ share/python-wheels/
 .minio-data/
 
 # Local helm overrides
-helm/leoflow/values.local.yaml
+helm/dexaflow/values.local.yaml
 
 # ─────────────────────────────────────────────────────────────────────────
 # Editor / IDE
@@ -184,7 +184,7 @@ docs/openapi.yaml
 docs/cli/
 docs/go/
 # Helm chart README mirrored into the docs site by .github/workflows/docs.yml
-# (source-of-truth at helm/leoflow/README.md, auto-generated from values.yaml
+# (source-of-truth at helm/dexaflow/README.md, auto-generated from values.yaml
 # by helm-docs). #183.
 docs/helm-chart.md
 

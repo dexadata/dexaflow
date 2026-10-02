@@ -42,7 +42,7 @@ No key in the Connection — credentials come from the ambient identity.
    `roles/storage.objectAdmin` on the bucket).
 2. Let the chart create + annotate the task KSA (cloud-agnostic knob):
    ```bash
-   helm upgrade leoflow ./helm/leoflow -n leoflow --reuse-values \
+   helm upgrade leoflow ./helm/dexaflow -n leoflow --reuse-values \
      --set taskServiceAccount.create=true --set taskServiceAccount.name=leoflow-gcs \
      --set 'taskServiceAccount.annotations.iam\.gke\.io/gcp-service-account=GSA@PROJECT.iam.gserviceaccount.com'
    gcloud iam service-accounts add-iam-policy-binding GSA@PROJECT.iam.gserviceaccount.com \
@@ -84,7 +84,7 @@ The key stays in the cluster's secret store; Leoflow only mounts it.
 
 ```bash
 kubectl -n leoflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
-helm upgrade leoflow ./helm/leoflow -n leoflow --reuse-values \
+helm upgrade leoflow ./helm/dexaflow -n leoflow --reuse-values \
   --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/leoflow/secrets
 ```
 Then the Connection's Extra: `{ "key_path": "/etc/leoflow/secrets/key.json", "project": "my-project" }`.

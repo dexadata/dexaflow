@@ -22,7 +22,7 @@ set -euo pipefail
 
 DOCS_DIR="website/content"
 # Paths whose change implies something an operator or author can see.
-SURFACE_RE='^(helm/leoflow/values\.yaml|docs/api/leoflow-yaml-schema\.json|internal/domain/schemas/.+|internal/cli/[a-z0-9_]+\.go)$'
+SURFACE_RE='^(helm/dexaflow/values\.yaml|docs/api/leoflow-yaml-schema\.json|internal/domain/schemas/.+|internal/cli/[a-z0-9_]+\.go)$'
 # A Go TEST file is not user-facing surface. `[a-z_]+\.go` matched
 # compile_baseimage_integration_test.go, so this gate blocked a test-only PR and
 # sent its author looking for a `skip-docs` label that did not exist. Digits are
@@ -62,14 +62,14 @@ check() { # <base-ref> [changed-files-file]
 self_test() {
 	local tmp rc; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
 
-	printf 'helm/leoflow/values.yaml\nwebsite/content/operate/x.md\n' > "$tmp/a"
+	printf 'helm/dexaflow/values.yaml\nwebsite/content/operate/x.md\n' > "$tmp/a"
 	check X "$tmp/a" >/dev/null || { echo "self-test FAIL: surface+docs rejected" >&2; return 1; }
 
 	printf 'internal/executor/kubernetes.go\ninternal/storage/repo.go\n' > "$tmp/b"
 	check X "$tmp/b" >/dev/null || { echo "self-test FAIL: internal-only rejected" >&2; return 1; }
 
 	# The real regression: a chart value with no docs.
-	printf 'helm/leoflow/values.yaml\n' > "$tmp/c"
+	printf 'helm/dexaflow/values.yaml\n' > "$tmp/c"
 	rc=0; check X "$tmp/c" >/dev/null 2>&1 || rc=$?
 	[ "$rc" -ne 0 ] || { echo "self-test FAIL: chart value with no docs accepted" >&2; return 1; }
 

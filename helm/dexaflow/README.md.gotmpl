@@ -1,0 +1,461 @@
+{{ template "chart.header" . }}
+
+{{ template "chart.versionBadge" . }}{{ template "chart.typeBadge" . }}{{ template "chart.appVersionBadge" . }}
+
+{{ template "chart.description" . }}
+
+Deploys the Leoflow **control plane** (`leoflow-server`) into Kubernetes for a
+production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
+
+{{ template "chart.homepageLine" . }}
+
+## What it installs
+
+| Resource | Purpose |
+|---|---|
+| Deployment | `leoflow-server` (HTTP `8080`, metrics `9090`, agent gRPC `9091`) |
+| Service | ClusterIP exposing http / metrics / grpc |
+| ServiceAccount + Role/RoleBinding | lets the control plane create/watch/delete **task pods** and read their logs in `taskNamespace` |
+| ClusterRole + ClusterRoleBinding | **only** when `auth.agentTokenTransport: exchange` — `create` on `tokenreviews` (cluster-scoped API). See [Agent credential transport](#agent-credential-transport-and-warm-worker-pools) |
+| Secret | holds inline DB/Redis/JWT/bootstrap credentials (skipped when you bring your own) |
+| ConfigMap | **only** when `auth.oidc.enabled`, the two OIDC settings that are maps and therefore have no env-var route (`tenantClaims`, `roleMappings`), mounted as the server's `LEOFLOW_CONFIG`. See [SSO with OIDC](#sso-with-oidc) |
+| Job (hook) | runs `golang-migrate` before install/upgrade |
+| Ingress | optional |
+
+## Quick start
+
+Every release tag publishes this chart as a signed **OCI artifact** to
+`oci://ghcr.io/dexadata/charts/dexaflow` (ADR 0028), so you can install a
+pinned version without cloning the repo:
+
+```bash
+kubectl create namespace leoflow
+helm install lf oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
+  --set database.url='postgres://user:pass@postgres:5432/leoflow?sslmode=disable' \
+  --set redis.url='redis://redis:6379/0' \
+  --set auth.jwtSecret='change-me' \
+  --set bootstrap.password='admin'
+```
+
+Use the release tag **without** the leading `v` as `--version` (tag `v0.4.0` →
+`--version 0.4.0`); the chart `version`/`appVersion` move in lockstep with the
+tag. The chart is cosign-signed by digest — verify it with
+`cosign verify ghcr.io/dexadata/charts/dexaflow --certificate-identity-regexp '…' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
+
+To install from a source checkout instead (e.g. an unreleased branch), point
+Helm at the chart directory:
+
+```bash
+helm install lf ./helm/dexaflow -n leoflow \
+  --set database.url='postgres://user:pass@postgres:5432/leoflow?sslmode=disable' \
+  --set redis.url='redis://redis:6379/0' \
+  --set auth.jwtSecret='change-me' \
+  --set bootstrap.password='admin'
+```
+
+Task pods are created in `taskNamespace` (default `leoflow`, which must match the
+namespace the server targets). Agents dial the control plane gRPC at the
+in-cluster Service DNS automatically (override with
+`config.agentControlPlaneAddr`).
+
+## Upgrading a release installed before the rename
+
+This chart was published as `leoflow` before the project was renamed. It is
+still published under that name, from the same templates, at
+`oci://ghcr.io/dexadata/charts/leoflow`. Upgrade an existing release with it:
+
+```bash
+helm upgrade lf oci://ghcr.io/dexadata/charts/leoflow --version <x.y.z> -n leoflow \
+  --reset-then-reuse-values
+```
+
+The chart name feeds the selector labels and every resource name, and a
+Deployment's selector cannot change in place, so the release has to keep the
+name it was installed with. Upgrading it with the `dexaflow` chart instead
+needs `--set nameOverride=leoflow`, which renders exactly the same resources.
+
+## Bringing your own secrets
+
+Instead of inline values, reference existing Secrets:
+
+```bash
+--set database.existingSecret=my-db     # key: databaseUrl
+--set redis.existingSecret=my-redis     # key: redisUrl
+--set auth.existingSecret=my-jwt        # key: jwtSecret
+--set bootstrap.existingSecret=my-boot  # key: bootstrapPassword
+```
+
+When all credentials come from existing Secrets, the chart creates no Secret of
+its own.
+
+> **Upgrades + secret rotation.** The pod template carries a `checksum/secret`
+> annotation hashed over the **chart-rendered** Secret (#316), so `helm upgrade`
+> rolls the pod whenever an **inline** value backing it changes
+> (`database.url`, `redis.url`, `auth.jwtSecret`, `secretKey`,
+> `bootstrap.password`). Credentials wired via `*.existingSecret` are **outside
+> the chart's visibility**: rotating them requires a manual
+> `kubectl rollout restart deployment/leoflow` for the change to take effect.
+
+## High availability
+
+A single control-plane replica is evicted as **routine** cluster housekeeping —
+autoscaler consolidation / bin-packing (Karpenter on EKS, GKE Autopilot), node
+drains, node auto-upgrades — and every eviction costs a full restart (image pull
++ boot + leadership: tens of seconds during which nothing dispatches). Running
+`replicaCount: 2` turns that into seconds of failover with no image pull: the
+scheduler leader-elects (active-passive), the API serves from both replicas
+(active-active).
+
+The chart keeps `replicaCount: 1` as the shipped default because HA needs a log
+store **every replica can write**, and the default install puts task logs on a
+ReadWriteOnce PVC (one node). It therefore guards the unsafe combination instead
+of defaulting into it:
+
+| Setting | Behavior |
+|---|---|
+| `replicaCount > 1` (or an HPA / split with more than one mounter) with a `ReadWriteOnce` / `ReadWriteOncePod` logs PVC | **render fails** — the extra pods would hang in `ContainerCreating` on a Multi-Attach error while the install reports success |
+| `split.enabled` with `logs.persistence.enabled: false` and the `disk` sink | **render fails** — the scheduler pod would write every task log into its own emptyDir and each api pod read from its own, so no log is ever readable |
+| `podDisruptionBudget.enabled` unset (auto) | PDB renders **iff** the guaranteed replica floor is `> 1` (`replicaCount`, the HPA `minReplicas`, or `split.api.replicaCount`). A `minAvailable: 1` budget over a **single** replica blocks every voluntary eviction — node drains hang, auto-upgrades stall — so it is only safe-by-default for HA. Explicit `true`/`false` always wins. **On upgrade** this means every `split.enabled` install (api default 2) and every `autoscaling.enabled` install (`minReplicas` default 2) gains a PDB; NOTES say so |
+| `podDisruptionBudget.unhealthyPodEvictionPolicy` | `AlwaysAllow` by default, so both replicas being unready (bad DB credentials, image-pull failure, wedged rollout) does not leave a drain hanging on an already-down control plane |
+| `topologySpreadConstraints` | empty by default; the HA profile spreads the replicas across nodes (`kubernetes.io/hostname`, `ScheduleAnyway`) — two replicas bin-packed onto one node are one replica, and the PDB then blocks that node's drain. A constraint without `labelSelector` gets the Deployment's own selector |
+| `terminationGracePeriodSeconds` | unset by default (Kubernetes' 30s); the HA profile sets `60`. An explicit `0` or `null` means the same as unset — the field is omitted and Kubernetes' 30s applies; the chart never renders a literal `0`, which would be SIGKILL with nothing drained. It buys headroom for the HTTP shutdown (10s) and the dispatch-pool drain; it does **not** decide leadership handoff (the lease is released within a tick of SIGTERM and frees anyway when the connection drops); with tasks running, open agent log streams are closed and flushed at SIGTERM and the gRPC stop is bounded, so the shutdown completes within the grace instead of being SIGKILLed |
+| `podAnnotations: {karpenter.sh/do-not-disrupt: "true"}` | **EKS/Karpenter-only opt-in**, not set by default: exempts the node from voluntary disruption, trading maintenance friction for eviction protection |
+
+The one-switch HA profile is
+[`examples/values-ha.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-ha.yaml):
+two replicas spread across nodes, task logs in object storage
+(`logs.persistence.enabled: false` + `logs.sink.provider: s3|gcs` — the
+recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
+memory sized for the object sink's per-attempt buffer, and the longer drain grace:
+
+```bash
+helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
+  -f helm/dexaflow/examples/values-ha.yaml
+```
+
+Involuntary disruptions — node failure, spot reclamation, a kernel panic — are
+stopped by **no** PDB or annotation, which is why the second replica is the
+posture that matters. Note that the api/scheduler **split** is not dispatch-HA:
+its scheduler is pinned to one replica with no standby and no PDB, so only
+non-split `replicaCount: 2` fails dispatch over today. The full reasoning,
+per-platform PDB behavior, and the upgrade path from a single replica are in the
+[Control-plane HA and disruption posture](https://dexaflow.dexadata.ai/operate/control-plane-ha/)
+page.
+
+## Verified TLS to managed Postgres (#315)
+
+Managed Postgres (Cloud SQL, RDS, Azure DB) presents a server cert signed by
+a provider / per-instance CA that is **not** in the container's system roots.
+Without the CA bundle mounted, the strongest TLS posture you can pin is
+`sslmode=require` — encrypted but the server cert is **not verified**
+(MITM-vulnerable). To upgrade to `sslmode=verify-full`:
+
+1. Create a ConfigMap holding the CA bundle as `ca.crt`:
+
+   ```bash
+   kubectl create configmap managed-pg-ca \
+     -n leoflow --from-file=ca.crt=server-ca.pem
+   ```
+
+2. Reference it from `database.caConfigMap` and point the DSN at the mounted
+   path:
+
+   ```bash
+   helm upgrade --install leoflow ./helm/dexaflow -n leoflow \
+     --set database.caConfigMap=managed-pg-ca \
+     --set database.url='postgres://user:pass@cloudsql-private-ip:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
+   ```
+
+The chart mounts the ConfigMap readonly at `/etc/leoflow/db-ca/ca.crt`. pgx
+reads `sslrootcert` from the DSN natively, so no extra Go-side configuration
+is required.
+
+> **Rotation note.** Kubernetes auto-updates the mounted file when the
+> ConfigMap changes, but the pgx pool keeps its existing connections until
+> they cycle. Cert rotation that invalidates the old chain may break in-flight
+> connections; rolling the pod (`kubectl rollout restart deploy/leoflow`)
+> guarantees a clean cutover.
+
+> **Redis sibling — coming next** (#312). The same pattern lands for Redis in
+> a follow-up PR: a `redis.caConfigMap` knob mounts the bundle and the Go
+> client overrides its `TLSConfig.RootCAs` from the file (go-redis does not
+> read CA paths from the URL the way pgx does).
+
+## Migrations
+
+The pre-install/pre-upgrade Job runs `migrate -path <path> -database <url> up`
+using the default image **`ghcr.io/dexadata/dexaflow-migrate`** (built from
+`deploy/Dockerfile.migrate`, published by `.github/workflows/release.yaml` on
+every tag), which bundles the Leoflow `migrations/` at `migrations.path`. The
+`migrate` binary in it is golang-migrate's own CLI, compiled from the version
+pinned in Leoflow's `go.mod` onto distroless static and running as UID 65532,
+rather than a third-party image pulled at build time (#1039).
+Override `migrations.image` to use your own, or set `migrations.enabled=false`
+to migrate out of band.
+
+## Datastore compatibility
+
+The chart talks to external Postgres + Redis you provision. Versions
+we test against in CI and the minimums we support:
+
+| Datastore | Tested in CI | Recommended minimum | Notes |
+|---|---|---|---|
+| **PostgreSQL** | 16.x (`postgres:16-alpine`) | **PostgreSQL 13** (current LTS line) | Uses JSONB, `ON CONFLICT`, advisory locks, generated columns. Versions below 13 may work but are untested; CI doesn't validate them. |
+| **Redis** | 7.x (`redis:7-alpine`) | **Redis 6.0** | ACL is used for the per-tenant auth model; Redis 5 and below lack ACL. Streams aren't used today but may be in the future. |
+
+The PoC recipe pins Bitnami chart majors that bundle the tested
+versions (postgres chart 16 → PG 16; redis chart 20 → Redis 7). When
+pointing at managed cloud datastores (RDS, ElastiCache, CloudSQL,
+Memorystore), check that the engine version is at the recommended
+minimum or above.
+
+If you need to run against an older engine, please file an issue with
+the version + symptoms — we don't bench-test older majors but will
+investigate specific incompatibilities.
+
+## Verified TLS to managed Redis (#312)
+
+Managed Redis offerings — Memorystore SERVER_AUTHENTICATION, ElastiCache
+in-transit encryption, Azure Cache for Redis — sign their TLS server cert
+with a provider or per-instance CA that is **not** in the container's
+system roots. Without telling the client which CA to trust, the only
+working postures are "plaintext `redis://`" (unacceptable across the
+internet) or "skip verification" (we don't expose that knob; it strips
+TLS to a noise channel).
+
+Set `redis.caConfigMap` to a ConfigMap holding the provider CA as
+`ca.crt`:
+
+```bash
+kubectl create configmap leoflow-redis-ca \
+  --from-file=ca.crt=./memorystore-server-ca.pem -n leoflow
+```
+
+```yaml
+redis:
+  url: rediss://10.0.0.5:6378/0
+  caConfigMap: leoflow-redis-ca
+```
+
+The chart then:
+
+1. Mounts the ConfigMap read-only at `/etc/leoflow/redis-ca/ca.crt`.
+2. Sets `LEOFLOW_REDIS_CA_FILE=/etc/leoflow/redis-ca/ca.crt` so the
+   server overrides `tls.Config.RootCAs` instead of falling back to
+   system roots.
+3. Refuses to boot if the file is missing or malformed (clear error
+   instead of a confusing "x509: certificate signed by unknown
+   authority" at first Ping).
+
+Leave `caConfigMap` empty for plaintext `redis://` or for managed
+TLS that uses a public CA (rare).
+
+## Agent credential transport, and warm worker pools
+
+Two independent settings, coupled in one direction. Both are operator-scoped: a
+DAG author cannot reach either.
+
+### `auth.agentTokenTransport`
+
+How the agent inside a task pod obtains its control-plane credential:
+
+| Value | What the task pod carries | RBAC |
+|---|---|---|
+| `envvar` *(default)* | the task-scoped JWT, in a plaintext `LEOFLOW_AGENT_TOKEN` env var on the Pod object | the namespaced executor Role only |
+| `exchange` | a projected ServiceAccount token, traded once — via a control-plane TokenReview — for the task-scoped JWT, so no bearer sits in plaintext on the pod spec | **plus** a ClusterRole granting `create` on `authentication.k8s.io/tokenreviews` |
+
+TokenReview is a **cluster-scoped** API, so the namespaced Role cannot carry it.
+The chart renders the ClusterRole + ClusterRoleBinding **only** on
+`exchange` — `create` on `tokenreviews` lets its holder ask the apiserver to
+validate any token it can get hold of, which is not a standing permission every
+install should carry. Setting the transport through the chart is therefore
+sufficient on its own:
+
+```bash
+--set auth.agentTokenTransport=exchange
+```
+
+> **Do not flip this outside the chart.** The transport is **server-wide**: with
+> `exchange` selected but no TokenReview grant, the control plane logs
+> `tokenreviews.authentication.k8s.io is forbidden ... at the cluster scope` and
+> **every** task pod fails on an invalid projected token — the ordinary dedicated
+> pod-per-task path included, not just warm pools.
+
+The cluster-scoped objects are named `<fullname>-<namespace>-tokenreview` so two
+Leoflow releases in one cluster never collide on them.
+
+### `execution.warmPoolsEnabled`
+
+Warm worker pools ([ADR 0058](https://github.com/dexadata/leoflow/blob/main/docs/adr/0058-warm-worker-pools.md))
+reuse one pod across many attempts of the **same DAG version**, instead of one pod
+per attempt. Off by default: every attempt gets a dedicated pod, which is today's
+behavior.
+
+Enabling is a security decision first. A reused pod holds one live credential
+across attempts, so per-attempt identity is the only thing stopping a superseded
+attempt from still resolving secrets — hence ADR 0058 D2:
+
+```bash
+--set execution.warmPoolsEnabled=true \
+--set auth.agentTokenTransport=exchange \
+--set auth.secretLivenessMode=enforce
+```
+
+The chart **refuses to render** if the flag is on without both prerequisites; the
+server enforces the same coupling at boot, so the alternative would be a
+`CrashLoopBackOff` explained only in container logs.
+
+The remaining knobs (`minIdleWorkers`, `maxPoolSize`, `maxAttemptsPerWorker`,
+`maxWorkerLifetime`, `workerIdleTtl`, `maxWarmPodsPerTenant`) default to exactly
+the server's own defaults and are sent only while the flag is on — see the values
+table below. Before enabling on a shared production cluster, read ADR 0058's
+*Measurement & enable readiness*: the go/no-go bar is stated in rates measured on
+a real cluster, and unit tests do not clear it.
+
+## Settings the chart does not model
+
+`extraEnv` appends raw env entries to the control-plane container, for any
+`LEOFLOW_*` setting without a first-class value (the full surface is in
+[`docs/configuration.md`](https://github.com/dexadata/leoflow/blob/main/docs/configuration.md)):
+
+```yaml
+extraEnv:
+  - name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+    value: "4"
+```
+
+It is an escape hatch, not an override: an entry redefining
+`LEOFLOW_EXECUTION_WARM_POOLS_ENABLED`, `LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT` or
+`LEOFLOW_AUTH_SECRET_LIVENESS_MODE` fails the render, because those three are the
+values the guard above validates against each other.
+
+## SSO with OIDC
+
+The server has had a complete OIDC implementation for several releases; this
+chart could not reach it until now, and the reason is worth knowing because it
+shapes how the values are laid out.
+
+Two of the server's OIDC settings are **maps** (`auth.oidc.tenant_claims` and
+`auth.oidc.role_mappings`), and a map has no environment-variable route at all.
+Viper binds env only for the scalar leaves the server registers, and those two are
+deliberately unregistered: a Google Workspace `hd` key is a domain, always dotted,
+and viper's `.` key delimiter would split it into nested maps and fail to decode
+(#826). The server reads them out-of-band from the YAML file named by
+`LEOFLOW_CONFIG`. The chart shipped no such file and no volume to put one in, so
+`auth.provider: oidc` could only ever fail boot closed on the missing tenant pin
+(#1143).
+
+So the chart splits the delivery:
+
+| What | How |
+|---|---|
+| `issuer`, `clientId`, `redirectUrl`, `tenantClaim`, `scopes`, `groupsClaim`, `defaultRole`, `allowedEmailDomains`, `breakGlassEmails`, `jitProvisioning`, `clockSkewSeconds` | `LEOFLOW_AUTH_OIDC_*` env vars, the way the rest of this chart delivers server settings |
+| `tenantClaims`, `roleMappings` | a ConfigMap mounted read-only at `/etc/leoflow/oidc`, with `LEOFLOW_CONFIG` pointing at it |
+| `clientSecret` | the chart-managed Secret (or `auth.oidc.existingSecret`), by `secretKeyRef`: never the ConfigMap |
+
+The mounted file is **partial on purpose**. Viper ranks env above a config file,
+and a key a file omits keeps the value it already had, so a file holding only the
+two maps can neither override nor blank anything the Deployment's env delivers.
+That is what makes mixing the two routes safe, and why nothing else is written
+there.
+
+```yaml
+auth:
+  jwtSecret: "…"          # still required: OIDC is the login flow, not the token signer
+  oidc:
+    enabled: true
+    issuer: "https://accounts.google.com"
+    clientId: "…apps.googleusercontent.com"
+    existingSecret: leoflow-idp          # key: oidcClientSecret
+    redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
+    tenantClaim: "hd"                    # `tid` on Entra
+    tenantClaims:
+      "example.com": "default"
+    defaultRole: "viewer"
+    breakGlassEmails: ["admin@example.com"]
+```
+
+A full worked example is in
+[`examples/values-oidc-google.yaml`](https://github.com/dexadata/leoflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml).
+
+Three things the chart refuses at render time rather than letting them become a
+CrashLoopBackOff whose cause is visible only in container logs: the one channel a
+GitOps sync never shows, since Argo CD does not render `NOTES.txt`:
+
+- `enabled: true` without `issuer`, `clientId`, `redirectUrl`, `tenantClaim` **and**
+  a non-empty `tenantClaims`. All missing keys are named in one error, because each
+  boot failure on Kubernetes costs a values edit, an upgrade and a rollout to learn
+  the next one.
+- a non-`https://` `issuer`.
+- an `extraEnv` entry setting `LEOFLOW_CONFIG` while SSO is on, which would repoint
+  the server away from the mounted file and take the tenant pin with it.
+
+`auth.oidc.jitProvisioning` defaults to `true` here, unlike the server's own
+default, because `false` means no SSO login can succeed at all: a login is matched
+to a user by `(oidc_provider, oidc_subject)`, and just-in-time provisioning is the
+only code path that ever writes those two columns, so there is nothing to match
+and every first login is denied (audited `no_user_jit_off`) behind a generic 403.
+It is not a widening of who may log in: the tenant pin, `email_verified` and
+`allowedEmailDomains` decide that, and a JIT-created row carries only the roles
+`roleMappings`/`defaultRole` resolve, which is none by default. One address it
+cannot serve either way is one that already has a LOCAL password account in the
+same tenant: it collides on the users table's unique `(tenant, email)` and the
+login is denied `jit_failed`, so keep `breakGlassEmails` off the domain your
+users sign in with.
+
+Two more it only warns about, in `NOTES.txt`, because both are legitimate
+configurations that are almost always mistakes: `jitProvisioning: false` (no
+login can succeed), an empty `breakGlassEmails` (SSO
+becomes the only way in, so an IdP outage or one wrong `tenantClaims` key locks out
+everybody, including whoever has to fix it), and neither `roleMappings` nor
+`defaultRole` set (role resolution is default-deny, so logins succeed into a UI
+that shows nothing).
+
+`auth.oidc.existingSecret` is separate from `auth.existingSecret` on purpose: the
+JWT signing key and the IdP client secret rotate on different schedules and usually
+have different owners. Like every `existingSecret` in this chart it sits outside
+the `checksum/secret` annotation's visibility, so rotating it needs a manual
+`kubectl rollout restart`. The maps do not: they carry their own
+`checksum/oidc-config` annotation, because `LoadServer` parses the file once at
+boot and would otherwise leave an edited tenant map sitting on disk unread.
+
+## Evaluating without a managed Postgres + Redis
+
+For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
+chart deliberately won't fall back to embedded datastores — that's Lite's
+job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
+path is to install Bitnami's Postgres + Redis charts alongside Leoflow:
+
+- Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/README.md)
+- Matching values file: [`helm/dexaflow/examples/poc.yaml`](https://github.com/dexadata/leoflow/tree/main/helm/dexaflow/examples/poc.yaml)
+
+Three `helm install`s in total. **Not for production** — see the recipe for
+the production-shaped command.
+
+## Validate
+
+```bash
+helm lint ./helm/dexaflow
+helm template lf ./helm/dexaflow -n leoflow \
+  --set database.url=postgres://x \
+  --set redis.url=redis://r/0 \
+  --set auth.jwtSecret=s \
+  --set "secretKey=$(openssl rand -hex 32)"
+bash scripts/helm-template-checks.sh   # contract assertions (env wiring, Job hardening, fixture lengths)
+```
+
+{{ template "chart.maintainersSection" . }}
+
+{{ template "chart.sourcesSection" . }}
+
+{{ template "chart.requirementsSection" . }}
+
+## Values
+
+The table below is auto-generated by [`helm-docs`](https://github.com/norwoodj/helm-docs) from `values.yaml`. To
+update: edit `values.yaml` (use `# -- <description>` comments above each key
+that warrants documentation), then run `helm-docs -c helm/dexaflow` from the
+repo root. CI fails (helm-ci.yaml lint job) if the regenerated README would
+differ from what's committed.
+
+{{ template "chart.valuesTable" . }}

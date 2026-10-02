@@ -40,7 +40,7 @@ See [DAG authoring](/author-dags/dag-authoring/) for the override layers.
 ### Python version support
 
 Every value the schema accepts has a published, multi-arch, cosign-signed base
-image at `ghcr.io/dexadata/leoflow-runtime:py<version>`. Nothing else does —
+image at `ghcr.io/dexadata/dexaflow-runtime:py<version>`. Nothing else does —
 if a version is not in the table above, no base image exists for it and the
 build fails on the pull.
 
@@ -402,7 +402,7 @@ sends the scalars and lists as `DEXAFLOW_AUTH_OIDC_*` env vars, the two maps as 
 mounted config file, and the client secret through the chart-managed Secret or
 `auth.oidc.existingSecret`. It refuses to render an `enabled: true` block that
 lacks the tenant pin. See the chart README's SSO section and
-`helm/leoflow/examples/values-oidc-google.yaml`.
+`helm/dexaflow/examples/values-oidc-google.yaml`.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|

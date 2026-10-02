@@ -1,0 +1,141 @@
+# #1055 — the migration hook pod must not be an endpoint of the control plane.
+#
+# The defect was one of SELECTION, and selection is a relationship between two
+# documents: a Service selector matches a pod when the pod's labels are a
+# superset of the selector's map. Every other suite here asserts one document at
+# a time, which is why the collision survived ~246 cases — the Job's labels were
+# "correct" and the Service's selector was "correct", and nothing compared them.
+#
+# So each case below pins BOTH maps, whole, side by side. Whole, because
+# asserting that the Job carries one distinguishing label stays green when
+# someone re-adds the shared selector set beside it — a superset still matches,
+# and that is exactly how the bug would come back. Side by side, because the
+# invariant is between them: reading one assertion without the other tells you
+# nothing about whether the pod is an endpoint.
+#
+# helm-unittest cannot compute the subset relation across documents, so the
+# property itself ("no control-plane Service selector is a subset of the migrate
+# pod's labels, in any mode") is enforced by scripts/check-migrate-pod-selection.sh,
+# which renders the chart and compares the real maps. These cases are the shape;
+# that script is the property.
+suite: "#1055 — the migrate Job's pod is not selected by the control plane"
+release:
+  name: leoflow
+templates:
+  - migration-job.yaml
+  - service.yaml
+  - pdb.yaml
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  # The default install, and the only mode where the collision existed: the "all"
+  # role's selector is byte-identical to leoflow.selectorLabels (ADR 0049 keeps it
+  # that way so the Deployment's immutable selector survives an upgrade from a
+  # pre-split install), so anything carrying that pair is an endpoint.
+  - it: "non-split: the Service selector is not a subset of the migrate pod's labels"
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: leoflow
+            app.kubernetes.io/instance: leoflow
+        template: service.yaml
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: leoflow-migrate
+            app.kubernetes.io/instance: leoflow
+            app.kubernetes.io/component: migrate
+        template: migration-job.yaml
+      # No PodDisruptionBudget at the default replica floor of one.
+      - hasDocuments:
+          count: 0
+        template: pdb.yaml
+
+  # The PodDisruptionBudget selects on the same role labels and renders once the
+  # guaranteed replica floor is above one, so an HA install also had a budget
+  # covering the migrate pod. Measured on k3s v1.33.6 (k3d) against the pre-fix chart, with the
+  # hook pod running: an integer `minAvailable` budget reported currentHealthy=2
+  # over ONE real replica — the hook pod padded the count, so the budget allowed
+  # one more simultaneous eviction than it was sized for. A percentage-valued
+  # budget failed outright, DisruptionAllowed=False with
+  # "jobs.batch does not implement the scale subresource", which pins
+  # disruptionsAllowed at 0 and stalls every voluntary eviction until the hook
+  # pod goes away. Both are gone once the selector cannot reach the pod.
+  - it: "replicaCount > 1: neither the Service nor the PodDisruptionBudget selects the migrate pod"
+    set:
+      replicaCount: 3
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: leoflow-logs
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: leoflow
+            app.kubernetes.io/instance: leoflow
+        template: service.yaml
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: leoflow
+            app.kubernetes.io/instance: leoflow
+        template: pdb.yaml
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: leoflow-migrate
+            app.kubernetes.io/instance: leoflow
+            app.kubernetes.io/component: migrate
+        template: migration-job.yaml
+
+  # Split mode never had the collision — api and scheduler each add a component
+  # label the Job lacked — and it must not acquire one. The migrate pod's own
+  # component is `migrate`, so it cannot match either role even if the shared
+  # name/instance pair were restored.
+  - it: "split mode: neither role's Service selector matches the migrate pod"
+    set:
+      split.enabled: true
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: leoflow-logs
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: leoflow
+            app.kubernetes.io/instance: leoflow
+            app.kubernetes.io/component: api
+        template: service.yaml
+        documentSelector:
+          path: metadata.name
+          value: leoflow-api
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: leoflow
+            app.kubernetes.io/instance: leoflow
+            app.kubernetes.io/component: scheduler
+        template: service.yaml
+        documentSelector:
+          path: metadata.name
+          value: leoflow-scheduler
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: leoflow
+            app.kubernetes.io/instance: leoflow
+            app.kubernetes.io/component: api
+        template: pdb.yaml
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: leoflow-migrate
+            app.kubernetes.io/instance: leoflow
+            app.kubernetes.io/component: migrate
+        template: migration-job.yaml

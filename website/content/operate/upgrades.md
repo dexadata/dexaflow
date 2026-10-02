@@ -89,11 +89,11 @@ newer version.
 
 ```sh
 # OCI chart (the primary install path — see Installation):
-helm upgrade leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
+helm upgrade leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --reset-then-reuse-values
 
 # Or pin the image tags explicitly:
-helm upgrade leoflow oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
+helm upgrade leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --reset-then-reuse-values \
   --set image.tag=<VERSION> \
   --set migrations.image.tag=<VERSION>

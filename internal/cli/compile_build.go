@@ -60,7 +60,7 @@ const generatedDockerfileName = ".leoflow.generated.Dockerfile"
 // leoflow-base required and the Pro control plane can pull it. This is the real
 // pipeline: the user ships dag.py + dexaflow.yaml, CI (or a local compile)
 // generates the image from the published base and pushes it to Pro.
-const publishedBaseRepo = "ghcr.io/dexadata/leoflow-runtime"
+const publishedBaseRepo = "ghcr.io/dexadata/dexaflow-runtime"
 
 // resolveBaseImage returns the task base image a generated DAG Dockerfile builds
 // FROM. An explicit base_image in dexaflow.yaml wins; otherwise it defaults to the

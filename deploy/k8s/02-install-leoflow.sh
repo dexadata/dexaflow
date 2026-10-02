@@ -37,7 +37,7 @@ LOGS_PVC_SIZE="${LOGS_PVC_SIZE:-5Gi}"    # small + cheap for the test (default c
 
 # Resolve paths relative to this script so it runs from anywhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHART_DIR="$(cd "$SCRIPT_DIR/../../helm/leoflow" && pwd)"
+CHART_DIR="$(cd "$SCRIPT_DIR/../../helm/dexaflow" && pwd)"
 VALUES_LOCAL="$SCRIPT_DIR/values.local.yaml"   # gitignored — holds generated secrets
 
 # Cert-manager resource names for the agent-TLS channel.

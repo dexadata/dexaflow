@@ -284,9 +284,9 @@ ci-local: ## Run every CI gate locally — pre-push tripwire so a PR does not ar
 		|| (echo "skip govulncheck (run: go install golang.org/x/vuln/cmd/govulncheck@latest)"; exit 0)
 	@echo "▸ helm unittest (chart contracts)"
 	@command -v helm >/dev/null && command -v helm-unittest >/dev/null \
-		&& (cd helm/leoflow && helm unittest .) \
+		&& (cd helm/dexaflow && helm unittest .) \
 		|| (command -v helm >/dev/null && helm plugin list 2>/dev/null | grep -q unittest \
-			&& (cd helm/leoflow && helm unittest .) \
+			&& (cd helm/dexaflow && helm unittest .) \
 			|| echo "skip helm unittest (install: helm plugin install https://github.com/helm-unittest/helm-unittest)")
 	@echo "▸ python parser tests"
 	@command -v python3 >/dev/null && (cd parser && python3 -m pytest -q) || echo "skip pytest (no python3)"

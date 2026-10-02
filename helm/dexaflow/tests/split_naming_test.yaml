@@ -1,0 +1,86 @@
+suite: split naming edge cases — truncation collision (F2) and SA name override (F3)
+release:
+  name: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  split.enabled: true
+  logs.persistence.accessMode: ReadWriteMany
+tests:
+  # F2: a fullnameOverride of 62 chars makes roleName truncate the "-api"/
+  # "-scheduler" suffix off, collapsing BOTH Deployments to the same 63-char
+  # name → helm install conflict / silent clobber. The api and scheduler names
+  # MUST stay distinct at any name length.
+  - it: api and scheduler Deployment names stay distinct under 62-char fullname truncation
+    template: deployment.yaml
+    set:
+      fullnameOverride: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: "-api$"
+        documentIndex: 0
+      - matchRegex:
+          path: metadata.name
+          pattern: "-scheduler$"
+        documentIndex: 1
+
+  - it: api and scheduler Service names also stay distinct under truncation
+    template: service.yaml
+    set:
+      fullnameOverride: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: "-api$"
+        documentIndex: 0
+      - matchRegex:
+          path: metadata.name
+          pattern: "-scheduler$"
+        documentIndex: 1
+
+  # F3: with a serviceAccount.name override, the split ServiceAccounts and the
+  # Deployments' serviceAccountName must reflect that base (role-suffixed), not
+  # the chart fullname — otherwise create=false + name=<pre-provisioned SA>
+  # (IRSA / Workload Identity) references SAs that do not exist and pods never
+  # schedule.
+  - it: split ServiceAccount names honor serviceAccount.name (base + role suffix)
+    template: serviceaccount.yaml
+    set:
+      serviceAccount.name: byo-sa
+    asserts:
+      - equal:
+          path: metadata.name
+          value: byo-sa-api
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: byo-sa-scheduler
+        documentIndex: 1
+
+  - it: the api Deployment runs as the overridden SA name (base + role suffix)
+    template: deployment.yaml
+    set:
+      serviceAccount.name: byo-sa
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: byo-sa-api
+
+  - it: the scheduler Deployment runs as the overridden SA name
+    template: deployment.yaml
+    set:
+      serviceAccount.name: byo-sa
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: byo-sa-scheduler

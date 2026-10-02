@@ -97,7 +97,7 @@ this page only calls out the ones deploy attempts hit most.
 A task container whose image runs as **UID 0** is refused by the control
 plane's pod security defaults. On Pro, this is the executor's
 `taskPodSecurity.runAsNonRoot` Helm value (`true` by default — see
-`helm/leoflow/values.yaml`). When it rejects your image, the **task pod**
+`helm/dexaflow/values.yaml`). When it rejects your image, the **task pod**
 fails to start with:
 
 ```

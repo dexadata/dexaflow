@@ -4,9 +4,9 @@
 # ADR 0028: the chart `version` and `appVersion` move in lockstep with the
 # release tag — a `vX.Y.Z` tag ships a chart pinned to `X.Y.Z`. The image tags
 # default to `.Values.image.tag | default .Chart.AppVersion`
-# (helm/leoflow/templates/_helpers.tpl, migration-job.yaml), so if a cut tags
+# (helm/dexaflow/templates/_helpers.tpl, migration-job.yaml), so if a cut tags
 # `v0.4.0-rc.3` while Chart.yaml still says `0.4.0-rc.2`, a DEFAULT
-# `helm install ./helm/leoflow` pulls the WRONG (previous) images and the
+# `helm install ./helm/dexaflow` pulls the WRONG (previous) images and the
 # operator has to `--set image.tag=… --set migrations.image.tag=…` by hand.
 # The published OCI chart stamps version/appVersion from the tag at package
 # time, so this gate protects the source tree (the from-source install path and
@@ -22,10 +22,10 @@
 #       Run the built-in pass/fail cases and exit; no repo state is touched.
 #
 # Overridable for the self-test only:
-#   CHART_FILE   path to the Chart.yaml to inspect (default: helm/leoflow/Chart.yaml)
+#   CHART_FILE   path to the Chart.yaml to inspect (default: helm/dexaflow/Chart.yaml)
 set -euo pipefail
 
-CHART_FILE="${CHART_FILE:-helm/leoflow/Chart.yaml}"
+CHART_FILE="${CHART_FILE:-helm/dexaflow/Chart.yaml}"
 
 # Read a top-level scalar key from Chart.yaml without a yq dependency (the helm
 # lint job has helm but not yq). Strips surrounding quotes and inline comments.
@@ -74,7 +74,7 @@ check_chart() {
 
 	if [ "$rc" -ne 0 ]; then
 		echo >&2
-		echo "Bump helm/leoflow/Chart.yaml 'version' and 'appVersion' to '$want'" >&2
+		echo "Bump helm/dexaflow/Chart.yaml 'version' and 'appVersion' to '$want'" >&2
 		echo "BEFORE cutting the tag (ADR 0028: chart moves in lockstep with the tag)." >&2
 		return 1
 	fi

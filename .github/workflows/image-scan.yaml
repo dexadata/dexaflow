@@ -102,7 +102,7 @@ jobs:
   # HEAD still produces the published image, which is the normal case, but the
   # gap is real and worth stating: a base CVE in an already-published `py3.11`
   # that HEAD no longer produces is invisible here. Scan the tag directly when
-  # that is the question — `trivy image ghcr.io/dexadata/leoflow-runtime:py3.11`
+  # that is the question — `trivy image ghcr.io/dexadata/dexaflow-runtime:py3.11`
   # needs no build.
   scan:
     name: Scan the images HEAD builds

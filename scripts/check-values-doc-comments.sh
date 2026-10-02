@@ -44,7 +44,7 @@ done
 
 if [ "$fail" -ne 0 ]; then
 	echo >&2
-	echo "check-values-doc-comments: wrap the flag so no space precedes the dashes, e.g. helm \`--set-string\`, then re-run \`helm-docs -c helm/leoflow\`." >&2
+	echo "check-values-doc-comments: wrap the flag so no space precedes the dashes, e.g. helm \`--set-string\`, then re-run \`helm-docs -c helm/dexaflow\`." >&2
 	exit 1
 fi
 
