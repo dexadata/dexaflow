@@ -1,0 +1,21 @@
+-- Index the tenant's active task instances with their pool (performance item
+-- D4), for PoolSlotUsage behind /api/v2/pools and the pools UI. It counts the
+-- task instances in scheduled, queued, running and deferred per pool;
+-- idx_ti_state covers only the first three, so the planner fell back to every
+-- task instance of the tenant (296 ms at 5M rows). This one matches the
+-- query's WHERE exactly and carries pool, so it is answered from the index.
+--
+-- CONCURRENTLY so the build does not block writes to task_instances. It cannot
+-- run inside a transaction, so this file holds this one statement and no
+-- BEGIN/COMMIT: golang-migrate sends the file as a single simple-protocol
+-- statement, which Postgres runs outside any transaction block.
+--
+-- If the build is interrupted, Postgres leaves an INVALID index behind and
+-- golang-migrate marks version 35 dirty. IF NOT EXISTS would then keep the
+-- invalid index, so drop it before retrying:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_ti_active_tenant;
+--   migrate -path migrations -database "$DATABASE_URL" force 34
+--   migrate -path migrations -database "$DATABASE_URL" up
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ti_active_tenant ON task_instances (tenant_id, state) INCLUDE (pool)
+    WHERE state IN ('scheduled', 'queued', 'running', 'deferred');
