@@ -110,7 +110,7 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", "could not ensure the tenant", err)
 			return
 		}
-		deps.Logger.Info("service api: tenant ensured", "tenant", name, "created", created)
+		deps.Logger.Info("service api: tenant ensured", "tenant", logSafe(name), "created", created)
 		c.JSON(statusFor(created), gin.H{"name": name, "created": created})
 	}
 }
@@ -157,7 +157,7 @@ func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 		recordService(c, deps, auditServiceUserEnsure, tenant, userID, body.Email, err, extra)
 		switch {
 		case err == nil:
-			deps.Logger.Info("service api: user ensured", "tenant", tenant, "user_id", user.ID, "created", created)
+			deps.Logger.Info("service api: user ensured", "tenant", logSafe(user.TenantID), "user_id", user.ID, "created", created)
 			c.JSON(statusFor(created), gin.H{"id": user.ID, "tenant": user.TenantID, "email": user.Email, "roles": user.Roles, "created": created})
 		case errors.Is(err, domain.ErrNotFound):
 			AbortProblem(c, http.StatusNotFound, "not found", "no such tenant; create it first")
@@ -179,4 +179,10 @@ func statusFor(created bool) int {
 		return http.StatusCreated
 	}
 	return http.StatusOK
+}
+
+// logSafe drops line breaks from a request-supplied value before it is logged,
+// so a crafted tenant or subject cannot forge a log line.
+func logSafe(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
 }

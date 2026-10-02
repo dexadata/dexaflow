@@ -260,3 +260,11 @@ func TestServiceAPIAuditsFailures(t *testing.T) {
 		t.Errorf("audit = %+v, want a %s failure", audit.events, auditServiceTenantEnsure)
 	}
 }
+
+// TestLogSafeDropsLineBreaks locks that a tenant or subject from the request
+// cannot start a new log line.
+func TestLogSafeDropsLineBreaks(t *testing.T) {
+	if got := logSafe("acme\r\nlevel=ERROR forged"); got != "acmelevel=ERROR forged" {
+		t.Fatalf("logSafe = %q", got)
+	}
+}
