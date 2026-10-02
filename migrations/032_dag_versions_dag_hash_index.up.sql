@@ -9,10 +9,11 @@
 -- statement, which Postgres runs outside any transaction block.
 --
 -- If the build is interrupted, Postgres leaves an INVALID index behind and
--- golang-migrate marks version 32 dirty. IF NOT EXISTS would then keep the
--- invalid index, so drop it before retrying:
+-- golang-migrate marks version 32 dirty. There is deliberately no IF NOT
+-- EXISTS: it would skip the rebuild on a retry and keep the invalid index, so
+-- a retry fails with "already exists" instead. Drop the index before retrying:
 --
 --   DROP INDEX CONCURRENTLY IF EXISTS idx_dag_versions_dag_hash;
 --   migrate -path migrations -database "$DATABASE_URL" force 31
 --   migrate -path migrations -database "$DATABASE_URL" up
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dag_versions_dag_hash ON dag_versions (dag_id, spec_hash);
+CREATE INDEX CONCURRENTLY idx_dag_versions_dag_hash ON dag_versions (dag_id, spec_hash);
