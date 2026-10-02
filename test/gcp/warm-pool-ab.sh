@@ -491,7 +491,7 @@ run_experiment() {
   # produced linux/amd64 and pushed it to Artifact Registry:
   #   us-central1-docker.pkg.dev/<project>/leoflow-validate/gcp-probe:gcpexp1
   #   sha256:ee3708486dc3ed224bb91d615f30c36ef0f81397e35b4256c90fde3d6ad22f92
-  # The platform pin in test/gcp/dags/gcp_probe/leoflow.yaml is what makes that
+  # The platform pin in test/gcp/dags/gcp_probe/dexaflow.yaml is what makes that
   # work; without it the image is arm64 and every task pod fails with an exec
   # format error AFTER the cluster has been paid for.
   #
@@ -592,12 +592,12 @@ wp_build_and_push() { # <out dir>
   # The registry URL carries ${GCP_PROJECT} in the committed file precisely so
   # no account identifier is in git. Substituted here, into the run directory,
   # which is gitignored.
-  python3 - "$out/dag-project/leoflow.yaml" "$GCP_PROJECT" <<'SUBST'
+  python3 - "$out/dag-project/dexaflow.yaml" "$GCP_PROJECT" <<'SUBST'
 import sys
 p, proj = sys.argv[1], sys.argv[2]
 src = open(p).read()
 if "${GCP_PROJECT}" not in src:
-    sys.exit("leoflow.yaml no longer carries ${GCP_PROJECT}; refusing to guess the registry")
+    sys.exit("dexaflow.yaml no longer carries ${GCP_PROJECT}; refusing to guess the registry")
 open(p, "w").write(src.replace("${GCP_PROJECT}", proj))
 SUBST
   gcloud auth configure-docker "${AR_HOST:-us-central1-docker.pkg.dev}" --quiet >/dev/null 2>&1 \

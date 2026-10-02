@@ -15,7 +15,7 @@ Leoflow Connection. `TelegramHook` posts to the Bot API using a bot token.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: telegram_notify
 connectors:
   - telegram
@@ -61,7 +61,7 @@ with DAG("telegram_notify", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: telegram_notify
 python_version: "3.12"

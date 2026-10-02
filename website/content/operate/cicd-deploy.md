@@ -22,7 +22,7 @@ artifact** — a `dag.json` + a container image, versioned together (ADR 0003).
 **By hand or for a team without a pipeline,** one command does it all:
 
 ```bash
-leoflow auth login --server "$LEOFLOW_SERVER"   # once; stores the token
+leoflow auth login --server "$DEXAFLOW_SERVER"   # once; stores the token
 leoflow deploy --yes                            # compile → build → push → register
 ```
 
@@ -35,12 +35,12 @@ gated, and audited independently:
 
 ```mermaid
 flowchart LR
-  E[edit dag.py + leoflow.yaml] --> C[leoflow compile --build]
+  E[edit dag.py + dexaflow.yaml] --> C[leoflow compile --build]
   C --> P[push image → registry]
   P --> R[leoflow push dag.json → control plane]
 ```
 
-1. **`leoflow compile --build`** — parse `dag.py`, overlay `leoflow.yaml`, run the
+1. **`leoflow compile --build`** — parse `dag.py`, overlay `dexaflow.yaml`, run the
    **guardrails** (unknown `task_id`, unsupported operator, duplicate keys), and
    build the DAG image.
 2. **push the image** to your registry, tagged by git SHA (immutable).
@@ -86,13 +86,13 @@ my-dags/                      # your Git repo
 └── dags/
     ├── my_pipeline/
     │   ├── dag.py            # the DAG (TaskFlow / operators)
-    │   └── leoflow.yaml      # id, python_version, dependencies, registry
+    │   └── dexaflow.yaml      # id, python_version, dependencies, registry
     └── another_pipeline/
         ├── dag.py
-        └── leoflow.yaml
+        └── dexaflow.yaml
 ```
 
-`leoflow compile --build` **synthesizes the image from `leoflow.yaml`** — `FROM`
+`leoflow compile --build` **synthesizes the image from `dexaflow.yaml`** — `FROM`
 the published Leoflow base, your deps/connectors installed, your DAG copied in.
 No Dockerfile to maintain. (Ship your own `Dockerfile` only if you want full
 control; it is then used verbatim. Our [examples](/author-dags/examples/) ship one so you can
@@ -100,7 +100,7 @@ control; it is then used verbatim. Our [examples](/author-dags/examples/) ship o
 
 The built image is **your** artifact — push it wherever you like (Docker Hub, ECR,
 Artifact Registry, ACR, GHCR, a private registry), via the `registry:` block in
-`leoflow.yaml` or `--image`. The only image Leoflow owns is the base your DAG
+`dexaflow.yaml` or `--image`. The only image Leoflow owns is the base your DAG
 layers on.
 
 **The mental model:** a push that touches `dags/my_pipeline/**` triggers CI for
@@ -157,7 +157,7 @@ older `dag.json`.
   parser shim — [ADR 0024](/project/adrs/0024-dag-parsing-structural-shim/) — to turn `dag.py`
   into `dag.json`). See [Python on the runner](#python-on-the-runner) below.
 - A container registry your cluster can pull from.
-- `LEOFLOW_SERVER` (control plane URL) and `LEOFLOW_TOKEN` (a push token) as CI secrets.
+- `DEXAFLOW_SERVER` (control plane URL) and `DEXAFLOW_TOKEN` (a push token) as CI secrets.
 
 ## Python on the runner
 
@@ -186,7 +186,7 @@ release once the parser shim is re-verified against it.
 
 After the `leoflow` binary lands on the runner and Python is in scope, run
 `leoflow setup` ONCE per runner. The CLI ships the parser source embedded;
-`setup` extracts it under `~/.leoflow/pysrc/parser/` and writes a config
+`setup` extracts it under `~/.dexaflow/pysrc/parser/` and writes a config
 file pointing the `compile` command at the chosen interpreter. Without this
 step `leoflow compile` fails with `No module named leoflow_parser` (the
 runner's Python has no idea where the parser lives).
@@ -199,14 +199,14 @@ recommended path because it's the operation that decides whether managed
 CPython is downloaded, and that's a step CI operators should consciously opt
 into.
 
-{{% alert title="Cache `~/.leoflow/` between CI runs" color="success" %}}
+{{% alert title="Cache `~/.dexaflow/` between CI runs" color="success" %}}
 Ephemeral CI runners re-extract the parser on every build (~3-5 s).
 Cache the directory keyed by the leoflow binary version (or the leoflow
 release URL) to skip it on warm runs:
 `actions/cache` on GitHub Actions, `cache:` keys on GitLab CI, the
 workspace cache on Cloud Build. With Python on PATH, the cache hit makes
 `leoflow setup` a near-no-op. Skip the cache if your runner image
-already bakes `~/.leoflow/pysrc/` in (some self-hosted setups do).
+already bakes `~/.dexaflow/pysrc/` in (some self-hosted setups do).
 {{% /alert %}}
 
 ## Examples
@@ -242,8 +242,8 @@ jobs:
           IMAGE=ghcr.io/${{ github.repository }}/my_pipeline:${{ github.sha }}
           leoflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
       - name: Register with the control plane
-        env: { LEOFLOW_TOKEN: ${{ secrets.LEOFLOW_TOKEN }} }
-        run: leoflow push dag.json --server ${{ secrets.LEOFLOW_SERVER }}
+        env: { DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }} }
+        run: leoflow push dag.json --server ${{ secrets.DEXAFLOW_SERVER }}
 ```
 {{% /tab %}}
 {{% tab header="GitLab CI" %}}
@@ -265,9 +265,9 @@ deploy_dag:
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - wget -qO /usr/local/bin/leoflow https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 && chmod +x /usr/local/bin/leoflow
-    - leoflow setup        # extracts the parser into ~/.leoflow/ using the python3 from before_script
+    - leoflow setup        # extracts the parser into ~/.dexaflow/ using the python3 from before_script
     - leoflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
-    - leoflow push dag.json --server "$LEOFLOW_SERVER"   # LEOFLOW_TOKEN from CI vars
+    - leoflow push dag.json --server "$DEXAFLOW_SERVER"   # DEXAFLOW_TOKEN from CI vars
 ```
 {{% /tab %}}
 {{% tab header="Google Cloud Build + Cloud Run" %}}
@@ -286,13 +286,13 @@ steps:
         # See #python-on-the-runner for the rationale.
         apt-get update -qq && apt-get install -y --no-install-recommends python3
         curl -fsSL https://github.com/dexadata/leoflow/releases/latest/download/leoflow-linux-amd64 -o /usr/bin/leoflow && chmod +x /usr/bin/leoflow
-        leoflow setup    # extracts the parser into ~/.leoflow/ using the python3 just installed
+        leoflow setup    # extracts the parser into ~/.dexaflow/ using the python3 just installed
         IMAGE="$_REGION-docker.pkg.dev/$PROJECT_ID/dags/my_pipeline:$SHORT_SHA"
         leoflow compile dags/my_pipeline --image "$$IMAGE" --build --push -o dag.json
-        leoflow push dag.json --server "$_LEOFLOW_SERVER"
+        leoflow push dag.json --server "$_DEXAFLOW_SERVER"
 substitutions:
   _REGION: us-central1
-  _LEOFLOW_SERVER: https://leoflow.run.app
+  _DEXAFLOW_SERVER: https://leoflow.run.app
 options: { logging: CLOUD_LOGGING_ONLY }
 ```
 
@@ -323,10 +323,10 @@ Any runner with Docker, **Python 3.11+**, and the `leoflow` CLI
 (see [Python on the runner](#python-on-the-runner)):
 
 ```bash
-leoflow setup    # one-shot per runner: extracts the parser into ~/.leoflow/
+leoflow setup    # one-shot per runner: extracts the parser into ~/.dexaflow/
 IMAGE="$REGISTRY/my_pipeline:$(git rev-parse --short HEAD)"
 leoflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
-leoflow push dag.json --server "$LEOFLOW_SERVER" --token "$LEOFLOW_TOKEN"
+leoflow push dag.json --server "$DEXAFLOW_SERVER" --token "$DEXAFLOW_TOKEN"
 ```
 {{% /tab %}}
 {{< /tabpane >}}

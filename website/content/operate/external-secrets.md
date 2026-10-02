@@ -60,7 +60,7 @@ taskServiceAccount:
 ```
 
 ```yaml
-# leoflow.yaml — reference that ServiceAccount from a task
+# dexaflow.yaml — reference that ServiceAccount from a task
 tasks:
   my_task_id:
     execution:
@@ -120,7 +120,7 @@ and more), and needs no Leoflow code.
    Extra:
 
    ```bash
-   curl -X POST "$LEOFLOW_SERVER/api/v2/connections" -H "Authorization: Bearer $TOKEN" \
+   curl -X POST "$DEXAFLOW_SERVER/api/v2/connections" -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' \
      -d '{"connection_id":"warehouse","conn_type":"google_cloud_platform","extra":"{\"key_path\":\"/etc/leoflow/secrets/key.json\"}"}'
    ```
@@ -128,7 +128,7 @@ and more), and needs no Leoflow code.
    Then declare it so a DAG's tasks can consume it:
 
    ```yaml
-   # leoflow.yaml
+   # dexaflow.yaml
    connections:
      - warehouse
    ```
@@ -198,7 +198,7 @@ provider package must be present in the **task image** — the base image does n
 bundle it. Declare it as a DAG dependency (baked at build time), e.g. for AWS:
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dependencies: [apache-airflow-providers-amazon]   # -google / -microsoft-azure / -hashicorp for other providers
 ```
 
@@ -211,7 +211,7 @@ and HashiCorp Vault use the same `secrets.backend` + `backendKwargs` with that
 provider's backend class and keyless mechanism.
 
 **Guarantees.**
-- **Operator-only.** The backend config is delivered as `LEOFLOW_SECRETS_*` pod
+- **Operator-only.** The backend config is delivered as `DEXAFLOW_SECRETS_*` pod
   env, which an author's task `env:` can never set (reserved keys are stripped).
 - **Declaration is the scope authority.** Only names the task **declared** are
   resolved — the same rule as the vault.

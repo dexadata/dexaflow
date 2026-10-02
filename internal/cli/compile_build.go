@@ -58,12 +58,12 @@ const generatedDockerfileName = ".leoflow.generated.Dockerfile"
 // yaml-driven build's generated Dockerfile defaults its FROM to this (per Python
 // version), so the produced DAG image builds anywhere — no locally-built
 // leoflow-base required and the Pro control plane can pull it. This is the real
-// pipeline: the user ships dag.py + leoflow.yaml, CI (or a local compile)
+// pipeline: the user ships dag.py + dexaflow.yaml, CI (or a local compile)
 // generates the image from the published base and pushes it to Pro.
 const publishedBaseRepo = "ghcr.io/dexadata/leoflow-runtime"
 
 // resolveBaseImage returns the task base image a generated DAG Dockerfile builds
-// FROM. An explicit base_image in leoflow.yaml wins; otherwise it defaults to the
+// FROM. An explicit base_image in dexaflow.yaml wins; otherwise it defaults to the
 // published runtime base (publishedBaseRepo:py<python_version>) so the image is
 // reproducible and pullable from any builder, not just a host that ran
 // `leoflow lite` to build the local base.
@@ -339,7 +339,7 @@ func writeDagSourceCopies(b *strings.Builder, cfg *domain.LeoflowConfig, dagSour
 
 // generatedDockerfile renders the Dockerfile for a project that does not ship its
 // own, layering the DAG onto the task base image (ADR 0003). The layers are
-// ordered for cache efficiency and matched to leoflow.yaml: FROM the resolved
+// ordered for cache efficiency and matched to dexaflow.yaml: FROM the resolved
 // base, the apt system_packages, then the pip dependencies (connectors: expanded
 // to their provider packages, ADR 0038), and finally the DAG source COPY with the
 // agent's PYTHONPATH convention. An unknown connector name is a hard error
@@ -439,7 +439,7 @@ const dockerignoreName = ".dockerignore"
 
 // dockerignoreHeader marks the block this tool appends, so a repeated merge
 // after an interrupted build does not stack identical comments.
-const dockerignoreHeader = "# added by leoflow compile --build from exclude_paths (leoflow.yaml); removed after the build"
+const dockerignoreHeader = "# added by leoflow compile --build from exclude_paths (dexaflow.yaml); removed after the build"
 
 // ensureDockerignore materializes exclude_paths as a .dockerignore for the
 // duration of the build, and restores the workspace afterward.
@@ -454,7 +454,7 @@ const dockerignoreHeader = "# added by leoflow compile --build from exclude_path
 //
 // The user's own .dockerignore is preserved and comes FIRST, so their file is
 // merged rather than replaced. Ours goes last because later rules win in
-// .dockerignore syntax, and leoflow.yaml is the authoritative statement of what
+// .dockerignore syntax, and dexaflow.yaml is the authoritative statement of what
 // may leave in the image: a stray `!secrets/x` in a .dockerignore must not
 // silently defeat an `exclude_paths: [secrets/]` the author wrote deliberately.
 //
@@ -476,7 +476,7 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 	// file behind. Read back as-is it would look like the author's own work:
 	// `had` would be true, and the next successful build would "restore" a
 	// leoflow block as if they had written it, permanently, still headed
-	// "removed after the build" and no longer tracking leoflow.yaml.
+	// "removed after the build" and no longer tracking dexaflow.yaml.
 	//
 	// So strip our block on the way in and treat what remains as theirs.
 	if stripped, found := stripLeoflowBlock(original); found {
@@ -679,7 +679,7 @@ func secretCandidatesIn(dir, place string) []secretCandidate {
 func warnUnexcludedSecrets(w io.Writer, dir string, cfg *domain.LeoflowConfig, merged []byte, ownDockerfile bool) (found []string) {
 	// Built from the MERGED file, not just exclude_paths, so an author who
 	// excluded .env in their own .dockerignore — the docker-native, obvious
-	// place — is not told to go and duplicate it in leoflow.yaml.
+	// place — is not told to go and duplicate it in dexaflow.yaml.
 	excluded := make(map[string]bool)
 	for _, line := range strings.Split(string(merged), "\n") {
 		excluded[strings.TrimSpace(line)] = true
@@ -719,7 +719,7 @@ func warnUnexcludedSecrets(w io.Writer, dir string, cfg *domain.LeoflowConfig, m
 			//nolint:errcheck // a warning that cannot be delivered must not fail the build
 			fmt.Fprintf(w, "warning: %s %s, "+
 				"which is pushed to a registry and pulled by every pod that runs this DAG. "+
-				"If it holds credentials, add %q to exclude_paths in leoflow.yaml.\n", rel, verb, rel)
+				"If it holds credentials, add %q to exclude_paths in dexaflow.yaml.\n", rel, verb, rel)
 			found = append(found, rel)
 		}
 	}
@@ -740,7 +740,7 @@ func warnUnexcludedSecrets(w io.Writer, dir string, cfg *domain.LeoflowConfig, m
 //     earlier `!` exception. With `secrets`, `!secrets/keep.pem`, `secrets`,
 //     the keep.pem shipped on both builders; with `secrets/**` last it did not.
 //     That matters because the merge deliberately puts our block last so
-//     leoflow.yaml has the final word — a promise the plain form does not keep.
+//     dexaflow.yaml has the final word — a promise the plain form does not keep.
 //
 // So a bare directory name yields four forms and a glob yields two. Emitting a
 // form that is already present is harmless; omitting the `/**` one is what

@@ -100,7 +100,7 @@ type DAGSpec struct {
 	// Staging, when enabled, requests an ephemeral RWX volume shared by the run's
 	// tasks at /staging (ADR 0022). nil/disabled means no staging volume.
 	Staging *StagingConfig `json:"staging,omitempty"`
-	// Alerts declares native on-failure alerting (#424), overlaid from leoflow.yaml
+	// Alerts declares native on-failure alerting (#424), overlaid from dexaflow.yaml
 	// at compile time so the scheduler fires it from the artifact without re-reading
 	// the project config. nil means no alerting.
 	Alerts *AlertsConfig `json:"alerts,omitempty"`

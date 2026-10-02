@@ -7,7 +7,7 @@ linkTitle: "validate"
 weight: 52
 ---
 
-Validate leoflow.yaml and the DAG source against the schema.
+Validate dexaflow.yaml and the DAG source against the schema.
 
 ```
 dexaflow validate [path] [flags]
@@ -22,7 +22,7 @@ dexaflow validate [path] [flags]
 ### Options inherited from parent commands
 
 ```
-      --config string       config file path (default ~/.leoflow/config.yaml)
+      --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
 ```

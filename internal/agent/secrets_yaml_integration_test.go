@@ -13,7 +13,7 @@ import (
 )
 
 // capturingBatchResolver records exactly which refs the chain asks it to resolve,
-// so a test can assert that the leoflow.yaml declaration — not the vault contents,
+// so a test can assert that the dexaflow.yaml declaration — not the vault contents,
 // not the whole backend — is the scope authority for the external request.
 type capturingBatchResolver struct {
 	hits map[secretsource.Ref]string
@@ -59,7 +59,7 @@ func effectiveDeclared(taskLevel, dagLevel []string) []string {
 }
 
 // TestSecretsFromRealLeoflowYAML is the integration seam ADR 0060 was otherwise
-// missing: an author's real leoflow.yaml, parsed by the domain loader, driving the
+// missing: an author's real dexaflow.yaml, parsed by the domain loader, driving the
 // pod-side external resolver. The per-layer unit tests each cover one side (yaml
 // parsing; the resolver chain given a hand-built TaskSpec). This joins them: the
 // connections/variables an author writes — narrowed per task — must be exactly
@@ -87,7 +87,7 @@ tasks:
 `
 	var cfg domain.LeoflowConfig
 	if err := yaml.Unmarshal([]byte(y), &cfg); err != nil {
-		t.Fatalf("parse leoflow.yaml: %v", err)
+		t.Fatalf("parse dexaflow.yaml: %v", err)
 	}
 
 	// The author's declaration parsed as written.

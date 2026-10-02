@@ -17,7 +17,7 @@ managed Leoflow Connection and the Azure provider's `PowerBIHook`. The conn_type
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: powerbi_refresh
 connectors:
   - powerbi
@@ -62,7 +62,7 @@ with DAG("powerbi_refresh", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: powerbi_refresh
 description: Refresh a Power BI dataset via PowerBIHook.

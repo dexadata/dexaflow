@@ -15,7 +15,7 @@ import (
 func newValidateCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate [path]",
-		Short: "Validate leoflow.yaml and the DAG source against the schema.",
+		Short: "Validate dexaflow.yaml and the DAG source against the schema.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
@@ -31,7 +31,7 @@ func newValidateCommand() *cobra.Command {
 			// conflict (#1015), and the deprecated-Python warning. Open-coding
 			// the first two meant `validate` silently skipped the third — and
 			// `validate` is the sub-second command an author runs in a loop
-			// with leoflow.yaml open, so it is where a warning about a field
+			// with dexaflow.yaml open, so it is where a warning about a field
 			// in that file has the best chance of being acted on.
 			//
 			// A pure-dbt project has no dag.py: the dbt project IS the DAG
@@ -95,7 +95,7 @@ func validateEnforcedPythonVersion(cfg *domain.LeoflowConfig) string {
 // syntax errors before push (issue #D8: validate used to lie about a broken
 // dag.py). The check is best-effort: when no Python interpreter is reachable
 // (managed or system), we warn instead of failing, because a fresh install that
-// has not yet run `leoflow setup` should still be able to lint its leoflow.yaml.
+// has not yet run `leoflow setup` should still be able to lint its dexaflow.yaml.
 func checkDagPythonSyntax(cmd *cobra.Command, dagPath string, cfg *domain.LeoflowConfig) error {
 	// A declared python_version is the author's statement about the interpreter
 	// their DAG runs on, and the cluster honors it through the task base image.
@@ -110,7 +110,7 @@ func checkDagPythonSyntax(cmd *cobra.Command, dagPath string, cfg *domain.Leoflo
 	// host python3.11/python3 that reports >= 3.11. A present-but-unsupported
 	// interpreter is a hard error (validate must not lint under 3.9 a DAG that
 	// will run under 3.11), while no interpreter at all is a soft skip so a fresh
-	// install that has not run `leoflow setup` can still lint its leoflow.yaml.
+	// install that has not run `leoflow setup` can still lint its dexaflow.yaml.
 	py, err := resolvePython3(cmd.Context(), leoflowManagedPython(), exec.LookPath, pythonVersion)
 	if err != nil {
 		return err
@@ -177,7 +177,7 @@ func warnSyntaxCheckSkipped(cmd *cobra.Command, wantVersion string, want int, fo
 // A too-old interpreter is a skip with a warning rather than the hard error
 // resolvePython3 would return, because with a declared version the project is
 // not asking to run on that interpreter: failing here would reject a
-// well-formed leoflow.yaml over a Python the author never claimed to use.
+// well-formed dexaflow.yaml over a Python the author never claimed to use.
 func checkDagSyntaxUnder(cmd *cobra.Command, dagPath, wantVersion string) error {
 	want, verr := parsePythonMinor(wantVersion)
 	if verr != nil {

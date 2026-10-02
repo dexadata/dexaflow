@@ -43,11 +43,11 @@ echo "==> resetting the database (migrated, empty)"
 echo "==> workspace: keeper (kept), ghost (removed later), broken (syntax error)"
 for d in keeper ghost; do
   mkdir -p "$WS/$d"
-  printf 'schema_version: "1.0"\ndag_id: %s\n' "$d" > "$WS/$d/leoflow.yaml"
+  printf 'schema_version: "1.0"\ndag_id: %s\n' "$d" > "$WS/$d/dexaflow.yaml"
   printf 'from airflow.providers.standard.operators.bash import BashOperator\nfrom airflow.sdk import DAG\nwith DAG("%s", schedule="@daily"):\n    BashOperator(task_id="t", bash_command="echo %s")\n' "$d" "$d" > "$WS/$d/dag.py"
 done
 mkdir -p "$WS/broken"
-printf 'schema_version: "1.0"\ndag_id: broken\n' > "$WS/broken/leoflow.yaml"
+printf 'schema_version: "1.0"\ndag_id: broken\n' > "$WS/broken/dexaflow.yaml"
 printf 'from airflow.sdk import DAG\nwith DAG("broken", schedule=None)   # missing colon -> SyntaxError\n    pass\n' > "$WS/broken/dag.py"
 
 start_lite() { # $1=logfile

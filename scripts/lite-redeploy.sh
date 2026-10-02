@@ -3,7 +3,7 @@
 #
 # Rebuilds leoflow / leoflow-server / leoflow-agent from the current source,
 # stops the running lite (if any), swaps the binaries in BOTH places lite
-# resolves them from (./bin and ~/.leoflow/bin — see resolveBinary in
+# resolves them from (./bin and ~/.dexaflow/bin — see resolveBinary in
 # internal/cli/dev.go), and restarts `leoflow lite --postgres managed`. Polls
 # /readyz and prints the URL + a tail of the boot log.
 #
@@ -58,7 +58,7 @@ sleep 1
 echo "==> swapping binaries…"
 # Both locations lite resolves from. Keep them in lockstep so the dev loop
 # is unambiguous regardless of which dir was picked.
-for dst in bin "$HOME/.leoflow/bin"; do
+for dst in bin "$HOME/.dexaflow/bin"; do
   mkdir -p "$dst"
   cp "$BUILD_DIR/leoflow"         "$dst/leoflow"
   cp "$BUILD_DIR/leoflow-server"  "$dst/leoflow-server"

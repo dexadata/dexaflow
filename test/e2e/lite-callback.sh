@@ -45,7 +45,7 @@ trap cleanup EXIT
 export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 export LEOFLOW_DATABASE_URL="$DB_URL"
 export LEOFLOW_LOGS_DIR="$TMP/logs"
-# Isolate HOME so Lite reads no ~/.leoflow/config.yaml admin hash and falls back
+# Isolate HOME so Lite reads no ~/.dexaflow/config.yaml admin hash and falls back
 # to no-auth loopback, so the API is reachable without a token.
 export HOME="$TMP/home"
 mkdir -p "$HOME"
@@ -102,7 +102,7 @@ echo "==> resetting the database (migrated, empty)"
 
 echo "==> workspace: a @task that raises, with an on_failure_callback that POSTs proof"
 mkdir -p "$WS/cbdag"
-cat > "$WS/cbdag/leoflow.yaml" <<YAML
+cat > "$WS/cbdag/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: cbdag
 YAML

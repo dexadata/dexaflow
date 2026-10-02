@@ -7,7 +7,7 @@ linkTitle: "init"
 weight: 36
 ---
 
-Scaffold a new DAG project (leoflow.yaml + dag.py).
+Scaffold a new DAG project (dexaflow.yaml + dag.py).
 
 ```
 dexaflow init <path> [flags]
@@ -22,7 +22,7 @@ dexaflow init <path> [flags]
 ### Options inherited from parent commands
 
 ```
-      --config string       config file path (default ~/.leoflow/config.yaml)
+      --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
 ```

@@ -16,7 +16,7 @@ launches task pods — the sections that follow walk each stage in turn.
 ```mermaid
 flowchart LR
   subgraph Dev["Dev / CI"]
-    A[leoflow.yaml + dag.py] -->|leoflow compile| B[dag.json + image]
+    A[dexaflow.yaml + dag.py] -->|leoflow compile| B[dag.json + image]
   end
   B -->|leoflow push| API
 
@@ -221,7 +221,7 @@ The pipeline:
    For each parameter it fetches every upstream's `return_value` via the
    existing `FetchXCom` gRPC (N round-trips), assembles the values into
    a JSON array in **declaration order**, and stamps
-   `LEOFLOW_XCOM_<PARAM>` with the array. A missing upstream contributes
+   `DEXAFLOW_XCOM_<PARAM>` with the array. A missing upstream contributes
    `null` so the reducer always receives `len(upstreams)` elements.
 
 4. **Runtime** (`_resolve_kwargs`) JSON-decodes the env var; the reducer

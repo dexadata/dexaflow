@@ -15,7 +15,7 @@ managed Leoflow Connection. The keyspace lives in the Schema field.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: cassandra_smoke
 connectors:
   - cassandra
@@ -71,7 +71,7 @@ with DAG("cassandra_smoke", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: cassandra_smoke
 python_version: "3.11"

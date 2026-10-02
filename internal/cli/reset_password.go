@@ -13,7 +13,7 @@ import (
 )
 
 // newResetPasswordCommand resets the Lite admin password. Lite is a per-user
-// install (the database and ~/.leoflow config belong to the user who ran it), so
+// install (the database and ~/.dexaflow config belong to the user who ran it), so
 // this runs as that user — NOT root. Running it under sudo would resolve HOME to
 // /root and miss the user's config; run it as the same user as `leoflow lite`.
 func newResetPasswordCommand() *cobra.Command {
@@ -77,8 +77,8 @@ func runResetPassword(cmd *cobra.Command, userEmail string) error {
 		// exported would have the shell value written over the per-install key,
 		// and this command would destroy the only copy of the key that decrypts
 		// every stored connection.
-		sec := configFileSecrets(filepath.Join(home, ".leoflow", "config.yaml"))
-		_ = writeLiteConfig(filepath.Join(home, ".leoflow"), cfg.ParserCmd, //nolint:errcheck // best-effort sync; the DB is the source of truth
+		sec := configFileSecrets(filepath.Join(stateDirIn(home), "config.yaml"))
+		_ = writeLiteConfig(stateDirIn(home), cfg.ParserCmd, //nolint:errcheck // best-effort sync; the DB is the source of truth
 			liteSettings{Workspace: cfg.Workspace, Executor: cfg.LiteExecutor, AdminEmail: email, Port: cfg.LitePort}, hash, sec)
 	}
 
@@ -102,12 +102,12 @@ func invokingUserHome() string {
 	return h
 }
 
-// loadUserConfig loads ~/.leoflow/config.yaml for the given home, or nil.
+// loadUserConfig loads ~/.dexaflow/config.yaml for the given home, or nil.
 func loadUserConfig(home string) *config.Config {
 	if home == "" {
 		return nil
 	}
-	c, err := config.Load(filepath.Join(home, ".leoflow", "config.yaml"), nil)
+	c, err := config.Load(filepath.Join(stateDirIn(home), "config.yaml"), nil)
 	if err != nil {
 		return nil
 	}

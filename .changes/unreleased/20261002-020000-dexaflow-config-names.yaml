@@ -1,0 +1,25 @@
+kind: Changed
+body: |-
+  **A project is configured by `dexaflow.yaml`, the environment uses
+  `DEXAFLOW_*`, and per-user state lives in `~/.dexaflow`. The old names keep
+  working.** `dexaflow init` scaffolds `dexaflow.yaml`; a project that only has
+  `leoflow.yaml` is read from it as before, and a note on an interactive terminal
+  says so. When a project has both, `dexaflow.yaml` wins and the note names the
+  ignored file, so an edit to the stale one is not lost silently.
+
+  Every binary mirrors `LEOFLOW_*` and `DEXAFLOW_*` onto each other at startup,
+  so either spelling configures the same key and processes they start inherit
+  both; when both are set and differ, the `DEXAFLOW_*` value wins and the
+  conflict is logged. The two filters that keep the agent's own variables away
+  from task code (the agent's secrets, the control-plane address) now cover both
+  prefixes, so a mirrored `DEXAFLOW_AUTH_JWT_SECRET` or an author's
+  `DEXAFLOW_CONTROL_PLANE_ADDR` is stripped exactly like its `LEOFLOW_*` twin.
+
+  On a machine with an existing `~/.leoflow`, nothing is moved: `~/.dexaflow` is
+  created as a link to it, so a running Lite, its Postgres data and its cluster
+  mounts are untouched and both paths reach the same state. `uninstall` removes
+  the data behind the link and the link itself.
+
+  The control plane keeps passing `LEOFLOW_*` to task pods, since agents built
+  before this release only read that prefix. Database names, the Lite cluster
+  name and the `leoflow.io/*` pod labels keep their names.

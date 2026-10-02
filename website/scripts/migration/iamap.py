@@ -39,7 +39,7 @@ PAGES = {
     # ---- Author DAGs ----
     "dag-authoring.md": dict(
         dest="author-dags/dag-authoring.md", title="DAG authoring", link="DAG authoring",
-        weight=10, desc="Author a DAG: leoflow.yaml plus dag.py compiled to one immutable artifact."),
+        weight=10, desc="Author a DAG: dexaflow.yaml plus dag.py compiled to one immutable artifact."),
     "airflow-operators.md": dict(
         dest="author-dags/operators-sensors.md", title="Airflow operators & sensors",
         link="Operators & sensors", weight=20,
@@ -53,7 +53,7 @@ PAGES = {
         desc="Expose Variables and Connections to your task pods."),
     "alerting.md": dict(
         dest="author-dags/alerting.md", title="On-failure alerting", link="Alerting",
-        weight=50, desc="Notify on run failure from leoflow.yaml — Slack or a generic webhook, no extra task and no Python."),
+        weight=50, desc="Notify on run failure from dexaflow.yaml — Slack or a generic webhook, no extra task and no Python."),
     "cookbook/map-reduce.md": dict(
         dest="author-dags/map-reduce.md", title="Map-reduce for ML", link="Map-reduce",
         weight=60, desc="Fan-out plus reduce as a Python list comprehension — native map-reduce for ML/AI."),

@@ -54,7 +54,7 @@ at, so it falls back to the moving line.
 This has a consequence worth knowing: **two people compiling the same project
 can get different base images**, if one runs a released CLI and the other runs
 one built from source. If that matters to you, set `base_image` in
-`leoflow.yaml` explicitly, which overrides both rules and is used verbatim.
+`dexaflow.yaml` explicitly, which overrides both rules and is used verbatim.
 
 `python_version` selects the `py<ver>` part; see
 [Python version support](/reference/configuration/#python-version-support) for

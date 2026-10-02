@@ -15,17 +15,17 @@ import (
 	"github.com/dexadata/dexaflow/internal/config"
 )
 
-// newUninstallCommand removes the Leoflow installation (~/.leoflow). It confirms
+// newUninstallCommand removes the Leoflow installation (~/.dexaflow). It confirms
 // first (unless --yes); --purge additionally removes the DAG workspace and the
 // Docker datastore volumes.
 func newUninstallCommand() *cobra.Command {
 	var yes, purge bool
 	cmd := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the Leoflow installation (~/.leoflow).",
-		Long: "uninstall removes the managed Leoflow home (~/.leoflow): the binaries, config, " +
+		Short: "Remove the Leoflow installation (~/.dexaflow).",
+		Long: "uninstall removes the managed Leoflow home (~/.dexaflow): the binaries, config, " +
 			"managed Python, Monaco assets, and local dev state. It does NOT remove your DAG " +
-			"workspace or your datastore (the managed Postgres data in ~/.leoflow/pgdata and this " +
+			"workspace or your datastore (the managed Postgres data in ~/.dexaflow/pgdata and this " +
 			"install's Docker volume) unless you pass --purge — so a reinstall keeps your data. It " +
 			"asks for confirmation unless --yes is given. (To upgrade instead, just re-run install.sh " +
 			"— it replaces the binaries and keeps your config.)",
@@ -45,7 +45,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	if err != nil {
 		return fmt.Errorf("resolving home dir: %w", err)
 	}
-	root := filepath.Join(home, ".leoflow")
+	root := stateDirIn(home)
 	if _, serr := os.Stat(root); errors.Is(serr, os.ErrNotExist) {
 		devPrintf(out, "Nothing to remove: %s does not exist.\n", root)
 		return nil
@@ -66,7 +66,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 		if workspace != "" {
 			devPrintf(out, "  %s  (your DAG workspace)\n", workspace)
 		}
-		devPrintln(out, "  your datastore: the managed Postgres data (~/.leoflow/pgdata) AND this install's Docker volume")
+		devPrintln(out, "  your datastore: the managed Postgres data (~/.dexaflow/pgdata) AND this install's Docker volume")
 	} else {
 		devPrintln(out, "  (keeping your datastore — the managed pgdata and the Docker volume — and your DAG workspace; pass --purge to remove them)")
 	}
@@ -98,7 +98,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 		devPrintln(out, "  (kept your datastore for a future reinstall — `leoflow uninstall --purge` removes it)")
 	}
 	// Remove the binaries too — install.sh places them on a PATH dir (e.g.
-	// /usr/local/bin), NOT under ~/.leoflow, so removing the home alone left a
+	// /usr/local/bin), NOT under ~/.dexaflow, so removing the home alone left a
 	// working `leoflow` behind.
 	removeBinariesIn(out, installBinDir())
 	if purge && workspace != "" {
@@ -113,7 +113,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 }
 
 // installBinDir is the directory the running leoflow binary lives in — where
-// install.sh placed the binaries (/usr/local/bin, ~/.local/bin, or ~/.leoflow/bin).
+// install.sh placed the binaries (/usr/local/bin, ~/.local/bin, or ~/.dexaflow/bin).
 func installBinDir() string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -125,7 +125,7 @@ func installBinDir() string {
 // removeBinariesIn deletes the dexaflow binaries from dir, and the leoflow-named
 // entry points older installs left there, with the CLI last (it is the running
 // process; on Linux unlinking a running binary is safe). A removal failure
-// (e.g. /usr/local/bin without sudo) is reported, not fatal, so ~/.leoflow is still
+// (e.g. /usr/local/bin without sudo) is reported, not fatal, so ~/.dexaflow is still
 // cleaned.
 func removeBinariesIn(out io.Writer, dir string) {
 	if dir == "" {
@@ -166,6 +166,20 @@ func confirmDestructive(cmd *cobra.Command) bool {
 // also drops this install's Docker volume and removes the datastore; without it,
 // the datastore (managed pgdata / the Docker volume) is preserved for a reinstall.
 func removeLeoflowHome(cmd *cobra.Command, root string, purge bool) error {
+	// root may be the ~/.dexaflow link to a pre-rename ~/.dexaflow
+	// (config.HomeDirIn). Work on the real directory, then drop the link, so the
+	// data goes and no dangling link stays behind.
+	if target, err := filepath.EvalSymlinks(root); err == nil && target != root {
+		if rerr := removeLeoflowHome(cmd, target, purge); rerr != nil {
+			return rerr
+		}
+		if _, serr := os.Stat(target); errors.Is(serr, os.ErrNotExist) {
+			if lerr := os.Remove(root); lerr != nil && !errors.Is(lerr, os.ErrNotExist) {
+				return fmt.Errorf("removing %s: %w", root, lerr)
+			}
+		}
+		return nil
+	}
 	stopManagedPostgres(cmd)
 	if purge {
 		// Best-effort: stop the Docker datastore and drop this install's volume

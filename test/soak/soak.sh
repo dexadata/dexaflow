@@ -109,9 +109,9 @@ FAULTS_FILE="$OUT_DIR/faults.jsonl"
 #
 # The private HOME is persistent on purpose: the per-DAG venvs cost minutes and
 # gigabytes to rebuild, and a weekend battery should not pay that on every start.
-SOAK_HOME="${SOAK_HOME:-$HOME/.leoflow-soak}"
-mkdir -p "$SOAK_HOME/.leoflow/dev"
-printf '%s' "$PG_PORT" > "$SOAK_HOME/.leoflow/dev/db-port"
+SOAK_HOME="${SOAK_HOME:-$HOME/.dexaflow-soak}"
+mkdir -p "$SOAK_HOME/.dexaflow/dev"
+printf '%s' "$PG_PORT" > "$SOAK_HOME/.dexaflow/dev/db-port"
 export SOAK_DATA_DIR="${SOAK_DATA_DIR:-$SOAK_HOME/data}"
 mkdir -p "$SOAK_DATA_DIR"
 
@@ -200,7 +200,7 @@ collect_evidence() {
     > "$OUT_DIR/pg-table-sizes.txt" 2>/dev/null
   # Every tree the soak writes into, including the two the first cost budget
   # omitted: Lite's task logs and the evidence directory itself.
-  du -sk "$SOAK_DATA_DIR" "$SOAK_HOME/.leoflow/dev/venvs" "$SOAK_HOME/.leoflow/dev/logs" "$OUT_DIR" \
+  du -sk "$SOAK_DATA_DIR" "$SOAK_HOME/.dexaflow/dev/venvs" "$SOAK_HOME/.dexaflow/dev/logs" "$OUT_DIR" \
     2>/dev/null > "$OUT_DIR/disk-usage.txt"
 }
 
@@ -302,7 +302,7 @@ export SOAK_DATABASE_URL="$DB_URL"
 # ── Isolation, asserted BEFORE anything destructive runs. ────────────────────
 #
 # `leoflow db reset --yes` always drops the database named `leoflow_dev` on the
-# port in <HOME>/.leoflow/dev/db-port (internal/cli/db.go dropDevDatabase ->
+# port in <HOME>/.dexaflow/dev/db-port (internal/cli/db.go dropDevDatabase ->
 # devDSNs -> devDBPort), and it ignores LEOFLOW_DATABASE_URL entirely (#1185).
 # So the only thing standing between this harness and the developer's own
 # database is that file, under a HOME that is not the developer's. Re-reading
@@ -312,12 +312,12 @@ assert_isolation() {
   [ "$SOAK_HOME" != "$HOME" ] \
     || die "isolation: SOAK_HOME is the developer's own HOME; a reset here would drop the developer's leoflow_dev"
   local written
-  written="$(cat "$SOAK_HOME/.leoflow/dev/db-port" 2>/dev/null || true)"
+  written="$(cat "$SOAK_HOME/.dexaflow/dev/db-port" 2>/dev/null || true)"
   [ "$written" = "$PG_PORT" ] \
-    || die "isolation: $SOAK_HOME/.leoflow/dev/db-port reads '$written', not '$PG_PORT'; a reset would target whatever that resolves to (an unreadable file falls back to the default dev port)"
+    || die "isolation: $SOAK_HOME/.dexaflow/dev/db-port reads '$written', not '$PG_PORT'; a reset would target whatever that resolves to (an unreadable file falls back to the default dev port)"
   # The developer's own datastore must not be on the port we are about to reset.
-  if [ -f "$HOME/.leoflow/dev/db-port" ]; then
-    local devport; devport="$(cat "$HOME/.leoflow/dev/db-port" 2>/dev/null || true)"
+  if [ -f "$HOME/.dexaflow/dev/db-port" ]; then
+    local devport; devport="$(cat "$HOME/.dexaflow/dev/db-port" 2>/dev/null || true)"
     [ "$devport" != "$PG_PORT" ] \
       || die "isolation: the developer's own datastore is on port $PG_PORT; choose another with SOAK_PG_PORT"
   fi
@@ -368,7 +368,7 @@ assert_isolation
 log "materializing the workspace"
 rm -rf "$WORKSPACE"; mkdir -p "$WORKSPACE"
 cp -R "$SOAK_DIR/dags/." "$WORKSPACE/"
-ok "$(find "$WORKSPACE" -name leoflow.yaml | wc -l | tr -d ' ') DAG projects in $WORKSPACE"
+ok "$(find "$WORKSPACE" -name dexaflow.yaml | wc -l | tr -d ' ') DAG projects in $WORKSPACE"
 
 log "starting the local HTTP fixture on 127.0.0.1:${FIXTURE_PORT}"
 "$BIN/soak-fixture" --addr "127.0.0.1:${FIXTURE_PORT}" > "$OUT_DIR/fixture.log" 2>&1 &
@@ -567,7 +567,7 @@ log "starting the monitor (samples every $SAMPLE_INTERVAL, ceiling $DURATION)"
   --db "$DB_URL" --api "$API" --out "$OUT_DIR" \
   --duration "${DURATION_S}s" --interval "$SAMPLE_INTERVAL" \
   --metrics "http://127.0.0.1:${METRICS_PORT}" \
-  --faults "$FAULTS_FILE" --data-dir "$SOAK_DATA_DIR,$SOAK_HOME/.leoflow/dev/logs,$OUT_DIR" --label "$LABEL" \
+  --faults "$FAULTS_FILE" --data-dir "$SOAK_DATA_DIR,$SOAK_HOME/.dexaflow/dev/logs,$OUT_DIR" --label "$LABEL" \
   --max-db-bytes "$MAX_DB_BYTES" --max-data-bytes "$MAX_DATA_BYTES" --min-free-bytes "$MIN_FREE_BYTES" \
   > "$OUT_DIR/monitor.log" 2>&1 &
 MONITOR_PID=$!

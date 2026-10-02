@@ -30,14 +30,14 @@ A backup archive (`leoflow-backup-<timestamp>.tar.gz`) contains:
 | `config.yaml` | The admin email + password hash, JWT signing secret, parser command, workspace path |
 | `setup.json` | Setup metadata (Python interpreter, OS/arch) |
 | `datastore.sql` | A logical `pg_dump` (--clean --if-exists, plain SQL) of the managed Postgres — DAGs, runs, task instances, XCom, Variables, Connections |
-| `workspace/` | Your project tree (DAGs, `leoflow.yaml`, etc.). VCS dirs and virtualenvs are excluded (see below) |
+| `workspace/` | Your project tree (DAGs, `dexaflow.yaml`, etc.). VCS dirs and virtualenvs are excluded (see below) |
 
 What is **not** included:
 
-- `~/.leoflow/python/` (managed CPython) — re-fetched by `leoflow setup` on the
+- `~/.dexaflow/python/` (managed CPython) — re-fetched by `leoflow setup` on the
   target machine if needed.
-- `~/.leoflow/postgres/` (managed PG binaries) — same.
-- `~/.leoflow/venv/` (parser/runtime venv) — re-installed lazily.
+- `~/.dexaflow/postgres/` (managed PG binaries) — same.
+- `~/.dexaflow/venv/` (parser/runtime venv) — re-installed lazily.
 - VCS metadata (`.git`, `.hg`, `.svn`).
 - Build artifacts (`.venv`, `venv`, `__pycache__`, `.pytest_cache`,
   `node_modules`, `.tox`, `.mypy_cache`).
@@ -63,7 +63,7 @@ terminal first.
 ## Restore
 
 ```sh
-# Refuses to overwrite an existing ~/.leoflow install:
+# Refuses to overwrite an existing ~/.dexaflow install:
 leoflow lite restore --input ~/snapshots/before-upgrade.tar.gz
 
 # Use --force to overwrite explicitly (e.g. after `leoflow uninstall`):
@@ -76,7 +76,7 @@ The restore command refuses, with a clear error, when:
    the restore is the inverse of the upgrade-time drift detector (see
    [Upgrades](/operate/upgrades/)). Loading rows into a DB the binary cannot read
    would corrupt them.
-2. **`~/.leoflow/` already holds an install** and `--force` is not set.
+2. **`~/.dexaflow/` already holds an install** and `--force` is not set.
    Pass `--force` only after confirming you want to overwrite.
 3. **The archive's `MANIFEST.json` is missing** or carries a `manifest_version`
    newer than this binary understands.
@@ -106,7 +106,7 @@ leoflow lite backup --output ~/snap-before-upgrade.tar.gz
 # Upgrade (re-run install.sh, restart leoflow lite). Something breaks.
 
 # Wipe and restore. --purge removes the new install completely; restore
-# refuses without it because ~/.leoflow is non-empty after the upgrade.
+# refuses without it because ~/.dexaflow is non-empty after the upgrade.
 leoflow uninstall --purge
 # Re-install the previous version's binaries via install.sh's pin, then:
 leoflow lite restore --input ~/snap-before-upgrade.tar.gz

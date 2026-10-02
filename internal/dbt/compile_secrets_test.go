@@ -7,7 +7,7 @@ import (
 
 // TestCompileCarriesDeclaredSecrets is the regression for #997. Compile builds
 // its DAGSpec from an explicit field list, and that list had no Connections or
-// Variables — so a leoflow.yaml declaring them produced a dag.json without them
+// Variables — so a dexaflow.yaml declaring them produced a dag.json without them
 // on the dbt-only path, while the dag.py path emitted both.
 //
 // Under ADR 0055 secret scoping the consequence is not cosmetic: the task pod

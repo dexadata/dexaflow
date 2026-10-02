@@ -12,7 +12,7 @@ import (
 // contract documented at docs/dag-authoring.md#discovery-rules:
 //
 //   - A subdir with dag.py is a project (yaml optional).
-//   - Workspace root with dag.py + leoflow.yaml stays a project (back-compat).
+//   - Workspace root with dag.py + dexaflow.yaml stays a project (back-compat).
 //   - Walk depth caps at MaxWorkspaceDepth (5) from the workspace root.
 //   - Skips exclude_paths defaults (.git, __pycache__, *.pyc, .venv, venv).
 //   - Skips hidden dirs (.*).
@@ -46,8 +46,8 @@ func TestDiscoverProjects_TableDriven(t *testing.T) {
 		{
 			name: "single subdir project with yaml",
 			files: map[string]string{
-				"sales_etl/leoflow.yaml": "dag_id: sales_etl\n",
-				"sales_etl/dag.py":       "from airflow.sdk import DAG\nwith DAG('sales_etl', schedule=None):\n    pass\n",
+				"sales_etl/dexaflow.yaml": "dag_id: sales_etl\n",
+				"sales_etl/dag.py":        "from airflow.sdk import DAG\nwith DAG('sales_etl', schedule=None):\n    pass\n",
 			},
 			want: want{projects: []string{"sales_etl"}, dagIDs: []string{"sales_etl"}},
 		},
@@ -59,36 +59,36 @@ func TestDiscoverProjects_TableDriven(t *testing.T) {
 			want: want{projects: []string{"yamlless"}, dagIDs: []string{"yamlless"}},
 		},
 		{
-			name: "dbt-only project (leoflow.yaml with dbt:, no dag.py) is discovered",
+			name: "dbt-only project (dexaflow.yaml with dbt:, no dag.py) is discovered",
 			files: map[string]string{
-				"shopdbt/leoflow.yaml":    "dag_id: shopdbt\ndbt:\n  project: .\n",
+				"shopdbt/dexaflow.yaml":   "dag_id: shopdbt\ndbt:\n  project: .\n",
 				"shopdbt/dbt_project.yml": "name: shop\n",
 			},
 			want: want{projects: []string{"shopdbt"}, dagIDs: []string{"shopdbt"}},
 		},
 		{
-			name: "leoflow.yaml without dag.py and without a dbt: block is NOT a project",
+			name: "dexaflow.yaml without dag.py and without a dbt: block is NOT a project",
 			files: map[string]string{
-				"notaproj/leoflow.yaml": "dag_id: notaproj\n",
+				"notaproj/dexaflow.yaml": "dag_id: notaproj\n",
 			},
 			want: want{projects: nil},
 		},
 		{
 			name: "root project (backward compat) is discovered",
 			files: map[string]string{
-				"leoflow.yaml": "dag_id: root_dag\n",
-				"dag.py":       "from airflow.sdk import DAG\nwith DAG('root_dag', schedule=None):\n    pass\n",
+				"dexaflow.yaml": "dag_id: root_dag\n",
+				"dag.py":        "from airflow.sdk import DAG\nwith DAG('root_dag', schedule=None):\n    pass\n",
 			},
 			want: want{projects: []string{"."}, dagIDs: []string{"root_dag"}},
 		},
 		{
 			name: "multiple sibling subdirs all discovered",
 			files: map[string]string{
-				"a/leoflow.yaml": "dag_id: a\n",
-				"a/dag.py":       "x = 1\n",
-				"b/leoflow.yaml": "dag_id: b\n",
-				"b/dag.py":       "x = 1\n",
-				"c/dag.py":       "x = 1\n", // no yaml — dag_id defaults to "c"
+				"a/dexaflow.yaml": "dag_id: a\n",
+				"a/dag.py":        "x = 1\n",
+				"b/dexaflow.yaml": "dag_id: b\n",
+				"b/dag.py":        "x = 1\n",
+				"c/dag.py":        "x = 1\n", // no yaml — dag_id defaults to "c"
 			},
 			want: want{
 				projects: []string{"a", "b", "c"},
@@ -98,16 +98,16 @@ func TestDiscoverProjects_TableDriven(t *testing.T) {
 		{
 			name: "nested at depth 5 is discovered (workspace=0, project=5)",
 			files: map[string]string{
-				"a/b/c/d/deep/leoflow.yaml": "dag_id: deep\n",
-				"a/b/c/d/deep/dag.py":       "x = 1\n",
+				"a/b/c/d/deep/dexaflow.yaml": "dag_id: deep\n",
+				"a/b/c/d/deep/dag.py":        "x = 1\n",
 			},
 			want: want{projects: []string{"a/b/c/d/deep"}, dagIDs: []string{"deep"}},
 		},
 		{
 			name: "beyond max depth (>5) is ignored",
 			files: map[string]string{
-				"a/b/c/d/e/toodeep/leoflow.yaml": "dag_id: toodeep\n",
-				"a/b/c/d/e/toodeep/dag.py":       "x = 1\n",
+				"a/b/c/d/e/toodeep/dexaflow.yaml": "dag_id: toodeep\n",
+				"a/b/c/d/e/toodeep/dag.py":        "x = 1\n",
 			},
 			want: want{projects: nil},
 		},
@@ -131,20 +131,20 @@ func TestDiscoverProjects_TableDriven(t *testing.T) {
 			want: want{projects: []string{"visible"}, dagIDs: []string{"visible"}},
 		},
 		{
-			name: "subdir with leoflow.yaml but no dag.py is not a project",
+			name: "subdir with dexaflow.yaml but no dag.py is not a project",
 			files: map[string]string{
-				"orphan_yaml/leoflow.yaml": "dag_id: orphan\n",
-				"real/dag.py":              "x = 1\n",
+				"orphan_yaml/dexaflow.yaml": "dag_id: orphan\n",
+				"real/dag.py":               "x = 1\n",
 			},
 			want: want{projects: []string{"real"}, dagIDs: []string{"real"}},
 		},
 		{
 			name: "duplicate dag_id across subdirs is a hard error",
 			files: map[string]string{
-				"foo/leoflow.yaml": "dag_id: shared\n",
-				"foo/dag.py":       "x = 1\n",
-				"bar/leoflow.yaml": "dag_id: shared\n",
-				"bar/dag.py":       "x = 1\n",
+				"foo/dexaflow.yaml": "dag_id: shared\n",
+				"foo/dag.py":        "x = 1\n",
+				"bar/dexaflow.yaml": "dag_id: shared\n",
+				"bar/dag.py":        "x = 1\n",
 			},
 			want: want{
 				errSubstr: "duplicate",
@@ -155,9 +155,9 @@ func TestDiscoverProjects_TableDriven(t *testing.T) {
 			name: "duplicate dag_id from yaml vs subdir-basename fallback collides",
 			files: map[string]string{
 				// subdir basename "collide" + a yaml elsewhere claiming dag_id "collide"
-				"collide/dag.py":     "x = 1\n",
-				"other/leoflow.yaml": "dag_id: collide\n",
-				"other/dag.py":       "x = 1\n",
+				"collide/dag.py":      "x = 1\n",
+				"other/dexaflow.yaml": "dag_id: collide\n",
+				"other/dag.py":        "x = 1\n",
 			},
 			want: want{
 				errSubstr: "duplicate",

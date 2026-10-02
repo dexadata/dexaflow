@@ -20,7 +20,7 @@ targets the dbt Cloud API.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: dbt_cloud_run
 connectors:
   - dbt_cloud
@@ -65,7 +65,7 @@ with DAG("dbt_cloud_run", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: dbt_cloud_run
 description: Trigger a dbt Cloud job via DbtCloudHook.

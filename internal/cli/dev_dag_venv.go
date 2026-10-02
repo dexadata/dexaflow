@@ -35,9 +35,9 @@ func sanitizeDagIDForFs(id string) string {
 }
 
 // dagVenvDir returns the per-DAG venv directory under the Lite dev home —
-// ~/.leoflow/dev/venvs/<sanitized-dag-id>. The "venvs" suffix (plural) is
+// ~/.dexaflow/dev/venvs/<sanitized-dag-id>. The "venvs" suffix (plural) is
 // deliberate so it never collides with the legacy single-venv layout at
-// ~/.leoflow/dev/venv (#346).
+// ~/.dexaflow/dev/venv (#346).
 func dagVenvDir(home, dagID string) string {
 	return filepath.Join(home, "venvs", sanitizeDagIDForFs(dagID))
 }

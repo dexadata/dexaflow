@@ -19,18 +19,18 @@ import (
 // so a binary upgrade (new embedded parser vs stale on-disk copy) is detectable.
 const pysrcMarker = ".leoflow-pysrc-checksum"
 
-// pysrcRoot returns the extracted Python-sources root (~/.leoflow/pysrc) that
+// pysrcRoot returns the extracted Python-sources root (~/.dexaflow/pysrc) that
 // `leoflow setup` writes and the parser runs from.
 func pysrcRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving home for pysrc: %w", err)
 	}
-	return filepath.Join(home, ".leoflow", "pysrc"), nil
+	return filepath.Join(stateDirIn(home), "pysrc"), nil
 }
 
 // parserPysrcDir returns the extracted parser-sources directory
-// (~/.leoflow/pysrc/parser) that ensurePysrc writes and the bundled
+// (~/.dexaflow/pysrc/parser) that ensurePysrc writes and the bundled
 // `python3 -m leoflow_parser` imports from. It is empty when the home
 // directory cannot be resolved — the caller then leaves PYTHONPATH untouched
 // and falls back to the ambient environment.
@@ -131,7 +131,7 @@ func ensurePysrcIn(dir string, logf func(format string, args ...any)) error {
 	return nil
 }
 
-// ensurePysrc self-heals ~/.leoflow/pysrc before compile runs the parser, so a
+// ensurePysrc self-heals ~/.dexaflow/pysrc before compile runs the parser, so a
 // binary upgrade never leaves `leoflow compile` on a stale parser. Best-effort: a
 // failure is logged and compile proceeds with whatever is on disk (its own error
 // surfaces if the parser truly cannot run), so this never blocks a working setup.

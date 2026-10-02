@@ -42,6 +42,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
-        run: gh pr diff "$PR" --name-only > /tmp/changed.txt
+        # The files endpoint, paginated: `gh pr diff` refuses a PR touching more
+        # than 300 files (HTTP 406), which a rename legitimately does.
+        run: |
+          gh api --paginate "repos/${{ github.repository }}/pulls/${PR}/files" \
+            --jq '.[].filename' > /tmp/changed.txt
       - name: Require a docs update (or the skip-docs label)
         run: bash scripts/check-docs-updated.sh HEAD /tmp/changed.txt

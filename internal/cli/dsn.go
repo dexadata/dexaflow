@@ -16,7 +16,7 @@ type dsnSet struct {
 }
 
 // devDSNs resolves the Lite DSNs for the current run. A live managed cluster
-// (detected by its socket file under ~/.leoflow/pgdata) is reached over its Unix
+// (detected by its socket file under ~/.dexaflow/pgdata) is reached over its Unix
 // socket; otherwise the Docker datastore is reached over TCP on the persisted
 // host port (ADR 0030 auto-selects which backend). Every entry point (the lite
 // runner, reset-password, db reset) calls this, so they connect consistently

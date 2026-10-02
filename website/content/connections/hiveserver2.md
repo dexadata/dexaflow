@@ -16,7 +16,7 @@ Airflow's `HiveServer2Hook`. The conn_type is `hiveserver2`. A connection carrie
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: hive_query
 connectors:
   - hiveserver2
@@ -64,7 +64,7 @@ with DAG("hive_query", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: hive_query
 description: Query Hive via HiveServer2Hook.

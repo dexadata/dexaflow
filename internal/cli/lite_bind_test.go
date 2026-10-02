@@ -76,7 +76,7 @@ func TestResolveComposeFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("managed resolve: %v", err)
 	}
-	want := filepath.Join(home, ".leoflow", "docker-compose.yaml")
+	want := filepath.Join(home, ".dexaflow", "docker-compose.yaml")
 	if got != want {
 		t.Errorf("managed compose = %q, want %q", got, want)
 	}

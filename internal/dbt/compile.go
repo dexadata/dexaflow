@@ -21,7 +21,7 @@ type Meta struct {
 	Tags        []string
 	Schedule    string
 	Granularity Granularity
-	// Connections and Variables are the secret names the leoflow.yaml declares
+	// Connections and Variables are the secret names the dexaflow.yaml declares
 	// (ADR 0045 / ADR 0055). They must reach the spec: what a task pod is allowed
 	// to see is derived from what the DAG declares. Dropping them here does not
 	// merely omit a field — under `auth.secret_scoping: enforce` the pod is

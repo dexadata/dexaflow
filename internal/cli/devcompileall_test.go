@@ -21,7 +21,7 @@ import (
 //
 //  1. EVERY project in the workspace is compiled (no silent skipping).
 //  2. The pre-compile log line names the resolved config source — either the
-//     absolute path of the project's leoflow.yaml, or `auto-defaults: <subdir>`
+//     absolute path of the project's dexaflow.yaml, or `auto-defaults: <subdir>`
 //     for projects that don't carry one. (Docs/dag-authoring promises this;
 //     this test pins it.)
 //  3. Per-project compile failures don't abort the loop — siblings still run.
@@ -58,14 +58,14 @@ func TestDevCompileAndRegisterAll_IteratesEveryProjectAndLogsConfigSource(t *tes
 			{
 				Path:       "/tmp/ws/etl",
 				DagID:      "etl",
-				ConfigPath: "/tmp/ws/etl/leoflow.yaml",
+				ConfigPath: "/tmp/ws/etl/dexaflow.yaml",
 				HasYAML:    true,
 				Config:     defaultedCfg("etl"),
 			},
 			{
 				Path:       "/tmp/ws/ml",
 				DagID:      "ml",
-				ConfigPath: "/tmp/ws/ml/leoflow.yaml",
+				ConfigPath: "/tmp/ws/ml/dexaflow.yaml",
 				HasYAML:    true,
 				Config:     defaultedCfg("ml"),
 			},
@@ -102,8 +102,8 @@ func TestDevCompileAndRegisterAll_IteratesEveryProjectAndLogsConfigSource(t *tes
 	// projects show the absolute yaml path; yaml-less shows `auto-defaults: <subdir>`.
 	out := stdout.String()
 	for _, must := range []string{
-		`compiling "etl" (config: /tmp/ws/etl/leoflow.yaml)`,
-		`compiling "ml" (config: /tmp/ws/ml/leoflow.yaml)`,
+		`compiling "etl" (config: /tmp/ws/etl/dexaflow.yaml)`,
+		`compiling "ml" (config: /tmp/ws/ml/dexaflow.yaml)`,
 		`compiling "yamlless" (config: auto-defaults: yamlless)`,
 	} {
 		if !strings.Contains(out, must) {

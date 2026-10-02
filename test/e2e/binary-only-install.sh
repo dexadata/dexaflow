@@ -9,7 +9,7 @@
 #      repo on any path (the primary symptom: `No module named leoflow_parser`).
 #   2. the binary self-extracts BOTH the parser AND the runtime sources the Lite
 #      per-DAG venv is built from — the venv-before-extract ordering precondition
-#      (the second symptom: `'<home>/.leoflow/pysrc/runtime/python' does not exist`).
+#      (the second symptom: `'<home>/.dexaflow/pysrc/runtime/python' does not exist`).
 #
 # No Postgres/Redis/agent needed: the failure was in resolution + extraction, not
 # in any runtime state, so this gate stays fast and deterministic.
@@ -44,9 +44,9 @@ grep -q '"dag_id"' proj/dag.json \
 pass "compile resolved the embedded parser without PYTHONPATH"
 
 echo "==> asserting the binary self-extracted parser + runtime sources"
-[ -d "$HOME_DIR/.leoflow/pysrc/parser/leoflow_parser" ] \
-  || fail "parser sources not extracted under ~/.leoflow/pysrc/parser"
-[ -f "$HOME_DIR/.leoflow/pysrc/runtime/python/pyproject.toml" ] \
+[ -d "$HOME_DIR/.dexaflow/pysrc/parser/leoflow_parser" ] \
+  || fail "parser sources not extracted under ~/.dexaflow/pysrc/parser"
+[ -f "$HOME_DIR/.dexaflow/pysrc/runtime/python/pyproject.toml" ] \
   || fail "runtime sources not extracted — the Lite venv build would abort with 'does not exist'"
 pass "binary extracted both parser and runtime sources for a binary-only install"
 

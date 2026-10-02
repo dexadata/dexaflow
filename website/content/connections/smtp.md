@@ -16,7 +16,7 @@ encrypted at rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: smtp_notify
 connectors:
   - smtp
@@ -70,7 +70,7 @@ with DAG("smtp_notify", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: smtp_notify
 python_version: "3.11"

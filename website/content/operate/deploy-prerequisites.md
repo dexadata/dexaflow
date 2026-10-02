@@ -28,12 +28,12 @@ CI-bypassing request cannot sneak an invalid artifact past compile-time checks.
 
 Pro has no single-node image-import path — Kubernetes pulls images from a
 registry, so a Pro deploy needs one, full stop (Lite runs locally and needs
-none). Missing `registry:` in `leoflow.yaml` fails immediately:
+none). Missing `registry:` in `dexaflow.yaml` fails immediately:
 
 ```
 error: deploy requires a container registry, but none is configured.
   A Pro deploy pushes the DAG image to a registry your cluster can pull from
-  (Lite runs locally and needs none). Add to leoflow.yaml:
+  (Lite runs locally and needs none). Add to dexaflow.yaml:
 
       registry:
         url: ghcr.io/<your-org>     # or ECR / Artifact Registry / ACR / private
@@ -146,7 +146,7 @@ private registry needs the task pod to carry pull credentials:
   runs as it.
 - **The task must actually run as that ServiceAccount** — set
   `execution.service_account: <taskServiceAccount.name>` in the DAG's
-  `leoflow.yaml`. Without it, task pods use the namespace `default` SA, which
+  `dexaflow.yaml`. Without it, task pods use the namespace `default` SA, which
   carries no pull secrets, and the pod fails with `ErrImagePull`/`ImagePullBackOff`
   even though `imagePullSecrets` is configured in the chart.
 - **On ECR specifically**, you have the same two options infra teams already

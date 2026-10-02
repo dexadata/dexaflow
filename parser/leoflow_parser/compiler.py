@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 # Per-project config arrives from the Go CLI via this env var. The CLI parses
-# leoflow.yaml with gopkg.in/yaml.v3 and hands the resolved (defaults
+# dexaflow.yaml with gopkg.in/yaml.v3 and hands the resolved (defaults
 # applied) struct here as JSON — so the parser has zero third-party deps and
 # the Go side stays the single source of truth for the config schema.
 _CONFIG_ENV = "LEOFLOW_PROJECT_CONFIG_JSON"
@@ -151,7 +151,7 @@ def _load_dag(source: str, dag_id: str | None):
     if dag_id:
         raise ValueError(f"DAG {dag_id!r} not found in {source}; found {sorted(dags)}")
     if len(dags) > 1:
-        raise ValueError(f"multiple DAGs in {source}; set dag_id in leoflow.yaml")
+        raise ValueError(f"multiple DAGs in {source}; set dag_id in dexaflow.yaml")
     return next(iter(dags.values()))
 
 
@@ -273,7 +273,7 @@ def _provider_import_hint(name: str) -> str:
         f"{name!r} is an Airflow provider imported at the DAG module top level, "
         f"which Leoflow cannot resolve while parsing (providers are not installed "
         f"in the parser). Import the hook/operator INSIDE your @task function, and "
-        f"declare the provider in leoflow.yaml via `connectors:` (short names like "
+        f"declare the provider in dexaflow.yaml via `connectors:` (short names like "
         f"postgres, http) or `dependencies:` (an explicit pip package) so it is "
         f"installed in the task runtime."
     )
@@ -436,7 +436,7 @@ def _check_callbacks(task, task_type: str, entry: dict) -> None:
         if _has_callback(task, name):
             raise ValueError(
                 f"{name} on task {task.task_id!r} is not supported by Leoflow yet — "
-                "refusing to silently drop it. Use an alerts: block in leoflow.yaml, "
+                "refusing to silently drop it. Use an alerts: block in dexaflow.yaml, "
                 "or a downstream @task with a trigger_rule.")
     if not _has_callback(task, _ON_FAILURE_CALLBACK):
         return
@@ -448,7 +448,7 @@ def _check_callbacks(task, task_type: str, entry: dict) -> None:
         f"on_failure_callback on task {task.task_id!r} (type {task_type}) cannot run: "
         "only a Python-executed task runs it in-process (a provider operator or a "
         "@task). For HTTP use HttpOperator (a provider operator, which runs it); "
-        "otherwise use an alerts: block in leoflow.yaml, or a downstream @task with "
+        "otherwise use an alerts: block in dexaflow.yaml, or a downstream @task with "
         "trigger_rule='one_failed'.")
 
 
@@ -575,7 +575,7 @@ def _sched_attr(task, dag, name: str):
     """Resolve an Airflow scheduling attribute (retries/retry_delay/execution_timeout)
     the way Airflow does: the value set on the operator wins; otherwise the DAG's
     default_args supplies it (#434). Returns None when neither sets it, so the task
-    emits no key and the Go side's leoflow.yaml defaults still apply."""
+    emits no key and the Go side's dexaflow.yaml defaults still apply."""
     value = getattr(task, name, None)
     if value is None and dag is not None:
         value = (getattr(dag, "default_args", None) or {}).get(name)

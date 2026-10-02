@@ -16,7 +16,7 @@ location live in **Extra**, and auth is keyless (Workload Identity / ADC).
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: bigquery_demo
 connectors:
   - gcpbigquery
@@ -69,7 +69,7 @@ with DAG("bigquery_demo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: bigquery_demo
 python_version: "3.12"

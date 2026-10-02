@@ -23,7 +23,7 @@ Spark provider hooks. The provider exposes a few conn types — all from
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: spark_job
 connectors:
   - spark
@@ -67,7 +67,7 @@ with DAG("spark_job", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: spark_job
 description: Submit a Spark job via SparkSubmitHook.

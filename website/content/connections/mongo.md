@@ -16,7 +16,7 @@ field carries the database (or auth database).
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: mongo_load
 connectors:
   - mongo
@@ -63,7 +63,7 @@ with DAG("mongo_load", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: mongo_load
 description: Load documents into MongoDB via MongoHook.

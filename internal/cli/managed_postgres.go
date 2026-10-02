@@ -18,7 +18,7 @@ import (
 
 // Datastore backends for Lite's Postgres. The default is "auto": Docker Postgres
 // when Docker is present (the realistic case, since the k3d executor needs Docker
-// too), else a managed relocatable PostgreSQL under ~/.leoflow on a Unix socket —
+// too), else a managed relocatable PostgreSQL under ~/.dexaflow on a Unix socket —
 // so `leoflow lite` runs on a Docker-free host with nothing to install. Either can
 // be forced explicitly.
 const (
@@ -78,18 +78,18 @@ func datastoreNote(mode string, dockerPresent bool) string {
 	case dockerPresent:
 		return "▸ Docker detected but not responding — using a managed Postgres (no Docker). Fix Docker, or pass --postgres docker to force it."
 	default:
-		return "▸ no Docker detected — using a managed Postgres (downloaded under ~/.leoflow, no Docker). Install Docker for the postgres:16 container instead."
+		return "▸ no Docker detected — using a managed Postgres (downloaded under ~/.dexaflow, no Docker). Install Docker for the postgres:16 container instead."
 	}
 }
 
 // managedPGPaths returns the managed Postgres bin dir and data dir, both per-user
-// under ~/.leoflow (so root and an unprivileged user never share a cluster).
+// under ~/.dexaflow (so root and an unprivileged user never share a cluster).
 func managedPGPaths() (binDir, dataDir string, err error) {
 	h, herr := os.UserHomeDir()
 	if herr != nil {
 		return "", "", fmt.Errorf("resolving home dir: %w", herr)
 	}
-	root := filepath.Join(h, ".leoflow")
+	root := stateDirIn(h)
 	return filepath.Join(root, "postgres", "bin"), filepath.Join(root, "pgdata"), nil
 }
 
@@ -99,14 +99,14 @@ func managedPGPaths() (binDir, dataDir string, err error) {
 // through the per-user socket and never collide with, or connect to, a foreign
 // Postgres bound to localhost:5432. Idempotent: an already-running cluster is
 // left as is. trust auth is safe here: the socket lives in the user's own
-// ~/.leoflow, the same single-user threat model as the Docker datastore.
+// ~/.dexaflow, the same single-user threat model as the Docker datastore.
 func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	h, herr := os.UserHomeDir()
 	if herr != nil {
 		return fmt.Errorf("resolving home dir: %w", herr)
 	}
-	root := filepath.Join(h, ".leoflow")
+	root := stateDirIn(h)
 	binDir, err := setup.EnsurePostgres(ctx, setup.EnsureOpts{
 		Home: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Libc: detectLibc(),
 		Stat: os.Stat,

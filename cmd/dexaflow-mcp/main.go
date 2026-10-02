@@ -19,6 +19,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/mcp"
 	versioninfo "github.com/dexadata/dexaflow/internal/version"
 	apiclient "github.com/dexadata/dexaflow/pkg/client"
@@ -32,6 +33,7 @@ var version = "dev"
 func main() { os.Exit(run()) }
 
 func run() int {
+	envcompat.MirrorProcess()
 	// Answer `--version` before parsing flags — flag.Parse would reject an
 	// unknown --version — and before any stdout goes to the MCP channel, so an
 	// operator can ask the binary its version (#593). Print main.version: this

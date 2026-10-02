@@ -81,7 +81,7 @@ are all dropped atomically with the `dags` row.
 {{% /alert %}}
 
 {{% alert title="Per-DAG venvs (subprocess executor)" color="info" %}}
-Each DAG gets its own virtualenv under `~/.leoflow/dev/venvs/<dag_id>/`, so
+Each DAG gets its own virtualenv under `~/.dexaflow/dev/venvs/<dag_id>/`, so
 editing one project's `dependencies:` only re-runs pip for **that** DAG —
 other DAGs' venvs are untouched. Two DAGs can pin **conflicting** versions
 of the same package without interfering. If
@@ -120,7 +120,7 @@ only the engine that hosts the local k3d cluster — never an executor.
 | Isolation | **none** (shared host venv) | real pods (limits, RBAC) |
 | Pro fidelity | low | **high** (identical path to prod) |
 | Moving parts that can break | few (just the venv) | more (cluster, scheduler, registry, PVC) |
-| Shared `/staging` volume (ADR 0022) | **not provided** (`LEOFLOW_STAGING_DIR` unset; tasks have direct host-disk access instead) | **yes** — per-run PVC at `/staging`, `LEOFLOW_STAGING_DIR` set, GC'd |
+| Shared `/staging` volume (ADR 0022) | **not provided** (`DEXAFLOW_STAGING_DIR` unset; tasks have direct host-disk access instead) | **yes** — per-run PVC at `/staging`, `DEXAFLOW_STAGING_DIR` set, GC'd |
 
 Rule of thumb: iterate on DAG logic in **`subprocess`** (instant loop), then
 validate in **`k8s`** before deploy — especially anything that uses the staging
@@ -276,7 +276,7 @@ This is **not** an install path. Real users still install via
    a `pkill -f "leoflow lite"` fallback).
 4. **Swaps the binaries in both locations** `leoflow lite` resolves
    them from — `./bin/` (the repo's local bin, preferred by
-   `resolveBinary` in `internal/cli/dev.go`) and `~/.leoflow/bin/` (the
+   `resolveBinary` in `internal/cli/dev.go`) and `~/.dexaflow/bin/` (the
    user-install location). Keeping them in lockstep is critical: if
    only one is updated the stale one silently runs and the dev loop
    becomes confusing fast (this happened — see the commit that added
@@ -301,7 +301,7 @@ After it returns:
 tail -f /tmp/leoflow-lite.log
 
 # get / rotate the admin password
-~/.leoflow/bin/leoflow lite reset-password
+~/.dexaflow/bin/leoflow lite reset-password
 
 # stop
 kill "$(cat /tmp/leoflow-lite.pid)"

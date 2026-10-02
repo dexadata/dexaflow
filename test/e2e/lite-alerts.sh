@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # End-to-end gate for native on-failure alerting (#424): the `alerts:` block in
-# leoflow.yaml must fire a real webhook POST when a DagRun reaches the terminal
+# dexaflow.yaml must fire a real webhook POST when a DagRun reaches the terminal
 # failed state — entirely in the Go control plane, with no task pod and no Python
 # in the hot path. This closes the "no e2e for the native surface" gap the #424
 # review flagged (the pure notifier/dispatcher logic is unit-tested; this asserts
 # the whole chain against a real DB, real connection encryption, and a real POST).
 #
 # The chain under test:
-#   leoflow.yaml alerts: ─► compile ─► dag.json ─► scheduler sees the run fail
+#   dexaflow.yaml alerts: ─► compile ─► dag.json ─► scheduler sees the run fail
 #     ─► resolve the managed connection to its (encrypted) endpoint URL
 #     ─► render the message ─► POST the structured webhook payload
 #
@@ -44,7 +44,7 @@ trap cleanup EXIT
 export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 export LEOFLOW_DATABASE_URL="$DB_URL"
 export LEOFLOW_LOGS_DIR="$TMP/logs"
-# Isolate HOME so Lite reads no ~/.leoflow/config.yaml admin hash and falls back
+# Isolate HOME so Lite reads no ~/.dexaflow/config.yaml admin hash and falls back
 # to no-auth loopback (LEOFLOW_AUTH_DEV_NO_AUTH), so the API is reachable without
 # a token. Connection encryption round-trips inside the server with its own key.
 export HOME="$TMP/home"
@@ -107,7 +107,7 @@ echo "==> resetting the database (migrated, empty)"
 
 echo "==> workspace: a DAG whose single task raises, with a webhook alert rule"
 mkdir -p "$WS/alertdag"
-cat > "$WS/alertdag/leoflow.yaml" <<YAML
+cat > "$WS/alertdag/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: alertdag
 alerts:

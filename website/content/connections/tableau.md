@@ -16,7 +16,7 @@ publish workbooks, or query metadata over a managed Leoflow Connection.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: tableau_signin
 connectors:
   - tableau
@@ -65,7 +65,7 @@ with DAG("tableau_signin", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: tableau_signin
 python_version: "3.12"

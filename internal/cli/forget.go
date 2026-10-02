@@ -26,7 +26,7 @@ func newForgetCommand() *cobra.Command {
 		Use:   "forget [dag_id]",
 		Short: "Remove a DAG (and all its history) from the Lite registry without touching the source files.",
 		Long: "forget hard-deletes a DAG from the Lite registry. The dag.py and " +
-			"leoflow.yaml on disk are untouched — only the database rows go. " +
+			"dexaflow.yaml on disk are untouched — only the database rows go. " +
 			"FK cascade handles versions, runs, task instances, and XCom. The " +
 			"watcher will re-discover the project on the next tick if its files " +
 			"are still present, so use this when you want to deregister AND " +

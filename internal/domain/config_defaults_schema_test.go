@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// A leoflow.yaml `defaults` block declaring resources and node_selector (the
+// A dexaflow.yaml `defaults` block declaring resources and node_selector (the
 // DAG-wide placement/QoS fallback, EKS validation aresta #6) validates against
 // the canonical schema.
 func TestDefaultsBlockWithNodeSelectorValidates(t *testing.T) {

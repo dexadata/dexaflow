@@ -17,7 +17,7 @@ the **client id** (login), the **client secret** (password), and the **tenant id
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: msgraph_users
 connectors:
   - msgraph
@@ -63,7 +63,7 @@ with DAG("msgraph_users", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: msgraph_users
 description: Call Microsoft Graph via KiotaRequestAdapterHook.

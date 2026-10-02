@@ -32,14 +32,14 @@ func newRestoreCommand() *cobra.Command {
 			"manifest against this binary (refuses an archive newer than what this " +
 			"binary knows about), then replays the datastore SQL and restores config " +
 			"and workspace.\n\n" +
-			"By default refuses to overwrite a non-empty ~/.leoflow; pass --force to confirm.",
+			"By default refuses to overwrite a non-empty ~/.dexaflow; pass --force to confirm.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runRestore(cmd, input, force)
 		},
 	}
 	cmd.Flags().StringVarP(&input, "input", "i", "", "path to the archive (required)")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing ~/.leoflow install")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing ~/.dexaflow install")
 	_ = cmd.MarkFlagRequired("input") //nolint:errcheck // Cobra returns nil for a known flag name; the error path is unreachable
 	return cmd
 }
@@ -50,7 +50,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	if home == "" {
 		return fmt.Errorf("could not resolve the user home directory")
 	}
-	leoflowHome := filepath.Join(home, ".leoflow")
+	leoflowHome := stateDirIn(home)
 
 	devPrintf(out, "▸ reading manifest from %s …\n", input)
 	archive, err := readBackupArchive(input)
@@ -178,7 +178,7 @@ func readBackupArchive(path string) (archiveContents, error) {
 	return out, nil
 }
 
-// leoflowHomeHasData reports whether ~/.leoflow already contains an install:
+// leoflowHomeHasData reports whether ~/.dexaflow already contains an install:
 // any file inside qualifies (config.yaml, pgdata, etc.). The check is the
 // guard the restore decision uses to refuse a destructive overwrite.
 func leoflowHomeHasData(leoflowHome string) bool {
@@ -222,7 +222,7 @@ func defaultWorkspaceDir() string {
 
 // restoreWorkspaceTree creates the workspace dir and writes every captured
 // file. Intermediate directories are created as needed so a nested layout
-// (subdir/leoflow.yaml) reproduces correctly. Existing files are
+// (subdir/dexaflow.yaml) reproduces correctly. Existing files are
 // overwritten — the operator opted in to a restore.
 func restoreWorkspaceTree(workspace string, files map[string][]byte) error {
 	if err := os.MkdirAll(workspace, 0o750); err != nil {

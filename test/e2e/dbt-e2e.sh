@@ -118,7 +118,7 @@ log "Generating the dbt manifest (dbt parse is offline)"
 # Pin the DAG image to the host arch (see e2e.sh): the loader defaults to
 # linux/amd64, which fails FROM an arm64 base on a Lima/dev host → ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat >"$PROJ/leoflow.yaml" <<YAML
+cat >"$PROJ/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: ${DAG_ID}
 owner: data-team

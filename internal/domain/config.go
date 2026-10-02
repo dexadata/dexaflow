@@ -8,7 +8,7 @@ import (
 )
 
 // LeoflowConfig is the developer-facing project configuration parsed from
-// leoflow.yaml. It mirrors docs/api/leoflow-yaml-schema.json and is consumed
+// dexaflow.yaml. It mirrors docs/api/leoflow-yaml-schema.json and is consumed
 // by `leoflow compile` to build an image and emit a DAGSpec.
 type LeoflowConfig struct {
 	SchemaVersion string   `json:"schema_version,omitempty" yaml:"schema_version,omitempty"`
@@ -42,7 +42,7 @@ type LeoflowConfig struct {
 	Defaults       *ConfigDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
 	// Staging requests the opt-in per-DAG-run shared volume (ADR 0022). It is a
 	// Leoflow deployment concern (not an Airflow DAG attribute), so it lives in
-	// leoflow.yaml and the compiler overlays it onto the produced dag.json.
+	// dexaflow.yaml and the compiler overlays it onto the produced dag.json.
 	Staging *StagingConfig `json:"staging,omitempty" yaml:"staging,omitempty"`
 	// Dbt declares a dbt project as the DAG source (ADR 0042). Its presence routes
 	// `leoflow compile` to the dbt renderer instead of the Python parser.
@@ -58,7 +58,7 @@ type LeoflowConfig struct {
 	// Alerts declares native on-failure alerting (#424): the scheduler fires the
 	// listed rules when a DagRun reaches the terminal failed state, in Go, with no
 	// task pod and no Python in the hot path. A Leoflow deployment concern (not an
-	// Airflow DAG attribute), so it lives in leoflow.yaml and the compiler overlays
+	// Airflow DAG attribute), so it lives in dexaflow.yaml and the compiler overlays
 	// it onto the produced dag.json.
 	Alerts *AlertsConfig `json:"alerts,omitempty" yaml:"alerts,omitempty"`
 }
@@ -73,7 +73,7 @@ type AlertsConfig struct {
 
 // AlertRule is one channel to notify on an alert event. The endpoint and its
 // secret always come from a managed connection (Conn), never a literal URL or
-// token in leoflow.yaml — that keeps credentials out of the compiled dag.json and
+// token in dexaflow.yaml — that keeps credentials out of the compiled dag.json and
 // mirrors the env-ref secret discipline.
 type AlertRule struct {
 	// Type is the channel: "slack" (Slack incoming webhook) or "webhook" (a generic
@@ -112,7 +112,7 @@ type DbtConfig struct {
 	Schema string `json:"schema,omitempty" yaml:"schema,omitempty"`
 }
 
-// TaskConfig holds the leoflow.yaml per-task overrides bound by task_id (ADR
+// TaskConfig holds the dexaflow.yaml per-task overrides bound by task_id (ADR
 // 0023). Every field is optional; a set field overrides the value compiled from
 // the DAG (most specific wins: task override > DAG default_args). These are
 // Leoflow deployment concerns, not Airflow operator attributes.
@@ -194,7 +194,7 @@ func (d *DefaultResources) AsResources() *Resources {
 //
 // Centralizing defaults here (instead of scattered `if x == ""` fallbacks at
 // each consumer) is what lets the multi-DAG workspace synthesize a working
-// config when a subdir ships no leoflow.yaml, while keeping the resolved
+// config when a subdir ships no dexaflow.yaml, while keeping the resolved
 // values debuggable from one place.
 func (c *LeoflowConfig) ApplyDefaults() {
 	if c.SchemaVersion == "" {
@@ -262,7 +262,7 @@ func (c *LeoflowConfig) EffectiveDependencies() ([]string, error) {
 	return effective, nil
 }
 
-// Validate checks the LeoflowConfig against the canonical leoflow.yaml schema
+// Validate checks the LeoflowConfig against the canonical dexaflow.yaml schema
 // and returns a joined error describing every violation, or nil when valid.
 func (c *LeoflowConfig) Validate() error {
 	s, err := schemas()

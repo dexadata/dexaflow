@@ -67,7 +67,7 @@ type Options struct {
 	// no server and no connection needed (L4). Ignored on the Pro/image path.
 	Local bool
 	// DagConnections are the connection ids declared at the top level of
-	// leoflow.yaml. They are stamped onto each task ALONGSIDE Connection, not
+	// dexaflow.yaml. They are stamped onto each task ALONGSIDE Connection, not
 	// instead of it: declaredConnections (internal/storage) returns the task's
 	// list whenever it is non-empty, so stamping only the managed connection
 	// shadows the DAG's own declarations and they never reach the pod — a

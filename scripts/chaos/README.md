@@ -27,7 +27,7 @@ the host happens to be configured the same way the contract expects.
 
 | # | Section | What it checks | Phase |
 |---|---|---|---|
-| 1 | Fresh-runner contract | `~/.leoflow/` absent + `leoflow_parser` NOT pip-installed (catches contributor-machine state — F5/#96) | 1 |
+| 1 | Fresh-runner contract | `~/.dexaflow/` absent + `leoflow_parser` NOT pip-installed (catches contributor-machine state — F5/#96) | 1 |
 | 2 | Go unit tests | `go test ./...` | 1 |
 | 2b | Chaos integration (failure injection) | `go test -tags integration -run TestChaos ./internal/storage/` — fast-forwards reaper thresholds and asserts the mid-tick-crash recovery contract end-to-end. Skipped when `DATABASE_URL` is absent. | 2b |
 | 3 | Go lint | `golangci-lint run ./...` at the CI-pinned version | 1 |

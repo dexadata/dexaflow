@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sync-example-dockerfiles.sh — keep each examples/<dag>/Dockerfile aligned with
-# its leoflow.yaml (#318). Idempotent: re-running on an in-sync tree is a no-op.
+# its dexaflow.yaml (#318). Idempotent: re-running on an in-sync tree is a no-op.
 #
 # The generated Dockerfile follows the same template `leoflow lite` uses
 # in-process (internal/cli/dev.go devDockerfile): FROM the matching task base,
@@ -75,7 +75,7 @@ gen_dockerfile() {
   cat <<EOF
 # Standard DAG image (#318). Built by 'leoflow compile --build' or by hand:
 #   docker build -t my-registry/$(basename "$(dirname "$yaml")"):<tag> .
-# Synthesized by scripts/sync-example-dockerfiles.sh from leoflow.yaml; do
+# Synthesized by scripts/sync-example-dockerfiles.sh from dexaflow.yaml; do
 # not hand-edit — re-run the script after changing python_version or
 # dependencies, or CI's drift check fails.
 FROM leoflow-base:py${py}
@@ -99,13 +99,13 @@ while IFS= read -r yaml; do
   if [ "$mode" = "check" ]; then
     actual="$(cat "$dockerfile" 2>/dev/null || true)"
     if [ "$actual" != "$expected" ]; then
-      echo "::error::$(realpath --relative-to=. "$dockerfile") is out of sync with leoflow.yaml" >&2
+      echo "::error::$(realpath --relative-to=. "$dockerfile") is out of sync with dexaflow.yaml" >&2
       drift=1
     fi
   else
     printf '%s\n' "$expected" > "$dockerfile"
   fi
-done < <(find examples -name leoflow.yaml | sort)
+done < <(find examples -name dexaflow.yaml | sort)
 
 if [ "$mode" = "check" ] && [ "$drift" -ne 0 ]; then
   echo "" >&2

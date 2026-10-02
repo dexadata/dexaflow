@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/agent"
+	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/version"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
@@ -34,7 +35,15 @@ Flags:
   --help, -h  print this help and exit
 `
 
-func main() { os.Exit(run()) }
+func main() {
+	// The control plane passes LEOFLOW_* to task pods, and older control planes
+	// only know that name; mirror it so DEXAFLOW_* readers see the same values.
+	// A conflict is reported, the plain legacy name is the normal case here.
+	for _, note := range envcompat.MirrorProcess().ConflictNotes() {
+		fmt.Fprintln(os.Stderr, "dexaflow-agent: "+note)
+	}
+	os.Exit(run())
+}
 
 // bootstrapToken resolves the agent's initial bearer and whether a token exchange
 // is required (ADR 0055 Fix #3). Under the exchange transport it reads the

@@ -18,7 +18,7 @@ run**, mounted at `/staging` in every task pod of that run. It is the place for
 **large intermediate data** between a run's tasks — the gap XCom (≤256KB) and
 object storage (durable, cross-run) don't fill.
 
-- **Opt-in** via `leoflow.yaml` → compiled into the immutable `dag.json`.
+- **Opt-in** via `dexaflow.yaml` → compiled into the immutable `dag.json`.
 - **Atomic/isolated per run**: one PVC per run, deterministic name; runs and DAGs
   never collide.
 - **Re-run safe**: the PVC's lifecycle is tied to the *run*, not the pod — it
@@ -31,14 +31,14 @@ It is **not** durable, cross-run, or cross-DAG storage — use object storage
 ## Configuration
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 staging:
   enabled: true
   size: 5Gi
   storage_class: ""   # empty = the cluster's default RWX StorageClass
 ```
 
-Tasks read/write under `$LEOFLOW_STAGING_DIR` (= `/staging`), shared across the
+Tasks read/write under `$DEXAFLOW_STAGING_DIR` (= `/staging`), shared across the
 run's tasks.
 
 ## Example — an ETL on a shared staging volume
@@ -69,7 +69,7 @@ flowchart TB
 ```
 
 {{< tabpane text=true >}}
-{{% tab header="leoflow.yaml" %}}
+{{% tab header="dexaflow.yaml" %}}
 
 ```yaml
 schema_version: "1.0"
@@ -89,7 +89,7 @@ staging:
 import json, os
 from airflow.sdk import DAG, task
 
-STAGING = os.environ.get("LEOFLOW_STAGING_DIR", "/staging")
+STAGING = os.environ.get("DEXAFLOW_STAGING_DIR", "/staging")
 
 @task
 def extract() -> str:
@@ -126,10 +126,10 @@ because they mount the same per-run PVC.
 
 ```mermaid
 flowchart TD
-    A["leoflow.yaml staging.enabled"] -->|leoflow compile| B["dag.json (immutable)"]
+    A["dexaflow.yaml staging.enabled"] -->|leoflow compile| B["dag.json (immutable)"]
     B -->|push| C["Control plane"]
     C -->|run leaves 'queued'| D["Ensure PVC<br/>leoflow-staging-&lt;dag&gt;-&lt;run&gt;<br/>(RWX, idempotent)"]
-    D --> E["Task pods of the run<br/>mount it at /staging<br/>(LEOFLOW_STAGING_DIR)"]
+    D --> E["Task pods of the run<br/>mount it at /staging<br/>(DEXAFLOW_STAGING_DIR)"]
     E --> F["Tasks share files within the run"]
     F -->|task fails → clear + re-run| G["Re-attach the SAME PVC<br/>(deterministic name)<br/>→ upstream data still present"]
     G --> E

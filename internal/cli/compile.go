@@ -142,7 +142,7 @@ func checkOutputWritable(output string) error {
 }
 
 // checkProjectPreconditions runs the checks that apply to every project before
-// the dag.py and dbt paths diverge: the leoflow.yaml must validate, it must not
+// the dag.py and dbt paths diverge: the dexaflow.yaml must validate, it must not
 // declare a dbt: block alongside a dag.py (#1015), and a deprecated Python line
 // earns a warning the author can still act on.
 //
@@ -151,7 +151,7 @@ func checkOutputWritable(output string) error {
 // leave every dbt project silently on a base image that stops being rebuilt,
 // and `leoflow validate` open-coding the first two checks is how it spent this
 // PR's first round never warning at all — validate is the sub-second command an
-// author runs in a loop with leoflow.yaml open, which is the exact moment the
+// author runs in a loop with dexaflow.yaml open, which is the exact moment the
 // warning is worth something.
 func checkProjectPreconditions(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig) error {
 	if verr := cfg.Validate(); verr != nil {
@@ -182,7 +182,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 		return perr
 	}
 	// Self-heal the extracted parser sources before running the parser, so a binary
-	// upgrade (new features like dbt vs a stale ~/.leoflow/pysrc) never surfaces as
+	// upgrade (new features like dbt vs a stale ~/.dexaflow/pysrc) never surfaces as
 	// a confusing "not supported" error (#239).
 	ensurePysrc(cmd)
 	if cfg.Dbt != nil {
@@ -195,7 +195,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if o.dagVersion == "" {
 		o.dagVersion = gitVersion(cmdContext(cmd))
 	}
-	// The image is the --image flag when set, else derived from the leoflow.yaml
+	// The image is the --image flag when set, else derived from the dexaflow.yaml
 	// registry block (url/image_name:version), so a yaml-driven build needs no
 	// flag. The resolved value flows into dag.json (via the parser) and the build,
 	// keeping the registered artifact and the built/pushed image in lockstep.
@@ -240,7 +240,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 
 // runDbtCompile compiles a dbt project (ADR 0042) instead of a Python DAG: it
 // acquires the manifest.json (a baked file or a fresh `dbt parse`), renders it
-// into a dag.json via the dbt package, overlays the leoflow.yaml, validates, and
+// into a dag.json via the dbt package, overlays the dexaflow.yaml, validates, and
 // optionally builds/pushes the image — reusing the same tail as the parser path.
 func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig) error {
 	if o.dagVersion == "" {
@@ -357,7 +357,7 @@ func expandDbtGroupsInFile(cmd *cobra.Command, dir, output string, cfg *domain.L
 	render := func(group string) ([]domain.TaskSpec, error) {
 		gc, ok := cfg.DbtGroups[group]
 		if !ok {
-			return nil, fmt.Errorf("dag uses dbt_group(%q) but leoflow.yaml has no dbt_groups.%s", group, group)
+			return nil, fmt.Errorf("dag uses dbt_group(%q) but dexaflow.yaml has no dbt_groups.%s", group, group)
 		}
 		manifest, merr := loadDbtManifest(cmd, dir, gc, local, cfg.DagID)
 		if merr != nil {
@@ -447,7 +447,7 @@ func liteDbtBinAt(home, dagID string) string {
 	if home == "" || dagID == "" {
 		return ""
 	}
-	cand := filepath.Join(home, ".leoflow", "dev", "venvs", dagID, "bin", "dbt")
+	cand := filepath.Join(stateDirIn(home), "dev", "venvs", dagID, "bin", "dbt")
 	if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
 		return cand
 	}
@@ -459,7 +459,7 @@ func liteDbtBinAt(home, dagID string) string {
 //
 // Deliberately NOT a function of where the DAG will run. Tying it to that was
 // the #993 conflation one layer down — a venv dbt is that DAG's own, pinned to
-// the adapter its leoflow.yaml declares, while PATH's is whatever the operator
+// the adapter its dexaflow.yaml declares, while PATH's is whatever the operator
 // happens to have. When both exist the venv one is strictly the better parser,
 // whichever executor the artifact ends up on.
 func dbtParseBinAt(home, dagID string) string {
@@ -543,7 +543,7 @@ func writeDAGFile(path string, spec *domain.DAGSpec) error {
 
 // buildAndPush optionally builds the DAG image and pushes it, honoring the
 // --build/--push flags. When building and the project ships no Dockerfile, one is
-// generated from the leoflow.yaml (base image + system packages + dependencies/
+// generated from the dexaflow.yaml (base image + system packages + dependencies/
 // connectors), built, and removed afterward so the workspace stays clean.
 func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
 	if o.build {
@@ -585,7 +585,7 @@ func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.
 }
 
 // resolveDockerfileName picks the Dockerfile name to look for in the DAG
-// directory: an explicit --dockerfile flag wins, then leoflow.yaml's
+// directory: an explicit --dockerfile flag wins, then dexaflow.yaml's
 // build.dockerfile, else the "Dockerfile" default.
 func resolveDockerfileName(cmd *cobra.Command, o compileOptions, cfg *domain.LeoflowConfig) string {
 	if cmd.Flags().Changed("dockerfile") {
@@ -615,7 +615,7 @@ func checkImageFlags(cmd *cobra.Command, build, push bool, image string) error {
 		return errors.New("--push requires --build")
 	}
 	if build && image == "" {
-		return errors.New("--build needs an image reference: pass --image, or set registry.url + registry.image_name in leoflow.yaml")
+		return errors.New("--build needs an image reference: pass --image, or set registry.url + registry.image_name in dexaflow.yaml")
 	}
 	if !build && image != "" {
 		_, werr := fmt.Fprintf(cmd.ErrOrStderr(), "note: recording image %q without building it; pass --build to build the DAG image\n", image)
@@ -674,7 +674,7 @@ type parserArgs struct {
 	// projectConfig is the parsed + defaulted LeoflowConfig the CLI loaded
 	// before invoking the parser. It is marshaled to JSON and handed to the
 	// parser via LEOFLOW_PROJECT_CONFIG_JSON, replacing the in-parser
-	// PyYAML read of leoflow.yaml. The Go side stays the single source of
+	// PyYAML read of dexaflow.yaml. The Go side stays the single source of
 	// truth for the config schema; the parser carries zero third-party
 	// Python deps (ADR 0024 + alpha cleanup).
 	projectConfig *domain.LeoflowConfig
@@ -738,11 +738,11 @@ func runParser(cmd *cobra.Command, command string, a parserArgs) error {
 	pc := exec.CommandContext(cmdContext(cmd), fields[0], argv...)
 	// Build the child environment. Guarantee the extracted parser sources are
 	// importable: on a binary-only install the default command is a bare
-	// `python3 -m leoflow_parser` and nothing else wires ~/.leoflow/pysrc/parser
+	// `python3 -m leoflow_parser` and nothing else wires ~/.dexaflow/pysrc/parser
 	// onto PYTHONPATH, so the parser fails with ModuleNotFoundError (#587).
 	env := withParserPythonPath(os.Environ())
 	// Hand the resolved project config to the parser as JSON via an env var.
-	// The parser uses this instead of re-parsing leoflow.yaml in-process, so
+	// The parser uses this instead of re-parsing dexaflow.yaml in-process, so
 	// Go owns the schema and the parser ships zero third-party deps.
 	if a.projectConfig != nil {
 		raw, merr := json.Marshal(a.projectConfig)
@@ -815,7 +815,7 @@ func parserErrorSummary(stderr string) string {
 	return last
 }
 
-// overlayProject writes the leoflow.yaml Leoflow-specific config (staging,
+// overlayProject writes the dexaflow.yaml Leoflow-specific config (staging,
 // on-failure alerts, and per-task overrides) onto the produced dag.json. These
 // are deployment concerns, not Airflow DAG attributes, so the parser does not
 // emit them (ADR 0022, 0023; #424).
@@ -862,7 +862,7 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 	return nil
 }
 
-// validateTaskBindings guards the YAML↔task binding: every key in the leoflow.yaml
+// validateTaskBindings guards the YAML↔task binding: every key in the dexaflow.yaml
 // tasks block must name a task_id present in the compiled DAG, so a typo fails the
 // compile instead of silently overriding nothing (ADR 0023).
 func validateTaskBindings(overrides map[string]*domain.TaskConfig, tasks []domain.TaskSpec) error {
@@ -878,7 +878,7 @@ func validateTaskBindings(overrides map[string]*domain.TaskConfig, tasks []domai
 	for id := range overrides {
 		if _, ok := known[id]; !ok {
 			sort.Strings(ids)
-			return fmt.Errorf("leoflow.yaml tasks: unknown task_id %q; the DAG defines %v", id, ids)
+			return fmt.Errorf("dexaflow.yaml tasks: unknown task_id %q; the DAG defines %v", id, ids)
 		}
 	}
 	return nil
@@ -953,7 +953,7 @@ func applyTaskOverride(task *domain.TaskSpec, o *domain.TaskConfig) {
 	}
 }
 
-// hasDAGDefaults reports whether the leoflow.yaml defaults block carries a
+// hasDAGDefaults reports whether the dexaflow.yaml defaults block carries a
 // DAG-wide value the overlay must bake onto tasks (resources or node_selector).
 // Retries/retry_delay/timeout are handled upstream by the parser's default_args,
 // so they don't count here.
@@ -962,7 +962,7 @@ func hasDAGDefaults(d *domain.ConfigDefaults) bool {
 }
 
 // applyDAGDefaults fills a task's resources and node_selector from the DAG-wide
-// leoflow.yaml defaults when the task declares none of its own. Per-task values
+// dexaflow.yaml defaults when the task declares none of its own. Per-task values
 // (set by applyTaskOverride or compiled from the DAG) always win; the default
 // never partially merges into an explicit block. Closes the accepted-but-ignored
 // footgun where defaults.resources / defaults.node_selector reached neither

@@ -48,7 +48,7 @@ import (
 // pushes tags to — instead of agreeing with the constant whatever it becomes.
 const publishedRuntimeRepo = "ghcr.io/dexadata/leoflow-runtime"
 
-// scaffoldPythonVersion is what `leoflow init` writes into leoflow.yaml, and
+// scaffoldPythonVersion is what `leoflow init` writes into dexaflow.yaml, and
 // what release.yaml's runtime-image matrix publishes a base for.
 const scaffoldPythonVersion = "3.11"
 
@@ -194,7 +194,7 @@ func assertVersionStamp(t *testing.T, bin, want string) {
 	}
 }
 
-// compiledDockerfileFrom scaffolds a project with NO base_image in leoflow.yaml
+// compiledDockerfileFrom scaffolds a project with NO base_image in dexaflow.yaml
 // (the default the pin governs), compiles it with the given binary, and returns
 // the FROM argument of the Dockerfile the CLI generated and handed the builder.
 //
@@ -213,9 +213,9 @@ func compiledDockerfileFrom(t *testing.T, bin string) string {
 	// Guard the premise: the scaffold must not carry a base_image, because an
 	// explicit one short-circuits resolveBaseImage and the FROM below would say
 	// nothing about the pin.
-	yaml, err := os.ReadFile(filepath.Join(dir, "leoflow.yaml"))
+	yaml, err := os.ReadFile(filepath.Join(dir, "dexaflow.yaml"))
 	if err != nil {
-		t.Fatalf("reading the scaffolded leoflow.yaml: %v", err)
+		t.Fatalf("reading the scaffolded dexaflow.yaml: %v", err)
 	}
 	if strings.Contains(string(yaml), "base_image") {
 		t.Fatalf("the scaffold now sets base_image; this test must compile a project WITHOUT one:\n%s", yaml)

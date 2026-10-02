@@ -20,7 +20,7 @@ the same host:port + login/password shape:
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: file_pull
 connectors:
   - sftp        # or ssh / ftp
@@ -68,7 +68,7 @@ with DAG("file_pull", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: file_pull
 description: Download a file over SFTP via SFTPHook.

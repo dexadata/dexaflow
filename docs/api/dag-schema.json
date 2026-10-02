@@ -78,7 +78,7 @@
     "min_idle_workers": {
       "type": "integer",
       "minimum": 0,
-      "description": "DORMANT seam, not author-settable today: warm workers an author would want kept ready for this DAG version so its tasks skip cold-pod startup (ADR 0058, warm pools). It is absent from the authoring schema (leoflow.yaml) and the parser never emits it, so a compiled artifact always carries 0. The downstream (EffectiveMinIdle clamp, scheduler store) is intentionally pre-wired, so exposing it to authors later is a schema+parser change only. Would be operator-capped at execution.max_pool_size and inert unless the operator enabled warm pools; 0 (default) means no warmth."
+      "description": "DORMANT seam, not author-settable today: warm workers an author would want kept ready for this DAG version so its tasks skip cold-pod startup (ADR 0058, warm pools). It is absent from the authoring schema (dexaflow.yaml) and the parser never emits it, so a compiled artifact always carries 0. The downstream (EffectiveMinIdle clamp, scheduler store) is intentionally pre-wired, so exposing it to authors later is a schema+parser change only. Would be operator-capped at execution.max_pool_size and inert unless the operator enabled warm pools; 0 (default) means no warmth."
     },
     "catchup": {
       "type": "boolean",
@@ -117,7 +117,7 @@
     },
     "alerts": {
       "type": "object",
-      "description": "Native on-failure alerting (#424), overlaid from leoflow.yaml; the scheduler fires it when the DagRun reaches failed.",
+      "description": "Native on-failure alerting (#424), overlaid from dexaflow.yaml; the scheduler fires it when the DagRun reaches failed.",
       "properties": {
         "on_failure": {
           "type": "array",

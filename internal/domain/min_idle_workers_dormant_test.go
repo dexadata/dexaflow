@@ -45,7 +45,7 @@ func TestMinIdleWorkersAbsentFromCompiledArtifactIsZero(t *testing.T) {
 
 // TestMinIdleWorkersRejectedFromAuthoringSchema locks the author-entry-point
 // half of the dormant contract: an author who writes min_idle_workers into
-// leoflow.yaml is rejected by schema validation (additionalProperties:false),
+// dexaflow.yaml is rejected by schema validation (additionalProperties:false),
 // rather than having it silently accepted-and-dropped. This is what makes the
 // seam honest — there is no author knob today, and an attempt to invent one
 // fails loudly at compile instead of looking like it worked.
@@ -54,7 +54,7 @@ func TestMinIdleWorkersRejectedFromAuthoringSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile schemas: %v", err)
 	}
-	// A raw leoflow.yaml an author might write to request warmth. The struct
+	// A raw dexaflow.yaml an author might write to request warmth. The struct
 	// cannot even hold this key, so validate the raw instance against the
 	// authoring schema directly.
 	inst := map[string]any{

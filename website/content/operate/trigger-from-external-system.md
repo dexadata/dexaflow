@@ -24,7 +24,7 @@ Use a dedicated service account with only the `execute:dag` permission it needs.
 ```bash
 TOKEN=$(curl -sS -X POST https://leoflow.example.com/auth/token \
   -H 'Content-Type: application/json' \
-  -d '{"username":"ci-bot","password":"'"$LEOFLOW_PASSWORD"'"}' \
+  -d '{"username":"ci-bot","password":"'"$DEXAFLOW_PASSWORD"'"}' \
   | jq -r .access_token)
 ```
 
@@ -84,6 +84,6 @@ assigns an `manual__<timestamp>` id.
 ## See also
 
 - [HTTP API (Scalar) reference](/reference/api/) — every endpoint, interactively.
-- [CI/CD deploy](/operate/cicd-deploy/) — the `leoflow push` + `LEOFLOW_TOKEN`
+- [CI/CD deploy](/operate/cicd-deploy/) — the `leoflow push` + `DEXAFLOW_TOKEN`
   path when you control the DAG source (vs. only triggering an existing DAG).
 - [ADR 0008 — JWT auth](/project/adrs/0008-jwt-auth/).

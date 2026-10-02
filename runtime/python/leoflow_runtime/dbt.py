@@ -208,7 +208,7 @@ def write_dbt_profile(
         raise RuntimeError(msg)
     output = dbt_profile_from_uri(uri)
     if schema:
-        output["schema"] = schema  # explicit leoflow.yaml schema wins over the URI/default
+        output["schema"] = schema  # explicit dexaflow.yaml schema wins over the URI/default
     profile = {profile_name: {"target": "dev", "outputs": {"dev": output}}}
     path = os.path.join(profiles_dir, "profiles.yml")
     # profiles.yml carries warehouse credentials (password / private key / keyfile /

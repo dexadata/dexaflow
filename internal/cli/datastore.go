@@ -16,14 +16,14 @@ import (
 // (a foreign Postgres, another install) Lite picks the next free one.
 const defaultDevDBPort = 5432
 
-// leoflowHome returns the per-user Leoflow home (~/.leoflow) — the install
+// leoflowHome returns the per-user Leoflow home (~/.dexaflow) — the install
 // identity that scopes the datastore to this user.
 func leoflowHome() (string, error) {
 	h, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving home dir: %w", err)
 	}
-	return filepath.Join(h, ".leoflow"), nil
+	return stateDirIn(h), nil
 }
 
 // projectName derives a stable, per-install docker compose project name from the

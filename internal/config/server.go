@@ -781,7 +781,7 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 	for key, val := range serverDefaults {
 		v.SetDefault(key, val)
 	}
-	v.SetEnvPrefix("LEOFLOW")
+	v.SetEnvPrefix("DEXAFLOW")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 
@@ -795,6 +795,9 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		if err := v.BindPFlags(flags); err != nil {
 			return nil, fmt.Errorf("binding flags: %w", err)
 		}
+	}
+	if err := bindBothPrefixes(v, strings.NewReplacer(".", "_", "-", "_")); err != nil {
+		return nil, err
 	}
 
 	var c ServerConfig

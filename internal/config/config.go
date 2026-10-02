@@ -4,7 +4,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -78,13 +77,13 @@ type Config struct {
 }
 
 // DefaultConfigFile returns the default configuration file path,
-// ~/.leoflow/config.yaml.
+// ~/.dexaflow/config.yaml (see HomeDir for installs from before the rename).
 func DefaultConfigFile() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := HomeDir()
 	if err != nil {
-		return "", fmt.Errorf("resolving home directory: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".leoflow", "config.yaml"), nil
+	return filepath.Join(dir, "config.yaml"), nil
 }
 
 // Load assembles configuration from defaults, the given file (when non-empty),
@@ -101,7 +100,7 @@ func Load(configFile string, flags *pflag.FlagSet) (*Config, error) {
 	// ReadInConfig populates the key directly.
 	v.SetDefault("token", "")
 
-	v.SetEnvPrefix("LEOFLOW")
+	v.SetEnvPrefix("DEXAFLOW")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv()
 
@@ -120,6 +119,10 @@ func Load(configFile string, flags *pflag.FlagSet) (*Config, error) {
 				}
 			}
 		}
+	}
+
+	if err := bindBothPrefixes(v, strings.NewReplacer("-", "_")); err != nil {
+		return nil, err
 	}
 
 	var c Config

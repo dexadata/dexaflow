@@ -54,7 +54,7 @@ func marshalManifest(m backupManifest) ([]byte, error) {
 //     DB with rows the binary cannot read. Refuse loudly, mirror the upgrade
 //     drift detector in #136. Force does NOT silence this — corruption is
 //     not opt-in.
-//  2. **Destructive overwrite**: if ~/.leoflow already holds an install,
+//  2. **Destructive overwrite**: if ~/.dexaflow already holds an install,
 //     restoring would clobber the user's existing data. Refuse unless the
 //     operator passed --force, the explicit "I know" override.
 //  3. Otherwise, allow.
@@ -72,7 +72,7 @@ func decideRestoreSafe(manifestSchema, embeddedSchema uint, homeAlreadyHasData, 
 	}
 	if homeAlreadyHasData && !force {
 		return fmt.Errorf(
-			"refusing: restore would overwrite an existing install at ~/.leoflow; " +
+			"refusing: restore would overwrite an existing install at ~/.dexaflow; " +
 				"pass --force to confirm, or move/back-up the existing install first",
 		)
 	}

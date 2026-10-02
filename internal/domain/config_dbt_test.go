@@ -2,7 +2,7 @@ package domain
 
 import "testing"
 
-// A leoflow.yaml declaring a dbt project (ADR 0042) validates against the schema.
+// A dexaflow.yaml declaring a dbt project (ADR 0042) validates against the schema.
 func TestDbtConfigValidates(t *testing.T) {
 	c := &LeoflowConfig{
 		DagID: "sales",

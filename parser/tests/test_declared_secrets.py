@@ -1,4 +1,4 @@
-"""The compiler carries declared variables/connections from leoflow.yaml into
+"""The compiler carries declared variables/connections from dexaflow.yaml into
 the compiled dag.json (ADR 0045, ADR 0055).
 
 These are the Airflow-native words. They are distinct from ``connectors:`` (pip
@@ -45,7 +45,7 @@ def test_declared_connections_and_variables_land_in_dag_json(tmp_path, monkeypat
     }
     monkeypatch.setenv("LEOFLOW_PROJECT_CONFIG_JSON", json.dumps(cfg))
 
-    spec = compile_dag(str(src), "/nonexistent/leoflow.yaml", "img:v1")
+    spec = compile_dag(str(src), "/nonexistent/dexaflow.yaml", "img:v1")
 
     assert spec["connections"] == ["warehouse", "webhook"]
     assert spec["variables"] == ["greeting"]
@@ -56,7 +56,7 @@ def test_absent_declarations_are_omitted(tmp_path, monkeypatch):
     cfg = {"schema_version": "1.0", "dag_id": "declared_demo"}
     monkeypatch.setenv("LEOFLOW_PROJECT_CONFIG_JSON", json.dumps(cfg))
 
-    spec = compile_dag(str(src), "/nonexistent/leoflow.yaml", "img:v1")
+    spec = compile_dag(str(src), "/nonexistent/dexaflow.yaml", "img:v1")
 
     # Absent declarations are additive/optional: no key at all (empty = declares
     # nothing), so an existing DAG's compiled shape is unchanged.
@@ -74,7 +74,7 @@ def test_empty_declaration_lists_are_omitted(tmp_path, monkeypatch):
     }
     monkeypatch.setenv("LEOFLOW_PROJECT_CONFIG_JSON", json.dumps(cfg))
 
-    spec = compile_dag(str(src), "/nonexistent/leoflow.yaml", "img:v1")
+    spec = compile_dag(str(src), "/nonexistent/dexaflow.yaml", "img:v1")
 
     assert "connections" not in spec
     assert "variables" not in spec
@@ -94,7 +94,7 @@ def test_connectors_is_untouched_by_connections(tmp_path, monkeypatch):
     }
     monkeypatch.setenv("LEOFLOW_PROJECT_CONFIG_JSON", json.dumps(cfg))
 
-    spec = compile_dag(str(src), "/nonexistent/leoflow.yaml", "img:v1")
+    spec = compile_dag(str(src), "/nonexistent/dexaflow.yaml", "img:v1")
 
     assert spec["connections"] == ["warehouse"]
     # connectors is a build/dependency concern; it never appears in dag.json.

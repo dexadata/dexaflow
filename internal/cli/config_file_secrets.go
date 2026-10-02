@@ -6,7 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// liteFileSecrets are the secrets as ~/.leoflow/config.yaml holds them, with no
+// liteFileSecrets are the secrets as ~/.dexaflow/config.yaml holds them, with no
 // environment overlay.
 type liteFileSecrets struct {
 	jwtSecret         string

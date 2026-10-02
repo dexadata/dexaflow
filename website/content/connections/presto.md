@@ -17,7 +17,7 @@ scheme and hook differ.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: presto_query
 connectors:
   - presto
@@ -67,7 +67,7 @@ with DAG("presto_query", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: presto_query
 python_version: "3.12"

@@ -33,7 +33,7 @@ with DAG("%s", schedule="@daily", catchup=False, tags=["example"]):
 func newInitCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init <path>",
-		Short: "Scaffold a new DAG project (leoflow.yaml + dag.py).",
+		Short: "Scaffold a new DAG project (dexaflow.yaml + dag.py).",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dagID, err := scaffoldProject(args[0])
@@ -51,7 +51,7 @@ func newInitCommand() *cobra.Command {
 	}
 }
 
-// scaffoldProject writes a starter project (leoflow.yaml + dag.py) into dir,
+// scaffoldProject writes a starter project (dexaflow.yaml + dag.py) into dir,
 // creating it if needed, and returns the derived dag id (the directory's base
 // name). It is shared by `leoflow init` and the no-argument `leoflow lite`,
 // which scaffolds into the workspace when it has no project yet.
@@ -61,9 +61,9 @@ func scaffoldProject(dir string) (string, error) {
 		return "", fmt.Errorf("creating project directory: %w", err)
 	}
 	files := map[string]string{
-		"leoflow.yaml": fmt.Sprintf(leoflowTemplate, dagID),
-		"dag.py":       fmt.Sprintf(dagTemplate, dagID, dagID),
-		".gitignore":   gitignoreTemplate,
+		projectConfigFile: fmt.Sprintf(leoflowTemplate, dagID),
+		"dag.py":          fmt.Sprintf(dagTemplate, dagID, dagID),
+		".gitignore":      gitignoreTemplate,
 	}
 	for name, content := range files {
 		p := filepath.Join(dir, name)

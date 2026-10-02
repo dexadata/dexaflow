@@ -59,7 +59,7 @@ func connectorDependencyNudge(connType string) string {
 		return ""
 	}
 	return "to use this connection from a task hook, declare the provider in your " +
-		"DAG's leoflow.yaml: connectors: [" + connType + "]"
+		"DAG's dexaflow.yaml: connectors: [" + connType + "]"
 }
 
 // defaultConnPorts maps connection types to their well-known port, used when the

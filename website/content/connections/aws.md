@@ -17,7 +17,7 @@ live in login/password + Extra.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: s3_load
 connectors:
   - aws
@@ -84,7 +84,7 @@ with DAG("s3_load", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: s3_load
 description: Upload an object to S3 via S3Hook.

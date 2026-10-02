@@ -37,6 +37,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/failurealert"
 	"github.com/dexadata/dexaflow/internal/kubeexchange"
@@ -66,6 +67,10 @@ Flags:
 `
 
 func main() {
+	// DEXAFLOW_* and the pre-rename LEOFLOW_* names are interchangeable; mirror
+	// them before anything reads the environment.
+	logEnvCompat(envcompat.MirrorProcess())
+
 	// Answer `--version`/`--help` before loading any config, so an operator can
 	// query a deployed binary without a runnable environment (#593). Without
 	// this, `--help` falls through to a boot attempt that errors on missing
@@ -2062,7 +2067,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		sched.EnablePools()
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
-	// declared in leoflow.yaml when a run finalizes failed, resolving each rule's
+	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
 	// managed connection to its endpoint URL. Best-effort, off the tick path.
 	sched.SetAlerter(failurealert.New(
 		alerts.NewNotifier(&http.Client{Timeout: alertHTTPTimeout}),
@@ -2472,4 +2477,16 @@ func platformDefaults(c config.PlatformDefaultsSection) dispatch.PlatformDefault
 		}
 	}
 	return d
+}
+
+// logEnvCompat reports the result of mirroring the environment: every
+// conflicting pair (the DEXAFLOW_* value won) and, in one line, how many
+// variables are set only under their LEOFLOW_* names, which keep working.
+func logEnvCompat(r envcompat.Report) {
+	for _, note := range r.ConflictNotes() {
+		slog.Warn("environment: " + note)
+	}
+	if n := len(r.Legacy); n > 0 {
+		slog.Info("environment: variables set under their LEOFLOW_* names are also read as DEXAFLOW_*", "count", n)
+	}
 }

@@ -16,7 +16,7 @@ host and API key are encrypted at rest and delivered to the task as
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: opsgenie_alert
 connectors:
   - opsgenie
@@ -66,7 +66,7 @@ with DAG("opsgenie_alert", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: opsgenie_alert
 python_version: "3.11"

@@ -129,7 +129,7 @@ task_states() {
 log "Scaffolding the chaos DAG (a sleeper so faults land mid-run)"
 "$ROOT/bin/leoflow" init "$WORKDIR/$DAG_ID" >/dev/null
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat >> "$WORKDIR/$DAG_ID/leoflow.yaml" <<YAML
+cat >> "$WORKDIR/$DAG_ID/dexaflow.yaml" <<YAML
 build:
   platforms:
     - ${HOST_PLATFORM}
@@ -350,7 +350,7 @@ scenario_task_pod_kill() {
 setup_recoverdag() {
   log "C-setup: scaffolding recoverdag (succeeds, but the agent dies mid-report)"
   "$ROOT/bin/leoflow" init "$WORKDIR/$RECOVER_DAG_ID" >/dev/null
-  cat >> "$WORKDIR/$RECOVER_DAG_ID/leoflow.yaml" <<YAML
+  cat >> "$WORKDIR/$RECOVER_DAG_ID/dexaflow.yaml" <<YAML
 build:
   platforms:
     - ${HOST_PLATFORM}
@@ -371,7 +371,7 @@ def quick() -> str:
 with DAG("recoverdag", schedule=None, catchup=False, tags=["chaos"]):
     quick()
 PY
-  # The fault seam rides in the IMAGE, not in leoflow.yaml's task env: dispatch
+  # The fault seam rides in the IMAGE, not in dexaflow.yaml's task env: dispatch
   # strips every LEOFLOW_-prefixed key an author declares (#828/#829, so a DAG
   # cannot redirect the agent's credential exchange), and the agent reads this
   # one with os.Getenv at startup. A task-env seam is silently dropped — which is
@@ -514,7 +514,7 @@ outage_run_state() {
 setup_outagedag() {
   log "D-setup: scaffolding outagedag (three parallel tasks; each agent dies after writing its record)"
   "$ROOT/bin/leoflow" init "$WORKDIR/$OUTAGE_DAG_ID" >/dev/null
-  cat >> "$WORKDIR/$OUTAGE_DAG_ID/leoflow.yaml" <<YAML
+  cat >> "$WORKDIR/$OUTAGE_DAG_ID/dexaflow.yaml" <<YAML
 build:
   platforms:
     - ${HOST_PLATFORM}

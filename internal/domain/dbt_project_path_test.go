@@ -127,7 +127,7 @@ func TestValidateAcceptsUsableDbtManifest(t *testing.T) {
 // to <context>/shared, so it is green only when the DAG dir has its own shared/
 // and then bakes THAT. Neither ever reaches the sibling — while Lite, which
 // resolves filepath.Abs on the host, does. Lite and Pro diverge on which
-// directory they read, and no message mentions leoflow.yaml.
+// directory they read, and no message mentions dexaflow.yaml.
 func TestValidateDbtGroupsProjectRejectsEscapingAndAbsolutePaths(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

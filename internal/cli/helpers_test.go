@@ -9,7 +9,7 @@ import (
 )
 
 // TestLoadProjectConfigAppliesDefaults verifies that loading a minimal
-// leoflow.yaml fills in every schema default via LeoflowConfig.ApplyDefaults().
+// dexaflow.yaml fills in every schema default via LeoflowConfig.ApplyDefaults().
 // This is what lets a yaml that only declares `dag_id` still produce a working
 // build (python 3.11, dag.py source, default exclude paths, etc.) and is the
 // foundation for the multi-DAG workspace contract (a subdir without a yaml
@@ -17,7 +17,7 @@ import (
 func TestLoadProjectConfigAppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	yaml := "dag_id: minimal\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	cfg, err := loadProjectConfig(dir)
@@ -54,7 +54,7 @@ func TestLoadProjectConfigAppliesDefaults(t *testing.T) {
 func TestDagSourcePathUsesAppliedDefault(t *testing.T) {
 	dir := t.TempDir()
 	yaml := "dag_id: minimal\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	cfg, err := loadProjectConfig(dir)
@@ -81,7 +81,7 @@ func TestLoadProjectConfigRejectsDuplicateTaskID(t *testing.T) {
 		"  transform:",
 		"    retries: 2",
 	}, "\n")
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	_, err := loadProjectConfig(dir)

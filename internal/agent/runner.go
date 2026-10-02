@@ -1053,6 +1053,11 @@ func (r *Runner) reportReschedule(ctx context.Context, when time.Time) error {
 // environment. Everything under it is stripped unless explicitly kept.
 const leoflowEnvPrefix = "LEOFLOW_"
 
+// dexaflowEnvPrefix is the same set of variables under their name since the
+// rename. The agent mirrors one prefix onto the other at startup (envcompat), so
+// every rule here applies to both.
+const dexaflowEnvPrefix = "DEXAFLOW_"
+
 // taskVisibleLeoflowEnv is the complete set of LEOFLOW_ variables a task is
 // allowed to inherit. Everything else under the prefix is removed.
 //
@@ -1088,13 +1093,24 @@ var taskVisibleLeoflowEnv = []string{
 	"LEOFLOW_TASK_INSTANCE_ID",
 }
 
+// isAgentOnlyEnv reports whether name is one of the agent's own variables, under
+// either prefix, that a task must not inherit.
+func isAgentOnlyEnv(name string) bool {
+	for _, prefix := range []string{leoflowEnvPrefix, dexaflowEnvPrefix} {
+		if suffix, ok := strings.CutPrefix(name, prefix); ok {
+			return !slices.Contains(taskVisibleLeoflowEnv, leoflowEnvPrefix+suffix)
+		}
+	}
+	return false
+}
+
 // stripAgentOnly removes Leoflow's own variables from an inherited environment
 // before it is handed to user code, keeping only those a task legitimately needs.
 func stripAgentOnly(base []string) []string {
 	out := make([]string, 0, len(base))
 	for _, kv := range base {
 		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, leoflowEnvPrefix) && !slices.Contains(taskVisibleLeoflowEnv, name) {
+		if isAgentOnlyEnv(name) {
 			continue
 		}
 		out = append(out, kv)

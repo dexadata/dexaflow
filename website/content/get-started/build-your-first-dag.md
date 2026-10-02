@@ -22,7 +22,7 @@ print a version). If `leoflow lite` is still running from the Quickstart, press
 ## 1 · Scaffold a project
 
 A Leoflow DAG project is just a directory with two files: **`dag.py`** (your
-pipeline) and **`leoflow.yaml`** (how to package it). `leoflow init` creates that
+pipeline) and **`dexaflow.yaml`** (how to package it). `leoflow init` creates that
 pair for you:
 
 ```bash
@@ -41,7 +41,7 @@ The `dag_id` is taken from the directory name — `taskflow_sales`. Look inside:
 
 ```bash
 ls taskflow_sales
-# dag.py  leoflow.yaml
+# dag.py  dexaflow.yaml
 ```
 
 The scaffold is a one-task "hello" DAG. In the next two steps you will replace it
@@ -100,7 +100,7 @@ What you just wrote, top to bottom:
 
 ## 3 · Declare packaging
 
-Open `taskflow_sales/leoflow.yaml` and make it match this. It tells Leoflow how to
+Open `taskflow_sales/dexaflow.yaml` and make it match this. It tells Leoflow how to
 build the DAG's image — here, nothing beyond a Python version, because the pipeline
 has no third-party dependencies:
 
@@ -127,7 +127,7 @@ Before running, check the project parses and matches the schema:
 leoflow validate taskflow_sales
 ```
 
-A clean run prints no errors. If you mistyped something in `leoflow.yaml` or
+A clean run prints no errors. If you mistyped something in `dexaflow.yaml` or
 `dag.py`, this is where you find out — fix it and rerun until it passes.
 
 ## 5 · Run it
@@ -215,7 +215,7 @@ Delete the bad line, save, and the banner clears as the DAG reloads. Press
 
 ## What you learned
 
-- A DAG project is **`dag.py` + `leoflow.yaml`**; `leoflow init` scaffolds the pair.
+- A DAG project is **`dag.py` + `dexaflow.yaml`**; `leoflow init` scaffolds the pair.
 - Tasks are `@task` functions; **returning a value and passing it to another task**
   moves data over XCom with no boilerplate.
 - The **call graph is the dependency graph** — `load(transform(extract()))`.
@@ -225,7 +225,7 @@ Delete the bad line, save, and the banner clears as the DAG reloads. Press
 ## Next
 
 - [DAG authoring](/author-dags/dag-authoring/) — the full dialect, the override
-  layers, and everything `leoflow.yaml` can express.
+  layers, and everything `dexaflow.yaml` can express.
 - [The Lite web editor](/author-dags/lite-web-editor/) — edit `dag.py` in the
   browser instead of a local editor.
 - [Examples](/author-dags/examples/) — more runnable DAGs, including this one, to

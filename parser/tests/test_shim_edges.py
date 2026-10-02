@@ -371,7 +371,7 @@ def test_operator_retries_win_over_default_args(monkeypatch, tmp_path):
 
 def test_no_scheduling_attrs_emits_no_keys(monkeypatch, tmp_path):
     """A task with no retries/timeout emits none — so the Go side's default_args /
-    leoflow.yaml defaults still apply (nil, not a forced 0)."""
+    dexaflow.yaml defaults still apply (nil, not a forced 0)."""
     spec = _compile(monkeypatch, tmp_path, """
         from airflow.providers.standard.operators.bash import BashOperator
         from airflow.sdk import DAG

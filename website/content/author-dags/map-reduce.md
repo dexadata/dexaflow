@@ -43,7 +43,7 @@ At runtime:
    `(dag_id, run_id, task_id, return_value)`.
 3. When all upstreams finish, Leoflow dispatches `select_best`. The agent
    fetches every upstream's XCom, assembles them into a JSON array (in
-   declaration order), and stamps it as `LEOFLOW_XCOM_TRIALS`.
+   declaration order), and stamps it as `DEXAFLOW_XCOM_TRIALS`.
 4. The runtime delivers the list directly to your function.
 
 ## When fan-in activates
@@ -70,7 +70,7 @@ What does **not** activate fan-in:
 | Code | What happens |
 |---|---|
 | `transform(extract())` | Single upstream. The parser captures one task_id (a 1-element list internally) — the function's parameter receives the value directly, not a list. |
-| `shard(n=0)` | Literal kwarg. Captured as `call_args.n = 0` and delivered via `LEOFLOW_CALL_ARGS_JSON`. No XCom, no upstream. |
+| `shard(n=0)` | Literal kwarg. Captured as `call_args.n = 0` and delivered via `DEXAFLOW_CALL_ARGS_JSON`. No XCom, no upstream. |
 | `start >> [a, b, c]` | Dependency edge only. No argument binding — downstream gets no list. |
 | `f(items=[1, 2, 3])` | Plain literal list. JSON-serialised into `call_args.items`, not fan-in. |
 | `aggregate([shard(0), 42, foo()])` | Mixed list (XComArg + literal). Currently silently dropped; intended to become a hard error. |
@@ -196,7 +196,7 @@ return value.
   pressure, GPU slots). Set it on the DAG.
 - **`retries`** + **`retry_delay_seconds`** make each map task survive
   transient infrastructure flakes.
-- **Per-task `resources`** in `leoflow.yaml` give each trial its own CPU /
+- **Per-task `resources`** in `dexaflow.yaml` give each trial its own CPU /
   memory / GPU budget.
 - **`trigger_rule="all_done"`** runs the reducer even when some trials fail,
   letting you decide what `null` in `trials` means.

@@ -39,7 +39,7 @@ flowchart LR
 ```
 
 {{< tabpane text=true >}}
-{{% tab header="leoflow.yaml" %}}
+{{% tab header="dexaflow.yaml" %}}
 
 ```yaml
 schema_version: "1.0"
@@ -62,7 +62,7 @@ staging:
 import os, time
 from airflow.sdk import DAG, task
 
-STAGING = os.environ.get("LEOFLOW_STAGING_DIR", "/staging")
+STAGING = os.environ.get("DEXAFLOW_STAGING_DIR", "/staging")
 ROWS = 70_000_000  # ~1.1 GB as Parquet
 
 @task

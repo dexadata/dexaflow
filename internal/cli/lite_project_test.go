@@ -18,7 +18,7 @@ func TestScaffoldProject(t *testing.T) {
 	if dagID != "etl" {
 		t.Errorf("dagID = %q, want etl (the dir base)", dagID)
 	}
-	for _, f := range []string{"leoflow.yaml", "dag.py"} {
+	for _, f := range []string{"dexaflow.yaml", "dag.py"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("scaffold missing %s: %v", f, err)
 		}
@@ -37,10 +37,10 @@ type nopWriter struct{}
 func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 func TestResolveLiteProjectExplicitArg(t *testing.T) {
-	// An explicit argument must point at a real project (a dir with leoflow.yaml);
+	// An explicit argument must point at a real project (a dir with dexaflow.yaml);
 	// a non-project arg now errors clearly instead of being swallowed as a path.
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte("dag_id: x\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte("dag_id: x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := resolveLiteProject(bareCmd(), []string{dir})
@@ -79,14 +79,14 @@ func TestResolveLiteProjectNoArgUsesExistingProject(t *testing.T) {
 	}
 	// An existing project must be used as-is, not overwritten.
 	marker := "dag_id: existing\n"
-	if err := os.WriteFile(filepath.Join(ws, "leoflow.yaml"), []byte(marker), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(ws, "dexaflow.yaml"), []byte(marker), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := resolveLiteProject(bareCmd(), nil)
 	if err != nil || got != ws {
 		t.Fatalf("resolve = (%q,%v), want %q", got, err, ws)
 	}
-	data, _ := os.ReadFile(filepath.Join(ws, "leoflow.yaml"))
+	data, _ := os.ReadFile(filepath.Join(ws, "dexaflow.yaml"))
 	if string(data) != marker {
 		t.Errorf("existing project must not be overwritten, got %q", data)
 	}

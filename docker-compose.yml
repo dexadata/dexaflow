@@ -87,14 +87,14 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      LEOFLOW_DATABASE_URL: postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable
-      LEOFLOW_REDIS_URL: redis://redis:6379/0
-      LEOFLOW_AUTH_JWT_SECRET: dev-secret-change-me
+      DEXAFLOW_DATABASE_URL: postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable
+      DEXAFLOW_REDIS_URL: redis://redis:6379/0
+      DEXAFLOW_AUTH_JWT_SECRET: dev-secret-change-me
       # Seeds admin@leoflow.local with this password on first boot (dev only).
-      LEOFLOW_BOOTSTRAP_PASSWORD: admin
+      DEXAFLOW_BOOTSTRAP_PASSWORD: admin
       # The distroless image runs as nonroot, which cannot create /var/log;
       # write task logs under a world-writable path instead.
-      LEOFLOW_LOGS_DIR: /tmp/leoflow-logs
+      DEXAFLOW_LOGS_DIR: /tmp/leoflow-logs
     ports:
       - "8080:8080"
       - "9090:9090"

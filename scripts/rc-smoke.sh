@@ -62,7 +62,7 @@ ui_smoke() {
   LEOFLOW_DATABASE_URL="$db" PATH="$home_dir/bin:$PATH" ./bin/leoflow db reset --yes >/dev/null 2>&1
   setup_out="$(HOME="$home_dir" PATH="$home_dir/bin:$PATH" ./bin/leoflow setup --workspace "$home_dir/ws" </dev/null 2>&1)"
   pw="$(printf '%s\n' "$setup_out" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
-  hash="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$home_dir/.leoflow/config.yaml" 2>/dev/null)"
+  hash="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$home_dir/.dexaflow/config.yaml" 2>/dev/null)"
   if [ -z "$pw" ] || [ -z "$hash" ]; then echo "ui-smoke: setup did not yield admin creds"; rm -rf "$home_dir"; return 1; fi
   printf 'print("hello")\n' > "$home_dir/ws/dag.py"
   LEOFLOW_SERVER_HTTP_ADDR="127.0.0.1:${port}" LEOFLOW_SERVER_GRPC_ADDR="127.0.0.1:19091" \

@@ -38,7 +38,7 @@ var defaultExcludeDirs = map[string]struct{}{
 }
 
 // Project is a single DAG project discovered in the workspace by
-// DiscoverProjects. The fields are populated from leoflow.yaml (when present)
+// DiscoverProjects. The fields are populated from dexaflow.yaml (when present)
 // or synthesized from the subdirectory's basename otherwise.
 type Project struct {
 	// Path is the absolute path to the project directory containing dag.py.
@@ -46,12 +46,12 @@ type Project struct {
 	// DagID resolves to the yaml's dag_id when present, else the subdir
 	// basename.
 	DagID string
-	// ConfigPath is the absolute path to leoflow.yaml when one exists, or
+	// ConfigPath is the absolute path to dexaflow.yaml when one exists, or
 	// empty when DiscoverProjects synthesized auto-defaults. The lite watcher
 	// logs this on every compile so "which config did it pick up?" is
 	// greppable.
 	ConfigPath string
-	// HasYAML reports whether a leoflow.yaml was present in the project dir.
+	// HasYAML reports whether a dexaflow.yaml was present in the project dir.
 	HasYAML bool
 	// Config is the resolved, default-filled config for the project. Always
 	// non-nil; when HasYAML is false the struct holds the schema defaults
@@ -60,14 +60,14 @@ type Project struct {
 }
 
 // DiscoverProjects walks workspace and returns every directory containing a
-// dag.py file (the project marker). Each project's config is the leoflow.yaml
+// dag.py file (the project marker). Each project's config is the dexaflow.yaml
 // in the same dir — loaded via loadProjectConfig so schema defaults apply —
 // or, when no yaml exists, a synthesized LeoflowConfig with DagID set to the
 // subdir basename and every other field at its schema default.
 //
 // The walk caps at MaxWorkspaceDepth from the workspace root and skips both
 // defaultExcludeDirs and any directory whose name begins with a dot. The
-// workspace root itself counts as depth 0 — a root-level dag.py + leoflow.yaml
+// workspace root itself counts as depth 0 — a root-level dag.py + dexaflow.yaml
 // is still recognized as a project for backward compatibility with the
 // single-DAG layout (recommended new layout is one project per subdir; see
 // docs/dag-authoring.md).
@@ -131,16 +131,16 @@ func pathDepth(p string) int {
 }
 
 // projectAt builds a Project for path when the directory is a DAG project. A
-// project is marked by either a dag.py (a Python DAG; leoflow.yaml optional) OR
-// a leoflow.yaml carrying a dbt: block with no dag.py (a pure dbt project, whose
+// project is marked by either a dag.py (a Python DAG; dexaflow.yaml optional) OR
+// a dexaflow.yaml carrying a dbt: block with no dag.py (a pure dbt project, whose
 // DAG is generated from the dbt manifest — the zero-config Lite path documented
 // in docs/dbt.md). The returned Project's Config is fully defaulted; when no
-// leoflow.yaml exists the DagID falls back to filepath.Base(path).
+// dexaflow.yaml exists the DagID falls back to filepath.Base(path).
 func projectAt(path string) (Project, bool) {
-	yamlPath := filepath.Join(path, "leoflow.yaml")
+	yamlPath := projectConfigPath(path)
 	if _, err := os.Stat(filepath.Join(path, dagSourceFile)); err != nil {
 		// No dag.py: the only other kind of project is a pure dbt project — a
-		// leoflow.yaml with a dbt: block. Anything else (no yaml, or a yaml with
+		// dexaflow.yaml with a dbt: block. Anything else (no yaml, or a yaml with
 		// neither dag.py nor dbt:) is not a project.
 		return dbtOnlyProjectAt(path, yamlPath)
 	}
@@ -185,10 +185,10 @@ func projectAt(path string) (Project, bool) {
 	}, true
 }
 
-// dbtOnlyProjectAt recognizes a pure dbt project: a leoflow.yaml carrying a dbt:
+// dbtOnlyProjectAt recognizes a pure dbt project: a dexaflow.yaml carrying a dbt:
 // block, with no dag.py. Its DAG is generated from the dbt manifest at compile
-// time, so it has no Python source. A directory with no leoflow.yaml, or a
-// leoflow.yaml without a dbt: block (or one that fails to parse — we can't tell
+// time, so it has no Python source. A directory with no dexaflow.yaml, or a
+// dexaflow.yaml without a dbt: block (or one that fails to parse — we can't tell
 // it's dbt without parsing), is not a project.
 func dbtOnlyProjectAt(path, yamlPath string) (Project, bool) {
 	if _, err := os.Stat(yamlPath); err != nil {

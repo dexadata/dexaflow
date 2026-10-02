@@ -19,7 +19,7 @@ and Airflow's `HiveCliHook`. The conn_type is `hive_cli`. A connection carries t
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: hive_cli_run
 connectors:
   - hive_cli
@@ -67,7 +67,7 @@ with DAG("hive_cli_run", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: hive_cli_run
 description: Run HiveQL via HiveCliHook.

@@ -214,3 +214,41 @@ func TestMergeEnvStripsUnknownLeoflowVariablesByDefault(t *testing.T) {
 		t.Fatalf("an unrecognized LEOFLOW_ variable was passed through: %v", got)
 	}
 }
+
+// The agent mirrors LEOFLOW_* onto DEXAFLOW_* at startup (envcompat), so every
+// secret the filter above removes is now present twice. The allowlist has to
+// hold for the new prefix too, or LEOFLOW_AUTH_JWT_SECRET is stripped and its
+// DEXAFLOW_AUTH_JWT_SECRET twin hands the task an admin-minting key.
+func TestMergeEnvStripsTheNewPrefixToo(t *testing.T) {
+	got := mergeEnv([]string{
+		"DEXAFLOW_SECRET_KEY=0123456789abcdef0123456789abcdef", // gitleaks:allow: fixture; the point is the KEY NAME
+		"DEXAFLOW_AUTH_JWT_SECRET=hmac-signing-secret",
+		"DEXAFLOW_AGENT_TOKEN=eyJhbGciOi.secret.sig",
+		"DEXAFLOW_SOME_FUTURE_CREDENTIAL=shhh",
+		"PATH=/usr/bin",
+	}, nil, nil)
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "DEXAFLOW_") {
+			t.Errorf("an agent-only DEXAFLOW_ variable reached the task: %q", kv)
+		}
+	}
+	if !slices.Contains(got, "PATH=/usr/bin") {
+		t.Errorf("unrelated variables must pass through: %v", got)
+	}
+}
+
+// The two variables a task may read keep both spellings.
+func TestMergeEnvKeepsTaskVisibleVariablesUnderBothNames(t *testing.T) {
+	got := mergeEnv([]string{
+		"LEOFLOW_STAGING_DIR=/staging", "DEXAFLOW_STAGING_DIR=/staging",
+		"LEOFLOW_TASK_INSTANCE_ID=ti-1", "DEXAFLOW_TASK_INSTANCE_ID=ti-1",
+	}, nil, nil)
+	for _, want := range []string{
+		"LEOFLOW_STAGING_DIR=/staging", "DEXAFLOW_STAGING_DIR=/staging",
+		"LEOFLOW_TASK_INSTANCE_ID=ti-1", "DEXAFLOW_TASK_INSTANCE_ID=ti-1",
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q from %v", want, got)
+		}
+	}
+}
