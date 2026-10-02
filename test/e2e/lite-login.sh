@@ -19,8 +19,8 @@ cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; chmo
 trap cleanup EXIT
 
 echo "==> building binaries"
-go build -o "$HOME_DIR/leoflow" ./cmd/leoflow
-go build -o "$HOME_DIR/leoflow-server" ./cmd/leoflow-server
+go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow
+go build -o "$HOME_DIR/leoflow-server" ./cmd/dexaflow-server
 
 # A fake python3.11 on PATH so `setup` uses it instead of downloading a CPython
 # (the parser is not exercised by this login test).

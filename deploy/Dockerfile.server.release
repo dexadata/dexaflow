@@ -4,7 +4,7 @@
 # The binary embeds the pinned Airflow 3.2.1 SPA (ADR 0017), so this one image
 # serves /api/v2 + /ui and the UI.
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY leoflow-server /leoflow-server
+COPY dexaflow-server /dexaflow-server
 EXPOSE 8080 9090
 USER nonroot:nonroot
-ENTRYPOINT ["/leoflow-server"]
+ENTRYPOINT ["/dexaflow-server"]

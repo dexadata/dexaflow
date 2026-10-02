@@ -51,7 +51,7 @@ func TestHTTPTransportPassesTokenThrough(t *testing.T) {
 	}
 	srv := NewServer(base, cp.URL, "test", true) // http transport: per-request bearer
 
-	// The MCP server, served over Streamable HTTP exactly as cmd/leoflow-mcp does.
+	// The MCP server, served over Streamable HTTP exactly as cmd/dexaflow-mcp does.
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return srv },
 		&mcpsdk.StreamableHTTPOptions{Stateless: true},

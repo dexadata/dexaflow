@@ -34,7 +34,7 @@ import (
 //     authorization header was sent once at stream open.
 //
 // In production StreamClient and WorkClient are two dials of the same control
-// plane (see cmd/leoflow-agent), one bound to the bootstrap TokenSource and one to
+// plane (see cmd/dexaflow-agent), one bound to the bootstrap TokenSource and one to
 // AttemptTokens. They may be the same client only in tests that don't exercise the
 // credential.
 type WarmRunner struct {

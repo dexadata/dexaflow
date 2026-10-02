@@ -73,7 +73,7 @@ and Keycloak register a confidential client too, unless you explicitly create
 the client as public: an empty secret against a confidential client is rejected
 at the code exchange with `invalid_client`, and the server logs a boot WARN
 naming `auth.oidc.client_secret` for exactly this case
-(`cmd/leoflow-server/main.go`, `oidcClientSecretWarnings`).
+(`cmd/dexaflow-server/main.go`, `oidcClientSecretWarnings`).
 
 ## Redirect URL
 

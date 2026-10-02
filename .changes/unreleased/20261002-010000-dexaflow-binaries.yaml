@@ -1,0 +1,23 @@
+kind: Changed
+body: |-
+  **The binaries are now `dexaflow`, `dexaflow-server`, `dexaflow-agent` and
+  `dexaflow-mcp`, and every `leoflow` name keeps working.** The installer puts
+  the new binaries on your PATH together with `leoflow*` links to them, and
+  `make build` does the same in `./bin`, so scripts, aliases and muscle memory
+  that call `leoflow lite` or `leoflow compile` run exactly as before. Started
+  as `leoflow` from an interactive terminal, the CLI prints a one-line note with
+  its new name; piped or scripted output is unchanged. The old names are not
+  scheduled for removal.
+
+  The CLI finds its companion server and agent under either name, beside itself,
+  in `~/.dexaflow/bin` or `~/.leoflow/bin`, on PATH or in `./bin`, so a mixed
+  install (a new CLI next to an older `leoflow-server`) still starts. `version`
+  now reports `dexaflow`. Release archives are named
+  `dexaflow_<version>_<os>_<arch>.tar.gz`; the installer still installs earlier
+  releases from their `leoflow_*` archives when pinned with `DEXAFLOW_VERSION`
+  (or `LEOFLOW_VERSION`).
+
+  Task images keep `leoflow-agent` as a link to `dexaflow-agent`: DAG images
+  built before this release, and control planes that launch the agent by its old
+  name (the `executor.agent_path` default), keep working without a rebuild. The
+  control-plane image's entrypoint is now `/dexaflow-server`.

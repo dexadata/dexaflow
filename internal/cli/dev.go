@@ -754,7 +754,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	if herr != nil {
 		return herr
 	}
-	serverBin, berr := resolveAndReport(cmdContext(cmd), cmd, o.serverBin, "leoflow-server")
+	serverBin, berr := resolveAndReport(cmdContext(cmd), cmd, o.serverBin, "server")
 	if berr != nil {
 		return berr
 	}
@@ -841,7 +841,7 @@ func makeDeleteDag(mintToken func() string, uiURL, home string, logf func(format
 // projects and uses the dependency-union from WorkspaceSpec.RootCfg so every
 // DAG's imports resolve from a single virtualenv.
 func devSubprocessSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, o devOptions, home string) (env []string, makeReload func(func() string) func() error, err error) {
-	agentBin, err := resolveAndReport(ctx, cmd, o.agentBin, "leoflow-agent")
+	agentBin, err := resolveAndReport(ctx, cmd, o.agentBin, "agent")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1505,12 +1505,12 @@ func ensureProjectDockerfile(cmd *cobra.Command, dir string, cfg *domain.Leoflow
 // resolveAndReport locates a companion binary and announces the choice, so the
 // two always happen together — a resolution nobody printed is what let a
 // month-old server run unnoticed (#471).
-func resolveAndReport(ctx context.Context, cmd *cobra.Command, explicit, name string) (string, error) {
-	path, err := resolveBinary(explicit, name)
+func resolveAndReport(ctx context.Context, cmd *cobra.Command, explicit, kind string) (string, error) {
+	path, err := resolveCompanion(explicit, kind)
 	if err != nil {
 		return "", err
 	}
-	if werr := reportCompanionBinary(ctx, cmd, name, path); werr != nil {
+	if werr := reportCompanionBinary(ctx, cmd, "dexaflow-"+kind, path); werr != nil {
 		return "", werr
 	}
 	return path, nil
@@ -1591,26 +1591,47 @@ func companionVersion(ctx context.Context, path string) string {
 // PATH is still consulted, so anyone relying on it keeps working — it is simply
 // no longer the first answer.
 func resolveBinary(explicit, name string) (string, error) {
+	return resolveBinaryNamed(explicit, name)
+}
+
+// resolveCompanion finds the companion binary of the given kind ("server",
+// "agent") under its current name, dexaflow-<kind>, or its pre-rename name,
+// leoflow-<kind>. Location keeps its priority over name: within each place the
+// new name is tried first, but a co-versioned sibling under the old name still
+// beats a new-name copy that is merely on PATH.
+func resolveCompanion(explicit, kind string) (string, error) {
+	return resolveBinaryNamed(explicit, "dexaflow-"+kind, "leoflow-"+kind)
+}
+
+// resolveBinaryNamed searches, in order, beside this binary, the install
+// directories, PATH and ./bin, trying every name at each place before moving on.
+func resolveBinaryNamed(explicit string, names ...string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
 	for _, dir := range companionDirs() {
-		cand := filepath.Join(dir, name)
-		if isExecutableFile(cand) {
-			return cand, nil
+		for _, name := range names {
+			cand := filepath.Join(dir, name)
+			if isExecutableFile(cand) {
+				return cand, nil
+			}
 		}
 	}
-	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
+	for _, name := range names {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
 	}
-	local := filepath.Join("bin", name)
-	if isExecutableFile(local) {
-		// Absolute, because the subprocess executor runs the agent with a different
-		// working directory; a relative path would not resolve there.
-		return filepath.Abs(local)
+	for _, name := range names {
+		local := filepath.Join("bin", name)
+		if isExecutableFile(local) {
+			// Absolute, because the subprocess executor runs the agent with a different
+			// working directory; a relative path would not resolve there.
+			return filepath.Abs(local)
+		}
 	}
-	return "", fmt.Errorf("%s not found beside this binary, in ~/.leoflow/bin, on PATH, or in ./bin; "+
-		"run `make build` or pass --%s", name, name)
+	return "", fmt.Errorf("%s not found beside this binary, in ~/.dexaflow/bin or ~/.leoflow/bin, on PATH, or in ./bin; "+
+		"run `make build` or pass --%s", names[0], names[0])
 }
 
 // companionDirs lists the directories that hold binaries shipped WITH this one,
@@ -1625,7 +1646,7 @@ func companionDirs() []string {
 		dirs = append(dirs, filepath.Dir(exe))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		dirs = append(dirs, filepath.Join(home, ".leoflow", "bin"))
+		dirs = append(dirs, filepath.Join(home, ".dexaflow", "bin"), filepath.Join(home, ".leoflow", "bin"))
 	}
 	return dirs
 }

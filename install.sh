@@ -1,14 +1,15 @@
 #!/bin/sh
-# Leoflow installer — downloads the release archive for this OS/arch, verifies
-# its checksum, installs the binaries into ~/.leoflow/bin, and runs
-# `leoflow setup` to bootstrap the managed runtime (Python, workspace).
+# Dexaflow installer: downloads the release archive for this OS/arch, verifies
+# its checksum, installs the binaries (plus leoflow* links to them, the names
+# before the rename) and runs `dexaflow setup` to bootstrap the managed runtime
+# (Python, workspace).
 #
 #   curl -fsSL https://raw.githubusercontent.com/dexadata/leoflow/main/install.sh | sh
 #
-# Environment overrides:
-#   LEOFLOW_VERSION=v0.1.0-alpha.1   pin a specific release (default: latest)
-#   LEOFLOW_NO_SETUP=1               install binaries only, skip `leoflow setup`
-#   LEOFLOW_INSTALL_DIR=~/.leoflow/bin
+# Environment overrides (the LEOFLOW_* names are still accepted):
+#   DEXAFLOW_VERSION=v0.5.0          pin a specific release (default: latest)
+#   DEXAFLOW_NO_SETUP=1              install binaries only, skip `dexaflow setup`
+#   DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin
 set -eu
 
 REPO="dexadata/leoflow"
@@ -16,11 +17,11 @@ REPO="dexadata/leoflow"
 # Choose where to put the binaries. Prefer a directory ALREADY on PATH so the
 # user needs no `source`/new shell — the common "command not found" trap. Order:
 # an explicit override; /usr/local/bin when writable (root); ~/.local/bin when
-# it is already on PATH; otherwise the managed ~/.leoflow/bin (we then edit the
+# it is already on PATH; otherwise the managed ~/.dexaflow/bin (we then edit the
 # profile). ON_PATH=1 means no profile edit is needed.
 resolve_install_dir() {
-	if [ -n "${LEOFLOW_INSTALL_DIR:-}" ]; then
-		printf '%s' "$LEOFLOW_INSTALL_DIR"
+	if [ -n "${DEXAFLOW_INSTALL_DIR:-${LEOFLOW_INSTALL_DIR:-}}" ]; then
+		printf '%s' "${DEXAFLOW_INSTALL_DIR:-$LEOFLOW_INSTALL_DIR}"
 		return
 	fi
 	if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
@@ -30,7 +31,7 @@ resolve_install_dir() {
 	case ":${PATH}:" in
 		*":${HOME}/.local/bin:"*) printf '%s' "${HOME}/.local/bin"; return ;;
 	esac
-	printf '%s' "${HOME}/.leoflow/bin"
+	printf '%s' "${HOME}/.dexaflow/bin"
 }
 INSTALL_DIR="$(resolve_install_dir)"
 
@@ -43,7 +44,7 @@ os=$(uname -s)
 case "$os" in
 	Linux) os=linux ;;
 	Darwin) os=darwin ;;
-	*) err "unsupported OS '$os' (Leoflow ships linux and darwin; on Windows use WSL2)" ;;
+	*) err "unsupported OS '$os' (Dexaflow ships linux and darwin; on Windows use WSL2)" ;;
 esac
 
 arch=$(uname -m)
@@ -61,7 +62,7 @@ elif have wget; then
 	dl() { wget -qO "$2" "$1"; }
 	fetch() { wget -qO - "$1"; }
 else
-	err "need curl or wget to download Leoflow"
+	err "need curl or wget to download Dexaflow"
 fi
 
 # tar extracts the release archive (tar -xzf below). Minimal images (e.g. openSUSE
@@ -71,7 +72,7 @@ have tar || err "need tar to extract the release archive (install it, e.g. 'apk 
 
 # ── Resolve version ──
 # Pin any version (incl. a pre-release once stable exists): LEOFLOW_VERSION=...
-version="${LEOFLOW_VERSION:-}"
+version="${DEXAFLOW_VERSION:-${LEOFLOW_VERSION:-}}"
 if [ -z "$version" ]; then
 	info "resolving latest release..."
 	# Prefer the latest STABLE release: /releases/latest excludes pre-releases AND
@@ -85,22 +86,27 @@ if [ -z "$version" ]; then
 		version=$(fetch "https://api.github.com/repos/${REPO}/releases?per_page=50" \
 			| grep '"tag_name"' | sed 's/.*: *"//; s/".*//' | sort -V | tail -1)
 	fi
-	[ -n "$version" ] || err "could not resolve the latest release tag (set LEOFLOW_VERSION)"
+	[ -n "$version" ] || err "could not resolve the latest release tag (set DEXAFLOW_VERSION)"
 fi
 # GoReleaser archive names drop the leading 'v' from the version.
 ver_nov=$(printf '%s' "$version" | sed 's/^v//')
 
-archive="leoflow_${ver_nov}_${os}_${arch}.tar.gz"
 base="https://github.com/${REPO}/releases/download/${version}"
-info "installing Leoflow ${version} (${os}/${arch})"
+info "installing Dexaflow ${version} (${os}/${arch})"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-dl "${base}/${archive}" "${tmp}/${archive}" || err "downloading ${archive} failed"
 dl "${base}/checksums.txt" "${tmp}/checksums.txt" || err "downloading checksums.txt failed"
+# Releases before the rename ship leoflow_* archives with leoflow* binaries.
+archive="dexaflow_${ver_nov}_${os}_${arch}.tar.gz"
+name=dexaflow
+if ! grep -q " ${archive}\$" "${tmp}/checksums.txt"; then
+	archive="leoflow_${ver_nov}_${os}_${arch}.tar.gz"
+	name=leoflow
+fi
+dl "${base}/${archive}" "${tmp}/${archive}" || err "downloading ${archive} failed"
 
-# ── Verify SHA-256 ──
 info "verifying checksum..."
 expected=$(grep " ${archive}\$" "${tmp}/checksums.txt" | awk '{print $1}')
 [ -n "$expected" ] || err "no checksum entry for ${archive}"
@@ -116,9 +122,15 @@ fi
 # ── Extract and install ──
 tar -xzf "${tmp}/${archive}" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
-for bin in leoflow leoflow-server leoflow-agent; do
+for suffix in "" -server -agent; do
+	bin="${name}${suffix}"
 	[ -f "${tmp}/${bin}" ] || err "archive is missing ${bin}"
 	install -m 0755 "${tmp}/${bin}" "${INSTALL_DIR}/${bin}"
+	# The pre-rename names keep working: scripts and habits that call leoflow*
+	# reach the same binaries.
+	if [ "$name" = dexaflow ]; then
+		ln -sf "${bin}" "${INSTALL_DIR}/leoflow${suffix}"
+	fi
 done
 info "installed binaries to ${INSTALL_DIR}"
 
@@ -144,7 +156,7 @@ add_to_profile() {
 		info "${dir} already on PATH in ${profile}"
 		return
 	fi
-	printf '\n# added by leoflow install.sh\nexport PATH="%s:$PATH"\n' "$dir" >>"$profile" || {
+	printf '\n# added by dexaflow install.sh\nexport PATH="%s:$PATH"\n' "$dir" >>"$profile" || {
 		info "could not update ${profile}; add this to your shell profile:"
 		printf '    export PATH="%s:$PATH"\n' "$dir"
 		return
@@ -156,22 +168,22 @@ add_to_profile() {
 case ":${PATH}:" in
 	*":${INSTALL_DIR}:"*) ;;
 	*)
-		if [ "${LEOFLOW_NO_PATH:-}" = "1" ]; then
+		if [ "${DEXAFLOW_NO_PATH:-${LEOFLOW_NO_PATH:-}}" = "1" ]; then
 			info "add ${INSTALL_DIR} to your PATH:"
 			printf '    export PATH="%s:$PATH"\n' "$INSTALL_DIR"
 		else
 			add_to_profile "$INSTALL_DIR"
 		fi
-		# Make leoflow usable for the rest of this script too.
+		# Make the CLI usable for the rest of this script too.
 		export PATH="${INSTALL_DIR}:${PATH}"
 		;;
 esac
 
 # ── Bootstrap the managed runtime ──
-if [ "${LEOFLOW_NO_SETUP:-}" = "1" ]; then
-	info "skipping setup (LEOFLOW_NO_SETUP=1); run '${INSTALL_DIR}/leoflow setup' when ready"
+if [ "${DEXAFLOW_NO_SETUP:-${LEOFLOW_NO_SETUP:-}}" = "1" ]; then
+	info "skipping setup (DEXAFLOW_NO_SETUP=1); run '${INSTALL_DIR}/${name} setup' when ready"
 else
-	info "running 'leoflow setup'..."
+	info "running '${name} setup'..."
 	# Attach the controlling terminal so the interactive setup wizard (where your
 	# DAGs live, how tasks run, the admin login) can prompt even under `curl | sh`,
 	# where stdin is the piped script, not a TTY. With no terminal (CI) or
@@ -181,21 +193,21 @@ else
 	# passes on the device node's permissions even in a CI container that has no
 	# controlling terminal, where the `</dev/tty` redirect then fails ("No such
 	# device or address") and aborts the installer.
-	if [ "${LEOFLOW_NONINTERACTIVE:-}" != "1" ] && (exec 3</dev/tty) 2>/dev/null; then
-		"${INSTALL_DIR}/leoflow" setup </dev/tty
+	if [ "${DEXAFLOW_NONINTERACTIVE:-${LEOFLOW_NONINTERACTIVE:-}}" != "1" ] && (exec 3</dev/tty) 2>/dev/null; then
+		"${INSTALL_DIR}/${name}" setup </dev/tty
 	else
-		"${INSTALL_DIR}/leoflow" setup
+		"${INSTALL_DIR}/${name}" setup
 	fi
 fi
 
 printf '\n'
-info "Leoflow Lite is installed."
+info "Dexaflow Lite is installed."
 if [ -n "${PATH_PROFILE:-}" ]; then
 	info "next steps:"
 	printf '    1) reload your shell:  source %s   (or open a new terminal)\n' "$PATH_PROFILE"
-	printf '    2) start Leoflow:       leoflow lite\n'
+	printf '    2) start Dexaflow:      %s lite\n' "$name"
 else
-	info "next: leoflow lite"
+	info "next: ${name} lite"
 fi
-printf '    leoflow lite scaffolds a starter DAG (if needed), prints the URL + login,\n'
+printf '    %s lite scaffolds a starter DAG (if needed), prints the URL + login,\n' "$name"
 printf '    and hot-reloads on save. Add --host 0.0.0.0 to reach it from your network.\n'

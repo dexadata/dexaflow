@@ -26,7 +26,7 @@ cleanup() { chmod -R u+w "$HOME_DIR" 2>/dev/null || true; rm -rf "$BINDIR" "$HOM
 trap cleanup EXIT
 
 echo "==> building the leoflow binary (parser + runtime embedded)"
-( cd "$REPO" && go build -o "$BINDIR/leoflow" ./cmd/leoflow )
+( cd "$REPO" && go build -o "$BINDIR/leoflow" ./cmd/dexaflow )
 
 # The genuine binary-only environment: a clean HOME, NO PYTHONPATH, and a working
 # directory OUTSIDE the repo so the repo-relative parser/ and runtime/python are
@@ -56,12 +56,12 @@ pass "binary extracted both parser and runtime sources for a binary-only install
 echo "==> building companion binaries and asserting they report a version"
 ( cd "$REPO" && go build \
     -ldflags "-X github.com/dexadata/dexaflow/internal/version.version=e2e-ver -X main.version=e2e-ver" \
-    -o "$BINDIR/leoflow-server" ./cmd/leoflow-server )
+    -o "$BINDIR/leoflow-server" ./cmd/dexaflow-server )
 ( cd "$REPO" && go build \
     -ldflags "-X github.com/dexadata/dexaflow/internal/version.version=e2e-ver" \
-    -o "$BINDIR/leoflow-agent" ./cmd/leoflow-agent )
+    -o "$BINDIR/leoflow-agent" ./cmd/dexaflow-agent )
 ( cd "$REPO" && go build -ldflags "-X main.version=e2e-ver" \
-    -o "$BINDIR/leoflow-mcp" ./cmd/leoflow-mcp )
+    -o "$BINDIR/leoflow-mcp" ./cmd/dexaflow-mcp )
 for b in leoflow-server leoflow-agent leoflow-mcp; do
   out="$("$BINDIR/$b" --version 2>&1)" || fail "$b --version exited non-zero: $out"
   printf '%s' "$out" | grep -q 'e2e-ver' \

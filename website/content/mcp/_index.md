@@ -66,7 +66,7 @@ holds no database, Redis, or Kubernetes access of its own. Built on the official
 ## Running it
 
 `leoflow-mcp` ships alongside the other binaries (installed by the one-command
-[install](/get-started/installation/), or `go build ./cmd/leoflow-mcp`). It has two
+[install](/get-started/installation/), or `go build ./cmd/dexaflow-mcp`). It has two
 transports.
 
 {{< tabpane text=true >}}

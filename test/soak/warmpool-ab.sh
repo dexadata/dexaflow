@@ -134,9 +134,9 @@ DB_URL="postgres://leoflow:leoflow@127.0.0.1:${PG_PORT}/leoflow_ab?sslmode=disab
 ok "postgres on 127.0.0.1:${PG_PORT}"
 
 log "building binaries and the two DAG images"
-go build -o "$OUT/leoflow" ./cmd/leoflow || die "building leoflow"
-go build -o "$OUT/leoflow-server" ./cmd/leoflow-server || die "building leoflow-server"
-go build -o "$OUT/leoflow-agent" ./cmd/leoflow-agent || die "building leoflow-agent"
+go build -o "$OUT/leoflow" ./cmd/dexaflow || die "building leoflow"
+go build -o "$OUT/leoflow-server" ./cmd/dexaflow-server || die "building leoflow-server"
+go build -o "$OUT/leoflow-agent" ./cmd/dexaflow-agent || die "building leoflow-agent"
 # The two DAGs are the same shapes the Lite soak runs, trimmed to the pair that
 # makes the operator-mix comparison meaningful: one native python DAG and one
 # airflow_operator DAG. Building them is the expensive part of this script.

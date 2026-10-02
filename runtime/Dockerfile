@@ -54,7 +54,7 @@ ARG GIT_COMMIT=none
 ARG BUILD_DATE=unknown
 RUN CGO_ENABLED=0 go build -trimpath \
 	-ldflags="-s -w -X 'github.com/dexadata/dexaflow/internal/version.version=${VERSION}' -X 'github.com/dexadata/dexaflow/internal/version.gitCommit=${GIT_COMMIT}' -X 'github.com/dexadata/dexaflow/internal/version.buildDate=${BUILD_DATE}'" \
-	-o /out/leoflow-agent ./cmd/leoflow-agent
+	-o /out/dexaflow-agent ./cmd/dexaflow-agent
 
 # ── Stage 2: runtime base ─────────────────────────────────────────────────────
 # Debian 13 (trixie). The suite is pinned explicitly rather than left implicit
@@ -104,7 +104,10 @@ RUN groupadd --gid 65532 leoflow \
  && useradd --create-home --home-dir /home/leoflow --uid 65532 --gid 65532 leoflow \
  && chmod 0700 /home/leoflow
 
-COPY --from=agent-build /out/leoflow-agent /usr/local/bin/leoflow-agent
+COPY --from=agent-build /out/dexaflow-agent /usr/local/bin/dexaflow-agent
+# Pre-rename name, kept as a link: control planes and DAG images from before the
+# rename launch the agent as `leoflow-agent`, and executor.agent_path defaults to it.
+RUN ln -s dexaflow-agent /usr/local/bin/leoflow-agent
 COPY runtime/python /opt/leoflow-runtime
 RUN pip install --no-cache-dir /opt/leoflow-runtime
 
@@ -129,4 +132,4 @@ USER 65532:65532
 WORKDIR /home/leoflow
 
 # The agent is PID 1; it fetches the task spec and runs the user code.
-ENTRYPOINT ["leoflow-agent"]
+ENTRYPOINT ["dexaflow-agent"]

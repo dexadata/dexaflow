@@ -90,8 +90,8 @@ fi
 echo "    container: $PG_CONTAINER"
 
 echo "==> building binaries"
-go build -o "$HOME_DIR/leoflow" ./cmd/leoflow || die "building leoflow"
-go build -o "$HOME_DIR/leoflow-server" ./cmd/leoflow-server || die "building leoflow-server"
+go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow || die "building leoflow"
+go build -o "$HOME_DIR/leoflow-server" ./cmd/dexaflow-server || die "building leoflow-server"
 
 mkdir -p "$HOME_DIR/bin"
 printf '#!/bin/sh\n' > "$HOME_DIR/bin/python3.11"

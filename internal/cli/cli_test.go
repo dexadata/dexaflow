@@ -31,8 +31,8 @@ func TestVersionCommandPrintsInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if !strings.Contains(out, "leoflow") || !strings.Contains(out, "dev") {
-		t.Errorf("version output = %q, want to contain leoflow and dev", out)
+	if !strings.Contains(out, "dexaflow") || !strings.Contains(out, "dev") {
+		t.Errorf("version output = %q, want to contain dexaflow and dev", out)
 	}
 }
 
@@ -51,8 +51,8 @@ func TestVersionFlagMatchesSubcommand(t *testing.T) {
 	if strings.TrimSpace(flagOut) != strings.TrimSpace(subOut) {
 		t.Errorf("--version = %q, want identical to `version` subcommand = %q", flagOut, subOut)
 	}
-	if !strings.Contains(flagOut, "leoflow") {
-		t.Errorf("--version output missing 'leoflow': %q", flagOut)
+	if !strings.Contains(flagOut, "dexaflow") {
+		t.Errorf("--version output missing 'dexaflow': %q", flagOut)
 	}
 }
 

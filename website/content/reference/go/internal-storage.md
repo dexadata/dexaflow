@@ -503,7 +503,7 @@ BootstrapAdmin creates a default admin user with the given password when the ten
 func (r *Repository) BootstrapAdminHash(ctx context.Context, tenant, email, hash string) (bool, error)
 ```
 
-BootstrapAdminHash provisions the Lite admin from a precomputed bcrypt hash \(so the plaintext never reaches the control plane\). It RECONCILES: if the admin already exists, its password is reset to this hash. The Lite config \(admin\_password\_hash\) is the source of truth, so the password the setup printed always logs in — even against a pre\-existing or stale database — without anyone having to wipe Docker volumes. The only sanctioned way to change the password, \`reset\-password\`, also writes the config, so the two never drift. Returns true only when the admin was newly created \(false when an existing one was reconciled\). See cmd/leoflow\-server bootstrapAdmin.
+BootstrapAdminHash provisions the Lite admin from a precomputed bcrypt hash \(so the plaintext never reaches the control plane\). It RECONCILES: if the admin already exists, its password is reset to this hash. The Lite config \(admin\_password\_hash\) is the source of truth, so the password the setup printed always logs in — even against a pre\-existing or stale database — without anyone having to wipe Docker volumes. The only sanctioned way to change the password, \`reset\-password\`, also writes the config, so the two never drift. Returns true only when the admin was newly created \(false when an existing one was reconciled\). See cmd/dexaflow\-server bootstrapAdmin.
 
 <a name="Repository.ClearDagHistory"></a>
 ### func \(\*Repository\) [ClearDagHistory](<https://github.com/dexadata/leoflow/blob/main/internal/storage/repository.go#L1888>)

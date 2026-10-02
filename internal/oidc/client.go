@@ -13,7 +13,7 @@ import (
 // ways:
 //
 //   - Discovery, on the boot path. Already bounded by a context deadline in
-//     cmd/leoflow-server, which is what #1153 was filed for.
+//     cmd/dexaflow-server, which is what #1153 was filed for.
 //   - The JWKS fetch, on every login whose signing key is not cached. NOT
 //     bounded: Provider.Verifier builds its key set over context.Background(),
 //     so a request-scoped deadline never reaches it. The client does, because
@@ -27,7 +27,7 @@ import (
 // attempt until the client gave up. A client timeout is the bound that applies
 // to all three whatever the caller passes.
 //
-// 15s matches the discovery deadline in cmd/leoflow-server so the two cannot
+// 15s matches the discovery deadline in cmd/dexaflow-server so the two cannot
 // drift into disagreeing about how patient this deployment is.
 const httpTimeout = 15 * time.Second
 

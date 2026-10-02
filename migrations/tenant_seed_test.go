@@ -21,7 +21,7 @@ import (
 // way to fix it other than direct SQL.
 //
 // If a migration ever does seed a second tenant, this test is the place that
-// says so: update the warning text in cmd/leoflow-server/main.go, the chart
+// says so: update the warning text in cmd/dexaflow-server/main.go, the chart
 // comment on auth.oidc.tenantClaims and the configuration reference with it.
 func TestDefaultIsTheOnlyTenantAnyMigrationCreates(t *testing.T) {
 	// Matches an insert into the tenants table whatever the whitespace or case,

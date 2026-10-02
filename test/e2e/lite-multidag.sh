@@ -25,7 +25,7 @@ cleanup() { rm -rf "$HOME_DIR"; }
 trap cleanup EXIT
 
 echo "==> building leoflow"
-go build -o "$HOME_DIR/leoflow" ./cmd/leoflow
+go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow
 
 echo "==> scaffolding a multi-DAG workspace (one DAG in a subdir)"
 mkdir -p "$WS/hello"

@@ -1093,13 +1093,15 @@ jobs:
       - name: Build
         run: |
           mkdir -p bin
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/leoflow ./cmd/leoflow
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/leoflow-server ./cmd/leoflow-server
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/leoflow-agent ./cmd/leoflow-agent
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dexaflow ./cmd/dexaflow
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dexaflow-server ./cmd/dexaflow-server
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dexaflow-agent ./cmd/dexaflow-agent
+          # Pre-rename entry points, as `make build` and install.sh create them.
+          for b in "" -server -agent; do ln -sf "dexaflow$b" "bin/leoflow$b"; done
 
       - name: Check agent binary size (<20MB per ADR 0004)
         run: |
-          SIZE=$(stat -c%s bin/leoflow-agent)
+          SIZE=$(stat -c%s bin/dexaflow-agent)
           MAX=20971520  # 20 MB
           echo "leoflow-agent size: $SIZE bytes (max: $MAX)"
           if [ "$SIZE" -gt "$MAX" ]; then

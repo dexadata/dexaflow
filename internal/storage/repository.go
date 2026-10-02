@@ -1296,7 +1296,7 @@ func (r *Repository) SetUserPassword(ctx context.Context, tenant, email, hash st
 // having to wipe Docker volumes. The only sanctioned way to change the password,
 // `reset-password`, also writes the config, so the two never drift. Returns true
 // only when the admin was newly created (false when an existing one was
-// reconciled). See cmd/leoflow-server bootstrapAdmin.
+// reconciled). See cmd/dexaflow-server bootstrapAdmin.
 func (r *Repository) BootstrapAdminHash(ctx context.Context, tenant, email, hash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {

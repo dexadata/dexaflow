@@ -518,7 +518,7 @@ run_experiment() {
   # GetUserByEmail with whatever `username` carries
   # (internal/storage/repository.go), and the bootstrap admin is created as
   # LEOFLOW_BOOTSTRAP_EMAIL or admin@leoflow.local
-  # (cmd/leoflow-server/main.go). This passed "admin" and got a 401 that the
+  # (cmd/dexaflow-server/main.go). This passed "admin" and got a 401 that the
   # first real run spent a cluster to discover.
   local admin_login="${WP_ADMIN_LOGIN:-admin@leoflow.local}"
   # Stderr is KEPT. It was sent to /dev/null on the one call whose failure is
@@ -586,7 +586,7 @@ run_experiment() {
 wp_build_and_push() { # <out dir>
   local out="$1"
   exp_require docker
-  [ -x "$WP_CLI" ] || exp_die "no leoflow CLI at $WP_CLI. Build one: go build -o $WP_CLI ./cmd/leoflow"
+  [ -x "$WP_CLI" ] || exp_die "no leoflow CLI at $WP_CLI. Build one: go build -o $WP_CLI ./cmd/dexaflow"
   mkdir -p "$out/dag-project"
   cp "$EXP_REPO_ROOT"/test/gcp/dags/gcp_probe/* "$out/dag-project/"
   # The registry URL carries ${GCP_PROJECT} in the committed file precisely so

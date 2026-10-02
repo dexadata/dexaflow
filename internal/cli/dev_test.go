@@ -744,3 +744,73 @@ func TestDevDockerfileCopiesDbtGroupProjects(t *testing.T) {
 		t.Errorf("devDockerfile() emits group COPYs out of sorted order:\n%s", df)
 	}
 }
+
+// Companion binaries are named dexaflow-* since the rename; installs and
+// builds from before it ship leoflow-*. Both must resolve, the new name wins
+// when both sit in the same place, and location still beats name: a co-versioned
+// legacy sibling is preferred over a new-name copy that is merely on PATH.
+func TestResolveCompanionAcceptsBothNames(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("legacy only", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("PATH", dir)
+		legacy := filepath.Join(dir, "leoflow-compatprobe")
+		writeFakeBinary(t, legacy)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != legacy {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, legacy)
+		}
+	})
+
+	t.Run("both in one place prefers the new name", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("PATH", dir)
+		writeFakeBinary(t, filepath.Join(dir, "leoflow-compatprobe"))
+		current := filepath.Join(dir, "dexaflow-compatprobe")
+		writeFakeBinary(t, current)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != current {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, current)
+		}
+	})
+
+	t.Run("legacy install dir beats new name on PATH", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		installed := filepath.Join(home, ".leoflow", "bin", "leoflow-compatprobe")
+		if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFakeBinary(t, installed)
+		pathDir := t.TempDir()
+		writeFakeBinary(t, filepath.Join(pathDir, "dexaflow-compatprobe"))
+		t.Setenv("PATH", pathDir)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != installed {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, installed)
+		}
+	})
+
+	t.Run("new install dir is searched", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("PATH", t.TempDir())
+		installed := filepath.Join(home, ".dexaflow", "bin", "dexaflow-compatprobe")
+		if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFakeBinary(t, installed)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != installed {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, installed)
+		}
+	})
+
+	t.Run("explicit path wins", func(t *testing.T) {
+		got, err := resolveCompanion("/custom/agent", "compatprobe")
+		if err != nil || got != "/custom/agent" {
+			t.Fatalf("resolveCompanion = %q, %v", got, err)
+		}
+	})
+}
