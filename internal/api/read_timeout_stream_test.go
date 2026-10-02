@@ -24,7 +24,7 @@ func (s *slowTailReader) ReadLogs(context.Context, string, string, string, strin
 	return nil, ErrNotFound
 }
 
-func (s *slowTailReader) Tail(ctx context.Context, _, _, _, _ string, _ int) (<-chan string, func(), error) {
+func (s *slowTailReader) Tail(ctx context.Context, _, _, _, _ string, _ int) (lines <-chan string, cancel func(), err error) {
 	ch := make(chan string)
 	go func() {
 		defer close(ch)
