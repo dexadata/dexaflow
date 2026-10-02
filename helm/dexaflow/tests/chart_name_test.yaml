@@ -14,7 +14,7 @@ set:
   database.url: postgres://h/d
   redis.url: redis://h/0
   auth.jwtSecret: jwt
-  secretKey: 0123456789abcdef0123456789abcdef
+  secretKey: leoflow-unittest-secretkey-32by!
 tests:
   - it: a new install of the dexaflow chart names its resources after it
     template: deployment.yaml

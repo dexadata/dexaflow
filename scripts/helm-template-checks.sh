@@ -20,7 +20,7 @@ fi
 # Minimal Pro-shaped values: external Postgres + external Redis + a jwtSecret
 # and a secretKey (the values the chart will encrypt at rest and inject as env).
 # Fixture keys are NOT real credentials — only used to render the chart.
-RENDERED=$(helm template leoflow-test "$CHART" \
+RENDERED=$(helm template dexaflow-test "$CHART" \
   --set database.url='postgres://leoflow:p@db:5432/leoflow?sslmode=disable' \
   --set redis.url='redis://r:6379/0' \
   --set auth.jwtSecret='helm-template-check-jwt-fixture' \
@@ -67,7 +67,7 @@ expect_substring 'name: LEOFLOW_AUTH_SECRET_SCOPING'           "secret scoping p
 # template so we don't accidentally validate the Deployment's hardening
 # here (that lives in the same rendered output but is asserted above by
 # proxy of the env contract).
-JOB_RENDERED=$(helm template leoflow-test "$CHART" \
+JOB_RENDERED=$(helm template dexaflow-test "$CHART" \
   --set database.url='postgres://leoflow:p@db:5432/leoflow?sslmode=disable' \
   --set redis.url='redis://r:6379/0' \
   --set auth.jwtSecret='helm-template-check-jwt-fixture' \
@@ -123,9 +123,9 @@ done
 # (agentTLS.autoGenerate=true). Render with ONLY the mandatory Pro datastore /
 # key values — deliberately NOT setting agentTLS.serverCertSecret or
 # agentTLS.caConfigMap — and assert the generated material renders and is wired.
-# The release name here is "leoflow-test", so the chart fullname (and thus the
+# The release name here is "dexaflow-test", so the chart fullname (and thus the
 # generated resource names) are prefixed with it.
-AUTOGEN_RENDERED=$(helm template leoflow-test "$CHART" \
+AUTOGEN_RENDERED=$(helm template dexaflow-test "$CHART" \
   --set database.url='postgres://leoflow:p@db:5432/leoflow?sslmode=disable' \
   --set redis.url='redis://r:6379/0' \
   --set auth.jwtSecret='helm-template-check-jwt-fixture' \
@@ -156,18 +156,18 @@ expect_in "$AUTOGEN_RENDERED" 'kind: Deployment' "the control-plane Deployment o
 
 # The auto-generated server cert Secret (kubernetes.io/tls) + its keys.
 expect_in "$AUTOGEN_RENDERED" 'type: kubernetes.io/tls'      "auto-generated kubernetes.io/tls Secret"
-expect_in "$AUTOGEN_RENDERED" 'name: leoflow-test-agent-tls' "auto-gen server cert Secret named <fullname>-agent-tls"
+expect_in "$AUTOGEN_RENDERED" 'name: dexaflow-test-agent-tls' "auto-gen server cert Secret named <fullname>-agent-tls"
 expect_in "$AUTOGEN_RENDERED" 'tls.crt:'                     "tls.crt in the auto-gen Secret"
 expect_in "$AUTOGEN_RENDERED" 'tls.key:'                     "tls.key in the auto-gen Secret"
 
 # The auto-generated CA ConfigMap task pods mount to verify the server cert.
-expect_in "$AUTOGEN_RENDERED" 'name: leoflow-test-agent-ca'  "auto-gen CA ConfigMap named <fullname>-agent-ca"
+expect_in "$AUTOGEN_RENDERED" 'name: dexaflow-test-agent-ca'  "auto-gen CA ConfigMap named <fullname>-agent-ca"
 expect_in "$AUTOGEN_RENDERED" 'ca.crt:'                      "ca.crt key in the auto-gen CA ConfigMap"
 
 # The Deployment must WIRE the generated material: mount the generated Secret as
 # the gRPC server cert volume and point the executor at the generated CA ConfigMap.
-expect_in "$AUTOGEN_RENDERED" 'secretName: leoflow-test-agent-tls' "Deployment mounts the auto-gen server cert Secret"
-expect_in "$AUTOGEN_RENDERED" 'value: "leoflow-test-agent-ca"'     "Deployment points the executor at the auto-gen CA ConfigMap"
+expect_in "$AUTOGEN_RENDERED" 'secretName: dexaflow-test-agent-tls' "Deployment mounts the auto-gen server cert Secret"
+expect_in "$AUTOGEN_RENDERED" 'value: "dexaflow-test-agent-ca"'     "Deployment points the executor at the auto-gen CA ConfigMap"
 
 # The generated tls.crt must be a real, parseable X.509 cert (not an empty or
 # malformed PEM). Extract the single-line base64 Secret value, decode it, and
@@ -184,8 +184,8 @@ fi
 # caConfigMap, the chart must use them verbatim and render NO auto-gen material.
 # $RENDERED above is exactly that BYO shape.
 refute_in "$RENDERED" 'type: kubernetes.io/tls'      "no auto-gen tls Secret rendered on the BYO path"
-refute_in "$RENDERED" 'leoflow-test-agent-tls'       "no auto-gen server cert Secret name on the BYO path"
-refute_in "$RENDERED" 'leoflow-test-agent-ca'        "no auto-gen CA ConfigMap name on the BYO path"
+refute_in "$RENDERED" 'dexaflow-test-agent-tls'       "no auto-gen server cert Secret name on the BYO path"
+refute_in "$RENDERED" 'dexaflow-test-agent-ca'        "no auto-gen CA ConfigMap name on the BYO path"
 expect_in "$RENDERED" 'secretName: leoflow-agent-tls-fixture' "BYO server cert Secret mounted verbatim"
 
 # ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ refute_in "$RENDERED" 'oidc-config'                 "no OIDC volume or ConfigMap
 # dotted tenant key is the point of the file, viper's key delimiter is "." and
 # would split a Google `hd` domain into nested maps (#826): so assert it survives
 # the render quoted and intact.
-OIDC_RENDERED=$(helm template leoflow-test "$CHART" \
+OIDC_RENDERED=$(helm template dexaflow-test "$CHART" \
   --set database.url='postgres://leoflow:p@db:5432/leoflow?sslmode=disable' \
   --set redis.url='redis://r:6379/0' \
   --set auth.jwtSecret='helm-template-check-jwt-fixture' \
@@ -224,7 +224,7 @@ expect_in "$OIDC_RENDERED" 'value: "oidc"'                     "auth provider se
 expect_in "$OIDC_RENDERED" 'value: "/etc/leoflow/oidc/config.yaml"' "LEOFLOW_CONFIG points at the mounted OIDC file"
 expect_in "$OIDC_RENDERED" 'name: LEOFLOW_AUTH_OIDC_ISSUER'    "OIDC issuer env entry in deployment"
 expect_in "$OIDC_RENDERED" 'name: LEOFLOW_AUTH_OIDC_TENANT_CLAIM' "OIDC tenant claim env entry in deployment"
-expect_in "$OIDC_RENDERED" 'name: leoflow-test-oidc'           "OIDC ConfigMap named <fullname>-oidc"
+expect_in "$OIDC_RENDERED" 'name: dexaflow-test-oidc'           "OIDC ConfigMap named <fullname>-oidc"
 expect_in "$OIDC_RENDERED" 'mountPath: /etc/leoflow/oidc'      "Deployment mounts the OIDC ConfigMap"
 expect_in "$OIDC_RENDERED" '"example.com": "default"'          "dotted tenant_claims key survives the render quoted (#826)"
 expect_in "$OIDC_RENDERED" 'oidcClientSecret:'                 "IdP client secret in the chart-managed Secret"
@@ -234,7 +234,7 @@ expect_in "$OIDC_RENDERED" 'oidcClientSecret:'                 "IdP client secre
 # code-exchange credential takes the jwtSecret route (secretKeyRef) instead. The
 # needle is the fixture VALUE, not the key name: the key name legitimately appears
 # in the Secret, and it is the value leaking into the ConfigMap that would matter.
-OIDC_CONFIGMAP=$(helm template leoflow-test "$CHART" \
+OIDC_CONFIGMAP=$(helm template dexaflow-test "$CHART" \
   --set database.url='postgres://leoflow:p@db:5432/leoflow?sslmode=disable' \
   --set redis.url='redis://r:6379/0' \
   --set auth.jwtSecret='helm-template-check-jwt-fixture' \
@@ -254,7 +254,7 @@ refute_in "$OIDC_CONFIGMAP" 'helm-template-check-oidc-fixture' "IdP client secre
 # each boot failure on Kubernetes costs a values edit, an upgrade and a rollout to
 # learn the next one; the chart owes the same one step earlier, where a GitOps sync
 # can show it. An install missing the tenant pin must not render at all.
-OIDC_NO_PIN=$(helm template leoflow-test "$CHART" \
+OIDC_NO_PIN=$(helm template dexaflow-test "$CHART" \
   --set database.url='postgres://leoflow:p@db:5432/leoflow?sslmode=disable' \
   --set redis.url='redis://r:6379/0' \
   --set auth.jwtSecret='helm-template-check-jwt-fixture' \
