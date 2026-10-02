@@ -57,7 +57,7 @@ names, and CLI surface per mode.
 ## Dexaflow Lite
 
 Lite is the whole control plane on your machine, scoped down for local use. One
-command installs it, [`dexaflow setup`](/get-started/installation/#what-leoflow-setup-does)
+command installs it, [`dexaflow setup`](/get-started/installation/#what-dexaflow-setup-does)
 provisions a managed Python and a single admin, and `dexaflow lite <project>`
 serves the UI with hot-reload at <http://localhost:8088> (marked **Dexaflow Lite**
 in the navbar, login enabled). Edit `dags/<project>/dag.py` or `dexaflow.yaml`,
@@ -150,7 +150,7 @@ rights; the two halves share nothing but Postgres.
 ```mermaid
 flowchart TB
   subgraph LITE["Lite · role=all — one process"]
-    ALL["leoflow-server<br/>API + UI + scheduler<br/>+ dispatch + agent gRPC"]
+    ALL["dexaflow-server<br/>API + UI + scheduler<br/>+ dispatch + agent gRPC"]
   end
 
   subgraph PRO["Pro · role=api + role=scheduler — two deployments"]

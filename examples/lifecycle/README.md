@@ -19,10 +19,10 @@ From this directory, with a control plane running (see the repo `README.md` /
 
 ```sh
 # 1. Compile the project into dag.json (and build the image).
-dexaflow compile . --image leoflow-lifecycle:dev --build -o dag.json
+dexaflow compile . --image dexaflow-lifecycle:dev --build -o dag.json
 
 # 2. (Local k3d only) import the image into the cluster.
-k3d image import leoflow-lifecycle:dev --cluster <cluster>
+k3d image import dexaflow-lifecycle:dev --cluster <cluster>
 
 # 3. Push the compiled DAG to the control plane.
 TOKEN=$(leoflow auth create-token --username admin@leoflow.local --password admin)

@@ -20,19 +20,19 @@ guides cover a clean first run; this page is where you land when one goes wrong.
 dexaflow doctor                          # host check (OS, python, docker, k3d, kubectl, recommended tier)
 dexaflow version                         # version + commit + build date
 tail -f /tmp/leoflow-lite.log           # the live boot log when you ran `dexaflow lite` via lite-redeploy
-journalctl -u leoflow-server -f         # Pro / systemd hosts
+journalctl -u dexaflow-server -f         # Pro / systemd hosts
 ```
 
 {{% alert title="Every binary reports its version" color="success" %}}
 When filing a bug, include the exact build. The root CLI takes both
-`dexaflow version` (with commit + build date) and `leoflow --version`, and each
+`dexaflow version` (with commit + build date) and `dexaflow --version`, and each
 companion binary answers `--version`:
 
 ```bash
-leoflow --version
-leoflow-server --version
-leoflow-agent --version
-leoflow-mcp --version
+dexaflow --version
+dexaflow-server --version
+dexaflow-agent --version
+dexaflow-mcp --version
 ```
 {{% /alert %}}
 
@@ -40,7 +40,7 @@ leoflow-mcp --version
 
 | Symptom | Cause / fix |
 |---|---|
-| `command not found: leoflow` | The binary is not on `PATH` — re-run `curl … \| sh`, or open a fresh shell to pick up the install-script's PATH line. Building from source? `go install .../cmd/dexaflow@latest` and add `$(go env GOPATH)/bin` to `PATH`. |
+| `command not found: dexaflow` | The binary is not on `PATH` — re-run `curl … \| sh`, or open a fresh shell to pick up the install-script's PATH line. Building from source? `go install .../cmd/dexaflow@latest` and add `$(go env GOPATH)/bin` to `PATH`. |
 | `dexaflow setup` says "python: none on PATH" but you have `python3.12` | Older Dexaflow versions only matched literal `python3.11`. Update to the latest release — `setup` now accepts any `python3.11`+ that's on `PATH`. |
 | Install on Alpine / musl fails fetching CPython | The musl-libc relocatable CPython build can be missing system libs. `dexaflow lite --postgres docker` falls back to the Docker Postgres path instead of the embedded managed one. |
 
@@ -58,12 +58,12 @@ leoflow-mcp --version
 
 | Symptom | Cause / fix |
 |---|---|
-| `declares unknown connection(s)` on the first `leoflow dev` of a project | Lite seeds a declared connection from `AIRFLOW_CONN_<ID>` when your environment already carries it, so this usually means the variable is absent or misspelled — the lookup upper-cases the id, so `my_db` reads `AIRFLOW_CONN_MY_DB`. Only connections the DAG **declares** are considered, a connection already in the vault is never replaced by the environment (use `dexaflow connections set` to change one), and a URI that cannot be parsed is reported by name and not stored. |
+| `declares unknown connection(s)` on the first `dexaflow lite` of a project | Lite seeds a declared connection from `AIRFLOW_CONN_<ID>` when your environment already carries it, so this usually means the variable is absent or misspelled — the lookup upper-cases the id, so `my_db` reads `AIRFLOW_CONN_MY_DB`. Only connections the DAG **declares** are considered, a connection already in the vault is never replaced by the environment (use `dexaflow connections set` to change one), and a URI that cannot be parsed is reported by name and not stored. |
 | `dexaflow compile` dumps a Python traceback with internal parser paths first | Recent builds lead the failure with the user-facing line (e.g. `SyntaxError: ...`) and put the parser paths in the bounded tail. If you still see the internal-first dump, you are on an older release — update. |
 | `dexaflow validate` reports a `SyntaxError` in code that runs fine on the cluster | The local tool judged your `dag.py` with a different Python minor than the one the project declares. Typical tell: `type Alias[T]`, or any other 3.12+ syntax, flagged on a project declaring `python_version: "3.12"` or later. Recent builds honour the declared version and warn instead of guessing: update, then install that minor (or run `dexaflow setup`). `dexaflow compile` is not fixed yet ([#1095](https://github.com/dexadata/dexaflow/issues/1095)); run `dexaflow setup` under the minor you declare. See [Which interpreter reads your DAG](/reference/configuration/#which-interpreter-reads-your-dag). |
 | `warning: skipping dag.py syntax check` on `dexaflow validate` | Working as intended: the project declares a `python_version` newer than any interpreter installed here, so the lint is skipped rather than run under an older one and reject valid code. A newer interpreter than the declared one is used without complaint. Install the named interpreter, or run `dexaflow setup`, to turn the check back on. Your `dexaflow.yaml` is still validated. |
-| `leoflow dev` reinstalls every dependency after you change `python_version` | Expected. The venv is rebuilt on the new interpreter, and the "already installed" markers are discarded with it, because a marker records what one interpreter has, so it cannot outlive that interpreter. |
-| `dexaflow compile` rejects a sensor / Jinja template / branching operator | This is **intentional** — Dexaflow accepts a closed set of task types (`python`, `bash`, `airflow_operator`). See [DAG authoring → Not supported](/author-dags/dag-authoring/#not-supported--leoflow-compile-rejects-these) for the full list and workarounds (`@task` + poll loop for sensors; build values from `airflow.sdk` context for Jinja). |
+| `dexaflow lite` reinstalls every dependency after you change `python_version` | Expected. The venv is rebuilt on the new interpreter, and the "already installed" markers are discarded with it, because a marker records what one interpreter has, so it cannot outlive that interpreter. |
+| `dexaflow compile` rejects a sensor / Jinja template / branching operator | This is **intentional** — Dexaflow accepts a closed set of task types (`python`, `bash`, `airflow_operator`). See [DAG authoring → Not supported](/author-dags/dag-authoring/#not-supported--dexaflow-compile-rejects-these) for the full list and workarounds (`@task` + poll loop for sensors; build values from `airflow.sdk` context for Jinja). |
 | `Compiled .../dag.py -> dag.json (image , version dev)` (dangling comma) | Older build — update. Recent versions render `(no image, version dev)` when `--image` is unset. |
 | Task pod `ErrImagePull` (cluster mode) | The DAG's image is not in the cluster — rebuild + import. Cluster-mode rebuilds on save; for a manual push, `dexaflow compile --build --push`. |
 | Run stuck at `queued` (subprocess) | The agent must reach the control plane — Lite uses `127.0.0.1:<grpc>`. The executor launches async and the agent reports state back. Look for the agent process in `ps`; if it exited, check `/tmp/leoflow-lite.log` for the launch error. |
@@ -79,7 +79,7 @@ leoflow-mcp --version
 |---|---|
 | `Invalid credentials` on the login page even with the right password | Disable autofill or type the password manually — some browsers append a trailing space. Usernames are trimmed, passwords are not (per security best practice). |
 | Login rate-limits you out after a few typos | Older builds counted *every* attempt against a 5/min cap; the fix splits successful and failed attempts so a typo does not block recovery. Update to the latest release. |
-| A DAG you deleted weeks ago still runs and fails | Lite's state lives in `~/.dexaflow/dev` and outlives sessions, so a DAG registered during an old spike stays registered and keeps being scheduled. The ready banner now reports how many DAGs earlier sessions left (`state: N DAGs registered by earlier sessions`); `leoflow dev --fresh` starts from an empty local database. Deleting the project directory stops it being re-registered, but does not deregister what is already there. |
+| A DAG you deleted weeks ago still runs and fails | Lite's state lives in `~/.dexaflow/dev` and outlives sessions, so a DAG registered during an old spike stays registered and keeps being scheduled. The ready banner now reports how many DAGs earlier sessions left (`state: N DAGs registered by earlier sessions`); dexaflow lite --fresh starts from an empty local database. Deleting the project directory stops it being re-registered, but does not deregister what is already there. |
 | No **Lite** badge on `http://localhost:8088` | You are likely on the **Demo** (production-shaped reference, port `8080`) — Lite runs on `8088` with a silver `Dexaflow Lite` badge. See [operating modes](/concepts/editions/). |
 | Copy-logs button silently fails over `http://<lan-ip>:8088` | The Clipboard API requires a secure context, so plain HTTP origins (LAN access from another machine) used to break copy. Recent builds inject a polyfill (`document.execCommand('copy')` fallback) — update. |
 | `server returned 401` from `push`, `deploy`, `dags`, `runs`, `connections` or `variables` | Usually the saved token belongs to a **different** control plane. `~/.dexaflow/config.yaml` holds one `server_url` and one `token`, written together by `dexaflow auth login`; passing `--server` points the command elsewhere while still sending that token. The error now names both servers and prints `dexaflow auth login --server <the one being called>` — run it, or unset `DEXAFLOW_TOKEN` if an env token is shadowing the file. Holding several servers' tokens at once is [#1102](https://github.com/dexadata/dexaflow/issues/1102). |
@@ -99,7 +99,7 @@ leoflow-mcp --version
 
 ```bash
 leoflow lite reset-password --user admin@leoflow.local  # generate a fresh admin password (no sudo)
-leoflow dev --fresh                                     # start a session with nothing registered (DESTRUCTIVE)
+dexaflow lite --fresh                                     # start a session with nothing registered (DESTRUCTIVE)
 dexaflow db reset --yes                                  # drop + recreate the Lite database (DESTRUCTIVE)
 dexaflow uninstall                                       # remove ~/.dexaflow (binaries, managed Python, config)
 dexaflow uninstall --purge                               # also remove the workspace (your DAGs!)
@@ -144,11 +144,11 @@ The cause is on the control-plane's request log line, under `cause`, alongside
 the `request_id` the response header `X-Request-Id` carries:
 
 ```bash
-journalctl -u leoflow-server -o cat | grep '"request_id":"<id>"' | jq '.cause'
+journalctl -u dexaflow-server -o cat | grep '"request_id":"<id>"' | jq '.cause'
 # "upserting dag: ERROR: ... violates foreign key constraint \"dag_versions_dag_id_fkey\" (SQLSTATE 23503)"
 ```
 
-`kubectl logs deploy/leoflow -c leoflow | jq 'select(.cause) | {path, status, cause}'`
+`kubectl logs deploy/<release> -c leoflow-server | jq 'select(.cause) | {path, status, cause}'`
 lists every request that failed with a server-side cause.
 
 ### "…: the request could not be completed; see the control-plane logs" in a task log
@@ -172,7 +172,7 @@ assignment request`, `receiving assignment ack`. The cause is on the
 control-plane log line of the same name, carrying the attempt identity:
 
 ```bash
-kubectl logs deploy/leoflow -c leoflow \
+kubectl logs deploy/<release> -c leoflow-server \
   | jq 'select(.cause) | select(.run == "<run_id>" and .task == "<task_id>") | {msg, try, cause}'
 # {"msg":"loading task spec","try":1,"cause":"loading run: ERROR: … (SQLSTATE 42P01)"}
 ```
@@ -182,7 +182,7 @@ knowing because `opening log sink` against a filesystem sink is a
 characteristically Lite failure:
 
 ```bash
-journalctl -u leoflow -o cat \
+journalctl -u dexaflow -o cat \
   | jq 'select(.cause) | select(.run == "<run_id>" and .task == "<task_id>") | {msg, try, cause}'
 ```
 

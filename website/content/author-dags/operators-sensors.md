@@ -57,7 +57,7 @@ flowchart TB
   STORE -->|"gRPC GetTaskSpec<br/>(agentrpc TaskSpec)"| AGENT
 
   subgraph POD["Task pod (DAG image)"]
-    AGENT["leoflow-agent (Go, PID 1)<br/>buildEnv: stamps DEXAFLOW_* / AIRFLOW_* env<br/>BuildCommand: picks runtime mode"]
+    AGENT["dexaflow-agent (Go, PID 1)<br/>buildEnv: stamps DEXAFLOW_* / AIRFLOW_* env<br/>BuildCommand: picks runtime mode"]
     RT["leoflow_runtime (Python)<br/>run / run_operator / run_bash"]
     SDK["Apache Airflow SDK<br/>import_string(class)(**args).execute(context)"]
     AGENT -->|"argv + env"| RT --> SDK
@@ -224,7 +224,7 @@ value from an untrusted `conf` cannot inject shell — write interpolations unqu
 
 > **Security — the auto-quoting is the native `bash` path only.** A captured
 > provider operator (`airflow_operator`) renders its `template_fields` with
-> Airflow's own Jinja, exactly as upstream Airflow does — leoflow does **not**
+> Airflow's own Jinja, exactly as upstream Airflow does — Dexaflow does **not**
 > (and cannot, without breaking non-shell operators and Airflow parity) inject
 > `shlex.quote` into that render. So if you use a provider operator that executes
 > a shell (e.g. a `BashOperator`) and template an **untrusted** value into a
@@ -245,11 +245,11 @@ than half-running:
 **Reschedule-mode sensors *are* supported.** Set `mode="reschedule"` and the
 scheduler persists the next-poke time, frees the pod between pokes, and
 re-dispatches the sensor preserving its `try_number` — the idiomatic way to wait
-in leoflow (see [DAG authoring](/author-dags/dag-authoring/)).
+in Dexaflow (see [DAG authoring](/author-dags/dag-authoring/)).
 
 {{% alert title="`deferrable=True` is not supported — a conscious non-goal" color="warning" %}}
 Airflow's deferrable operators offload a wait to a shared **async triggerer** that
-runs user trigger code in a long-lived process. leoflow's control plane
+runs user trigger code in a long-lived process. Dexaflow's control plane
 deliberately runs no user code or network
 ([ADR 0048](/project/adrs/0048-no-user-code-in-control-plane/)), and pod-per-task
 plus reschedule already deliver what deferrable exists for — freeing the slot

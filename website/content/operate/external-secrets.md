@@ -51,7 +51,7 @@ chart's task ServiceAccount, then point a task at it:
 # values.yaml
 taskServiceAccount:
   create: true
-  name: leoflow-task
+  name: dexaflow-task
   annotations:
     # GKE Workload Identity:
     iam.gke.io/gcp-service-account: "<GSA>@<project>.iam.gserviceaccount.com"
@@ -64,7 +64,7 @@ taskServiceAccount:
 tasks:
   my_task_id:
     execution:
-      service_account: leoflow-task
+      service_account: dexaflow-task
 ```
 
 Dexaflow passes the pod identity through untouched; it never sees a token or key.
@@ -180,7 +180,7 @@ secrets:
 taskServiceAccount:
   create: true
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<leoflow-secrets-reader>
+    eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<dexaflow-secrets-reader>
 ```
 
 ```python

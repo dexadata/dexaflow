@@ -89,7 +89,7 @@ never leaves the cluster):
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
-  name: leoflow-selfsigned
+  name: dexaflow-selfsigned
   namespace: leoflow
 spec:
   selfSigned: {}
@@ -107,28 +107,28 @@ The Certificate's `secretName` must match `agentTLS.serverCertSecret`:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: leoflow-agent-tls
+  name: dexaflow-agent-tls
   namespace: leoflow
 spec:
-  secretName: leoflow-agent-tls          # == agentTLS.serverCertSecret
+  secretName: dexaflow-agent-tls          # == agentTLS.serverCertSecret
   duration: 2160h                        # 90d
   renewBefore: 360h                      # 15d
   issuerRef:
-    name: leoflow-selfsigned
+    name: dexaflow-selfsigned
     kind: Issuer
   dnsNames:
-    - leoflow.leoflow.svc                 # the control-plane Service DNS
-    - leoflow.leoflow.svc.cluster.local
+    - dexaflow.leoflow.svc                 # the control-plane Service DNS
+    - dexaflow.leoflow.svc.cluster.local
     # When split.enabled=true (ADR 0049) the scheduler runs as its own
     # Service and task pods dial IT, not the api Service. The agent verifies
     # the server hostname, so the cert MUST also carry the scheduler DNS or
     # every task's connection fails verification and hangs. Drop these two
     # SANs only if you run the fused `all` role (split.enabled=false).
-    - leoflow-scheduler.leoflow.svc
-    - leoflow-scheduler.leoflow.svc.cluster.local
+    - dexaflow-scheduler.leoflow.svc
+    - dexaflow-scheduler.leoflow.svc.cluster.local
 ```
 
-> The Service names above assume a release named `leoflow` in namespace
+> The Service names above assume a release named `dexaflow` in namespace
 > `leoflow`; both derive from the chart fullname. If you install under a
 > different release/namespace, substitute `<fullname>` and `<fullname>-scheduler`
 > (run `helm template` and read the `Service` names) into every SAN.
@@ -144,7 +144,7 @@ standard way, or copy the issuer's `ca.crt` into a ConfigMap keyed `ca.crt`. Set
 ## 5. Install
 
 ```console
-$ helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
+$ helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
     -n leoflow --create-namespace \
     -f values-pro-tls.yaml
 ```

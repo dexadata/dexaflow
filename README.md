@@ -25,8 +25,8 @@
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/dexadata/dexaflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/dexadata/dexaflow)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13068/badge)](https://www.bestpractices.dev/projects/13068)
 
-[![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#leoflow-lite)
-[![Edition: Pro](https://img.shields.io/badge/edition-Pro-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#leoflow-pro-chart-installable)
+[![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-lite)
+[![Edition: Pro](https://img.shields.io/badge/edition-Pro-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-pro-chart-installable)
 
 ---
 
@@ -99,7 +99,7 @@ helm install lf oci://ghcr.io/dexadata/charts/leoflow --version 0.4.8 -n leoflow
   --set bootstrap.password='change-me'
 ```
 
-Pro deploys the control plane on a real cluster (`leoflow-server` Deployment
+Pro deploys the control plane on a real cluster (`dexaflow-server` Deployment
 + RBAC for the pod-per-task executor + a pre-install migrations Job). **External**
 Postgres 13+ and Redis 6+ are required (the chart fails the install otherwise —
 embedded datastores are Lite-only). Managed datastores work out of the box
@@ -236,7 +236,7 @@ activates fan-in vs what does not, and the on-disk `dag.json` shape.
 A DAG is compiled into an **immutable artifact** (a `dag.json` spec plus a
 container image) and pushed to the control plane. A Go **control plane**
 schedules it and, for each task, dispatches an ephemeral **worker pod** whose
-`leoflow-agent` runs the user code and reports back over gRPC. Postgres holds
+`dexaflow-agent` runs the user code and reports back over gRPC. Postgres holds
 metadata; Redis holds XCom values and live-log fan-out.
 
 ```mermaid
@@ -259,7 +259,7 @@ flowchart LR
 
     sched -->|"dispatch: one pod per task"| pod
     subgraph k8s["Kubernetes"]
-        pod["Worker pod = your DAG image<br/>leoflow-agent ⇄ your Python / Bash"]
+        pod["Worker pod = your DAG image<br/>dexaflow-agent ⇄ your Python / Bash"]
     end
     pod -->|"gRPC: register · fetch spec · push XCom · stream logs · report state"| asvc
 
@@ -288,10 +288,10 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 
 - **CLI + parser** — `dexaflow init / validate / compile / push / runs trigger / runs status / auth create-token`; the Python DAG parser; `compile --build / --push` builds and pushes the DAG image (out-of-process).
 - **Control plane** — Airflow-compatible `/api/v2` API, JWT auth + RBAC + multi-tenant, the scheduler state machine with cron scheduling, Postgres advisory-lock leader election, **task retries**, embedded Scalar API docs, and Prometheus + OpenTelemetry observability.
-- **Execution** — real pod-per-task execution via the `leoflow-agent` over gRPC (Kubernetes, ADR 0015); orphaned-pod reconciliation and completed-pod garbage collection.
+- **Execution** — real pod-per-task execution via the `dexaflow-agent` over gRPC (Kubernetes, ADR 0015); orphaned-pod reconciliation and completed-pod garbage collection.
 - **Data flow** — XCom on Redis (256 KB limit, TTL, optional schema validation) passed between tasks; log shipping to disk **or an opt-in S3/GCS object-store sink** (S3-compatible, keyless-first per ADR 0035) with a read API and live tailing over Redis pub/sub.
 - **dbt** — a dbt project runs as a DAG (pod-per-model or fused groups); managed warehouse connections generate `profiles.yml` in-pod, with modern service-account auth (Snowflake key-pair, BigQuery keyless / Workload Identity, Databricks OAuth M2M).
-- **MCP + typed client** — an experimental [`leoflow-mcp`](https://dexaflow.dexadata.ai/project/adrs/0050-mcp-server/) Model Context Protocol server (read tools + resources over stdio / Streamable HTTP) and a generated, typed Go client for `/api/v2` (`pkg/client`).
+- **MCP + typed client** — an experimental [`dexaflow-mcp`](https://dexaflow.dexadata.ai/project/adrs/0050-mcp-server/) Model Context Protocol server (read tools + resources over stdio / Streamable HTTP) and a generated, typed Go client for `/api/v2` (`pkg/client`).
 
 **Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/dexaflow/issues).
 
@@ -348,21 +348,21 @@ admin password any time with `dexaflow lite reset-password`.
 
 ```bash
 git clone https://github.com/dexadata/dexaflow
-cd leoflow
+cd dexaflow
 make setup            # Go tools, Python parser, pre-commit hook
-make build            # builds bin/leoflow, bin/leoflow-server, bin/leoflow-agent
+make build            # builds bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
 
 # Start Postgres + Redis (Docker) and apply migrations
 make dev-up           # docker compose up --wait + migrate-up; `make dev-down` to stop
 
 # Run the control plane (bootstraps a default admin user)
-DEXAFLOW_AUTH_JWT_SECRET=dev DEXAFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/leoflow-server &
+DEXAFLOW_AUTH_JWT_SECRET=dev DEXAFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/dexaflow-server &
 # API docs (Scalar) at http://localhost:8080/docs ; metrics at http://localhost:9090/metrics
 
 # Author, compile, and register a DAG
 ./bin/dexaflow init my-dag
 ./bin/dexaflow compile my-dag --image my-dag:dev -o my-dag/dag.json
-TOKEN=$(./bin/leoflow auth create-token --username admin@leoflow.local --password admin123)
+TOKEN=$(./bin/dexaflow auth create-token --username admin@leoflow.local --password admin123)
 ./bin/dexaflow push my-dag/dag.json --token "$TOKEN"
 ```
 

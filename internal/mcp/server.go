@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	serverName    = "leoflow"
+	serverName    = "dexaflow"
 	defaultDagLim = 25
 	maxDagLim     = 200
 )

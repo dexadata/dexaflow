@@ -1422,7 +1422,7 @@ func ensureBaseImage(ctx context.Context, cmd *cobra.Command) error {
 	}
 	devPrintln(cmd.OutOrStdout(), "▸ building task base image "+devBaseImage+" (first run) …")
 	if err := devRun(ctx, cmd, "docker", baseImageBuildArgs()...); err != nil {
-		return fmt.Errorf("building base image (run from the leoflow source tree): %w", err)
+		return fmt.Errorf("building base image (run from the dexaflow source tree): %w", err)
 	}
 	return nil
 }

@@ -71,8 +71,8 @@ def upload() -> None:
     hook = S3Hook(aws_conn_id="aws_default")
     print("upload: putting object via S3Hook(aws_default)")
     hook.load_string(
-        string_data="hello from leoflow",
-        key="leoflow/hello.txt",
+        string_data="hello from dexaflow",
+        key="dexaflow/hello.txt",
         bucket_name="my-bucket",
         replace=True,
     )

@@ -70,9 +70,9 @@ not — discovered inside your build, not ours — so it is not published.
 2026-10-31, and `docker-library/python` stops rebuilding an EOL line the day
 after (`python:3.9-slim` was last rebuilt 2025-11-01, one day after 3.9 went
 EOL). From that point `python:3.10-slim` — and so
-`leoflow-runtime:py3.10` — receives no further OS security updates and
+`dexaflow-runtime:py3.10` — receives no further OS security updates and
 accumulates unfixed CVEs indefinitely. The `py3.10` leg keeps being published
-until 2026-10-31, so nothing breaks today; `dexaflow validate`, `leoflow
+until 2026-10-31, so nothing breaks today; `dexaflow validate`, `dexaflow
 compile` and `dexaflow deploy` warn when your project resolves to it.
 
 There are two ways to resolve to it, and they have different fixes:
@@ -95,10 +95,10 @@ base was on the day you pinned it.
 When `base_image` is unset, `dexaflow compile --build` writes the `FROM` itself,
 and it chooses between two tag shapes based on the CLI you are running:
 
-- a **released** `leoflow` pins `leoflow-runtime:py<ver>-v<X.Y.Z>`, which is
+- a **released** `dexaflow` pins `dexaflow-runtime:py<ver>-v<X.Y.Z>`, which is
   immutable, so a compile from that release reproduces byte for byte (ADR 0003)
 - a **development** build, from source or a dirty tree, falls back to
-  `leoflow-runtime:py<ver>`, a line every release republishes
+  `dexaflow-runtime:py<ver>`, a line every release republishes
 
 So two people compiling the same project can end up on different bases if one
 runs a released CLI and the other runs one built from source. Setting
@@ -118,7 +118,7 @@ cluster runs correctly, and phrases it as a mistake in your code.
 | Tool | What it does with the declared version |
 |---|---|
 | `dexaflow validate` | Lints `dag.py` under that minor. If it is not installed, it falls back to any interpreter **at least as new**, because a newer one accepts everything the declared minor accepts. If all that is installed is older, the lint is **skipped with a warning** naming the version rather than run under it. |
-| `leoflow dev` | Builds the project's venv on it, and stops rather than substituting a different minor. |
+| `dexaflow lite` | Builds the project's venv on it, and stops rather than substituting a different minor. |
 
 Three things follow from this that are worth knowing:
 
@@ -195,7 +195,7 @@ this guard exists.
 
 `exclude_paths` is checked on the patterns that are actually emitted, not on the
 field alone: a dbt project path reaches the same `.dockerignore` through the
-build-artifact exclusions leoflow adds for it, so checking only the field left
+build-artifact exclusions Dexaflow adds for it, so checking only the field left
 the class reachable through `dbt.project` and `dbt_groups`.
 
 The same guards apply to the Dockerfile `dexaflow lite --executor=k8s` generates
@@ -270,11 +270,11 @@ roadmap item.
 |---|---|---|
 | `schema_version` | `"1.0"` | Stamps every artifact for forward-compat. |
 | `dag_id` | *subdir basename* | If `dexaflow.yaml` is absent, the parent directory name is used. Two subdirs resolving to the same `dag_id` is a hard error — see [Discovery rules](/author-dags/dag-authoring/#discovery-rules). |
-| `python_version` | `"3.11"` | Pick `3.10`, `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `leoflow dev` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `leoflow dev` stops and says so rather than substituting a different one; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
+| `python_version` | `"3.11"` | Pick `3.10`, `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `dexaflow lite` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `dexaflow lite` stops and says so rather than substituting a different one; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
 | `dag_source` | `"dag.py"` | DAG file relative to the project. |
 | `dependencies` | `[]` | pip specifiers baked into the image. Any [PEP 508](https://peps.python.org/pep-0508/) form works, including version floors (`"setuptools>=80.9.0"`) and environment markers (`'requests; python_version < "3.12"'`) — each entry is passed to pip as one literal argument, so shell characters in a specifier are never interpreted. A line break inside an entry is refused, since it would end the generated `RUN` instruction, and every entry is passed after a `--` so an entry beginning with a dash is treated as a package name rather than as an option to pip. |
 | `connectors` | `[]` | Short connector names expanded to provider packages at compile (ADR 0038). |
-| `system_packages` | `[]` | apt packages. `apt-get install`ed into the DAG image at compile, resolving against the task base image's Debian suite — see the `system_packages` row under [dexaflow.yaml](#leoflowyaml) for which suite that is and what moved. |
+| `system_packages` | `[]` | apt packages. `apt-get install`ed into the DAG image at compile, resolving against the task base image's Debian suite — see the `system_packages` row under [dexaflow.yaml](#dexaflowyaml) for which suite that is and what moved. |
 | `include_paths` | `["."]` | Extra paths copied into the image **alongside** `dag_source` — a helper module, a config file, a fixtures directory. Entries are relative to the project directory; an absolute one, or one escaping the context (`../x`), is refused at compile with the entry named, because Docker cannot `COPY` it and failing at build time would name a Docker error instead. The default `["."]` means *no extra paths*, not "everything": it is what every existing project carries, so it must not change what their images contain. Entries already copied (the DAG source, a dbt group directory) are skipped rather than duplicated. Only the **generated** Dockerfile honours it — a project-supplied Dockerfile copies whatever its own `COPY` lines say. Included paths are scanned by the credential warning like everything else that ships. |
 | `exclude_paths` | `[".git", "__pycache__", "*.pyc", ".venv", "venv"]` | Kept out of the image. On `--build` these become a `.dockerignore` in the build context for the duration of the build — merged with yours if you have one, and removed afterwards. Each entry is expanded to the forms Docker actually honours, because a bare name in a `.dockerignore` matches only at the context root: a plain directory name becomes four patterns (`p`, `**/p`, `p/**`, `**/p/**`) so that both the directory and its contents are pruned at any depth; an entry whose last segment contains a glob becomes `p` and `**/p` only, since a glob names files rather than a directory to descend into; and an entry containing a `/` is already anchored, so it becomes `p` and `p/**`. An entry starting with `!` or `#` contributes nothing: it is dropped rather than expanded, so a negation belongs in your own `.dockerignore` (which is merged, never rewritten) and not here. A dropped `!` is **reported by name** at build time — leoflow's block is appended after your own lines, so a negation emitted there could resurrect a path one of your earlier lines excluded. Add anything holding credentials: the image is pushed to a registry and pulled by every pod that runs the DAG. **Not** used by workspace discovery, which has its own hardcoded skip list. |
 | `build.context` | `"."` | **Not implemented.** Declared and defaulted, but the build always uses the DAG directory. Tracked in [#1062](https://github.com/dexadata/dexaflow/issues/1062). |
@@ -464,14 +464,14 @@ a WARN at boot when the secret is empty.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `dexaflow lite`/`leoflow dev` set it). |
+| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `dexaflow lite` sets it). |
 | `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). |
 | `DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR` | _(empty → `server.grpc_addr`)_ | both | gRPC address task pods dial back to. In a local k3d/kind cluster set it to a host-reachable address such as `host.k3d.internal:9091`. |
 | `DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP` | _(empty)_ | Pro | Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel (dev). |
 | `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` | _(empty)_ | Pro | Names a Kubernetes Secret mounted read-only into every task pod, so a task can read a cluster-stored credential (e.g. a GCP SA key) referenced by a connection's `key_path` ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)). Empty = no secret mounted. |
 | `DEXAFLOW_EXECUTOR_TASK_SECRET_MOUNT_PATH` | `/etc/leoflow/secrets` | Pro | Where `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` is mounted in the task pod. |
 | `DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT` | _(empty)_ | Pro | ServiceAccount task pods run as when a DAG does not set `execution.service_account`. The Helm chart wires this from `taskServiceAccount.name` when `taskServiceAccount.create: true`, so creating the task SA is enough for keyless secret access — no per-DAG opt-in. An explicit per-task `execution.service_account` still wins; empty leaves pods on the namespace default SA. |
-| `DEXAFLOW_EXECUTOR_AGENT_PATH` | `leoflow-agent` | dev-only | The leoflow-agent binary the subprocess executor runs. |
+| `DEXAFLOW_EXECUTOR_AGENT_PATH` | `leoflow-agent` | dev-only | The agent binary the subprocess executor runs (`leoflow-agent`, a link to `dexaflow-agent`, so agents from before the rename are found too). |
 | `DEXAFLOW_EXECUTOR_SUBPROCESS_WORKDIR` | _(empty)_ | dev-only | Working directory the subprocess executor runs the agent in (so it can import the project's `dag.py`). Empty keeps the server's working directory. |
 | `DEXAFLOW_EXECUTOR_HTTP_USER_AGENT` | `leoflow/0.1` | both | Default `User-Agent` header for HTTP requests a task image may make on the platform's behalf. |
 

@@ -67,7 +67,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 		return serr
 	}
 
-	devPrintf(out, "  archive: leoflow=%s schema=%d created=%s\n",
+	devPrintf(out, "  archive: dexaflow=%s schema=%d created=%s\n",
 		archive.Manifest.LeoflowVersion, archive.Manifest.SchemaVersion,
 		archive.Manifest.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
 
@@ -168,7 +168,7 @@ func readBackupArchive(path string) (archiveContents, error) {
 		}
 	}
 	if len(manifestData) == 0 {
-		return archiveContents{}, fmt.Errorf("archive has no MANIFEST.json; is this a leoflow backup?")
+		return archiveContents{}, fmt.Errorf("archive has no MANIFEST.json; is this a dexaflow backup?")
 	}
 	manifest, merr := unmarshalManifest(manifestData)
 	if merr != nil {

@@ -11,7 +11,7 @@ Python pain. Native map-reduce for ML/AI: fan-out + reduce as a list comprehensi
 <a class="btn btn-lg btn-primary me-3 mb-4" href="/get-started/quickstart/">
   Get started <i class="fas fa-arrow-alt-circle-right ms-2"></i>
 </a>
-<a class="btn btn-lg btn-secondary me-3 mb-4" href="/why-leoflow/">
+<a class="btn btn-lg btn-secondary me-3 mb-4" href="/why-dexaflow/">
   Why Dexaflow <i class="fas fa-heart ms-2"></i>
 </a>
 <a class="btn btn-lg btn-secondary me-3 mb-4" href="https://github.com/dexadata/dexaflow">
@@ -69,7 +69,7 @@ changes.
 ### Start where you are
 
 **New here?** [Quickstart](/get-started/quickstart/) gets Dexaflow Lite running in
-two commands. **Evaluating?** [Why Dexaflow](/why-leoflow/) and
+two commands. **Evaluating?** [Why Dexaflow](/why-dexaflow/) and
 [Editions & modes](/concepts/editions/) lay out the model and the Lite/Pro split.
 **Building?** The [Reference](/reference/) has the HTTP API, CLI, Go packages, and
 every `DEXAFLOW_*` config key.

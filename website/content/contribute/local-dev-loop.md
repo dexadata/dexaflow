@@ -14,7 +14,7 @@ Working on Dexaflow from source has **two inner loops**, and you pick by what yo
 changed:
 
 - **Iterating on a DAG** (Python/YAML) — use the
-  [`dexaflow lite` hot-reload loop](#the-leoflow-lite-hot-reload-loop): save a file,
+  [`dexaflow lite` hot-reload loop](#the-dexaflow-lite-hot-reload-loop): save a file,
   the watcher recompiles and registers a new version in seconds.
 - **Iterating on the control plane, agent, or CLI** (Go) — use
   [`make lite-redeploy`](#redeploying-go-changes-make-lite-redeploy): it rebuilds all
@@ -34,14 +34,14 @@ production instance.
 This page is the **from-source** loop for working on Dexaflow itself:
 
 ```bash
-make dev-install            # build + put leoflow / server / agent on your PATH
+make dev-install            # build + put dexaflow / server / agent on your PATH
 dexaflow lite provision          # provision local dev deps (base image, local DB)
 dexaflow init dags/my_dag    # scaffold a project
 dexaflow lite dags/my_dag    # hot-reload at http://localhost:8088 (marked LITE)
 ```
 
 {{% alert title="Login" color="info" %}}
-If you ran [`dexaflow setup`](/get-started/installation/#what-leoflow-setup-does) (the
+If you ran [`dexaflow setup`](/get-started/installation/#what-dexaflow-setup-does) (the
 end-user installer does), Lite enforces a real **admin login** — recover it
 with `dexaflow lite reset-password`. A bare source checkout without that
 config falls back to no-auth (loopback only) with a warning, for a quick loop.
@@ -266,7 +266,7 @@ This is **not** an install path. Real users still install via
 
 ### What it does
 
-1. **Builds** `leoflow`, `leoflow-server`, and `leoflow-agent` from the
+1. **Builds** `dexaflow`, `dexaflow-server`, and `dexaflow-agent` from the
    current working tree (no `git tag` needed).
 2. **Ad-hoc code-signs** the binaries on macOS so the OS does not
    SIGKILL them at exec (Sequoia 14+ refuses to run an unsigned binary
@@ -309,18 +309,18 @@ kill "$(cat /tmp/leoflow-lite.pid)"
 
 ### The two-binary trap (why this script exists)
 
-`dexaflow lite` is a thin orchestrator: it spawns `leoflow-server` as a
+`dexaflow lite` is a thin orchestrator: it spawns `dexaflow-server` as a
 subprocess. The Subprocess executor (the dev-only path that runs your
-Python tasks) in turn spawns `leoflow-agent`. So a single `dexaflow lite`
+Python tasks) in turn spawns `dexaflow-agent`. So a single `dexaflow lite`
 process tree uses **all three binaries**:
 
 ```
 dexaflow lite (CLI / orchestrator)
-└── leoflow-server (control plane HTTP + gRPC + scheduler)
-    └── leoflow-agent (per-task subprocess; runs the user's dag.py)
+└── dexaflow-server (control plane HTTP + gRPC + scheduler)
+    └── dexaflow-agent (per-task subprocess; runs the user's dag.py)
 ```
 
-If you rebuild only `leoflow` (the CLI) but leave a stale `leoflow-server`
+If you rebuild only `dexaflow` (the CLI) but leave a stale `dexaflow-server`
 behind, lite still boots — but the control plane that actually handles
 requests is the OLD code. Symptom: your code change "doesn't show up"
 and you waste 30 minutes second-guessing the test. The script avoids

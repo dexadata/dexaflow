@@ -89,7 +89,7 @@ The construct named most often in real deploys:
 The full, current, authoritative list (including reschedule-mode sensors,
 deferrable operators, branching, `PythonVirtualenvOperator`, per-task
 `default_args`) lives in
-[DAG authoring → Not supported](/author-dags/dag-authoring/#not-supported--leoflow-compile-rejects-these) —
+[DAG authoring → Not supported](/author-dags/dag-authoring/#not-supported--dexaflow-compile-rejects-these) —
 this page only calls out the ones deploy attempts hit most.
 
 ### 4. Non-root task image

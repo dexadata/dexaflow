@@ -20,7 +20,7 @@ removed when the task ends) — **never** the project directory, the process CWD
 the repo, or a committable dotfile. The default output location must be a private
 `mkdtemp`, never `os.getcwd()` / `"."`.
 
-leoflow provides the scratch on both execution paths — use it, don't reinvent it:
+Dexaflow provides the scratch on both execution paths — use it, don't reinvent it:
 
 - **Pod**: the base image sets `DBT_PROFILES_DIR` / `DBT_TARGET_PATH` /
   `DBT_LOG_PATH` to `/tmp/leoflow/...` (`runtime/Dockerfile`).

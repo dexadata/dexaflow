@@ -279,7 +279,7 @@ Pin a pre-built one with `dbt.manifest` to skip the parse (see
 **Which `dbt` runs the parse is not the same in both editions**, and the
 difference decides whether you need dbt installed on your host at all:
 
-- Under **`leoflow dev`** the per-DAG venv is provisioned from `dependencies:`
+- Under **`dexaflow lite`** the per-DAG venv is provisioned from `dependencies:`
   *before* the project is compiled, and the parse uses **that venv's `dbt`**. So
   a Lite project that declares `dbt-core` and its adapter in `dependencies:`
   compiles with no dbt on your `PATH` — the version that parses your models is

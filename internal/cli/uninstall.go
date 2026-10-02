@@ -60,7 +60,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	binDir := installBinDir()
 	devPrintf(out, "This will remove the Dexaflow installation:\n  %s  (config, managed Python, Monaco, sources)\n", root)
 	if binDir != "" {
-		devPrintf(out, "  the leoflow binaries in %s\n", binDir)
+		devPrintf(out, "  the dexaflow binaries (and their leoflow links) in %s\n", binDir)
 	}
 	if purge {
 		if workspace != "" {
@@ -108,7 +108,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 			devPrintf(out, "✓ removed workspace %s\n", workspace)
 		}
 	}
-	devPrintln(out, "Done. If install.sh added a 'leoflow' PATH line to your shell profile, remove it.")
+	devPrintln(out, "Done. If install.sh added a dexaflow (or, before the rename, leoflow) PATH line to your shell profile, remove it.")
 	return nil
 }
 

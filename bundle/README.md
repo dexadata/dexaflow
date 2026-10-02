@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/bundle/insta
 The script will:
 
 1. Detect Linux/arch and delegate to the canonical `install.sh` to download
-   the latest pre-release `leoflow` binary into `~/.local/bin/`.
+   the latest pre-release `dexaflow` binary into `~/.local/bin/`.
 2. Run `dexaflow setup` — which **generates the admin password and prints it
    once in cyan**. SAVE IT.
 3. Drop the curated DAG bundle into the workspace (`~/dexaflow/` by default).
@@ -71,8 +71,8 @@ Specifically:
   (max sleep is 6 s), NOT take 18 s in sequence.
 - Trigger `lifecycle` from the UI. Logs visible? Status transitions correct?
   XCom values flow between the 3 tasks?
-- Try to break it — restart the host mid-run; kill the leoflow process
-  with `pkill -9 leoflow`; pull the network briefly. Recovery contract is
+- Try to break it — restart the host mid-run; kill the dexaflow process
+  with `pkill -9 dexaflow`; pull the network briefly. Recovery contract is
   in `docs/scheduler-resilience.md`.
 
 Findings → comments on the alpha-prep issues.

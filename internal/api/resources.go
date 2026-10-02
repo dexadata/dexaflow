@@ -676,7 +676,7 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		// termination, not a predicate change.
 		if body.OnlyRunning != nil && *body.OnlyRunning {
 			AbortProblem(c, http.StatusBadRequest, "bad request",
-				"only_running is not supported: leoflow cannot clear a running task instance. "+
+				"only_running is not supported: Dexaflow cannot clear a running task instance. "+
 					"Airflow's equivalent sets the task to RESTARTING and kills it; this server has no such path, "+
 					"and honoring only_failed=false alone would clear every task instance named by the request, "+
 					"including ones that succeeded. Wait for the task to settle, or name the task instances explicitly.")

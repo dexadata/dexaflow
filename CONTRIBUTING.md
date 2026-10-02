@@ -115,7 +115,7 @@ If you have a contribution in these areas, please open a discussion issue first.
 ```bash
 # Clone the repo
 git clone https://github.com/dexadata/dexaflow.git
-cd leoflow
+cd dexaflow
 ```
 
 ### See it run first (one command)
@@ -133,12 +133,12 @@ docker compose --profile demo up --build
 cp .github/CLAUDE.md.template ./CLAUDE.md
 
 make setup        # Go tools, Python parser/runtime, pre-commit hook
-make build        # build bin/leoflow, bin/leoflow-server, bin/leoflow-agent
+make build        # build bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent (plus leoflow* links)
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the quality gates you must pass before pushing
 ```
 
-For an end-to-end author→run loop without Kubernetes, use `leoflow dev`
+For an end-to-end author→run loop without Kubernetes, use `dexaflow lite`
 (see [Editions & operating modes](website/content/concepts/editions.md)).
 
 ## Project Layout

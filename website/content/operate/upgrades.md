@@ -21,7 +21,7 @@ concern.
 
 ## Lite — what is preserved across upgrades
 
-Reinstalling (running the new `install.sh`, or `brew upgrade leoflow` once
+Reinstalling (running the new `install.sh`, or `brew upgrade dexaflow` once
 that ships) over an existing Lite install **preserves all of these by
 default**:
 
@@ -37,18 +37,18 @@ default**:
 
 | What | Why |
 |---|---|
-| The `leoflow` / `leoflow-server` / `leoflow-agent` binaries on `PATH` | Replaced by `install.sh`. |
+| The `dexaflow` / `dexaflow-server` / `dexaflow-agent` binaries on `PATH` (and their `leoflow*` links) | Replaced by `install.sh`. |
 | `~/.dexaflow/python/` (managed CPython) | Pinned per release; replaced if the new release pins a different version. |
 | The SQL schema | The new binary applies any missing migrations on first start. |
 
 ## Drift detection
 
-If you somehow run an **older** `leoflow` binary against a database a **newer**
+If you somehow run an **older** `dexaflow` binary against a database a **newer**
 binary has already migrated, the older binary refuses to start with:
 
 ```
 database is at schema version 18 but this binary only knows up to 15;
-an older `leoflow` is being run against a newer database.
+an older `dexaflow` is being run against a newer database.
 Upgrade the binary, or run `dexaflow uninstall --purge` to start over
 (this WIPES your data)
 ```
@@ -88,15 +88,25 @@ The Pro control plane upgrades with the standard Helm flow: re-run
 newer version.
 
 ```sh
-# OCI chart (the primary install path — see Installation):
-helm upgrade leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
+# OCI chart (the primary install path, see Installation):
+helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --reset-then-reuse-values
 
 # Or pin the image tags explicitly:
-helm upgrade leoflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
+helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --reset-then-reuse-values \
   --set image.tag=<VERSION> \
   --set migrations.image.tag=<VERSION>
+```
+
+A release installed before the rename was installed from the chart named
+`leoflow`, and the chart name is part of its Deployment selector, which
+Kubernetes does not let an upgrade change. Keep upgrading it with
+`charts/leoflow`, the same chart published under its old name:
+
+```sh
+helm upgrade <release> oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
+  -n leoflow --reset-then-reuse-values
 ```
 
 ### Use `--reset-then-reuse-values`, not `--reuse-values`
@@ -121,7 +131,7 @@ actually configured is preserved. Prefer it for every cross-version upgrade.
 Keeping a values file under version control and passing `-f` is better still.
 
 The chart runs a **pre-upgrade migrations Job** (`golang-migrate` against
-`database.url`) before the new `leoflow-server` rolls out, so the schema is
+`database.url`) before the new `dexaflow-server` rolls out, so the schema is
 brought to parity before any new binary serves traffic. The same startup
 **drift detector** described above protects a Pro control plane from being run
 against a database a newer binary already migrated. Use `--version <VERSION>`

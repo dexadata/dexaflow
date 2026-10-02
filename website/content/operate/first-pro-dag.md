@@ -20,7 +20,7 @@ every boundary in one shot:
 ```mermaid
 flowchart LR
   A[dag.py + dexaflow.yaml] --> B[compile → dag.json]
-  B --> C[build DAG image<br/>FROM leoflow-runtime]
+  B --> C[build DAG image<br/>FROM dexaflow-runtime]
   C --> D[push image → your registry]
   D --> E[re-pin by digest<br/>+ register → control plane]
   E --> F[runs in a pod]
@@ -39,7 +39,7 @@ flowchart LR
 
 - **`docker`** (or `podman`/`nerdctl` — pass `--builder`). Used to build and push
   the DAG image. On Docker Desktop, cross-building for the cluster "just works".
-- The **`leoflow` CLI** and Python 3.11+ on your machine (`leoflow setup` once).
+- The **`dexaflow` CLI** and Python 3.11+ on your machine (`dexaflow setup` once).
 - **A container registry your cluster can pull from** — anywhere: Docker Hub, GHCR,
   Amazon ECR, Google Artifact Registry, Azure ACR, or a private one. You push the
   DAG image there; the control plane pulls it. (Lite needs none — this is a Pro
@@ -100,7 +100,7 @@ ENV PYTHONPATH=/home/leoflow
 
 {{% alert title="The base image is ours; you never build it" color="success" %}}
 Your image layers `FROM` the **published Dexaflow task base**
-(`ghcr.io/dexadata/dexaflow-runtime:py3.11`) — it bundles the `leoflow-agent`
+(`ghcr.io/dexadata/dexaflow-runtime:py3.11`) — it bundles the `dexaflow-agent`
 (PID 1, talks gRPC to the control plane) and the `leoflow_runtime` helper, is
 multi-arch and signed, and is built by our CI. You only add your deps and copy
 your DAG in. (In [the complete path](#the-complete-path--your-own-dag-yaml-driven)

@@ -31,7 +31,7 @@ page at `docs/connections/mysql.md` covers it.
 ### 1. Spin up a target MySQL
 
 ```sh
-docker run --rm -d --name leoflow-warehouse-mysql \
+docker run --rm -d --name dexaflow-warehouse-mysql \
   -e MYSQL_ROOT_PASSWORD=etl \
   -e MYSQL_DATABASE=warehouse \
   -p 53306:3306 \
@@ -67,7 +67,7 @@ In the UI: open `mysql_load` → **Trigger DAG**.
 ### 4. Verify
 
 ```sh
-docker exec leoflow-warehouse-mysql \
+docker exec dexaflow-warehouse-mysql \
   mysql -uroot -petl -D warehouse \
   -e "SELECT COUNT(*), MIN(name), MAX(score) FROM example_load;"
 ```

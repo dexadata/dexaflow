@@ -23,7 +23,7 @@ from airflow.sdk import DAG, task
 
 @task
 def hello() -> str:
-    return "hello from leoflow"
+    return "hello from dexaflow"
 
 
 with DAG("%s", schedule="@daily", catchup=False, tags=["example"]):
