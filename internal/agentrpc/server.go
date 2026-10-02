@@ -149,6 +149,7 @@ type Server struct {
 	xcom                 XComService
 	logs                 LogSink
 	tail                 LogPublisher
+	tailOnDemand         bool
 	secrets              SecretsStore
 	secretAudit          SecretScopeAuditor
 	liveness             TaskLivenessChecker
@@ -231,6 +232,17 @@ func (s *Server) SetLogSink(sink LogSink) { s.logs = sink }
 // SetLogPublisher attaches the live-tail publisher (optional). When set,
 // StreamLogs publishes each line for the UI's live tail.
 func (s *Server) SetLogPublisher(p LogPublisher) { s.tail = p }
+
+// SetTailPublishOnDemand selects logs.tail.publish: false (the default,
+// "always") publishes every line as it arrives; true ("on_demand") publishes
+// only while a probe finds a follower, replaying the lines held since the last
+// probe that found none (see tailGate).
+func (s *Server) SetTailPublishOnDemand(on bool) { s.tailOnDemand = on }
+
+// tailGateFor builds the live-tail gate for one attempt's log stream.
+func (s *Server) tailGateFor(ref logs.Ref) *tailGate {
+	return newTailGate(s.tail, ref, time.Now, s.tailOnDemand)
+}
 
 // Register acknowledges an agent's startup and returns the server clock.
 func (s *Server) Register(ctx context.Context, _ *agentv1.RegisterRequest) (*agentv1.RegisterResponse, error) {
@@ -531,7 +543,7 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 	ref := logs.Ref{TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber}
 	publish := func(string) {}
 	if s.tail != nil {
-		gate := newTailGate(s.tail, ref, time.Now)
+		gate := s.tailGateFor(ref)
 		publish = func(line string) { gate.publish(stream.Context(), line) }
 	}
 	return writeLines(s.shutdown, w, stream.Recv, publish, attemptAttrs(id))

@@ -559,6 +559,7 @@ differ from what's committed.
 | logs.sink.prefix | string | `""` | Optional key prefix under which attempt objects are laid out (`{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`). |
 | logs.sink.provider | string | `"disk"` | Durable task-log backend: `disk` (default — the PVC above), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage). Object storage is opt-in; `disk` leaves the on-disk path unchanged. |
 | logs.sink.region | string | `""` | [s3] Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores. |
+| logs.tail.publish | string | `"always"` | When received task-log lines are published for live followers: `always` (default) publishes every line as it arrives; `on_demand` publishes only while someone follows the attempt, checking at most once a second per log stream and replaying to a new follower the lines received since the last check (at most 1024 lines or 1 MiB). Enable `on_demand` once every replica runs a version that skips replayed lines. |
 | metrics.serviceMonitor.additionalLabels | object | `{}` | Extra labels on the ServiceMonitor. Required when the Prometheus instance has a `serviceMonitorSelector` filter (e.g. `{release: kube-prometheus-stack}`). |
 | metrics.serviceMonitor.enabled | bool | `false` | Enable ServiceMonitor for Prometheus scraping. Requires kube-prometheus-stack CRDs. |
 | metrics.serviceMonitor.interval | string | `"30s"` | Prometheus scrape interval. |

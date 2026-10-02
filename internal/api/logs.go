@@ -58,7 +58,7 @@ func serveLogs(c *gin.Context, reader LogReader, tasks TaskInstanceRepository, t
 	case logFormatNDJSON:
 		serveNdjsonLogs(c, stored, try)
 		if c.Query("follow") == "true" {
-			tailNdjson(c, reader, try, stored.servedUntil())
+			tailNdjson(c, reader, try, stored.served())
 		}
 		return
 	case logFormatJSON:
@@ -80,7 +80,7 @@ func serveLogs(c *gin.Context, reader LogReader, tasks TaskInstanceRepository, t
 		}
 	}
 	if c.Query("follow") == "true" {
-		tailLogs(c, reader, try, stored.servedUntil())
+		tailLogs(c, reader, try, stored.served())
 	}
 }
 
@@ -109,36 +109,53 @@ func (t *lastLineTracker) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// servedUntil is the timestamp of the last stored line read, zero when there is
-// none or it carries no timestamp (a legacy plain line).
-func (t *lastLineTracker) servedUntil() time.Time {
+// storedTail is the last line a stored read served: its raw encoding and its
+// timestamp. The zero value means nothing was served.
+type storedTail struct {
+	line string
+	at   time.Time // zero when the line carries no timestamp (a legacy plain line)
+}
+
+// served reports the last stored line read.
+func (t *lastLineTracker) served() storedTail {
 	line := t.last
 	if len(t.tail) > 0 {
 		line = t.tail
 	}
 	if len(line) == 0 {
-		return time.Time{}
+		return storedTail{}
 	}
-	return logs.DecodeLine(string(line)).Time
+	return storedTail{line: string(line), at: logs.DecodeLine(string(line)).Time}
 }
 
-// replaySkipper drops the leading live lines a stored read already served. The
-// publisher replays the lines it held until it noticed this follower (see
-// agentrpc.tailGate), and the oldest of those can already be in the store. Only
-// the leading run is examined: once a line newer than the stored tail passes,
-// every later line passes, so a line stamped out of order is never lost.
+// replaySkipper drops the leading live lines a stored read already served. With
+// logs.tail.publish set to on_demand the publisher replays the lines it held
+// until it noticed this follower (see agentrpc.tailGate), and the oldest of
+// those can already be in the store. Only lines flagged as a replay
+// (logs.MarkReplay) are ever skipped, so the default publish mode, which never
+// replays, shows every live line as before. Within the leading replayed run, the
+// exact last stored line ends the skip: the replay is in the order the server
+// received the lines, which is the order it stored them, so nothing after that
+// line was served. Before it, a line stamped no later than the stored tail is
+// taken as served. The first line that is not skipped ends the skip for good.
 type replaySkipper struct {
-	served time.Time
+	served storedTail
 	done   bool
 }
 
 // next decodes a live line and reports whether to skip it.
 func (s *replaySkipper) next(line string) (logs.Event, bool) {
-	ev := logs.DecodeLine(line)
-	if s.done || s.served.IsZero() {
+	raw, replay := logs.SplitReplay(line)
+	ev := logs.DecodeLine(raw)
+	if s.done || !replay || s.served.line == "" {
+		s.done = true
 		return ev, false
 	}
-	if !ev.Time.IsZero() && !ev.Time.After(s.served) {
+	if raw == s.served.line {
+		s.done = true
+		return ev, true
+	}
+	if !s.served.at.IsZero() && !ev.Time.IsZero() && !ev.Time.After(s.served.at) {
 		return ev, true
 	}
 	s.done = true
@@ -207,9 +224,9 @@ func attemptFailureReason(c *gin.Context, tasks TaskInstanceRepository, try int)
 
 // tailLogs streams live log lines to the client until the task stops producing
 // them or the client disconnects. It is best-effort: if tailing is unavailable
-// the already-sent stored logs stand on their own. served is the timestamp of
-// the last stored line already sent (see replaySkipper).
-func tailLogs(c *gin.Context, reader LogReader, try int, served time.Time) {
+// the already-sent stored logs stand on their own. served is the last stored
+// line already sent (see replaySkipper).
+func tailLogs(c *gin.Context, reader LogReader, try int, served storedTail) {
 	ctx := c.Request.Context()
 	lines, cancel, err := reader.Tail(ctx, tenantOf(c),
 		c.Param("dag_id"), c.Param("dag_run_id"), c.Param("task_id"), try)

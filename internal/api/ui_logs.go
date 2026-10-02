@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -106,9 +105,9 @@ func toStructuredEvent(ev logs.Event) structuredLogEvent {
 // tailNdjson streams live log lines as NDJSON structured events, so a follower
 // (Accept: application/x-ndjson with follow=true) colors live lines exactly like
 // the stored drill-down. Best-effort: it ends when the task stops producing
-// lines or the client disconnects. served is the timestamp of the last stored
-// line already sent (see replaySkipper).
-func tailNdjson(c *gin.Context, reader LogReader, try int, served time.Time) {
+// lines or the client disconnects. served is the last stored line already sent
+// (see replaySkipper).
+func tailNdjson(c *gin.Context, reader LogReader, try int, served storedTail) {
 	ctx := c.Request.Context()
 	lines, cancel, err := reader.Tail(ctx, tenantOf(c),
 		c.Param("dag_id"), c.Param("dag_run_id"), c.Param("task_id"), try)
