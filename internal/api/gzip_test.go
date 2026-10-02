@@ -128,3 +128,75 @@ func TestGzipJSONIsOffByDefault(t *testing.T) {
 		t.Errorf("Content-Encoding = %q with the gate off, want identity", enc)
 	}
 }
+
+// TestGzipJSONLetsRecoveryAnswerAPanic pins that a handler panic still ends
+// in gin.Recovery's 500: the middleware must not flush a 200 with an empty
+// body on its way out.
+func TestGzipJSONLetsRecoveryAnswerAPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(gin.RecoveryWithWriter(io.Discard))
+	r.Use(GzipJSON())
+	r.GET("/api/v2/boom", func(c *gin.Context) {
+		c.Header("Content-Type", "application/json")
+		panic("boom")
+	})
+	rec := gzipGet(t, r, "/api/v2/boom", true)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d after a handler panic, want 500", rec.Code)
+	}
+	if enc := rec.Header().Get("Content-Encoding"); enc != "" {
+		t.Errorf("Content-Encoding %q on the panic response, want identity", enc)
+	}
+}
+
+// TestGzipJSONSkipsSecretBearingRoutes pins the BREACH mitigation: routes that
+// return secrets or tokens (variables, connections, XComs, auth) are never
+// compressed, so their length cannot leak a secret next to reflected input.
+func TestGzipJSONSkipsSecretBearingRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(GzipJSON())
+	paths := []string{
+		"/api/v2/variables",
+		"/api/v2/variables/db_password",
+		"/api/v2/connections",
+		"/api/v2/connections/pg",
+		"/api/v2/xcoms/etl/r1/extract/key",
+		"/api/v2/dags/etl/dagRuns/r1/taskInstances/extract/xcomEntries",
+		"/api/v2/auth/token/renew",
+	}
+	for _, p := range paths {
+		r.GET(p, func(c *gin.Context) { c.JSON(http.StatusOK, bigJSON) })
+	}
+	for _, p := range paths {
+		rec := gzipGet(t, r, p, true)
+		if enc := rec.Header().Get("Content-Encoding"); enc != "" {
+			t.Errorf("%s: Content-Encoding %q, want identity", p, enc)
+		}
+	}
+}
+
+// TestGzipJSONHonorsAcceptEncodingQuality pins the Accept-Encoding parse: a
+// coding with q=0 is refused, not accepted because its name appears.
+func TestGzipJSONHonorsAcceptEncodingQuality(t *testing.T) {
+	r := gzipEngine()
+	cases := map[string]bool{
+		"gzip":                 true,
+		"br, GZIP;q=0.5":       true,
+		"gzip;q=0":             false,
+		"gzip; q=0.000":        false,
+		"identity, x-gzip;q=0": false,
+		"deflate":              false,
+		"nogzip":               false,
+	}
+	for ae, want := range cases {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v2/big", http.NoBody)
+		req.Header.Set("Accept-Encoding", ae)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Content-Encoding") == "gzip"; got != want {
+			t.Errorf("Accept-Encoding %q: gzipped=%v, want %v", ae, got, want)
+		}
+	}
+}
