@@ -1,9 +1,9 @@
-Leoflow
+Dexaflow (formerly Leoflow)
 Licensed under the Apache License, Version 2.0 (see LICENSE).
 
 This product includes software developed by third parties, redistributed under
 the terms below. Apache-2.0 §4(d) requires a NOTICE file when a work you
-redistribute carries one; this file exists because Leoflow's binaries embed and
+redistribute carries one; this file exists because Dexaflow's binaries embed and
 redistribute the components listed here, not merely depend on them.
 
 --------------------------------------------------------------------------------
@@ -11,15 +11,15 @@ Apache Airflow web UI (SPA bundle)
 --------------------------------------------------------------------------------
 
 Version 3.2.1, embedded under internal/ui/assets and compiled into the
-leoflow-server binary and the container images built from it (ADR 0017).
+dexaflow-server binary and the container images built from it (ADR 0017).
 
   Copyright The Apache Software Foundation
   Licensed under the Apache License, Version 2.0
   https://github.com/apache/airflow
 
-Leoflow serves this bundle to provide an Airflow-compatible interface (ADR 0007).
-The bundle's navigation links are rewritten to point at Leoflow's own
-documentation; the bundle is otherwise unmodified. Leoflow is not affiliated with
+Dexaflow serves this bundle to provide an Airflow-compatible interface (ADR 0007).
+The bundle's navigation links are rewritten to point at Dexaflow's own
+documentation; the bundle is otherwise unmodified. Dexaflow is not affiliated with
 or endorsed by the Apache Software Foundation, and "Apache", "Apache Airflow" and
 the Airflow logo are trademarks of the Apache Software Foundation.
 
