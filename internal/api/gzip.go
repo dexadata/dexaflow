@@ -34,23 +34,88 @@ func newGzipWriter() *gzip.Writer {
 // identity from then on, so every line still reaches the client the moment it
 // is flushed. Static assets are precompressed by their own handler and are
 // not on these prefixes.
+//
+// Routes that return secrets or tokens (variables, connections, XComs, auth)
+// are never compressed either: with a secret and attacker-reflected input in
+// one compressed body, the response length can leak the secret (BREACH).
+//
+// A handler panic is passed on untouched: the held-back response is dropped
+// so gin.Recovery can still answer 500.
 func GzipJSON() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p := c.Request.URL.Path
 		if !strings.HasPrefix(p, "/api/v2/") && !strings.HasPrefix(p, "/ui/") ||
-			strings.Contains(p, "/logs") ||
-			!strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+			strings.Contains(p, "/logs") || secretBearingPath(p) ||
+			!acceptsGzip(c.Request.Header.Values("Accept-Encoding")) {
 			c.Next()
 			return
 		}
 		w := &gzipResponseWriter{ResponseWriter: c.Writer, status: http.StatusOK}
 		c.Writer = w
 		defer func() {
+			if r := recover(); r != nil {
+				c.Writer = w.ResponseWriter
+				panic(r)
+			}
 			w.finish()
 			c.Writer = w.ResponseWriter
 		}()
 		c.Next()
 	}
+}
+
+// secretBearingPrefixes are the API routes whose bodies can carry a secret or
+// a token, kept out of compression (see GzipJSON).
+var secretBearingPrefixes = []string{
+	"/api/v2/variables",
+	"/api/v2/connections",
+	"/api/v2/xcoms",
+	"/api/v2/auth/",
+}
+
+// secretBearingPath reports whether a path returns secrets, tokens or XCom
+// values, which may hold either.
+func secretBearingPath(p string) bool {
+	for _, prefix := range secretBearingPrefixes {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(p), "xcom")
+}
+
+// acceptsGzip parses Accept-Encoding (RFC 9110 section 12.5.3) and reports
+// whether gzip (or its x-gzip alias) is listed with a nonzero quality. A bare
+// "*" is not taken as consent: compression stays opt in per client.
+func acceptsGzip(values []string) bool {
+	for _, v := range values {
+		for _, item := range strings.Split(v, ",") {
+			coding, params, _ := strings.Cut(item, ";")
+			coding = strings.ToLower(strings.TrimSpace(coding))
+			if coding != "gzip" && coding != "x-gzip" {
+				continue
+			}
+			if qualityIsZero(params) {
+				return false
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// qualityIsZero reports whether an Accept-Encoding parameter list carries
+// q=0 (in any of its spellings: 0, 0., 0.0, 0.00, 0.000).
+func qualityIsZero(params string) bool {
+	for _, param := range strings.Split(params, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "q") {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		return strings.HasPrefix(value, "0") && strings.Trim(value, "0.") == ""
+	}
+	return false
 }
 
 // gzipResponseWriter holds back the first gzipMinBytes of the body to decide

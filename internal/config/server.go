@@ -351,7 +351,11 @@ type ServerSection struct {
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
 	// GzipResponses gzips JSON and NDJSON responses of 1 KB or more on the API
 	// and UI surfaces for clients that accept it. Log routes and anything that
-	// flushes (live tails, SSE) stay uncompressed. Off by default (ADR 0062).
+	// flushes (live tails, SSE) stay uncompressed. Routes that return secrets
+	// or tokens (variables, connections, XComs, auth) also stay uncompressed:
+	// compressing a secret next to reflected input lets its length leak the
+	// secret (BREACH). Other JSON can still echo request input next to private
+	// data, which is the trade-off of turning this on. Off by default (ADR 0062).
 	GzipResponses bool `mapstructure:"gzip_responses"`
 }
 
