@@ -5,18 +5,22 @@ package storage_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/dexadata/dexaflow/migrations"
 )
 
 // slotFixture is a tenant of its own with one DAG run that holds many settled
@@ -188,6 +192,53 @@ WHERE i.indrelid = 'task_instances'::regclass
 	defer rows.Close()
 	if !rows.Next() {
 		t.Error("no valid task_instances index leads with tenant_id, carries state and pool, and holds only scheduled, queued, running and deferred rows")
+	}
+}
+
+// TestActiveTenantIndexBuildFailsOverInvalidIndex replays 035 against the
+// state an interrupted CREATE INDEX CONCURRENTLY leaves behind: an INVALID
+// idx_ti_active_tenant. The retry must fail with duplicate_table instead of
+// reporting success and keeping an index the planner never uses.
+func TestActiveTenantIndexBuildFailsOverInvalidIndex(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL must point at a migrated database for integration tests")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	const schema = "dexaflow_probe_active_tenant_index"
+	if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE; CREATE SCHEMA "+schema); err != nil {
+		t.Skipf("creating a scratch schema needs CREATE on the database: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE") })
+	cfg := pool.Config().Copy()
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	scratch, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scratch.Close()
+
+	// A unique build over duplicate keys fails the way an interrupted one
+	// does, leaving an INVALID index with the final name.
+	if _, err := scratch.Exec(ctx, "CREATE TABLE task_instances (k int, tenant_id uuid, state text, pool text); INSERT INTO task_instances (k) VALUES (1), (1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scratch.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY idx_ti_active_tenant ON task_instances (k)"); err == nil {
+		t.Fatal("precondition: the unique build over duplicate keys must fail")
+	}
+	body, err := fs.ReadFile(migrations.Files, "035_ti_active_tenant_index.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = scratch.Exec(ctx, string(body))
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42P07" {
+		t.Errorf("retrying 035 over an INVALID idx_ti_active_tenant: err = %v, want duplicate_table (42P07)", err)
 	}
 }
 
