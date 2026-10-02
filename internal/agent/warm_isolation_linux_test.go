@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
@@ -160,5 +162,75 @@ func TestParseProcStat(t *testing.T) {
 	}
 	if _, _, _, ok := parseProcStat("garbage"); ok {
 		t.Error("parseProcStat accepted a malformed line")
+	}
+}
+
+// TestProcStartTime reads field 22 of /proc/<pid>/stat, the process start time
+// the sweep pairs with the pid so a recycled pid is never mistaken for the
+// process the walk found. The fields are counted from the last ')', so a command
+// name with spaces and parentheses cannot shift them.
+func TestProcStartTime(t *testing.T) {
+	cases := []struct {
+		line  string
+		start uint64
+	}{
+		{"42 (sleep) S 7 42 42 0 -1 4194304 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10", 987654},
+		{"43 (a) b) c) R 99 43 43 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5 0 0", 5},
+	}
+	for _, c := range cases {
+		got, ok := procStartTime(c.line)
+		if !ok || got != c.start {
+			t.Errorf("procStartTime(%q) = %d %v, want %d true", c.line, got, ok, c.start)
+		}
+	}
+	if _, ok := procStartTime("42 (short) S 7 42"); ok {
+		t.Error("procStartTime accepted a line without field 22")
+	}
+}
+
+// TestKillProcSkipsARecycledPid: between the /proc walk and the kill, a
+// descendant can exit and its pid be handed to an unrelated process (a kubectl
+// exec session, say). The kill must check the start time the walk recorded and
+// leave a process whose start time differs alone, on both the pidfd path and
+// the plain kill fallback.
+func TestKillProcSkipsARecycledPid(t *testing.T) {
+	for _, usePidfd := range []bool{true, false} {
+		t.Run(fmt.Sprintf("pidfd=%v", usePidfd), func(t *testing.T) {
+			cmd := exec.Command("sleep", "30")
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("starting sleep: %v", err)
+			}
+			done := make(chan struct{})
+			go func() { _ = cmd.Wait(); close(done) }()
+			defer func() { _ = cmd.Process.Kill(); <-done }()
+
+			pid := cmd.Process.Pid
+			raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+			if err != nil {
+				t.Fatalf("reading stat: %v", err)
+			}
+			start, ok := procStartTime(string(raw))
+			if !ok {
+				t.Fatalf("no start time in %q", raw)
+			}
+
+			if err := killProc(procRef{pid: pid, start: start + 1}, usePidfd); err != nil {
+				t.Fatalf("killProc(stale ref): %v", err)
+			}
+			select {
+			case <-done:
+				t.Fatal("a process whose start time did not match the walk was killed")
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			if err := killProc(procRef{pid: pid, start: start}, usePidfd); err != nil {
+				t.Fatalf("killProc(live ref): %v", err)
+			}
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the process the walk found was not killed")
+			}
+		})
 	}
 }
