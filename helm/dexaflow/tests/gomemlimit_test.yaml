@@ -142,14 +142,125 @@ tests:
       - failedTemplate:
           errorPattern: 'goMemLimit\.enabled requires resources\.limits\.memory'
 
-  - it: fails the render on a quantity it cannot read
+  # Decimal quantities, the P and E suffixes and decimal exponents are all
+  # valid Kubernetes quantities and must be read, not refused.
+  - it: reads a decimal Gi limit
     set:
       goMemLimit.enabled: true
       resources.limits.memory: 1.5Gi
     template: deployment.yaml
     asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 1228MiB
+
+  - it: reads a fractional Gi limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 0.5Gi
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 409MiB
+
+  - it: reads a fraction with no leading digit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: ".5Gi"
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 409MiB
+
+  - it: reads a P limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 1P
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 762939453MiB
+
+  - it: reads a Pi limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 1Pi
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 858993459MiB
+
+  # E alone is the exa suffix, not an exponent.
+  - it: reads an E limit
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 1E
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 762939453125MiB
+
+  - it: reads a decimal exponent
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: "1e9"
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 762MiB
+
+  - it: reads an upper-case decimal exponent
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: "5E8"
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 381MiB
+
+  - it: reads a decimal with an exponent
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: "2.5e8"
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 190MiB
+
+  - it: fails the render on a quantity it cannot read
+    set:
+      goMemLimit.enabled: true
+      resources.limits.memory: 512MB
+    template: deployment.yaml
+    asserts:
       - failedTemplate:
-          errorPattern: 'cannot read resources\.limits\.memory "1\.5Gi"'
+          errorPattern: 'cannot read resources\.limits\.memory "512MB"'
 
   - it: fails the render on a percentage outside 1 to 100
     set:
