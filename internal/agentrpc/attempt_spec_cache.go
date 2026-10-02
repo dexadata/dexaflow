@@ -19,10 +19,18 @@ const (
 
 // attemptSpec is the slice of a task spec that PushXCom and FetchXCom need:
 // the declared inputs and dependencies that authorize a fetch, and the schema a
-// push is validated against. All of it comes from the run's immutable
-// dag_version. It deliberately carries nothing else: no environment, call or
-// operator args, params, or declared secret names, so the secret RPCs and
-// GetTaskSpec always read the store.
+// push is validated against. All of it comes from the dag version the attempt
+// started under: a dag version is never edited, but a clear with
+// run_on_latest_version (ResetDagRunToVersion) can rebind the run to a newer
+// one while sibling attempts still run. A cached attempt does not see that
+// rebind and keeps authorizing and validating its XComs against the version it
+// started under (the one its pod's image was built for) until its entry is
+// dropped: when it reports a terminal state or a reschedule, or at most
+// attemptSpecCacheTTL (15 minutes) after it was cached. Until then another
+// replica that has no entry for the attempt may already load the new version.
+// It deliberately carries nothing else: no environment, call or operator args,
+// params, or declared secret names, so the secret RPCs and GetTaskSpec always
+// read the store.
 type attemptSpec struct {
 	XComInputMapping map[string][]string
 	DependsOn        []string
