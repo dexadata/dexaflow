@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -239,5 +240,30 @@ func TestEventLogsCursorWalksEveryEntryOnce(t *testing.T) {
 	}
 	if reader.gotDag != "etl" || reader.gotAfter == nil || reader.gotAfter.Key != "20" {
 		t.Errorf("cursor call dag=%q after=%+v", reader.gotDag, reader.gotAfter)
+	}
+}
+
+// A browser client on another allowed origin can read the paging headers:
+// CORS exposes Link and Dexaflow-Next-Cursor.
+func TestCORSExposesPagingHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(CORS([]string{"https://ui.example"}))
+	r.GET("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", http.NoBody)
+	req.Header.Set("Origin", "https://ui.example")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	exposed := rec.Header().Get("Access-Control-Expose-Headers")
+	for _, h := range []string{"Link", nextCursorHeader} {
+		if !strings.Contains(exposed, h) {
+			t.Errorf("Access-Control-Expose-Headers = %q, want it to name %s", exposed, h)
+		}
+	}
+	req.Header.Set("Origin", "https://evil.example")
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "" {
+		t.Errorf("exposed headers to a disallowed origin: %q", got)
 	}
 }
