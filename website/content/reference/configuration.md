@@ -347,6 +347,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_SERVER_GRPC_TLS_KEY` | _(empty)_ | Pro | PEM private key paired with `DEXAFLOW_SERVER_GRPC_TLS_CERT`. Both must be set together to encrypt the agent channel. |
 | `DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS` | `http://localhost:8080` | both | Browser origins allowed to call the API cross-origin (`server.cors.allowed_origins`, a list). The UI is served same-origin with the API, so most deployments need no entry and should leave the server default alone. Comma-separated via the env var; in the chart set `config.cors.allowedOrigins` (a YAML list) and it is rendered comma-joined for you. The chart rejects `"*"` at render time (#1144). |
 | `DEXAFLOW_SERVER_TRUSTED_PROXIES` | *(empty — trust none)* | both | Proxy IPs/CIDRs whose `X-Forwarded-For` is honored for the client IP (`server.trusted_proxies`, a list). See note below. |
+| `DEXAFLOW_SERVER_GZIP_RESPONSES` | `false` | both | Gzip JSON and NDJSON responses of 1 KB or more on `/api/v2/*` and `/ui/*` for clients that send `Accept-Encoding: gzip`. Log routes and any response that streams (flushes before 1 KB, such as a live log tail) are never compressed. Off sends every body uncompressed. Helm: set it through `extraEnv`. |
 
 ### Database (`database.*`)
 

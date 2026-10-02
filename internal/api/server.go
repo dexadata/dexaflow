@@ -43,6 +43,10 @@ type Dependencies struct {
 	// CIDR so per-client rate-limiting and audit see the real client.
 	TrustedProxies []string
 	TokenTTLSecs   int
+	// GzipResponses (server.gzip_responses) gzips JSON and NDJSON responses of
+	// 1 KB or more for clients that accept it; streams are never compressed.
+	// False (the default) sends every body as identity.
+	GzipResponses bool
 	// TokenRenewer re-mints a still-valid user bearer with a fresh short TTL so a
 	// long CLI/dev session need not re-login every TokenTTLSecs (aresta #5). Nil
 	// leaves the renew route unregistered (renewal simply unavailable). In practice
@@ -192,6 +196,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(StructuredLogger(deps.Logger))
 	r.Use(CORS(deps.CORSOrigins))
 	r.Use(NoStoreOnVolatileRoutes())
+	if deps.GzipResponses {
+		r.Use(GzipJSON())
+	}
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {

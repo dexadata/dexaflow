@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **Opt-in gzip for API and UI JSON.** Every JSON and NDJSON response went out
+  uncompressed: a `/ui/dags` page of 100 DAGs with their recent runs is about
+  210 KB per poll. With `server.gzip_responses: true`
+  (`DEXAFLOW_SERVER_GZIP_RESPONSES`, or the legacy `LEOFLOW_` name) the server
+  gzips JSON and NDJSON bodies of 1 KB or more on `/api/v2/*` and `/ui/*` for
+  clients that accept it; that page shrinks to about 18 KB for under 1 ms of
+  CPU. Log routes and anything that streams (a live log tail flushes before
+  1 KB) are never compressed, so lines still arrive as they are written. The
+  default keeps every body uncompressed.
+time: 2026-10-02T17:40:00.000000000-03:00
