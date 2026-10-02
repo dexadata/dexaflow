@@ -468,6 +468,7 @@ a WARN at boot when the secret is empty.
 |---|---|---|---|
 | `DEXAFLOW_SCHEDULER_ENABLED` | `true` | both | Whether this process runs the scheduler loop. |
 | `DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS` | `1000` | both | Scheduler tick interval, in milliseconds. |
+| `DEXAFLOW_SCHEDULER_EAGER_PROMOTION` | `false` | both | Dispatches downstream tasks sooner after their upstreams settle. Within one tick, a task that becomes ready is queued at once instead of on the next tick, and skips or upstream failures cascade down the DAG (bounded passes per run, the rest continues next tick). A task's final state report also triggers an early tick on the replica that receives it, spaced at least 100 ms apart; the loop interval stays the upper bound. Max active tasks and pool limits apply across the extra passes. Off by default. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency). |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. |
 
