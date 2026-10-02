@@ -7,5 +7,9 @@ body: |-
   longer stretches the tick by every Kubernetes API call. The default stays 0
   (synchronous dispatch inside the tick) and renders nothing, so an upgrade
   changes nothing. A starting point for a busy cluster is a buffer of 512 with
-  16 workers.
+  16 workers. Caveat: in this release a pod create that fails inside a
+  dispatch worker fails the task at once, even for a ResourceQuota rejection
+  (403) or apiserver throttling (429) that synchronous dispatch holds and
+  re-offers, so keep the buffer at 0 on a namespace that runs close to its
+  quota until buffered dispatch re-offers those failures too.
 time: 2026-10-02T17:20:00.000000000-03:00
