@@ -28,7 +28,7 @@ AT="22:00"
 FAULTS="standard"
 LABEL="scheduled"
 ACTION="install"
-NAME="dev.dexaflow.soak"
+NAME="dev.leoflow.soak"
 
 while [ $# -gt 0 ]; do
   case "$1" in
