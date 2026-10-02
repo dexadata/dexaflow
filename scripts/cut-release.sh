@@ -98,6 +98,18 @@ self_test() {
   if is_rc "0.4.4"; then echo "FAIL: is_rc ga"; fail=1; fi
   for v in 0.4.4 0.4.4-rc.1 10.20.30 1.2.3-rc.15; do valid_version "$v" || { echo "FAIL: valid_version $v"; fail=1; }; done
   for v in v0.4.4 0.4 0.4.4-rc 0.4.4rc1 1.2.3-alpha; do valid_version "$v" && { echo "FAIL: valid_version accepted bad $v"; fail=1; }; done
+  # release_base decides which branch a tag is cut from (ADR 0062): every
+  # X.Y.0 and its candidates come from main, every later patch of that minor
+  # from release-X.Y. Cutting a patch from main would ship whatever main has
+  # gathered since the minor, which is the thing release branches exist to stop.
+  _eq "$(minor_of 0.5.1-rc.2)"        "0.5"          "minor_of drops patch and rc"
+  _eq "$(minor_of 10.20.30)"          "10.20"        "minor_of multi-digit"
+  _eq "$(release_base 0.5.0)"         "main"         "a minor GA is cut from main"
+  _eq "$(release_base 0.5.0-rc.3)"    "main"         "a minor rc is cut from main"
+  _eq "$(release_base 0.5.1)"         "release-0.5"  "a patch GA is cut from its release branch"
+  _eq "$(release_base 0.5.1-rc.1)"    "release-0.5"  "a patch rc is cut from its release branch"
+  _eq "$(release_base 10.20.3)"       "release-10.20" "multi-digit release branch"
+  _eq "$(release_base 0.5.10)"        "release-0.5"  "patch 10 is still a patch, not 0.5.1"
   # FLAKE_RE decides whether a red run gets rerun or stops the cut, so both ways
   # of getting it wrong cost something real: too broad reruns past a genuine
   # regression, and a pattern that can never match does nothing while looking
@@ -254,6 +266,14 @@ self_test() {
   out="$(_promote v2.0.0)"
   _eq "$(printf '%s' "$out" | jq -r '.versions[] | select(.id=="latest") | .ref')" "v2.0.0" "promoting the current root is a no-op"
 
+  # With release branches a GA can be OLDER than the docs root: a security
+  # patch on release-1.0 after v2.0.0 shipped. Promoting it would point the site
+  # root back at the previous minor and archive the current one.
+  _versions '{"root_url":"https://example.invalid/","versions":[{"id":"latest","ref":"v2.0.0","subpath":"","label":"v2.0.0 (latest)","archived":false}]}'
+  out="$(_promote v1.0.5)"
+  _eq "$(printf '%s' "$out" | jq -r '.versions[] | select(.id=="latest") | .ref')" "v2.0.0" "an older patch never takes the docs root"
+  _eq "$(printf '%s' "$out" | jq -r '[.versions[] | select(.archived==true)] | length')" "0" "and archives nothing"
+
   # restore_docs_file has to undo a STAGED edit, not just a dirty worktree. The
   # commit at the end of promote_docs_pr runs one line after `git add`, so when
   # it fails the file is already in the index — and `git checkout -- <path>`
@@ -335,6 +355,25 @@ self_test() {
   case "$got" in *"does not hold a prepared"*) echo "  ok   resume_target says why it refused" ;;
     *) printf '  FAIL resume_target message\n    got: %q\n' "$got"; fail=1 ;; esac
 
+  # On a release branch the walk has to run against THAT branch: main carries
+  # the next minor's history, and the prepare commit of a patch exists only on
+  # release-X.Y. The fixture forks a release branch off the 9.9.9 prepare, bumps
+  # it to 9.9.10 and adds an unrelated commit after, the same plateau shape.
+  (
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    cd "$rt" && git checkout -q -b rel HEAD~2 &&
+    printf 'version: 9.9.10\nappVersion: "9.9.10"\n' >helm/dexaflow/Chart.yaml &&
+    git add -A && git commit -qm "release: prepare v9.9.10" &&
+    echo three >c.txt && git add -A && git commit -qm "unrelated three" &&
+    git update-ref refs/remotes/origin/release-9.9 refs/heads/rel && git checkout -q main
+  ) >/dev/null 2>&1 || { echo "  FAIL resume_target: could not build the release-branch fixture"; fail=1; }
+  want="$( cd "$rt" && git rev-parse rel~1 )"
+  got="$( cd "$rt" && resume_target 9.9.10 v9.9.10 release-9.9 2>/dev/null )" && rc=0 || rc=$?
+  _eq "$rc" "0" "resume_target accepts a release branch that carries the patch being cut"
+  _eq "$got" "$want" "resume_target walks the release branch, not main"
+  got="$( cd "$rt" && resume_target 9.9.10 v9.9.10 2>&1 )" && rc=0 || rc=$?
+  _eq "$rc" "1" "resume_target with the default base still judges main"
+
   # A shallow clone truncates rev-list, and the truncation is invisible. At
   # depth 1 the shallow root has no parents, so it is not TREESAME to anything
   # and gets listed even though it never touched Chart.yaml: intro lands on the
@@ -375,6 +414,13 @@ self_test() {
     echo "  FAIL prepare PR is missing --label skip-changelog; the changelog guard will fail it"; fail=1
   fi
   _eq "$(printf '%s\n' "$argv" | grep -cx 'release/v9.9.9-rc.1')" "1" "prepare PR heads the release branch"
+  _eq "$(printf '%s\n' "$argv" | grep -A1 -x -- '--base' | tail -n1)" "main" "prepare PR targets main by default"
+  argv="$(
+    export PATH="$stubdir:$PATH" STUB_ARGV="$stubdir/argv" REPO=o/r
+    create_prepare_pr release/v9.9.10 "release: prepare v9.9.10" body release-9.9 >/dev/null 2>&1
+    cat "$stubdir/argv" 2>/dev/null
+  )"
+  _eq "$(printf '%s\n' "$argv" | grep -A1 -x -- '--base' | tail -n1)" "release-9.9" "a patch prepare PR targets its release branch"
   rm -rf "$stubdir"
 
   # promote_docs_pr had no coverage at all — every case above targets
