@@ -26,8 +26,10 @@ tests:
     asserts:
       - isKind:
           of: Role
-      # `pods` — create, get, list, watch, delete. NOT `update` or `patch`
-      # (the executor never mutates a running pod — it creates and deletes).
+      # `pods`: create, get, list, watch, delete, deletecollection. NOT
+      # `update` or `patch` (the executor never mutates a running pod; it
+      # creates and deletes). deletecollection serves the opt-in settled-run
+      # collection (executor.collect_settled_run_pods).
       - contains:
           path: rules[0].verbs
           content: create
@@ -43,6 +45,9 @@ tests:
       - contains:
           path: rules[0].verbs
           content: delete
+      - contains:
+          path: rules[0].verbs
+          content: deletecollection
       - notContains:
           path: rules[0].verbs
           content: update
