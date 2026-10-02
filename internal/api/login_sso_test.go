@@ -398,7 +398,7 @@ func TestAutoRedirectNeedsAFlow(t *testing.T) {
 func TestLogoutDoesNotBounceStraightBackIntoTheIdP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/api/v2/auth/logout", logoutHandler(false))
+	r.GET("/api/v2/auth/logout", logoutHandler(false, ""))
 	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{sso: true, breakGlass: true, autoRedirect: true}))
 
 	rec := httptest.NewRecorder()

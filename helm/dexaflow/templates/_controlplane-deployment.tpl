@@ -250,6 +250,16 @@ spec:
               value: {{ .ctx.Values.database.maxIdleConns | quote }}
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
+            {{- with .ctx.Values.auth.externalSigninUrl }}
+            # The operator's own sign-in and sign-out in place of Leoflow's
+            # pages (#1288). Omitted when unset; validated at boot.
+            - name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.auth.externalSignoutUrl }}
+            - name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
+              value: {{ . | quote }}
+            {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT
               value: {{ .ctx.Values.observability.logFormat | quote }}
             - name: LEOFLOW_OBSERVABILITY_LOG_LEVEL

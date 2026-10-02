@@ -392,6 +392,16 @@ type AuthSection struct {
 	// "oidc" (Pro-gated); the JWT authenticator remains the request-path verifier
 	// in both modes.
 	OIDC OIDCSection `mapstructure:"oidc"`
+	// ExternalSignInURL hands unauthenticated UI visitors to the operator's own
+	// sign-in instead of Leoflow's page, with the requested path in a `next`
+	// query parameter (#1288). The operator's flow is expected to return them
+	// with a Leoflow session. Empty keeps Leoflow's page; `?local=1` reaches it
+	// either way.
+	ExternalSignInURL string `mapstructure:"external_signin_url"`
+	// ExternalSignOutURL is where sign-out lands after clearing the session, so
+	// the operator can end their own session too (#1288). Empty returns to
+	// Leoflow's sign-in page.
+	ExternalSignOutURL string `mapstructure:"external_signout_url"`
 	// DevNoAuth disables authentication entirely, treating every request as an
 	// admin. It exists ONLY for `leoflow dev` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
@@ -765,6 +775,8 @@ var serverDefaults = map[string]any{
 	// poll every 1s) was actually running at the 30s production default.
 	"ui.auto_refresh_interval_seconds": 0,
 	"auth.dev_no_auth":                 false,
+	"auth.external_signin_url":         "",
+	"auth.external_signout_url":        "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
@@ -901,6 +913,12 @@ func (c *ServerConfig) Validate() error {
 		return err
 	}
 	if err := c.validateExecution(); err != nil {
+		return err
+	}
+	if err := validateExternalAuthURL("auth.external_signin_url", c.Auth.ExternalSignInURL); err != nil {
+		return err
+	}
+	if err := validateExternalAuthURL("auth.external_signout_url", c.Auth.ExternalSignOutURL); err != nil {
 		return err
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
@@ -1154,6 +1172,23 @@ func tenantPinHint(c *ServerConfig) string {
 		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Leoflow tenant. " +
 		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by LEOFLOW_CONFIG; no LEOFLOW_AUTH_OIDC_* environment variable can carry it. " +
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
+}
+
+// validateExternalAuthURL checks one of the #1288 settings: empty, or an
+// absolute http(s) URL with a host. A relative URL would send the browser back
+// into Leoflow, where the sign-in route redirects again: a loop.
+func validateExternalAuthURL(key, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid URL (got %q): %w", key, raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%s must be an absolute http:// or https:// URL (got %q)", key, raw)
+	}
+	return nil
 }
 
 // validateRedirectURL requires the OIDC callback URL to use https so the

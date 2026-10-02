@@ -126,6 +126,11 @@ type Dependencies struct {
 	// OIDCSettings carries the role mappings, JIT policy, default_role, and
 	// break-glass allowlist the login flow and the credential gate read.
 	OIDCSettings config.OIDCSection
+	// ExternalSignInURL and ExternalSignOutURL are auth.external_signin_url and
+	// auth.external_signout_url (#1288): the operator's own sign-in and
+	// sign-out, used in place of Leoflow's pages. Empty keeps Leoflow's.
+	ExternalSignInURL  string
+	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).
 	OIDCUsers OIDCUserStore
 	// AuthAudit records authentication events (login, tenant-pin rejection, JIT,
@@ -194,11 +199,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
-	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure))
+	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
 	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{
-		sso:          deps.OIDCFlow != nil,
-		breakGlass:   len(deps.OIDCSettings.BreakGlassEmails) > 0,
-		autoRedirect: deps.OIDCSettings.AutoRedirect,
+		sso:            deps.OIDCFlow != nil,
+		breakGlass:     len(deps.OIDCSettings.BreakGlassEmails) > 0,
+		autoRedirect:   deps.OIDCSettings.AutoRedirect,
+		externalSignIn: deps.ExternalSignInURL,
 	}))
 	// OIDC/SSO login flow (D1): registered only when a provider was discovered at
 	// boot. Both routes sit under the public /api/v2/auth/ prefix.

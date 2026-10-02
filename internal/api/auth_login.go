@@ -124,6 +124,9 @@ type loginPageOpts struct {
 	// autoRedirect starts the flow instead of rendering the page, for deployments
 	// where the sign-in page is a screen to acknowledge for nothing.
 	autoRedirect bool
+	// externalSignIn is the operator's sign-in URL (#1288). When set, it takes
+	// the place of this page and of autoRedirect.
+	externalSignIn string
 }
 
 // loginLocalParam reaches the password form on a deployment that auto-redirects.
@@ -144,14 +147,36 @@ const loginLocalParam = "local"
 //
 // It also requires sso, or a deployment with no flow would send every user to a
 // route the router never registered.
+//
+// An external sign-in (#1288) takes precedence and yields to the same two
+// markers, so break-glass and a refused sign-on still reach this page.
 func (o loginPageOpts) autoRedirectTarget(c *gin.Context) (string, bool) {
-	if !o.autoRedirect || !o.sso {
-		return "", false
-	}
 	if c.Query(ssoErrorParam) != "" || c.Query(loginLocalParam) != "" {
 		return "", false
 	}
-	return "/api/v2/auth/oidc/login?next=" + url.QueryEscape(sanitizeNext(c.Query("next"))), true
+	next := sanitizeNext(c.Query("next"))
+	if o.externalSignIn != "" {
+		return withNext(o.externalSignIn, next), true
+	}
+	if !o.autoRedirect || !o.sso {
+		return "", false
+	}
+	return "/api/v2/auth/oidc/login?next=" + url.QueryEscape(next), true
+}
+
+// withNext appends next to the operator's URL as the `next` query parameter,
+// keeping whatever query the operator configured. Config validation has
+// already required an absolute http(s) URL, so the parse cannot fail on a
+// value that reached here; if it somehow does, the URL is used as is.
+func withNext(raw, next string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Set("next", next)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // sanitizeNext keeps the post-login redirect on this origin: a single-slash
@@ -227,14 +252,19 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 }
 
 // logoutHandler implements GET /api/v2/auth/logout: it clears the _token cookie
-// and returns to the login page. It clears through the same helper both login
+// and returns to the login page, or to the operator's external sign-out when
+// one is configured (#1288). It clears through the same helper both login
 // paths set through, so the deletion can never disagree with the cookie it is
 // deleting.
-func logoutHandler(insecureCookies bool) gin.HandlerFunc {
+func logoutHandler(insecureCookies bool, externalSignOut string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Both halves are needed and they are about different things. The helper
 		// is how the deletion can never disagree with the cookie it deletes.
 		clearSessionCookie(c, insecureCookies)
+		if externalSignOut != "" {
+			c.Redirect(http.StatusFound, externalSignOut)
+			return
+		}
 		// The PAGE, not the flow. With auto_redirect on, the bare sign-in URL is
 		// itself a redirect to the IdP, and our sign-out does not touch the IdP
 		// session, so a user who signed out would be signed straight back in and
