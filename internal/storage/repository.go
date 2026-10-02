@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -422,6 +423,41 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 		return nil, 0, fmt.Errorf("listing dag runs: %w", err)
 	}
 	total, err := r.q.CountDagRunsByDag(ctx, dag.ID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
+	}
+	out := make([]domain.DagRun, 0, len(rows))
+	for _, run := range rows {
+		out = append(out, mapDagRunWithVersion(queries.GetDagRunWithVersionRow(run), dagID))
+	}
+	return out, int(total), nil
+}
+
+// ListDagRunsAfter returns up to limit of a DAG's runs strictly before the
+// cursor, newest first, and the number of runs matching states (all runs when
+// states is empty). It is the keyset form of ListDagRuns: the same order, but a
+// deep page is an index range scan instead of a scan past every skipped row.
+func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string, states []string, after domain.PageCursor, limit int) ([]domain.DagRun, int, error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListDagRunsByDagAfter(ctx, queries.ListDagRunsByDagAfterParams{
+		DagID: dag.ID, States: states, AfterLogicalDate: pgtype.Timestamptz{Time: after.At, Valid: true},
+		AfterRunID: after.Key, RowLimit: toInt32(limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing dag runs: %w", err)
+	}
+	var total int64
+	if len(states) == 0 {
+		total, err = r.q.CountDagRunsByDag(ctx, dag.ID)
+	} else {
+		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{DagID: dag.ID, States: states})
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
 	}
@@ -1368,15 +1404,54 @@ func (r *Repository) ListAuditLogs(ctx context.Context, tenant, dagID string, li
 	}
 	out := make([]domain.AuditLogEntry, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.AuditLogEntry{
-			ID:           row.ID,
-			When:         timeVal(row.OccurredAt),
-			Action:       row.Action,
-			ResourceType: strOrEmpty(row.ResourceType),
-			ResourceID:   strOrEmpty(row.ResourceID),
-			Owner:        row.Owner,
-			Extra:        string(row.Metadata),
-		})
+		out = append(out, mapAuditLogEntry(row))
+	}
+	return out, int(total), nil
+}
+
+func mapAuditLogEntry(row queries.ListAuditLogsRow) domain.AuditLogEntry {
+	return domain.AuditLogEntry{
+		ID:           row.ID,
+		When:         timeVal(row.OccurredAt),
+		Action:       row.Action,
+		ResourceType: strOrEmpty(row.ResourceType),
+		ResourceID:   strOrEmpty(row.ResourceID),
+		Owner:        row.Owner,
+		Extra:        string(row.Metadata),
+	}
+}
+
+// ListAuditLogsAfter returns up to limit of the tenant's audit entries
+// strictly before the cursor, newest first, optionally filtered to one DAG, and
+// the number of entries matching the filter. It is the keyset form of
+// ListAuditLogs; the cursor key is the entry id.
+func (r *Repository) ListAuditLogsAfter(ctx context.Context, tenant, dagID string, after domain.PageCursor, limit int) ([]domain.AuditLogEntry, int, error) {
+	afterID, err := strconv.ParseInt(after.Key, 10, 64)
+	if err != nil {
+		return nil, 0, domain.Safef(domain.ErrValidation, "invalid audit log cursor")
+	}
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return nil, 0, err
+	}
+	var dagFilter *string
+	if dagID != "" {
+		dagFilter = &dagID
+	}
+	rows, err := r.q.ListAuditLogsAfter(ctx, queries.ListAuditLogsAfterParams{
+		TenantID: tid, DagID: dagFilter, AfterOccurredAt: pgtype.Timestamptz{Time: after.At, Valid: true},
+		AfterID: afterID, RowLimit: toInt32(limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing audit logs: %w", err)
+	}
+	total, err := r.q.CountAuditLogs(ctx, queries.CountAuditLogsParams{TenantID: tid, DagID: dagFilter})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting audit logs: %w", err)
+	}
+	out := make([]domain.AuditLogEntry, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapAuditLogEntry(queries.ListAuditLogsRow(row)))
 	}
 	return out, int(total), nil
 }

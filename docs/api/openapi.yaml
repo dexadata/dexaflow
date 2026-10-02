@@ -417,6 +417,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Cursor"
         - name: state
           in: query
           schema:
@@ -666,6 +667,16 @@ components:
       name: offset
       in: query
       schema: { type: integer, minimum: 0, default: 0 }
+    Cursor:
+      name: cursor
+      in: query
+      description: >-
+        Dexaflow extension. Opaque keyset cursor taken from the
+        Dexaflow-Next-Cursor response header of the previous page. When set,
+        offset is ignored and the page holds the rows after the cursor in the
+        same order, at the cost of the first page whatever the depth. The
+        response body is unchanged.
+      schema: { type: string }
     DagID:
       name: dag_id
       in: path

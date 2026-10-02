@@ -437,6 +437,9 @@ type XComEntry struct {
 // ConnectionID defines model for ConnectionID.
 type ConnectionID = string
 
+// Cursor defines model for Cursor.
+type Cursor = string
+
 // DagID defines model for DagID.
 type DagID = string
 
@@ -481,8 +484,11 @@ type ListDagsParams struct {
 
 // ListDagRunsParams defines parameters for ListDagRuns.
 type ListDagRunsParams struct {
-	Limit  *Limit                    `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *Offset                   `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Cursor Dexaflow extension. Opaque keyset cursor taken from the Dexaflow-Next-Cursor response header of the previous page. When set, offset is ignored and the page holds the rows after the cursor in the same order, at the cost of the first page whatever the depth. The response body is unchanged.
+	Cursor *Cursor                   `form:"cursor,omitempty" json:"cursor,omitempty"`
 	State  *[]ListDagRunsParamsState `form:"state,omitempty" json:"state,omitempty"`
 }
 
@@ -2116,6 +2122,18 @@ func NewListDagRunsRequest(server string, dagId DagID, params *ListDagRunsParams
 		if params.Offset != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
