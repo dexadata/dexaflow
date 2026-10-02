@@ -81,6 +81,19 @@ func TestRedisTailerHasSubscribers(t *testing.T) {
 	}
 	stop()
 	deadline = time.Now().Add(2 * time.Second)
+	defer func() {
+		// A pattern subscriber (a forwarder on log_tail:*) is invisible to
+		// NUMSUB; it must still count, or it would silently stop receiving.
+		client := testRedis(t)
+		psub := client.PSubscribe(ctx, "log_tail:*")
+		defer func() { _ = psub.Close() }()
+		if _, err := psub.Receive(ctx); err != nil {
+			t.Fatalf("PSUBSCRIBE: %v", err)
+		}
+		if has, err := tailer.HasSubscribers(ctx, ref); err != nil || !has {
+			t.Errorf("HasSubscribers() = %v, %v with a pattern subscriber, want true", has, err)
+		}
+	}()
 	for {
 		if has, _ := tailer.HasSubscribers(ctx, ref); !has {
 			return
