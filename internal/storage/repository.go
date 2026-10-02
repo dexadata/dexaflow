@@ -106,6 +106,9 @@ func mapConflict(err error) error {
 // starts with it, so a resolved id is cached for the life of the process: a
 // tenant is never renamed or deleted (no query does either), so name -> id
 // cannot change. A miss is not cached, so a tenant created later is found.
+// The one way the mapping changes under a running process is outside it:
+// restoring a backup whose tenants carry different ids. Restart the control
+// plane after such a restore, or every query keeps using the old ids.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
 	if r.tenants != nil {
 		if id, ok := r.tenants.Load(name); ok {
