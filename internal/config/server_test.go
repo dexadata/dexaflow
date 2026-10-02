@@ -568,6 +568,7 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM", "org")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS", "acme,globex")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS", "300")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS", "https://portal.example.com,http://localhost:3000")
 	c, err = LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
@@ -578,7 +579,8 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	}
 	got := c.Auth.TrustedIssuer
 	if got.Name != want.Name || got.Issuer != want.Issuer || got.JWKSURL != want.JWKSURL || got.Audience != want.Audience ||
-		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 {
+		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 ||
+		strings.Join(got.AllowedOrigins, ",") != "https://portal.example.com,http://localhost:3000" {
 		t.Errorf("TrustedIssuer = %+v, want %+v", got, want)
 	}
 }
@@ -590,6 +592,7 @@ func TestValidateTrustedIssuer(t *testing.T) {
 	full := TrustedIssuerSection{
 		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
 		Audience: "leoflow-engine", TenantClaim: "tenant_id", AllowedTenants: []string{"*"},
+		AllowedOrigins: []string{"https://portal.example.com"},
 	}
 	cases := []struct {
 		name    string
@@ -601,7 +604,10 @@ func TestValidateTrustedIssuer(t *testing.T) {
 		{"loopback http jwks", func(s *TrustedIssuerSection) { s.JWKSURL = "http://localhost:9000/jwks" }, nil},
 		{"only an issuer", func(s *TrustedIssuerSection) {
 			*s = TrustedIssuerSection{Issuer: "https://portal.example.com", TenantClaim: "tenant_id"}
-		}, []string{"auth.trusted_issuer.name", "auth.trusted_issuer.jwks_url", "auth.trusted_issuer.audience", "auth.trusted_issuer.allowed_tenants"}},
+		}, []string{"auth.trusted_issuer.name", "auth.trusted_issuer.jwks_url", "auth.trusted_issuer.audience", "auth.trusted_issuer.allowed_tenants", "auth.trusted_issuer.allowed_origins"}},
+		{"no origins", func(s *TrustedIssuerSection) { s.AllowedOrigins = nil }, []string{"auth.trusted_issuer.allowed_origins"}},
+		{"origin with a path", func(s *TrustedIssuerSection) { s.AllowedOrigins = []string{"https://portal.example.com/engine"} }, []string{"auth.trusted_issuer.allowed_origins"}},
+		{"wildcard origin", func(s *TrustedIssuerSection) { s.AllowedOrigins = []string{"*"} }, []string{"auth.trusted_issuer.allowed_origins"}},
 		{"bad name", func(s *TrustedIssuerSection) { s.Name = "Portal One" }, []string{"auth.trusted_issuer.name"}},
 		{"plain http jwks", func(s *TrustedIssuerSection) { s.JWKSURL = "http://portal.example.com/jwks" }, []string{"auth.trusted_issuer.jwks_url"}},
 		{"lifetime too long", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 7200 }, []string{"auth.trusted_issuer.max_lifetime_seconds"}},

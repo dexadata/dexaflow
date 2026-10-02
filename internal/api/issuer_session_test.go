@@ -53,18 +53,26 @@ func issuerSessionServer(t *testing.T, users *fakeIssuerUsers) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	return NewServer(Dependencies{
-		Logger:             discardLogger(),
-		RateLimiter:        auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:          "test-secret",
-		TokenTTLSecs:       900,
-		TrustedIssuer:      fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers: users,
+		Logger:               discardLogger(),
+		RateLimiter:          auth.NewRateLimiter(100, time.Minute),
+		JWTSecret:            "test-secret",
+		TokenTTLSecs:         900,
+		TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+		TrustedIssuerUsers:   users,
+		TrustedIssuerOrigins: []string{"https://portal.example.com"},
 	})
 }
 
 func postSession(h http.Handler, form url.Values) *httptest.ResponseRecorder {
+	return postSessionFrom(h, form, "https://portal.example.com")
+}
+
+func postSessionFrom(h http.Handler, form url.Values, origin string) *httptest.ResponseRecorder {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v2/auth/session", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -154,5 +162,26 @@ func TestIssuerSessionRouteExistsOnlyWhenConfigured(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d without a trusted issuer, want 404", rec.Code)
+	}
+}
+
+// TestIssuerSessionOnlyFromTheOperatorsOrigin closes login CSRF: a page on
+// another site that auto-posts a valid token (the attacker's own, say) would
+// otherwise sign the victim's browser in as the attacker. Browsers send Origin
+// on every cross-site form POST, so the handoff accepts only the operator's.
+func TestIssuerSessionOnlyFromTheOperatorsOrigin(t *testing.T) {
+	for _, origin := range []string{"", "https://evil.example", "null", "https://portal.example.com.evil.example"} {
+		t.Run(origin, func(t *testing.T) {
+			h := issuerSessionServer(t, activeAcmeUser())
+
+			rec := postSessionFrom(h, url.Values{"token": {"good"}}, origin)
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("Origin %q: status = %d, want 403", origin, rec.Code)
+			}
+			if c := rec.Header().Get("Set-Cookie"); strings.HasPrefix(c, authTokenCookie+"=") && !strings.HasPrefix(c, authTokenCookie+"=;") {
+				t.Errorf("Origin %q set a session cookie", origin)
+			}
+		})
 	}
 }

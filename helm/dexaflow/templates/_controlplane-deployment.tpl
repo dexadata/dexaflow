@@ -268,6 +268,8 @@ spec:
               value: {{ join "," .allowedTenants | quote }}
             - name: LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS
               value: {{ .maxLifetimeSeconds | quote }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS
+              value: {{ join "," .allowedOrigins | quote }}
             {{- end }}
             {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT

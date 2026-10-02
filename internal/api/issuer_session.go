@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,7 @@ type TrustedIssuerUserStore interface {
 type issuerSessionDeps struct {
 	issuer          TrustedIssuer
 	users           TrustedIssuerUserStore
+	origins         []string
 	audit           AuthAuditWriter
 	jwtSecret       string
 	tokenTTL        time.Duration
@@ -55,9 +57,21 @@ type issuerSessionDeps struct {
 // It never creates a user and never takes roles from the token: the user must
 // already be linked to the issuer, and its roles are the ones Leoflow holds.
 // Refusals set no cookie, answer with a status that says which side is wrong
-// (401 token, 403 user, 500 Leoflow), and log the reason server-side only.
+// (401 token, 403 user or origin, 500 Leoflow), and log the reason
+// server-side only.
+//
+// The post must come from one of the operator's origins. Without that, any
+// site could auto-post a valid token (its owner's own, for instance) and sign
+// a visitor's browser in as someone else: login CSRF. Browsers send Origin on
+// every cross-site form POST, so a missing one is refused too.
 func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if origin := c.GetHeader("Origin"); !slices.Contains(d.origins, origin) {
+			d.logger.Warn("trusted issuer sign-in refused: origin", "origin", origin)
+			d.record(c, auditIssuerLoginFailure, "", "", "", map[string]string{"reason": "origin_not_allowed"})
+			AbortProblem(c, http.StatusForbidden, "forbidden", "sign-in posted from an origin that is not allowed")
+			return
+		}
 		raw := c.PostForm("token")
 		if raw == "" {
 			AbortProblem(c, http.StatusBadRequest, "bad request", "form field token is required")

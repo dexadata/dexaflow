@@ -408,6 +408,10 @@ type TrustedIssuerSection struct {
 	// MaxLifetimeSeconds caps exp - iat of a token, the replay window of a
 	// handoff. Zero uses the 900-second default; at most 3600.
 	MaxLifetimeSeconds int `mapstructure:"max_lifetime_seconds"`
+	// AllowedOrigins are the origins (scheme://host[:port]) whose pages may
+	// post a handoff. Any other Origin, or none, is refused, so another site
+	// cannot sign a visitor in (login CSRF). Required.
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
 }
 
 // Enabled reports whether a trusted issuer is configured.
@@ -805,6 +809,7 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.tenant_claim":         "tenant_id",
 	"auth.trusted_issuer.allowed_tenants":      []string{},
 	"auth.trusted_issuer.max_lifetime_seconds": 0,
+	"auth.trusted_issuer.allowed_origins":      []string{},
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
@@ -1207,7 +1212,7 @@ var issuerNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
 // Every missing or malformed key is reported in one error, so first-time setup
 // is one edit rather than a chain of restarts.
 func validateTrustedIssuer(s TrustedIssuerSection) error {
-	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 {
+	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 {
 		return nil
 	}
 	checks := []struct {
@@ -1221,6 +1226,7 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{s.TenantClaim != "", "auth.trusted_issuer.tenant_claim"},
 		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
 		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 3600, "auth.trusted_issuer.max_lifetime_seconds (0 to 3600)"},
+		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -1232,6 +1238,22 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		return fmt.Errorf("auth.trusted_issuer is incomplete or invalid; set: %s", strings.Join(problems, ", "))
 	}
 	return nil
+}
+
+// originsValid reports whether list is non-empty and every entry is a bare
+// http(s) origin, the exact form a browser sends in the Origin header.
+func originsValid(list []string) bool {
+	if len(list) == 0 {
+		return false
+	}
+	for _, o := range list {
+		u, err := url.Parse(o)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // jwksURLAllowed accepts an https URL with a host, or http on a loopback host

@@ -1393,8 +1393,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 
 		// Trusted-issuer handoff (#1284): nil unless auth.trusted_issuer is set,
 		// which leaves POST /api/v2/auth/session unregistered.
-		TrustedIssuer:      trustedIssuer,
-		TrustedIssuerUsers: repo,
+		TrustedIssuer:        trustedIssuer,
+		TrustedIssuerUsers:   repo,
+		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 	})

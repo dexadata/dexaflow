@@ -263,6 +263,8 @@ auth:
     allowedTenants: []
     # -- Longest `exp - iat` a handoff token may have. `0` uses 900 seconds; at most 3600.
     maxLifetimeSeconds: 0
+    # -- Origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. Any other `Origin`, or none, is refused, so another site cannot sign a visitor in as someone else. Required when `issuer` is set.
+    allowedOrigins: []
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
   # fetch (ADR 0055). All three ship on the value that is byte-for-byte today's

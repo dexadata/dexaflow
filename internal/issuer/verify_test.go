@@ -189,3 +189,34 @@ func TestProviderKeyIsNamespaced(t *testing.T) {
 		t.Errorf("Provider() = %q, want issuer:portal", got)
 	}
 }
+
+// TestVerifyRejectsATokenIssuedInTheFuture closes the gap the lifetime bound
+// alone leaves: a token whose iat and exp both sit far in the future has a
+// short exp - iat and an exp that has not passed, so without this check it
+// would replay for as long as the issuer cared to post-date it.
+func TestVerifyRejectsATokenIssuedInTheFuture(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, testConfig(f))
+	claims := goodClaims()
+	claims["iat"] = testNow.Add(365 * 24 * time.Hour).Unix()
+	claims["exp"] = testNow.Add(365*24*time.Hour + 5*time.Minute).Unix()
+
+	_, err := v.Verify(context.Background(), f.sign(t, claims, f.key))
+
+	if !errors.Is(err, ErrLifetime) {
+		t.Errorf("err = %v, want ErrLifetime for a post-dated token", err)
+	}
+}
+
+// TestVerifyToleratesSmallClockSkew keeps a token minted by a clock a few
+// seconds ahead of ours usable.
+func TestVerifyToleratesSmallClockSkew(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, testConfig(f))
+	claims := goodClaims()
+	claims["iat"] = testNow.Add(30 * time.Second).Unix()
+
+	if _, err := v.Verify(context.Background(), f.sign(t, claims, f.key)); err != nil {
+		t.Errorf("Verify with iat 30s ahead = %v, want accepted", err)
+	}
+}

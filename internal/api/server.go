@@ -136,6 +136,9 @@ type Dependencies struct {
 	// (#1284). TrustedIssuerUsers resolves those users (the storage repo).
 	TrustedIssuer      TrustedIssuer
 	TrustedIssuerUsers TrustedIssuerUserStore
+	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
+	// (scheme://host[:port]), so another site cannot sign a browser in.
+	TrustedIssuerOrigins []string
 	// JWTSecret is the HS256 secret the OIDC callback mints the app's _token with.
 	JWTSecret string
 	// SessionCookieInsecure drops the Secure attribute from the session and OIDC
@@ -212,6 +215,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 		r.POST("/api/v2/auth/session", rateLimitByIP(issuerLimiter), issuerSessionHandler(issuerSessionDeps{
 			issuer:          deps.TrustedIssuer,
 			users:           deps.TrustedIssuerUsers,
+			origins:         deps.TrustedIssuerOrigins,
 			audit:           deps.AuthAudit,
 			jwtSecret:       deps.JWTSecret,
 			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,

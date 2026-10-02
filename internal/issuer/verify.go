@@ -23,9 +23,9 @@ var (
 	// ErrInvalidToken covers a bad signature, issuer, audience, expiry or a
 	// missing subject: the token is not one the trusted issuer made for us.
 	ErrInvalidToken = errors.New("issuer: invalid token")
-	// ErrLifetime is a token without iat or one valid for longer than
-	// MaxLifetime. A handoff token is meant to be used once, right away; a long
-	// one is a long replay window.
+	// ErrLifetime is a token without iat, one valid for longer than
+	// MaxLifetime, or one issued in the future. A handoff token is meant to be
+	// used once, right away; a long or post-dated one is a long replay window.
 	ErrLifetime = errors.New("issuer: token lifetime missing or too long")
 	// ErrTenantNotAllowed is a tenant claim that is absent, not a string, or
 	// not in AllowedTenants.
@@ -34,6 +34,10 @@ var (
 
 // DefaultMaxLifetime bounds exp - iat when Config.MaxLifetime is zero.
 const DefaultMaxLifetime = 15 * time.Minute
+
+// clockSkew is how far ahead of this server's clock a token's iat may be. A
+// post-dated iat would otherwise let a short exp - iat hide a long validity.
+const clockSkew = time.Minute
 
 // Config is one trusted issuer.
 type Config struct {
@@ -99,7 +103,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 	if tok.Subject == "" {
 		return nil, fmt.Errorf("%w: no subject", ErrInvalidToken)
 	}
-	if tok.IssuedAt.IsZero() || tok.Expiry.Sub(tok.IssuedAt) > v.cfg.MaxLifetime {
+	if tok.IssuedAt.IsZero() || tok.Expiry.Sub(tok.IssuedAt) > v.cfg.MaxLifetime || tok.IssuedAt.After(v.now().Add(clockSkew)) {
 		return nil, fmt.Errorf("%w: iat %v, exp %v, max %v", ErrLifetime, tok.IssuedAt, tok.Expiry, v.cfg.MaxLifetime)
 	}
 	var claims map[string]any

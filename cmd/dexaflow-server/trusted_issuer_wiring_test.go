@@ -19,6 +19,7 @@ func TestNewTrustedIssuerFollowsTheConfig(t *testing.T) {
 	cfg.Auth.TrustedIssuer = config.TrustedIssuerSection{
 		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
 		Audience: "leoflow-engine", TenantClaim: "tenant_id", AllowedTenants: []string{"*"},
+		AllowedOrigins: []string{"https://portal.example.com"},
 	}
 	got := newTrustedIssuer(context.Background(), cfg)
 
