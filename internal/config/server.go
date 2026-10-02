@@ -162,9 +162,10 @@ type ExecutorSection struct {
 	// CollectSettledRunPods deletes a settled run's finished task pods as soon
 	// as the reconciler has recorded every outcome, in one DeleteCollection by
 	// the run's label instead of one delete per pod after the grace period. It
-	// needs the deletecollection verb on pods (the chart grants it) and falls
-	// back to per-pod deletes without it. Off by default: finished pods stay for
-	// the grace period, so they can be inspected with kubectl.
+	// needs the deletecollection verb on pods (the chart grants it only when this
+	// is on) and falls back to per-pod deletes without it. Off by default:
+	// finished pods stay for the grace period, so they can be inspected with
+	// kubectl.
 	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
 }
 

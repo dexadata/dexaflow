@@ -26,10 +26,11 @@ import (
 // pod is still the only signal a later sweep can settle from. The reapers'
 // live pod read is untouched.
 //
-// The executor Role grants deletecollection on pods. A cluster whose Role
-// predates that answers 403; the reconciler then deletes the run's finished
-// pods one by one, which is today's call pattern without the wait, and stops
-// asking for the verb until restart.
+// The chart grants deletecollection on pods only when the collection is on. A
+// Role without the verb (an older chart, or one managed by hand) answers 403;
+// the reconciler then deletes the run's finished pods one by one, which is
+// today's call pattern without the wait, and stops asking for the verb until
+// restart.
 
 // finishedPhases selects pods with no container left to stop.
 const finishedPhases = "status.phase!=Pending,status.phase!=Running,status.phase!=Unknown"

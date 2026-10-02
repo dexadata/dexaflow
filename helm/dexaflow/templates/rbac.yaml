@@ -19,12 +19,16 @@ metadata:
   labels:
     {{- include "leoflow.labels" . | nindent 4 }}
 rules:
-  # deletecollection serves the opt-in settled-run collection
+  # deletecollection is granted only with the opt-in settled-run collection
   # (executor.collectSettledRunPods): one call per settled run, limited by label
   # to that run and by field selector to finished pods.
   - apiGroups: [""]
     resources: ["pods"]
+    {{- if .Values.executor.collectSettledRunPods }}
     verbs: ["create", "get", "list", "watch", "delete", "deletecollection"]
+    {{- else }}
+    verbs: ["create", "get", "list", "watch", "delete"]
+    {{- end }}
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]

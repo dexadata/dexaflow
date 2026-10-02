@@ -6,6 +6,6 @@ body: |-
   is recorded, in one `DeleteCollection` by the run's label limited to finished
   phases, instead of one delete per pod after the 10 minute grace period: one
   apiserver call per run instead of one per pod. Off by default. The chart's
-  executor Role now grants `deletecollection` on pods; on a cluster without it
-  the server falls back to per-pod deletes.
+  executor Role grants `deletecollection` on pods only when the value is on;
+  without the verb the server falls back to per-pod deletes.
 time: 2026-10-02T19:00:00.000000000-03:00
