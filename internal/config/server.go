@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -384,6 +385,34 @@ type RedisSection struct {
 	CAFile string `mapstructure:"ca_file"`
 }
 
+// TrustedIssuerSection configures one trusted external issuer (#1284). Its
+// tokens are verified against its published JWKS and name an existing user,
+// linked by (issuer:<name>, subject), in an allowed tenant; they never create
+// users or grant roles.
+type TrustedIssuerSection struct {
+	// Name identifies the issuer; its users are linked under "issuer:<name>".
+	// Lowercase letters, digits and '-'. Keep it stable once users exist.
+	Name string `mapstructure:"name"`
+	// Issuer is the exact `iss` the tokens carry.
+	Issuer string `mapstructure:"issuer"`
+	// JWKSURL is where the issuer publishes its public signing keys: https, or
+	// http on a loopback host for local development.
+	JWKSURL string `mapstructure:"jwks_url"`
+	// Audience is the `aud` the tokens must carry for this Leoflow.
+	Audience string `mapstructure:"audience"`
+	// TenantClaim names the string claim carrying the Leoflow tenant name.
+	TenantClaim string `mapstructure:"tenant_claim"`
+	// AllowedTenants lists the tenants the issuer may sign in to; "*" allows
+	// every tenant.
+	AllowedTenants []string `mapstructure:"allowed_tenants"`
+	// MaxLifetimeSeconds caps exp - iat of a token, the replay window of a
+	// handoff. Zero uses the 900-second default; at most 3600.
+	MaxLifetimeSeconds int `mapstructure:"max_lifetime_seconds"`
+}
+
+// Enabled reports whether a trusted issuer is configured.
+func (s TrustedIssuerSection) Enabled() bool { return s.Issuer != "" }
+
 // AuthSection configures authentication.
 type AuthSection struct {
 	Provider string     `mapstructure:"provider"`
@@ -392,6 +421,10 @@ type AuthSection struct {
 	// "oidc" (Pro-gated); the JWT authenticator remains the request-path verifier
 	// in both modes.
 	OIDC OIDCSection `mapstructure:"oidc"`
+	// TrustedIssuer lets a platform that already authenticates its users open a
+	// UI session for them with a token its own issuer signed (#1284). Empty
+	// Issuer disables it.
+	TrustedIssuer TrustedIssuerSection `mapstructure:"trusted_issuer"`
 	// DevNoAuth disables authentication entirely, treating every request as an
 	// admin. It exists ONLY for `leoflow dev` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
@@ -763,8 +796,15 @@ var serverDefaults = map[string]any{
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `leoflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
-	"ui.auto_refresh_interval_seconds": 0,
-	"auth.dev_no_auth":                 false,
+	"ui.auto_refresh_interval_seconds":         0,
+	"auth.dev_no_auth":                         false,
+	"auth.trusted_issuer.name":                 "",
+	"auth.trusted_issuer.issuer":               "",
+	"auth.trusted_issuer.jwks_url":             "",
+	"auth.trusted_issuer.audience":             "",
+	"auth.trusted_issuer.tenant_claim":         "tenant_id",
+	"auth.trusted_issuer.allowed_tenants":      []string{},
+	"auth.trusted_issuer.max_lifetime_seconds": 0,
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
@@ -901,6 +941,9 @@ func (c *ServerConfig) Validate() error {
 		return err
 	}
 	if err := c.validateExecution(); err != nil {
+		return err
+	}
+	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
 		return err
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
@@ -1154,6 +1197,51 @@ func tenantPinHint(c *ServerConfig) string {
 		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Leoflow tenant. " +
 		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by LEOFLOW_CONFIG; no LEOFLOW_AUTH_OIDC_* environment variable can carry it. " +
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
+}
+
+// issuerNamePattern is the shape of a trusted issuer's name: it becomes part of
+// the provider key stored on every linked user.
+var issuerNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
+
+// validateTrustedIssuer checks auth.trusted_issuer (#1284) when any key is set.
+// Every missing or malformed key is reported in one error, so first-time setup
+// is one edit rather than a chain of restarts.
+func validateTrustedIssuer(s TrustedIssuerSection) error {
+	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 {
+		return nil
+	}
+	checks := []struct {
+		ok      bool
+		problem string
+	}{
+		{issuerNamePattern.MatchString(s.Name), "auth.trusted_issuer.name (1-40 lowercase letters, digits or '-')"},
+		{s.Issuer != "", "auth.trusted_issuer.issuer"},
+		{jwksURLAllowed(s.JWKSURL), "auth.trusted_issuer.jwks_url (https, or http on a loopback host)"},
+		{s.Audience != "", "auth.trusted_issuer.audience"},
+		{s.TenantClaim != "", "auth.trusted_issuer.tenant_claim"},
+		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
+		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 3600, "auth.trusted_issuer.max_lifetime_seconds (0 to 3600)"},
+	}
+	var problems []string
+	for _, c := range checks {
+		if !c.ok {
+			problems = append(problems, c.problem)
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("auth.trusted_issuer is incomplete or invalid; set: %s", strings.Join(problems, ", "))
+	}
+	return nil
+}
+
+// jwksURLAllowed accepts an https URL with a host, or http on a loopback host
+// for local development, like the OIDC redirect URL.
+func jwksURLAllowed(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname()))
 }
 
 // validateRedirectURL requires the OIDC callback URL to use https so the

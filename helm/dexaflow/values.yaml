@@ -243,6 +243,26 @@ auth:
   existingSecret: ""
   # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
   tokenTtlSeconds: 3600
+  # Trusted-issuer handoff (#1284): a platform that already signs its users in
+  # opens a UI session for them by posting a short-lived token its own issuer
+  # signed to POST /api/v2/auth/session. Leoflow verifies it against the
+  # issuer's public JWKS and signs in the existing user linked to the token's
+  # subject; it never creates users or grants roles. Off until `issuer` is set.
+  trustedIssuer:
+    # -- The exact `iss` of the issuer's tokens. Empty (the default) disables the handoff and renders none of these keys.
+    issuer: ""
+    # -- Name of the issuer, 1-40 lowercase letters, digits or `-`. Users are linked under `issuer:<name>`, so keep it stable once users exist.
+    name: ""
+    # -- Where the issuer publishes its public signing keys. `https`, or `http` on a loopback host.
+    jwksUrl: ""
+    # -- The `aud` the tokens must carry for this Leoflow.
+    audience: ""
+    # -- The string claim naming the Leoflow tenant.
+    tenantClaim: tenant_id
+    # -- Tenants the issuer may sign in to; `["*"]` allows every tenant. Required when `issuer` is set.
+    allowedTenants: []
+    # -- Longest `exp - iat` a handoff token may have. `0` uses 900 seconds; at most 3600.
+    maxLifetimeSeconds: 0
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
   # fetch (ADR 0055). All three ship on the value that is byte-for-byte today's

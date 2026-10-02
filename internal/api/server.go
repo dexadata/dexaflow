@@ -131,6 +131,11 @@ type Dependencies struct {
 	// AuthAudit records authentication events (login, tenant-pin rejection, JIT,
 	// break-glass, logout) to the audit sink.
 	AuthAudit AuthAuditWriter
+	// TrustedIssuer, when set, enables POST /api/v2/auth/session: a token from
+	// the operator's trusted issuer opens a UI session for a linked user
+	// (#1284). TrustedIssuerUsers resolves those users (the storage repo).
+	TrustedIssuer      TrustedIssuer
+	TrustedIssuerUsers TrustedIssuerUserStore
 	// JWTSecret is the HS256 secret the OIDC callback mints the app's _token with.
 	JWTSecret string
 	// SessionCookieInsecure drops the Secure attribute from the session and OIDC
@@ -200,6 +205,20 @@ func NewServer(deps Dependencies) *gin.Engine {
 		breakGlass:   len(deps.OIDCSettings.BreakGlassEmails) > 0,
 		autoRedirect: deps.OIDCSettings.AutoRedirect,
 	}))
+	// Trusted-issuer handoff (#1284): registered only when an issuer is
+	// configured, on its own per-IP limiter like the OIDC routes.
+	if deps.TrustedIssuer != nil {
+		issuerLimiter := auth.NewRateLimiter(30, time.Minute)
+		r.POST("/api/v2/auth/session", rateLimitByIP(issuerLimiter), issuerSessionHandler(issuerSessionDeps{
+			issuer:          deps.TrustedIssuer,
+			users:           deps.TrustedIssuerUsers,
+			audit:           deps.AuthAudit,
+			jwtSecret:       deps.JWTSecret,
+			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,
+			logger:          deps.Logger,
+			insecureCookies: deps.SessionCookieInsecure,
+		}))
+	}
 	// OIDC/SSO login flow (D1): registered only when a provider was discovered at
 	// boot. Both routes sit under the public /api/v2/auth/ prefix.
 	if deps.OIDCFlow != nil {

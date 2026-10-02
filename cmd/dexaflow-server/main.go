@@ -40,6 +40,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/failurealert"
+	"github.com/dexadata/dexaflow/internal/issuer"
 	"github.com/dexadata/dexaflow/internal/kubeexchange"
 	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/observability"
@@ -1249,7 +1250,7 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		oidcFlow = flow
 	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
-	return buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow), nil
+	return buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg)), nil
 }
 
 // oidcDiscoveryTimeout bounds the IdP discovery request on the boot path. It is
@@ -1267,6 +1268,25 @@ var oidcDiscoveryTimeout = 15 * time.Second
 // flow or an error, never nil,nil). The client secret comes from the environment
 // (LEOFLOW_AUTH_OIDC_CLIENT_SECRET, bound by viper); it is never logged.
 // Discovery failure is a boot failure — fail closed.
+// newTrustedIssuer builds the #1284 verifier from auth.trusted_issuer, or nil
+// when none is configured. It makes no network call: the JWKS is fetched on
+// first use, so an issuer outage never blocks boot.
+func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.TrustedIssuer {
+	s := cfg.Auth.TrustedIssuer
+	if !s.Enabled() {
+		return nil
+	}
+	return issuer.New(ctx, issuer.Config{
+		Name:           s.Name,
+		Issuer:         s.Issuer,
+		JWKSURL:        s.JWKSURL,
+		Audience:       s.Audience,
+		TenantClaim:    s.TenantClaim,
+		AllowedTenants: s.AllowedTenants,
+		MaxLifetime:    time.Duration(s.MaxLifetimeSeconds) * time.Second,
+	})
+}
+
 func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slog.Logger) (*oidc.Flow, error) {
 	discCtx, cancel := context.WithTimeout(ctx, oidcDiscoveryTimeout)
 	defer cancel()
@@ -1303,7 +1323,7 @@ func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slo
 	return flow, nil
 }
 
-func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow) *http.Server {
+func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer) *http.Server {
 	if cfg.Auth.DevNoAuth {
 		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only — NEVER use in production")
 	}
@@ -1370,6 +1390,11 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		OIDCUsers:    repo,
 		AuthAudit:    repo,
 		JWTSecret:    cfg.Auth.JWT.Secret,
+
+		// Trusted-issuer handoff (#1284): nil unless auth.trusted_issuer is set,
+		// which leaves POST /api/v2/auth/session unregistered.
+		TrustedIssuer:      trustedIssuer,
+		TrustedIssuerUsers: repo,
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 	})

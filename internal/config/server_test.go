@@ -548,3 +548,86 @@ auth:
 		t.Errorf("role_mappings[app.admins] = %q, want admin (dotted group was split)", got)
 	}
 }
+
+// TestLoadServerReadsTrustedIssuerFromEnv locks that every #1284 key binds
+// from the environment, the tenant list comma-split, and that the section is
+// empty by default (no handoff endpoint).
+func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Auth.TrustedIssuer.Issuer != "" || c.Auth.TrustedIssuer.TenantClaim != "tenant_id" {
+		t.Fatalf("defaults = %+v, want no issuer and tenant_claim tenant_id", c.Auth.TrustedIssuer)
+	}
+
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_NAME", "portal")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ISSUER", "https://portal.example.com")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL", "https://portal.example.com/jwks")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE", "leoflow-engine")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM", "org")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS", "acme,globex")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS", "300")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	want := TrustedIssuerSection{
+		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
+		Audience: "leoflow-engine", TenantClaim: "org", AllowedTenants: []string{"acme", "globex"}, MaxLifetimeSeconds: 300,
+	}
+	got := c.Auth.TrustedIssuer
+	if got.Name != want.Name || got.Issuer != want.Issuer || got.JWKSURL != want.JWKSURL || got.Audience != want.Audience ||
+		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 {
+		t.Errorf("TrustedIssuer = %+v, want %+v", got, want)
+	}
+}
+
+// TestValidateTrustedIssuer covers the boot checks. A half-configured issuer
+// fails boot with every missing key named at once, so first-time setup is one
+// edit, not a chain of restarts.
+func TestValidateTrustedIssuer(t *testing.T) {
+	full := TrustedIssuerSection{
+		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
+		Audience: "leoflow-engine", TenantClaim: "tenant_id", AllowedTenants: []string{"*"},
+	}
+	cases := []struct {
+		name    string
+		mutate  func(*TrustedIssuerSection)
+		wantErr []string
+	}{
+		{"unset", func(s *TrustedIssuerSection) { *s = TrustedIssuerSection{TenantClaim: "tenant_id"} }, nil},
+		{"complete", func(*TrustedIssuerSection) {}, nil},
+		{"loopback http jwks", func(s *TrustedIssuerSection) { s.JWKSURL = "http://localhost:9000/jwks" }, nil},
+		{"only an issuer", func(s *TrustedIssuerSection) {
+			*s = TrustedIssuerSection{Issuer: "https://portal.example.com", TenantClaim: "tenant_id"}
+		}, []string{"auth.trusted_issuer.name", "auth.trusted_issuer.jwks_url", "auth.trusted_issuer.audience", "auth.trusted_issuer.allowed_tenants"}},
+		{"bad name", func(s *TrustedIssuerSection) { s.Name = "Portal One" }, []string{"auth.trusted_issuer.name"}},
+		{"plain http jwks", func(s *TrustedIssuerSection) { s.JWKSURL = "http://portal.example.com/jwks" }, []string{"auth.trusted_issuer.jwks_url"}},
+		{"lifetime too long", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 7200 }, []string{"auth.trusted_issuer.max_lifetime_seconds"}},
+		{"empty tenant claim", func(s *TrustedIssuerSection) { s.TenantClaim = "" }, []string{"auth.trusted_issuer.tenant_claim"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.TrustedIssuer = full
+			tc.mutate(&c.Auth.TrustedIssuer)
+			err := c.Validate()
+			if len(tc.wantErr) == 0 {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate() = nil, want an error naming %v", tc.wantErr)
+			}
+			for _, key := range tc.wantErr {
+				if !strings.Contains(err.Error(), key) {
+					t.Errorf("Validate() = %v, want it to name %q", err, key)
+				}
+			}
+		})
+	}
+}

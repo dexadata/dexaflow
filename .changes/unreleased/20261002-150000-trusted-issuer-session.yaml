@@ -1,0 +1,15 @@
+kind: Added
+body: |-
+  **Open a UI session from a trusted issuer's token** (#1284). A platform that
+  already signs its users in can now hand them to Leoflow without Leoflow
+  storing a password and without the platform holding Leoflow's signing
+  secret: configure `auth.trusted_issuer` (issuer, JWKS URL, audience, tenant
+  claim, allowed tenants; Helm: `auth.trustedIssuer`) and post a short-lived
+  token the issuer signed to `POST /api/v2/auth/session`. Leoflow verifies it
+  against the issuer's public keys, signs in the existing active user linked
+  to the token's subject in the token's tenant, and redirects to `next`. The
+  token never creates users or grants roles. Off by default, validated at boot,
+  and keys are fetched on first use so an issuer outage cannot block boot. See
+  [Trusted-issuer
+  handoff](https://dexaflow.dexadata.ai/reference/configuration/#trusted-issuer-handoff).
+time: 2026-10-02T15:00:00.000000000-03:00
