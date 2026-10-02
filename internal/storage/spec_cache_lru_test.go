@@ -93,3 +93,68 @@ func TestSpecCacheDropsRawSpecBytes(t *testing.T) {
 		t.Errorf("version or spec lost data: image %q, %d tasks", ver.ImageReference, len(spec.Tasks))
 	}
 }
+
+func tickGet(t *testing.T, cache *specCache, getter versionGetter, ids []pgtype.UUID) {
+	t.Helper()
+	cache.beginTick()
+	for _, id := range ids {
+		if _, _, err := cache.getForTick(context.Background(), getter, id); err != nil {
+			t.Fatalf("getForTick: %v", err)
+		}
+	}
+}
+
+func totalCalls(g *countingVersionGetter) int {
+	n := 0
+	for _, c := range g.calls {
+		n += c
+	}
+	return n
+}
+
+// TestSpecCacheKeepsTheTickWorkingSet pins that a scheduler tick reading more
+// active versions than the bound does not thrash: every version read in a tick
+// stays cached through the next one, so the second tick fetches nothing.
+func TestSpecCacheKeepsTheTickWorkingSet(t *testing.T) {
+	getter := &countingVersionGetter{spec: domain.DAGSpec{DagID: "d"}}
+	cache := newSpecCacheWithLimit(4)
+	active := make([]pgtype.UUID, 0, 10)
+	for i := range 10 {
+		active = append(active, versionUUID(byte(0x40+i)))
+	}
+
+	tickGet(t, cache, getter, active)
+	if got := totalCalls(getter); got != 10 {
+		t.Fatalf("first tick fetched %d versions, want 10", got)
+	}
+	tickGet(t, cache, getter, active)
+	if got := totalCalls(getter); got != 10 {
+		t.Errorf("second tick fetched %d more versions, want 0", got-10)
+	}
+	// An API read of another version must not evict the tick's working set.
+	mustGet(t, cache, getter, versionUUID(0x7f))
+	tickGet(t, cache, getter, active)
+	if got := totalCalls(getter); got != 11 {
+		t.Errorf("third tick fetched %d more versions, want 0", got-11)
+	}
+}
+
+// TestSpecCacheReleasesVersionsTheTickStopsReading pins that the tick
+// protection lapses: once two ticks pass without reading a version (its runs
+// finished), it is evictable again and the cache returns to its bound.
+func TestSpecCacheReleasesVersionsTheTickStopsReading(t *testing.T) {
+	getter := &countingVersionGetter{spec: domain.DAGSpec{DagID: "d"}}
+	cache := newSpecCacheWithLimit(2)
+	old := []pgtype.UUID{versionUUID(0x51), versionUUID(0x52), versionUUID(0x53), versionUUID(0x54)}
+
+	tickGet(t, cache, getter, old)
+	tickGet(t, cache, getter, nil)
+	tickGet(t, cache, getter, nil)
+	mustGet(t, cache, getter, versionUUID(0x61))
+	cache.mu.Lock()
+	n := cache.lru.Len()
+	cache.mu.Unlock()
+	if n > 2 {
+		t.Errorf("cache holds %d unpinned versions after the tick dropped them, want at most 2", n)
+	}
+}
