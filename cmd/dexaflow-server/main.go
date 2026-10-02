@@ -1121,14 +1121,29 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
+	// The scheduler loop, its reapers and the janitors run on their own pool
+	// when database.scheduler_max_conns is set, so API traffic cannot starve
+	// them; unset, schedPG is pg and nothing changes. The agent gRPC handlers
+	// above stay on the main pool with the repository they share with the API.
+	schedPG, releaseSchedPG, perr := pg.ForScheduler(ctx, cfg.Database)
+	if perr != nil {
+		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		return nil, false, nil, fmt.Errorf("scheduler pool: %w", perr)
+	}
+	schedExec := execStore
+	if schedPG != pg {
+		schedExec = storage.NewExecutionStore(schedPG)
+		logger.Info("scheduler uses a dedicated database pool", "max_conns", cfg.Database.SchedulerMaxConns)
+	}
 	// XCom-TTL and log-retention janitors are maintenance the scheduler owns; the
 	// api role runs no background writers.
-	startCleanup(ctx, storage.NewXComIndex(pg), logSink, cfg.Logs.Dir, logger)
+	startCleanup(ctx, storage.NewXComIndex(schedPG), logSink, cfg.Logs.Dir, logger)
 
 	drain := func() {}
 	if cfg.Scheduler.Enabled {
-		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, pg, repo, execStore, authn, warmReg, logSink, logger, metrics)
+		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, schedPG, repo, schedExec, authn, warmReg, logSink, logger, metrics)
 		if serr != nil {
+			releaseSchedPG()
 			// Bounded, like every other stop of this server. At boot no stream is
 			// open yet, so the unbounded form could not actually hang here — but a
 			// second way to stop the same server is a way for the two to drift, and
@@ -1155,6 +1170,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	stop = func() {
 		drain()
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		releaseSchedPG()
 	}
 	return health, podDispatch, stop, nil
 }
