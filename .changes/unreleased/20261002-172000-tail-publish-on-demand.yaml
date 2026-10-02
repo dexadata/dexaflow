@@ -1,0 +1,13 @@
+kind: Changed
+body: |-
+  **Live log tailing costs nothing for attempts nobody is watching.** The
+  control plane used to publish every task log line to Redis, one round trip
+  per line, even when no one followed the log. It now publishes only while a
+  follower is subscribed to that attempt (checked with `PUBSUB NUMSUB` at most
+  once per second per running log stream; any pattern subscriber keeps every
+  attempt publishing), and each line is encoded once for storage and
+  publishing. A follower that subscribes between two checks still receives
+  every line that arrived after it subscribed: the lines held since the last
+  check are published first, and the follow view skips those it already read
+  from the stored log.
+time: 2026-10-02T17:20:00.000000000-03:00

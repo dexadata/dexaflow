@@ -531,11 +531,8 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 	ref := logs.Ref{TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber}
 	publish := func(string) {}
 	if s.tail != nil {
-		publish = func(line string) {
-			if perr := s.tail.Publish(stream.Context(), ref, line); perr != nil {
-				slog.Warn("publishing log tail", "task", id.TaskID, "error", perr)
-			}
-		}
+		gate := newTailGate(s.tail, ref, time.Now)
+		publish = func(line string) { gate.publish(stream.Context(), line) }
 	}
 	return writeLines(s.shutdown, w, stream.Recv, publish, attemptAttrs(id))
 }
@@ -623,12 +620,20 @@ func writeLine(w logs.LogWriter, line *agentv1.LogLine, publish func(string), at
 		Stream:  line.GetStream(),
 		Message: msg,
 	}
-	if werr := w.WriteEvent(ev); werr != nil {
+	// Encode once: the same JSON line is stored and published. The full event
+	// (level/stream/ts), not just the text, so a live NDJSON follower can color
+	// lines exactly like the stored drill-down.
+	encoded := logs.EncodeLine(ev)
+	var werr error
+	if lw, ok := w.(logs.LineWriter); ok {
+		werr = lw.WriteLine(encoded)
+	} else {
+		werr = w.WriteEvent(ev)
+	}
+	if werr != nil {
 		return internalStatus("writing log line", werr, attrs...)
 	}
-	// Publish the full event (level/stream/ts), not just the text, so a live
-	// NDJSON follower can color lines exactly like the stored drill-down.
-	publish(logs.EncodeLine(ev))
+	publish(encoded)
 	return nil
 }
 

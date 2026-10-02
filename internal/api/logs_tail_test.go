@@ -38,7 +38,7 @@ func TestTailNdjsonEmitsStructuredEvents(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/logs?follow=true", http.NoBody)
 
-	tailNdjson(c, &fakeTailReader{ch: ch}, 1)
+	tailNdjson(c, &fakeTailReader{ch: ch}, 1, time.Time{})
 
 	body := rec.Body.String()
 	if !strings.Contains(body, `"event":"boom"`) {
