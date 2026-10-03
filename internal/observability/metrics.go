@@ -13,6 +13,7 @@ import (
 type Metrics struct {
 	// Scheduler
 	SchedulerLoopDuration prometheus.Histogram
+	SchedulerWokenTicks   prometheus.Counter
 	SchedulerDecisions    *prometheus.CounterVec
 	SchedulerLeader       *prometheus.GaugeVec
 	ActiveDAGRuns         *prometheus.GaugeVec
@@ -80,6 +81,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		SchedulerDecisions: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_scheduler_decisions_total", Help: "Scheduler decisions by type.",
 		}, []string{"decision_type"}),
+		SchedulerWokenTicks: f.NewCounter(prometheus.CounterOpts{
+			Name: "dexaflow_scheduler_woken_ticks_total",
+			Help: "Scheduler ticks started early by a task completion instead of the loop interval (scheduler.eager_promotion).",
+		}),
 		TasksUndispatchable: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_tasks_undispatchable_total", Help: "Tasks queued with no executor to launch them, by reason.",
 		}, []string{"reason"}),
@@ -246,6 +251,10 @@ func (m *Metrics) RecordHTTPRequest(method, path string, status int, dur time.Du
 	m.HTTPRequests.WithLabelValues(method, path, strconv.Itoa(status)).Inc()
 	m.HTTPRequestDuration.WithLabelValues(method, path).Observe(dur.Seconds())
 }
+
+// RecordSchedulerWokenTick counts one scheduler tick started early by a task
+// completion (scheduler.eager_promotion).
+func (m *Metrics) RecordSchedulerWokenTick() { m.SchedulerWokenTicks.Inc() }
 
 // RecordSchedulerDecision records one scheduler decision by type.
 func (m *Metrics) RecordSchedulerDecision(decisionType string) {
