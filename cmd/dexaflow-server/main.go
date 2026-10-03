@@ -1357,6 +1357,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only — NEVER use in production")
 	}
 	uiSrv, editorFS := newUIServer(cfg, tel.Logger)
+	// Gzip the SPA bundle once, off the startup path, so no browser pays it.
+	go uiSrv.Precompress()
 
 	handler := api.NewServer(api.Dependencies{
 		Logger:                       tel.Logger,
