@@ -260,7 +260,7 @@ func run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
-	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks), ReadHeaderTimeout: 10 * time.Second}
+	metricsSrv := newHTTPServer(cfg.Server.MetricsAddr, api.ObservabilityHandler(tel.Registry, checks), cfg)
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
 	return serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv)
@@ -1428,7 +1428,30 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 	})
-	return &http.Server{Addr: cfg.Server.HTTPAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg)
+}
+
+// newHTTPServer builds an HTTP listener with the configured timeouts. The
+// header timeout is always on. ReadTimeout and IdleTimeout come from
+// server.read_timeout and server.idle_timeout (0, the default, leaves them
+// off). WriteTimeout is deliberately never set: a write deadline would cut
+// live log tails and long downloads mid-stream.
+//
+// net/http uses ReadTimeout as the idle timeout when IdleTimeout is 0, so with
+// only a read timeout set an idle 0 is passed on as negative (no idle timeout):
+// idle keep-alive connections stay open, as before, until idle_timeout is set.
+func newHTTPServer(addr string, handler http.Handler, cfg *config.ServerConfig) *http.Server {
+	idle := cfg.Server.IdleTimeout
+	if idle == 0 && cfg.Server.ReadTimeout > 0 {
+		idle = -1
+	}
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		IdleTimeout:       idle,
+	}
 }
 
 // executorDispatchEnabled decides what /api/v2/monitor/executor reports for

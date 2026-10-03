@@ -347,6 +347,8 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_SERVER_GRPC_TLS_KEY` | _(empty)_ | Pro | PEM private key paired with `DEXAFLOW_SERVER_GRPC_TLS_CERT`. Both must be set together to encrypt the agent channel. |
 | `DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS` | `http://localhost:8080` | both | Browser origins allowed to call the API cross-origin (`server.cors.allowed_origins`, a list). The UI is served same-origin with the API, so most deployments need no entry and should leave the server default alone. Comma-separated via the env var; in the chart set `config.cors.allowedOrigins` (a YAML list) and it is rendered comma-joined for you. The chart rejects `"*"` at render time (#1144). |
 | `DEXAFLOW_SERVER_TRUSTED_PROXIES` | *(empty — trust none)* | both | Proxy IPs/CIDRs whose `X-Forwarded-For` is honored for the client IP (`server.trusted_proxies`, a list). See note below. |
+| `DEXAFLOW_SERVER_READ_TIMEOUT` | `0s` | both | Longest time the API and metrics listeners spend reading one request, headers and body (a Go duration such as `60s`). Protects against clients that trickle a body to hold connections. Set it above your slowest legitimate upload. It never limits a response, so live log tails keep streaming. `0s` means no limit. Helm: set it through `extraEnv`. |
+| `DEXAFLOW_SERVER_IDLE_TIMEOUT` | `0s` | both | Closes a keep-alive connection idle this long (a Go duration such as `120s`). `0s` keeps idle connections open, also when `DEXAFLOW_SERVER_READ_TIMEOUT` is set (the read timeout is never used as an idle timeout). Helm: set it through `extraEnv`. |
 
 ### Database (`database.*`)
 
