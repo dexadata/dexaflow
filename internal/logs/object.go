@@ -139,7 +139,7 @@ func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 	first, err := o.countSegments(ref)
 	if err != nil {
 		o.logger.Warn("probing stored log segments failed; starting at segment zero",
-			"key", o.segmentKey(ref, 0), "error", err)
+			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
 		first = 0
 	}
 	keyFn := func(n int) string { return o.segmentKey(ref, n) }
@@ -194,7 +194,7 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 		if serr != nil {
 			if !errors.Is(serr, ErrObjectNotFound) {
 				o.logger.Debug("probing log segment failed; treating the log as missing",
-					"key", o.segmentKey(ref, 0), "error", serr)
+					"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(serr.Error()))
 			}
 			return nil, fmt.Errorf("reading log object: %w", err)
 		}
@@ -206,7 +206,7 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
 	case !errors.Is(err, ErrObjectNotFound):
 		o.logger.Warn("probing log segment failed; reading the single object",
-			"key", o.segmentKey(ref, 0), "error", err)
+			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
 	}
 	rc, err := o.store.Get(o.ctx, o.key(ref))
 	if err != nil {
@@ -519,7 +519,7 @@ func (w *objectWriter) maybeFlush(ctx context.Context) {
 		return
 	}
 	if err := w.flush(ctx); err != nil {
-		w.logger.Warn("incremental log object flush failed; will retry", "key", w.currentKey(), "error", err)
+		w.logger.Warn("incremental log object flush failed; will retry", "key", logSafe(w.currentKey()), "error", logSafe(err.Error()))
 	}
 }
 
