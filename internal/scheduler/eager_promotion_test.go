@@ -313,13 +313,19 @@ func TestWakesCoalesce(t *testing.T) {
 	s.EnableEagerPromotion()
 	stop := runLoop(t, s)
 	defer stop()
+	start := time.Now()
 	for range 1000 {
 		s.Wake()
 	}
+	// The burst itself can be descheduled for longer than wakeMinGap on a busy
+	// race-enabled runner, and the loop may then tick once per gap it spans. The
+	// bound is what coalescing promises: one tick for the first wake, one for
+	// the wakes pending behind it, and one more per gap the burst outlasted.
+	allowed := 2 + int64(time.Since(start)/wakeMinGap)
 	pollUntil(t, func() bool { return store.ticks.Load() > 0 }, 2*time.Second)
 	time.Sleep(3 * wakeMinGap)
-	if n := store.ticks.Load(); n < 1 || n > 2 {
-		t.Errorf("1000 wakes in a burst should coalesce into one or two ticks, got %d", n)
+	if n := store.ticks.Load(); n < 1 || n > allowed {
+		t.Errorf("1000 wakes in a burst should coalesce into at most %d ticks, got %d", allowed, n)
 	}
 }
 
