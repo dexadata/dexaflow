@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-02
+
 ### Added
 
 - **A reference page for every image and chart a release publishes**, and the
@@ -239,6 +241,11 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `scripts/check-codeql-action-pins.sh` refuses the mixed state.
 
 ### Fixed
+
+- **`dexaflow setup` names the new commands in its closing summary.** The admin
+  banner read `LEOFLOW LITE ADMIN` and the next-step hints suggested
+  `leoflow lite`; they now say `DEXAFLOW LITE ADMIN` and `dexaflow lite`. The
+  `leoflow` command keeps working.
 
 - **`dexaflow compile <dir>` wrote `dag.json` into the directory you ran it from,
   silently clobbering one that was already there.** The `--output` flag defaulted
