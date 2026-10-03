@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,7 +53,7 @@ func TestHTTPTimeoutsRejectNegative(t *testing.T) {
 
 func validServerConfig(t *testing.T) *ServerConfig {
 	t.Helper()
-	t.Setenv("DEXAFLOW_AUTH_JWT_SECRET", "a-test-secret-that-is-long-enough-123")
+	t.Setenv("DEXAFLOW_AUTH_JWT_SECRET", strings.Repeat("x", 40))
 	c, err := LoadServer("", nil)
 	if err != nil {
 		t.Fatal(err)
