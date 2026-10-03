@@ -247,7 +247,7 @@ func (s *Server) serveIdentity(w http.ResponseWriter, r *http.Request, name stri
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			slog.Debug("ui static close failed", "name", name, "err", cerr)
+			slog.Debug("ui static close failed", "err", cerr)
 		}
 	}()
 	rs, ok := f.(io.ReadSeeker)
