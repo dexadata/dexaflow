@@ -1,0 +1,21 @@
+-- Index settled runs by tenant and end time for the retention janitor
+-- (performance item D5). It selects a tenant's runs in success or failed that
+-- ended before a cutoff, oldest first, a hundred at a time; without this index
+-- every batch reads every run of the tenant. The partial predicate keeps active
+-- runs out, so the index adds no write cost to the hot queued and running rows
+-- beyond the one insert when a run settles.
+--
+-- CONCURRENTLY so the build does not block writes to dag_runs. It cannot run
+-- inside a transaction, so this file holds this one statement and no
+-- BEGIN/COMMIT: golang-migrate sends the file as a single simple-protocol
+-- statement, which Postgres runs outside any transaction block.
+--
+-- No IF NOT EXISTS, on purpose: if the build is interrupted, Postgres leaves
+-- an INVALID index behind and golang-migrate marks version 36 dirty, and a
+-- retry must fail loudly instead of keeping the invalid index. Drop it first:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;
+--   migrate -path migrations -database "$DATABASE_URL" force 35
+--   migrate -path migrations -database "$DATABASE_URL" up
+CREATE INDEX CONCURRENTLY idx_dag_runs_tenant_settled_ended ON dag_runs (tenant_id, ended_at)
+    WHERE state IN ('success', 'failed');

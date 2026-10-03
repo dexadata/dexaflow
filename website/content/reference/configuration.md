@@ -548,6 +548,46 @@ before enabling it in production.
 | `DEXAFLOW_SECRETS_BACKEND` | _(empty — disabled)_ | Pro (K8s) | Provider secrets-backend class the in-pod resolver drives (e.g. `airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend`). When set, a Connection/Variable a DAG declares can be resolved pod-side from the provider store under the pod's keyless identity. Helm: `secrets.backend`. |
 | `DEXAFLOW_SECRETS_BACKEND_KWARGS` | _(empty — treated as `{}`)_ | Pro (K8s) | Provider kwargs as a JSON **object string** (`connections_prefix`, `variables_prefix`, `region_name`, …), delivered to the pod verbatim. A kind is served only if its `*_prefix` kwarg is present. A JSON string rather than a map so a single env var sets it, matching the env-only control-plane chart. Keyless auth (IRSA / Workload Identity) uses the task pod's ServiceAccount — set `executor.task_service_account` accordingly. Helm: `secrets.backendKwargs`. |
 
+### Retention (`retention.*`)
+
+The retention janitor deletes metadata rows past an age you choose, per data
+class. Every class is off by default (`0` days): a default install never
+deletes a row. It runs on the scheduler leader only and rechecks leadership
+before every batch. A run is eligible once it settled (`success` or `failed`)
+more than `dag_runs_days` ago, every task instance of it is settled
+(`success`, `failed`, `skipped` or `upstream_failed`; a task in `none` is
+waiting to be scheduled, for example after a clear, so its run is kept), and
+no staging volume of it is still live. It goes with its task instances, state
+history, attempt history and XCom index rows, children first. Every batch is
+one short transaction of at most `batch_size` rows, run rows included; a run
+with more rows than that is finished by later batches, each of which checks
+again that the run is still eligible. Active and recent runs are never
+touched. The janitor sleeps `batch_pause` between batches and a cycle stops
+once it deleted `max_rows_per_cycle` rows; the rest waits for the next cycle.
+Each tenant's runs and each tenant's audit rows take turns, one batch each,
+so no tenant and neither class waits behind another's backlog. Every cycle
+that deletes audit rows writes a `retention.purge` audit entry in the same
+scope with the row count and the cutoff. Turn on `dry_run` first to see what
+a cycle would delete: it only counts (summed across all tenants), logs the
+counts and sets `dexaflow_retention_rows_eligible`, which a deleting cycle
+resets to zero. Metrics: `dexaflow_retention_rows_deleted_total{table}`,
+`dexaflow_retention_rows_eligible{table}` and
+`dexaflow_retention_cycle_duration_seconds`. What the janitor does not delete:
+task logs, which the `disk` log backend prunes after 30 days and an object
+store keeps by its bucket lifecycle policy, and the bookkeeping rows of
+staging volumes already marked deleted. The chart has no values for these
+keys; set them through `extraEnv`.
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `0` (off) | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. `0` keeps every run. |
+| `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `0` (off) | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. |
+| `DEXAFLOW_RETENTION_DRY_RUN` | `false` | both | Only count what a cycle would delete; delete nothing. |
+| `DEXAFLOW_RETENTION_INTERVAL` | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |
+| `DEXAFLOW_RETENTION_BATCH_SIZE` | `1000` | both | Most rows one DELETE statement removes (1 to 50000). Also caps the runs per batch at 100. |
+| `DEXAFLOW_RETENTION_BATCH_PAUSE` | `100ms` | both | Sleep between two batches, so the janitor never keeps the database busy. |
+| `DEXAFLOW_RETENTION_MAX_ROWS_PER_CYCLE` | `100000` | both | A cycle starts no new batch once it deleted this many rows, children included. |
+
 ### Observability (`observability.*`)
 
 | Variable | Default | Edition | Purpose |

@@ -1,0 +1,19 @@
+kind: Added
+body: |-
+  **An opt-in retention janitor for finished runs and the audit log.** Set
+  `retention.dag_runs_days` to delete settled runs, with their task instances,
+  state and attempt history and XCom index rows, that ended more than that many
+  days ago, and `retention.audit_log_days` to delete older audit entries. Both
+  are `0` (off) by default, so nothing is deleted unless configured. The janitor
+  runs on the scheduler leader only, per tenant, in batches of
+  `retention.batch_size` rows (default 1000) with a `retention.batch_pause`
+  (default 100ms) between them and at most `retention.max_rows_per_cycle`
+  (default 100000) rows per `retention.interval` (default 1h), with tenants
+  and the audit log taking turns. Active runs, runs with a task instance that
+  is not settled (including one a clear just reset) and runs with a live
+  staging volume are never touched. Each audit purge writes a
+  `retention.purge` audit entry. `retention.dry_run` only counts. New metrics:
+  `dexaflow_retention_rows_deleted_total`, `dexaflow_retention_rows_eligible`
+  and `dexaflow_retention_cycle_duration_seconds`. See
+  [Retention](https://dexaflow.dexadata.ai/reference/configuration/#retention-retention).
+time: 2026-10-02T18:00:00.000000000-03:00
