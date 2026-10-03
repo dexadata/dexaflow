@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path"
+	"slices"
 	"sync"
 	"time"
 )
@@ -51,6 +52,28 @@ type ObjectSink struct {
 	store  ObjectStore
 	prefix string
 	logger *slog.Logger
+	layout string
+}
+
+// Object layouts. ObjectLayoutSingle (the default) keeps each attempt in one
+// object at {try}.log, rewritten on every flush. ObjectLayoutSegmented writes
+// the attempt as numbered segments under {try}.log.d/, sealing a segment once it
+// reaches objectSegmentBytes, so a flush uploads the open segment instead of the
+// whole attempt and the writer holds one segment in memory instead of the whole
+// attempt. A server older than the segmented layout reads only {try}.log, which
+// is why it is opt-in; every sink reads both layouts regardless of its own.
+const (
+	ObjectLayoutSingle    = "single"
+	ObjectLayoutSegmented = "segmented"
+)
+
+// ObjectOption configures an ObjectSink.
+type ObjectOption func(*ObjectSink)
+
+// WithObjectLayout selects the layout new attempts are written in. Empty means
+// ObjectLayoutSingle; an unknown value is rejected by NewDurableSink.
+func WithObjectLayout(layout string) ObjectOption {
+	return func(o *ObjectSink) { o.layout = layout }
 }
 
 // NewObjectSink builds an ObjectSink writing to store under an optional key
@@ -72,11 +95,15 @@ type ObjectSink struct {
 // that only runs while the process is already shutting down". What pins the
 // hand-off is a test that reaches this constructor the way the server does, via
 // NewDurableSink (#918).
-func NewObjectSink(ctx context.Context, store ObjectStore, prefix string, logger *slog.Logger) *ObjectSink {
+func NewObjectSink(ctx context.Context, store ObjectStore, prefix string, logger *slog.Logger, opts ...ObjectOption) *ObjectSink {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ObjectSink{ctx: ctx, store: store, prefix: prefix, logger: logger}
+	o := &ObjectSink{ctx: ctx, store: store, prefix: prefix, logger: logger}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
 }
 
 // key maps a Ref to its object key, mirroring DiskSink's on-disk layout so an
@@ -86,26 +113,174 @@ func (o *ObjectSink) key(ref Ref) string {
 	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, fmt.Sprintf("%d.log", ref.TryNumber))
 }
 
+// segmentKey maps a Ref and a segment number to the segment's object key. The
+// zero-padded number keeps a lexical listing in write order.
+func (o *ObjectSink) segmentKey(ref Ref, n int) string {
+	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID,
+		fmt.Sprintf("%d.log.d", ref.TryNumber), fmt.Sprintf("%08d.log", n))
+}
+
 // Open validates the ref and returns a writer that keeps the attempt's object
 // current as lines arrive (see objectWriter) and performs the last flush on Close.
+// In the segmented layout the writer starts after any segment already stored for
+// the attempt, so a second stream opened once the previous one has closed
+// appends instead of overwriting. Two writers live at the same time (a
+// reconnect before the old stream ended) can still overwrite each other's
+// segments, as they overwrite each other's object in the single layout. A failed
+// probe is logged and the writer starts at segment zero.
 func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
-	return newObjectWriter(o.ctx, o.store, o.key(ref), o.logger), nil
+	if o.layout != ObjectLayoutSegmented {
+		single := o.key(ref)
+		return newObjectWriter(o.ctx, o.store, func(int) string { return single }, false, 0, o.logger), nil
+	}
+	first, err := o.countSegments(ref)
+	if err != nil {
+		o.logger.Warn("probing stored log segments failed; starting at segment zero",
+			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
+		first = 0
+	}
+	keyFn := func(n int) string { return o.segmentKey(ref, n) }
+	return newObjectWriter(o.ctx, o.store, keyFn, true, first, o.logger), nil
 }
 
-// Read fetches the stored object for the ref. A missing object surfaces as
-// ErrObjectNotFound.
+// countSegments returns how many contiguous segments are stored for ref. A
+// writer only starts segment n+1 after segment n was stored, so the first
+// missing number ends the attempt.
+func (o *ObjectSink) countSegments(ref Ref) (int, error) {
+	for n := 0; ; n++ {
+		rc, err := o.store.Get(o.ctx, o.segmentKey(ref, n))
+		if errors.Is(err, ErrObjectNotFound) {
+			return n, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		if cerr := rc.Close(); cerr != nil {
+			return 0, cerr
+		}
+	}
+}
+
+// Read returns the attempt's stored log in either layout: its segments in order
+// followed by the single object, which holds the whole log of an attempt written
+// in the single layout and only the reaper's markers of a segmented one. A
+// missing log surfaces as ErrObjectNotFound.
+//
+// Each layout looks for its own shape first. The single layout GETs {try}.log
+// exactly as it did before segments existed and probes segment zero only when
+// that object is missing, so a default deployment pays no extra round trip and
+// a store that answers a missing key with something other than not-found (S3
+// returns 403 AccessDenied to a caller without s3:ListBucket) cannot fail its
+// reads. The price: a segmented attempt that also holds a reaper marker reads
+// back as the marker alone once the layout is switched back to single. The
+// segmented layout probes segment zero first and falls back to {try}.log when
+// that probe fails for any reason.
 func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
+	}
+	if o.layout != ObjectLayoutSegmented {
+		rc, err := o.store.Get(o.ctx, o.key(ref))
+		if err == nil {
+			return rc, nil
+		}
+		if !errors.Is(err, ErrObjectNotFound) {
+			return nil, fmt.Errorf("reading log object: %w", err)
+		}
+		first, serr := o.store.Get(o.ctx, o.segmentKey(ref, 0))
+		if serr != nil {
+			if !errors.Is(serr, ErrObjectNotFound) {
+				o.logger.Debug("probing log segment failed; treating the log as missing",
+					"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(serr.Error()))
+			}
+			return nil, fmt.Errorf("reading log object: %w", err)
+		}
+		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
+	}
+	first, err := o.store.Get(o.ctx, o.segmentKey(ref, 0))
+	switch {
+	case err == nil:
+		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
+	case !errors.Is(err, ErrObjectNotFound):
+		o.logger.Warn("probing log segment failed; reading the single object",
+			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
 	}
 	rc, err := o.store.Get(o.ctx, o.key(ref))
 	if err != nil {
 		return nil, fmt.Errorf("reading log object: %w", err)
 	}
 	return rc, nil
+}
+
+// segmentReader streams a segmented attempt: each segment is fetched only once
+// the previous one is drained, then the single object (the reaper's markers) if
+// one exists.
+type segmentReader struct {
+	sink   *ObjectSink
+	ref    Ref
+	cur    io.ReadCloser
+	next   int
+	tailed bool // the single object was already fetched or found missing
+}
+
+// Read drains the current object and moves on to the next one at its end.
+func (r *segmentReader) Read(p []byte) (int, error) {
+	for r.cur != nil {
+		n, err := r.cur.Read(p)
+		if !errors.Is(err, io.EOF) {
+			return n, err
+		}
+		cerr := r.cur.Close()
+		r.cur = nil
+		if cerr != nil {
+			return n, fmt.Errorf("closing log segment: %w", cerr)
+		}
+		if aerr := r.advance(); aerr != nil {
+			return n, aerr
+		}
+		if n > 0 {
+			return n, nil
+		}
+	}
+	return 0, io.EOF
+}
+
+// advance opens the next segment, or the single object once the segments run
+// out, leaving cur nil when nothing is left.
+func (r *segmentReader) advance() error {
+	if r.tailed {
+		return nil
+	}
+	rc, err := r.sink.store.Get(r.sink.ctx, r.sink.segmentKey(r.ref, r.next))
+	if err == nil {
+		r.cur, r.next = rc, r.next+1
+		return nil
+	}
+	if !errors.Is(err, ErrObjectNotFound) {
+		return fmt.Errorf("reading log segment: %w", err)
+	}
+	r.tailed = true
+	rc, err = r.sink.store.Get(r.sink.ctx, r.sink.key(r.ref))
+	switch {
+	case err == nil:
+		r.cur = rc
+	case !errors.Is(err, ErrObjectNotFound):
+		return fmt.Errorf("reading log object: %w", err)
+	}
+	return nil
+}
+
+// Close releases the object currently being read, if any.
+func (r *segmentReader) Close() error {
+	if r.cur == nil {
+		return nil
+	}
+	err := r.cur.Close()
+	r.cur = nil
+	return err
 }
 
 // AppendEvent adds one event to the attempt's stored object WITHOUT clobbering
@@ -131,7 +306,9 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 // straight over it. Each side Puts the whole object it last read, so the loser
 // loses whole flushes, not one line. Anything that shortens the gap between the
 // two writers — a lower threshold, a caller that is not the reaper — widens this
-// from an exception into the normal case (#918).
+// from an exception into the normal case (#918). In the segmented layout the
+// live writer never writes {try}.log, so the marker there cannot be overwritten;
+// Read serves it after the segments.
 func (o *ObjectSink) AppendEvent(ref Ref, ev Event) error {
 	if err := ref.validate(); err != nil {
 		return err
@@ -167,13 +344,15 @@ func (o *ObjectSink) AppendEvent(ref Ref, ev Event) error {
 // could OOM the shared control plane. What the cap no longer decides is
 // durability: everything flushed before it trips is already stored. Far above
 // any sane task log; it keeps the blast radius of a runaway task to its own
-// attempt.
+// attempt. In the segmented layout the writer only holds the open segment and
+// its unflushed tail, but the cap still counts the sealed segments, so it stays
+// the stored-size ceiling of an attempt in both layouts.
 // var (not const) so tests can lower it without buffering 128 MiB.
 var maxBufferedAttemptBytes = 128 << 20 // 128 MiB
 
 // Flush cadence of the object writer. A kill loses at most the unflushed tail,
-// so these bound the loss; but each flush re-uploads the whole object, so they
-// also bound upload amplification. var (not const) so tests can tighten them.
+// so these bound the loss; but each flush re-uploads the whole object (the open
+// segment in the segmented layout), so they also bound upload amplification. var (not const) so tests can tighten them.
 var (
 	// objectFlushBytes is the unflushed-tail size that forces a flush, matching
 	// the disk sink's bufio threshold so both sinks trail the live log alike.
@@ -201,6 +380,10 @@ var (
 	// server's lifecycle, so the final flush on shutdown survives the SIGTERM
 	// cancellation yet cannot hang the shutdown forever.
 	objectPutTimeout = 30 * time.Second
+	// objectSegmentBytes is the size at which the segmented layout seals the open
+	// segment and starts the next one. It bounds both the bytes a flush uploads
+	// and the writer's memory, at the cost of one Get per segment on read.
+	objectSegmentBytes = 4 << 20 // 4 MiB
 )
 
 // shouldFlush reports whether an unflushed tail of the given size, over an
@@ -227,27 +410,47 @@ func shouldFlush(unflushed, flushed int, sinceLast time.Duration) bool {
 // from a flusher goroutine on the time cadence; Close performs the last flush.
 // Invariant: after any flush the stored object is a prefix of the attempt, so a
 // process kill (no Close) loses at most the unflushed tail. Memory is bounded by
-// maxBufferedAttemptBytes; mu serializes the writer against the flusher.
+// maxBufferedAttemptBytes.
+//
+// In the segmented layout the object being rewritten is the open segment: once a
+// flush stores a segment of at least objectSegmentBytes it is sealed, dropped
+// from memory, and later lines go to the next number. Segment n+1 is only
+// started after segment n was stored, so the stored segments are always
+// contiguous and a reader stops at the first missing number.
+//
+// Two locks keep the network out of the buffer's critical section: mu guards the
+// buffer and is only held to append or to snapshot it, while flushMu serializes
+// the Puts. A flush copies nothing: lines are only ever appended, so the bytes
+// of a snapshot are never written again while its Put is in flight.
 type objectWriter struct {
-	ctx    context.Context
-	store  ObjectStore
-	key    string
-	logger *slog.Logger
+	ctx       context.Context
+	store     ObjectStore
+	keyFn     func(segment int) string
+	segmented bool
+	logger    *slog.Logger
+
+	flushMu sync.Mutex // held for the duration of a Put; taken before mu
 
 	mu        sync.Mutex
-	buf       bytes.Buffer
-	flushed   int  // bytes of buf already stored
-	stored    bool // at least one Put succeeded (an empty attempt still Puts once)
+	buf       []byte // the attempt (single layout) or the open segment and its tail
+	flushed   int    // bytes of buf already stored
+	stored    bool   // at least one Put succeeded (an empty attempt still Puts once)
 	lastFlush time.Time
+	segment   int // number of the open segment; always 0 in the single layout
+	sealed    int // bytes of the segments this writer sealed; counted against the attempt cap
 
 	stopOnce sync.Once
 	stop     chan struct{} // closed by stopFlusher to end the flusher
 	done     chan struct{} // closed by the flusher when it exits
 }
 
-// newObjectWriter builds a writer and starts its flusher.
-func newObjectWriter(ctx context.Context, store ObjectStore, key string, logger *slog.Logger) *objectWriter {
-	w := &objectWriter{ctx: ctx, store: store, key: key, logger: logger, lastFlush: time.Now(), stop: make(chan struct{}), done: make(chan struct{})}
+// newObjectWriter builds a writer and starts its flusher. keyFn maps a segment
+// number to its key; the single layout ignores the number.
+func newObjectWriter(ctx context.Context, store ObjectStore, keyFn func(int) string, segmented bool, firstSegment int, logger *slog.Logger) *objectWriter {
+	w := &objectWriter{
+		ctx: ctx, store: store, keyFn: keyFn, segmented: segmented, segment: firstSegment, logger: logger,
+		lastFlush: time.Now(), stop: make(chan struct{}), done: make(chan struct{}),
+	}
 	go w.runFlusher(ctx)
 	return w
 }
@@ -263,58 +466,102 @@ func (w *objectWriter) runFlusher(ctx context.Context) {
 		case <-w.stop:
 			return
 		case <-ticker.C:
-			w.mu.Lock()
-			w.maybeFlushLocked(ctx)
-			w.mu.Unlock()
+			w.flushMu.Lock()
+			w.maybeFlush(ctx)
+			w.flushMu.Unlock()
 		}
 	}
 }
 
 // WriteEvent appends an event to the in-memory buffer as a JSON line, matching
 // the JSONL format the disk sink writes and the UI reader decodes, then flushes
-// when the tail crosses the threshold. It fails loudly once the attempt exceeds
-// maxBufferedAttemptBytes rather than growing the control plane's memory without
-// bound; whatever was buffered before the cap is still flushed on Close.
+// when the tail crosses the threshold. It fails loudly once the buffer would
+// exceed maxBufferedAttemptBytes rather than growing the control plane's memory
+// without bound; whatever was buffered before the cap is still flushed on Close.
+// When the flusher already has a Put in flight the write does not wait for it:
+// the next trigger picks the tail up.
 func (w *objectWriter) WriteEvent(ev Event) error {
 	line := EncodeLine(ev) + "\n"
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.buf.Len()+len(line) > maxBufferedAttemptBytes {
+	if w.sealed+len(w.buf)+len(line) > maxBufferedAttemptBytes {
+		w.mu.Unlock()
 		return fmt.Errorf("task attempt log exceeds the %d-byte object-sink buffer cap; not buffering further lines", maxBufferedAttemptBytes)
 	}
-	if _, err := w.buf.WriteString(line); err != nil {
-		return fmt.Errorf("buffering log line: %w", err)
+	if cap(w.buf)-len(w.buf) < len(line) {
+		// Double rather than append's gentler growth for large slices: an attempt's
+		// buffer grows to megabytes and every regrowth copies it.
+		w.buf = slices.Grow(w.buf, max(len(line), len(w.buf)))
 	}
-	w.maybeFlushLocked(w.ctx)
+	w.buf = append(w.buf, line...)
+	due := w.dueLocked()
+	w.mu.Unlock()
+	if due && w.flushMu.TryLock() {
+		w.maybeFlush(w.ctx)
+		w.flushMu.Unlock()
+	}
 	return nil
 }
 
-// maybeFlushLocked flushes when shouldFlush says so. An incremental flush
-// failure is logged, not returned: the lines stay buffered and the next trigger
-// retries, so a transient store error never ends the agent's log stream; Close
-// surfaces the final flush's error. Caller holds mu.
-func (w *objectWriter) maybeFlushLocked(ctx context.Context) {
-	if !shouldFlush(w.buf.Len()-w.flushed, w.flushed, time.Since(w.lastFlush)) {
+// dueLocked reports whether shouldFlush calls for a flush now. Caller holds mu.
+func (w *objectWriter) dueLocked() bool {
+	return shouldFlush(len(w.buf)-w.flushed, w.flushed, time.Since(w.lastFlush))
+}
+
+// maybeFlush flushes when shouldFlush says so. An incremental flush failure is
+// logged, not returned: the lines stay buffered and the next trigger retries, so
+// a transient store error never ends the agent's log stream; Close surfaces the
+// final flush's error. Caller holds flushMu.
+func (w *objectWriter) maybeFlush(ctx context.Context) {
+	w.mu.Lock()
+	due := w.dueLocked()
+	w.mu.Unlock()
+	if !due {
 		return
 	}
-	if err := w.flushLocked(ctx); err != nil {
-		w.logger.Warn("incremental log object flush failed; will retry", "key", w.key, "error", err)
+	if err := w.flush(ctx); err != nil {
+		w.logger.Warn("incremental log object flush failed; will retry", "key", logSafe(w.currentKey()), "error", logSafe(err.Error()))
 	}
 }
 
-// flushLocked rewrites the stored object with the whole accumulated content. The
-// Put runs on a context detached from the sink's lifecycle context — which is
-// canceled by SIGTERM at exactly the moment the shutdown path closes writers —
-// and bounded by objectPutTimeout. Caller holds mu.
-func (w *objectWriter) flushLocked(ctx context.Context) error {
+// currentKey is the key the next flush writes.
+func (w *objectWriter) currentKey() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.keyFn(w.segment)
+}
+
+// flush stores a snapshot of the buffer: the whole attempt in the single layout,
+// the open segment in the segmented one. Only the snapshot is taken under mu; the
+// Put runs without it, on a context detached from the sink's lifecycle context
+// (which is canceled by SIGTERM at exactly the moment the shutdown path closes
+// writers) and bounded by objectPutTimeout. Caller holds flushMu.
+func (w *objectWriter) flush(ctx context.Context) error {
+	w.mu.Lock()
+	n := len(w.buf)
+	body := w.buf[:n:n]
+	key := w.keyFn(w.segment)
+	w.mu.Unlock()
+
 	putCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), objectPutTimeout)
 	defer cancel()
-	if err := w.store.Put(putCtx, w.key, bytes.NewReader(w.buf.Bytes())); err != nil {
+	if err := w.store.Put(putCtx, key, bytes.NewReader(body)); err != nil {
 		return fmt.Errorf("writing log object: %w", err)
 	}
-	w.flushed = w.buf.Len()
-	w.stored = true
-	w.lastFlush = time.Now()
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.flushed, w.stored, w.lastFlush = n, true, time.Now()
+	if w.segmented && n >= objectSegmentBytes {
+		// Seal: keep only what arrived during the Put, in a fresh array. The old
+		// one is not reused: an earlier Put that timed out may still have its
+		// body read by the transport. The new array is sized for about one
+		// segment, never for whatever a burst during a slow Put grew the old one
+		// to, so later segments do not inherit that capacity.
+		w.buf = append(make([]byte, 0, max(len(w.buf)-n, min(cap(w.buf), 2*objectSegmentBytes))), w.buf[n:]...)
+		w.flushed = 0
+		w.sealed += n
+		w.segment++
+	}
 	return nil
 }
 
@@ -332,12 +579,15 @@ func (w *objectWriter) stopFlusher() {
 // Safe to call more than once.
 func (w *objectWriter) Close() error {
 	w.stopFlusher()
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.stored && w.flushed == w.buf.Len() {
+	idle := w.stored && w.flushed == len(w.buf)
+	w.mu.Unlock()
+	if idle {
 		return nil
 	}
-	return w.flushLocked(w.ctx)
+	return w.flush(w.ctx)
 }
 
 // NewDurableSink selects the durable log sink from configuration. The default —
@@ -348,8 +598,9 @@ func (w *objectWriter) Close() error {
 // and require a non-nil store. An unknown backend is rejected rather than
 // silently falling back. logger is the process's configured logger, carried to
 // the object sink so its retry warnings honor that contract (see
-// NewObjectSink); the disk sink ignores it.
-func NewDurableSink(ctx context.Context, backend, dir string, store ObjectStore, prefix string, logger *slog.Logger) (Sink, error) {
+// NewObjectSink); the disk sink ignores it, and so it does opts. An unknown
+// object layout is rejected like an unknown backend.
+func NewDurableSink(ctx context.Context, backend, dir string, store ObjectStore, prefix string, logger *slog.Logger, opts ...ObjectOption) (Sink, error) {
 	switch backend {
 	case "", "disk":
 		return NewDiskSink(dir), nil
@@ -357,7 +608,13 @@ func NewDurableSink(ctx context.Context, backend, dir string, store ObjectStore,
 		if store == nil {
 			return nil, fmt.Errorf("%s log backend requires an object store", backend)
 		}
-		return NewObjectSink(ctx, store, prefix, logger), nil
+		sink := NewObjectSink(ctx, store, prefix, logger, opts...)
+		switch sink.layout {
+		case "", ObjectLayoutSingle, ObjectLayoutSegmented:
+			return sink, nil
+		default:
+			return nil, fmt.Errorf("unknown object log layout %q (want %q or %q)", sink.layout, ObjectLayoutSingle, ObjectLayoutSegmented)
+		}
 	default:
 		return nil, fmt.Errorf("unknown log backend %q (want \"disk\", \"s3\" or \"gcs\")", backend)
 	}
