@@ -196,6 +196,10 @@ type Querier interface {
 	ListActiveDagRuns(ctx context.Context) ([]DagRun, error)
 	// run_id is the dag_run's UUID (StagingClaimName uses it), so join on dag_runs.id,
 	// which is globally unique. run_state is NULL only when the run row is truly gone.
+	// The join compares uuids so it probes dag_runs_pkey; casting dag_runs.id to text
+	// instead read every run. run_id is TEXT and older rows may hold something else,
+	// so the CASE casts only the canonical lower case form, the one id::text produces,
+	// and leaves anything else unmatched rather than failing the cast.
 	ListActiveStagingVolumes(ctx context.Context) ([]ListActiveStagingVolumesRow, error)
 	// Lists running TIs that have heartbeated at least once and whose latest
 	// heartbeat is non-null, alongside enough identity to log + observe.
