@@ -217,7 +217,7 @@ are satisfied). There is no reconcile phase because there are no pods to sweep.
 | Reaper | Lite | Why |
 |---|---|---|
 | Orphan-run | **Runs** | Purely a metadatabase signal: a `running` run with no active TI. |
-| TI heartbeat (agent-lost) | **Runs, gated on the agent process** | Fails a silent `running` TI only when its agent process is gone. A silent agent that is still alive (for example a laptop resuming from sleep) is deferred. |
+| TI heartbeat (agent-lost) | **Runs, gated on the agent process** | Fails a silent `running` TI only when its agent process is gone. A silent agent that is still alive (for example a laptop resuming from sleep) is deferred. Also covers a TI that never heartbeated (see below). |
 | Dispatch-lost | **Runs, gated on the agent process** | Fails a stale `queued` TI only when no agent process for the attempt is alive. |
 | Pod-lost | No-op | There is no pod to lose. A "no pod" signal would read every live subprocess as lost. |
 | Warm-worker-lost | No-op | Warm pools are Kubernetes-only. |
@@ -241,6 +241,44 @@ proceed. If the server cannot write the record when it spawns an agent, it
 stops that agent and fails the dispatch rather than run an agent the reapers
 cannot see.
 
+**The task's process group counts too.** The agent runs the user task as the
+leader of its own process group, so a task can outlive an agent that is killed
+outright (`kill -9`, a crash, the OOM killer): it is reparented and keeps
+running. Only the agent learns the group id, so the agent writes it into the
+same directory as soon as the task starts, one `.pgid` file per attempt next to
+the agent's `.pid` file, together with its own PID and the group leader's start
+time. A task whose group the agent cannot record is stopped and its run fails,
+the same rule as for the agent record. An attempt reads alive while its agent
+is alive **or** while any process of its recorded task group exists (signal 0
+to the whole group; a member owned by another user still counts as alive).
+
+**An agent that dies before its first heartbeat.** Agent-lost normally judges
+only a `running` TI that has heartbeated at least once, and on Kubernetes the
+window before the first heartbeat belongs to pod-lost, which has no signal in
+Lite. So in Lite, and only there, agent-lost also looks at a `running` TI that
+never heartbeated and entered `running` longer ago than the agent-lost
+threshold (90 s): it is failed as `agent_lost` (`agent_lost_never_heartbeated`)
+only when its agent **and** its task process group both read dead. Anything
+alive defers (`agent_lost_never_heartbeated_process_alive`), a liveness error
+defers (`agent_lost_never_heartbeated_process_query_error`), and such an
+attempt's orphaned task group is never stopped, only waited for. The Kubernetes
+path is unchanged.
+
+**An orphaned task is stopped before the attempt is re-placed.** When an
+attempt reads alive only because of its task group, and the agent that
+recorded that group is confirmed dead, the reaper stops the group before it
+reaps: `SIGTERM` to the whole group, up to 10 s to exit, then `SIGKILL`, then
+up to 5 s more. Only once no process of the group is left does the reap go
+ahead (`agent_lost_orphan_stopped`, `dispatch_lost_orphan_stopped`), so the
+re-placed attempt never runs beside the old copy. The server signals only a
+group recorded in its own record directory, and only when the group's leader is
+still the very process that was recorded (same PID, same start time); a group
+it cannot verify that way (its leader exited while other members run on, or
+the start time could not be read) is never signaled, and the attempt keeps
+deferring as alive until the group exits. A stop that fails defers too
+(`*_orphan_stop_error`). This runs on Linux and macOS; elsewhere a task group
+cannot be probed, so the reapers keep deferring.
+
 What this does **not** cover, plainly:
 
 - **An agent that is alive but wedged** (the process exists, its heartbeat
@@ -250,16 +288,14 @@ What this does **not** cover, plainly:
   its PID to an unrelated process, that attempt reads alive and is deferred
   until that process exits. This can only delay a reap, never cause a false
   one.
-- **An agent killed outright (`kill -9`, a crash) while its task runs.** The
-  task runs in its own process group, so it can outlive the agent. The record
-  names the agent, so the attempt reads dead and is reaped and re-placed while
-  the orphaned task process may still be running. Stop the task's processes
-  too when you kill an agent by hand. An agent stopped with SIGINT or SIGTERM
-  kills its task first.
-- **An agent that dies before its first heartbeat.** Agent-lost only judges a
-  `running` TI that has heartbeated at least once, and the pod-lost reaper that
-  covers that window on Kubernetes has no signal in Lite. Such a TI stays
-  `running` until you fail or clear it by hand.
+- **A task process that leaves its process group.** A descendant that calls
+  `setsid` (or is handed to a service manager) is outside the recorded group,
+  so it neither keeps the attempt alive nor is stopped with the orphan. This is
+  the same boundary the agent's own execution timeout has.
+- **An agent killed in the instant between starting its task and recording the
+  task's group.** That task has no record, so it is invisible to the reapers,
+  exactly as before. The window is the few microseconds between the fork and
+  one small file write.
 - **A record directory that changes across a restart.** The record is found
   through the server's `$TMPDIR`; a server restarted with a different `TMPDIR`
   (or after the temp directory was cleaned) sees no record for agents it
@@ -292,7 +328,9 @@ anything:
 
 - **TI heartbeat reaper** — only fires on TIs that *did* heartbeat at least
   once and then went silent. A TI that never heartbeated (e.g. a pod that never
-  started, so no agent ever reported) is left alone.
+  started, so no agent ever reported) is left alone. In Lite, a TI that never heartbeated is
+  judged only on the positive signal that its agent and its task process group
+  are both gone (see "Lite: which reapers run").
 - **Dispatch-lost reaper** — requires a non-zero `queued_at` older than the
   threshold AND, on Kubernetes, confirmation that no live pod for the TI
   exists. If a pod for the TI is `Pending`/`Running`, the dispatch actually
@@ -409,8 +447,12 @@ your Prometheus dashboard:
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
 | `agent_lost_list_error`, `dispatch_lost_list_error`, `orphan_list_error`, `pod_lost_list_error`, `warm_worker_lost_list_error` | Reaper's list query failed; the next cycle will retry |
 | `dispatch_lost_pod_query_error`, `pod_lost_pod_query_error` | Pod liveness could not be read (K8s API error); the reaper deferred rather than risk a false positive |
-| `agent_lost_process_alive`, `dispatch_lost_process_alive` | Lite only: the attempt's agent process is still alive, so the reaper deferred. Sustained `agent_lost_process_alive` for one attempt means a wedged agent; stop it by hand |
+| `agent_lost_process_alive`, `dispatch_lost_process_alive` | Lite only: the attempt's agent process, or a process of its recorded task group that could not be stopped as an orphan, is still alive, so the reaper deferred. Sustained `agent_lost_process_alive` for one attempt means a wedged agent; stop it by hand |
 | `agent_lost_process_query_error`, `dispatch_lost_process_query_error` | Lite only: the agent's PID record could not be read or probed; the reaper deferred |
+| `agent_lost_orphan_stopped`, `dispatch_lost_orphan_stopped` | Lite only: the attempt's agent was dead but its task process group was still running; the reaper stopped that group (SIGTERM, then SIGKILL) and then reaped |
+| `agent_lost_orphan_stop_error`, `dispatch_lost_orphan_stop_error` | Lite only: stopping an orphaned task process group failed; the reaper deferred and retries next cycle |
+| `agent_lost_never_heartbeated` | Lite only: a `running` TI that never heartbeated, past the agent-lost threshold, whose agent and task process group are both gone, was failed as `agent_lost` |
+| `agent_lost_never_heartbeated_process_alive`, `agent_lost_never_heartbeated_process_query_error` | Lite only: such a TI's agent or task group is alive, or its liveness could not be read; the reaper deferred |
 | `agent_lost_pod_delete_error`, `dispatch_lost_pod_delete_error`, `orphan_pod_delete_error`, `pod_lost_pod_delete_error` | Pod teardown after a reap failed; the DB reap stands and the pod's `activeDeadlineSeconds`/GC are backstops |
 
 A sustained non-zero rate on any of these is worth investigating — reapers
