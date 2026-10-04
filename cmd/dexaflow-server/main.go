@@ -1961,8 +1961,13 @@ func buildPodInformer(ctx context.Context, cfg *config.ServerConfig, cs kubernet
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
+	// Opt-in (executor.collect_settled_run_pods): collect a settled run's
+	// finished pods in one DeleteCollection; nil keeps the age-based GC only.
+	if settled != nil {
+		rec.SetSettledRunCollection(settled)
+	}
 	// Read task pods from the shared informer cache instead of a live LIST every
 	// tick when the informer is wired (PR-10); nil keeps the live LIST.
 	if snapshotter != nil {
@@ -1972,6 +1977,15 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 	startGatedTicker(ctx, "maintenance", reconcileInterval, leading, logger, func() {
 		maintenanceCycle(ctx, maintenancePhaseTimeout, rec.Reconcile, reaper.ReapOnce, logger)
 	})
+}
+
+// settledRunCollection returns the reconciler's settled-run checker when the
+// operator turned executor.collect_settled_run_pods on, and nil otherwise.
+func settledRunCollection(sec config.ExecutorSection, store executor.SettledRunChecker) executor.SettledRunChecker {
+	if !sec.CollectSettledRunPods {
+		return nil
+	}
+	return store
 }
 
 // maintenancePhaseTimeout bounds each phase of a maintenance cycle — the
@@ -2573,7 +2587,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// draining or stepping-down leader from marking TIs failed or deleting pods
 	// on its way out — the successor redoes the reap under its own settling gate.
 	reaper.SetLeading(sched.IsLeading)
-	startMaintenance(ctx, cs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter)
+	startMaintenance(ctx, cs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
 	startStagingGC(ctx, cs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with
