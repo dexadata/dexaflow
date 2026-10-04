@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -136,8 +134,11 @@ func stateOrNil(s domain.TaskState) *string {
 // tiSummariesHandler implements GET /ui/grid/ti_summaries/{dag_id}: an NDJSON
 // stream (application/x-ndjson), one GridTISummaries object per requested run.
 // One DB query backs it; results are grouped in Go. A weak ETag over the latest
-// timestamp and instance count enables conditional GETs.
-func tiSummariesHandler(reader TaskSummaryReader) gin.HandlerFunc {
+// timestamp, the instance count and a fingerprint of every row enables
+// conditional GETs. With revalidate (ui.etag_revalidation) the response is
+// marked private, no-cache instead of the surface-wide no-store, so a browser
+// can actually send that ETag back.
+func tiSummariesHandler(reader TaskSummaryReader, revalidate bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		dagID := c.Param("dag_id")
 		runIDs := parseRunIDs(c)
@@ -152,17 +153,17 @@ func tiSummariesHandler(reader TaskSummaryReader) gin.HandlerFunc {
 		// started/ended timestamps, so the original `count + latest` ETag
 		// was identical before and after the mutation and the SPA's
 		// TanStack Query kept serving the cached body. Fold a fingerprint
-		// of every (run, task, state) into the ETag so any state change
-		// invalidates it. Sort for stability (map iteration is random).
-		fingerprints := make([]string, 0, len(tis))
-		for _, ti := range tis {
-			fingerprints = append(fingerprints, ti.RunID+":"+ti.TaskID+":"+string(ti.State))
-		}
-		sort.Strings(fingerprints)
-		h := fnv.New64a()
-		_, _ = h.Write([]byte(strings.Join(fingerprints, "|")))
-		etag := fmt.Sprintf(`W/"%d-%d-%x"`, count, latest.UnixNano(), h.Sum64())
+		// of every row into the ETag so any change invalidates it.
+		etag := fmt.Sprintf(`W/"%d-%d-%x"`, count, latest.UnixNano(), gridFingerprint(tis))
 		c.Header("ETag", etag)
+		if revalidate {
+			// The browser may keep a private copy but must revalidate it on
+			// every use. Revalidation runs the full auth chain, so a revoked
+			// credential gets 401 rather than 304, and Vary keys the copy to
+			// the credential that fetched it.
+			c.Header("Cache-Control", "private, no-cache")
+			c.Header("Vary", "Authorization, Cookie")
+		}
 		c.Header("Content-Type", "application/x-ndjson")
 		if match := c.GetHeader("If-None-Match"); match == etag {
 			c.Status(http.StatusNotModified)
@@ -189,9 +190,74 @@ func tiSummariesHandler(reader TaskSummaryReader) gin.HandlerFunc {
 }
 
 // registerUISummaries mounts the grid ti-summaries stream when a reader is set.
-func registerUISummaries(r gin.IRouter, reader TaskSummaryReader) {
+func registerUISummaries(r gin.IRouter, reader TaskSummaryReader, revalidate bool) {
 	if reader == nil {
 		return
 	}
-	r.GET("/ui/grid/ti_summaries/:dag_id", RequirePermission("read", "task_instance"), tiSummariesHandler(reader))
+	r.GET("/ui/grid/ti_summaries/:dag_id", RequirePermission("read", "task_instance"), tiSummariesHandler(reader, revalidate))
+}
+
+// FNV-1a 64-bit parameters, inlined so the fingerprint hashes without
+// allocating a hash.Hash per row.
+const (
+	fnvOffset64 = 14695981039346656037
+	fnvPrime64  = 1099511628211
+)
+
+// gridFingerprint is an order-independent hash of the rows that feed the
+// ti_summaries body: the sum of a per-row FNV-1a over run, task, map index, try,
+// state and the start and end times. It is O(n) and allocation-free; the sum
+// makes it a property of the set of rows, so the database's row order never
+// changes it.
+func gridFingerprint(tis []domain.TaskInstance) uint64 {
+	var sum uint64
+	for i := range tis {
+		ti := &tis[i]
+		h := uint64(fnvOffset64)
+		h = fnvString(h, ti.RunID)
+		h = fnvString(h, ti.TaskID)
+		h = fnvInt(h, int64(ti.MapIndex))
+		h = fnvInt(h, int64(ti.TryNumber))
+		h = fnvString(h, string(ti.State))
+		h = fnvTime(h, ti.StartedAt)
+		h = fnvTime(h, ti.EndedAt)
+		sum += h
+	}
+	return sum
+}
+
+// fnvString folds s and a terminator into h, so adjacent fields cannot run into
+// each other ("ab"+"c" differs from "a"+"bc").
+func fnvString(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= fnvPrime64
+	}
+	h ^= 0xff
+	h *= fnvPrime64
+	return h
+}
+
+// fnvInt folds the two's-complement bytes of v into h.
+func fnvInt(h uint64, v int64) uint64 {
+	return fnvUint(h, uint64(v)) //nolint:gosec // only the bit pattern is hashed; the sign is irrelevant.
+}
+
+// fnvUint folds the eight bytes of v into h.
+func fnvUint(h, v uint64) uint64 {
+	for range 8 {
+		h ^= v & 0xff
+		h *= fnvPrime64
+		v >>= 8
+	}
+	return h
+}
+
+// fnvTime folds a nullable timestamp into h, keeping nil distinct from the
+// zero time.
+func fnvTime(h uint64, t *time.Time) uint64 {
+	if t == nil {
+		return fnvUint(h, 0)
+	}
+	return fnvInt(fnvUint(h, 1), t.UnixNano())
 }

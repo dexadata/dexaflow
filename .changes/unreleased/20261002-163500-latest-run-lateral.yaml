@@ -1,0 +1,9 @@
+kind: Changed
+body: |-
+  **Faster DAG list state filter and dashboard DAG counters.** Filtering the
+  DAG list by latest run state, its total, and the dashboard's failed, running
+  and queued DAG counters now look up each DAG's newest run through an index
+  instead of reading every run in the database. On a tenant with 1,000 DAGs
+  and 1,000,000 runs they went from 380 to 510 ms to under 7 ms. Results are
+  unchanged.
+time: 2026-10-02T16:35:00.000000000-03:00

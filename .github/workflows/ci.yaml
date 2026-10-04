@@ -1,10 +1,13 @@
 name: CI
 
+# release-* is the per-minor branch every patch is tagged from (ADR 0062). A
+# cherry-pick PR to it gets the same CI as a PR to main, and so does the push
+# that merges it, because cut-release.sh tags only a merge commit that is green.
 on:
   push:
-    branches: [main]
+    branches: [main, "release-*"]
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
 
 permissions:
   contents: read

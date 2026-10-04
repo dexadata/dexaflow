@@ -259,10 +259,18 @@ control on a writable root filesystem — most notably **`$HOME`** (which keeps 
 image-baked `~/.config` and anything a task writes there, e.g. `~/.aws/credentials`
 or a `~/.dbt/profiles.yml`), the container image layers, and mounted volumes. These
 persist for the whole worker's lifetime and are shared by every attempt the worker
-serves (same tenant + DAG version). Tasks that write secrets to `$HOME` rather than
-`$TMPDIR` should run warm pods with a **read-only task root filesystem**
-(`read_only_task_root_filesystem`) so those writes fail closed instead of leaking to
-the next attempt.
+serves (same tenant + DAG version). Turn on
+**`execution.warm_read_only_root_filesystem`** to close this: the warm container's
+root filesystem becomes read only, each attempt gets its own `$HOME` and XDG dirs
+(`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`) inside the
+scratch the worker wipes, and the other writable paths a read-only root leaves,
+the `/tmp` emptyDir and the pod's `/dev/shm` tmpfs, are emptied before each
+attempt and again as soon as it ends, so a generated dbt profile does not stay on
+an idle worker. A task that writes anywhere else (its working directory, an image
+path) fails with it on, and a task that reads config baked into the image's home
+dir must point at it explicitly, for example with `DBT_PROFILES_DIR`. The setting
+takes effect on warm pods created after it is turned on: running warm pods keep
+their spec until they recycle (`workerIdleTtl`, `maxWorkerLifetime`).
 {{% /alert %}}
 
 Because a fresh scrubbed child and a fresh per-attempt token are mandatory, there is
@@ -429,6 +437,7 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `workerIdleTtl` | `WORKER_IDLE_TTL` | duration | `5m` | How long an idle worker is kept before recycle. Must be > 0. |
 | `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; promised idle floors are always honored. Must be ≥ 1. |
 | `warmPodResources.cpu` / `.memory` | `WARM_POD_RESOURCES_CPU` / `_MEMORY` | Kubernetes quantity | empty | Request **and** limit of every warm pod. Empty inherits `executor.defaults.resources`, the resources a task without its own gets on a dedicated pod. A task declaring resources the warm pod does not cover runs on a dedicated pod. |
+| `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` and `/dev/shm` emptied around each attempt (see [isolation](#isolation-between-attempts)). Applies to warm pods created after it is turned on. Dedicated task pods are not affected. |
 
 Durations accept Go duration strings (`"90s"`, `"5m"`, `"1h"`). When
 `warmPoolsEnabled` is on, the server **validates these at boot and refuses to start**

@@ -17,7 +17,7 @@ name: Helm CI
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     paths:
       - "helm/**"
       - "scripts/helm-template-checks.sh"
@@ -360,6 +360,15 @@ jobs:
         run: |
           set -euo pipefail
           helm uninstall leoflow -n leoflow --wait
+          # Start the previous release on an empty database. The steps above
+          # already migrated it to HEAD, and a released migrate image cannot
+          # start from a schema version it does not ship (golang-migrate fails
+          # with "no migration found for version N" as soon as HEAD adds a
+          # migration). An operator upgrading has a database at the previous
+          # release's version, so that is also the realistic starting point:
+          # the HEAD upgrade below then applies every new migration to it.
+          kubectl -n leoflow exec deploy/postgres -- psql -v ON_ERROR_STOP=1 \
+            -U leoflow -d leoflow -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
           # No pinned version: the newest chart in the registry IS the previous
           # release from this PR's point of view, and a pin here would go stale
           # silently the first time nobody remembered to bump it.

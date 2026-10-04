@@ -239,7 +239,9 @@ func shellSessionValid(c *gin.Context, authn auth.Authenticator) bool {
 		return false
 	}
 	for _, token := range candidateTokens(c) {
-		if _, err := authn.Authenticate(c.Request.Context(), token); err == nil {
+		// Same rule as JWTAuth: a principal with no tenant is no session, so
+		// the shell gate and the data plane never disagree about it.
+		if u, err := authn.Authenticate(c.Request.Context(), token); err == nil && u.TenantID != "" {
 			return true
 		}
 	}

@@ -90,3 +90,21 @@ func TestWarmPodResources(t *testing.T) {
 		}
 	}
 }
+
+// TestWarmPodSpecFuncCarriesReadOnlyRoot locks the X3.2 wiring: the operator's
+// execution.warm_read_only_root_filesystem reaches the warm-pod spec, and its
+// absence leaves the spec on today's writable root.
+func TestWarmPodSpecFuncCarriesReadOnlyRoot(t *testing.T) {
+	authn := auth.NewJWTAuthenticator(nil, "secret", time.Hour)
+	for _, on := range []bool{false, true} {
+		cfg := &config.ServerConfig{}
+		cfg.Execution.WarmReadOnlyRootFilesystem = on
+		spec, err := warmPodSpecFunc(cfg, authn, "cp:9000")(executor.WarmTarget{DagVersionID: "dv-1", Image: "reg/dag:v1"})
+		if err != nil {
+			t.Fatalf("warmPodSpecFunc: %v", err)
+		}
+		if spec.ReadOnlyRootFilesystem != on {
+			t.Errorf("warm_read_only_root_filesystem=%v: spec.ReadOnlyRootFilesystem = %v", on, spec.ReadOnlyRootFilesystem)
+		}
+	}
+}

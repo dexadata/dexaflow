@@ -101,6 +101,13 @@ tests:
           content:
             name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
             value: "100"
+      # Stamped only when turned on, so enabling warm pools alone renders the
+      # same env as before this knob existed.
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            value: "false"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -125,6 +132,7 @@ tests:
       execution.maxWorkerLifetime: 30m
       execution.workerIdleTtl: 90s
       execution.maxWarmPodsPerTenant: 40
+      execution.warmReadOnlyRootFilesystem: true
       auth.agentTokenTransport: exchange
       auth.secretLivenessMode: enforce
     asserts:
@@ -158,6 +166,11 @@ tests:
           content:
             name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
             value: "40"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            value: "true"
 
   # X4: warm pods inherit executor.defaults.resources unless sized explicitly, so
   # the override is stamped only when set and an unset install keeps its env.
