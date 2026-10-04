@@ -5,9 +5,12 @@ package storage_test
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/domain"
 )
@@ -193,5 +196,45 @@ func TestEnsureTenantSizesTheDefaultPool(t *testing.T) {
 	}
 	if got := slots("default"); got != def {
 		t.Errorf("sizing another tenant changed the default tenant's pool to %d", got)
+	}
+}
+
+// TestEnsureTenantMarksALegacyDefaultPoolRow: a tenant whose default_pool row
+// lost (or never had) is_default, as one created before #1283 could, gets the
+// flag back from either ensure path, and a sized pool carries the seed
+// description.
+func TestEnsureTenantMarksALegacyDefaultPoolRow(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pg.Close)
+	unflag := func(tenant string) {
+		t.Helper()
+		if _, err := pg.Exec(ctx, `UPDATE pools SET is_default = false
+			WHERE name = $1 AND tenant_id = (SELECT id FROM tenants WHERE name = $2)`, domain.DefaultPoolName, tenant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, slots := range []int{0, 8} {
+		name := uniqueTenant(fmt.Sprintf("pool-legacy-%d", slots))
+		if _, err := repo.EnsureTenant(ctx, name, "", 0); err != nil {
+			t.Fatal(err)
+		}
+		unflag(name)
+		if _, err := repo.EnsureTenant(ctx, name, "", slots); err != nil {
+			t.Fatal(err)
+		}
+		p, err := repo.GetPool(ctx, name, domain.DefaultPoolName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !p.IsDefault {
+			t.Errorf("slots=%d: default_pool is_default = false after ensure, want true", slots)
+		}
+		if slots > 0 && (p.Slots != slots || p.Description != "Default pool") {
+			t.Errorf("slots=%d: pool = %+v, want %d slots and the seed description", slots, p, slots)
+		}
 	}
 }

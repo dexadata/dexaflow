@@ -1991,8 +1991,9 @@ func (r *Repository) ClearImportError(ctx context.Context, tenant, filename stri
 // permissions and the default pool copied from the "default" tenant, all in
 // one transaction (#1283). It is idempotent: for an existing tenant it fills in
 // anything missing and reports created=false. A positive defaultPoolSlots sizes
-// the tenant's default pool to that many slots, on creation or later; 0 leaves
-// an existing pool alone and gives a new one the default tenant's size.
+// the tenant's default pool to that many slots, on creation or later; a
+// non-positive value leaves an existing pool alone and gives a new one the
+// default tenant's size.
 func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int) (created bool, err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -2024,7 +2025,9 @@ func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string,
 }
 
 // ensureDefaultPool gives the tenant its default pool: sized to slots when
-// slots is positive, otherwise copied from the default tenant if missing.
+// slots is positive, otherwise copied from the default tenant if missing (a
+// non-positive slots means "not given"). The caller bounds slots to the int32
+// column; toInt32 saturates rather than wrapping if it ever does not.
 func ensureDefaultPool(ctx context.Context, q *queries.Queries, tenantID pgtype.UUID, slots int) error {
 	if slots <= 0 {
 		if err := q.InsertDefaultPool(ctx, tenantID); err != nil {
@@ -2032,11 +2035,8 @@ func ensureDefaultPool(ctx context.Context, q *queries.Queries, tenantID pgtype.
 		}
 		return nil
 	}
-	if slots > math.MaxInt32 {
-		return domain.Safef(domain.ErrValidation, "default pool slots must be at most %d", math.MaxInt32)
-	}
 	if err := q.UpsertDefaultPoolSlots(ctx, queries.UpsertDefaultPoolSlotsParams{
-		TenantID: tenantID, Name: domain.DefaultPoolName, Slots: int32(slots),
+		TenantID: tenantID, Name: domain.DefaultPoolName, Slots: toInt32(slots),
 	}); err != nil {
 		return fmt.Errorf("sizing default pool: %w", err)
 	}

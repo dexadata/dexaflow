@@ -656,15 +656,18 @@ a user session never reaches them.
 digits or `-`) with the same built-in roles, role permissions and default pool
 as the `default` tenant, copied from it so every tenant's ladder stays equal.
 It answers `201` when the tenant is new and `200` when it already existed; a
-second call fills in anything missing and changes nothing else.
+second call fills in anything missing and, apart from `default_pool_slots`
+below, changes nothing else.
 
 The same body may carry `"default_pool_slots": 8` to size the tenant's
 `default_pool`, the slot cap every task without an explicit pool shares within
 the tenant. Without it a new tenant gets the `default` tenant's size (128
 unless an operator changed it), which on an engine shared by many tenants lets
 each of them run that many tasks at once. Given on a later call, it re-sizes
-the existing pool; left out, the pool is not touched. It must be a whole
-number from 1 to 2147483647 (`400` otherwise), and the audit entry records it.
+the existing pool, including a size a tenant admin set through the pools API,
+so an automation that re-applies its tenants should send the size it wants to
+keep; left out, the pool is not touched. It must be a whole number from 1 to
+2147483647 (`400` otherwise), and the audit entry records it.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
