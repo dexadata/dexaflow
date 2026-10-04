@@ -260,11 +260,12 @@ anything:
   run never looks orphaned in that tick.
 
   The list is only a snapshot, so the reap re-checks the whole predicate
-  atomically: it share-locks the run's TIs, then fails the run only if it is
-  still `running`, still has no live TI and its last activity is still older
-  than the threshold. If a TI moved in between (say a retriable failure went
-  to `up_for_retry`, or a TI was scheduled) or fresh activity landed, the reap
-  is a no-op: nothing is written, no pod is torn down, and the reaper records
+  atomically: it share-locks the run's TIs without waiting, then fails the run
+  only if it is still `running`, still has no live TI and its last activity is
+  still older than the threshold. If a TI moved in between (say a retriable
+  failure went to `up_for_retry`, or a TI was scheduled), fresh activity
+  landed, or another transaction is writing one of the run's TIs at that
+  moment, the reap is a no-op: nothing is written, no pod is torn down, and the reaper records
   `orphan_reap_noop`.
 
 ## Tearing down the reaped task's pod
@@ -354,7 +355,7 @@ your Prometheus dashboard:
 | `pod_lost_terminal_pod_defer` | Pod-lost skipped because the attempt's pod is still there in a terminal phase — the reconciler settles it from its termination log; reaping would delete that evidence. Healthy as a *transient*. Sustained past two maintenance cycles means the reconciler is not settling and those task instances are stranded `running`, not about to settle: correlate with `reap_settling_valve_open` and `pod_lost_pod_query_error` |
 | `warm_worker_lost` | TI failed by the warm-worker-lost reaper (its warm worker is gone) |
 | `orphan_reaped` | Run failed by the orphan-run reaper |
-| `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved or fresh activity landed); nothing was written and no pod was torn down |
+| `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved, fresh activity landed, or a TI was being written); nothing was written and no pod was torn down |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |

@@ -357,10 +357,14 @@ type Querier interface {
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
 	// Share-locks every task instance of a run inside the reap transaction, before
-	// MarkRunOrphanedRun re-checks the orphan predicate. A writer that is mid-update
-	// on one of them is waited for, so the re-check (a fresh snapshot under READ
-	// COMMITTED) sees its committed state, and no TI of the run can change until
-	// the reap commits or rolls back.
+	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
+	// snapshot under READ COMMITTED) sees committed state and no TI of the run can
+	// change until the reap commits or rolls back. NOWAIT: a TI another transaction
+	// is writing right now is activity, so the reap gives up (lock_not_available,
+	// treated as a no-op by ReapRun) instead of waiting. Waiting would let these
+	// share locks, taken in scan order, form a cycle with a writer that locks
+	// several TIs of the run in another order (a multi-task clear, a batched
+	// scheduler transition); a reap that never waits on a TI cannot be in one.
 	LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error
 	// Stamp a run's on-failure alert as DELIVERED. Called only after a successful
 	// send, which is the whole point of the split: alerted_at now answers "did the

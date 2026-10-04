@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/dexadata/dexaflow/internal/config"
@@ -648,12 +649,18 @@ func (s *SchedulerStore) ListReapCandidates(ctx context.Context) ([]executor.Rea
 	return out, nil
 }
 
+// pgLockNotAvailable is the SQLSTATE a NOWAIT row lock raises when another
+// transaction holds a conflicting lock.
+const pgLockNotAvailable = "55P03"
+
 // ReapRun fails an orphaned dag run, then any of its still-active task
 // instances, inside a single transaction, and reports whether it did. The list
 // the reaper decided from is only a snapshot, so the orphan predicate is
 // re-checked atomically here: the run's task instances are share-locked first,
-// then the run UPDATE applies the same predicate ListReapCandidates does (still
-// running, no live task instance, last activity at or before quietBefore). If
+// without waiting (a task instance being written counts as activity and makes
+// the reap a no-op), then the run UPDATE applies the same predicate
+// ListReapCandidates does (still running, no live task instance, last activity
+// at or before quietBefore). If
 // zero rows are touched the run is no longer an orphan (a task instance moved,
 // fresh activity landed, or a competing finalizer settled it), the transaction
 // rolls back without touching any task instance, and ReapRun returns false so
@@ -677,8 +684,14 @@ func (s *SchedulerStore) ReapRun(ctx context.Context, runID string, quietBefore 
 		_ = tx.Rollback(ctx) //nolint:errcheck // best-effort cleanup; commit path returns the meaningful error
 	}()
 	q := s.q.WithTx(tx)
-	if err := q.LockRunTaskInstancesForReap(ctx, rid); err != nil {
-		return false, fmt.Errorf("locking orphan candidate task instances: %w", err)
+	if lerr := q.LockRunTaskInstancesForReap(ctx, rid); lerr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(lerr, &pgErr) && pgErr.Code == pgLockNotAvailable {
+			// A task instance of the run is being written right now: that is
+			// activity, so the run is not an orphan this cycle.
+			return false, nil
+		}
+		return false, fmt.Errorf("locking orphan candidate task instances: %w", lerr)
 	}
 	rows, err := q.MarkRunOrphanedRun(ctx, queries.MarkRunOrphanedRunParams{
 		ID:          rid,

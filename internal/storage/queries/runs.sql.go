@@ -1500,14 +1500,18 @@ func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundR
 const lockRunTaskInstancesForReap = `-- name: LockRunTaskInstancesForReap :exec
 SELECT id FROM task_instances
 WHERE dag_run_id = $1
-FOR SHARE
+FOR SHARE NOWAIT
 `
 
 // Share-locks every task instance of a run inside the reap transaction, before
-// MarkRunOrphanedRun re-checks the orphan predicate. A writer that is mid-update
-// on one of them is waited for, so the re-check (a fresh snapshot under READ
-// COMMITTED) sees its committed state, and no TI of the run can change until
-// the reap commits or rolls back.
+// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
+// snapshot under READ COMMITTED) sees committed state and no TI of the run can
+// change until the reap commits or rolls back. NOWAIT: a TI another transaction
+// is writing right now is activity, so the reap gives up (lock_not_available,
+// treated as a no-op by ReapRun) instead of waiting. Waiting would let these
+// share locks, taken in scan order, form a cycle with a writer that locks
+// several TIs of the run in another order (a multi-task clear, a batched
+// scheduler transition); a reap that never waits on a TI cannot be in one.
 func (q *Queries) LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, lockRunTaskInstancesForReap, dagRunID)
 	return err
