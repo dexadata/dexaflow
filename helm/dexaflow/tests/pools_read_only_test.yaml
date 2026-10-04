@@ -1,0 +1,51 @@
+suite: tenant-facing pool API read-only lock (server.pools_read_only)
+templates:
+  # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
+  # resolve its `include` reference (same reason as deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  - it: renders no variable by default, so pools stay writable as before
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_POOLS_READ_ONLY
+          any: true
+
+  - it: sets the lock when config.poolsReadOnly is true
+    template: deployment.yaml
+    set:
+      config.poolsReadOnly: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_POOLS_READ_ONLY
+            value: "true"
+
+  # The api role serves the pool endpoints, so the lock must reach it when the
+  # control plane is split; both Deployments share the env block.
+  - it: reaches both Deployments when the control plane is split
+    template: deployment.yaml
+    set:
+      config.poolsReadOnly: true
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_POOLS_READ_ONLY
+            value: "true"
