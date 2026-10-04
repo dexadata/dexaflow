@@ -123,11 +123,13 @@ func run() error {
 	}
 
 	tel, shutdownTel, err := observability.Setup(ctx, observability.Config{
-		ServiceName:  "leoflow-server",
-		LogLevel:     cfg.Observability.LogLevel,
-		LogFormat:    cfg.Observability.LogFormat,
-		OTelEnabled:  cfg.Observability.OTel.Enabled,
-		OTelEndpoint: cfg.Observability.OTel.Endpoint,
+		ServiceName:    "leoflow-server",
+		LogLevel:       cfg.Observability.LogLevel,
+		LogFormat:      cfg.Observability.LogFormat,
+		OTelEnabled:    cfg.Observability.OTel.Enabled,
+		OTelEndpoint:   cfg.Observability.OTel.Endpoint,
+		SampleRatio:    cfg.Observability.OTel.SampleRatio,
+		SkipProbeSpans: cfg.Observability.OTel.SkipProbeSpans,
 	})
 	if err != nil {
 		return fmt.Errorf("observability setup: %w", err)
