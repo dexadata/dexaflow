@@ -16,7 +16,7 @@ import (
 )
 
 // Pod label keys the informer selects and filters on. They mirror exactly the
-// keys BuildPod stamps and TaskPodPresence selects, sanitizeLabel-transformed —
+// keys BuildPod stamps and TaskPodPresence selects, labelValue-transformed;
 // reusing the same transform is load-bearing: a lookup built from a different key
 // would silently miss every pod and quietly return the storm PR-10 removes.
 const (
@@ -130,8 +130,8 @@ func (p *PodInformer) CachedPodActive(runID, taskID string, tryNumber int) bool 
 		return false
 	}
 	selector := labels.SelectorFromSet(labels.Set{
-		podLabelRunID:     sanitizeLabel(runID),
-		podLabelTaskID:    sanitizeLabel(taskID),
+		podLabelRunID:     labelValue(runID),
+		podLabelTaskID:    labelValue(taskID),
 		podLabelTryNumber: strconv.Itoa(tryNumber),
 	})
 	pods, err := p.lister.Pods(p.namespace).List(selector)

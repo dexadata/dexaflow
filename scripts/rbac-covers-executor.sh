@@ -70,6 +70,11 @@ fi
 
 while read -r method verb; do
 	[ -n "$method" ] || continue
+	# Pods.DeleteCollection is the opt-in settled-run collection, granted only
+	# with executor.collectSettledRunPods; it is checked against that render below.
+	if [ "$method $verb" = "Pods DeleteCollection" ]; then
+		continue
+	fi
 	res="$(resource_of "$method")"
 	if [ -z "$res" ]; then
 		echo "FAIL: $method is called in $EXEC_DIR but this script has no RBAC mapping for it." >&2
@@ -126,6 +131,31 @@ if grep -rqE 'AuthenticationV1\(\)\.TokenReviews\(\)\.Create\(' internal --inclu
 	else
 		echo "FAIL: the control plane submits a TokenReview but the chart grants no cluster-scoped tokenreviews/create" >&2
 		echo "      -> TokenReview is cluster-scoped: a namespaced Role cannot grant it. Add a ClusterRole + ClusterRoleBinding to $CHART/templates/rbac.yaml" >&2
+		fail=1
+	fi
+fi
+
+# The settled-run collection (executor.collectSettledRunPods) is the one caller
+# of Pods.DeleteCollection. The verb is granted only when the collection is on
+# (least privilege; with it off the call is never made, and a 403 falls back to
+# per-pod deletes), so the check renders the chart a third time with it on.
+if echo "$calls" | grep -qx 'Pods DeleteCollection'; then
+	collect_rbac="$(helm template rbac-check "$CHART" \
+		--set database.url=postgres://h/d \
+		--set redis.url=redis://h/0 \
+		--set auth.jwtSecret=j \
+		--set agentTLS.serverCertSecret=cert \
+		--set agentTLS.caConfigMap=ca \
+		--set executor.collectSettledRunPods=true \
+		--show-only templates/rbac.yaml 2>/dev/null)"
+	collect_pairs="$(echo "$collect_rbac" | awk '
+		/^[[:space:]]*-?[[:space:]]*resources:/ { r = $0 }
+		/^[[:space:]]*verbs:/ { if (r != "") { print r " || " $0; r = "" } }
+	')"
+	if echo "$collect_pairs" | grep '"pods"' | grep -q '"deletecollection"'; then
+		echo "OK:   pods/deletecollection granted with executor.collectSettledRunPods (called as Pods.DeleteCollection)"
+	else
+		echo "FAIL: the executor calls Pods.DeleteCollection but the Role does not grant deletecollection on pods with executor.collectSettledRunPods=true" >&2
 		fail=1
 	fi
 fi
