@@ -177,6 +177,9 @@ type epochMarkStore struct {
 	queued  []StaleQueuedCandidate
 	warm    []WarmBoundTI
 	marks   []Attempt
+	// stale makes every mark match no row, as when the listed attempt was
+	// re-claimed or moved on between the list and the write.
+	stale bool
 }
 
 func (f *epochMarkStore) ListRunningTasks(context.Context, time.Duration) ([]PodLostCandidate, error) {
@@ -196,9 +199,9 @@ func (f *epochMarkStore) MarkTaskPodLost(_ context.Context, _ string, try, epoch
 	return true, nil
 }
 
-func (f *epochMarkStore) MarkTaskDispatchLost(_ context.Context, _ string, try, epoch int) error {
+func (f *epochMarkStore) MarkTaskDispatchLost(_ context.Context, _ string, try, epoch int) (bool, error) {
 	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
-	return nil
+	return !f.stale, nil
 }
 
 // TestPodLostReaperIsPinnedToTheCandidateEpoch: a live pod of a superseded
@@ -236,6 +239,47 @@ func TestDispatchLostReaperMarksTheCandidateEpoch(t *testing.T) {
 	}
 	if len(store.marks) != 1 || store.marks[0] != (Attempt{TryNumber: 3, AttemptEpoch: 4}) {
 		t.Fatalf("the mark must name the candidate's (try, epoch), got %+v", store.marks)
+	}
+}
+
+// TestDispatchLostReaperLeavesThePodWhenTheMarkIsANoop: a dispatch-lost mark
+// that matched no row (the listed attempt was re-claimed, or its agent reported
+// RUNNING, between the list and the write) is not a reap. The reaper must not
+// tear down that attempt's pod, which may now be the row's live execution.
+func TestDispatchLostReaperLeavesThePodWhenTheMarkIsANoop(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	store := &epochMarkStore{stale: true, queued: []StaleQueuedCandidate{{
+		TaskInstanceID: "ti-1", DagRunID: "run-a", TaskID: "extract", TryNumber: 1, AttemptEpoch: 2,
+		QueuedAt: time.Now().Add(-time.Hour),
+	}}}
+	rec := &capturingRecorder{}
+	r := newDispatchLostReaper(store, reapTestLogger(), time.Minute, rec)
+	r.pods = NewKubernetesExecutor(cs, "leoflow")
+	// The pod materializes after the presence read: the first list (the read)
+	// sees nothing, a later one (the teardown) would find it.
+	lists := 0
+	cs.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		lists++
+		if lists == 1 {
+			return true, &corev1.PodList{}, nil
+		}
+		return false, nil, nil
+	})
+	if _, err := cs.CoreV1().Pods("leoflow").Create(context.Background(),
+		epochPod("now-running", "run-a", "extract", 1, 2, corev1.PodRunning), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(store.marks) != 1 {
+		t.Fatalf("want one mark attempt, got %+v", store.marks)
+	}
+	if !podNames(t, cs)["now-running"] {
+		t.Fatalf("a no-op mark must not tear down the attempt's pod")
+	}
+	if rec.count("dispatch_lost") != 0 || rec.count("dispatch_lost_noop") != 1 {
+		t.Fatalf("a no-op mark is recorded as dispatch_lost_noop, not a reap: %v", rec.decisions)
 	}
 }
 
