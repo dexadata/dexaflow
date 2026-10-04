@@ -139,6 +139,12 @@ spec:
             # the served SPA shell, mirroring Lite's silver LITE pill.
             - name: LEOFLOW_UI_EDITION
               value: "pro"
+            {{- if .ctx.Values.goMemLimit.enabled }}
+            # Soft memory limit for the Go GC, a fraction of the container's
+            # hard limit (leoflow.goMemLimit). Omitted when off.
+            - name: GOMEMLIMIT
+              value: {{ include "leoflow.goMemLimit" .ctx | quote }}
+            {{- end }}
             {{- with .ctx.Values.ui.autoRefreshIntervalSeconds }}
             # Omitted entirely when unset, so the server's own default decides.
             # Rendering an empty string here would bind the variable to "" and
