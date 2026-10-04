@@ -176,3 +176,29 @@ func limitRedirects(_ *http.Request, via []*http.Request) error {
 	}
 	return nil
 }
+
+// sensitive are the destinations an allow list most likely re-opens by
+// accident: the control plane's own loopback and the cloud metadata endpoints.
+var sensitive = []struct {
+	name string
+	addr netip.Addr
+}{
+	{"loopback 127.0.0.1", netip.MustParseAddr("127.0.0.1")},
+	{"loopback ::1", netip.MustParseAddr("::1")},
+	{"metadata 169.254.169.254", netip.MustParseAddr("169.254.169.254")},
+	{"metadata fd00:ec2::254", netip.MustParseAddr("fd00:ec2::254")},
+	{"Azure host endpoint 168.63.129.16", netip.MustParseAddr("168.63.129.16")},
+}
+
+// ReopenedSensitive names the loopback and metadata destinations the allow
+// list lets through, so the operator can be warned that an allowed range is
+// broader than it looks. Empty when none is.
+func (p *Policy) ReopenedSensitive() []string {
+	var out []string
+	for _, s := range sensitive {
+		if p.Check(s.addr) == nil {
+			out = append(out, s.name)
+		}
+	}
+	return out
+}

@@ -707,7 +707,8 @@ counted as a failed delivery, like any other send error.
 
 If an alert endpoint legitimately lives on a private network (an on-premises
 chat server, for example), list its range in `scheduler.alerts.allowed_cidrs`
-(chart `config.alerts.allowedCIDRs`).
+(chart `config.alerts.allowedCIDRs`). A range broad enough to include loopback
+or a metadata endpoint is accepted but logged as a warning at startup.
 
 ### Trusted proxies and the client IP
 

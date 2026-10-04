@@ -2174,6 +2174,12 @@ func alertHTTPClient(cfg config.AlertsSection) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
 	}
+	if reopened := policy.ReopenedSensitive(); len(reopened) > 0 {
+		// Not an error: an operator may mean it. But a range that lets tenant
+		// alerts reach loopback or a metadata endpoint should be a choice.
+		slog.Warn("scheduler.alerts.allowed_cidrs lets alerts reach sensitive destinations",
+			"destinations", strings.Join(reopened, ", "))
+	}
 	return policy.Client(alertHTTPTimeout), nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -198,5 +199,39 @@ func TestClientBoundsRedirects(t *testing.T) {
 	}
 	if n := hops.Load(); n != maxRedirects+1 {
 		t.Errorf("hops = %d, want %d (the request plus %d redirects)", n, maxRedirects+1, maxRedirects)
+	}
+}
+
+func TestPolicyReopenedSensitive(t *testing.T) {
+	narrow, err := NewPolicy([]string{"10.20.0.0/16"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := narrow.ReopenedSensitive(); len(got) != 0 {
+		t.Errorf("narrow allow list reopens %v, want nothing", got)
+	}
+	broad, err := NewPolicy([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(broad.ReopenedSensitive(), ",")
+	if !strings.Contains(got, "127.0.0.1") || !strings.Contains(got, "169.254.169.254") {
+		t.Errorf("0.0.0.0/0 reopens %q, want loopback and metadata named", got)
+	}
+}
+
+// TestClientIgnoresTheProxyEnvironment: through a proxy the dialed address
+// would be the proxy's, so the guarded transport must not read HTTP_PROXY or
+// HTTPS_PROXY at all.
+func TestClientIgnoresTheProxyEnvironment(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://10.0.0.1:3128")
+	t.Setenv("HTTPS_PROXY", "http://10.0.0.1:3128")
+	p, err := NewPolicy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := p.Client(time.Second).Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil {
+		t.Error("guarded transport reads a proxy setting, want none")
 	}
 }
