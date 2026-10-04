@@ -130,7 +130,7 @@ func TestShellSessionRejectsATenantlessPrincipal(t *testing.T) {
 // tenant is served in that tenant.
 func TestJWTAuthWithTheRealAuthenticator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	const secret = "test-secret-with-enough-length-0123456789"
+	const secret = "test-secret-test-secret-test-secret-test"
 	r := gin.New()
 	r.Use(JWTAuth(auth.NewJWTAuthenticator(nil, secret, time.Hour)))
 	r.GET("/api/v2/dags", func(c *gin.Context) { c.String(http.StatusOK, tenantOf(c)) })
