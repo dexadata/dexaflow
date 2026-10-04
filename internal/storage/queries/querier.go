@@ -527,7 +527,9 @@ type Querier interface {
 	// until next_dispatch_at, adding one dispatch attempt only when counted
 	// (backpressure is not). Guarded to scheduled/queued, so a task the agent has
 	// since reported on is left alone. warm_worker_id is cleared as in
-	// RequeueForRedispatch: the attempt never ran.
+	// RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
+	// as on every rail that starts a new execution of the row (ADR 0051
+	// amendment, A0).
 	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding
