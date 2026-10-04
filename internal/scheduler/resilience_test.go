@@ -60,7 +60,7 @@ func (f *flakyStore) PoolBudgets(context.Context) (map[string]int, error) {
 	return map[string]int{}, nil
 }
 
-func (f *flakyStore) CreateScheduledRun(_ context.Context, dagID string, _ time.Time) error {
+func (f *flakyStore) CreateScheduledRun(_ context.Context, _, dagID string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErrOn[dagID] {
@@ -85,6 +85,13 @@ func (f *flakyStore) ApplyTransition(_ context.Context, runID, taskID string, to
 	defer f.mu.Unlock()
 	f.transitions = append(f.transitions, transition{runID, taskID, to})
 	return nil
+}
+
+func (f *flakyStore) MarkQueued(_ context.Context, runID, taskID string, _ *time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transitions = append(f.transitions, transition{runID, taskID, domain.TaskStateQueued})
+	return true, nil
 }
 
 // ApplyTransitions records one transition per task, matching the equivalent

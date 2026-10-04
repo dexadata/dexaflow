@@ -1,0 +1,13 @@
+kind: Changed
+body: |-
+  **The UI bundle is compressed once instead of on every request.** The static
+  handler used to read and gzip each file per request, so every cache-cold
+  browser cost the server about half a second of CPU for the 5 MB main bundle.
+  Each file is now gzipped once (in the background at startup, or on its first
+  request) and the gzipped copy is served from memory; uncompressed responses
+  stream straight from the bundle embedded in the binary. Both carry a strong
+  `ETag`, so a conditional request is answered with `304 Not Modified`, and
+  `Range` requests get `206 Partial Content`. The cache policy is unchanged:
+  hashed assets stay immutable for a year and the HTML shell is never cached.
+  The compressed copies add about 3 MB of memory per API replica.
+time: 2026-10-02T16:30:00.000000000-03:00

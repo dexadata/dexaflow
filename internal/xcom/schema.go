@@ -121,6 +121,7 @@ func compileSchema(raw []byte) (*jsonschema.Schema, error) {
 		return nil, fmt.Errorf("parsing schema: %w", err)
 	}
 	c := jsonschema.NewCompiler()
+	c.UseLoader(noRemoteRefs{})
 	if aerr := c.AddResource("xcom_schema.json", doc); aerr != nil {
 		return nil, fmt.Errorf("loading schema: %w", aerr)
 	}
