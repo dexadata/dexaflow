@@ -27,7 +27,7 @@ A backup archive (`leoflow-backup-<timestamp>.tar.gz`) contains:
 | File / dir | Contents |
 |---|---|
 | `MANIFEST.json` | Format version, `leoflow_version`, embedded schema version, Postgres version, `created_at` |
-| `config.yaml` | The admin email + password hash, JWT signing secret, parser command, workspace path |
+| `config.yaml` | The admin email + password hash, JWT signing secret, the key that decrypts your stored connection secrets (`secret_key`), parser command, workspace path |
 | `setup.json` | Setup metadata (Python interpreter, OS/arch) |
 | `datastore.sql` | A logical `pg_dump` (--clean --if-exists, plain SQL) of the managed Postgres — DAGs, runs, task instances, XCom, Variables, Connections |
 | `workspace/` | Your project tree (DAGs, `dexaflow.yaml`, etc.). VCS dirs and virtualenvs are excluded (see below) |
@@ -83,6 +83,20 @@ The restore command refuses, with a clear error, when:
 
 `--force` does **not** silence the schema-drift refusal. Corruption is not
 opt-in.
+
+The datastore is replayed **first**, and `config.yaml` is written only once
+the replay succeeded. A replay that fails (disk full, a schema mismatch)
+leaves your current `config.yaml` in place, so the key that opens the
+unchanged datastore is still recorded. The config a restore replaces is kept
+as `~/.dexaflow/config.yaml.pre-restore` (mode `0600`) and the restore prints
+its path; the next `dexaflow lite` that starts successfully removes it.
+
+The archive's `config.yaml` is written as it is. A restore never adds or
+removes an encryption key on Lite's behalf: an archive taken before an install
+had a key of its own restores as an install on the key published in this
+repository, and `dexaflow lite` says so and names
+[`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/).
+Run it to finish the move.
 
 ## Worked example: migrate to a new machine
 
