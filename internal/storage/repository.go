@@ -35,7 +35,19 @@ type Repository struct {
 	pool        txBeginner
 	cipher      secrets.Cipher
 	extCoverage externalSecretCoverage
+	xcomValues  XComValueDeleter
 }
+
+// XComValueDeleter deletes a stored XCom value by its backend key. xcom.Backend
+// satisfies it (Redis in production, xcom_store under Lite).
+type XComValueDeleter interface {
+	Delete(ctx context.Context, key string) error
+}
+
+// SetXComBackend attaches the XCom value store, so a clear deletes the values of
+// the attempts it clears and not only their index rows (#1131). Without it a
+// clear removes only the index rows.
+func (r *Repository) SetXComBackend(b XComValueDeleter) { r.xcomValues = b }
 
 // externalSecretCoverage reports whether a declared name is served by a
 // configured external secret backend (operator config, ADR 0060). The D6
