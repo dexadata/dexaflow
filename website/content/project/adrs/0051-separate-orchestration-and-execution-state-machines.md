@@ -446,7 +446,11 @@ attempt's heartbeat until its own first beat, one full interval later
 inherited value is already past the threshold by definition, so a maintenance
 sweep landing in that window lists it (`runs.sql:864-865`) and
 `IsAgentLost` (`internal/executor/heartbeat_reap.go:51-56`) fails the
-replacement immediately, spending another infra attempt. This is read from the
+replacement immediately, spending another infra attempt. The window is not
+specific to the infra rail: a clear of any task that heartbeated before (the
+ordinary clear-and-rerun) and a retry whose `retry_delay` exceeds the threshold
+minus one heartbeat interval inherit an equally stale value, and there the
+spurious `agent_lost` mark costs an infra attempt on a task that was never lost. This is read from the
 source, not reproduced; PR A0 below starts with the failing test.
 
 ### Decision
@@ -478,7 +482,20 @@ statement:
   "demonstrably will not run" the attempt, and the epoch fences it if it does;
 - `RecordDispatchFailure` (`runs.sql:947-958`): a synchronous dispatch failure
   is ambiguous (a create that timed out may still have created the pod), so the
-  next dispatch gets a new epoch.
+  next dispatch gets a new epoch;
+- **the dispatch itself.** `launchQueued` creates the pod before it records
+  `queued` (`internal/scheduler/scheduler.go:1053-1064`), and pod names carry a
+  random suffix (`internal/executor/kubernetes.go:785-793`). A dispatch whose
+  `queued` write failed (a database error, or leadership lost between the two
+  statements) is therefore dispatched again on a later tick with no reset rail
+  in between, and both pods would share `(try, epoch)`. The epoch is claimed
+  where the dispatcher resolves the row: `ResolveTask` becomes an
+  `UPDATE ... SET attempt_epoch = attempt_epoch + 1 ... RETURNING` guarded to
+  the pre-dispatch states, and the token, label and annotation are minted from
+  the claimed value. With the claim at dispatch every execution has its own
+  epoch whatever path led to it; the reset-rail bumps above stay, so that a
+  reset alone already fences the attempt it superseded before the next
+  dispatch runs.
 
 The epoch is never reset. The attempt identity becomes
 `(task_instance_id, try_number, attempt_epoch)`; `try_number` stays in every
@@ -548,10 +565,16 @@ AND try_number = sqlc.arg(try_number)
 AND attempt_epoch = COALESCE(sqlc.narg(attempt_epoch)::int, 0)
 ```
 
-A token or pod without an epoch is treated as epoch 0. That is exact for the
-case that matters: everything minted before the upgrade belongs to a row whose
-epoch the migration set to 0, and the first post-upgrade re-place bumps it to
-1, after which the legacy attempt is fenced like any other superseded one.
+A token or pod without an epoch is treated as epoch 0. Everything minted
+before the upgrade belongs to a row whose epoch the migration set to 0, and
+because the epoch is claimed at dispatch, every attempt dispatched after the
+upgrade carries an epoch of at least 1, so no legacy credential or unlabeled pod
+can match it. A reset-only bump would not be enough: a row that was re-placed,
+re-poked or requeued before the upgrade sits at epoch 0 with no rail left to
+run, and its first post-upgrade dispatch would share epoch 0 with the
+superseded legacy attempt. The one residual case is two legacy attempts that
+already aliased one row before the upgrade (today's bug); they stay
+indistinguishable until that row's next dispatch, exactly as today.
 
 ### Rollout and compatibility
 
@@ -572,7 +595,10 @@ epoch the migration set to 0, and the first post-upgrade re-place bumps it to
   dispatching a row that a new leader already bumped** (leadership returning
   to an old replica mid-rollout): its legacy token fails the epoch-0 rule,
   the attempt is told to terminate, and it is reaped and re-placed. That is
-  one redundant infra re-place for that attempt, never a wrong outcome.
+  one redundant infra re-place for that attempt, never a wrong outcome. An old
+  leader also resets and re-places without bumping; the next dispatch by a new
+  leader claims a fresh epoch, so that window adds no aliasing beyond today's.
+  The same holds after a rollback followed by a second upgrade.
 - **Retiring legacy tokens.** The release that ships the fence accepts legacy
   tokens under the epoch-0 rule and meters them
   (`agent_legacy_attempt_token_total`). The next minor release rejects a
@@ -617,9 +643,10 @@ Each PR is one logical change, failing test first (ADR 0011).
   heartbeated, is marked `agent_lost`, re-placed and transitioned to `running`
   must not appear in `ListAgentLostCandidates`. Same test for the retry rail.
 - **PR A1: schema and identity plumbing, no behavior change.** Migration;
-  every rail listed above bumps `attempt_epoch`; `ResolveTask` returns it.
+  every rail listed above bumps `attempt_epoch`; `ResolveTask` claims it.
   Tests: one integration test per rail asserting the epoch strictly
-  increases; migration up/down/up test; history keeps both rows for two infra
+  increases, including two dispatches of one row with no reset between them;
+  migration up/down/up test; history keeps both rows for two infra
   re-places on one try.
 - **PR A2: token claim.** `agentClaims`, `AgentIdentity`, mint, renew,
   dispatch, exchange annotation and resolver, `WorkAssignment` and `TaskSpec`

@@ -433,7 +433,22 @@ WHERE ti.id = sqlc.arg(id)
   clear-task is the recovery.
 - The reconciler calls it only for a **SUCCESS** record, and only after
   `SucceedTaskInstanceIfActive` affected zero rows (`reconcile.go:495-508`
-  gains the fallback, which is why the query is `:execrows`).
+  gains the fallback). `SucceedTaskInstanceIfActive` is `:exec` today
+  (`runs.sql:483`) and becomes `:execrows` so that zero rows can be told
+  apart; the new query is `:execrows` so the metric counts real overrides.
+- A user's verdict is never overridden. The mark-state endpoint
+  (`SetTaskInstanceState`, `internal/storage/repository.go:870-884`) writes
+  the state through `UpdateTaskInstanceStateByRunTask` and leaves
+  `last_failure_kind` as it was, so a user who marks a reaped task `failed`
+  today leaves `failed`/`infra` behind: the planner still re-places it, and
+  this query would turn it into `success`. The mark-state write therefore
+  clears `last_failure_kind` (and stamps `infra_confirmed_at`) in the same
+  statement, making a user's `failed` an application failure that neither
+  rail touches.
+- The scheduler's state machine has no `failed` to `success` edge
+  (`internal/scheduler/state_machine.go:31`). The override is a reconciler
+  write outside the planner, like the existing settles, and the ADR records it
+  as such rather than adding the edge for the planner.
 
 **A FAILED record never overrides an infra mark.** The reaper's own teardown
 kills the agent, and the agent's cancellation path writes a FAILED record
@@ -459,10 +474,15 @@ guess:
 - Each reconciler sweep lists provisional infra failures (bounded, like the
   reaper candidate queries) and, per row, looks at the pods of that exact
   `(try, epoch)` in the cache it already holds. A SUCCESS record: override
-  (part 1). No pod at all, or only terminal pods without a SUCCESS record:
-  `ConfirmInfraFailure` stamps `infra_confirmed_at = now()`, guarded on the
-  same `(id, try, epoch, failed, infra)` tuple. A pod still terminating: leave
-  it for the next sweep.
+  (part 1). No pod at all, or only pods whose task container has terminated
+  without a SUCCESS record: `ConfirmInfraFailure` stamps
+  `infra_confirmed_at = now()`, guarded on the same
+  `(id, try, epoch, failed, infra)` tuple. A pod whose task container has not
+  terminated yet (a pod stopped in place by part 3 is still inside its
+  termination grace, and may already show phase `Failed` with reason
+  `DeadlineExceeded` before its container status does): leave it for the
+  next sweep. The test is the container's `state.terminated`, the same field
+  `outcomeRecord` reads (`reconcile.go:102-112`), never the pod phase.
 - The planner treats a provisional infra failure as **active**: no re-place,
   and no downstream condemnation, regardless of the remaining infra budget.
   `planRetryTransitions` (`plan.go:169-199`) keeps it at the effective
@@ -474,13 +494,24 @@ guess:
   `infra_confirm_valve_open`. The value must exceed the task pod's termination
   grace plus two maintenance intervals; it becomes a rung of the boot-time
   ladder (`internal/executor/resilience_ladder.go:15-40`), next to the
-  settling-grace rungs it mirrors.
+  settling-grace rungs it mirrors. It also joins the "infra re-place delay <
+  orphan threshold" rung: a run whose only live task is a provisional mark has
+  no activity to show the orphan-run reaper, so `max(InfraReplaceMaxDelay,
+  infraConfirmMaxWait)` must stay below `OrphanThreshold` (5 minutes by
+  default, `reaper.go:43`). A DAG that declares a termination grace longer than
+  that bound gets the valve, not the record, for that task.
 - **Lite** has no reconciler and no record transport (the termination-log path
   is unset, `runner.go:897-899`), so the Lite wiring stamps
   `infra_confirmed_at` at mark time and behaves exactly as today.
 
-The added latency is one sweep (at most 30 s on top of the existing 5 to 35 s
-backoff) for a genuine loss, and it buys the record its read.
+The re-place backoff is measured from `ended_at` (`plan.go:340-351`), and so
+is the wait for confirmation, so the two overlap rather than add. For a genuine
+loss with no pod left, confirmation lands on the next sweep, at most one
+maintenance interval (30 s) after the mark, and the first re-place moves from
+5 to 35 s to at most about 30 to 35 s. For a pod that was stopped in place,
+confirmation waits for the container to exit, so the bound is the pod's
+termination grace (30 s by default) plus one interval, about a minute. That is
+the price of the record's read; Lite pays none of it (below).
 
 #### 3. Teardown stops the pod in place instead of deleting it
 
@@ -491,9 +522,14 @@ the pod object, and with it the termination message, as soon as the container
 stops. The teardown therefore changes for a pod whose containers have started
 (`status.startTime` set):
 
-- **Stop in place:** patch `spec.activeDeadlineSeconds` to `1`. Kubernetes
-  allows lowering it on a live pod, and task pods already carry one
-  (`internal/executor/kubernetes.go:132`). The kubelet kills the containers with
+- **Stop in place:** patch `spec.activeDeadlineSeconds` to `1`.
+  `ValidatePodUpdate` (`k8s.io/kubernetes`, `pkg/apis/core/validation`)
+  allows exactly two updates of this field on a live pod: setting it when it
+  is unset, and lowering it; raising it or removing it is rejected. Task pods
+  carry one only when the task declares a timeout or the credential ceiling
+  is on (`podActiveDeadline`, `internal/executor/kubernetes.go:234-242`), and
+  the patch to `1` is valid in both cases. The deadline counts from
+  `status.startTime`, so `1` has always elapsed. The kubelet kills the containers with
   the pod's normal termination grace, the pod goes `Failed` with reason
   `DeadlineExceeded`, and the **object stays**, carrying the task container's
   termination message. The #474 property (a reaped attempt stops running user
@@ -506,10 +542,13 @@ stops. The teardown therefore changes for a pod whose containers have started
   exactly as `terminalForTeardown` argues today.
 - **RBAC:** the executor Role gains `patch` on `pods`
   (`helm/dexaflow/templates/rbac.yaml:22-24`), and
-  `scripts/rbac-covers-executor.sh` is updated in the same PR. If the patch is
-  `Forbidden` (a hand-maintained Role), the teardown falls back to delete and
-  meters `reap_teardown_delete_fallback`; correctness then degrades to today's,
-  never below it.
+  `scripts/rbac-covers-executor.sh` is updated in the same PR. If the patch
+  fails for any reason other than `NotFound` (`Forbidden` from a
+  hand-maintained Role, or an admission webhook that rejects pod updates), the
+  teardown falls back to delete and meters `reap_teardown_delete_fallback`;
+  correctness then degrades to today's, never below it. The verb adds no
+  meaningful privilege: the same Role can already `create` arbitrary pods in
+  the task namespace.
 
 `DeleteRunPods` (the orphan-run reaper) uses the same helper and gets the same
 behavior.
@@ -590,6 +629,18 @@ Two paths can still meet a downstream `upstream_failed`:
   `internal/scheduler/state_machine.go:33`, but never emits; #896 item 3). It is level-triggered and only fires in a running run.
 - **The run already finalized.** The override's `dr.state='running'` clause
   refuses it; the record is metered and the operator clears the task.
+
+The B4 rule covers only `upstream_failed`. Once the valve has opened and the
+planner has treated the task as terminally failed, a downstream whose trigger
+rule fires on failure (`one_failed`, `all_failed`, `all_done`,
+`none_success`, and the like) may already have run, and a later override would
+leave the run recording both the failure branch and the success. B4 also
+fires for any `upstream_failed` whose upstream later reads success, including
+one a user marked `success` by hand, which Airflow does not do. **Open question
+for acceptance:** add `AND ti.ended_at > now() - infraConfirmMaxWait` (and
+`ti.infra_confirmed_at IS NULL`) to the override guard, so the override is
+legal only while the planner provably still treats the task as active. The
+planner's view and the override then never disagree, and B4 is unnecessary.
 
 ### Changes to the text above
 
