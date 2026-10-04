@@ -158,3 +158,57 @@ func waitNoFiles(t *testing.T, dir string) {
 	}
 	t.Fatalf("liveness records left behind after the agent exited: %v (%s)", names, strconv.Itoa(len(names)))
 }
+
+// TestPIDDirRefusesATamperableDirectory: the record directory sits under the
+// system temp directory, which other users share on Linux. A directory others
+// can write (or a symlink planted in its place) must not be used: recording
+// fails the dispatch and probing defers, instead of trusting records another
+// user could delete (a live agent would read dead, #911) or plant.
+func TestPIDDirRefusesATamperableDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions only")
+	}
+	open := filepath.Join(t.TempDir(), "pids")
+	if err := os.Mkdir(open, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(open, 0o777); err != nil { //nolint:gosec // the test needs a world-writable dir
+		t.Fatal(err)
+	}
+	e := NewSubprocessExecutor("/bin/true", discardLogger())
+	e.SetPIDDir(open)
+	if err := e.recordPID("r", "t", 1, os.Getpid()); err == nil {
+		t.Error("recordPID into a world-writable dir must fail")
+	}
+	if _, err := e.AttemptProcessAlive(context.Background(), "r", "t", 1); err == nil {
+		t.Error("probing a world-writable dir must report an error so the reapers defer")
+	}
+
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	e.SetPIDDir(link)
+	if err := e.recordPID("r", "t", 1, os.Getpid()); err == nil {
+		t.Error("recordPID through a symlinked dir must fail")
+	}
+}
+
+// TestAttemptProcessAliveWithoutDirIsGone: before the first spawn the record
+// directory does not exist, which means no agent is known, not an error.
+func TestAttemptProcessAliveWithoutDirIsGone(t *testing.T) {
+	e := NewSubprocessExecutor("/bin/true", discardLogger())
+	e.SetPIDDir(filepath.Join(t.TempDir(), "missing"))
+	alive, err := e.AttemptProcessAlive(context.Background(), "r", "t", 1)
+	if err != nil || alive {
+		t.Fatalf("AttemptProcessAlive = (%v, %v), want (false, nil) with no dir", alive, err)
+	}
+}
+
+// TestDefaultPIDDirIsPerUser: the default directory is keyed by user id, so two
+// users of one host never share (or fight over) one record directory.
+func TestDefaultPIDDirIsPerUser(t *testing.T) {
+	if got, want := filepath.Base(defaultAgentPIDDir()), "dexaflow-agent-pids-"+strconv.Itoa(os.Getuid()); got != want {
+		t.Errorf("default pid dir = %q, want base %q", got, want)
+	}
+}

@@ -14,11 +14,39 @@ import (
 )
 
 // defaultAgentPIDDir is where the subprocess executor records the PID of every
-// agent it spawns when no directory is configured. It is shared by every Lite
-// server of one host user; records are keyed by attempt, so the worst a
-// collision between two servers can do is defer a reap, never authorize one.
+// agent it spawns when no directory is configured. The name carries the user id
+// because the system temp directory is shared on Linux (/tmp when TMPDIR is
+// unset): one fixed name would let the first user to run Lite own it and fail
+// every dispatch of the next one, and would let another user who created it
+// first delete or plant records. It is shared by every Lite server of one host
+// user; records are keyed by attempt, so the worst a collision between two
+// servers can do is defer a reap, never authorize one.
 func defaultAgentPIDDir() string {
-	return filepath.Join(os.TempDir(), "dexaflow-agent-pids")
+	return filepath.Join(os.TempDir(), "dexaflow-agent-pids-"+strconv.Itoa(os.Getuid()))
+}
+
+// checkPIDDir refuses a record directory another user could tamper with: it must
+// be a real directory (not a symlink), owned by this user, and not writable by
+// group or others (it is created 0700; reading it reveals nothing worth hiding). MkdirAll does not check any of that for a
+// directory that already exists, and a directory someone else controls could
+// have records removed (a live agent then reads dead and is reaped beside a
+// second one, #911) or planted. A missing directory is reported as such so a
+// reader can treat it as "no record".
+func checkPIDDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("agent pid dir %s is not a directory", dir)
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("agent pid dir %s is writable by other users (mode %v)", dir, fi.Mode().Perm())
+	}
+	if !ownedByCurrentUser(fi) {
+		return fmt.Errorf("agent pid dir %s is owned by another user", dir)
+	}
+	return nil
 }
 
 // SetPIDDir sets the directory the executor records each spawned agent's PID
@@ -47,6 +75,9 @@ func (e *SubprocessExecutor) pidPath(runID, taskID string, tryNumber int) string
 func (e *SubprocessExecutor) recordPID(runID, taskID string, tryNumber, pid int) error {
 	if err := os.MkdirAll(e.pidDir, 0o700); err != nil {
 		return fmt.Errorf("creating agent pid dir: %w", err)
+	}
+	if err := checkPIDDir(e.pidDir); err != nil {
+		return err
 	}
 	tmp, err := os.CreateTemp(e.pidDir, ".pid-*")
 	if err != nil {
@@ -96,9 +127,17 @@ func readPID(path string) (int, error) {
 // try) attempt is alive, by the PID this executor recorded when it spawned it.
 // No record means no agent is known for the attempt: (false, nil). A record
 // that cannot be read, or a PID whose liveness cannot be probed, is an error so
-// the caller defers. A recorded PID that the OS reuses for an unrelated process
-// reads alive; that only defers a reap, it never authorizes one.
+// the caller defers, and so is a record directory another user could have
+// tampered with (see checkPIDDir). A recorded PID that the OS reuses for an
+// unrelated process reads alive; that only defers a reap, it never authorizes
+// one.
 func (e *SubprocessExecutor) AttemptProcessAlive(_ context.Context, runID, taskID string, tryNumber int) (bool, error) {
+	if err := checkPIDDir(e.pidDir); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
 	pid, err := readPID(e.pidPath(runID, taskID, tryNumber))
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
