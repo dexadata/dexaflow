@@ -270,8 +270,10 @@ RETURNING *;
 -- Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 -- both "is there a slot due?" (schedule + last_logical), "how many slots
 -- should I backfill on this tick?" (catchup + start_date, see #129), and
--- "may this DAG take another active run?" (max_active_runs, see #200).
-SELECT d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+-- "may this DAG take another active run?" (max_active_runs, see #200). The
+-- owning tenant is returned because a dag_id is unique only within its tenant
+-- (#209).
+SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
 WHERE d.is_active = true AND d.is_paused = false
@@ -281,8 +283,7 @@ WHERE d.is_active = true AND d.is_paused = false
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, sqlc.arg(run_id), sqlc.arg(logical_date), 'queued', 'scheduled'
 FROM dags d
-JOIN tenants t ON t.id = d.tenant_id
-WHERE t.name = sqlc.arg(tenant) AND d.dag_id = sqlc.arg(dag_id) AND d.current_version_id IS NOT NULL
+WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_id = sqlc.arg(dag_id) AND d.current_version_id IS NOT NULL
 ON CONFLICT (dag_id, run_id) DO NOTHING;
 
 -- name: GetDagVersionByID :one
@@ -591,14 +592,18 @@ WHERE d.tenant_id = $1 AND d.dag_id = $2 AND dr.run_id = ANY($3::text[])
 ORDER BY dr.run_id, ti.task_id, ti.try_number;
 
 -- name: CountDagsByLatestRunState :many
+-- One index probe per DAG of the tenant for its newest run. DAGs without runs
+-- drop out of the CROSS JOIN, so they are not counted.
 SELECT lr.state AS state, count(*) AS n
-FROM (
-    SELECT DISTINCT ON (r.dag_id) r.state
+FROM dags d
+CROSS JOIN LATERAL (
+    SELECT r.state
     FROM dag_runs r
-    JOIN dags d ON d.id = r.dag_id
-    WHERE d.tenant_id = $1
-    ORDER BY r.dag_id, r.logical_date DESC
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
 ) lr
+WHERE d.tenant_id = $1
 GROUP BY lr.state;
 
 -- name: CountDagRunStatesInWindow :many

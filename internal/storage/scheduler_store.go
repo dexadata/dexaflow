@@ -549,6 +549,7 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 	out := make([]scheduler.ScheduledDAG, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, scheduler.ScheduledDAG{
+			TenantID:      uuidToString(r.TenantID),
 			DagID:         r.DagID,
 			Schedule:      strOrEmpty(r.Schedule),
 			LastLogical:   timeFromAny(r.LastLogical),
@@ -560,13 +561,19 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 	return out, nil
 }
 
-// CreateScheduledRun inserts a scheduled run for a DAG (idempotent on run_id).
-func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, dagID string, logical time.Time) error {
+// CreateScheduledRun inserts a scheduled run for the DAG dagID owned by the
+// tenant tenantID (a tenant UUID), idempotent on run_id. The tenant is explicit
+// because a dag_id is unique only within its tenant (#209).
+func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error {
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return fmt.Errorf("scheduled run tenant id %q: %w", tenantID, err)
+	}
 	runID := "scheduled__" + logical.UTC().Format(time.RFC3339)
 	return s.q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
 		RunID:       runID,
 		LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
-		Tenant:      "default",
+		TenantID:    tid,
 		DagID:       dagID,
 	})
 }
