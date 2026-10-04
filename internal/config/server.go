@@ -323,6 +323,13 @@ type UISection struct {
 	// the web fonts a theme's fonts tokens name. Each must be http(s) or
 	// root-relative.
 	StylesheetURLs []string `mapstructure:"stylesheet_urls"`
+	// ETagRevalidation lets the browser revalidate the UI routes that compute
+	// an ETag (the grid's task summaries) with "private, no-cache" instead of
+	// no-store, so an unchanged grid poll is answered 304. The browser then
+	// keeps the last grid body in its private cache after logout, revalidated
+	// before any use. Off by default (ADR 0062 gate): every UI route keeps
+	// no-store.
+	ETagRevalidation bool `mapstructure:"etag_revalidation"`
 }
 
 // HomeLinkSection is the operator's way back from the UI: a label and the
@@ -877,6 +884,7 @@ var serverDefaults = map[string]any{
 	"ui.theme":                           "",
 	"ui.favicon_url":                     "",
 	"ui.stylesheet_urls":                 []string{},
+	"ui.etag_revalidation":               false,
 	// Must appear here even though the zero value is meaningful (the handler
 	// falls back to api.DefaultUIAutoRefreshIntervalSeconds when ≤ 0): viper's
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
