@@ -1,0 +1,16 @@
+kind: Fixed
+body: |-
+  **A superseded task agent can no longer report over the attempt that
+  replaced it.** After an infra re-place, a reschedule poke or a repeated
+  dispatch, the old and new executions shared a try number, so the old agent's
+  `running` report (on Lite, a detached subprocess that kept retrying) could
+  land on the replacement and start the task twice. State reports, reschedule
+  reports, warm-worker bindings and requeues now match the attempt epoch in the
+  agent's token, and a stale one is told to terminate. The reschedule report
+  also gains the try-number check it was missing. A token minted before the
+  upgrade is read as epoch 0 for reports. Heartbeats and secret liveness
+  accept such a token on its try number alone, so a task whose token an old
+  replica re-minted during a rolling upgrade is not killed. Such tokens are
+  counted in `dexaflow_agent_legacy_attempt_token_total`. See the upgrade notes
+  for 0.5.1. (#911)
+time: 2026-10-04T22:00:00.000000000-03:00

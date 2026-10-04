@@ -102,8 +102,10 @@ func TestSupersededAttemptIsFencedAfterInfraReplace(t *testing.T) {
 }
 
 // TestRepeatedDispatchFencesTheFirstPod: two dispatches of one row with no
-// reset between them (the queued write of the first one failed). The first
-// pod's token is superseded by the second dispatch's claim.
+// reset between them (the queued write of the first one failed, or a stale
+// buffered dispatch request is processed after a re-enqueue). The first pod's
+// token is superseded by the second dispatch's claim; fencing it is the
+// intended outcome, since only one of the two pods may run the attempt.
 func TestRepeatedDispatchFencesTheFirstPod(t *testing.T) {
 	f := seedStaleHeartbeat(t, "fence_redispatch")
 	f.setState(t, "scheduled")
@@ -116,10 +118,15 @@ func TestRepeatedDispatchFencesTheFirstPod(t *testing.T) {
 	}
 }
 
-// TestLegacyTokenFence is the mixed-version rule: a token minted before the
-// upgrade carries no epoch and is read as epoch 0. It keeps working for its
-// own in-flight attempt (the row is still at epoch 0) and is rejected once the
-// row has been dispatched again by a new binary (epoch 1 or higher).
+// TestLegacyTokenFence is the mixed-version rule. A token without an epoch is
+// either one minted before the upgrade or one an old replica re-minted
+// (renewal or exchange) during a rolling upgrade, which drops the claim it does
+// not know. Reports read it as epoch 0: it reports for its own pre-upgrade
+// attempt and is rejected once a new binary has dispatched the row again
+// (epoch 1 or higher), which is what keeps #911 closed. Heartbeats and the
+// secret liveness read match it on the try alone, so a live post-upgrade
+// attempt whose token was stripped mid-rollout is not reaped or cut off from
+// its secrets; at worst its terminal report is rejected and it is re-placed.
 func TestLegacyTokenFence(t *testing.T) {
 	f := seedStaleHeartbeat(t, "fence_legacy")
 	legacy := f.legacyIdentity(f.tryNumber(t))
@@ -145,12 +152,28 @@ func TestLegacyTokenFence(t *testing.T) {
 		t.Fatalf("ResetForInfraReplace applied=%v err=%v", applied, err)
 	}
 	f.setState(t, "scheduled")
-	_ = f.dispatch(t)
+	replacement := f.dispatch(t)
 	f.transition(t, domain.TaskStateRunning)
 	wantStale(t, "a legacy RUNNING report", f.exec.ReportState(f.ctx, legacy, domain.TaskStateRunning, 0, ""))
-	wantStale(t, "a legacy heartbeat", f.exec.RecordHeartbeat(f.ctx, legacy))
-	if live, err := f.exec.IsTaskInstanceLive(f.ctx, legacy); err != nil || live {
-		t.Errorf("a legacy token must not be live against an epoch-1 row: live=%v err=%v", live, err)
+	wantStale(t, "a legacy SUCCESS report", f.exec.ReportState(f.ctx, legacy, domain.TaskStateSuccess, 0, ""))
+	wantStale(t, "a legacy reschedule", f.exec.Reschedule(f.ctx, legacy, time.Now().Add(time.Minute)))
+
+	// Heartbeat and liveness accept a claim-less token of the current try, so
+	// a replacement whose token an old replica stripped is neither reaped nor
+	// denied its secrets.
+	if err := f.exec.RecordHeartbeat(f.ctx, legacy); err != nil {
+		t.Errorf("a claim-less heartbeat of the current try must apply: %v", err)
+	}
+	if live, err := f.exec.IsTaskInstanceLive(f.ctx, legacy); err != nil || !live {
+		t.Errorf("a claim-less token of the current try must read live: live=%v err=%v", live, err)
+	}
+	// A token that carries an epoch is always matched exactly.
+	stale := f.identityFor(replacement.TryNumber, replacement.AttemptEpoch-1)
+	wantStale(t, "a heartbeat with a superseded epoch", f.exec.RecordHeartbeat(f.ctx, stale))
+	// An earlier try is still rejected, with or without a claim.
+	wantStale(t, "a claim-less heartbeat of an earlier try", f.exec.RecordHeartbeat(f.ctx, f.legacyIdentity(replacement.TryNumber-1)))
+	if err := f.exec.ReportState(f.ctx, replacement, domain.TaskStateSuccess, 0, ""); err != nil {
+		t.Errorf("the replacement's own report must apply: %v", err)
 	}
 }
 

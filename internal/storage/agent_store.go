@@ -157,11 +157,12 @@ func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity,
 	}
 	code := toInt32(exitCode)
 	params := queries.ReportTaskResultParams{
-		DagRunID:  rid,
-		TaskID:    id.TaskID,
-		Column3:   queries.TaskState(state), // sqlc names the $3::task_state cast param Column3.
-		ExitCode:  &code,
-		TryNumber: toInt32(id.TryNumber),
+		DagRunID:     rid,
+		TaskID:       id.TaskID,
+		Column3:      queries.TaskState(state), // sqlc names the $3::task_state cast param Column3.
+		ExitCode:     &code,
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	}
 	if errMsg != "" {
 		params.ErrorMessage = &errMsg
@@ -182,17 +183,28 @@ func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity,
 
 // Reschedule parks an active task instance in up_for_reschedule with its next-poke
 // time, so the scheduler re-dispatches it once reschedule_at passes (#380). Used by
-// the agent's reschedule path; a no-op if the TI is no longer active (terminal).
+// the agent's reschedule path. It is guarded on the attempt (try_number and attempt
+// epoch, ADR 0051 amendment) and the active states, so a poke from a superseded
+// attempt or onto a settled row does not apply and returns agentrpc.ErrStaleReport.
 func (s *ExecutionStore) Reschedule(ctx context.Context, id auth.AgentIdentity, at time.Time) error {
 	rid, err := parseUUID(id.RunID)
 	if err != nil {
 		return err
 	}
-	return s.q.RescheduleTaskInstance(ctx, queries.RescheduleTaskInstanceParams{
+	rows, err := s.q.RescheduleTaskInstance(ctx, queries.RescheduleTaskInstanceParams{
 		DagRunID:     rid,
 		TaskID:       id.TaskID,
 		RescheduleAt: pgtype.Timestamptz{Time: at, Valid: true},
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return agentrpc.ErrStaleReport
+	}
+	return nil
 }
 
 // RecordHeartbeat stamps last_heartbeat_at on the agent's TI so the
@@ -205,9 +217,10 @@ func (s *ExecutionStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdent
 		return err
 	}
 	rows, err := s.q.RecordTaskHeartbeat(ctx, queries.RecordTaskHeartbeatParams{
-		DagRunID:  rid,
-		TaskID:    id.TaskID,
-		TryNumber: toInt32(id.TryNumber),
+		DagRunID:     rid,
+		TaskID:       id.TaskID,
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	})
 	if err != nil {
 		return err
@@ -235,16 +248,18 @@ func (s *ExecutionStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdent
 // N1d-a2 deferral: warm_worker_id is intentionally NOT cleared when the attempt
 // settles. The consuming reaper filters on state, so a lingering value on a
 // terminal TI is harmless; a settle-time clear is left to that increment.
-func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber int, workerPod string) error {
+func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int, workerPod string) error {
 	rid, err := parseUUID(runID)
 	if err != nil {
 		return err
 	}
 	pod := workerPod
+	epoch := toInt32(attemptEpoch)
 	_, err = s.q.BindWarmAttempt(ctx, queries.BindWarmAttemptParams{
 		DagRunID:     rid,
 		TaskID:       taskID,
 		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: &epoch,
 		WarmWorkerID: &pod,
 	})
 	// Zero rows is the guard working, not a failure: the attempt already moved on
@@ -253,26 +268,27 @@ func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID stri
 	return err
 }
 
-// IsTaskInstanceLive reports whether the attempt (runID, taskID, tryNumber) is
-// still live — present and in an active (non-terminal) state — derived from the
+// IsTaskInstanceLive reports whether the attempt id names (run, task, try and
+// attempt epoch, a token without an epoch read as epoch 0) is still live (present and in an active, non-terminal state), derived from the
 // same predicate RecordHeartbeat writes on, but as a pure read with no
 // side-effect (ADR 0055). It is the read-only revocation signal the secret path
 // consults: a terminal, superseded (try_number moved on), or reaped attempt is
 // not live, so its token stops resolving secrets even while the signature holds.
 //
-// It derives ONLY from (run, task, try) + active state, exactly as the heartbeat
-// predicate does. It must never gain a run-recency / logical_date clause: a
+// It derives ONLY from (run, task, try, epoch) + active state, exactly as the
+// heartbeat predicate does. It must never gain a run-recency / logical_date clause: a
 // recency term would deny a legitimate clear-and-rerun of an old run, binding
 // credential lifetime to the run's age rather than to the attempt.
-func (s *ExecutionStore) IsTaskInstanceLive(ctx context.Context, runID, taskID string, tryNumber int) (bool, error) {
-	rid, err := parseUUID(runID)
+func (s *ExecutionStore) IsTaskInstanceLive(ctx context.Context, id auth.AgentIdentity) (bool, error) {
+	rid, err := parseUUID(id.RunID)
 	if err != nil {
 		return false, err
 	}
 	return s.q.IsTaskInstanceLive(ctx, queries.IsTaskInstanceLiveParams{
-		DagRunID:  rid,
-		TaskID:    taskID,
-		TryNumber: toInt32(tryNumber),
+		DagRunID:     rid,
+		TaskID:       id.TaskID,
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	})
 }
 
@@ -332,17 +348,33 @@ func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID stri
 // TI is running or settled, or the attempt moved on), a benign no-op, not an
 // error. It bumps neither try_number nor infra_attempts — the attempt never ran,
 // this is a re-offer of the same attempt.
-func (s *ExecutionStore) RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber int) error {
+func (s *ExecutionStore) RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int) error {
 	rid, err := parseUUID(runID)
 	if err != nil {
 		return err
 	}
+	epoch := toInt32(attemptEpoch)
 	_, err = s.q.RequeueForRedispatch(ctx, queries.RequeueForRedispatchParams{
-		DagRunID:  rid,
-		TaskID:    taskID,
-		TryNumber: toInt32(tryNumber),
+		DagRunID:     rid,
+		TaskID:       taskID,
+		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: &epoch,
 	})
 	return err
+}
+
+// attemptEpochArg is the attempt-epoch argument of the agent-path fence
+// (ADR 0051 amendment): the token's epoch, or nil for a token minted before the
+// claim existed, which the SQL reads as epoch 0 (COALESCE). Every row that
+// predates the upgrade is at epoch 0 and every attempt dispatched after it
+// claims at least 1, so a legacy token matches only its own pre-upgrade
+// attempt.
+func attemptEpochArg(id auth.AgentIdentity) *int32 {
+	if !id.HasAttemptEpoch {
+		return nil
+	}
+	n := toInt32(id.AttemptEpoch)
+	return &n
 }
 
 // ErrNotDispatchable is returned by ResolveTask when the task's row is no

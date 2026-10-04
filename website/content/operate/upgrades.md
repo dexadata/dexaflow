@@ -168,6 +168,30 @@ Two consequences for your own tooling:
   policy the chart creates normally does not exist yet when the *pre-install*
   hook runs.
 
+### Upgrading to 0.5.1: finish the rollout promptly
+
+0.5.1 fences each task execution by an attempt epoch carried in the agent's
+token ([ADR 0051](/project/adrs/0051-separate-orchestration-and-execution-state-machines/),
+amendment). Tasks that are already running when you upgrade keep their old
+tokens and are not affected. While old and new control-plane replicas serve
+side by side during a rolling upgrade, two cases cost one redundant re-placement
+of a task, never a wrong result:
+
+- an old replica renews a new task's token, or exchanges its projected
+  ServiceAccount token, and drops the epoch it does not know. The task keeps
+  heartbeating and resolving its secrets, but when it finishes its final state
+  report is rejected, and it is re-placed and runs again;
+- leadership moves back to an old replica, which dispatches a task a new
+  replica already advanced. That task is told to stop on its first report and
+  is re-placed.
+
+Both last only as long as old replicas serve agent traffic. On an HA install,
+let the rollout finish without pausing it, or scale the control plane to one
+replica for the upgrade. `dexaflow_agent_legacy_attempt_token_total` counts agent
+calls that still use a token without the epoch; it falls to zero once every
+task started before the upgrade has finished. A later minor release will refuse
+such tokens.
+
 ## Related issues
 
 - #136 — this contract.

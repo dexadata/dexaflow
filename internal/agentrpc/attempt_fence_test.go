@@ -13,8 +13,8 @@ import (
 )
 
 // epochFencingStore answers like the storage fence (ADR 0051 amendment): a
-// write applies only for the row's current epoch, and a token with no epoch is
-// read as epoch 0.
+// report applies only for the row's current epoch, a token with no epoch read
+// as epoch 0, and a heartbeat with no epoch is not fenced on it.
 type epochFencingStore struct {
 	fakeStore
 	current int
@@ -35,8 +35,9 @@ func (s *epochFencingStore) ReportState(ctx context.Context, id auth.AgentIdenti
 	return s.fakeStore.ReportState(ctx, id, st, exit, msg)
 }
 
+// RecordHeartbeat matches a claim-less token on the try alone, like the SQL.
 func (s *epochFencingStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdentity) error {
-	if s.fenced(id) {
+	if id.HasAttemptEpoch && s.fenced(id) {
 		return ErrStaleReport
 	}
 	return s.fakeStore.RecordHeartbeat(ctx, id)
@@ -100,6 +101,19 @@ func TestStaleEpochGetsShouldTerminate(t *testing.T) {
 	hb, err = srv.Heartbeat(live, &agentv1.HeartbeatRequest{})
 	if err != nil || hb.GetShouldTerminate() {
 		t.Errorf("live heartbeat: should_terminate=%v err=%v, want false", hb.GetShouldTerminate(), err)
+	}
+
+	// A claim-less token (pre-upgrade, or stripped by an old replica mid-rollout)
+	// keeps heartbeating, so the attempt is not killed for the missing claim, but
+	// its report is still fenced as epoch 0.
+	legacy := ctxForIdentity(t, a, testIdentity())
+	hb, err = srv.Heartbeat(legacy, &agentv1.HeartbeatRequest{})
+	if err != nil || hb.GetShouldTerminate() {
+		t.Errorf("claim-less heartbeat: should_terminate=%v err=%v, want false", hb.GetShouldTerminate(), err)
+	}
+	rep, err = srv.ReportState(legacy, &agentv1.ReportStateRequest{State: agentv1.TaskState_TASK_STATE_RUNNING})
+	if err != nil || !rep.GetShouldTerminate() {
+		t.Errorf("claim-less report on an epoch-2 row: should_terminate=%v err=%v, want true", rep.GetShouldTerminate(), err)
 	}
 }
 
