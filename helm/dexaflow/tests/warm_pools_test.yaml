@@ -108,6 +108,11 @@ tests:
           content:
             name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
             value: "false"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+            value: "false"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -133,6 +138,7 @@ tests:
       execution.workerIdleTtl: 90s
       execution.maxWarmPodsPerTenant: 40
       execution.warmReadOnlyRootFilesystem: true
+      execution.warmPoolEventRefill: true
       auth.agentTokenTransport: exchange
       auth.secretLivenessMode: enforce
     asserts:
@@ -170,6 +176,11 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
             value: "true"
 
   # X4: warm pods inherit executor.defaults.resources unless sized explicitly, so

@@ -456,6 +456,12 @@ spec:
             - name: LEOFLOW_EXECUTION_WARM_POD_RESOURCES_MEMORY
               value: {{ .ctx.Values.execution.warmPodResources.memory | quote }}
             {{- end }}
+            {{- if .ctx.Values.execution.warmPoolEventRefill }}
+            # Stamped only when on, so enabling warm pools alone renders the same
+            # env it did before this knob existed (the server default is false).
+            - name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+              value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
+            {{- end }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:

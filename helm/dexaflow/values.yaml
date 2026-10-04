@@ -435,6 +435,8 @@ execution:
     cpu: ""
     # -- Memory request and limit of every warm pod (e.g. `512Mi`). Empty inherits `executor.defaults.resources.memory`. Same rules as `cpu`. Ignored while `warmPoolsEnabled` is false.
     memory: ""
+  # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
+  warmPoolEventRefill: false
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see
