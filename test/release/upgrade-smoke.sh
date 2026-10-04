@@ -93,8 +93,8 @@ case "${UPGRADED}" in
 esac
 
 echo "==> verifying the managed CPython still launches after the upgrade"
-if [ -x "${HOME}/.leoflow/python/bin/python3.11" ]; then
-  "${HOME}/.leoflow/python/bin/python3.11" --version >/dev/null
+if [ -x "${HOME}/.dexaflow/python/bin/python3.11" ]; then
+  "${HOME}/.dexaflow/python/bin/python3.11" --version >/dev/null
   pass "managed CPython runs after upgrade"
 else
   echo "    (managed CPython not extracted on this distro — skip)"

@@ -348,7 +348,7 @@ func printSetupSummary(out io.Writer, lc liteSettings, generatedPassword string)
 		// unmissable. Stays readable on a non-TTY (palette empties to plain text).
 		const sep = "═══════════════════════════════════════════════════════════════"
 		_, _ = fmt.Fprintf(out, "\n  %s%s%s\n", p.bold, sep, p.reset)                                               //nolint:errcheck // best-effort terminal output
-		_, _ = fmt.Fprintf(out, "    %sLEOFLOW LITE ADMIN — SAVE NOW (shown only once)%s\n", p.bold, p.reset)       //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintf(out, "    %sDEXAFLOW LITE ADMIN — SAVE NOW (shown only once)%s\n", p.bold, p.reset)      //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "  %s%s%s\n\n", p.bold, sep, p.reset)                                               //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "    user:      %s\n", lc.AdminEmail)                                               //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "    password:  %s%s%s%s%s\n", p.bold, p.cyan, generatedPassword, p.reset, p.reset) //nolint:errcheck // best-effort terminal output
@@ -362,9 +362,9 @@ func printSetupSummary(out io.Writer, lc liteSettings, generatedPassword string)
 	_, _ = fmt.Fprintln(out, "  trusted use only. Run it on an internal network or VPN — never expose it publicly.") //nolint:errcheck // best-effort terminal output
 	// AAA close: tell the dev exactly what to do next, with what it does.
 	_, _ = fmt.Fprintf(out, "\n  %s✓ You're all set!%s\n", p.green, p.reset) //nolint:errcheck // best-effort terminal output
-	devPrintf(out, "\n      Start Dexaflow Lite:        %sleoflow lite%s\n"+
+	devPrintf(out, "\n      Start Dexaflow Lite:        %sdexaflow lite%s\n"+
 		"        (opens the UI, scaffolds a starter DAG in %s if empty, and hot-reloads on save)\n"+
-		"      Reach it from your network: %sleoflow lite --host 0.0.0.0%s\n",
+		"      Reach it from your network: %sdexaflow lite --host 0.0.0.0%s\n",
 		p.cyan, p.reset, lc.Workspace, p.cyan, p.reset)
 }
 

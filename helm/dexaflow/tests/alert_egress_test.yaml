@@ -1,0 +1,54 @@
+suite: control-plane env for the alert egress guard
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: dexaflow
+# The chart refuses to render without agent TLS (#459), so every case needs a
+# cert pair.
+set:
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: dexaflow-tls
+  agentTLS.caConfigMap: dexaflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: renders no alert egress env by default (guard off, server default applies)
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
+          any: true
+
+  - it: config.alerts.blockPrivateDestinations renders the guard env
+    template: deployment.yaml
+    set:
+      config.alerts.blockPrivateDestinations: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
+            value: "true"
+
+  - it: config.alerts.allowedCIDRs renders a comma-joined env (viper splits it into a list)
+    template: deployment.yaml
+    set:
+      config.alerts.blockPrivateDestinations: true
+      config.alerts.allowedCIDRs:
+        - 10.20.0.0/16
+        - 192.168.5.7
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
+            value: 10.20.0.0/16,192.168.5.7
