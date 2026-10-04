@@ -271,6 +271,15 @@ The Lite server never re-encrypts at startup (it runs with
 `config.yaml` only: a `DEXAFLOW_SECRET_KEY` or `LEOFLOW_SECRET_KEY` exported in
 your shell is ignored, and `dexaflow lite` says so when it differs.
 
+Downgrading after a migration: v0.5.0 is the oldest release that reads
+`secret_key`, so its `dexaflow` and `dexaflow-server` still open every
+migrated secret (downgrade both binaries together: this `dexaflow lite` refuses
+a v0.5.0 `dexaflow-server`). v0.5.0 does not take the key-migration lock, takes
+an exported `DEXAFLOW_SECRET_KEY` or `LEOFLOW_SECRET_KEY` over the file, and,
+on an install whose migration has not finished, re-encrypts at startup onto
+`secret_key`, which is safe because both keys are recorded. A release older than
+v0.5.0 ignores `secret_key` and cannot read migrated secrets.
+
 **`config.yaml` holds the only copy of the key that decrypts your stored
 connections.** `dexaflow lite backup` includes it, which also means the backup
 archive holds the key and the ciphertext together. If you roll your own backup
