@@ -59,8 +59,8 @@ func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, a Attempt) error
 // run, task and try. The epoch is not in it (see podMatchesEpoch).
 func attemptSelector(a Attempt) string {
 	return fmt.Sprintf("%s=%s,%s=%s,%s=%s",
-		podLabelRunID, sanitizeLabel(a.RunID),
-		podLabelTaskID, sanitizeLabel(a.TaskID),
+		podLabelRunID, labelValue(a.RunID),
+		podLabelTaskID, labelValue(a.TaskID),
 		podLabelTryNumber, strconv.Itoa(a.TryNumber))
 }
 
@@ -105,7 +105,7 @@ func podMatchesEpoch(pod *corev1.Pod, epoch int) bool {
 // a reaper only ever preserves a poke pod for an attempt it has just made
 // terminal. Tolerates NotFound.
 func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) error {
-	selector := fmt.Sprintf("%s=%s", podLabelRunID, sanitizeLabel(runID))
+	selector := fmt.Sprintf("%s=%s", podLabelRunID, labelValue(runID))
 	return e.deletePodsBySelector(ctx, selector, nil)
 }
 
