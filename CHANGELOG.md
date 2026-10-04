@@ -6,6 +6,436 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-02
+
+### Added
+
+- **A reference page for every image and chart a release publishes**, and the
+  tag scheme for each: [Published
+  images](https://dexaflow.dexadata.ai/reference/published-images/).
+  The only page that named `leoflow-server`, `leoflow-migrate` and
+  `leoflow-runtime` together was a maintainer page about scanning them, so an
+  operator asking what Dexaflow publishes and how it is tagged had nowhere to
+  read.
+
+  It also writes down a rule that lived only in the code: when `base_image` is
+  unset, a **released** `dexaflow` pins `dexaflow-runtime:py<ver>-v<X.Y.Z>`, which
+  is immutable, while a **development** build falls back to
+  `leoflow-runtime:py<ver>`, a line every release republishes. Two people
+  compiling the same project can therefore end up on different bases, and
+  nothing said so. The configuration reference now says it where a reader is
+  already deciding whether to pin.
+- **An optional link from the UI back to the platform you serve it from**
+  (#1290). Operators who run Dexaflow inside an internal portal or a hosting
+  console can set `ui.home_link.label` and `ui.home_link.url` (Helm:
+  `ui.homeLink`), and every UI page shows a small "back" pill at the
+  bottom-left that opens the URL in the same tab. It is off by default. Boot
+  fails on a URL that is not absolute `http://` or `https://`, or on a label
+  without a URL, so a typo never renders a dead or script-bearing link.
+- **Brand the UI by configuration** (#1289). `ui.theme` takes a JSON object in
+  the shape of Airflow's `[api] theme` (Chakra `tokens` such as the brand
+  palette and fonts, `globalCss`, `icon`, `icon_dark_mode`) and serves it in
+  `/ui/config`, so the bundled UI applies it through its own theming instead of
+  a patched bundle. `ui.favicon_url` replaces the favicon and
+  `ui.stylesheet_urls` loads extra stylesheets such as web fonts. Helm:
+  `ui.theme`, `ui.faviconUrl`, `ui.stylesheetUrls`. All off by default; boot
+  fails on invalid theme JSON, an unknown theme key, or a URL that is not
+  http(s) or root-relative. See [Branding the
+  UI](https://dexaflow.dexadata.ai/reference/configuration/#branding-the-ui).
+- **Hand sign-in and sign-out to the platform Dexaflow is served from**
+  (#1288). With `auth.external_signin_url` set, a UI visitor without a session
+  goes to that URL with the page they asked for in `next`, instead of
+  Dexaflow's sign-in page, so deep links survive. `auth.external_signout_url`
+  is where sign-out lands after clearing the session. Helm:
+  `auth.externalSigninUrl`, `auth.externalSignoutUrl`. Off by default;
+  `?local=1` and a refused single sign-on still reach Dexaflow's own page, and
+  boot fails on anything but an absolute `http(s)` URL.
+- **Open a UI session from a trusted issuer's token** (#1284). A platform that
+  already signs its users in can now hand them to Dexaflow without Dexaflow
+  storing a password and without the platform holding Dexaflow's signing
+  secret: configure `auth.trusted_issuer` (issuer, JWKS URL, audience, tenant
+  claim, allowed tenants, allowed origins; Helm: `auth.trustedIssuer`) and post
+  a short-lived token the issuer signed to `POST /api/v2/auth/session` from a
+  page on one of the allowed origins. Dexaflow verifies it
+  against the issuer's public keys, signs in the existing active user linked
+  to the token's subject in the token's tenant, and redirects to `next`. The
+  token never creates users or grants roles, carries a `jti` and opens one
+  session (a replayed `jti` is refused), and lives at most two minutes by
+  default (`max_lifetime_seconds`, up to 600). Off by default, validated at boot,
+  and keys are fetched on first use so an issuer outage cannot block boot. See
+  [Trusted-issuer
+  handoff](https://dexaflow.dexadata.ai/reference/configuration/#trusted-issuer-handoff).
+- **An operator service API to create tenants and passwordless users**
+  (#1283). With `auth.service_token` set (Helm: `auth.serviceToken` or
+  `auth.serviceTokenExistingSecret`), `PUT /api/v2/service/tenants/{tenant}`
+  creates a tenant with the same built-in roles, permissions and default pool
+  as `default`, and `PUT /api/v2/service/tenants/{tenant}/users/{subject}`
+  makes sure a user with no password exists there, linked to the trusted
+  issuer under that subject, with exactly the roles given. Both are idempotent
+  and authenticate with the service token, never a user session. Users are
+  linked only in tenants the trusted issuer may sign in to, and every call is
+  recorded in the audit trail. Off by default. The OIDC boot warning about a missing tenant now names the service
+  API as the way to create one. See [Operator service
+  API](https://dexaflow.dexadata.ai/reference/configuration/#operator-service-api).
+
+### Changed
+
+- **Leoflow is now Dexaflow.** Messages, the login and IDE pages, the UI navbar,
+  the docs and the README use the new name and the `dexaflow` commands. The
+  README and a new "The name" page tell where both names come from, and keep the
+  dedication to Leonardo ([@leonardo-jas](https://github.com/leonardo-jas)),
+  after whom Leoflow was named. Everything adopted under the old name keeps
+  working; the configuration reference lists each one.
+- **Images and the chart are published as `dexaflow-*` and `charts/dexaflow`,
+  and every release is still published under the `leoflow` names.** Each
+  release pushes `dexaflow-server`, `dexaflow-migrate` and `dexaflow-runtime`,
+  and the same builds as `leoflow-server`, `leoflow-migrate` and
+  `leoflow-runtime`: same tags, same digests, all signed. Values files,
+  Dockerfiles and `FROM` lines that name `leoflow-*` keep receiving new
+  releases without a change. The chart's image defaults and the runtime base
+  `dexaflow compile` builds on are the `dexaflow-*` names.
+
+  The chart is published twice from the same templates: `charts/dexaflow` for
+  new installs and `charts/leoflow` for releases installed before the rename.
+  The chart name decides the selector labels and every resource name, and a
+  Deployment's selector cannot change in place, so an existing release is
+  upgraded with `oci://ghcr.io/dexadata/charts/leoflow` (or with the
+  `dexaflow` chart and `--set nameOverride=leoflow`, which renders the same
+  resources). The CI upgrade guard now upgrades a released install exactly
+  that way.
+- **New installs keep their DAG projects in `~/dexaflow`.** An install from
+  before the rename that has `~/leoflow` keeps using it as the default
+  workspace, and a workspace recorded by `dexaflow setup` is used as is, so no
+  project moves. The bundle installer copies its DAGs into the recorded
+  workspace. Messages that still named the old `dev` command now say
+  `dexaflow lite`.
+- **DAGs import the authoring names from `dexaflow`, and `from leoflow import
+  dbt_group` keeps working.** The package a `dag.py` imports at its top is now
+  `dexaflow`, at parse time and inside task images and Lite venvs alike.
+  `leoflow` is a re-export of it, not a copy: `leoflow.dbt_group is
+  dexaflow.dbt_group`, so DAGs written before the rename compile and run
+  unchanged, and the two can never drift apart.
+
+  A Lite venv built before this release has no `dexaflow` package; the
+  freshness check now probes for it, so the venv is rebuilt once on the next
+  `dexaflow lite` instead of every `from dexaflow import ...` failing in the pod.
+
+  The internal modules `leoflow_runtime` and `leoflow_parser` keep their names:
+  agents in already built task images run `python -m leoflow_runtime`, and the
+  `parser_cmd` in existing `config.yaml` files names `leoflow_parser`.
+- **Metrics are named `dexaflow_*`, and every family is still published as
+  `leoflow_*`.** The control plane's `/metrics` endpoint exposes each
+  `dexaflow_*` family a second time under its pre-rename name, with the same
+  help, type, labels and values, so dashboards, alerts and recording rules
+  written against `leoflow_*` keep working without a change. Moving a dashboard
+  to the new names is a rename of the metric, not of anything else. Each family
+  appears twice in a scrape; series counts for these families double.
+
+  The soak monitor reads either name and counts each family once, so it keeps
+  working against control planes from before this release.
+- **The documentation moves to its own domain, https://dexaflow.dexadata.ai/.**
+  The site used to live at `https://neochaotic.github.io/leoflow/`, an address
+  tied to the account that owns the repository, so moving the repository would
+  have broken every link to the docs. Serving the site from a custom domain
+  decouples the two. The `/leoflow/` path prefix goes away with it: the latest
+  release is at the root, `main` at `/dev/`, and archived releases at
+  `/vX.Y.Z/`, as before. Old `neochaotic.github.io/leoflow/...` links redirect
+  to the same page on the new domain.
+
+  The README's Pro install snippet also stops pointing `helm repo add` at the
+  docs site, which never served a chart index. It now installs from the OCI
+  chart in GHCR, where the chart is actually published.
+- **The repository is now `github.com/dexadata/dexaflow`.** It moved from
+  `neochaotic/leoflow` to the DexaData organization and took the new name. Old
+  `github.com/neochaotic/leoflow` and `github.com/dexadata/leoflow` links,
+  clones, remotes and raw URLs keep working through GitHub's redirect; new
+  links, the install script and the release tooling use the new path. The
+  one-line installer is
+  `curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh`.
+
+  Images and the Helm chart are published under `ghcr.io/dexadata`. Every
+  earlier tag stays where it was, under `ghcr.io/neochaotic`, and keeps pulling;
+  a pinned `ghcr.io/neochaotic/...` reference in your own values or Dockerfiles
+  does not need to change until you upgrade.
+
+  The Go module path is `github.com/dexadata/dexaflow`, so
+  `go install github.com/dexadata/dexaflow/cmd/dexaflow@latest` works.
+  Release signatures made under the old repository names still verify; the
+  cosign commands in the docs accept both.
+- **The binaries are now `dexaflow`, `dexaflow-server`, `dexaflow-agent` and
+  `dexaflow-mcp`, and every `leoflow` name keeps working.** The installer puts
+  the new binaries on your PATH together with `leoflow*` links to them, and
+  `make build` does the same in `./bin`, so scripts, aliases and muscle memory
+  that call `leoflow lite` or `leoflow compile` run exactly as before. Started
+  as `leoflow` from an interactive terminal, the CLI prints a one-line note with
+  its new name; piped or scripted output is unchanged. The old names are not
+  scheduled for removal.
+
+  The CLI finds its companion server and agent under either name, beside itself,
+  in `~/.dexaflow/bin` or `~/.leoflow/bin`, on PATH or in `./bin`, so a mixed
+  install (a new CLI next to an older `leoflow-server`) still starts. `version`
+  now reports `dexaflow`. Release archives are named
+  `dexaflow_<version>_<os>_<arch>.tar.gz`; the installer still installs earlier
+  releases from their `leoflow_*` archives when pinned with `DEXAFLOW_VERSION`
+  (or `LEOFLOW_VERSION`).
+
+  Task images keep `leoflow-agent` as a link to `dexaflow-agent`: DAG images
+  built before this release, and control planes that launch the agent by its old
+  name (the `executor.agent_path` default), keep working without a rebuild. The
+  control-plane image's entrypoint is now `/dexaflow-server`.
+- **A project is configured by `dexaflow.yaml`, the environment uses
+  `DEXAFLOW_*`, and per-user state lives in `~/.dexaflow`. The old names keep
+  working.** `dexaflow init` scaffolds `dexaflow.yaml`; a project that only has
+  `leoflow.yaml` is read from it as before, and a note on an interactive terminal
+  says so. When a project has both, `dexaflow.yaml` wins and the note names the
+  ignored file, so an edit to the stale one is not lost silently.
+
+  Every binary mirrors `LEOFLOW_*` and `DEXAFLOW_*` onto each other at startup,
+  so either spelling configures the same key and processes they start inherit
+  both; when both are set and differ, the `DEXAFLOW_*` value wins and the
+  conflict is logged. The two filters that keep the agent's own variables away
+  from task code (the agent's secrets, the control-plane address) now cover both
+  prefixes, so a mirrored `DEXAFLOW_AUTH_JWT_SECRET` or an author's
+  `DEXAFLOW_CONTROL_PLANE_ADDR` is stripped exactly like its `LEOFLOW_*` twin.
+
+  On a machine with an existing `~/.leoflow`, nothing is moved: `~/.dexaflow` is
+  created as a link to it, so a running Lite, its Postgres data and its cluster
+  mounts are untouched and both paths reach the same state. `uninstall` removes
+  the data behind the link and the link itself.
+
+  The control plane keeps passing `LEOFLOW_*` to task pods, since agents built
+  before this release only read that prefix. Database names, the Lite cluster
+  name and the `leoflow.io/*` pod labels keep their names.
+- **Dependency refresh: nine modules updated, gRPC deliberately held back.**
+  The AWS SDK, Google Cloud auth and storage, the MCP Go SDK and the Google API
+  client all move up.
+
+  `google.golang.org/grpc` stays at `v1.83.2`. The current release, `v1.84.0`,
+  carries [GO-2026-6443](https://pkg.go.dev/vuln/GO-2026-6443), a server panic
+  reachable through a missing authority or Host header, and our code calls that
+  path. It is not a matter of waiting for the next release either: the fix is
+  dated 2026-08-25 and `v1.84.0` shipped on 2026-09-17, so the release was cut
+  from a line that did not carry it, and the only version with the fix is an
+  unreleased commit. `v1.83.2` is a published release on the fixed side of its
+  own range, which is a better place to sit than an untagged commit governing
+  the agent gRPC channel.
+- **The rule that decides whether a pull request needs the heavy Kubernetes
+  jobs lives in one place, and is tested.** Four jobs asked that question and
+  each carried its own copy of the same regex, with nothing reconciling them
+  and no way to ask "would this file list run or skip?" short of opening a pull
+  request and watching.
+
+  That cost a cycle already. When changelog fragments landed, every pull
+  request started carrying one, `.changes/` was not in the list, and the
+  docs-only pull requests the rule exists to spare became the ones it stopped
+  sparing. It was found by reading, because there was no test to fail.
+
+  `scripts/ci-heavy-gate.sh` now holds the rule, answers `--decide` for a file
+  list on stdin, and has twelve self-test cases. `test/README.md` documents
+  every suite, what each proves and what it does not, and the self-test reads
+  the skip list out of that page and fails when the prose and the gate
+  disagree.
+- Bumped `github/codeql-action` to v4.38.2 across all eleven steps in one
+  change. Dependabot opens one pull request per sub-action and CodeQL requires
+  them to match, so each of those pull requests fails its own CodeQL jobs;
+  `scripts/check-codeql-action-pins.sh` refuses the mixed state.
+
+### Fixed
+
+- **`dexaflow setup` names the new commands in its closing summary.** The admin
+  banner read `LEOFLOW LITE ADMIN` and the next-step hints suggested
+  `leoflow lite`; they now say `DEXAFLOW LITE ADMIN` and `dexaflow lite`. The
+  `leoflow` command keeps working.
+
+- **`dexaflow compile <dir>` wrote `dag.json` into the directory you ran it from,
+  silently clobbering one that was already there.** The `--output` flag defaulted
+  to the bare name `dag.json`, which resolves against the current directory
+  rather than the project the command was pointed at. So compiling a scratch
+  project from a checkout overwrote that checkout's own tracked artifact: the
+  compile succeeded, the path it printed was correct, and the damage was to a
+  file the command was never asked to touch. It is recoverable through git when
+  the target happened to be tracked, and not necessarily otherwise.
+
+  The default is now `<project>/dag.json`, which is what `compile <dir>` reads
+  like, what the success line already implied, and what `dexaflow deploy` and
+  every e2e script had already been passing by hand. Compiling the directory you
+  are standing in still writes `./dag.json`, so the common interactive case and
+  every documented pipeline that reads the artifact back are unaffected; the
+  change is confined to the case that was broken. An explicit `-o` is used
+  verbatim, as before.
+
+  Two consequences of moving the write into the source tree are handled with it.
+  A project directory that is not writable, which used to succeed because the
+  artifact went to the current directory instead, now fails with a message
+  naming the directory and pointing at `-o`, rather than a `PermissionError`
+  traceback out of the Python parser. And `dexaflow init` scaffolds a
+  `.gitignore` covering `dag.json`, so the first `git add .` after the first
+  compile does not stage a build artifact (#1084).
+- **Two ways the wrong Python interpreter judged your DAG.**
+
+  `dexaflow validate` checked `dag.py` under whatever interpreter it found,
+  never consulting `python_version`. The failure was the annoying direction:
+  `type X[T]` is a `SyntaxError` on 3.11, so validate **rejected** a DAG that
+  compiles and runs correctly in the cluster, with a message that reads as a
+  complaint about the author's code. It now asks the same question `dexaflow lite`
+  asks, with the same exemptions (a defaulted version, `base_image` set, a
+  deprecated version). When the declared interpreter is not installed the
+  fallback is asymmetric, because Python's grammar grows: an interpreter at
+  least as new accepts everything the declared minor accepts, so it is used
+  and a syntax error from it is real; only an older one is refused, with a
+  warning, since a check that cannot be trusted is worth less than no check
+  (#1094).
+
+  A per-DAG venv whose **interpreter went missing while its directory stayed**,
+  from a partial delete or a `python` symlink into a build that was upgraded
+  away, was recreated over the existing directory. The freshness markers live
+  inside the venv and survived, so `.leoflow-deps` asserted that a brand-new
+  interpreter already had the project's dependencies, and it never got them: a
+  venv that looks provisioned and fails at import time. The markers are now
+  dropped whenever the interpreter had to be created (#1096).
+- **The last places that still said leoflow now say Dexaflow.** The UI's Docs
+  and GitHub links pointed at the old `neochaotic.github.io/leoflow` site, which
+  no longer exists; they now open https://dexaflow.dexadata.ai/ and the
+  repository. The MCP server reports itself as `dexaflow`, CLI messages name
+  `dexaflow`, and the docs use the `dexaflow*` binaries, a `dexaflow` release
+  name for new Helm installs, and `charts/leoflow` for upgrading a release
+  installed before the rename. The CI install snippets in the docs downloaded a
+  release asset that never existed; they now use the installer.
+- **Warm-pool tasks that run longer than the pod-lost grace period are no longer
+  failed as `pod_lost` while they run.** A warm attempt runs in a shared warm
+  pod with no per-task labels, so the pod-lost reaper always found "no pod" for
+  it. That reaper now leaves warm attempts to the warm-worker-lost reaper, and
+  applies its grace period before its per-tick limit, so recent attempts no
+  longer crowd out the ones it can act on.
+
+  **A warm worker can only register for the DAG version its token was minted
+  for.** The pool in the worker's register message was trusted as sent, so a
+  worker credential for one tenant's DAG version could register in another
+  pool and receive its assignments. Such a registration is now refused with
+  PermissionDenied.
+- **The v0.4.8 release page shipped empty, and the build stayed green.** The
+  previous fix composed the notes from `CHANGELOG.md` and handed them to
+  GoReleaser with `--release-notes`. The notes were right, the flag was
+  accepted, and the page carried nothing: every check passed because nothing
+  downstream ever looked at the published release.
+
+  The body is now written with `gh release edit` and then **read back**, and a
+  body under 200 bytes, or with no entries or no sections, fails the release.
+  Composing the right notes was never the goal; a page that carries them is,
+  and only reading the page apart tells those two apart.
+
+  The v0.4.8 page was repaired by hand when this was found, and now carries its
+  17 entries.
+- **Code scanning stopped running whenever Dependabot bumped part of it.**
+  Every `github/codeql-action/*` step has to be pinned to the same commit:
+  `init` writes a configuration file stamped with its own version and
+  `autobuild` and `analyze` read it back, so a mixed set dies with `Loaded a
+  configuration file for version '4.38.1', but running version '4.35.5'`.
+
+  Dependabot treats each sub-action as its own dependency and opens one pull
+  request per sub-action, so a workflow whose steps disagree is the normal state
+  during a bump. The repository was already sitting at two versions before this,
+  and the failure surfaces inside CodeQL, which reads as a code-scanning problem
+  rather than a pinning one. The message even suggests the wrong remedy,
+  replacing autobuild with custom build steps.
+
+  All eleven steps across three workflows now share one commit, and
+  `scripts/check-codeql-action-pins.sh` fails the build when they drift apart
+  again. The gate found a fifth stale pin, in two workflows nobody had looked
+  at, the first time it ran.
+- **Every GA left the documentation root on the previous release.** The version
+  menu is stated in two files: `website/scripts/ci/versions.json` drives the
+  published Pages tree, and the `[[params.versions]]` block in
+  `website/hugo.toml` is what a plain `hugo` build uses. The release cut
+  rewrote the first and left the second, so `check-docs-version-menu.sh` failed
+  the docs-promotion pull request of every release, and while that pull request
+  sat unmerged the release was published with its documentation root still
+  serving the version before it. v0.4.8 shipped into exactly that state.
+
+  The cut now renders both, through the same script that renders the Pages
+  overlay and from the same manifest, so the fallback cannot drift from what is
+  published. A self-test runs the promotion against a fixture and then asserts
+  the gate passes, which binds the generator to the checker rather than leaving
+  each to discover the other's omission once per release.
+
+### Security
+
+- **Config values could add their own instructions to a generated Dockerfile.**
+  #1066 gave `dependencies` and `system_packages` a line-break guard because a
+  newline ends the `RUN` instruction. The same class lived in every other value
+  the generator interpolates, and those reach `FROM` and `COPY`, where no shell
+  is involved and no quoting helps: the newline IS the instruction separator.
+  `base_image: "python:3.11-slim\nRUN <cmd>"` rendered as two instructions, and
+  `dbt.project`, `dbt_groups.*.project`, `dag_source` and `include_paths` did the
+  same in their `COPY` lines. So did `exclude_paths` in the generated
+  `.dockerignore`, where an injected `!secrets.env` defeats the author's own
+  exclusion of a credentials file.
+
+  Whoever writes `leoflow.yaml` is usually whoever runs the build, so locally no
+  boundary is crossed. What it means is that merge rights become arbitrary
+  instruction injection into a published image, on a runner holding the deploy
+  credentials.
+
+  A line break, a vertical tab and a form feed are now refused in every
+  interpolated value, naming the field and the value. Vertical tab and form feed
+  are included because Docker splits a line on `[\t\v\f\r ]+`, so they are word
+  separators exactly like a space. A `COPY` path additionally refuses `'`, `"`,
+  `\` and `$`: after parsing, every `COPY` operand goes through a lexer that
+  strips quotes, eats backslashes and expands `$VAR` whatever quoting the line
+  used, so `COPY ["d'a't.py", ...]` would copy `dat.py`. A leading `--`, which
+  Docker reads as a `COPY` flag, is refused too, and `base_image` refuses any
+  whitespace, which `FROM` would read as a stage name. A path containing a space
+  or starting with `[` is quoted rather than refused, so an existing project's
+  generated Dockerfile is unchanged unless it held one of the refused characters.
+
+  `dexaflow lite --executor=k8s` has its own Dockerfile generator, which had the
+  whole class untouched plus the unquoted `pip install` of #1064. It now shares
+  the same guards. It was the worse of the two places to have them: it writes
+  `<project>/Dockerfile` and never removes it, and a project-supplied Dockerfile
+  is afterwards honoured verbatim, so one run would have persisted a poisoned
+  file that every later `compile --build` used (#1070).
+- **A new Dexaflow Lite install no longer encrypts connection passwords with a
+  key published in this repository.** Every Lite install shared the same
+  constant, so anyone holding a Lite database file read every stored credential
+  in it without work, while the documentation said "encrypted at rest" (#486). A
+  database file travels far more easily than shell access does: a backup, a
+  synced home directory, a support bundle, a resold laptop.
+
+  `dexaflow setup` now generates a key for that install alone, and a fresh
+  install never accepts the published one.
+
+  **An install created before this is NOT migrated.** Its secrets stay under the
+  shared key, and `dexaflow lite` says so on every start. Moving an existing
+  install means re-encrypting every stored credential, and three security
+  reviews of an attempt at it found ordering, interruption and privilege defects
+  that each destroyed credentials, so it was pulled rather than shipped
+  half-right. It is tracked on its own.
+
+  `dexaflow uninstall` keeps your datastore but removes the config holding its
+  key, so it now warns before doing that and tells you what to copy.
+
+  **`DEXAFLOW_SECRET_KEY` accepts a comma-separated list for operators.** The
+  first entry encrypts and decrypts, later entries only decrypt, and the control
+  plane re-encrypts onto the first entry at startup and reports what it moved.
+  Same rule as Airflow's `fernet_key`. This replaces ADR 0019's previous
+  position, that a key change invalidates existing ciphertexts and connections
+  are re-entered. A row no configured key can open is left untouched and
+  reported, never overwritten, and a row another writer changed mid-pass is left
+  to that writer.
+
+  **Upgrade note:** because the value is split on commas and trimmed, a raw
+  32-character passphrase containing a comma, or with leading or trailing
+  whitespace, no longer parses. Hex and base64 keys are unaffected.
+
+  Two ways to lose credentials were closed along the way. `dexaflow lite
+  reset-password` read the key through the config loader, which overlays
+  `LEOFLOW_*` environment variables, and wrote the result back: an operator with
+  `DEXAFLOW_SECRET_KEY` exported would have had the shell value persisted over
+  the real key. And every rewrite of `config.yaml` is now atomic, 0600 enforced
+  and owner preserving: it previously left an existing world-readable file
+  world-readable while adding an encryption key to it, and a crash mid-write
+  could take the encryption key, the JWT secret and the admin hash together.
+
 ## [0.4.8] - 2026-09-21
 
 ### Added
