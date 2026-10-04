@@ -120,10 +120,10 @@ func TestClearRestoresRetryBudget(t *testing.T) {
 	}
 }
 
-// TestClearRetryBudgetHonoursDefaultArgs: a task with no retries of its own takes
+// TestClearRetryBudgetHonorsDefaultArgs: a task with no retries of its own takes
 // the DAG's default_args.retries, exactly as materialization does, so a clear
 // restores the same budget the run started with.
-func TestClearRetryBudgetHonoursDefaultArgs(t *testing.T) {
+func TestClearRetryBudgetHonorsDefaultArgs(t *testing.T) {
 	repo, sched, pg, ctx := openInfra(t)
 	dagID := fmt.Sprintf("clear_budget_defaults_%d", time.Now().UnixNano())
 	spec := domain.DAGSpec{

@@ -673,9 +673,10 @@ SET state = 'none',
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
 
--- name: ResetAllFailedTaskInstances :execrows
+-- name: ResetAllFailedTaskInstances :many
 -- Archives every failed attempt in the run into task_instance_history then
--- resets. See ResetTaskInstanceToNone for the per-attempt rationale.
+-- resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+-- task ids it reset, so the clear can delete exactly their XCom.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -716,7 +717,8 @@ SET state = 'none',
         GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id)
-  AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
+  AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
+RETURNING ti.task_id;
 
 -- name: SetTaskInstanceNote :exec
 UPDATE task_instances

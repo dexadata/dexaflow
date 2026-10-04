@@ -1923,7 +1923,7 @@ func (q *Queries) RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg Re
 	return err
 }
 
-const resetAllFailedTaskInstances = `-- name: ResetAllFailedTaskInstances :execrows
+const resetAllFailedTaskInstances = `-- name: ResetAllFailedTaskInstances :many
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -1965,6 +1965,7 @@ SET state = 'none',
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $3
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
+RETURNING ti.task_id
 `
 
 type ResetAllFailedTaskInstancesParams struct {
@@ -1974,13 +1975,26 @@ type ResetAllFailedTaskInstancesParams struct {
 }
 
 // Archives every failed attempt in the run into task_instance_history then
-// resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) (int64, error) {
-	result, err := q.db.Exec(ctx, resetAllFailedTaskInstances, arg.SpecRetries, arg.SpecTaskIds, arg.DagRunID)
+// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+// task ids it reset, so the clear can delete exactly their XCom.
+func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, resetAllFailedTaskInstances, arg.SpecRetries, arg.SpecTaskIds, arg.DagRunID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var task_id string
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resetDagRunToVersion = `-- name: ResetDagRunToVersion :exec

@@ -98,6 +98,11 @@ type Querier interface {
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	DeleteVariable(ctx context.Context, arg DeleteVariableParams) (int64, error)
+	// Removes the XCom index rows of task instances a clear is resetting (#1131) and
+	// returns their backend keys, so the stored values can be deleted too. XCom
+	// carries no try number, so rows left behind would serve the cleared attempt's
+	// values to the next attempt's downstream.
+	DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error)
 	// The subset of the given conn_ids that exist for the tenant. Used to reject a
 	// DAG that declares an unknown connection at registration (ADR 0055 D6); a name
 	// absent from the result does not exist.
@@ -506,8 +511,9 @@ type Querier interface {
 	// retry budget. Mirrors RescheduleTaskInstance but keyed by id, for the reconciler.
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
 	// Archives every failed attempt in the run into task_instance_history then
-	// resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-	ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) (int64, error)
+	// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+	// task ids it reset, so the clear can delete exactly their XCom.
+	ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error)
 	// Clear with run_on_latest_version re-binds the run to the DAG's current
 	// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
 	// re-run after a code/yaml fix picks up the newest image and config — in dev that

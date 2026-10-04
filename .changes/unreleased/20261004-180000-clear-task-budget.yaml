@@ -1,0 +1,13 @@
+kind: Fixed
+body: |-
+  **Clearing a task gives it back its retries, its infra tolerance and a clean
+  XCom slate** (#1131). A clear bumped `try_number` but never touched
+  `max_tries`, so one clear spent every retry for the rest of the task's life
+  and the UI showed "try 4 of 3". A clear now sets `max_tries` from the task's
+  `retries` in the version the re-run executes, as Apache Airflow does. It also
+  resets `infra_attempts`, so a task that had used up its infra re-placements
+  can survive a lost agent again, and it deletes the XCom of the attempts it
+  clears, so a downstream task can no longer read a value the new attempt did
+  not write. The clear is now a single transaction: if the XCom values cannot
+  be deleted, nothing is cleared and the request fails.
+time: 2026-10-04T18:00:00.000000000-03:00
