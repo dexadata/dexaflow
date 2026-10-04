@@ -58,11 +58,21 @@ func (b *breakGlass) allows(email string) bool {
 // rate limit), on a limiter separate from the /auth/token one so OIDC traffic and
 // password-login lockouts never contaminate each other's budget.
 func rateLimitByIP(limiter *auth.RateLimiter) gin.HandlerFunc {
+	return rateLimitByIPWith(limiter, func(c *gin.Context) {
+		AbortProblem(c, http.StatusTooManyRequests, "rate limited", rateLimitedDetail)
+	})
+}
+
+// rateLimitedDetail is what a caller over a per-IP limit is told.
+const rateLimitedDetail = "too many requests; wait about a minute and try again"
+
+// rateLimitByIPWith is rateLimitByIP with the refusal left to the route:
+// blocked answers a caller over the limit and must abort the chain.
+func rateLimitByIPWith(limiter *auth.RateLimiter, blocked gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		if limiter.Blocked(ip) {
-			AbortProblem(c, http.StatusTooManyRequests, "rate limited",
-				"too many requests; wait about a minute and try again")
+			blocked(c)
 			return
 		}
 		limiter.Allow(ip)
