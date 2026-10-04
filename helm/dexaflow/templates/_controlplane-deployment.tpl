@@ -290,6 +290,19 @@ spec:
               value: {{ .ctx.Values.database.maxOpenConns | quote }}
             - name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
               value: {{ .ctx.Values.database.maxIdleConns | quote }}
+            {{- /* Pool tuning, each omitted at its default 0 so the pools stay as they were. */}}
+            {{- with .ctx.Values.database.schedulerMaxConns }}
+            - name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.database.statementTimeoutMs }}
+            - name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.database.connMaxLifetimeJitterMs }}
+            - name: LEOFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS
+              value: {{ . | quote }}
+            {{- end }}
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}

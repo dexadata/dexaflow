@@ -242,6 +242,12 @@ database:
   maxOpenConns: 20
   # -- Idle DB connections each pod keeps open even when quiet (the pool's floor). This is what each pod opens at boot, so a server must hold `pods x (maxIdleConns + 3)` plus 1 for the migration Job just to start; the install notes warn when that exceeds 20, the budget of the smallest managed tiers (Cloud SQL `db-f1-micro`, the smallest RDS and Azure Flexible sizes cap `max_connections` near 25). Should be ≤ `maxOpenConns`. Was 5 before #1088.
   maxIdleConns: 2
+  # -- Size of a dedicated pool for the scheduler loop, its reapers and janitors, so API traffic that holds every `maxOpenConns` connection cannot stall a scheduler tick. Counts on top of `maxOpenConns`, and is opened only by a replica that runs the scheduler (`config.scheduler.enabled`). 0 (default) keeps them on the main pool.
+  schedulerMaxConns: 0
+  # -- `statement_timeout` in milliseconds for the main pool, which serves the API (30000 is a reasonable bound). Never applied to the leader election connection, the health checks, the scheduler pool or migrations; deleting a DAG, clearing its history and the XCom janitor lift it for their own transaction. Without `schedulerMaxConns` the scheduler shares the main pool and so this timeout, so set both together. Applied with `SET` after each connection opens, so it works through PgBouncer in session mode; in transaction mode set `statement_timeout` on the database role instead and leave this at 0. 0 (default) sets none.
+  statementTimeoutMs: 0
+  # -- Random extra lifetime, in milliseconds, added to each pooled connection so replicas started together do not all reconnect at once. 0 (default) adds none.
+  connMaxLifetimeJitterMs: 0
 
 # Redis (XCom + locks).
 redis:
