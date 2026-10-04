@@ -1,0 +1,22 @@
+kind: Added
+body: |-
+  **Database pool tuning: a scheduler pool, an API statement timeout and
+  connection lifetime jitter.** Three settings, all off by default so nothing
+  changes until you set them. `database.scheduler_max_conns` (Helm:
+  `database.schedulerMaxConns`) gives the scheduler loop, its reapers and its
+  janitors a pool of their own, so API traffic that holds every main pool
+  connection can no longer stall a scheduler tick; it is opened in addition to
+  `max_open_conns`, and only by a process that runs the scheduler. `database.statement_timeout_ms` (Helm:
+  `database.statementTimeoutMs`) sets `statement_timeout` on the main pool,
+  which serves the API; about 30000 bounds a runaway query. It never reaches
+  the leader election connection, the health checks, the scheduler pool or
+  migrations, and deleting a DAG, clearing its history and the XCom janitor
+  lift it for their own transaction; without a scheduler pool the scheduler
+  shares the main pool and its timeout, so set both together. It is applied
+  with `SET` after connecting, so it works through PgBouncer in session mode;
+  in transaction mode set it on the database role instead. `database.conn_max_lifetime_jitter_ms` (Helm:
+  `database.connMaxLifetimeJitterMs`) spreads connection recycling so replicas
+  started together do not reconnect at once. Each is also read from the
+  matching `DEXAFLOW_DATABASE_*` or `LEOFLOW_DATABASE_*` variable. See
+  [Database](https://dexaflow.dexadata.ai/reference/configuration/#database-database).
+time: 2026-10-02T17:30:00.000000000-03:00

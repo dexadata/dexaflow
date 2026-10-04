@@ -355,6 +355,9 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_DATABASE_URL` | `postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable` | both | Postgres DSN. |
 | `DEXAFLOW_DATABASE_MAX_OPEN_CONNS` | `25` | both | Max open connections in the Postgres pool. |
 | `DEXAFLOW_DATABASE_MAX_IDLE_CONNS` | `5` | both | Max idle connections retained in the pool. |
+| `DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS` | `0` | both | Size of a dedicated pool for the scheduler loop, its reapers and its janitors (`database.scheduler_max_conns`; Helm `database.schedulerMaxConns`), so API traffic that holds every main pool connection cannot stall a scheduler tick. It is opened in addition to the main pool, only by a process that runs the scheduler (`DEXAFLOW_SCHEDULER_ENABLED`). `0` keeps them on the main pool. |
+| `DEXAFLOW_DATABASE_STATEMENT_TIMEOUT_MS` | `0` | both | `statement_timeout`, in milliseconds, for every connection of the main pool, which serves the API (`database.statement_timeout_ms`; Helm `database.statementTimeoutMs`). About `30000` bounds a runaway API query without cutting legitimate ones. Never applied to the leader election connection (its session holds the scheduler advisory lock), the health checks, the scheduler pool or migrations. Deleting a DAG, clearing its history and the XCom janitor lift it with `SET LOCAL statement_timeout = 0` for their own transaction, since their cost grows with the data they cascade over. Without `DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS` the scheduler shares the main pool, and with it this timeout, so set both together. The server applies it with `SET` as each connection opens, not as a startup parameter, so it also works through PgBouncer in session mode (no `ignore_startup_parameters` entry needed); in transaction mode a session `SET` does not stay on one server connection, so set it on the role instead (`ALTER ROLE ... SET statement_timeout`) and leave this at `0`. `0` sets none. |
+| `DEXAFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS` | `0` | both | Up to this many milliseconds of random extra lifetime per pooled connection (`database.conn_max_lifetime_jitter_ms`; Helm `database.connMaxLifetimeJitterMs`), so replicas started together do not all reconnect at the same moment. Applies to the main, scheduler and health pools, never to the leader election connection. `0` adds none. |
 
 ### Redis (`redis.*`)
 
@@ -470,6 +473,8 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS` | `1000` | both | Scheduler tick interval, in milliseconds. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency). |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. |
+| `DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS` | `false` | both | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses. See [Alert destinations](#alert-destinations). |
+| `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | *(empty)* | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Applied only while the block is on, but validated at startup either way: an invalid entry fails startup. |
 
 ### Executor (`executor.*`)
 
@@ -482,6 +487,7 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` | _(empty)_ | Pro | Names a Kubernetes Secret mounted read-only into every task pod, so a task can read a cluster-stored credential (e.g. a GCP SA key) referenced by a connection's `key_path` ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)). Empty = no secret mounted. |
 | `DEXAFLOW_EXECUTOR_TASK_SECRET_MOUNT_PATH` | `/etc/leoflow/secrets` | Pro | Where `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` is mounted in the task pod. |
 | `DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT` | _(empty)_ | Pro | ServiceAccount task pods run as when a DAG does not set `execution.service_account`. The Helm chart wires this from `taskServiceAccount.name` when `taskServiceAccount.create: true`, so creating the task SA is enough for keyless secret access — no per-DAG opt-in. An explicit per-task `execution.service_account` still wins; empty leaves pods on the namespace default SA. |
+| `DEXAFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS` | `false` | Pro | Collect a settled run's finished task pods as soon as the reconciler has recorded every outcome, in one `DeleteCollection` by the run's and tenant's labels limited to finished phases and served from the apiserver's watch cache, instead of one delete per pod after the 10 minute grace period. A run is settled when it is `success` or `failed` and none of its task instances is outside `success`, `failed`, `skipped` and `upstream_failed`; a sweep collects at most 50 runs. Off keeps finished pods inspectable with `kubectl` for the grace period. Needs the `deletecollection` verb on pods, which the chart's executor Role grants only when `executor.collectSettledRunPods` is on; without it the server falls back to per-pod deletes. Helm: `executor.collectSettledRunPods`. |
 | `DEXAFLOW_EXECUTOR_AGENT_PATH` | `leoflow-agent` | dev-only | The agent binary the subprocess executor runs (`leoflow-agent`, a link to `dexaflow-agent`, so agents from before the rename are found too). |
 | `DEXAFLOW_EXECUTOR_SUBPROCESS_WORKDIR` | _(empty)_ | dev-only | Working directory the subprocess executor runs the agent in (so it can import the project's `dag.py`). Empty keeps the server's working directory. |
 | `DEXAFLOW_EXECUTOR_HTTP_USER_AGENT` | `leoflow/0.1` | both | Default `User-Agent` header for HTTP requests a task image may make on the platform's behalf. |
@@ -518,6 +524,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME` | `1h` | Pro | Wall-clock lifetime of a warm worker before it drains and recycles, independent of the attempt count (D9). A duration string. |
 | `DEXAFLOW_EXECUTION_WORKER_IDLE_TTL` | `5m` | Pro | How long an idle warm worker is kept before it is recycled (D6). A duration string. |
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
+| `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
 
 ### Logs (`logs.*`)
 
@@ -532,6 +539,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_LOGS_SINK_FORCE_PATH_STYLE` | `false` | Pro | **s3-only.** Use path-style addressing (bucket in the path, not the host). Required by MinIO and some S3-compatible stores. |
 | `DEXAFLOW_LOGS_SINK_ACCESS_KEY_ID` / `DEXAFLOW_LOGS_SINK_SECRET_ACCESS_KEY` | _(empty)_ | Pro | **s3-only.** Static credentials — **discouraged**. Leave empty (recommended) to use the keyless chain (IRSA / instance profile), per [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/). |
 | `DEXAFLOW_LOGS_SINK_CREDENTIALS_FILE` | _(empty)_ | Pro | **gcs-only.** Path to a service-account JSON key — **discouraged**. Leave empty (recommended) to use Application Default Credentials (GKE Workload Identity). |
+| `DEXAFLOW_LOGS_SINK_LAYOUT` | `single` | Pro | How new attempts are written. `single` keeps one object per attempt at `{try}.log`, rewritten on every flush. `segmented` writes numbered segments under `{try}.log.d/` so each flush uploads only the open segment (up to 4 MiB) and the control plane holds one segment per attempt instead of the whole log. Both layouts are always readable, but a server older than this setting reads only `{try}.log`: enable `segmented` once every replica is upgraded. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found. |
 
 ### External secrets (`secrets.*`)
 
@@ -611,6 +619,7 @@ keys; set them through `extraEnv`.
 | `DEXAFLOW_UI_THEME` | _(empty)_ | both | Theme for the UI as a JSON object, the same shape as Airflow's `[api] theme`: `tokens` (Chakra design tokens such as `colors.brand` and `fonts`), `globalCss`, `icon`, `icon_dark_mode`. Served in `/ui/config`, so the UI applies it through its own theming. Boot fails on invalid JSON, an unknown top-level key, or an icon that is not http(s) or root-relative. Helm: `ui.theme` (YAML, rendered as JSON). See [Branding the UI](#branding-the-ui). |
 | `DEXAFLOW_UI_FAVICON_URL` | _(empty)_ | both | Favicon for the UI, http(s) or root-relative. Empty keeps the stock icon. Helm: `ui.faviconUrl`. |
 | `DEXAFLOW_UI_STYLESHEET_URLS` | _(empty)_ | both | Comma-separated stylesheets every UI page loads in `<head>`, typically the web fonts a theme names. Each must be http(s) or root-relative and contain no comma. Helm: `ui.stylesheetUrls`. |
+| `DEXAFLOW_UI_ETAG_REVALIDATION` | `false` | both | Lets the browser revalidate the grid's task summaries (`/ui/grid/ti_summaries/*`), the one UI route that computes an `ETag`: that route answers `Cache-Control: private, no-cache` with `Vary: Authorization, Cookie` instead of `no-store`, so an unchanged poll gets `304 Not Modified` and no body. Every revalidation still runs authentication and authorization. With it on, the browser keeps the last grid body in its private cache after logout (on a shared machine it stays on disk until evicted); it is never shown without a revalidation, so a signed-out user gets `401`, not the cached grid. Off keeps `no-store` on every UI route. Helm: set it through `extraEnv`. |
 
 ### Branding the UI
 
@@ -696,7 +705,21 @@ a user session never reaches them.
 digits or `-`) with the same built-in roles, role permissions and default pool
 as the `default` tenant, copied from it so every tenant's ladder stays equal.
 It answers `201` when the tenant is new and `200` when it already existed; a
-second call fills in anything missing and changes nothing else.
+second call fills in anything missing and, apart from `default_pool_slots`
+below, changes nothing else.
+
+The same body may carry `"default_pool_slots": 8` to size the tenant's
+`default_pool`, the slot cap every task without an explicit pool shares within
+the tenant. Without it a new tenant gets the `default` tenant's size (128
+unless an operator changed it), which on an engine shared by many tenants lets
+each of them run that many tasks at once. Given on a later call, it re-sizes
+the existing pool, including a size a tenant admin set through the pools API,
+so an automation that re-applies its tenants should send the size it wants to
+keep; left out, the pool is not touched. It must be a whole number from 1 to
+2147483647 (`400` otherwise), and the audit entry records it. It sets the pool's size,
+not a ceiling on the tenant: a tenant role that may write pools (`operator`,
+`admin`) can still resize it or create other pools. Pools apply to the Pro
+edition only; Lite ignores the value.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
@@ -719,6 +742,34 @@ The service token is a root-level credential: whoever holds it can create
 tenants and grant any role, `admin` included, in every tenant the trusted
 issuer covers. Keep it in a Secret, give it only to the automation that
 provisions tenants, and rotate it by changing the Secret and restarting.
+
+### Alert destinations
+
+An on-failure alert ([alerting](/author-dags/alerting/)) is posted by the control
+plane to the URL, with the headers, of a connection the DAG's tenant manages.
+When tenants that do not trust each other share one engine, that URL is
+untrusted input: it can name the control plane's own loopback, a private
+service in the cluster, or the cloud metadata endpoint.
+
+Set `scheduler.alerts.block_private_destinations: true` (env
+`DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS`, chart
+`config.alerts.blockPrivateDestinations`) to refuse those destinations. The
+check runs on the address the control plane is about to connect to, after DNS
+resolution, so a host name that resolves to an internal address is refused even
+if it resolved to a public one earlier (DNS rebinding), and every redirect hop
+is checked the same way (at most three redirects are followed). A NAT64
+(`64:ff9b::/96`) or 6to4 address is checked as the IPv4 address it carries, so
+an IPv6-only cluster behind DNS64 still reaches a public IPv4-only endpoint.
+The block also covers the Azure host endpoint `168.63.129.16`, which looks
+public but is node-local. With the block on, alert requests are dialed directly
+and do not use the `HTTP_PROXY` / `HTTPS_PROXY` environment, since through a
+proxy the real destination could not be checked. A refused alert is logged and
+counted as a failed delivery, like any other send error.
+
+If an alert endpoint legitimately lives on a private network (an on-premises
+chat server, for example), list its range in `scheduler.alerts.allowed_cidrs`
+(chart `config.alerts.allowedCIDRs`). A range broad enough to include loopback
+or a metadata endpoint is accepted but logged as a warning at startup.
 
 ### Trusted proxies and the client IP
 

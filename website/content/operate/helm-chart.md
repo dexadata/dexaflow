@@ -183,6 +183,31 @@ The readiness check runs on its own dedicated database connection, separate from
 the pool serving API traffic, so a saturated control plane does not make every
 replica report itself unready at the same moment.
 
+## Memory limit for the Go runtime
+
+The Go runtime does not read the container memory limit on its own. Without a
+soft limit the garbage collector paces only on heap growth, so a burst can push
+the control plane past `resources.limits.memory` and get it OOM-killed before a
+collection runs. Set `goMemLimit.enabled` and the chart renders `GOMEMLIMIT` as
+a share of that limit, so the collector works harder near the ceiling instead:
+
+```yaml
+resources:
+  limits:
+    memory: 512Mi
+goMemLimit:
+  enabled: true
+  percent: 80   # GOMEMLIMIT=409MiB
+```
+
+It is off by default, so the rendered environment is unchanged until you turn it
+on, and it applies to both Deployments in split mode. The value is computed in
+whole MiB from any Kubernetes byte quantity (`512Mi`, `1.5Gi`, `1e9`). The render
+fails on quantities that are not bytes, such as the `m` suffix; for those leave
+the switch off and set `GOMEMLIMIT` through `extraEnv`. The remaining share is
+headroom for memory the container is charged for but the Go runtime does not
+track, such as cgo allocations and page cache.
+
 ## Related
 
 - [Editions & operating modes](/concepts/editions/) — what Pro gives you and its

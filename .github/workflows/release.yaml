@@ -365,7 +365,7 @@ jobs:
         run: |
           set -eu
           dexaflow version
-          "$HOME/.leoflow/python/bin/python3.11" --version
+          "$HOME/.dexaflow/python/bin/python3.11" --version
 
   # ── Cold-start smoke (#96): the actual user flow we cannot reproduce in
   # any other gate — install fresh, run `dexaflow setup`, boot `dexaflow lite`,

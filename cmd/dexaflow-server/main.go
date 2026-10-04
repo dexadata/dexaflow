@@ -38,6 +38,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/failurealert"
@@ -1122,14 +1123,29 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
+	// The scheduler loop, its reapers and the janitors run on their own pool
+	// when database.scheduler_max_conns is set, so API traffic cannot starve
+	// them; unset, schedPG is pg and nothing changes. The agent gRPC handlers
+	// above stay on the main pool with the repository they share with the API.
+	schedPG, releaseSchedPG, perr := pg.ForScheduler(ctx, schedulerDatabase(cfg))
+	if perr != nil {
+		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		return nil, false, nil, fmt.Errorf("scheduler pool: %w", perr)
+	}
+	schedExec := execStore
+	if schedPG != pg {
+		schedExec = storage.NewExecutionStore(schedPG)
+		logger.Info("scheduler uses a dedicated database pool", "max_conns", cfg.Database.SchedulerMaxConns)
+	}
 	// XCom-TTL and log-retention janitors are maintenance the scheduler owns; the
 	// api role runs no background writers.
-	startCleanup(ctx, storage.NewXComIndex(pg), logSink, cfg.Logs.Dir, logger)
+	startCleanup(ctx, storage.NewXComIndex(schedPG), logSink, cfg.Logs.Dir, logger)
 
 	drain := func() {}
 	if cfg.Scheduler.Enabled {
-		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, pg, repo, execStore, authn, warmReg, logSink, logger, metrics)
+		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, schedPG, repo, schedExec, authn, warmReg, logSink, logger, metrics)
 		if serr != nil {
+			releaseSchedPG()
 			// Bounded, like every other stop of this server. At boot no stream is
 			// open yet, so the unbounded form could not actually hang here — but a
 			// second way to stop the same server is a way for the two to drift, and
@@ -1157,6 +1173,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	stop = func() {
 		drain()
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		releaseSchedPG()
 	}
 	return health, podDispatch, stop, nil
 }
@@ -1359,6 +1376,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only — NEVER use in production")
 	}
 	uiSrv, editorFS := newUIServer(cfg, tel.Logger)
+	// Gzip the SPA bundle once, off the startup path, so no browser pays it.
+	go uiSrv.Precompress()
 
 	handler := api.NewServer(api.Dependencies{
 		Logger:                       tel.Logger,
@@ -1376,6 +1395,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		InstanceName:                 cfg.UI.InstanceName,
 		UIAutoRefreshIntervalSeconds: cfg.UI.AutoRefreshIntervalSeconds,
 		UITheme:                      uiTheme(cfg),
+		UIETagRevalidation:           cfg.UI.ETagRevalidation,
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
 
@@ -1671,8 +1691,8 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 			return nil, fmt.Errorf("building s3 log store: %w", err)
 		}
 		logger.Info("task logs: s3 object-store backend enabled",
-			"bucket", cfg.Logs.Sink.Bucket, "endpoint", cfg.Logs.Sink.Endpoint, "prefix", cfg.Logs.Sink.Prefix)
-		return logs.NewDurableSink(ctx, "s3", "", store, cfg.Logs.Sink.Prefix, logger)
+			"bucket", cfg.Logs.Sink.Bucket, "endpoint", cfg.Logs.Sink.Endpoint, "prefix", cfg.Logs.Sink.Prefix, "layout", cfg.Logs.Sink.Layout)
+		return logs.NewDurableSink(ctx, "s3", "", store, cfg.Logs.Sink.Prefix, logger, logs.WithObjectLayout(cfg.Logs.Sink.Layout))
 	case "gcs":
 		store, err := logs.NewGCSStore(ctx, logs.GCSConfig{
 			Bucket:          cfg.Logs.Sink.Bucket,
@@ -1682,8 +1702,8 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 			return nil, fmt.Errorf("building gcs log store: %w", err)
 		}
 		logger.Info("task logs: gcs object-store backend enabled",
-			"bucket", cfg.Logs.Sink.Bucket, "prefix", cfg.Logs.Sink.Prefix)
-		return logs.NewDurableSink(ctx, "gcs", "", store, cfg.Logs.Sink.Prefix, logger)
+			"bucket", cfg.Logs.Sink.Bucket, "prefix", cfg.Logs.Sink.Prefix, "layout", cfg.Logs.Sink.Layout)
+		return logs.NewDurableSink(ctx, "gcs", "", store, cfg.Logs.Sink.Prefix, logger, logs.WithObjectLayout(cfg.Logs.Sink.Layout))
 	default:
 		return nil, fmt.Errorf("unknown logs.backend %q", cfg.Logs.Backend)
 	}
@@ -1720,6 +1740,18 @@ func startCleanup(ctx context.Context, idx *storage.XComIndex, sink logs.Sink, d
 			}
 		}
 	}()
+}
+
+// schedulerDatabase is the database section the scheduler side opens its
+// pool from. The dedicated pool (database.scheduler_max_conns) is only for a
+// process that runs the scheduler loop; with scheduler.enabled=false the
+// janitors stay on the main pool and no extra connections are opened.
+func schedulerDatabase(cfg *config.ServerConfig) config.DatabaseSection {
+	db := cfg.Database
+	if !cfg.Scheduler.Enabled {
+		db.SchedulerMaxConns = 0
+	}
+	return db
 }
 
 // lowDisk reports whether free is below the threshold (both in bytes).
@@ -1951,8 +1983,13 @@ func buildPodInformer(ctx context.Context, cfg *config.ServerConfig, cs kubernet
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
+	// Opt-in (executor.collect_settled_run_pods): collect a settled run's
+	// finished pods in one DeleteCollection; nil keeps the age-based GC only.
+	if settled != nil {
+		rec.SetSettledRunCollection(settled)
+	}
 	// Read task pods from the shared informer cache instead of a live LIST every
 	// tick when the informer is wired (PR-10); nil keeps the live LIST.
 	if snapshotter != nil {
@@ -1962,6 +1999,15 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 	startGatedTicker(ctx, "maintenance", reconcileInterval, leading, logger, func() {
 		maintenanceCycle(ctx, maintenancePhaseTimeout, rec.Reconcile, reaper.ReapOnce, logger)
 	})
+}
+
+// settledRunCollection returns the reconciler's settled-run checker when the
+// operator turned executor.collect_settled_run_pods on, and nil otherwise.
+func settledRunCollection(sec config.ExecutorSection, store executor.SettledRunChecker) executor.SettledRunChecker {
+	if !sec.CollectSettledRunPods {
+		return nil
+	}
+	return store
 }
 
 // maintenancePhaseTimeout bounds each phase of a maintenance cycle — the
@@ -2065,6 +2111,9 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			MaxWorkerLifetimeSeconds: int64(cfg.Execution.MaxWorkerLifetime.Seconds()),
 			WorkerIdleTTLSeconds:     int64(cfg.Execution.WorkerIdleTTL.Seconds()),
 			AttemptWatchdogSeconds:   int64(cfg.Auth.MaxAttemptCredentialLifetime.Seconds()),
+			// X3.2: a read-only root plus a per-attempt HOME, so nothing one attempt
+			// writes to the image survives into the next attempt on this worker.
+			ReadOnlyRootFilesystem: cfg.Execution.WarmReadOnlyRootFilesystem,
 		}
 		if useExchange {
 			// Exchange transport: project an SA token, no plaintext bootstrap token.
@@ -2133,6 +2182,11 @@ func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace stri
 }
 
 func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
+	// Built before the leader pool so a bad alert egress config cannot leak it.
+	alertClient, err := alertHTTPClient(cfg.Scheduler.Alerts)
+	if err != nil {
+		return nil, false, nil, err
+	}
 	leaderPool, err := storage.NewLeaderPool(ctx, cfg.Database)
 	if err != nil {
 		return nil, false, nil, fmt.Errorf("leader pool: %w", err)
@@ -2151,7 +2205,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
 	// managed connection to its endpoint URL. Best-effort, off the tick path.
 	sched.SetAlerter(failurealert.New(
-		alerts.NewNotifier(&http.Client{Timeout: alertHTTPTimeout}),
+		alerts.NewNotifier(alertClient),
 		connEndpointResolver{repo},
 		metrics,
 		logger,
@@ -2180,6 +2234,28 @@ func drainDispatch(closer io.Closer, logger *slog.Logger) {
 // alertHTTPTimeout bounds each on-failure alert POST so a slow or hung channel
 // endpoint cannot pile up detached alert goroutines (#424).
 const alertHTTPTimeout = 10 * time.Second
+
+// alertHTTPClient builds the client on-failure alerts are posted with. An
+// alert's URL comes from a tenant's connection, so with
+// scheduler.alerts.block_private_destinations on, the client refuses loopback,
+// private, link-local and metadata addresses at dial time (internal/egress).
+// Off, it is the plain client alerts have always used.
+func alertHTTPClient(cfg config.AlertsSection) (*http.Client, error) {
+	if !cfg.BlockPrivateDestinations {
+		return &http.Client{Timeout: alertHTTPTimeout}, nil
+	}
+	policy, err := egress.NewPolicy(cfg.AllowedCIDRs)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
+	}
+	if reopened := policy.ReopenedSensitive(); len(reopened) > 0 {
+		// Not an error: an operator may mean it. But a range that lets tenant
+		// alerts reach loopback or a metadata endpoint should be a choice.
+		slog.Warn("scheduler.alerts.allowed_cidrs lets alerts reach sensitive destinations",
+			"destinations", strings.Join(reopened, ", "))
+	}
+	return policy.Client(alertHTTPTimeout), nil
+}
 
 // connEndpointResolver adapts the connection store to failurealert.EndpointResolver:
 // an alert channel's endpoint URL is the connection's decrypted secret (#424).
@@ -2482,7 +2558,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// draining or stepping-down leader from marking TIs failed or deleting pods
 	// on its way out — the successor redoes the reap under its own settling gate.
 	reaper.SetLeading(sched.IsLeading)
-	startMaintenance(ctx, cs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter)
+	startMaintenance(ctx, cs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
 	startStagingGC(ctx, cs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with
@@ -2504,8 +2580,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 // BufferSize > 0 the inner dispatcher is fronted by the worker pool (#127);
 // when BufferSize == 0 the inner dispatcher is used directly (Lite). The
 // caller passes a FailureSink (typically the SchedulerStore) so worker-side
-// dispatch failures fail the TI with a clear reason instead of leaving it
-// stuck `queued`.
+// dispatch failures are re-offered or fail the TI with a clear reason instead
+// of leaving it stuck `queued`.
 // The io.Closer is non-nil only in buffered mode; the caller defers Close() on
 // shutdown so in-flight dispatches drain (workers finish or fail via the sink)
 // instead of leaking goroutines and leaving TIs stuck `queued` (#133).
@@ -2514,6 +2590,12 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 		// Passthrough: keep the inner dispatcher exposed verbatim so the
 		// scheduler sees the same surface it always did in Lite. No pool to close.
 		return inner, nil
+	}
+	// A store that can re-offer (the SchedulerStore) gets the scheduler's
+	// failure policy, so a worker-side dispatch failure is retried like a
+	// synchronous one instead of failing the task at once.
+	if st, ok := sink.(scheduler.AsyncDispatchStore); ok {
+		sink = scheduler.NewAsyncDispatchFailures(st, logger)
 	}
 	bd := dispatch.NewBuffered(inner, sink, logger, metrics, dispatch.BufferConfig{
 		BufferSize: cfg.BufferSize,

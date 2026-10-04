@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-02
+
 ### Added
 
 - **A reference page for every image and chart a release publishes**, and the
@@ -17,7 +19,7 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read.
 
   It also writes down a rule that lived only in the code: when `base_image` is
-  unset, a **released** `leoflow` pins `leoflow-runtime:py<ver>-v<X.Y.Z>`, which
+  unset, a **released** `dexaflow` pins `dexaflow-runtime:py<ver>-v<X.Y.Z>`, which
   is immutable, while a **development** build falls back to
   `leoflow-runtime:py<ver>`, a line every release republishes. Two people
   compiling the same project can therefore end up on different bases, and
@@ -240,7 +242,12 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **`leoflow compile <dir>` wrote `dag.json` into the directory you ran it from,
+- **`dexaflow setup` names the new commands in its closing summary.** The admin
+  banner read `LEOFLOW LITE ADMIN` and the next-step hints suggested
+  `leoflow lite`; they now say `DEXAFLOW LITE ADMIN` and `dexaflow lite`. The
+  `leoflow` command keeps working.
+
+- **`dexaflow compile <dir>` wrote `dag.json` into the directory you ran it from,
   silently clobbering one that was already there.** The `--output` flag defaulted
   to the bare name `dag.json`, which resolves against the current directory
   rather than the project the command was pointed at. So compiling a scratch
@@ -250,7 +257,7 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the target happened to be tracked, and not necessarily otherwise.
 
   The default is now `<project>/dag.json`, which is what `compile <dir>` reads
-  like, what the success line already implied, and what `leoflow deploy` and
+  like, what the success line already implied, and what `dexaflow deploy` and
   every e2e script had already been passing by hand. Compiling the directory you
   are standing in still writes `./dag.json`, so the common interactive case and
   every documented pipeline that reads the artifact back are unaffected; the
@@ -261,16 +268,16 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A project directory that is not writable, which used to succeed because the
   artifact went to the current directory instead, now fails with a message
   naming the directory and pointing at `-o`, rather than a `PermissionError`
-  traceback out of the Python parser. And `leoflow init` scaffolds a
+  traceback out of the Python parser. And `dexaflow init` scaffolds a
   `.gitignore` covering `dag.json`, so the first `git add .` after the first
   compile does not stage a build artifact (#1084).
 - **Two ways the wrong Python interpreter judged your DAG.**
 
-  `leoflow validate` checked `dag.py` under whatever interpreter it found,
+  `dexaflow validate` checked `dag.py` under whatever interpreter it found,
   never consulting `python_version`. The failure was the annoying direction:
   `type X[T]` is a `SyntaxError` on 3.11, so validate **rejected** a DAG that
   compiles and runs correctly in the cluster, with a message that reads as a
-  complaint about the author's code. It now asks the same question `leoflow dev`
+  complaint about the author's code. It now asks the same question `dexaflow lite`
   asks, with the same exemptions (a defaulted version, `base_image` set, a
   deprecated version). When the declared interpreter is not installed the
   fallback is asymmetric, because Python's grammar grows: an interpreter at
@@ -381,7 +388,7 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or starting with `[` is quoted rather than refused, so an existing project's
   generated Dockerfile is unchanged unless it held one of the refused characters.
 
-  `leoflow lite --executor=k8s` has its own Dockerfile generator, which had the
+  `dexaflow lite --executor=k8s` has its own Dockerfile generator, which had the
   whole class untouched plus the unquoted `pip install` of #1064. It now shares
   the same guards. It was the worse of the two places to have them: it writes
   `<project>/Dockerfile` and never removes it, and a project-supplied Dockerfile
@@ -394,20 +401,20 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   database file travels far more easily than shell access does: a backup, a
   synced home directory, a support bundle, a resold laptop.
 
-  `leoflow setup` now generates a key for that install alone, and a fresh
+  `dexaflow setup` now generates a key for that install alone, and a fresh
   install never accepts the published one.
 
   **An install created before this is NOT migrated.** Its secrets stay under the
-  shared key, and `leoflow lite` says so on every start. Moving an existing
+  shared key, and `dexaflow lite` says so on every start. Moving an existing
   install means re-encrypting every stored credential, and three security
   reviews of an attempt at it found ordering, interruption and privilege defects
   that each destroyed credentials, so it was pulled rather than shipped
   half-right. It is tracked on its own.
 
-  `leoflow uninstall` keeps your datastore but removes the config holding its
+  `dexaflow uninstall` keeps your datastore but removes the config holding its
   key, so it now warns before doing that and tells you what to copy.
 
-  **`LEOFLOW_SECRET_KEY` accepts a comma-separated list for operators.** The
+  **`DEXAFLOW_SECRET_KEY` accepts a comma-separated list for operators.** The
   first entry encrypts and decrypts, later entries only decrypt, and the control
   plane re-encrypts onto the first entry at startup and reports what it moved.
   Same rule as Airflow's `fernet_key`. This replaces ADR 0019's previous
@@ -420,10 +427,10 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   32-character passphrase containing a comma, or with leading or trailing
   whitespace, no longer parses. Hex and base64 keys are unaffected.
 
-  Two ways to lose credentials were closed along the way. `leoflow lite
+  Two ways to lose credentials were closed along the way. `dexaflow lite
   reset-password` read the key through the config loader, which overlays
   `LEOFLOW_*` environment variables, and wrote the result back: an operator with
-  `LEOFLOW_SECRET_KEY` exported would have had the shell value persisted over
+  `DEXAFLOW_SECRET_KEY` exported would have had the shell value persisted over
   the real key. And every rewrite of `config.yaml` is now atomic, 0600 enforced
   and owner preserving: it previously left an existing world-readable file
   world-readable while adding an encryption key to it, and a crash mid-write
