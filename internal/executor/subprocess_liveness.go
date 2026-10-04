@@ -11,6 +11,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/dexadata/dexaflow/internal/procgroup"
+)
+
+// defaultOrphanGrace and defaultOrphanKillWait bound how long StopOrphanedTask
+// waits for an orphaned task group after SIGTERM and then after SIGKILL. Their
+// sum stays well inside one maintenance phase budget (30 s), so a pass that
+// meets an orphan ignoring SIGTERM still reaches SIGKILL; an orphan that a
+// pass runs out of budget for is simply handled by the next pass.
+const (
+	defaultOrphanGrace    = 10 * time.Second
+	defaultOrphanKillWait = 5 * time.Second
 )
 
 // defaultAgentPIDDir is where the subprocess executor records the PID of every
@@ -69,14 +82,26 @@ func (e *SubprocessExecutor) pidPath(runID, taskID string, tryNumber int) string
 	return filepath.Join(e.pidDir, hex.EncodeToString(sum[:16])+".pid")
 }
 
+// ensurePIDDir creates the record directory (0700) when missing and refuses one
+// another user could tamper with (see checkPIDDir).
+func (e *SubprocessExecutor) ensurePIDDir() error {
+	if err := os.MkdirAll(e.pidDir, 0o700); err != nil {
+		return fmt.Errorf("creating agent pid dir: %w", err)
+	}
+	return checkPIDDir(e.pidDir)
+}
+
+// groupPath is the attempt's task process group record, written by the agent
+// (procgroup.Record) next to the server's record of the agent itself.
+func (e *SubprocessExecutor) groupPath(runID, taskID string, tryNumber int) string {
+	return strings.TrimSuffix(e.pidPath(runID, taskID, tryNumber), ".pid") + ".pgid"
+}
+
 // recordPID writes the attempt's agent PID atomically (temp file + rename), so a
 // reader never sees a partial record. A later spawn for the same attempt (an
 // infra re-place keeps the try number) replaces the record.
 func (e *SubprocessExecutor) recordPID(runID, taskID string, tryNumber, pid int) error {
-	if err := os.MkdirAll(e.pidDir, 0o700); err != nil {
-		return fmt.Errorf("creating agent pid dir: %w", err)
-	}
-	if err := checkPIDDir(e.pidDir); err != nil {
+	if err := e.ensurePIDDir(); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(e.pidDir, ".pid-*")
@@ -99,7 +124,10 @@ func (e *SubprocessExecutor) recordPID(runID, taskID string, tryNumber, pid int)
 // forgetPID removes the attempt's record once its agent has exited, but only if
 // the record still names that agent: a newer agent for the same attempt keeps
 // its record. Best-effort; a leftover record names a dead PID and reads gone.
+// The agent's task group record goes with it unless the group is still alive
+// (see forgetGroup).
 func (e *SubprocessExecutor) forgetPID(runID, taskID string, tryNumber, pid int) {
+	e.forgetGroup(runID, taskID, tryNumber, pid)
 	path := e.pidPath(runID, taskID, tryNumber)
 	recorded, err := readPID(path)
 	if err != nil || recorded != pid {
@@ -107,6 +135,24 @@ func (e *SubprocessExecutor) forgetPID(runID, taskID string, tryNumber, pid int)
 	}
 	if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 		e.logger.Warn("removing agent pid record", "path", path, "error", rerr)
+	}
+}
+
+// forgetGroup removes the attempt's task group record once the group is gone,
+// and only when the record was written by agent pid. A group still alive is an
+// orphan of an agent killed outright: its record stays so the attempt keeps
+// reading alive until the reaper stops the orphan or it exits.
+func (e *SubprocessExecutor) forgetGroup(runID, taskID string, tryNumber, pid int) {
+	path := e.groupPath(runID, taskID, tryNumber)
+	rec, err := procgroup.Read(path)
+	if err != nil || rec.AgentPID != pid {
+		return
+	}
+	if alive, aerr := procgroup.GroupAlive(rec.PGID); aerr != nil || alive {
+		return
+	}
+	if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+		e.logger.Warn("removing task group record", "path", path, "error", rerr)
 	}
 }
 
@@ -124,8 +170,10 @@ func readPID(path string) (int, error) {
 }
 
 // AttemptProcessAlive reports whether the agent spawned for the (run, task,
-// try) attempt is alive, by the PID this executor recorded when it spawned it.
-// No record means no agent is known for the attempt: (false, nil). A record
+// try) attempt is alive, by the PID this executor recorded when it spawned it,
+// or, when that agent is gone, whether any process of the task group the agent
+// recorded is still running (an agent killed outright leaves its task behind,
+// #916). No record of either means nothing is known for the attempt: (false, nil). A record
 // that cannot be read, or a PID whose liveness cannot be probed, is an error so
 // the caller defers, and so is a record directory another user could have
 // tampered with (see checkPIDDir). A recorded PID that the OS reuses for an
@@ -139,11 +187,69 @@ func (e *SubprocessExecutor) AttemptProcessAlive(_ context.Context, runID, taskI
 		return false, err
 	}
 	pid, err := readPID(e.pidPath(runID, taskID, tryNumber))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return false, err
+	default:
+		alive, perr := processAlive(pid)
+		if perr != nil || alive {
+			return alive, perr
+		}
+	}
+	return e.taskGroupAlive(runID, taskID, tryNumber)
+}
+
+// taskGroupAlive reports whether any process of the attempt's recorded task
+// group exists (kill(-pgid, 0); EPERM counts as alive). No record means no task
+// group is known: (false, nil).
+func (e *SubprocessExecutor) taskGroupAlive(runID, taskID string, tryNumber int) (bool, error) {
+	rec, err := procgroup.Read(e.groupPath(runID, taskID, tryNumber))
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return processAlive(pid)
+	return procgroup.GroupAlive(rec.PGID)
+}
+
+// StopOrphanedTask stops the attempt's task process group when it is an orphan
+// of a dead agent, so the attempt can be reaped and placed again without a
+// second copy of the task running beside the first (#916). It acts only on a
+// group recorded in this server's own record directory, only when the agent
+// that recorded it is dead (signal 0 answers ESRCH), and only when the group's
+// leader is still the process that was recorded (procgroup.Stop checks its
+// start time). It sends SIGTERM, then SIGKILL after the grace, and reports true
+// once the group is gone. Any other case (no record, agent alive or unknown,
+// leader unverifiable, group still alive after SIGKILL) reports false and
+// changes nothing, so the reaper keeps deferring.
+func (e *SubprocessExecutor) StopOrphanedTask(ctx context.Context, runID, taskID string, tryNumber int) (bool, error) {
+	if err := checkPIDDir(e.pidDir); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	path := e.groupPath(runID, taskID, tryNumber)
+	rec, err := procgroup.Read(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if agentAlive, aerr := processAlive(rec.AgentPID); aerr != nil || agentAlive {
+		return false, aerr
+	}
+	stopped, err := procgroup.Stop(ctx, rec, e.orphanGrace, e.orphanKillWait)
+	if err != nil || !stopped {
+		return false, err
+	}
+	e.logger.Warn("stopped the orphaned task process group of a dead agent",
+		"run", runID, "task", taskID, "try", tryNumber, "agent_pid", rec.AgentPID, "pgid", rec.PGID)
+	if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+		e.logger.Warn("removing task group record", "path", path, "error", rerr)
+	}
+	return true, nil
 }

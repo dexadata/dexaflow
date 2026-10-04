@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // materializeWorkDir stages req.Source into a per-task-instance temp dir as a
@@ -58,7 +59,11 @@ type SubprocessExecutor struct {
 	// pidDir holds one PID record per spawned attempt (see SetPIDDir), the
 	// source of AttemptProcessAlive, which the Lite reapers gate on.
 	pidDir string
-	logger *slog.Logger
+	// orphanGrace and orphanKillWait bound StopOrphanedTask: how long an
+	// orphaned task group gets to exit after SIGTERM, then after SIGKILL.
+	orphanGrace    time.Duration
+	orphanKillWait time.Duration
+	logger         *slog.Logger
 }
 
 // NewSubprocessExecutor builds a SubprocessExecutor running the given agent
@@ -68,10 +73,12 @@ type SubprocessExecutor struct {
 func NewSubprocessExecutor(agentPath string, logger *slog.Logger) *SubprocessExecutor {
 	logger.Warn("subprocess executor active; user code runs without isolation. Do NOT use in production")
 	return &SubprocessExecutor{
-		agentPath:     agentPath,
-		liteVenvsRoot: os.Getenv("LEOFLOW_LITE_VENVS_ROOT"),
-		pidDir:        defaultAgentPIDDir(),
-		logger:        logger,
+		agentPath:      agentPath,
+		liteVenvsRoot:  os.Getenv("LEOFLOW_LITE_VENVS_ROOT"),
+		pidDir:         defaultAgentPIDDir(),
+		orphanGrace:    defaultOrphanGrace,
+		orphanKillWait: defaultOrphanKillWait,
+		logger:         logger,
 	}
 }
 
@@ -209,6 +216,18 @@ func (e *SubprocessExecutor) Execute(ctx context.Context, req Request) (Disposit
 			"PATH="+prependVenvBin(perDagPy, os.Getenv("PATH")),
 		)
 	}
+	// The agent records its task's process group next to this server's record
+	// of the agent itself (#916): the task leads its own group and outlives an
+	// agent killed outright, and only the agent learns the group id. The
+	// directory must exist before the agent starts, since the agent may write
+	// before recordPID below runs.
+	if derr := e.ensurePIDDir(); derr != nil {
+		cleanupWorkDir()
+		_ = os.RemoveAll(dbtScratch) //nolint:errcheck // best-effort cleanup of the dbt scratch dir
+		e.logger.Error("preparing agent pid dir failed", "task", req.TaskID, "error", derr)
+		return Rejected, fmt.Errorf("preparing agent pid dir for task %s: %w", req.TaskID, derr)
+	}
+	cmd.Env = append(cmd.Env, "LEOFLOW_TASK_PGID_FILE="+e.groupPath(req.RunID, req.TaskID, req.TryNumber))
 	cmd.Dir = workDir
 	// Surface the agent's own diagnostics (it logs to stderr); otherwise an agent
 	// that fails to start or connect fails silently. The task's stdout/stderr are
