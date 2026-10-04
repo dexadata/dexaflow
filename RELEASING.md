@@ -39,7 +39,10 @@ the model Kubernetes uses:
   not carry, ignoring PRs milestoned for a later release and the lines of
   `.github/release-skip.txt` on the release branch (`#N reason` or
   `<sha> reason`, for what will never ship in this minor, such as an ADR).
-  The cut runs it and refuses a patch while the list is not empty.
+  The cut runs it and refuses a patch while the list is not empty. The
+  commits the cut itself lands on `main` (release prep, docs promotion) never
+  count; a Dependabot bump has no milestone, so it shows in the list until it
+  is cherry-picked or skipped.
 - **Only the newest release branch takes patches.** An older one gets a
   security fix only when the owner decides so for that fix.
 

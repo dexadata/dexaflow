@@ -37,13 +37,15 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          # Dependabot bumps and the release-prep pull requests cut-release.sh
-          # opens belong to whichever release comes next by construction.
+          # Dependabot bumps and the pull requests cut-release.sh opens (the
+          # release prep and the docs promotion) belong to whichever release
+          # comes next by construction. A Dependabot bump still shows in
+          # release-gap.sh's list for the patch: cherry-pick it or skip it.
           if [ "$AUTHOR" = "dependabot[bot]" ]; then
             echo "author is dependabot: exempt"; exit 0
           fi
           case "$HEAD_REF" in
-            release/v*) echo "release-prep pull request: exempt"; exit 0 ;;
+            release/v*|docs/promote-v*) echo "release pull request from cut-release.sh: exempt"; exit 0 ;;
           esac
           m=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR" -q '.milestone.title // empty')
           if [[ "$m" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

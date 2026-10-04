@@ -15,7 +15,15 @@
 #
 # A commit counts as cherry-picked when a commit on release-X.Y carries
 # `(cherry picked from commit <full sha>)`, which `git cherry-pick -x` writes
-# and a squash merge keeps in the body, or names its pull request as `(#N)`.
+# and a squash merge keeps in the body, or names its pull request as `(#N)` at
+# the end of its SUBJECT. A `(#N)` in a body does not count: squash bodies list
+# the commits of the branch, and those mention other pull requests in passing.
+#
+# A pull request merged with a merge commit shows on main's first-parent line
+# as "Merge pull request #N from ...", and is judged by that number like a
+# squash merge. The commits cut-release.sh makes itself ("release: prepare
+# vX", "release: promote vX GA", "docs: publish vX at the documentation root")
+# are release mechanics, not changes, and never count as missing.
 #
 # A commit that should not ship in the patch (an ADR, a feature held for the
 # next minor) is skipped by a line in .github/release-skip.txt ON THE RELEASE
@@ -24,8 +32,9 @@
 #   #1307 ADR only, nothing to ship
 #   0123abcd held for 0.6: new API surface
 #
-# The first field is a pull request number (#N) or a commit sha prefix; the
-# rest of the line is the reason, and a line without one is refused.
+# The first field is a pull request number (#N) or a commit sha prefix of at
+# least 7 characters; the rest of the line is the reason. A line without a
+# reason, or with a first field of any other shape, is refused.
 #
 # Most holds need no skip line: every pull request to main carries the
 # milestone of the release it is planned for (checked by the milestone guard
@@ -47,15 +56,33 @@ OFFLINE=0
 
 die() { printf 'release-gap: %s\n' "$*" >&2; exit 2; }
 
-# pr_of: the pull request a squash-merge subject names, "fix: x (#12)" -> "12".
-pr_of() { printf '%s\n' "$1" | sed -nE 's/.*\(#([0-9]+)\)[[:space:]]*$/\1/p'; }
+# pr_of: the pull request a subject names: "fix: x (#12)" -> "12" for a
+# squash merge, "Merge pull request #12 from o/b" -> "12" for a merge commit.
+pr_of() {
+  printf '%s\n' "$1" | sed -nE -e 's/^Merge pull request #([0-9]+) from .*/\1/p' \
+    -e 't' -e 's/.*\(#([0-9]+)\)[[:space:]]*$/\1/p'
+}
+
+# release_mechanics: true for the commits cut-release.sh lands on main itself.
+release_mechanics() {
+  printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root)'
+}
 
 # milestone_of <pr>: the milestone title of a pull request, empty when it has
-# none or cannot be read. The self-test replaces it.
+# none or cannot be read. A failed read is reported once on stderr: without it
+# every held pull request would move into the gap with no explanation. The
+# self-test replaces it.
+MILESTONE_WARNED=0
 milestone_of() {
   [ "$OFFLINE" = 1 ] && return 0
-  command -v gh >/dev/null || return 0
-  gh api "repos/$REPO/issues/$1" -q '.milestone.title // empty' 2>/dev/null || true
+  local m
+  if command -v gh >/dev/null && m="$(gh api "repos/$REPO/issues/$1" -q '.milestone.title // empty' 2>/dev/null)"; then
+    printf '%s' "$m"; return 0
+  fi
+  if [ "$MILESTONE_WARNED" = 0 ]; then
+    printf 'release-gap: cannot read milestones with gh (pull request #%s); commits held by a later milestone are listed as missing\n' "$1" >&2
+    MILESTONE_WARNED=1
+  fi
 }
 
 # held_for_later <milestone> <version>: true when the milestone names a
@@ -77,13 +104,14 @@ gap() {
 
   local picked prs skips
   picked="$(git -C "$repo" log --format=%B "$base..$rel_ref" | sed -nE 's/.*cherry picked from commit ([0-9a-f]{40}).*/\1/p' | sort -u)"
-  prs="$(git -C "$repo" log --format=%B "$base..$rel_ref" | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | sort -u)"
+  prs="$(git -C "$repo" log --format=%s "$base..$rel_ref" | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | sort -u)"
   skips="$(git -C "$repo" show "$rel_ref:$SKIP_FILE" 2>/dev/null | sed -e 's/#[^0-9].*$//' -e '/^[[:space:]]*$/d')" || skips=""
 
   local line key reason
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     key="${line%%[[:space:]]*}"; reason="${line#"$key"}"
+    [[ "$key" =~ ^#[0-9]+$ || "$key" =~ ^[0-9a-f]{7,40}$ ]] || die "$SKIP_FILE: '$key' is neither #<pull request> nor a commit sha of 7 or more characters"
     [ -n "${reason//[[:space:]]/}" ] || die "$SKIP_FILE: '$key' has no reason"
   done <<<"$skips"
 
@@ -91,6 +119,7 @@ gap() {
   while IFS=$'\t' read -r sha subject; do
     [ -n "$sha" ] || continue
     grep -qx "$sha" <<<"$picked" && continue
+    release_mechanics "$subject" && continue
     pr="$(pr_of "$subject")"
     [ -n "$pr" ] && grep -qx "$pr" <<<"$prs" && continue
     local skipped=0
@@ -102,7 +131,7 @@ gap() {
     [ "$skipped" = 1 ] && continue
     [ -n "$pr" ] && held_for_later "$(milestone_of "$pr")" "$version" && continue
     printf '%s %s\n' "${sha:0:8}" "$subject"
-  done < <(git -C "$repo" log --first-parent --no-merges --reverse --format='%H%x09%s' "$base..$main_ref")
+  done < <(git -C "$repo" log --first-parent --reverse --format='%H%x09%s' "$base..$main_ref")
 }
 
 self_test() {
@@ -110,6 +139,12 @@ self_test() {
   _eq() { [ "$1" = "$2" ] || { printf 'FAIL: %s\n  got:  %s\n  want: %s\n' "$3" "$1" "$2"; fail=1; }; }
   _eq "$(pr_of 'fix(x): y (#1355)')" "1355" "pr_of reads the squash suffix"
   _eq "$(pr_of 'fix(x): see #12 for context')" "" "pr_of ignores a mention that is not the suffix"
+  _eq "$(pr_of 'Merge pull request #77 from o/b')" "77" "pr_of reads a merge commit"
+  _rm() { if release_mechanics "$1"; then echo yes; else echo no; fi; }
+  _eq "$(_rm 'release: prepare v0.9.1-rc.1')" "yes" "a prepare commit is release mechanics"
+  _eq "$(_rm 'release: promote v0.9.1 GA')" "yes" "a promote commit is release mechanics"
+  _eq "$(_rm 'docs: publish v0.9.1 at the documentation root (#9)')" "yes" "the docs promotion is release mechanics"
+  _eq "$(_rm 'fix(release): prepare step')" "no" "an ordinary fix is not"
   _held() { if held_for_later "$1" "$2"; then echo held; else echo ships; fi; }
   _eq "$(_held v0.5.2 0.5.1)"  "held"  "a milestone for the next patch holds the commit"
   _eq "$(_held v0.6.0 0.5.1)"  "held"  "a milestone for the next minor holds it"
@@ -129,30 +164,40 @@ self_test() {
   _c b "fix: b (#2)"; local b; b="$(git -C "$tmp" rev-parse HEAD)"
   _c c "docs: adr (#3)"
   _c d "feat: d (#4)"
+  _c rc "release: prepare v0.9.1-rc.1"
+  _g checkout -q -b feat-e; _c e "feat: e"; _g checkout -q main
+  _g merge -q --no-ff -m "Merge pull request #5 from o/feat-e" feat-e
   _g checkout -q -b release-0.9 v0.9.0
   # #1 arrives by `cherry-pick -x` (the sha line), #2 by a squash merge whose
   # subject is the backport PR but whose body still names the original.
   _g cherry-pick -x "$a"
   echo b >"$tmp/b"; _g add b; _g commit -qm "[release-0.9] fix: b (#20)" -m "(cherry picked from commit $b)"
+  # A squash body that mentions #3 in passing does not ship #3.
+  _c notes "chore: notes (#21)"; _g commit -q --amend -m "chore: notes (#21)" -m "* docs: adr (#3)"
   _g checkout -q main
 
   out="$(gap "$tmp" 0.9.1 main release-0.9)"
-  _eq "$(printf '%s\n' "$out" | sed 's/^[0-9a-f]* //')" "docs: adr (#3)" "cherry-picked commits and a PR milestoned for a later patch drop out"
+  _eq "$(printf '%s\n' "$out" | sed 's/^[0-9a-f]* //')" "$(printf 'docs: adr (#3)\nMerge pull request #5 from o/feat-e')" \
+    "cherry-picked commits, a PR milestoned for a later patch and release commits drop out; a merge commit stays"
   milestone_of() { :; }
   out="$(gap "$tmp" 0.9.1 main release-0.9)"
-  _eq "$(printf '%s\n' "$out" | sed 's/^[0-9a-f]* //')" "$(printf 'docs: adr (#3)\nfeat: d (#4)')" "without milestones the rest is the gap"
+  _eq "$(printf '%s\n' "$out" | sed 's/^[0-9a-f]* //')" "$(printf 'docs: adr (#3)\nfeat: d (#4)\nMerge pull request #5 from o/feat-e')" "without milestones the rest is the gap"
 
   _g checkout -q release-0.9; mkdir -p "$tmp/.github"
   printf '# held on purpose\n#3 ADR only\n' >"$tmp/$SKIP_FILE"; _g add -A; _g commit -qm "skip"
   _g checkout -q main
   out="$(gap "$tmp" 0.9.1 main release-0.9)"
-  _eq "$(printf '%s\n' "$out" | sed 's/^[0-9a-f]* //')" "feat: d (#4)" "a skipped PR leaves the gap, a comment line is ignored"
+  _eq "$(printf '%s\n' "$out" | sed 's/^[0-9a-f]* //')" "$(printf 'feat: d (#4)\nMerge pull request #5 from o/feat-e')" "a skipped PR leaves the gap, a comment line is ignored"
 
   _g checkout -q release-0.9; printf '#4\n' >>"$tmp/$SKIP_FILE"; _g add -A; _g commit -qm "skip without reason"
   _g checkout -q main
   ( gap "$tmp" 0.9.1 main release-0.9 ) >/dev/null 2>&1; _eq "$?" "2" "a skip without a reason is refused"
 
-  _g checkout -q release-0.9; printf '#3 ADR only\n%s held for 1.0\n' "$(git -C "$tmp" rev-parse --short main)" >"$tmp/$SKIP_FILE"; _g add -A; _g commit -qm "skip by sha"
+  _g checkout -q release-0.9; printf '#3 ADR only\n0 typo\n' >"$tmp/$SKIP_FILE"; _g add -A; _g commit -qm "bad key"
+  _g checkout -q main
+  ( gap "$tmp" 0.9.1 main release-0.9 ) >/dev/null 2>&1; _eq "$?" "2" "a skip key that is neither #N nor a 7+ character sha is refused"
+
+  _g checkout -q release-0.9; printf '#3 ADR only\n#4 held for 1.0\n%s held for 1.0\n' "$(git -C "$tmp" rev-parse --short=8 main)" >"$tmp/$SKIP_FILE"; _g add -A; _g commit -qm "skip by sha"
   _g checkout -q main
   _eq "$(gap "$tmp" 0.9.1 main release-0.9)" "" "a sha prefix skips too; an empty gap prints nothing"
 

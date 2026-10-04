@@ -988,9 +988,13 @@ main() {
   # own, so without this check a fix merged on main can miss the patch
   # silently. --resume skips it: the prepare half already passed it.
   if [ "$base" != main ] && [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
-    local gap_out
-    if ! gap_out="$("$ROOT/scripts/release-gap.sh" "$version" --fetch 2>&1)"; then
+    local gap_out gap_rc=0
+    gap_out="$("$ROOT/scripts/release-gap.sh" "$version" --fetch 2>&1)" || gap_rc=$?
+    if [ "$gap_rc" != 0 ]; then
       printf '%s\n' "$gap_out" >&2
+      # 1 is a list of missing commits; anything else means the check did not
+      # run, and nothing was verified, so even a dry run stops.
+      [ "$gap_rc" = 1 ] || die "release-gap.sh could not run (exit $gap_rc, above), so nothing was checked against main"
       if [ "$dry" = 1 ]; then
         warn "$base is missing commits from main (above); the real cut will refuse until each is cherry-picked or listed in .github/release-skip.txt"
       else
