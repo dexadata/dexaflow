@@ -20,15 +20,18 @@ type transition struct {
 }
 
 type fakeStore struct {
-	runs                 []RunState
-	materialize          []string
-	transitions          []transition
-	retried              []transition
-	resetInfra           []transition
-	redispatched         []transition
-	runStates            map[string]domain.DagRunState
-	scheduled            []ScheduledDAG
-	createdRuns          []string
+	runs         []RunState
+	materialize  []string
+	transitions  []transition
+	retried      []transition
+	resetInfra   []transition
+	redispatched []transition
+	runStates    map[string]domain.DagRunState
+	scheduled    []ScheduledDAG
+	createdRuns  []string
+	// createdTenants records the tenant of each created scheduled run, in the
+	// same order as createdRuns.
+	createdTenants       []string
 	notes                map[string]string
 	createErr            bool
 	dispatchFailures     []transition
@@ -75,11 +78,12 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 	f.poolBudgetsCalls++
 	return f.poolBudgets, nil
 }
-func (f *fakeStore) CreateScheduledRun(_ context.Context, dagID string, _ time.Time) error {
+func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, _ time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
 	}
 	f.createdRuns = append(f.createdRuns, dagID)
+	f.createdTenants = append(f.createdTenants, tenantID)
 	return nil
 }
 func (f *fakeStore) MaterializeTasks(_ context.Context, runID string, _ []domain.TaskSpec) error {

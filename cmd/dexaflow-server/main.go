@@ -39,6 +39,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/failurealert"
@@ -2381,6 +2382,11 @@ func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace stri
 }
 
 func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
+	// Built before the leader pool so a bad alert egress config cannot leak it.
+	alertClient, err := alertHTTPClient(cfg.Scheduler.Alerts)
+	if err != nil {
+		return nil, false, nil, err
+	}
 	leaderPool, err := storage.NewLeaderPool(ctx, cfg.Database)
 	if err != nil {
 		return nil, false, nil, fmt.Errorf("leader pool: %w", err)
@@ -2404,7 +2410,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
 	// managed connection to its endpoint URL. Best-effort, off the tick path.
 	sched.SetAlerter(failurealert.New(
-		alerts.NewNotifier(&http.Client{Timeout: alertHTTPTimeout}),
+		alerts.NewNotifier(alertClient),
 		connEndpointResolver{repo},
 		metrics,
 		logger,
@@ -2433,6 +2439,28 @@ func drainDispatch(closer io.Closer, logger *slog.Logger) {
 // alertHTTPTimeout bounds each on-failure alert POST so a slow or hung channel
 // endpoint cannot pile up detached alert goroutines (#424).
 const alertHTTPTimeout = 10 * time.Second
+
+// alertHTTPClient builds the client on-failure alerts are posted with. An
+// alert's URL comes from a tenant's connection, so with
+// scheduler.alerts.block_private_destinations on, the client refuses loopback,
+// private, link-local and metadata addresses at dial time (internal/egress).
+// Off, it is the plain client alerts have always used.
+func alertHTTPClient(cfg config.AlertsSection) (*http.Client, error) {
+	if !cfg.BlockPrivateDestinations {
+		return &http.Client{Timeout: alertHTTPTimeout}, nil
+	}
+	policy, err := egress.NewPolicy(cfg.AllowedCIDRs)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
+	}
+	if reopened := policy.ReopenedSensitive(); len(reopened) > 0 {
+		// Not an error: an operator may mean it. But a range that lets tenant
+		// alerts reach loopback or a metadata endpoint should be a choice.
+		slog.Warn("scheduler.alerts.allowed_cidrs lets alerts reach sensitive destinations",
+			"destinations", strings.Join(reopened, ", "))
+	}
+	return policy.Client(alertHTTPTimeout), nil
+}
 
 // connEndpointResolver adapts the connection store to failurealert.EndpointResolver:
 // an alert channel's endpoint URL is the connection's decrypted secret (#424).

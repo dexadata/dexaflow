@@ -478,6 +478,8 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_SCHEDULER_EAGER_PROMOTION` | `false` | both | Dispatches downstream tasks sooner after their upstreams settle. Within one tick, a task that becomes ready is queued at once instead of on the next tick, and skips or upstream failures cascade down the DAG (bounded passes per run, the rest continues next tick). A task's final state report also triggers an early tick on the replica that receives it, started at least 100 ms, and at least twice the previous tick's duration, after the previous tick began; the loop interval stays the upper bound. `dexaflow_scheduler_woken_ticks_total` (also exported as `leoflow_scheduler_woken_ticks_total`) counts those early ticks. Max active tasks and pool limits apply across the extra passes. Off by default. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency): the tick only enqueues, and a full buffer leaves the task scheduled for the next tick. Recommended for a busy cluster: `512` with 16 workers. Helm: `config.scheduler.dispatch.bufferSize`. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. Helm: `config.scheduler.dispatch.workers`. |
+| `DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS` | `false` | both | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses. See [Alert destinations](#alert-destinations). |
+| `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | *(empty)* | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Applied only while the block is on, but validated at startup either way: an invalid entry fails startup. |
 
 ### Executor (`executor.*`)
 
@@ -719,7 +721,21 @@ a user session never reaches them.
 digits or `-`) with the same built-in roles, role permissions and default pool
 as the `default` tenant, copied from it so every tenant's ladder stays equal.
 It answers `201` when the tenant is new and `200` when it already existed; a
-second call fills in anything missing and changes nothing else.
+second call fills in anything missing and, apart from `default_pool_slots`
+below, changes nothing else.
+
+The same body may carry `"default_pool_slots": 8` to size the tenant's
+`default_pool`, the slot cap every task without an explicit pool shares within
+the tenant. Without it a new tenant gets the `default` tenant's size (128
+unless an operator changed it), which on an engine shared by many tenants lets
+each of them run that many tasks at once. Given on a later call, it re-sizes
+the existing pool, including a size a tenant admin set through the pools API,
+so an automation that re-applies its tenants should send the size it wants to
+keep; left out, the pool is not touched. It must be a whole number from 1 to
+2147483647 (`400` otherwise), and the audit entry records it. It sets the pool's size,
+not a ceiling on the tenant: a tenant role that may write pools (`operator`,
+`admin`) can still resize it or create other pools. Pools apply to the Pro
+edition only; Lite ignores the value.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
@@ -742,6 +758,34 @@ The service token is a root-level credential: whoever holds it can create
 tenants and grant any role, `admin` included, in every tenant the trusted
 issuer covers. Keep it in a Secret, give it only to the automation that
 provisions tenants, and rotate it by changing the Secret and restarting.
+
+### Alert destinations
+
+An on-failure alert ([alerting](/author-dags/alerting/)) is posted by the control
+plane to the URL, with the headers, of a connection the DAG's tenant manages.
+When tenants that do not trust each other share one engine, that URL is
+untrusted input: it can name the control plane's own loopback, a private
+service in the cluster, or the cloud metadata endpoint.
+
+Set `scheduler.alerts.block_private_destinations: true` (env
+`DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS`, chart
+`config.alerts.blockPrivateDestinations`) to refuse those destinations. The
+check runs on the address the control plane is about to connect to, after DNS
+resolution, so a host name that resolves to an internal address is refused even
+if it resolved to a public one earlier (DNS rebinding), and every redirect hop
+is checked the same way (at most three redirects are followed). A NAT64
+(`64:ff9b::/96`) or 6to4 address is checked as the IPv4 address it carries, so
+an IPv6-only cluster behind DNS64 still reaches a public IPv4-only endpoint.
+The block also covers the Azure host endpoint `168.63.129.16`, which looks
+public but is node-local. With the block on, alert requests are dialed directly
+and do not use the `HTTP_PROXY` / `HTTPS_PROXY` environment, since through a
+proxy the real destination could not be checked. A refused alert is logged and
+counted as a failed delivery, like any other send error.
+
+If an alert endpoint legitimately lives on a private network (an on-premises
+chat server, for example), list its range in `scheduler.alerts.allowed_cidrs`
+(chart `config.alerts.allowedCIDRs`). A range broad enough to include loopback
+or a metadata endpoint is accepted but logged as a warning at startup.
 
 ### Trusted proxies and the client IP
 

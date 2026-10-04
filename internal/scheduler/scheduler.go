@@ -144,6 +144,9 @@ type RunState struct {
 // leader has been down across multiple slots, catchup=true backfills every
 // missed slot while catchup=false jumps straight to the most recent one.
 type ScheduledDAG struct {
+	// TenantID is the UUID of the tenant that owns the DAG. A dag_id is unique
+	// only within its tenant, so every per-DAG decision keys on the pair (#209).
+	TenantID    string
 	DagID       string
 	Schedule    string
 	LastLogical *time.Time
@@ -226,7 +229,7 @@ type Store interface {
 	// a new episode mid-send, and a stamp from the superseded one must not land.
 	MarkRunAlertDelivered(ctx context.Context, runID string, attempt int) error
 	ScheduledDAGs(ctx context.Context) ([]ScheduledDAG, error)
-	CreateScheduledRun(ctx context.Context, dagID string, logical time.Time) error
+	CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error
 	// SetTaskNote attaches operational context to a task instance (shown in the
 	// UI), e.g. why it is queued but not running.
 	SetTaskNote(ctx context.Context, runID, taskID, note string) error
@@ -305,10 +308,11 @@ type Scheduler struct {
 	leading      atomic.Bool  // true only while this instance holds leadership and ticks
 	leaderSince  atomic.Int64 // unix-nano when leadership was last acquired; 0 = not leading. Drives the execution reaper's leader-settling gate
 	steppingDown atomic.Bool  // true only during a leader step-down — the campaign loop sets it before canceling the run-context so the expected cancel-fanout logs at WARN, not ERROR (#311 tripwire preserved when it's false)
-	// warnedSchedules dedupes the "unparseable schedule" warning per DAG (keyed by
-	// the offending expression) so a bad cron logs once, not every tick. Accessed
-	// only from the single-threaded tick (createDueRuns), so it needs no lock.
-	warnedSchedules map[string]string
+	// warnedSchedules dedupes the "unparseable schedule" warning per (tenant,
+	// dag_id), keyed by the offending expression, so a bad cron logs once, not
+	// every tick. Accessed only from the single-threaded tick (createDueRuns),
+	// so it needs no lock.
+	warnedSchedules map[dagRef]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
 	// Stage 3). Pro-only: main calls EnablePools() only when the edition is "pro".
 	// While false (Lite / non-Pro), Step never loads pool budgets and never
@@ -331,7 +335,7 @@ func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Sch
 		logger:          logger,
 		interval:        interval,
 		stepTimeout:     defaultStepTimeout(interval),
-		warnedSchedules: map[string]string{},
+		warnedSchedules: map[dagRef]string{},
 		alertSem:        make(chan struct{}, defaultAlertConcurrency),
 		wake:            make(chan struct{}, 1),
 	}
@@ -570,14 +574,14 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing active runs: %w", err)
 	}
-	activeByDAG := make(map[string]int, len(runs))
+	activeByDAG := make(map[dagRef]int, len(runs))
 	// Per-DAG task-admission budget (max_active_tasks, ADR 0053 Stage 1).
 	// activeTasksByDAG is the snapshot of currently non-terminal (queued+running)
 	// TIs per DAG; admittedTasksByDAG folds in what earlier sibling runs already
 	// promoted this tick so a single tick cannot breach the cap across runs —
 	// mirroring how createDueRuns folds justCreated into the max_active_runs cap.
 	activeTasksByDAG := activeTaskCounts(runs)
-	admittedTasksByDAG := make(map[string]int, len(runs))
+	admittedTasksByDAG := make(map[dagRef]int, len(runs))
 	// Cross-DAG named-pool budget (ADR 0053 Stage 3, Pro only). Loaded once per
 	// tick; poolOccupied starts at the current cross-DAG occupancy and each run's
 	// admissions fold back in — the same within-tick threading as the per-DAG cap,
@@ -591,13 +595,14 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	s.deferredRun = ""
 	for k := range runs {
 		run := runs[(start+k)%len(runs)]
-		activeByDAG[run.DagID]++
-		run.ActiveTaskCount = activeTasksByDAG[run.DagID] + admittedTasksByDAG[run.DagID]
+		key := dagRef{run.TenantID, run.DagID}
+		activeByDAG[key]++
+		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
 		run.PoolsEnabled = s.poolsEnabled
 		run.PoolBudgets = poolBudgets
 		run.PoolActive = poolOccupied
 		admitted, admittedByPool := s.advanceSafely(ctx, run)
-		admittedTasksByDAG[run.DagID] += admitted
+		admittedTasksByDAG[key] += admitted
 		for k, n := range admittedByPool {
 			poolOccupied[k] += n
 		}
@@ -625,17 +630,28 @@ func rotateAfter(runs []RunState, deferredRun string) int {
 // running) across every active run of the DAG. It is the snapshot the admission
 // gate subtracts from max_active_tasks to size per-run headroom (ADR 0053 Stage
 // 1). Reuses the runs Step already loaded, so it adds no per-tick query.
-func activeTaskCounts(runs []RunState) map[string]int {
-	counts := make(map[string]int, len(runs))
+func activeTaskCounts(runs []RunState) map[dagRef]int {
+	counts := make(map[dagRef]int, len(runs))
 	for i := range runs {
+		active := 0
 		for _, st := range runs[i].States {
 			if st == domain.TaskStateQueued || st == domain.TaskStateRunning {
-				counts[runs[i].DagID]++
+				active++
 			}
+		}
+		if active > 0 {
+			counts[dagRef{runs[i].TenantID, runs[i].DagID}] += active
 		}
 	}
 	return counts
 }
+
+// dagRef identifies a DAG across tenants. A dag_id is unique only within its
+// tenant, so the per-DAG caps (max_active_runs, max_active_tasks) and the
+// once-per-schedule warnings key on the (tenant, dag_id) pair: two tenants that
+// both own an "etl" DAG never share a budget (#209). A struct key costs no
+// allocation per lookup and cannot collide the way a joined string could.
+type dagRef struct{ tenantID, dagID string }
 
 // loadPoolBudget prepares the cross-DAG named-pool admission state for a tick
 // (ADR 0053 Stage 3): the per-pool slot caps (queried once) and the current
@@ -705,22 +721,23 @@ func (s *Scheduler) advanceSafely(ctx context.Context, run RunState) (admitted i
 // exceed the cap is truncated to the remaining headroom. The local
 // `createdThisTick` map folds creations made in this same tick into the cap
 // so a single tick cannot itself breach the limit.
-func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]int) error {
+func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[dagRef]int) error {
 	dags, err := s.store.ScheduledDAGs(ctx)
 	if err != nil {
 		return fmt.Errorf("listing scheduled dags: %w", err)
 	}
 	now := time.Now().UTC()
-	createdThisTick := make(map[string]int, len(dags))
+	createdThisTick := make(map[dagRef]int, len(dags))
 	for _, d := range dags {
+		key := dagRef{d.TenantID, d.DagID}
 		if domain.IsOnceSchedule(d.Schedule) {
 			// @once: fire exactly one run on first sight, then never again. Once
 			// the run exists, the DAG's LastLogical is non-nil and this is
 			// skipped — that single-shot semantic already prevents any cap
 			// breach, so no headroom check is needed here.
 			if d.LastLogical == nil {
-				s.createScheduledRun(ctx, d.DagID, now)
-				createdThisTick[d.DagID]++
+				s.createScheduledRun(ctx, d, now)
+				createdThisTick[key]++
 			}
 			continue
 		}
@@ -735,10 +752,10 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]in
 		// validation (domain.ValidateSchedule) catches this earlier; this is the
 		// backstop for DAGs registered before the fix.
 		if !scheduleParseable(d.Schedule) {
-			if s.warnedSchedules[d.DagID] != d.Schedule {
+			if s.warnedSchedules[key] != d.Schedule {
 				s.logger.Warn("DAG has an unparseable cron schedule; it will not run on a schedule until fixed",
-					"dag", d.DagID, "schedule", d.Schedule)
-				s.warnedSchedules[d.DagID] = d.Schedule
+					"tenant", d.TenantID, "dag", d.DagID, "schedule", d.Schedule)
+				s.warnedSchedules[key] = d.Schedule
 			}
 			continue
 		}
@@ -751,22 +768,22 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]in
 			if !due {
 				continue
 			}
-			if !s.hasHeadroom(d, activeByDAG, createdThisTick) {
-				s.recordCapSkip(d.DagID)
+			if !s.hasHeadroom(d, key, activeByDAG, createdThisTick) {
+				s.recordCapSkip(d)
 				continue
 			}
-			s.createScheduledRun(ctx, d.DagID, logical)
-			createdThisTick[d.DagID]++
+			s.createScheduledRun(ctx, d, logical)
+			createdThisTick[key]++
 			continue
 		}
 		slots := dueScheduledSlots(d.Schedule, d.LastLogical, d.StartDate, now, d.Catchup, maxCatchupSlotsPerTick)
 		for _, logical := range slots {
-			if !s.hasHeadroom(d, activeByDAG, createdThisTick) {
-				s.recordCapSkip(d.DagID)
+			if !s.hasHeadroom(d, key, activeByDAG, createdThisTick) {
+				s.recordCapSkip(d)
 				break
 			}
-			s.createScheduledRun(ctx, d.DagID, logical)
-			createdThisTick[d.DagID]++
+			s.createScheduledRun(ctx, d, logical)
+			createdThisTick[key]++
 		}
 	}
 	return nil
@@ -781,28 +798,28 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]in
 // the scheduler fail open rather than locking the DAG out forever when a
 // bad row is encountered. Callers pass `justCreated` so a single tick
 // folds in its own creations and cannot itself breach the cap.
-func (s *Scheduler) hasHeadroom(d ScheduledDAG, active map[string]int, justCreated map[string]int) bool {
+func (s *Scheduler) hasHeadroom(d ScheduledDAG, key dagRef, active, justCreated map[dagRef]int) bool {
 	if d.MaxActiveRuns <= 0 {
 		return true
 	}
-	return active[d.DagID]+justCreated[d.DagID] < d.MaxActiveRuns
+	return active[key]+justCreated[key] < d.MaxActiveRuns
 }
 
 // recordCapSkip logs (once per DAG between successful creations) and meters
 // that a due slot was skipped because the DAG is at its max_active_runs cap.
 // We use a single metric label so dashboards can see "is concurrency the
 // bottleneck right now?" without per-DAG cardinality.
-func (s *Scheduler) recordCapSkip(dagID string) {
-	s.logger.Debug("skipping due run; DAG is at max_active_runs cap", "dag", dagID)
+func (s *Scheduler) recordCapSkip(d ScheduledDAG) {
+	s.logger.Debug("skipping due run; DAG is at max_active_runs cap", "tenant", d.TenantID, "dag", d.DagID)
 	s.record("max_active_runs_cap")
 }
 
 // createScheduledRun creates one scheduled run for a DAG, isolating per-DAG
 // failures: a single DAG's creation error is logged and metered but never blocks
 // run creation for the other scheduled DAGs in this tick.
-func (s *Scheduler) createScheduledRun(ctx context.Context, dagID string, logical time.Time) {
-	if err := s.store.CreateScheduledRun(ctx, dagID, logical); err != nil {
-		s.logger.Error("creating scheduled run", "dag", dagID, "error", err)
+func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logical time.Time) {
+	if err := s.store.CreateScheduledRun(ctx, d.TenantID, d.DagID, logical); err != nil {
+		s.logger.Error("creating scheduled run", "tenant", d.TenantID, "dag", d.DagID, "error", err)
 		s.record("create_run_error")
 		return
 	}

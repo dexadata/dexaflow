@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"slices"
@@ -23,7 +24,7 @@ import (
 type ServiceTenantStore interface {
 	// EnsureTenant creates a tenant with the built-in roles and default pool,
 	// or fills in what is missing; created reports whether it was new.
-	EnsureTenant(ctx context.Context, name, displayName string) (created bool, err error)
+	EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int) (created bool, err error)
 	// EnsureIssuerUser makes sure a passwordless user linked to (provider,
 	// subject) exists in tenant with exactly roles.
 	EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error)
@@ -87,8 +88,10 @@ func serviceAuth(token string) gin.HandlerFunc {
 }
 
 // ensureTenantHandler implements PUT /api/v2/service/tenants/{tenant} with an
-// optional {"display_name": "..."}: 201 when the tenant is new, 200 when it
-// already existed. Either way it ends with the built-in roles and default pool.
+// optional {"display_name": "...", "default_pool_slots": N}: 201 when the
+// tenant is new, 200 when it already existed. Either way it ends with the
+// built-in roles and default pool; default_pool_slots, when given, sizes that
+// pool, otherwise a new tenant gets the default tenant's size.
 func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("tenant")
@@ -97,15 +100,28 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		var body struct {
-			DisplayName string `json:"display_name"`
+			DisplayName      string `json:"display_name"`
+			DefaultPoolSlots *int   `json:"default_pool_slots"`
 		}
 		// The body is optional: an empty one is io.EOF, not a malformed request.
 		if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
 			AbortProblem(c, http.StatusBadRequest, "bad request", "body must be JSON")
 			return
 		}
-		created, err := deps.ServiceTenants.EnsureTenant(c.Request.Context(), name, body.DisplayName)
-		recordService(c, deps, auditServiceTenantEnsure, name, "", "", err, map[string]string{"created": strconv.FormatBool(created)})
+		poolSlots := 0
+		if body.DefaultPoolSlots != nil {
+			poolSlots = *body.DefaultPoolSlots
+			if poolSlots < 1 || poolSlots > math.MaxInt32 {
+				AbortProblem(c, http.StatusBadRequest, "bad request", "default_pool_slots must be a whole number from 1 to 2147483647")
+				return
+			}
+		}
+		created, err := deps.ServiceTenants.EnsureTenant(c.Request.Context(), name, body.DisplayName, poolSlots)
+		meta := map[string]string{"created": strconv.FormatBool(created)}
+		if poolSlots > 0 {
+			meta["default_pool_slots"] = strconv.Itoa(poolSlots)
+		}
+		recordService(c, deps, auditServiceTenantEnsure, name, "", "", err, meta)
 		if err != nil {
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", "could not ensure the tenant", err)
 			return

@@ -315,15 +315,14 @@ const createScheduledRunByDagID = `-- name: CreateScheduledRunByDagID :exec
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, $1, $2, 'queued', 'scheduled'
 FROM dags d
-JOIN tenants t ON t.id = d.tenant_id
-WHERE t.name = $3 AND d.dag_id = $4 AND d.current_version_id IS NOT NULL
+WHERE d.tenant_id = $3 AND d.dag_id = $4 AND d.current_version_id IS NOT NULL
 ON CONFLICT (dag_id, run_id) DO NOTHING
 `
 
 type CreateScheduledRunByDagIDParams struct {
 	RunID       string             `json:"run_id"`
 	LogicalDate pgtype.Timestamptz `json:"logical_date"`
-	Tenant      string             `json:"tenant"`
+	TenantID    pgtype.UUID        `json:"tenant_id"`
 	DagID       string             `json:"dag_id"`
 }
 
@@ -331,7 +330,7 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 	_, err := q.db.Exec(ctx, createScheduledRunByDagID,
 		arg.RunID,
 		arg.LogicalDate,
-		arg.Tenant,
+		arg.TenantID,
 		arg.DagID,
 	)
 	return err
@@ -1266,7 +1265,7 @@ func (q *Queries) ListRunningTasks(ctx context.Context, graceSeconds float64) ([
 }
 
 const listScheduledDags = `-- name: ListScheduledDags :many
-SELECT d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
 WHERE d.is_active = true AND d.is_paused = false
@@ -1274,6 +1273,7 @@ WHERE d.is_active = true AND d.is_paused = false
 `
 
 type ListScheduledDagsRow struct {
+	TenantID      pgtype.UUID        `json:"tenant_id"`
 	DagID         string             `json:"dag_id"`
 	Schedule      *string            `json:"schedule"`
 	Catchup       bool               `json:"catchup"`
@@ -1285,7 +1285,9 @@ type ListScheduledDagsRow struct {
 // Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 // both "is there a slot due?" (schedule + last_logical), "how many slots
 // should I backfill on this tick?" (catchup + start_date, see #129), and
-// "may this DAG take another active run?" (max_active_runs, see #200).
+// "may this DAG take another active run?" (max_active_runs, see #200). The
+// owning tenant is returned because a dag_id is unique only within its tenant
+// (#209).
 func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error) {
 	rows, err := q.db.Query(ctx, listScheduledDags)
 	if err != nil {
@@ -1296,6 +1298,7 @@ func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow
 	for rows.Next() {
 		var i ListScheduledDagsRow
 		if err := rows.Scan(
+			&i.TenantID,
 			&i.DagID,
 			&i.Schedule,
 			&i.Catchup,
