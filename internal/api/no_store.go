@@ -27,6 +27,10 @@ import (
 // guarantee we can give a TanStack-backed SPA. "must-revalidate" is added
 // for older intermediaries (proxies / SW) that may not honor no-store
 // alone. This is ADR-0017-compatible: no SPA changes.
+//
+// A handler that computes an ETag and authorizes every request may replace the
+// header with "private, no-cache" when ui.etag_revalidation is on, so the
+// browser revalidates instead of refetching (tiSummariesHandler).
 func NoStoreOnVolatileRoutes() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p := c.Request.URL.Path

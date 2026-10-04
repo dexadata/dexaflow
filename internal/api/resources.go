@@ -104,11 +104,19 @@ func setPaginationLinks(c *gin.Context, total, limit, offset int) {
 	}
 }
 
+// tenantOf returns the tenant the request's principal belongs to. It fails
+// closed: a request with no principal, or a principal that names no tenant, gets
+// the empty name, so every tenant-scoped lookup misses instead of serving the
+// default tenant's data. No tenant is named "" today: the migrations seed
+// "default" and the service API only creates names matching serviceTenantName.
+// The authenticator and JWTAuth already refuse a tenantless principal, and
+// DevBypassAuth names the default tenant explicitly, so this only matters for a
+// handler reached without either.
 func tenantOf(c *gin.Context) string {
 	if u, ok := UserFromContext(c); ok && u.TenantID != "" {
 		return u.TenantID
 	}
-	return "default"
+	return ""
 }
 
 // statusClientClosedRequest (499, nginx convention) marks a request the client
@@ -366,6 +374,10 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 		}
 		limit, offset := pagination(c)
 		states := c.QueryArray("state")
+		if raw := c.Query("cursor"); raw != "" {
+			listDagRunsByCursor(c, repo, raw, states, limit)
+			return
+		}
 		runs, total, err := listRunsFiltered(c, repo, states, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
@@ -376,6 +388,9 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 			out.DagRuns = append(out.DagRuns, toDagRunDTO(r))
 		}
 		setPaginationLinks(c, total, limit, offset)
+		if _, ok := repo.(DagRunPageReader); ok && len(runs) > 0 && offset+len(runs) < total {
+			setNextCursor(c, runCursor(runs[len(runs)-1]), false)
+		}
 		c.JSON(http.StatusOK, out)
 	}
 }

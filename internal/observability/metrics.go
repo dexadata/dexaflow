@@ -14,9 +14,6 @@ type Metrics struct {
 	// Scheduler
 	SchedulerLoopDuration prometheus.Histogram
 	SchedulerDecisions    *prometheus.CounterVec
-	SchedulerLeader       *prometheus.GaugeVec
-	ActiveDAGRuns         *prometheus.GaugeVec
-	QueuedTasks           *prometheus.GaugeVec
 	TasksUndispatchable   *prometheus.CounterVec
 	SchedulerStepDowns    *prometheus.CounterVec // #311 leader churn observability
 	SchedulerReacquire    prometheus.Histogram   // #311 step-down → re-acquire latency
@@ -42,7 +39,6 @@ type Metrics struct {
 
 	// Executor (Kubernetes)
 	PodsCreated        *prometheus.CounterVec
-	PodsRunning        prometheus.Gauge
 	PodPendingDuration prometheus.Histogram
 	KubernetesAPICalls *prometheus.CounterVec
 
@@ -83,9 +79,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		TasksUndispatchable: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_tasks_undispatchable_total", Help: "Tasks queued with no executor to launch them, by reason.",
 		}, []string{"reason"}),
-		SchedulerLeader: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "dexaflow_scheduler_leader", Help: "1 when this replica is the scheduler leader.",
-		}, []string{"replica_id"}),
 		SchedulerStepDowns: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_scheduler_step_downs_total",
 			Help: "Scheduler leadership step-downs by reason (lock_released, check_timeout, shutdown). " +
@@ -100,12 +93,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			// reportable distribution.
 			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300},
 		}),
-		ActiveDAGRuns: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "dexaflow_active_dag_runs", Help: "Active dag runs by dag and state.",
-		}, []string{"dag_id", "state"}),
-		QueuedTasks: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "dexaflow_queued_tasks", Help: "Queued task instances by dag.",
-		}, []string{"dag_id"}),
 		AlertsDispatched: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_alerts_dispatched_total",
 			Help: "Native on-failure alerts dispatched, by channel type and outcome (sent, failed). " +
@@ -154,9 +141,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_pods_created_total", Help: "Pods created by dag and result.",
 		}, []string{"dag_id", "result"}),
-		PodsRunning: f.NewGauge(prometheus.GaugeOpts{
-			Name: "dexaflow_pods_running", Help: "Currently running pods.",
-		}),
 		PodPendingDuration: f.NewHistogram(prometheus.HistogramOpts{
 			Name: "dexaflow_pod_pending_duration_seconds", Help: "Pod pending duration.",
 		}),
