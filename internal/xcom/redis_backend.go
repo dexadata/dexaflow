@@ -49,6 +49,31 @@ func (b *RedisBackend) Fetch(ctx context.Context, key string) (Entry, error) {
 	return entry, nil
 }
 
+// FetchMany reads every key with one MGET, in order. Absent or expired keys
+// come back as not found.
+func (b *RedisBackend) FetchMany(ctx context.Context, keys []string) ([]Entry, []bool, error) {
+	entries := make([]Entry, len(keys))
+	found := make([]bool, len(keys))
+	if len(keys) == 0 {
+		return entries, found, nil
+	}
+	vals, err := b.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading xcom from redis: %w", err)
+	}
+	for i, v := range vals {
+		raw, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if uerr := json.Unmarshal([]byte(raw), &entries[i]); uerr != nil {
+			return nil, nil, fmt.Errorf("decoding xcom entry: %w", uerr)
+		}
+		found[i] = true
+	}
+	return entries, found, nil
+}
+
 // Delete removes the entry at key.
 func (b *RedisBackend) Delete(ctx context.Context, key string) error {
 	if err := b.client.Del(ctx, key).Err(); err != nil {
