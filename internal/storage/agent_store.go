@@ -12,6 +12,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -316,15 +317,61 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 // whose report was lost (ADR 0052) — guarded by the attempt and the active states.
 // A settle on an already-terminal or superseded row is a no-op.
 func (s *ExecutionStore) SucceedTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error {
+	_, err := s.SucceedTaskIfActive(ctx, taskInstanceID, tryNumber, attemptEpoch)
+	return err
+}
+
+// SucceedTaskIfActive is SucceedTask reporting whether it changed the row. A
+// false with no error means the attempt was not active: already terminal,
+// superseded, or marked by a reaper meanwhile. It implements part of
+// executor.InfraOverrideReporter.
+func (s *ExecutionStore) SucceedTaskIfActive(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return s.q.SucceedTaskInstanceIfActive(ctx, queries.SucceedTaskInstanceIfActiveParams{
+	n, err := s.q.SucceedTaskInstanceIfActive(ctx, queries.SucceedTaskInstanceIfActiveParams{
 		ID:           tid,
 		TryNumber:    toInt32(tryNumber),
 		AttemptEpoch: toInt32(attemptEpoch),
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// SucceedTaskOverInfraMark settles a durable SUCCESS record over a reaper's
+// provisional infra mark of the same attempt (ADR 0052 amendment, part 1).
+// It applies only while the mark is unconfirmed and inside
+// scheduler.InfraConfirmMaxWait, on a running run; otherwise it changes
+// nothing and reports false. On success it returns the mark it overrode and
+// the attempt's log location. It implements part of
+// executor.InfraOverrideReporter.
+func (s *ExecutionStore) SucceedTaskOverInfraMark(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (executor.InfraOverride, bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return executor.InfraOverride{}, false, err
+	}
+	row, err := s.q.SucceedTaskInstanceOverInfraMark(ctx, queries.SucceedTaskInstanceOverInfraMarkParams{
+		ID:                    tid,
+		TryNumber:             toInt32(tryNumber),
+		AttemptEpoch:          toInt32(attemptEpoch),
+		ConfirmMaxWaitSeconds: scheduler.InfraConfirmMaxWait.Seconds(),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return executor.InfraOverride{}, false, nil
+	}
+	if err != nil {
+		return executor.InfraOverride{}, false, fmt.Errorf("settling a success over an infra mark: %w", err)
+	}
+	return executor.InfraOverride{
+		Mark:     row.Mark,
+		TenantID: uuidToString(row.TenantID),
+		DagID:    row.DagIDText,
+		DagRunID: uuidToString(row.DagRunID),
+		TaskID:   row.TaskID,
+	}, true, nil
 }
 
 // RescheduleTask parks a task instance in up_for_reschedule with the recovered

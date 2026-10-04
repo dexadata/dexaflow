@@ -40,6 +40,9 @@ type Metrics struct {
 	// Agent credentials: task tokens authenticated without an attempt_epoch
 	// claim, accepted under the epoch-0 rule (ADR 0051 amendment).
 	AgentLegacyAttemptTokens prometheus.Counter
+	// Reconciler: durable SUCCESS records settled over a reaper's provisional
+	// infra mark, by the mark overridden (ADR 0052 amendment).
+	ReconcileInfraOverrides *prometheus.CounterVec
 
 	// Executor (Kubernetes)
 	PodsCreated        *prometheus.CounterVec
@@ -148,6 +151,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 				"or one an old replica renewed or exchanged during a rolling upgrade. Reports from such a token are read as epoch 0. " +
 				"It falls to zero once the rollout has finished and every pre-upgrade attempt has finished; a later release rejects such tokens.",
 		}),
+
+		ReconcileInfraOverrides: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_reconcile_infra_override_total",
+			Help: "Durable SUCCESS records the reconciler settled over a reaper's provisional infra mark (agent_lost, pod_lost, dispatch_lost), " +
+				"by the mark overridden: a task that finished while the control plane lost track of it, recovered instead of re-run.",
+		}, []string{"mark"}),
 
 		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_pods_created_total", Help: "Pods created by dag and result.",
@@ -308,6 +317,12 @@ func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 // without an attempt_epoch claim (ADR 0051 amendment). It satisfies
 // agentrpc.LegacyTokenRecorder.
 func (m *Metrics) RecordLegacyAttemptToken() { m.AgentLegacyAttemptTokens.Inc() }
+
+// RecordInfraOverride counts one durable SUCCESS settled over an infra mark.
+// It satisfies executor.InfraOverrideRecorder.
+func (m *Metrics) RecordInfraOverride(mark string) {
+	m.ReconcileInfraOverrides.WithLabelValues(mark).Inc()
+}
 
 // RecordDispatchInnerError counts one error returned by the inner dispatcher
 // inside a worker — typically a Kubernetes API failure or pod-create rejection.
