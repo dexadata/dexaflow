@@ -1,0 +1,8 @@
+kind: Fixed
+body: |-
+  **Tenants created through the service API get the same built-in role grants as `default`.**
+  Built-in role changes made by migrations, such as the role ladder, reached the
+  `default` tenant only. A new migration brings the built-in roles of every other
+  tenant in line with `default`: it adds the roles and grants a tenant is missing
+  and removes grants `default` no longer has. Custom roles and user role
+  assignments are not touched. (#1305)
