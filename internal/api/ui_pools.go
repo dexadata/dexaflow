@@ -165,18 +165,36 @@ func deletePoolHandler(store PoolStore) gin.HandlerFunc {
 	}
 }
 
+// PoolsReadOnlyDetail is the stable problem detail of the 403 every pool write
+// gets when server.pools_read_only is on. Clients may match on it to tell the
+// lock apart from a missing permission.
+const PoolsReadOnlyDetail = "pools are read-only on this server: their slots are managed by the platform operator"
+
+// poolsReadOnlyHandler refuses a pool write under server.pools_read_only. It
+// runs after RequirePermission, so a caller without write:pool still sees the
+// permission refusal it always saw, and never reaches the store.
+func poolsReadOnlyHandler(c *gin.Context) {
+	AbortProblem(c, http.StatusForbidden, "forbidden", PoolsReadOnlyDetail)
+}
+
 // registerUIPools mounts the Admin Pools CRUD. Pools are Pro-only (ADR 0053): on
 // Lite/non-Pro, or when no store is configured, it keeps the graceful empty
 // collection so the Airflow UI's Pools screen renders instead of 404ing.
-// Mutations are admin-gated like connections and variables.
-func registerUIPools(r gin.IRouter, store PoolStore, proEnabled bool) {
+// Mutations are gated on write:pool. With readOnly (server.pools_read_only) the
+// write routes stay mounted but refuse every caller, tenant admin included, so
+// only the platform operator, out of band, sizes a tenant's pools.
+func registerUIPools(r gin.IRouter, store PoolStore, proEnabled, readOnly bool) {
 	if !proEnabled || store == nil {
 		r.GET("/api/v2/pools", apiEmptyCollection("pools"))
 		return
 	}
 	r.GET("/api/v2/pools", RequirePermission("read", "pool"), listPoolsHandler(store))
 	r.GET("/api/v2/pools/:pool_name", RequirePermission("read", "pool"), getPoolHandler(store))
-	r.POST("/api/v2/pools", RequirePermission("write", "pool"), createPoolHandler(store))
-	r.PATCH("/api/v2/pools/:pool_name", RequirePermission("write", "pool"), updatePoolHandler(store))
-	r.DELETE("/api/v2/pools/:pool_name", RequirePermission("write", "pool"), deletePoolHandler(store))
+	create, update, remove := createPoolHandler(store), updatePoolHandler(store), deletePoolHandler(store)
+	if readOnly {
+		create, update, remove = poolsReadOnlyHandler, poolsReadOnlyHandler, poolsReadOnlyHandler
+	}
+	r.POST("/api/v2/pools", RequirePermission("write", "pool"), create)
+	r.PATCH("/api/v2/pools/:pool_name", RequirePermission("write", "pool"), update)
+	r.DELETE("/api/v2/pools/:pool_name", RequirePermission("write", "pool"), remove)
 }
