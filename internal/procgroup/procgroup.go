@@ -77,6 +77,27 @@ func Read(path string) (Record, error) {
 	return Record{AgentPID: agent, PGID: pgid, LeaderStart: start}, nil
 }
 
+// Alive reports whether the group r names still has a process. It is
+// GroupAlive with one refinement: when the record carries the leader's start
+// time and a process with the group id's pid exists under a different start
+// time, the group id now belongs to an unrelated process and the recorded group
+// is gone. The kernel never hands out a pid that is still in use as a process
+// group id, so a reused leader pid means no member of the old group is left.
+// Without that refinement a group id an unrelated group leader picked up (any
+// shell job, more likely once pids wrap) would read alive for as long as that
+// group lives, and the attempt would never be reaped. A leader that exited, or
+// a start time that cannot be read, falls back to the group probe.
+func Alive(r Record) (bool, error) {
+	alive, err := GroupAlive(r.PGID)
+	if err != nil || !alive || r.LeaderStart == 0 {
+		return alive, err
+	}
+	if start, serr := StartTime(r.PGID); serr == nil && start != r.LeaderStart {
+		return false, nil
+	}
+	return true, nil
+}
+
 // pollInterval is how often Stop re-probes the group while it waits.
 const pollInterval = 50 * time.Millisecond
 

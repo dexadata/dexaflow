@@ -227,7 +227,10 @@ func (e *SubprocessExecutor) Execute(ctx context.Context, req Request) (Disposit
 		e.logger.Error("preparing agent pid dir failed", "task", req.TaskID, "error", derr)
 		return Rejected, fmt.Errorf("preparing agent pid dir for task %s: %w", req.TaskID, derr)
 	}
-	cmd.Env = append(cmd.Env, "LEOFLOW_TASK_PGID_FILE="+e.groupPath(req.RunID, req.TaskID, req.TryNumber))
+	// DEXAFLOW_ is the variable's name; the agent mirrors it onto LEOFLOW_ at
+	// startup like every other one (envcompat), and an agent that predates the
+	// record ignores it.
+	cmd.Env = append(cmd.Env, "DEXAFLOW_TASK_PGID_FILE="+e.groupPath(req.RunID, req.TaskID, req.TryNumber))
 	cmd.Dir = workDir
 	// Surface the agent's own diagnostics (it logs to stderr); otherwise an agent
 	// that fails to start or connect fails silently. The task's stdout/stderr are

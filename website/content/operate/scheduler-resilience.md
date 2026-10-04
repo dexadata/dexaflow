@@ -251,6 +251,9 @@ time. A task whose group the agent cannot record is stopped and its run fails,
 the same rule as for the agent record. An attempt reads alive while its agent
 is alive **or** while any process of its recorded task group exists (signal 0
 to the whole group; a member owned by another user still counts as alive).
+A group id whose leader PID now belongs to a process with a different start
+time names an unrelated group (the OS never reuses a PID while it is still a
+group id, so nothing of the recorded group is left), and reads dead.
 
 **An agent that dies before its first heartbeat.** Agent-lost normally judges
 only a `running` TI that has heartbeated at least once, and on Kubernetes the

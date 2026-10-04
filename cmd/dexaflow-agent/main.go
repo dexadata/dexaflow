@@ -202,7 +202,8 @@ func run() int {
 		// Lite (the subprocess executor) names a file for the task's process
 		// group record, so the server can see and stop a task this agent leaves
 		// behind if it is killed outright (#916). Empty in a pod: nothing to do.
-		Cmd:        agent.NewExecRunnerRecordingGroup(os.Getenv("LEOFLOW_TASK_PGID_FILE")),
+		// LEOFLOW_TASK_PGID_FILE is accepted too (envcompat mirrors it).
+		Cmd:        agent.NewExecRunnerRecordingGroup(os.Getenv("DEXAFLOW_TASK_PGID_FILE")),
 		Sink:       sink,
 		Hostname:   hostname,
 		Version:    version.Get().Version,

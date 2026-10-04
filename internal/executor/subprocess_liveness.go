@@ -148,7 +148,7 @@ func (e *SubprocessExecutor) forgetGroup(runID, taskID string, tryNumber, pid in
 	if err != nil || rec.AgentPID != pid {
 		return
 	}
-	if alive, aerr := procgroup.GroupAlive(rec.PGID); aerr != nil || alive {
+	if alive, aerr := procgroup.Alive(rec); aerr != nil || alive {
 		return
 	}
 	if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
@@ -201,7 +201,8 @@ func (e *SubprocessExecutor) AttemptProcessAlive(_ context.Context, runID, taskI
 }
 
 // taskGroupAlive reports whether any process of the attempt's recorded task
-// group exists (kill(-pgid, 0); EPERM counts as alive). No record means no task
+// group exists (kill(-pgid, 0); EPERM counts as alive), unless the group id now
+// names an unrelated leader (see procgroup.Alive). No record means no task
 // group is known: (false, nil).
 func (e *SubprocessExecutor) taskGroupAlive(runID, taskID string, tryNumber int) (bool, error) {
 	rec, err := procgroup.Read(e.groupPath(runID, taskID, tryNumber))
@@ -211,7 +212,7 @@ func (e *SubprocessExecutor) taskGroupAlive(runID, taskID string, tryNumber int)
 	if err != nil {
 		return false, err
 	}
-	return procgroup.GroupAlive(rec.PGID)
+	return procgroup.Alive(rec)
 }
 
 // StopOrphanedTask stops the attempt's task process group when it is an orphan
