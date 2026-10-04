@@ -95,8 +95,10 @@ func TestLiteReaperWiring(t *testing.T) {
 	if err := reaper.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
 	}
-	if len(store.reapedRuns) != 1 || len(store.agentMarked) != 1 {
-		t.Errorf("settled Lite leader must reap the orphan run and the dead agent: reapedRuns=%v agentMarked=%v",
+	// agentMarked: the silent dead agent, and the dead agent that never
+	// heartbeated (Lite-only never-heartbeated path).
+	if len(store.reapedRuns) != 1 || len(store.agentMarked) != 2 {
+		t.Errorf("settled Lite leader must reap the orphan run and both dead agents: reapedRuns=%v agentMarked=%v",
 			store.reapedRuns, store.agentMarked)
 	}
 	if len(store.queuedMarked) != 0 {

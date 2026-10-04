@@ -50,8 +50,8 @@ func TestLiteReaperReapsDeadSubprocessWork(t *testing.T) {
 	if len(store.reapedRuns) != 1 {
 		t.Errorf("orphan-run must reap in Lite: reapedRuns=%v", store.reapedRuns)
 	}
-	if len(store.agentMarked) != 1 {
-		t.Errorf("agent-lost must reap a dead subprocess agent in Lite: agentMarked=%v", store.agentMarked)
+	if len(store.agentMarked) != 2 {
+		t.Errorf("agent-lost must reap a dead subprocess agent in Lite, the one that died before its first heartbeat too: agentMarked=%v", store.agentMarked)
 	}
 	if len(store.queuedMarked) != 1 {
 		t.Errorf("dispatch-lost must reap a queued TI with no agent process in Lite: queuedMarked=%v", store.queuedMarked)
@@ -70,7 +70,7 @@ func TestLiteReaperReapsDeadSubprocessWork(t *testing.T) {
 // stop the process the way a pod delete does, so it only reaps a dead one.
 func TestLiteReaperDefersOnLiveAgentProcess(t *testing.T) {
 	store := staleEverythingStore()
-	procs := &fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true}}
+	procs := &fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true, "r3/t/1": true}}
 	rec := &capturingRecorder{}
 	r := newLiteTestReaper(store, procs, rec)
 
@@ -134,7 +134,7 @@ func TestLiteReaperHeldBySettlingGate(t *testing.T) {
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
 	}
-	if len(store.reapedRuns) != 1 || len(store.agentMarked) != 1 || len(store.queuedMarked) != 1 {
+	if len(store.reapedRuns) != 1 || len(store.agentMarked) != 2 || len(store.queuedMarked) != 1 {
 		t.Errorf("once settled Lite must reap: reapedRuns=%v agentMarked=%v queuedMarked=%v",
 			store.reapedRuns, store.agentMarked, store.queuedMarked)
 	}
@@ -166,7 +166,7 @@ func (f *fakeOrphanStopper) StopOrphanedTask(_ context.Context, runID, taskID st
 func TestLiteReaperStopsAnOrphanedTaskBeforeReaping(t *testing.T) {
 	store := staleEverythingStore()
 	procs := &fakeOrphanStopper{
-		fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true}},
+		fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true, "r3/t/1": true}},
 		stopped:             map[string]bool{"r1/t/1": true, "r2/t/1": true},
 	}
 	rec := &capturingRecorder{}
@@ -176,7 +176,7 @@ func TestLiteReaperStopsAnOrphanedTaskBeforeReaping(t *testing.T) {
 		t.Fatalf("ReapOnce: %v", err)
 	}
 	if len(store.agentMarked) != 1 || len(store.queuedMarked) != 1 {
-		t.Errorf("a stopped orphan must let the reap proceed: agentMarked=%v queuedMarked=%v", store.agentMarked, store.queuedMarked)
+		t.Errorf("a stopped orphan must let the reap proceed (and a live never-heartbeated attempt must not be reaped): agentMarked=%v queuedMarked=%v", store.agentMarked, store.queuedMarked)
 	}
 	for _, want := range []string{"agent_lost_orphan_stopped", "dispatch_lost_orphan_stopped"} {
 		if rec.count(want) == 0 {
@@ -191,11 +191,11 @@ func TestLiteReaperStopsAnOrphanedTaskBeforeReaping(t *testing.T) {
 func TestLiteReaperDefersWhenTheOrphanCannotBeStopped(t *testing.T) {
 	for name, procs := range map[string]*fakeOrphanStopper{
 		"declined": {
-			fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true}},
+			fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true, "r3/t/1": true}},
 			stopped:             map[string]bool{},
 		},
 		"failed": {
-			fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true}},
+			fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true, "r3/t/1": true}},
 			stopErr:             errors.New("kill: operation not permitted"),
 		},
 	} {
@@ -220,5 +220,66 @@ func TestLiteReaperDefersWhenTheOrphanCannotBeStopped(t *testing.T) {
 				t.Errorf("the deferral must be metered as %q; got %v", want, rec.decisions)
 			}
 		})
+	}
+}
+
+// TestLiteReaperReapsAnAgentThatDiedBeforeItsFirstHeartbeat: agent-lost only
+// judges a TI that has heartbeated, and the pod-lost reaper that covers the
+// window before the first heartbeat on Kubernetes has no signal in Lite. So in
+// Lite a running TI that never heartbeated and has been running longer than
+// the agent-lost threshold is failed as agent_lost, but ONLY when its agent and
+// its task process group both read dead. A live one (even an orphan whose
+// group could be stopped), a fresh one, and one that has heartbeated (left to
+// the regular agent-lost path) are not touched by this path.
+func TestLiteReaperReapsAnAgentThatDiedBeforeItsFirstHeartbeat(t *testing.T) {
+	past := time.Now().UTC().Add(-time.Hour)
+	store := &fakeReaperStore{runningCands: []PodLostCandidate{
+		{TaskInstanceID: "never-hb-dead", DagRunID: "r5", TaskID: "t", TryNumber: 1, RunningSince: past},
+		{TaskInstanceID: "never-hb-alive", DagRunID: "r6", TaskID: "t", TryNumber: 1, RunningSince: past},
+		{TaskInstanceID: "never-hb-fresh", DagRunID: "r7", TaskID: "t", TryNumber: 1, RunningSince: time.Now().UTC().Add(-10 * time.Second)},
+		{TaskInstanceID: "heartbeated", DagRunID: "r8", TaskID: "t", TryNumber: 1, RunningSince: past, Heartbeated: true},
+	}}
+	procs := &fakeOrphanStopper{
+		fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r6/t/1": true}},
+		stopped:             map[string]bool{"r6/t/1": true},
+	}
+	rec := &capturingRecorder{}
+	r := newLiteTestReaper(store, procs, rec)
+
+	if err := r.ReapOnce(context.Background()); err != nil {
+		t.Fatalf("ReapOnce: %v", err)
+	}
+	if len(store.agentMarked) != 1 || store.agentMarked[0] != "never-hb-dead" {
+		t.Fatalf("only the dead never-heartbeated attempt may be reaped: agentMarked=%v", store.agentMarked)
+	}
+	if len(store.podMarked) != 0 {
+		t.Errorf("Lite has no pods to lose: podMarked=%v", store.podMarked)
+	}
+	if len(procs.stops) != 0 {
+		t.Errorf("an attempt that never heartbeated is never stopped as an orphan: stops=%v", procs.stops)
+	}
+	if rec.count("agent_lost_never_heartbeated") != 1 {
+		t.Errorf("the reap must be metered as agent_lost_never_heartbeated; got %v", rec.decisions)
+	}
+	if rec.count("agent_lost_never_heartbeated_process_alive") != 1 {
+		t.Errorf("the live attempt must be metered as deferred; got %v", rec.decisions)
+	}
+}
+
+// TestProReaperIgnoresNeverHeartbeatedTasksForAgentLost: the never-heartbeated
+// path is Lite-only. On Kubernetes that window belongs to pod-lost, so with no
+// liveness seam agent-lost must not fail a TI that never heartbeated.
+func TestProReaperIgnoresNeverHeartbeatedTasksForAgentLost(t *testing.T) {
+	past := time.Now().UTC().Add(-time.Hour)
+	store := &fakeReaperStore{runningCands: []PodLostCandidate{
+		{TaskInstanceID: "never-hb", DagRunID: "r5", TaskID: "t", TryNumber: 1, RunningSince: past},
+	}}
+	pods := &fakePodManager{active: map[string]bool{"r5/t/1": true}}
+	r := NewReaper(store, pods, nil, &fakeWarmLister{}, &capturingRecorder{}, reapTestLogger(), DefaultReaperConfig(), nil)
+	if err := r.ReapOnce(context.Background()); err != nil {
+		t.Fatalf("ReapOnce: %v", err)
+	}
+	if len(store.agentMarked) != 0 {
+		t.Errorf("Pro must not fail a never-heartbeated TI as agent_lost: agentMarked=%v", store.agentMarked)
 	}
 }
