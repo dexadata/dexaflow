@@ -62,7 +62,7 @@ func TestSupersededAttemptIsFencedAfterInfraReplace(t *testing.T) {
 	f.setState(t, "scheduled")
 	old := f.dispatch(t)
 	f.transition(t, domain.TaskStateQueued)
-	if err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID); err != nil {
+	if err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID, old.TryNumber, old.AttemptEpoch); err != nil {
 		t.Fatalf("MarkTaskDispatchLost: %v", err)
 	}
 	if applied, err := f.sched.ResetForInfraReplace(f.ctx, f.runUUID, "t"); err != nil || !applied {
@@ -145,7 +145,7 @@ func TestLegacyTokenFence(t *testing.T) {
 
 	// The legacy attempt is reaped and re-placed after the upgrade; the new
 	// binary dispatches the replacement at epoch >= 1.
-	if ok, err := f.sched.MarkTaskAgentLost(f.ctx, f.tiID); err != nil || !ok {
+	if ok, err := f.sched.MarkTaskAgentLost(f.ctx, f.tiID, f.tryNumber(t), f.attemptEpoch(t)); err != nil || !ok {
 		t.Fatalf("MarkTaskAgentLost ok=%v err=%v", ok, err)
 	}
 	if applied, err := f.sched.ResetForInfraReplace(f.ctx, f.runUUID, "t"); err != nil || !applied {

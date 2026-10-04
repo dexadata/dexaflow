@@ -53,7 +53,7 @@ func (f *fakeStaleQueuedStore) ListStaleQueuedCandidates(context.Context) ([]Sta
 	return f.candidates, f.listErr
 }
 
-func (f *fakeStaleQueuedStore) MarkTaskDispatchLost(_ context.Context, tiID string) error {
+func (f *fakeStaleQueuedStore) MarkTaskDispatchLost(_ context.Context, tiID string, _, _ int) error {
 	if f.failErr != nil {
 		return f.failErr
 	}

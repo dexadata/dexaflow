@@ -75,7 +75,7 @@ func TestLimaBug1_ClearResetsQueuedAtIntegration(t *testing.T) {
 	// MarkTaskDispatchLost is idempotent at the SQL layer (WHERE state='queued')
 	// so a second call before any clear is a no-op — that's not the bug.
 	tiID := taskInstanceID(t, sched, ctx, runUUID, "hello")
-	if err := sched.MarkTaskDispatchLost(ctx, tiID); err != nil {
+	if err := sched.MarkTaskDispatchLost(ctx, tiID, 1, 0); err != nil {
 		t.Fatalf("MarkTaskDispatchLost: %v", err)
 	}
 	if got := taskInstanceState(t, sched, ctx, runUUID, "hello"); got != domain.TaskStateFailed {
