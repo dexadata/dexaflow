@@ -114,12 +114,27 @@ func EncodeLine(ev Event) string {
 }
 
 // Ref identifies a task instance's log stream and maps to its storage location.
+//
+// AttemptEpoch names one execution of the try (ADR 0051 amendment): an infra
+// re-place, a reschedule poke or a repeated dispatch runs the same try again,
+// and each execution keeps its own stream. Epoch 0 maps to the key every log
+// had before the epoch existed, so those logs are still found.
 type Ref struct {
-	TenantID  string
-	DagID     string
-	RunID     string
-	TaskID    string
-	TryNumber int
+	TenantID     string
+	DagID        string
+	RunID        string
+	TaskID       string
+	TryNumber    int
+	AttemptEpoch int
+}
+
+// fileName is the last segment of the ref's storage location:
+// {try}.log for epoch 0 and {try}.e{epoch}.log otherwise.
+func (r Ref) fileName() string {
+	if r.AttemptEpoch == 0 {
+		return fmt.Sprintf("%d.log", r.TryNumber)
+	}
+	return fmt.Sprintf("%d.e%d.log", r.TryNumber, r.AttemptEpoch)
 }
 
 // LogWriter appends structured log events for one task attempt and flushes on
@@ -145,7 +160,8 @@ type MarkerSink interface {
 	AppendEvent(ref Ref, ev Event) error
 }
 
-// DiskSink writes logs to ${root}/{tenant}/{dag}/{run}/{task}/{try}.log.
+// DiskSink writes logs to ${root}/{tenant}/{dag}/{run}/{task}/{try}.log, or
+// {try}.e{epoch}.log for an execution with a non-zero attempt epoch.
 type DiskSink struct {
 	root string
 }
@@ -175,7 +191,7 @@ func (d *DiskSink) withRoot(fn func(*os.Root) (*os.File, error)) (*os.File, erro
 
 // rel is the storage location relative to the sink root, for use with os.Root.
 func (d *DiskSink) rel(ref Ref) string {
-	return filepath.Join(ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, fmt.Sprintf("%d.log", ref.TryNumber))
+	return filepath.Join(ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, ref.fileName())
 }
 
 // ErrUnsafeRef reports a Ref whose fields cannot be used as path segments.
@@ -205,6 +221,9 @@ func (r Ref) validate() error {
 		if err := safeSegment(f.value); err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrUnsafeRef, f.name, err)
 		}
+	}
+	if r.AttemptEpoch < 0 {
+		return fmt.Errorf("%w: attempt_epoch: is negative", ErrUnsafeRef)
 	}
 	return nil
 }

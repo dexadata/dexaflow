@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **A re-placed task no longer overwrites the log of the execution it
+  replaced.** When the control plane re-placed a task after an infrastructure
+  failure, or re-poked a reschedule-mode sensor, every execution of that try
+  wrote the same log object, so only the last one survived. Each execution now
+  writes its own object (`{try}.e{epoch}.log`; the first, and every log written
+  before the upgrade, keeps `{try}.log`), and the log endpoint serves all of a
+  try's executions in order, each introduced by one system line. The tries
+  list still shows each try once, with its latest execution's state. (#863)
+time: 2026-10-04T23:59:00.000000000-03:00

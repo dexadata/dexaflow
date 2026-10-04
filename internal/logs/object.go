@@ -40,7 +40,7 @@ type Pruner interface {
 
 // ObjectSink stores each task attempt as a single object in an ObjectStore,
 // keyed the same way the disk sink lays out files
-// ({prefix}/{tenant}/{dag}/{run}/{task}/{try}.log). Object stores have no
+// ({prefix}/{tenant}/{dag}/{run}/{task}/{try}.log, or {try}.e{epoch}.log). Object stores have no
 // append, so a writer accumulates the attempt's events and rewrites the object
 // incrementally (by size and on a time cadence) with a final rewrite on Close,
 // so a control plane killed mid-attempt leaves a partial object rather than
@@ -83,7 +83,7 @@ func NewObjectSink(ctx context.Context, store ObjectStore, prefix string, logger
 // operator can reason about both the same way. path.Join (not filepath.Join)
 // keeps forward slashes on every OS, since object keys are not filesystem paths.
 func (o *ObjectSink) key(ref Ref) string {
-	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, fmt.Sprintf("%d.log", ref.TryNumber))
+	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, ref.fileName())
 }
 
 // Open validates the ref and returns a writer that keeps the attempt's object

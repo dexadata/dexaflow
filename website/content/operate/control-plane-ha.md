@@ -298,7 +298,7 @@ only one pod can hold.
 2. **Know what happens to old logs.** Logs written before the switch stay where
    they were. With the object sink the control plane serves logs from the bucket
    only, so keep the old PVC around (or copy it into the bucket under the same
-   `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log` layout) if you need the
+   `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log` layout, or `{try}.e{epoch}.log` for a re-placed execution of the try) if you need the
    history in the UI.
 3. **Apply the profile.** `helm upgrade -f values-ha.yaml`. With the PVC gone the
    update strategy auto-selects `RollingUpdate`, the second replica comes up

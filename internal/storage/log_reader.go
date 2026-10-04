@@ -47,25 +47,59 @@ func (r *LogReader) Tail(ctx context.Context, tenant, dagID, runID, taskID strin
 	return lines, cancel, nil
 }
 
+// maxTryLogStreams bounds how many executions' streams one try's log read
+// probes and serves. Every execution of a try has its own attempt epoch (ADR
+// 0051 amendment), and a reschedule-mode sensor starts a new execution on
+// every poke, so a long-running sensor's try can span many epochs. The read
+// keeps the epoch-0 stream and the most recent executions up to this bound.
+const maxTryLogStreams = 256
+
 // ReadLogs resolves the run reference (tenant name -> id, run_id -> dag_run id),
 // then opens the stored log for the task attempt. It returns domain.ErrNotFound
 // when the run or its log file is absent. See issue #21 for the resolution cost.
+//
+// The API addresses a try, and one try can have several executions (an infra
+// re-place, a reschedule poke, a repeated dispatch), each storing its stream
+// under its own attempt epoch (#863). The epochs the try can span come from
+// the database (TryAttemptEpochBounds), and logs.ReadAttempts serves every
+// stored one in order. A try that ran once reads exactly as before.
 func (r *LogReader) ReadLogs(ctx context.Context, tenant, dagID, runID, taskID string, tryNumber int) (io.ReadCloser, error) {
 	ref, err := r.q.ResolveRunRef(ctx, queries.ResolveRunRefParams{Name: tenant, DagID: dagID, RunID: runID})
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
-	rc, err := r.sink.Read(logs.Ref{
+	bounds, err := r.q.TryAttemptEpochBounds(ctx, queries.TryAttemptEpochBoundsParams{
+		DagRunID: ref.DagRunID, TaskID: taskID, TryNumber: toInt32(tryNumber),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolving the try's attempt epochs: %w", err)
+	}
+	rc, err := logs.ReadAttempts(r.sink, logs.Ref{
 		TenantID:  uuidToString(ref.TenantID),
 		DagID:     dagID,
 		RunID:     uuidToString(ref.DagRunID),
 		TaskID:    taskID,
 		TryNumber: tryNumber,
-	})
+	}, tryEpochs(int(bounds.Low), int(bounds.High)))
 	if err != nil {
 		return nil, classifyLogReadError(err)
 	}
 	return rc, nil
+}
+
+// tryEpochs is the epochs a try's log read probes: 0, where every log written
+// before the epoch existed lives, then (low, high], capped to the most recent
+// maxTryLogStreams.
+func tryEpochs(low, high int) []int {
+	if high-low > maxTryLogStreams {
+		low = high - maxTryLogStreams
+	}
+	out := make([]int, 0, high-low+1)
+	out = append(out, 0)
+	for e := max(low+1, 1); e <= high; e++ {
+		out = append(out, e)
+	}
+	return out
 }
 
 // classifyLogReadError maps a sink read error to the API-facing error. Only a

@@ -222,6 +222,9 @@ ORDER BY task_id;
 -- Returns every attempt for (run, task), oldest first. UNIONs the current
 -- task_instances row with all archived task_instance_history rows so the UI's
 -- /tries endpoint can render one navigable tab per attempt (Lima bug #241).
+-- One entry per try (ADR 0051 amendment, #863): an infra re-place archives the
+-- try and keeps it on the current row, so a history row for the current try is
+-- left out and the current row, the try's latest execution, stands for it.
 -- Each row carries the per-attempt fields PLUS the run-constant fields
 -- (operator, max_tries, map_index) copied from the current TI; archived rows
 -- get them via the JOIN.
@@ -246,6 +249,7 @@ SELECT
 FROM task_instance_history h
 JOIN task_instances ti ON ti.id = h.task_instance_id
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+  AND h.try_number <> ti.try_number
 UNION ALL
 SELECT
     ti.id AS task_instance_id,
@@ -268,6 +272,35 @@ SELECT
 FROM task_instances ti
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
 ORDER BY try_number;
+
+-- name: TryAttemptEpochBounds :one
+-- The range of attempt epochs one try's executions can have, for the log
+-- reader (ADR 0051 amendment, #863). Epochs grow monotonically per row and the
+-- try only grows, so every execution of try N has an epoch above the latest
+-- epoch archived for an earlier try (low, exclusive) and at most the try's own
+-- latest epoch (high, inclusive): the current row's when it is still on try N,
+-- else the try's history row, which holds its latest archived execution. A row
+-- the previous release archived carries epoch 0, so its try reads as epoch 0
+-- alone. Epoch 0 is always read as well, since every pre-upgrade log has it.
+SELECT
+    COALESCE((
+        SELECT max(h.attempt_epoch)
+        FROM task_instance_history h
+        JOIN task_instances lt ON lt.id = h.task_instance_id
+        WHERE lt.dag_run_id = sqlc.arg(dag_run_id) AND lt.task_id = sqlc.arg(task_id)
+          AND h.try_number < sqlc.arg(try_number)
+    ), 0)::int AS low,
+    COALESCE((
+        SELECT cur.attempt_epoch FROM task_instances cur
+        WHERE cur.dag_run_id = sqlc.arg(dag_run_id) AND cur.task_id = sqlc.arg(task_id)
+          AND cur.try_number = sqlc.arg(try_number)
+    ), (
+        SELECT h.attempt_epoch
+        FROM task_instance_history h
+        JOIN task_instances ht ON ht.id = h.task_instance_id
+        WHERE ht.dag_run_id = sqlc.arg(dag_run_id) AND ht.task_id = sqlc.arg(task_id)
+          AND h.try_number = sqlc.arg(try_number)
+    ), 0)::int AS high;
 
 -- name: UpdateTaskInstanceState :one
 UPDATE task_instances
@@ -352,8 +385,12 @@ WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = ANY(sqlc.arg(task_ids)::te
 -- already fences the attempt it superseded before the next dispatch claims its
 -- own epoch (ClaimAttemptEpoch). The archive row records the superseded
 -- attempt's epoch. The archive key stays (task_instance_id, try_number) for
--- compatibility with the previous release, so a second execution of one try is
--- still dropped by ON CONFLICT until the key is widened (ADR 0051 amendment, A5).
+-- compatibility with the previous release until PR A6 widens it, so one try
+-- keeps one history row: a later execution of the try (higher epoch) replaces
+-- the row an earlier one archived, and the row always holds the try's latest
+-- execution, which is what the tries endpoint shows (ADR 0051 amendment, A5).
+-- An older binary archives with DO NOTHING against the same key, which still
+-- plans and runs. Each execution's log is kept apart by its epoch-keyed object.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -366,7 +403,21 @@ WITH archived AS (
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
-    ON CONFLICT (task_instance_id, try_number) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO UPDATE
+    SET state = EXCLUDED.state,
+        queued_at = EXCLUDED.queued_at,
+        scheduled_at = EXCLUDED.scheduled_at,
+        started_at = EXCLUDED.started_at,
+        ended_at = EXCLUDED.ended_at,
+        duration_seconds = EXCLUDED.duration_seconds,
+        exit_code = EXCLUDED.exit_code,
+        error_message = EXCLUDED.error_message,
+        hostname = EXCLUDED.hostname,
+        pod_name = EXCLUDED.pod_name,
+        node_name = EXCLUDED.node_name,
+        note = EXCLUDED.note,
+        attempt_epoch = EXCLUDED.attempt_epoch
+    WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -406,7 +457,21 @@ WITH archived AS (
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2 AND src.state = 'up_for_retry'
-    ON CONFLICT (task_instance_id, try_number) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO UPDATE
+    SET state = EXCLUDED.state,
+        queued_at = EXCLUDED.queued_at,
+        scheduled_at = EXCLUDED.scheduled_at,
+        started_at = EXCLUDED.started_at,
+        ended_at = EXCLUDED.ended_at,
+        duration_seconds = EXCLUDED.duration_seconds,
+        exit_code = EXCLUDED.exit_code,
+        error_message = EXCLUDED.error_message,
+        hostname = EXCLUDED.hostname,
+        pod_name = EXCLUDED.pod_name,
+        node_name = EXCLUDED.node_name,
+        note = EXCLUDED.note,
+        attempt_epoch = EXCLUDED.attempt_epoch
+    WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -452,7 +517,21 @@ WITH archived AS (
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
       AND src.state = 'failed' AND src.last_failure_kind = 'infra'
-    ON CONFLICT (task_instance_id, try_number) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO UPDATE
+    SET state = EXCLUDED.state,
+        queued_at = EXCLUDED.queued_at,
+        scheduled_at = EXCLUDED.scheduled_at,
+        started_at = EXCLUDED.started_at,
+        ended_at = EXCLUDED.ended_at,
+        duration_seconds = EXCLUDED.duration_seconds,
+        exit_code = EXCLUDED.exit_code,
+        error_message = EXCLUDED.error_message,
+        hostname = EXCLUDED.hostname,
+        pod_name = EXCLUDED.pod_name,
+        node_name = EXCLUDED.node_name,
+        note = EXCLUDED.note,
+        attempt_epoch = EXCLUDED.attempt_epoch
+    WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -685,7 +764,21 @@ WITH archived AS (
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
-    ON CONFLICT (task_instance_id, try_number) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO UPDATE
+    SET state = EXCLUDED.state,
+        queued_at = EXCLUDED.queued_at,
+        scheduled_at = EXCLUDED.scheduled_at,
+        started_at = EXCLUDED.started_at,
+        ended_at = EXCLUDED.ended_at,
+        duration_seconds = EXCLUDED.duration_seconds,
+        exit_code = EXCLUDED.exit_code,
+        error_message = EXCLUDED.error_message,
+        hostname = EXCLUDED.hostname,
+        pod_name = EXCLUDED.pod_name,
+        node_name = EXCLUDED.node_name,
+        note = EXCLUDED.note,
+        attempt_epoch = EXCLUDED.attempt_epoch
+    WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -720,7 +813,21 @@ WITH archived AS (
     FROM task_instances src
     WHERE src.dag_run_id = $1
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
-    ON CONFLICT (task_instance_id, try_number) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO UPDATE
+    SET state = EXCLUDED.state,
+        queued_at = EXCLUDED.queued_at,
+        scheduled_at = EXCLUDED.scheduled_at,
+        started_at = EXCLUDED.started_at,
+        ended_at = EXCLUDED.ended_at,
+        duration_seconds = EXCLUDED.duration_seconds,
+        exit_code = EXCLUDED.exit_code,
+        error_message = EXCLUDED.error_message,
+        hostname = EXCLUDED.hostname,
+        pod_name = EXCLUDED.pod_name,
+        node_name = EXCLUDED.node_name,
+        note = EXCLUDED.note,
+        attempt_epoch = EXCLUDED.attempt_epoch
+    WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti

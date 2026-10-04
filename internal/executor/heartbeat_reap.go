@@ -197,7 +197,10 @@ func (r *agentLostReaper) writeAgentLostMarker(c AgentLostCandidate, now time.Ti
 	if r.sink == nil {
 		return
 	}
-	ref := logs.Ref{TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber}
+	ref := logs.Ref{
+		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,
+		TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
+	}
 	ev := logs.Event{
 		Time:    now,
 		Level:   "error",
