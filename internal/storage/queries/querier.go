@@ -97,6 +97,11 @@ type Querier interface {
 	// The implicit default pool is never deletable (Airflow parity): the guard is in
 	// the query so a direct call cannot orphan the fallback pool the gate resolves to.
 	DeletePool(ctx context.Context, arg DeletePoolParams) (int64, error)
+	// Remove a built-in role's grants that its "default" twin no longer has, so
+	// re-running ensure undoes drift (#1305). Only system roles with a twin in
+	// "default" are touched; custom roles keep every grant. For "default" itself
+	// each role is its own twin, so nothing is deleted.
+	DeleteStaleSystemRolePermissions(ctx context.Context, tenantID pgtype.UUID) error
 	// Remove every role grant for a user: the delete half of the IdP-authoritative
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error

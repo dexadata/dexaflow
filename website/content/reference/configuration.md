@@ -660,8 +660,9 @@ a user session never reaches them.
 digits or `-`) with the same built-in roles, role permissions and default pool
 as the `default` tenant, copied from it so every tenant's ladder stays equal.
 It answers `201` when the tenant is new and `200` when it already existed; a
-second call fills in anything missing and, apart from `default_pool_slots`
-below, changes nothing else.
+second call fills in anything missing and brings the built-in roles' permissions
+back in line with `default`'s, removing the ones `default` no longer grants.
+Apart from that and `default_pool_slots` below, it changes nothing else.
 
 The same body may carry `"default_pool_slots": 8` to size the tenant's
 `default_pool`, the slot cap every task without an explicit pool shares within

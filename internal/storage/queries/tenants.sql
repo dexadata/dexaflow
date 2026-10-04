@@ -26,6 +26,25 @@ JOIN roles nr ON nr.tenant_id = sqlc.arg(tenant_id)::uuid AND nr.name = dr.name
 WHERE dr.is_system
 ON CONFLICT DO NOTHING;
 
+-- name: DeleteStaleSystemRolePermissions :exec
+-- Remove a built-in role's grants that its "default" twin no longer has, so
+-- re-running ensure undoes drift (#1305). Only system roles with a twin in
+-- "default" are touched; custom roles keep every grant. For "default" itself
+-- each role is its own twin, so nothing is deleted.
+DELETE FROM role_permissions rp
+USING roles nr, roles dr, tenants d
+WHERE rp.role_id = nr.id
+  AND nr.tenant_id = sqlc.arg(tenant_id)::uuid
+  AND nr.is_system
+  AND d.name = 'default'
+  AND dr.tenant_id = d.id
+  AND dr.name = nr.name
+  AND dr.is_system
+  AND NOT EXISTS (
+      SELECT 1 FROM role_permissions drp
+      WHERE drp.role_id = dr.id AND drp.permission_id = rp.permission_id
+  );
+
 -- name: InsertDefaultPool :exec
 -- The implicit default pool every tenant needs (migration 023 seeds it for
 -- "default"), copied from default's so the slot count stays in step.

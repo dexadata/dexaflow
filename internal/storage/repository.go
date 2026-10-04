@@ -1998,10 +1998,12 @@ func (r *Repository) ClearImportError(ctx context.Context, tenant, filename stri
 // EnsureTenant creates the tenant name with the built-in roles, their
 // permissions and the default pool copied from the "default" tenant, all in
 // one transaction (#1283). It is idempotent: for an existing tenant it fills in
-// anything missing and reports created=false. A positive defaultPoolSlots sizes
-// the tenant's default pool to that many slots, on creation or later; a
-// non-positive value leaves an existing pool alone and gives a new one the
-// default tenant's size.
+// anything missing and reports created=false. Each call also reconciles the
+// built-in roles' grants with default's, removing the ones default no longer
+// has, so re-running it repairs a drifted ladder (#1305). Custom roles are
+// never changed. A positive defaultPoolSlots sizes the tenant's default pool to
+// that many slots, on creation or later; a non-positive value leaves an
+// existing pool alone and gives a new one the default tenant's size.
 func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int) (created bool, err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -2022,6 +2024,9 @@ func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string,
 	}
 	if err := qtx.CopyDefaultRolePermissions(ctx, t.ID); err != nil {
 		return false, fmt.Errorf("seeding role permissions: %w", err)
+	}
+	if err := qtx.DeleteStaleSystemRolePermissions(ctx, t.ID); err != nil {
+		return false, fmt.Errorf("removing stale role permissions: %w", err)
 	}
 	if err := ensureDefaultPool(ctx, qtx, t.ID, defaultPoolSlots); err != nil {
 		return false, err

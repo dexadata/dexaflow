@@ -23,7 +23,8 @@ import (
 // storage.Repository implements it.
 type ServiceTenantStore interface {
 	// EnsureTenant creates a tenant with the built-in roles and default pool,
-	// or fills in what is missing; created reports whether it was new.
+	// or fills in what is missing and aligns the built-in roles' grants with
+	// the default tenant's; created reports whether it was new.
 	EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int) (created bool, err error)
 	// EnsureIssuerUser makes sure a passwordless user linked to (provider,
 	// subject) exists in tenant with exactly roles.

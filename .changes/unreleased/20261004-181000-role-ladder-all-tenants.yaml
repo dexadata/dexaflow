@@ -1,0 +1,8 @@
+kind: Fixed
+body: |-
+  **Re-running `PUT /api/v2/service/tenants/{tenant}` repairs a drifted role
+  ladder.** A tenant the service API created copied the built-in roles'
+  permissions from `default` once, and later calls only added grants, so a
+  permission removed from a built-in role survived on every other tenant. The
+  call now also removes built-in role grants that `default` no longer has.
+  Custom roles keep all of their permissions. (#1305)

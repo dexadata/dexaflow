@@ -44,6 +44,31 @@ func (q *Queries) CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UU
 	return err
 }
 
+const deleteStaleSystemRolePermissions = `-- name: DeleteStaleSystemRolePermissions :exec
+DELETE FROM role_permissions rp
+USING roles nr, roles dr, tenants d
+WHERE rp.role_id = nr.id
+  AND nr.tenant_id = $1::uuid
+  AND nr.is_system
+  AND d.name = 'default'
+  AND dr.tenant_id = d.id
+  AND dr.name = nr.name
+  AND dr.is_system
+  AND NOT EXISTS (
+      SELECT 1 FROM role_permissions drp
+      WHERE drp.role_id = dr.id AND drp.permission_id = rp.permission_id
+  )
+`
+
+// Remove a built-in role's grants that its "default" twin no longer has, so
+// re-running ensure undoes drift (#1305). Only system roles with a twin in
+// "default" are touched; custom roles keep every grant. For "default" itself
+// each role is its own twin, so nothing is deleted.
+func (q *Queries) DeleteStaleSystemRolePermissions(ctx context.Context, tenantID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteStaleSystemRolePermissions, tenantID)
+	return err
+}
+
 const insertDefaultPool = `-- name: InsertDefaultPool :exec
 INSERT INTO pools (tenant_id, name, slots, description, is_default)
 SELECT $1::uuid, p.name, p.slots, p.description, true
