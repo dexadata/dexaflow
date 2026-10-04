@@ -1397,6 +1397,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		InstanceName:                 cfg.UI.InstanceName,
 		UIAutoRefreshIntervalSeconds: cfg.UI.AutoRefreshIntervalSeconds,
 		UITheme:                      uiTheme(cfg),
+		UIETagRevalidation:           cfg.UI.ETagRevalidation,
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
 
