@@ -89,15 +89,19 @@ coexist out of the box.
 
 ```bash
 kubectl create namespace leoflow
-helm install lf oci://ghcr.io/dexadata/charts/leoflow --version 0.4.8 -n leoflow \
-  --set image.tag=v0.4.8 \
-  --set migrations.image.tag=v0.4.8 \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.0 -n leoflow \
+  --set image.tag=v0.5.0 \
+  --set migrations.image.tag=v0.5.0 \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
   --set secretKey="$(openssl rand -hex 32)" \
   --set bootstrap.password='change-me'
 ```
+
+A release installed before the rename keeps upgrading with
+`oci://ghcr.io/dexadata/charts/leoflow`; see
+[names from before the rename](https://dexaflow.dexadata.ai/reference/published-images/#names-from-before-the-rename).
 
 Pro deploys the control plane on a real cluster (`dexaflow-server` Deployment
 + RBAC for the pod-per-task executor + a pre-install migrations Job). **External**
