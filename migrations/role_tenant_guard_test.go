@@ -288,9 +288,9 @@ func dollarQuotedEnd(sql string, i int) int {
 			return i + 1
 		}
 	}
-	close := strings.Index(sql[i+len(tag):], tag)
-	if close < 0 {
+	closing := strings.Index(sql[i+len(tag):], tag)
+	if closing < 0 {
 		return len(sql)
 	}
-	return i + len(tag) + close + len(tag)
+	return i + len(tag) + closing + len(tag)
 }
