@@ -545,7 +545,8 @@ type Querier interface {
 	// since reported on is left alone. warm_worker_id is cleared as in
 	// RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
 	// as on every rail that starts a new execution of the row (ADR 0051
-	// amendment, A0).
+	// amendment, A0). The requeue is a rail, so attempt_epoch is bumped: a late
+	// start or report from the abandoned dispatch is fenced (ADR 0051, A1).
 	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding

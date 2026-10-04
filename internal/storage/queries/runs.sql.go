@@ -2176,7 +2176,8 @@ SET state = 'scheduled',
     next_dispatch_at = $1,
     dispatch_attempts = dispatch_attempts + $2::int,
     warm_worker_id = NULL,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $3
   AND task_id = $4
   AND state IN ('scheduled', 'queued')
@@ -2197,7 +2198,8 @@ type RequeueDispatchParams struct {
 // since reported on is left alone. warm_worker_id is cleared as in
 // RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
 // as on every rail that starts a new execution of the row (ADR 0051
-// amendment, A0).
+// amendment, A0). The requeue is a rail, so attempt_epoch is bumped: a late
+// start or report from the abandoned dispatch is fenced (ADR 0051, A1).
 func (q *Queries) RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueDispatch,
 		arg.NextDispatchAt,

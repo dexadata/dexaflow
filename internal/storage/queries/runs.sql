@@ -1083,13 +1083,15 @@ WHERE dag_run_id = sqlc.arg(dag_run_id)
 -- since reported on is left alone. warm_worker_id is cleared as in
 -- RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
 -- as on every rail that starts a new execution of the row (ADR 0051
--- amendment, A0).
+-- amendment, A0). The requeue is a rail, so attempt_epoch is bumped: a late
+-- start or report from the abandoned dispatch is fenced (ADR 0051, A1).
 UPDATE task_instances
 SET state = 'scheduled',
     next_dispatch_at = sqlc.arg(next_dispatch_at),
     dispatch_attempts = dispatch_attempts + sqlc.arg(attempt_increment)::int,
     warm_worker_id = NULL,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = sqlc.arg(dag_run_id)
   AND task_id = sqlc.arg(task_id)
   AND state IN ('scheduled', 'queued');
