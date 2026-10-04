@@ -160,13 +160,15 @@ func (q *Queries) CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int
 
 const countDagsByLatestRunState = `-- name: CountDagsByLatestRunState :many
 SELECT lr.state AS state, count(*) AS n
-FROM (
-    SELECT DISTINCT ON (r.dag_id) r.state
+FROM dags d
+CROSS JOIN LATERAL (
+    SELECT r.state
     FROM dag_runs r
-    JOIN dags d ON d.id = r.dag_id
-    WHERE d.tenant_id = $1
-    ORDER BY r.dag_id, r.logical_date DESC
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
 ) lr
+WHERE d.tenant_id = $1
 GROUP BY lr.state
 `
 
@@ -175,6 +177,8 @@ type CountDagsByLatestRunStateRow struct {
 	N     int64       `json:"n"`
 }
 
+// One index probe per DAG of the tenant for its newest run. DAGs without runs
+// drop out of the CROSS JOIN, so they are not counted.
 func (q *Queries) CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error) {
 	rows, err := q.db.Query(ctx, countDagsByLatestRunState, tenantID)
 	if err != nil {
