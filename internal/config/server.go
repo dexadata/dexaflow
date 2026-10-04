@@ -419,6 +419,17 @@ type ServerSection struct {
 	// secret (BREACH). Other JSON can still echo request input next to private
 	// data, which is the trade-off of turning this on. Off by default (ADR 0062).
 	GzipResponses bool `mapstructure:"gzip_responses"`
+	// ReadTimeout bounds reading a whole request, headers and body, on the API
+	// and metrics listeners: a slow client cannot hold a connection open by
+	// trickling a body. Set it above the slowest legitimate upload. It never
+	// limits a response: net/http lifts the read deadline once the body is
+	// read, so live log tails are unaffected. 0 (the default, ADR 0062 gate)
+	// means no limit, as before.
+	ReadTimeout time.Duration `mapstructure:"read_timeout"`
+	// IdleTimeout closes a keep-alive connection that has been idle this long.
+	// 0 (the default) keeps idle connections open, as before, even when
+	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
+	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
 }
 
 // Server roles (ADR 0049).
@@ -968,6 +979,9 @@ var serverDefaults = map[string]any{
 	"execution.warm_pool_event_refill": false,
 	// Gate (ADR 0062): false sends every API body uncompressed, as before.
 	"server.gzip_responses": false,
+	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
+	"server.read_timeout": "0s",
+	"server.idle_timeout": "0s",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -1578,6 +1592,12 @@ func isLoopbackHost(host string) bool {
 // validateRole rejects an unknown server.role (ADR 0049). Empty is valid (defaults
 // to "all"). A typo like "worker" is a loud boot failure, not a silent monolith.
 func (c *ServerConfig) validateRole() error {
+	// The listener timeouts are validated with the role: both shape how this
+	// process serves HTTP. A negative duration is a typo, not "off".
+	if c.Server.ReadTimeout < 0 || c.Server.IdleTimeout < 0 {
+		return fmt.Errorf("server.read_timeout (%v) and server.idle_timeout (%v) must not be negative; 0 disables them",
+			c.Server.ReadTimeout, c.Server.IdleTimeout)
+	}
 	switch c.Server.Role {
 	case "", RoleAll, RoleAPI, RoleScheduler:
 		return nil
