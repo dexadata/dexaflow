@@ -50,6 +50,9 @@ func TestAlertHTTPClientUnguardedByDefault(t *testing.T) {
 	if err := postTo(t, c, srv.URL); err != nil {
 		t.Errorf("POST with the guard off = %v, want success", err)
 	}
+	if c.Transport != nil {
+		t.Errorf("transport = %T, want nil (http.DefaultTransport, proxy environment included)", c.Transport)
+	}
 	if c.Timeout != alertHTTPTimeout {
 		t.Errorf("timeout = %v, want %v", c.Timeout, alertHTTPTimeout)
 	}

@@ -471,7 +471,7 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency). |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. |
 | `DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS` | `false` | both | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses. See [Alert destinations](#alert-destinations). |
-| `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | *(empty)* | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Ignored while the block is off. An invalid entry fails startup. |
+| `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | *(empty)* | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Applied only while the block is on, but validated at startup either way: an invalid entry fails startup. |
 
 ### Executor (`executor.*`)
 
@@ -696,7 +696,11 @@ Set `scheduler.alerts.block_private_destinations: true` (env
 check runs on the address the control plane is about to connect to, after DNS
 resolution, so a host name that resolves to an internal address is refused even
 if it resolved to a public one earlier (DNS rebinding), and every redirect hop
-is checked the same way. With the block on, alert requests are dialed directly
+is checked the same way (at most three redirects are followed). A NAT64
+(`64:ff9b::/96`) or 6to4 address is checked as the IPv4 address it carries, so
+an IPv6-only cluster behind DNS64 still reaches a public IPv4-only endpoint.
+The block also covers the Azure host endpoint `168.63.129.16`, which looks
+public but is node-local. With the block on, alert requests are dialed directly
 and do not use the `HTTP_PROXY` / `HTTPS_PROXY` environment, since through a
 proxy the real destination could not be checked. A refused alert is logged and
 counted as a failed delivery, like any other send error.

@@ -669,7 +669,9 @@ type AlertsSection struct {
 	// an in-cluster endpoint keeps working.
 	BlockPrivateDestinations bool `mapstructure:"block_private_destinations"`
 	// AllowedCIDRs exempts these ranges (CIDRs or single addresses) from the
-	// block, e.g. an on-premises chat server. Ignored while the block is off.
+	// block, e.g. an on-premises chat server. Validated at startup even while the
+	// block is off, so a typo surfaces before anyone turns it on; applied only
+	// while it is on.
 	AllowedCIDRs []string `mapstructure:"allowed_cidrs"`
 }
 
