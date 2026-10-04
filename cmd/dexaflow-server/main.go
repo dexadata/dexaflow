@@ -1384,6 +1384,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedProxies:               cfg.Server.TrustedProxies,
 		TokenTTLSecs:                 cfg.Auth.JWT.TokenTTLSeconds,
 		MaxPageLimit:                 cfg.Server.MaxPageLimit,
+		GzipResponses:                cfg.Server.GzipResponses,
 		TokenRenewer:                 authn,
 		TokenMaxLifetimeSecs:         cfg.Auth.JWT.MaxLifetimeSeconds,
 		InstanceName:                 cfg.UI.InstanceName,
