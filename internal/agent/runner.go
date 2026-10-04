@@ -182,6 +182,7 @@ func (r *Runner) register(ctx context.Context) error {
 }
 
 func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string, error) {
+	fetcher := r.prefetchXCom(ctx, spec)
 	var xcom []string
 	for param, upstreams := range spec.GetXcomInputMapping() {
 		taskIDs := upstreams.GetTaskIds()
@@ -193,7 +194,7 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 			// Single upstream: deliver the raw return_value JSON as-is, so a task
 			// declaring `def f(x: dict)` receives the upstream's dict (not a
 			// 1-element list wrapping it). Matches Airflow's TaskFlow semantics.
-			resp, err := r.Client.FetchXCom(ctx, &agentv1.FetchXComRequest{
+			resp, err := fetcher.FetchXCom(ctx, &agentv1.FetchXComRequest{
 				UpstreamTaskId: taskIDs[0],
 				Key:            "return_value",
 			})
@@ -209,7 +210,7 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 			// Fan-in: each upstream's return_value becomes one element of a JSON
 			// array, in declaration order. An absent upstream contributes `null`
 			// so the function still receives len(upstreams) elements.
-			collected, err := fetchFanInValues(ctx, r.Client, param, taskIDs)
+			collected, err := fetchFanInValues(ctx, fetcher, param, taskIDs)
 			if err != nil {
 				return nil, err
 			}
@@ -225,7 +226,7 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 	// and never reach the agent's pipe.
 	env = append(env, "PYTHONUNBUFFERED=1", "PYTHONIOENCODING=UTF-8")
 	env = append(env, runContextEnv(spec)...)
-	byTaskEnv, err := r.xcomByTaskEnv(ctx, spec)
+	byTaskEnv, err := xcomByTaskEnv(ctx, fetcher, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -337,13 +338,13 @@ const upstreamXComEnv = "LEOFLOW_UPSTREAM_XCOM"
 // ti.xcom_pull — a python @task gets its inputs via the param-keyed xcom_input_mapping
 // — so the map is built for airflow_operator tasks only, avoiding wasted fetches. An
 // upstream with no return_value is omitted (pulls as None). nil when nothing to deliver.
-func (r *Runner) xcomByTaskEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string, error) {
+func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskSpec) ([]string, error) {
 	if spec.GetOperator() != "airflow_operator" {
 		return nil, nil
 	}
 	byTask := map[string]json.RawMessage{}
 	for _, taskID := range spec.GetDependsOn() {
-		resp, err := r.Client.FetchXCom(ctx, &agentv1.FetchXComRequest{
+		resp, err := fetcher.FetchXCom(ctx, &agentv1.FetchXComRequest{
 			UpstreamTaskId: taskID,
 			Key:            "return_value",
 		})
@@ -574,7 +575,7 @@ func (r *Runner) resolveExternal(ctx context.Context, refs []secretsource.Ref) (
 // upstream's return value, or `null` if the upstream produced no XCom (Airflow
 // semantics: missing XCom is None). The function the runtime calls receives
 // this as `list[T]` — len(upstreams) elements, never fewer.
-func fetchFanInValues(ctx context.Context, client agentv1.AgentServiceClient, param string, upstreams []string) ([]byte, error) {
+func fetchFanInValues(ctx context.Context, client xcomFetcher, param string, upstreams []string) ([]byte, error) {
 	pieces := make([][]byte, 0, len(upstreams))
 	for _, upstream := range upstreams {
 		resp, err := client.FetchXCom(ctx, &agentv1.FetchXComRequest{
