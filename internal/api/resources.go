@@ -82,7 +82,44 @@ func pagination(c *gin.Context) (limit, offset int) {
 	if n, err := strconv.Atoi(c.Query("offset")); err == nil && n >= 0 {
 		offset = n
 	}
-	return limit, offset
+	return capPageLimit(c, limit), offset
+}
+
+// contextKeyMaxPageLimit carries server.max_page_limit into the handlers.
+const contextKeyMaxPageLimit = "leoflow.max_page_limit"
+
+// maxPageLimit stamps the configured page-size cap on every request, so the
+// shared pagination helpers can read it. Registered only when a cap is set.
+func maxPageLimit(n int) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(contextKeyMaxPageLimit, n)
+		c.Next()
+	}
+}
+
+// capPageLimit clamps n to server.max_page_limit when one is configured, the
+// way Airflow serves a limit above [api] maximum_page_limit.
+func capPageLimit(c *gin.Context, n int) int {
+	if maxN := c.GetInt(contextKeyMaxPageLimit); maxN > 0 && n > maxN {
+		return maxN
+	}
+	return n
+}
+
+// dagRunPageLister lists a DAG's runs without counting them all. Handlers
+// that discard the total use it when the repository offers it.
+type dagRunPageLister interface {
+	ListDagRunsPage(ctx context.Context, tenant, dagID string, limit, offset int) ([]domain.DagRun, error)
+}
+
+// listDagRunsPage returns one page of runs, skipping the COUNT over every run
+// of the DAG when the repository can.
+func listDagRunsPage(c *gin.Context, repo DagRunRepository, dagID string, limit, offset int) ([]domain.DagRun, error) {
+	if p, ok := repo.(dagRunPageLister); ok {
+		return p.ListDagRunsPage(c.Request.Context(), tenantOf(c), dagID, limit, offset)
+	}
+	runs, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), dagID, limit, offset)
+	return runs, err
 }
 
 // setPaginationLinks sets an RFC 5988 Link header with next/prev relations.
@@ -285,7 +322,7 @@ func listRunsFiltered(c *gin.Context, repo DagRunRepository, states []string, li
 	for _, s := range states {
 		want[s] = true
 	}
-	all, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), maxRunScan, 0)
+	all, err := listDagRunsPage(c, repo, c.Param("dag_id"), maxRunScan, 0)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -755,7 +792,7 @@ func clearTargetRuns(c *gin.Context, runs DagRunRepository, currentRunID string,
 	if err != nil {
 		return []string{currentRunID}
 	}
-	all, _, err := runs.ListDagRuns(c.Request.Context(), tenantOf(c), dagID, maxRunScan, 0)
+	all, err := listDagRunsPage(c, runs, dagID, maxRunScan, 0)
 	if err != nil {
 		return []string{currentRunID}
 	}

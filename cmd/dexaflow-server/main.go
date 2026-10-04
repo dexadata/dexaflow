@@ -1383,6 +1383,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		CORSOrigins:                  cfg.Server.CORS.AllowedOrigins,
 		TrustedProxies:               cfg.Server.TrustedProxies,
 		TokenTTLSecs:                 cfg.Auth.JWT.TokenTTLSeconds,
+		MaxPageLimit:                 cfg.Server.MaxPageLimit,
 		TokenRenewer:                 authn,
 		TokenMaxLifetimeSecs:         cfg.Auth.JWT.MaxLifetimeSeconds,
 		InstanceName:                 cfg.UI.InstanceName,
