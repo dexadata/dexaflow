@@ -1,13 +1,13 @@
 package logs
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
 	"strings"
-	"time"
 )
 
 // ReadAttempts reads the log of one try as every execution of it stored,
@@ -95,13 +95,18 @@ func uniqueSorted(epochs []int) []int {
 }
 
 // systemLine is the JSONL line that introduces one execution's stream in a
-// concatenated try log. Its timestamp is fixed at the Unix epoch: it marks a
-// boundary between streams, not an event, and a fixed value keeps the read
-// deterministic.
+// concatenated try log. It carries the zero time: it marks a boundary between
+// streams, not an event, so the structured log view renders it without a
+// timestamp, and a fixed value keeps the read deterministic. It is marshaled
+// directly because EncodeLine stamps a zero time with the current one.
 func systemLine(try, epoch, n, total int) io.Reader {
 	msg := fmt.Sprintf("execution %d of %d of try %d (attempt epoch %d); a later execution is an infra re-place, a reschedule poke or a redispatch of the same try",
 		n, total, try, epoch)
-	return strings.NewReader(EncodeLine(Event{Time: time.Unix(0, 0).UTC(), Level: "info", Stream: "system", Message: msg}) + "\n")
+	line, err := json.Marshal(Event{Level: "info", Stream: "system", Message: msg})
+	if err != nil {
+		line = []byte(msg)
+	}
+	return strings.NewReader(string(line) + "\n")
 }
 
 // newlineTerminated passes r through and adds a final newline when r ended

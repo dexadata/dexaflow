@@ -51,7 +51,9 @@ func (r *LogReader) Tail(ctx context.Context, tenant, dagID, runID, taskID strin
 // probes and serves. Every execution of a try has its own attempt epoch (ADR
 // 0051 amendment), and a reschedule-mode sensor starts a new execution on
 // every poke, so a long-running sensor's try can span many epochs. The read
-// keeps the epoch-0 stream and the most recent executions up to this bound.
+// keeps the epoch-0 stream and the most recent epochs up to this bound. A
+// dispatch claims an epoch and every reset rail bumps one too, so the bound
+// covers fewer executions than epochs.
 const maxTryLogStreams = 256
 
 // ReadLogs resolves the run reference (tenant name -> id, run_id -> dag_run id),
@@ -89,8 +91,13 @@ func (r *LogReader) ReadLogs(ctx context.Context, tenant, dagID, runID, taskID s
 
 // tryEpochs is the epochs a try's log read probes: 0, where every log written
 // before the epoch existed lives, then (low, high], capped to the most recent
-// maxTryLogStreams.
+// maxTryLogStreams. A try the database has no row for (a client naming a try
+// above the task's current one) has high 0 while earlier tries may have
+// archived a higher low; that range is empty, so only epoch 0 is probed.
 func tryEpochs(low, high int) []int {
+	if high <= low {
+		return []int{0}
+	}
 	if high-low > maxTryLogStreams {
 		low = high - maxTryLogStreams
 	}
