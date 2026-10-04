@@ -5,9 +5,12 @@ package storage_test
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/domain"
 )
@@ -25,7 +28,7 @@ func TestEnsureTenantSeedsTheDefaultTenantsRolesAndPool(t *testing.T) {
 	repo, _, ctx := openRepo(t)
 	name := uniqueTenant("acme")
 
-	created, err := repo.EnsureTenant(ctx, name, "Acme Corp")
+	created, err := repo.EnsureTenant(ctx, name, "Acme Corp", 0)
 
 	if err != nil || !created {
 		t.Fatalf("EnsureTenant = %v, %v; want created", created, err)
@@ -58,11 +61,11 @@ func TestEnsureTenantSeedsTheDefaultTenantsRolesAndPool(t *testing.T) {
 func TestEnsureTenantIsIdempotent(t *testing.T) {
 	repo, _, ctx := openRepo(t)
 	name := uniqueTenant("globex")
-	if _, err := repo.EnsureTenant(ctx, name, "Globex"); err != nil {
+	if _, err := repo.EnsureTenant(ctx, name, "Globex", 0); err != nil {
 		t.Fatal(err)
 	}
 
-	created, err := repo.EnsureTenant(ctx, name, "Globex")
+	created, err := repo.EnsureTenant(ctx, name, "Globex", 0)
 
 	if err != nil || created {
 		t.Errorf("second EnsureTenant = %v, %v; want not created, no error", created, err)
@@ -75,7 +78,7 @@ func TestEnsureTenantIsIdempotent(t *testing.T) {
 func TestEnsureIssuerUserCreatesThenReconciles(t *testing.T) {
 	repo, _, ctx := openRepo(t)
 	tenant := uniqueTenant("initech")
-	if _, err := repo.EnsureTenant(ctx, tenant, "Initech"); err != nil {
+	if _, err := repo.EnsureTenant(ctx, tenant, "Initech", 0); err != nil {
 		t.Fatal(err)
 	}
 	subject := uniqueTenant("sub")
@@ -102,7 +105,7 @@ func TestEnsureIssuerUserRefusesASubjectLinkedInAnotherTenant(t *testing.T) {
 	repo, _, ctx := openRepo(t)
 	a, b := uniqueTenant("a"), uniqueTenant("b")
 	for _, n := range []string{a, b} {
-		if _, err := repo.EnsureTenant(ctx, n, n); err != nil {
+		if _, err := repo.EnsureTenant(ctx, n, n, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -135,7 +138,7 @@ func TestEnsureIssuerUserNeedsTheTenant(t *testing.T) {
 func TestEnsureIssuerUserRefusesAnEmailAnotherUserHas(t *testing.T) {
 	repo, _, ctx := openRepo(t)
 	tenant := uniqueTenant("hooli")
-	if _, err := repo.EnsureTenant(ctx, tenant, "Hooli"); err != nil {
+	if _, err := repo.EnsureTenant(ctx, tenant, "Hooli", 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.CreateUser(ctx, tenant, "gavin@hooli.com", "a-long-password-123", nil); err != nil {
@@ -146,5 +149,92 @@ func TestEnsureIssuerUserRefusesAnEmailAnotherUserHas(t *testing.T) {
 
 	if !errors.Is(err, domain.ErrConflict) {
 		t.Errorf("err = %v, want domain.ErrConflict", err)
+	}
+}
+
+// TestEnsureTenantSizesTheDefaultPool: defaultPoolSlots sizes a new tenant's
+// default pool, re-sizes an existing one, and 0 leaves it alone (a new tenant
+// then inherits the default tenant's size).
+func TestEnsureTenantSizesTheDefaultPool(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	slots := func(tenant string) int {
+		t.Helper()
+		p, err := repo.GetPool(ctx, tenant, domain.DefaultPoolName)
+		if err != nil {
+			t.Fatalf("default pool of %s: %v", tenant, err)
+		}
+		return p.Slots
+	}
+	def := slots("default")
+
+	inherited := uniqueTenant("pool-inherit")
+	if _, err := repo.EnsureTenant(ctx, inherited, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := slots(inherited); got != def {
+		t.Errorf("unsized tenant pool = %d, want the default tenant's %d", got, def)
+	}
+
+	sized := uniqueTenant("pool-sized")
+	if _, err := repo.EnsureTenant(ctx, sized, "", 8); err != nil {
+		t.Fatal(err)
+	}
+	if got := slots(sized); got != 8 {
+		t.Errorf("new tenant pool = %d, want 8", got)
+	}
+	if _, err := repo.EnsureTenant(ctx, sized, "", 16); err != nil {
+		t.Fatal(err)
+	}
+	if got := slots(sized); got != 16 {
+		t.Errorf("re-sized tenant pool = %d, want 16", got)
+	}
+	if _, err := repo.EnsureTenant(ctx, sized, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := slots(sized); got != 16 {
+		t.Errorf("an unsized ensure changed the pool to %d, want it left at 16", got)
+	}
+	if got := slots("default"); got != def {
+		t.Errorf("sizing another tenant changed the default tenant's pool to %d", got)
+	}
+}
+
+// TestEnsureTenantMarksALegacyDefaultPoolRow: a tenant whose default_pool row
+// lost (or never had) is_default, as one created before #1283 could, gets the
+// flag back from either ensure path, and a sized pool carries the seed
+// description.
+func TestEnsureTenantMarksALegacyDefaultPoolRow(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pg.Close)
+	unflag := func(tenant string) {
+		t.Helper()
+		if _, err := pg.Exec(ctx, `UPDATE pools SET is_default = false
+			WHERE name = $1 AND tenant_id = (SELECT id FROM tenants WHERE name = $2)`, domain.DefaultPoolName, tenant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, slots := range []int{0, 8} {
+		name := uniqueTenant(fmt.Sprintf("pool-legacy-%d", slots))
+		if _, err := repo.EnsureTenant(ctx, name, "", 0); err != nil {
+			t.Fatal(err)
+		}
+		unflag(name)
+		if _, err := repo.EnsureTenant(ctx, name, "", slots); err != nil {
+			t.Fatal(err)
+		}
+		p, err := repo.GetPool(ctx, name, domain.DefaultPoolName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !p.IsDefault {
+			t.Errorf("slots=%d: default_pool is_default = false after ensure, want true", slots)
+		}
+		if slots > 0 && (p.Slots != slots || p.Description != "Default pool") {
+			t.Errorf("slots=%d: pool = %+v, want %d slots and the seed description", slots, p, slots)
+		}
 	}
 }

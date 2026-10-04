@@ -710,3 +710,55 @@ copies that could drift apart on a partial upgrade.
 {{- define "leoflow.oidcConfigMapName" -}}
 {{- printf "%s-oidc" (include "leoflow.fullname" .) -}}
 {{- end -}}
+
+{{/*
+GOMEMLIMIT for the control-plane container: goMemLimit.percent of
+resources.limits.memory, in whole MiB. The Go runtime does not read the cgroup
+limit on its own; without this variable the GC paces on heap growth alone, so a
+burst can be OOM-killed before a collection runs. A soft limit below the hard
+one makes the GC work harder near the ceiling instead.
+
+The fraction is computed here because the downward API cannot: a
+resourceFieldRef on limits.memory yields the whole limit, and its divisor must
+be a unit (1, 1Ki, 1Mi, ...), not a ratio. Any Kubernetes byte quantity is
+read: a whole or decimal number (1, 1.5, .5) with a binary suffix (Ki to Ei),
+a decimal suffix (k to E) or a decimal exponent (1e9, 2.5E8). Milli and
+smaller suffixes (m, u, n) and signs are refused, as is anything else: the
+render fails with the way out rather than shipping a guess.
+*/}}
+{{- define "leoflow.goMemLimit" -}}
+{{- $pct := .Values.goMemLimit.percent -}}
+{{- if not (regexMatch "^[0-9]+$" (toString $pct)) -}}
+{{- fail (printf "goMemLimit.percent must be between 1 and 100 (got %v)" $pct) -}}
+{{- end -}}
+{{- if or (lt (int $pct) 1) (gt (int $pct) 100) -}}
+{{- fail (printf "goMemLimit.percent must be between 1 and 100 (got %v)" $pct) -}}
+{{- end -}}
+{{- $raw := dig "limits" "memory" "" (.Values.resources | default dict) -}}
+{{- if kindIs "float64" $raw -}}{{- $raw = printf "%.0f" $raw -}}{{- end -}}
+{{- $raw = toString $raw -}}
+{{- if not $raw -}}
+{{- fail "goMemLimit.enabled requires resources.limits.memory: GOMEMLIMIT is a fraction of the container limit" -}}
+{{- end -}}
+{{- $quantity := "^([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|[eE][+-]?[0-9]{1,2})?$" -}}
+{{- if not (regexMatch $quantity $raw) -}}
+{{- fail (printf "goMemLimit: cannot read resources.limits.memory %q; use a number (1, 1.5, .5) with a Ki, Mi, Gi, Ti, Pi, Ei, k, M, G, T, P or E suffix or a decimal exponent (1e9), or leave goMemLimit off and set GOMEMLIMIT through extraEnv" $raw) -}}
+{{- end -}}
+{{- $num := regexFind "^([0-9]+(\\.[0-9]*)?|\\.[0-9]+)" $raw -}}
+{{- $unit := trimPrefix $num $raw -}}
+{{- $bytes := float64 (printf "0%s" $num) -}}
+{{- if regexMatch "^[eE][+-]?[0-9]" $unit -}}
+{{- $exp := int (substr 1 -1 $unit | trimPrefix "+") -}}
+{{- range until (int (max $exp (sub 0 $exp))) -}}
+{{- if gt $exp 0 -}}{{- $bytes = mulf $bytes 10 -}}{{- else -}}{{- $bytes = divf $bytes 10 -}}{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- $scale := get (dict "" 1 "k" 1e3 "M" 1e6 "G" 1e9 "T" 1e12 "P" 1e15 "E" 1e18 "Ki" 1024 "Mi" 1048576 "Gi" 1073741824 "Ti" 1099511627776 "Pi" 1125899906842624 "Ei" 1152921504606846976) $unit -}}
+{{- $bytes = mulf $bytes $scale -}}
+{{- end -}}
+{{- $mib := int64 (floor (divf (mulf $bytes (int $pct)) 104857600)) -}}
+{{- if lt $mib 1 -}}
+{{- fail (printf "goMemLimit: %d%% of resources.limits.memory %q is below 1MiB" (int $pct) $raw) -}}
+{{- end -}}
+{{- printf "%dMiB" $mib -}}
+{{- end -}}
