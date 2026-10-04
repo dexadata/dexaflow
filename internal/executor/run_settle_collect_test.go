@@ -301,7 +301,9 @@ type failingReporter struct{}
 func (failingReporter) FailTask(context.Context, string, int, int, string) error {
 	return errors.New("db down")
 }
-func (failingReporter) SucceedTask(context.Context, string, int, int) error { return errors.New("db down") }
+func (failingReporter) SucceedTask(context.Context, string, int, int) error {
+	return errors.New("db down")
+}
 func (failingReporter) RescheduleTask(context.Context, string, int, int, time.Time) error {
 	return errors.New("db down")
 }
