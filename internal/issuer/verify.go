@@ -1,8 +1,8 @@
 // Package issuer verifies tokens from a trusted external issuer, so a platform
-// that already authenticates its users can open a Leoflow UI session for them
-// without holding Leoflow's own signing secret (#1284).
+// that already authenticates its users can open a Dexaflow UI session for them
+// without holding Dexaflow's own signing secret (#1284).
 //
-// The issuer signs with its own key and publishes it as a JWKS; Leoflow only
+// The issuer signs with its own key and publishes it as a JWKS; Dexaflow only
 // ever reads public keys. A verified token names an existing user (by the
 // issuer's subject) in an allowed tenant. It never creates users and never
 // grants roles: roles stay whatever the user row holds.
@@ -52,16 +52,16 @@ const clockSkew = time.Minute
 
 // Config is one trusted issuer.
 type Config struct {
-	// Name identifies the issuer inside Leoflow. Its users are linked by
+	// Name identifies the issuer inside Dexaflow. Its users are linked by
 	// (Provider(), subject), so it must stay stable once users exist.
 	Name string
 	// Issuer is the exact `iss` the tokens carry.
 	Issuer string
 	// JWKSURL is where the issuer publishes its public signing keys.
 	JWKSURL string
-	// Audience is the `aud` the tokens must carry for this Leoflow.
+	// Audience is the `aud` the tokens must carry for this Dexaflow.
 	Audience string
-	// TenantClaim names the string claim carrying the Leoflow tenant name.
+	// TenantClaim names the string claim carrying the Dexaflow tenant name.
 	TenantClaim string
 	// AllowedTenants lists the tenants this issuer may sign in to; "*" allows
 	// every tenant.

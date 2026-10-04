@@ -13,6 +13,11 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 // ErrInvalidToken is returned when a token is malformed, expired, or unsigned by us.
 var ErrInvalidToken = errors.New("invalid token")
 
+// ErrTenantlessToken is joined with ErrInvalidToken when a token is trusted
+// from its signed claims but names no tenant: such a principal cannot be scoped
+// to any tenant's data, so it is refused rather than given a default one.
+var ErrTenantlessToken = errors.New("token names no tenant")
+
 // ErrUserNotFound is returned by UserStore.FindUserByID when no user has the
 // given id. Authenticate treats it as a signal to trust the token's signed
 // claims (the in-process minting path has no backing row), distinct from a

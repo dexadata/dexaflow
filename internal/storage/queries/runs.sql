@@ -209,6 +209,15 @@ SELECT * FROM task_instances
 WHERE dag_run_id = $1
 ORDER BY task_id;
 
+-- name: ListTaskInstancesByRuns :many
+-- The batched form of ListTaskInstancesByRun for the scheduler tick: every
+-- active run's task instances in one round trip instead of one per run. Rows
+-- come grouped by run and, within a run, in the same task_id order the per-run
+-- query returns, so the caller can split them without re-sorting.
+SELECT * FROM task_instances
+WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[])
+ORDER BY dag_run_id, task_id;
+
 -- name: ListTaskInstanceAttempts :many
 -- Returns every attempt for (run, task), oldest first. UNIONs the current
 -- task_instances row with all archived task_instance_history rows so the UI's
@@ -270,8 +279,10 @@ RETURNING *;
 -- Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 -- both "is there a slot due?" (schedule + last_logical), "how many slots
 -- should I backfill on this tick?" (catchup + start_date, see #129), and
--- "may this DAG take another active run?" (max_active_runs, see #200).
-SELECT d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+-- "may this DAG take another active run?" (max_active_runs, see #200). The
+-- owning tenant is returned because a dag_id is unique only within its tenant
+-- (#209).
+SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
 WHERE d.is_active = true AND d.is_paused = false
@@ -281,8 +292,7 @@ WHERE d.is_active = true AND d.is_paused = false
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, sqlc.arg(run_id), sqlc.arg(logical_date), 'queued', 'scheduled'
 FROM dags d
-JOIN tenants t ON t.id = d.tenant_id
-WHERE t.name = sqlc.arg(tenant) AND d.dag_id = sqlc.arg(dag_id) AND d.current_version_id IS NOT NULL
+WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_id = sqlc.arg(dag_id) AND d.current_version_id IS NOT NULL
 ON CONFLICT (dag_id, run_id) DO NOTHING;
 
 -- name: GetDagVersionByID :one
@@ -591,14 +601,18 @@ WHERE d.tenant_id = $1 AND d.dag_id = $2 AND dr.run_id = ANY($3::text[])
 ORDER BY dr.run_id, ti.task_id, ti.try_number;
 
 -- name: CountDagsByLatestRunState :many
+-- One index probe per DAG of the tenant for its newest run. DAGs without runs
+-- drop out of the CROSS JOIN, so they are not counted.
 SELECT lr.state AS state, count(*) AS n
-FROM (
-    SELECT DISTINCT ON (r.dag_id) r.state
+FROM dags d
+CROSS JOIN LATERAL (
+    SELECT r.state
     FROM dag_runs r
-    JOIN dags d ON d.id = r.dag_id
-    WHERE d.tenant_id = $1
-    ORDER BY r.dag_id, r.logical_date DESC
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
 ) lr
+WHERE d.tenant_id = $1
 GROUP BY lr.state;
 
 -- name: CountDagRunStatesInWindow :many
@@ -969,6 +983,47 @@ WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 UPDATE task_instances
 SET next_dispatch_at = $3
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
+
+-- name: MarkTaskInstanceQueued :execrows
+-- The scheduler's scheduled -> queued write after a dispatch was accepted.
+-- Guarded to the exact slot the tick planned: still 'scheduled', with the
+-- next_dispatch_at the tick read. Under buffered dispatch the worker can finish
+-- before this write lands: it may have failed the task (MarkTaskDispatchFailed),
+-- re-offered it with a new backoff (RequeueDispatch), or the agent may already
+-- have reported running. Each of those moves the row off the planned slot, so
+-- this write touches zero rows instead of overwriting the newer outcome.
+UPDATE task_instances
+SET state = 'queued',
+    queued_at = COALESCE(queued_at, now())
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state = 'scheduled'
+  AND next_dispatch_at IS NOT DISTINCT FROM sqlc.narg(expect_next_dispatch_at)::timestamptz;
+
+-- name: RequeueDispatch :execrows
+-- A buffered dispatch failed inside the worker for a retriable reason: re-offer
+-- the task the way a synchronous failure is re-offered (RecordDispatchFailure,
+-- RecordDispatchBackpressure). Back to 'scheduled' with the next attempt held
+-- until next_dispatch_at, adding one dispatch attempt only when counted
+-- (backpressure is not). Guarded to scheduled/queued, so a task the agent has
+-- since reported on is left alone. warm_worker_id is cleared as in
+-- RequeueForRedispatch: the attempt never ran.
+UPDATE task_instances
+SET state = 'scheduled',
+    next_dispatch_at = sqlc.arg(next_dispatch_at),
+    dispatch_attempts = dispatch_attempts + sqlc.arg(attempt_increment)::int,
+    warm_worker_id = NULL
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state IN ('scheduled', 'queued');
+
+-- name: DispatchAttemptsForActive :one
+-- The consecutive dispatch-failure count of a task still waiting to run
+-- (scheduled or queued); no row means it has moved on.
+SELECT dispatch_attempts FROM task_instances
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state IN ('scheduled', 'queued');
 
 -- name: RequeueForRedispatch :execrows
 -- Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was

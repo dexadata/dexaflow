@@ -139,6 +139,12 @@ spec:
             # the served SPA shell, mirroring Lite's silver LITE pill.
             - name: LEOFLOW_UI_EDITION
               value: "pro"
+            {{- if .ctx.Values.goMemLimit.enabled }}
+            # Soft memory limit for the Go GC, a fraction of the container's
+            # hard limit (leoflow.goMemLimit). Omitted when off.
+            - name: GOMEMLIMIT
+              value: {{ include "leoflow.goMemLimit" .ctx | quote }}
+            {{- end }}
             {{- with .ctx.Values.ui.autoRefreshIntervalSeconds }}
             # Omitted entirely when unset, so the server's own default decides.
             # Rendering an empty string here would bind the variable to "" and
@@ -206,6 +212,22 @@ spec:
             - name: LEOFLOW_SERVER_TRUSTED_PROXIES
               value: {{ join "," .ctx.Values.config.trustedProxies | quote }}
             {{- end }}
+            {{- with .ctx.Values.config.alerts }}
+            {{- if .blockPrivateDestinations }}
+            # Refuse on-failure alert requests to loopback, private, link-local and
+            # metadata addresses (scheduler.alerts.block_private_destinations). An
+            # alert URL is a tenant's connection, so on a shared engine it is
+            # untrusted. Omitted when off, which leaves the server default (off).
+            - name: LEOFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
+              value: "true"
+            {{- end }}
+            {{- if .allowedCIDRs }}
+            # Ranges exempted from that block, comma-joined like trustedProxies;
+            # viper splits the env var back into scheduler.alerts.allowed_cidrs.
+            - name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
+              value: {{ join "," .allowedCIDRs | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set
@@ -245,6 +267,8 @@ spec:
               value: {{ .ctx.Values.logs.sink.bucket | quote }}
             - name: LEOFLOW_LOGS_SINK_PREFIX
               value: {{ .ctx.Values.logs.sink.prefix | quote }}
+            - name: LEOFLOW_LOGS_SINK_LAYOUT
+              value: {{ .ctx.Values.logs.sink.layout | default "single" | quote }}
             {{- if eq .ctx.Values.logs.sink.provider "s3" }}
             - name: LEOFLOW_LOGS_SINK_REGION
               value: {{ .ctx.Values.logs.sink.region | quote }}
@@ -274,10 +298,23 @@ spec:
               value: {{ .ctx.Values.database.maxOpenConns | quote }}
             - name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
               value: {{ .ctx.Values.database.maxIdleConns | quote }}
+            {{- /* Pool tuning, each omitted at its default 0 so the pools stay as they were. */}}
+            {{- with .ctx.Values.database.schedulerMaxConns }}
+            - name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.database.statementTimeoutMs }}
+            - name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.database.connMaxLifetimeJitterMs }}
+            - name: LEOFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS
+              value: {{ . | quote }}
+            {{- end }}
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}
-            # The operator's own sign-in and sign-out in place of Leoflow's
+            # The operator's own sign-in and sign-out in place of Dexaflow's
             # pages (#1288). Omitted when unset; validated at boot.
             - name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
               value: {{ . | quote }}
@@ -407,6 +444,12 @@ spec:
               value: {{ .ctx.Values.execution.workerIdleTtl | quote }}
             - name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
               value: {{ .ctx.Values.execution.maxWarmPodsPerTenant | quote }}
+            {{- if .ctx.Values.execution.warmReadOnlyRootFilesystem }}
+            # Stamped only when on, so enabling warm pools alone renders the same
+            # env it did before this knob existed (the server default is false).
+            - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+              value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
+            {{- end }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:
