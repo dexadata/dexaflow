@@ -57,7 +57,11 @@ dump_pods() {
   for p in $(kubectl get pods -n leoflow -o name 2>/dev/null); do
     printf '\033[1;33m--- logs %s ---\033[0m\n' "$p" >&2
     kubectl logs -n leoflow "$p" --all-containers --tail=80 >&2 2>&1 || true
+    kubectl describe -n leoflow "$p" >&2 2>&1 || true
   done
+  printf '\033[1;33m--- images on the node ---\033[0m\n' >&2
+  docker exec "k3d-${CLUSTER}-server-0" crictl images >&2 2>&1 || true
+  docker exec "k3d-${CLUSTER}-server-0" df -h / >&2 2>&1 || true
 }
 fail() { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; dump_pods; exit 1; }
 
