@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // epochIdentity is a task credential for one attempt carrying the given epoch.
@@ -126,5 +128,108 @@ func TestWarmWorkerCredentialCarriesNoAttemptEpoch(t *testing.T) {
 	}
 	if _, ok := rawClaims(t, token)["attempt_epoch"]; ok {
 		t.Errorf("a warm-worker credential must not carry attempt_epoch")
+	}
+}
+
+// resign replaces a token's payload with the given claims while keeping the
+// original signature, which is what an agent that edits its own bearer can do.
+func resign(t *testing.T, token string, claims map[string]any) string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return parts[0] + "." + base64.RawURLEncoding.EncodeToString(payload) + "." + parts[2]
+}
+
+// TestAttemptEpochClaimCannotBeEditedByTheAgent: the agent holds its token, so
+// it can rewrite the payload, but the HMAC no longer verifies. Neither the
+// verifier nor renewal accepts a changed epoch or a stripped one (a downgrade
+// to the legacy epoch-0 rule).
+func TestAttemptEpochClaimCannotBeEditedByTheAgent(t *testing.T) {
+	a := NewJWTAuthenticator(nil, "secret", time.Hour)
+	token, err := a.IssueAgentToken(epochIdentity(3), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("IssueAgentToken: %v", err)
+	}
+	bumped := rawClaims(t, token)
+	bumped["attempt_epoch"] = 4
+	stripped := rawClaims(t, token)
+	delete(stripped, "attempt_epoch")
+	for name, forged := range map[string]string{
+		"changed":  resign(t, token, bumped),
+		"stripped": resign(t, token, stripped),
+	} {
+		if _, err := a.AuthenticateAgent(forged); err == nil {
+			t.Errorf("%s: AuthenticateAgent accepted an edited attempt_epoch", name)
+		}
+		if renewed, ok, err := a.RenewAgentToken(forged, 10*time.Minute, 0); err == nil || ok || renewed != "" {
+			t.Errorf("%s: RenewAgentToken re-minted an edited token (ok=%v err=%v)", name, ok, err)
+		}
+	}
+}
+
+// legacyAgentClaims is the agent claim set of a binary that predates the
+// attempt_epoch claim (v0.5.0), used to check both directions of a mixed
+// version control plane.
+type legacyAgentClaims struct {
+	TenantID       string           `json:"tenant_id"`
+	DagID          string           `json:"dag_id"`
+	RunID          string           `json:"run_id"`
+	TaskID         string           `json:"task_id"`
+	TryNumber      int              `json:"try_number"`
+	Scope          string           `json:"scope,omitempty"`
+	DagVersionID   string           `json:"dag_version_id,omitempty"`
+	OriginIssuedAt *jwt.NumericDate `json:"oiat,omitempty"`
+	jwt.RegisteredClaims
+}
+
+// TestAttemptEpochMixedVersionVerifiers: an old verifier accepts a new token
+// and reads the same task identity (the unknown claim is ignored), and a new
+// verifier accepts a token an old minter signed and reads it as legacy.
+func TestAttemptEpochMixedVersionVerifiers(t *testing.T) {
+	a := NewJWTAuthenticator(nil, "secret", time.Hour)
+	want := epochIdentity(9)
+	token, err := a.IssueAgentToken(want, 10*time.Minute)
+	if err != nil {
+		t.Fatalf("IssueAgentToken: %v", err)
+	}
+	var old legacyAgentClaims
+	if _, perr := jwt.ParseWithClaims(token, &old, func(*jwt.Token) (any, error) { return []byte("secret"), nil },
+		jwt.WithIssuer(tokenIssuer), jwt.WithAudience(audienceAgent), jwt.WithValidMethods([]string{"HS256"})); perr != nil {
+		t.Fatalf("an old verifier rejected a token carrying attempt_epoch: %v", perr)
+	}
+	if old.Subject != want.TaskInstanceID || old.RunID != want.RunID || old.TaskID != want.TaskID || old.TryNumber != want.TryNumber {
+		t.Errorf("an old verifier read %+v, want the identity %+v", old, want)
+	}
+
+	now := time.Now()
+	legacy, err := jwt.NewWithClaims(jwt.SigningMethodHS256, legacyAgentClaims{
+		TenantID: want.TenantID, DagID: want.DagID, RunID: want.RunID, TaskID: want.TaskID, TryNumber: want.TryNumber,
+		OriginIssuedAt: jwt.NewNumericDate(now),
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject: want.TaskInstanceID, Issuer: tokenIssuer, Audience: jwt.ClaimStrings{audienceAgent},
+			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(10 * time.Minute)),
+		},
+	}).SignedString([]byte("secret"))
+	if err != nil {
+		t.Fatalf("signing a legacy token: %v", err)
+	}
+	got, err := a.AuthenticateAgent(legacy)
+	if err != nil {
+		t.Fatalf("a new verifier rejected a legacy token: %v", err)
+	}
+	wantLegacy := want
+	wantLegacy.AttemptEpoch, wantLegacy.HasAttemptEpoch = 0, false
+	if *got != wantLegacy {
+		t.Errorf("legacy token identity = %+v, want %+v", *got, wantLegacy)
+	}
+	renewed, ok, err := a.RenewAgentToken(legacy, 10*time.Minute, 0)
+	if err != nil || !ok {
+		t.Fatalf("RenewAgentToken(legacy) ok=%v err=%v", ok, err)
+	}
+	if _, present := rawClaims(t, renewed)["attempt_epoch"]; present {
+		t.Errorf("renewing a legacy token upgraded it to an epoch")
 	}
 }
