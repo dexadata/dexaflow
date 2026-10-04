@@ -35,8 +35,9 @@ tests:
             name: LEOFLOW_SERVER_POOLS_READ_ONLY
             value: "true"
 
-  # The api role serves the pool endpoints, so the lock must reach it when the
-  # control plane is split; both Deployments share the env block.
+  # The api role enforces the lock and the scheduler role the default_pool
+  # fallback, so the setting must reach both when the control plane is split;
+  # both Deployments share the env block.
   - it: reaches both Deployments when the control plane is split
     template: deployment.yaml
     set:
@@ -44,6 +45,8 @@ tests:
       split.enabled: true
       logs.persistence.accessMode: ReadWriteMany
     asserts:
+      - hasDocuments:
+          count: 2
       - contains:
           path: spec.template.spec.containers[0].env
           content:

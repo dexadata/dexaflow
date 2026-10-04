@@ -7,6 +7,8 @@ body: |-
   through `/api/v2/pools`. With the option on, create, resize and delete on
   that API answer `403` with a stable detail for every tenant role, admin
   included, and list and get keep working. Pools are then changed only out of
-  band by the platform. Off by default, so nothing changes on upgrade; in the
-  chart set `config.poolsReadOnly: true` (#646).
+  band by the platform. A task that names a pool its tenant has not defined is
+  then admitted against `default_pool` instead of running unlimited, so DAGs
+  using such names start sharing it. Off by default, so nothing changes on
+  upgrade; in the chart set `config.poolsReadOnly: true` (#646).
 time: 2026-10-04T18:30:00.000000000-03:00

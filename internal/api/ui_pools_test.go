@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -305,5 +306,54 @@ func TestPoolsReadOnlyStillPermissionGated(t *testing.T) {
 	}
 	if p.Detail != "missing permission write:pool" {
 		t.Errorf("viewer detail = %q, want the unchanged permission refusal", p.Detail)
+	}
+}
+
+// TestPoolsReadOnlyChargesUndefinedPoolUsageToDefaultPool: under the lock the
+// scheduler admits a task naming an undefined pool against default_pool, so the
+// Pools screen counts its occupancy there too, and the undefined name is not
+// shown as a pool of its own. Without the lock nothing is folded.
+func TestPoolsReadOnlyChargesUndefinedPoolUsageToDefaultPool(t *testing.T) {
+	newStore := func() *fakePoolStore {
+		return &fakePoolStore{
+			pools: map[string]domain.Pool{
+				domain.DefaultPoolName: {Name: domain.DefaultPoolName, Slots: 4, IsDefault: true},
+				"batch":                {Name: "batch", Slots: 2},
+			},
+			usage: map[string]domain.PoolUsage{
+				domain.DefaultPoolName: {Running: 1},
+				"made-up":              {Running: 2, Queued: 1},
+				"batch":                {Running: 1},
+			},
+		}
+	}
+	get := func(srv *gin.Engine, name string) poolDTO {
+		t.Helper()
+		rec := authGet(srv, http.MethodGet, "/api/v2/pools/"+name, "")
+		var p poolDTO
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &p) != nil {
+			t.Fatalf("GET %s = %d %s", name, rec.Code, rec.Body.String())
+		}
+		return p
+	}
+
+	locked := readOnlyPoolServer(newStore(), &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}})
+	if p := get(locked, domain.DefaultPoolName); p.OccupiedSlots != 4 || p.OpenSlots != 0 {
+		t.Errorf("locked default_pool = %+v, want 4 occupied (1 own + 3 from made-up), 0 open", p)
+	}
+	if p := get(locked, "batch"); p.OccupiedSlots != 1 {
+		t.Errorf("locked batch = %+v, want its own 1 occupied", p)
+	}
+	rec := authGet(locked, http.MethodGet, "/api/v2/pools", "")
+	if strings.Contains(rec.Body.String(), "made-up") {
+		t.Errorf("list shows the undefined pool: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"occupied_slots":4`) {
+		t.Errorf("list does not fold made-up into default_pool: %s", rec.Body.String())
+	}
+
+	open := poolServer(newStore(), "pro")
+	if p := get(open, domain.DefaultPoolName); p.OccupiedSlots != 1 {
+		t.Errorf("unlocked default_pool = %+v, want its own 1 occupied", p)
 	}
 }

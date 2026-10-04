@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -65,7 +66,38 @@ type poolBody struct {
 	IncludeDeferred bool   `json:"include_deferred"`
 }
 
-func listPoolsHandler(store PoolStore) gin.HandlerFunc {
+// poolUsage loads the tenant's per-pool occupancy. With confine (pools locked by
+// server.pools_read_only) the scheduler admits a task that names a pool the
+// tenant has not defined against default_pool, so its occupancy is folded into
+// default_pool here too, keeping the Pools screen in step with admission.
+func poolUsage(ctx context.Context, store PoolStore, tenant string, confine bool) (map[string]domain.PoolUsage, error) {
+	usage, err := store.PoolSlotUsage(ctx, tenant)
+	if err != nil || !confine {
+		return usage, err
+	}
+	for name, u := range usage {
+		if name == domain.DefaultPoolName {
+			continue
+		}
+		_, gerr := store.GetPool(ctx, tenant, name)
+		if errors.Is(gerr, domain.ErrNotFound) {
+			d := usage[domain.DefaultPoolName]
+			d.Running += u.Running
+			d.Queued += u.Queued
+			d.Scheduled += u.Scheduled
+			d.Deferred += u.Deferred
+			usage[domain.DefaultPoolName] = d
+			delete(usage, name)
+			continue
+		}
+		if gerr != nil {
+			return nil, gerr
+		}
+	}
+	return usage, nil
+}
+
+func listPoolsHandler(store PoolStore, confine bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
 		pools, total, err := store.ListPools(c.Request.Context(), tenantOf(c), limit, offset)
@@ -73,7 +105,7 @@ func listPoolsHandler(store PoolStore) gin.HandlerFunc {
 			handleRepoError(c, err)
 			return
 		}
-		usage, err := store.PoolSlotUsage(c.Request.Context(), tenantOf(c))
+		usage, err := poolUsage(c.Request.Context(), store, tenantOf(c), confine)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -86,7 +118,7 @@ func listPoolsHandler(store PoolStore) gin.HandlerFunc {
 	}
 }
 
-func getPoolHandler(store PoolStore) gin.HandlerFunc {
+func getPoolHandler(store PoolStore, confine bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("pool_name")
 		pool, err := store.GetPool(c.Request.Context(), tenantOf(c), name)
@@ -94,7 +126,7 @@ func getPoolHandler(store PoolStore) gin.HandlerFunc {
 			handleRepoError(c, err)
 			return
 		}
-		usage, err := store.PoolSlotUsage(c.Request.Context(), tenantOf(c))
+		usage, err := poolUsage(c.Request.Context(), store, tenantOf(c), confine)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -188,8 +220,8 @@ func registerUIPools(r gin.IRouter, store PoolStore, proEnabled, readOnly bool) 
 		r.GET("/api/v2/pools", apiEmptyCollection("pools"))
 		return
 	}
-	r.GET("/api/v2/pools", RequirePermission("read", "pool"), listPoolsHandler(store))
-	r.GET("/api/v2/pools/:pool_name", RequirePermission("read", "pool"), getPoolHandler(store))
+	r.GET("/api/v2/pools", RequirePermission("read", "pool"), listPoolsHandler(store, readOnly))
+	r.GET("/api/v2/pools/:pool_name", RequirePermission("read", "pool"), getPoolHandler(store, readOnly))
 	create, update, remove := createPoolHandler(store), updatePoolHandler(store), deletePoolHandler(store)
 	if readOnly {
 		create, update, remove = poolsReadOnlyHandler, poolsReadOnlyHandler, poolsReadOnlyHandler

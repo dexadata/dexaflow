@@ -2274,7 +2274,10 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 			// Tenants cannot create pools, so an undefined pool name must not be
 			// a way around default_pool (#646).
 			sched.ConfineUndefinedPools()
+			logger.Info("pools read-only: tasks naming an undefined pool draw on default_pool")
 		}
+	} else if cfg.Server.PoolsReadOnly {
+		logger.Warn("server.pools_read_only has no effect: pools are a Pro edition feature")
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
