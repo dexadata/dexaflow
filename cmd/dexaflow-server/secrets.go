@@ -12,11 +12,19 @@ import (
 
 // configureSecrets wires connection-secret encryption (the AES-256-GCM cipher)
 // and the external-secrets D6 registration relaxation (ADR 0060) onto the repo.
+//
+// The boot sweep runs only when SecretKeyReencryptOnBoot is on (the default,
+// Pro). `dexaflow lite` switches it off, because a Lite install moves keys only
+// through `dexaflow lite migrate-key` (ADR 0065): a sweep at boot would migrate
+// a config holding a predecessor implicitly, under no lock, with no
+// verification before commit.
 func configureSecrets(ctx context.Context, repo *storage.Repository, cfg *config.ServerConfig, logger *slog.Logger) error {
 	if err := configureSecretCipher(repo, cfg.SecretKey, logger); err != nil {
 		return err
 	}
-	finishKeyRotation(ctx, repo, logger)
+	if cfg.SecretKeyReencryptOnBoot {
+		finishKeyRotation(ctx, repo, logger)
+	}
 	return configureSecretsCoverage(cfg.Secrets, repo)
 }
 
@@ -30,16 +38,35 @@ func configureSecrets(ctx context.Context, repo *storage.Repository, cfg *config
 // open is reported and left untouched, because its ciphertext is the only copy
 // of that credential.
 func finishKeyRotation(ctx context.Context, repo *storage.Repository, logger *slog.Logger) {
-	n, err := repo.ReencryptSecrets(ctx)
-	if err != nil {
-		logger.Error("could not finish the secret key rotation; the previous key is still required",
-			"re_encrypted", n, "error", err)
+	res, err := repo.ReencryptSecrets(ctx)
+	msg, level := rotationOutcome(res, err)
+	if msg == "" {
 		return
 	}
-	if n > 0 {
-		logger.Info("secret key rotation complete for the stored connections",
-			"re_encrypted", n,
-			"next", "remove the previous key from LEOFLOW_SECRET_KEY once no other replica needs it")
+	attrs := []any{"re_encrypted", res.Migrated, "skipped", res.Skipped, "unreadable", res.Unreadable}
+	if err != nil {
+		attrs = append(attrs, "error", err)
+	}
+	logger.Log(ctx, level, msg, attrs...)
+}
+
+// rotationOutcome is the one line the boot sweep logs about what it did, or ""
+// when there was nothing to say. It calls the rotation complete only after a
+// clean pass that moved something: a row skipped by the optimistic guard, or
+// one no key opens, still needs the previous key, and a log that says
+// otherwise is how an operator comes to delete it (ADR 0065, attempt 1).
+func rotationOutcome(res storage.ReencryptResult, err error) (string, slog.Level) {
+	switch {
+	case err != nil || res.Unreadable > 0:
+		return "could not finish the secret key rotation; the previous key is still required", slog.LevelError
+	case res.Skipped > 0:
+		return "the secret key rotation is not finished: some connections changed during the pass and were not moved; " +
+			"the previous key is still required, and the next restart retries them", slog.LevelWarn
+	case res.Migrated > 0:
+		return "secret key rotation complete for the stored connections; " +
+			"remove the previous key from DEXAFLOW_SECRET_KEY once no other replica needs it", slog.LevelInfo
+	default:
+		return "", slog.LevelInfo
 	}
 }
 

@@ -81,7 +81,7 @@ func main() {
 	args := os.Args[1:]
 	switch {
 	case version.WantsVersion(args):
-		fmt.Println(version.Get().String())
+		fmt.Print(versionOutput())
 		return
 	case version.WantsHelp(args):
 		fmt.Print(usage)
@@ -153,6 +153,14 @@ func run() error {
 		return fmt.Errorf("postgres: %w", err)
 	}
 	defer pg.Close()
+
+	// Lite only: hold the key-migration lock before anything reads or writes a
+	// stored secret, and stop if it is lost (ADR 0065 section 3).
+	ctx, releaseKeyLock, err := holdKeyLock(ctx, cfg, tel.Logger)
+	if err != nil {
+		return err
+	}
+	defer releaseKeyLock()
 
 	// Datastore for XCom + live-log tailing: Redis when configured (production,
 	// ADR 0006), or the embedded Postgres/in-process backends when no Redis is
@@ -264,7 +272,15 @@ func run() error {
 	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks), ReadHeaderTimeout: 10 * time.Second}
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
-	return serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv)
+	if serr := serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv); serr != nil {
+		return serr
+	}
+	// A server canceled because it lost its key-migration lock exits non-zero,
+	// so neither its supervisor nor an operator mistakes it for a clean stop.
+	if cause := context.Cause(ctx); errors.Is(cause, errKeyLockLost) {
+		return cause
+	}
+	return nil
 }
 
 // awaitShutdown blocks until a server errors or the context is canceled, then
