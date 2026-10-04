@@ -52,8 +52,8 @@ func TestLogTailOutlivesTheServerReadTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	reader := &slowTailReader{n: 5, gap: 100 * time.Millisecond}
-	r.GET("/plain", func(c *gin.Context) { tailLogs(c, reader, 1) })
-	r.GET("/ndjson", func(c *gin.Context) { tailNdjson(c, reader, 1) })
+	r.GET("/plain", func(c *gin.Context) { tailLogs(c, reader, 1, storedTail{}) })
+	r.GET("/ndjson", func(c *gin.Context) { tailNdjson(c, reader, 1, storedTail{}) })
 
 	srv := httptest.NewUnstartedServer(r)
 	srv.Config.ReadTimeout = 150 * time.Millisecond
