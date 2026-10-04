@@ -59,6 +59,10 @@ type Querier interface {
 	CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error)
 	// Same newest-run lookup as ListDagsFiltered.
 	CountDagsFiltered(ctx context.Context, arg CountDagsFilteredParams) (int64, error)
+	CountExpiredAuditLog(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
+	// The dry-run count: the same predicate as LockExpiredSettledRuns, across
+	// tenants, with no lock.
+	CountExpiredSettledRuns(ctx context.Context, cutoff pgtype.Timestamptz) (CountExpiredSettledRunsRow, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
 	// with no password row is an escape hatch that does not open, which is worse
@@ -92,15 +96,23 @@ type Querier interface {
 	DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, error)
 	// Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
 	DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error)
+	// Removes the locked runs whose children are all gone, up to row_limit.
+	DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
 	// The implicit default pool is never deletable (Airflow parity): the guard is in
 	// the query so a direct call cannot orphan the fallback pool the gate resolves to.
 	DeletePool(ctx context.Context, arg DeletePoolParams) (int64, error)
+	DeleteSystemAuditLog(ctx context.Context, arg DeleteSystemAuditLogParams) (int64, error)
+	DeleteTaskInstanceHistoryOfRuns(ctx context.Context, arg DeleteTaskInstanceHistoryOfRunsParams) (int64, error)
+	DeleteTaskInstancesOfRuns(ctx context.Context, arg DeleteTaskInstancesOfRunsParams) (int64, error)
+	DeleteTaskStateHistoryOfRuns(ctx context.Context, arg DeleteTaskStateHistoryOfRunsParams) (int64, error)
+	DeleteTenantAuditLog(ctx context.Context, arg DeleteTenantAuditLogParams) (int64, error)
 	// Remove every role grant for a user: the delete half of the IdP-authoritative
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	DeleteVariable(ctx context.Context, arg DeleteVariableParams) (int64, error)
+	DeleteXComIndexOfRuns(ctx context.Context, arg DeleteXComIndexOfRunsParams) (int64, error)
 	// The consecutive dispatch-failure count of a task still waiting to run
 	// (scheduled or queued); no row means it has moved on.
 	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
@@ -332,6 +344,9 @@ type Querier interface {
 	// come grouped by run and, within a run, in the same task_id order the per-run
 	// query returns, so the caller can split them without re-sorting.
 	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
+	// Retention janitor (performance item D5). Every statement is tenant scoped and
+	// bounded; the janitor in internal/retention paces and caps them.
+	ListTenantIDs(ctx context.Context) ([]pgtype.UUID, error)
 	// "role:action:resource" for every grant of a tenant's built-in roles.
 	ListTenantRolePermissions(ctx context.Context, name string) ([]string, error)
 	// One row per user in the tenant, newest first, with every granted role name
@@ -357,6 +372,19 @@ type Querier interface {
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
+	// A tenant's runs that settled (success or failed) before the cutoff, oldest
+	// first, whose task instances are all settled and that no live staging volume
+	// still points at. "Settled" is the predicate the pod reconciler's settled-run
+	// collection uses too: run in success or failed, and no task instance outside
+	// success, failed, skipped and upstream_failed. none is unsettled on purpose:
+	// it is a task a clear just reset, waiting to be scheduled, while the run row
+	// still says success until the clear reopens it. Any state added later counts
+	// as unsettled, so it is kept rather than deleted. The janitor calls this once
+	// per batch, so a run whose children span several batches is re-checked each
+	// time. FOR UPDATE makes a clear or
+	// rerun of the same run wait for the batch to commit; SKIP LOCKED lets the
+	// janitor pass over a run another transaction holds instead of waiting on it.
+	LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error)
 	// Stamp a run's on-failure alert as DELIVERED. Called only after a successful
 	// send, which is the whole point of the split: alerted_at now answers "did the
 	// page get through", not "did we try".
@@ -435,6 +463,9 @@ type Querier interface {
 	// a row that has since progressed. try_number is untouched: this is infra, not a
 	// task failure.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
+	// One audit entry per scope a retention cycle purged audit rows from, so the
+	// purge itself is on the record. tenant_id NULL is the system rows.
+	RecordRetentionPurge(ctx context.Context, arg RecordRetentionPurgeParams) error
 	RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error
 	// Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
 	// (dag_run_id, task_id, try_number) tuple to match the agent's identity. The
