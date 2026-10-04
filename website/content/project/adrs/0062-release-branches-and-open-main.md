@@ -118,6 +118,18 @@ than the fix-only rule in section 3.
 The exception covers only that review's items. Any other non-fix change for
 `release-0.5` needs its own recorded exception.
 
+#### 6.1 Recorded exception: `default_pool_slots` on the service API
+
+`PUT /api/v2/service/tenants/{tenant}` accepting an optional
+`default_pool_slots` (#1364) is also cherry-picked into `release-0.5` and ships
+in `v0.5.1`. Without it, every tenant the operator service API creates copies
+the `default` tenant's pool size, and an engine shared by many tenants has no
+way to size them until a `v0.6.0` that has no date. It qualifies because it is
+additive and opt-in: the field is optional, a request without it behaves as in
+`v0.5.0`, it needs no migration, and it is reachable only with the operator
+service token. It still lands on `main` first and passes the review in
+section 5.
+
 ### 7. Versions do not change
 
 SemVer and the RC discipline of ADR 0033 and ADR 0037 stay as they are: a
