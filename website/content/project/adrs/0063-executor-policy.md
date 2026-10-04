@@ -67,30 +67,34 @@ becomes a sidecar that does not appear. Refusing names the rule.
 ```yaml
 executor:
   policy:
-    runtimeClassName: gvisor          # force; also on warm pods
-    serviceAccount:
-      force: ""                       # force this SA, or
-      allowed: [etl-reader, etl-writer]  # restrict to these
+    runtime_class_name: gvisor            # force; also on warm pods
+    service_account:
+      force: ""                           # force this SA, or
+      allowed: [etl-reader, etl-writer]   # restrict to these
     placement:
-      nodeSelector: {pool: tasks}     # force; policy keys win a collision
-      tolerations:                    # force; appended to the DAG's
-        - {key: pool, value: tasks, effect: NoSchedule}
-      allowDAGPlacement: false        # refuse DAG node_selector, tolerations,
-                                      # affinity, topology spread
-      allowedPriorityClasses: [batch-low]
+      node_selector: {pool: tasks}        # force; policy keys win a collision
+      tolerations:                        # force; appended to the DAG's
+        - {key: pool, operator: Equal, value: tasks, effect: NoSchedule}
+      allow_dag_placement: false          # refuse DAG node_selector, tolerations,
+                                          # affinity, topology spread
+      allowed_priority_classes: [batch-low]
     metadata:
-      allowedLabelPrefixes: [team.example.com/]
-      allowedAnnotationPrefixes: []   # empty list: no DAG annotations
+      allowed_label_prefixes: [team.example.com/]
+      allowed_annotation_prefixes: []     # empty list: no DAG annotations
     resources:
       max: {cpu: "4", memory: 16Gi, ephemeral_storage: 20Gi}
     images:
       allowed: [registry.example.com/dags/]   # prefix match on the image reference
 ```
 
-Every key is optional; an unset rule does nothing. Resource ceilings are checked
-after the L0 defaults (ADR 0023) are applied, so a task that declares nothing is
-held to the ceiling through the default. Dexaflow's own `leoflow.io/*` labels and
-annotations stay outside the metadata rule, as they already win any collision.
+Keys are snake_case like the rest of the server config. Every key is optional;
+an unset rule does nothing, and an empty list allows nothing. Resource ceilings
+are checked after the L0 defaults (ADR 0023) are applied, so a task that
+declares nothing is held to the ceiling through the default; a limit the policy
+fills in comes with an explicit zero request, because Kubernetes would
+otherwise default the request to the whole ceiling. The metadata rule covers
+the DAG's own keys only; the executor's own labels and annotations are not
+checked against it.
 
 ### 3. Where it is checked
 
@@ -147,6 +151,13 @@ different SA takes the dedicated path) is unchanged.
   pool. Deferred until the engine-wide policy has shipped.
 - **Image digests.** Requiring `@sha256:` references is a natural extra
   restrict rule; left out until someone needs it.
+- **Fields not covered yet.** Dynamic Resource Allocation claims
+  (`execution.resource_claims`), which bypass the resource ceiling, and the
+  termination grace period.
+- **Executor-owned metadata.** A DAG can today set labels and annotations under
+  the executor's own `leoflow.io/` prefix on its pod. That is not a policy
+  question: the executor should refuse or drop those keys for every DAG, and
+  is fixed separately.
 
 ## Consequences
 
@@ -172,7 +183,8 @@ different SA takes the dedicated path) is unchanged.
 ## Implementation plan
 
 1. Policy type, file loading, validation and dispatch enforcement, with the
-   permanent-refusal outcome.
+   permanent-refusal outcome. Until step 3 lands, the server refuses to start
+   with both a policy and warm pools, because warm pods would run outside it.
 2. Registration-time check (`422`).
 3. Warm pod force rules and the image check before pool creation.
 4. Chart values and config file, configuration reference and an operator guide
