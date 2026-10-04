@@ -1434,7 +1434,14 @@ func (r *Repository) DeleteDag(ctx context.Context, tenant, dagID string) error 
 	if err != nil {
 		return err
 	}
-	rows, err := r.q.DeleteDag(ctx, queries.DeleteDagParams{TenantID: tid, DagID: dagID})
+	// The cascade covers every version, run and task instance of the DAG, so
+	// it runs without the API statement timeout.
+	var rows int64
+	err = withoutStatementTimeout(ctx, r.pool, r.q, func(q *queries.Queries) error {
+		var derr error
+		rows, derr = q.DeleteDag(ctx, queries.DeleteDagParams{TenantID: tid, DagID: dagID})
+		return derr
+	})
 	if err != nil {
 		return fmt.Errorf("deleting dag: %w", err)
 	}
@@ -1986,7 +1993,13 @@ func (r *Repository) ClearDagHistory(ctx context.Context, tenant, dagID string) 
 	if err != nil {
 		return err
 	}
-	if _, err := r.q.ClearDagRuns(ctx, dag.ID); err != nil {
+	// Like DeleteDag, the cascade covers every run and task instance of the
+	// DAG, so it runs without the API statement timeout.
+	err = withoutStatementTimeout(ctx, r.pool, r.q, func(q *queries.Queries) error {
+		_, cerr := q.ClearDagRuns(ctx, dag.ID)
+		return cerr
+	})
+	if err != nil {
 		return fmt.Errorf("clearing dag history: %w", err)
 	}
 	return nil
