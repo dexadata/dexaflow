@@ -60,7 +60,11 @@ type RunState struct {
 	TenantID     string
 	State        domain.DagRunState
 	Tasks        []domain.TaskSpec
-	States       map[string]domain.TaskState
+	// Graph is the task index for Tasks, built once per dag_version by the store
+	// and shared read-only by every run of that version. Nil means "build it
+	// when needed", so callers that construct a RunState by hand need not set it.
+	Graph  *TaskGraph
+	States map[string]domain.TaskState
 	// Tries and MaxTries hold the current and maximum attempt counts per task,
 	// driving retry decisions. Absent entries mean no retry budget.
 	Tries    map[string]int
@@ -782,6 +786,9 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, ad
 		}
 		return 0, nil, nil
 	}
+	// Resolve the task index once so planning and every dispatch below share it;
+	// a run without the store's prebuilt graph gets one built here.
+	run.Graph = run.taskGraph()
 	poolOf := taskPools(run) // taskID → pool key; nil when the pool gate is off.
 	// Plain state-set transitions (no side effect beyond the write + metric) are
 	// collected and flushed grouped by target state in one UPDATE each, instead of
@@ -1074,7 +1081,7 @@ func (s *Scheduler) redispatchReschedule(ctx context.Context, run RunState, task
 // appropriate transition. A transient failure leaves the task scheduled so the
 // next tick retries.
 func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTransition) error {
-	task, ok := findTask(run.Tasks, t.TaskID)
+	task, ok := findTask(run, t.TaskID)
 	if !ok {
 		return fmt.Errorf("task %s not found in run %s", t.TaskID, run.RunID)
 	}
@@ -1208,12 +1215,13 @@ func (s *Scheduler) recordTransition(ctx context.Context, run RunState, taskID s
 	return nil
 }
 
-// findTask returns the task with the given ID from the run topology.
-func findTask(tasks []domain.TaskSpec, taskID string) (domain.TaskSpec, bool) {
-	for _, task := range tasks {
-		if task.TaskID == taskID {
-			return task, true
-		}
+// findTask returns the task with the given ID from the run topology. It looks
+// the task up through the run's task index, so dispatching a whole fan-out is
+// linear in its width rather than quadratic.
+func findTask(run RunState, taskID string) (domain.TaskSpec, bool) {
+	i, ok := run.taskGraph().Lookup(taskID)
+	if !ok {
+		return domain.TaskSpec{}, false
 	}
-	return domain.TaskSpec{}, false
+	return run.Tasks[i], true
 }
