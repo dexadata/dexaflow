@@ -53,6 +53,7 @@ type Querier interface {
 	CountConnections(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountDagRunStatesInWindow(ctx context.Context, arg CountDagRunStatesInWindowParams) ([]CountDagRunStatesInWindowRow, error)
 	CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error)
 	CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	// One index probe per DAG of the tenant for its newest run. DAGs without runs
 	// drop out of the CROSS JOIN, so they are not counted.
@@ -215,6 +216,10 @@ type Querier interface {
 	// outage; the rest are picked up on the next tick.
 	ListAgentLostCandidates(ctx context.Context) ([]ListAgentLostCandidatesRow, error)
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
+	// Keyset form of ListAuditLogs: the entries strictly before the cursor
+	// (occurred_at, id) in the same order, so a deep page costs the same as the
+	// first.
+	ListAuditLogsAfter(ctx context.Context, arg ListAuditLogsAfterParams) ([]ListAuditLogsAfterRow, error)
 	// Lists the DISTINCT warm-worker pod names currently serving an active attempt
 	// (ADR 0058 N1d-b): a warm worker is BUSY iff some task_instance in an active
 	// state (`queued` or `running`) is durably bound to it (warm_worker_id = the
@@ -252,6 +257,11 @@ type Querier interface {
 	ListConnectionSecretsScoped(ctx context.Context, arg ListConnectionSecretsScopedParams) ([]ListConnectionSecretsScopedRow, error)
 	ListConnections(ctx context.Context, arg ListConnectionsParams) ([]ListConnectionsRow, error)
 	ListDagRunsByDag(ctx context.Context, arg ListDagRunsByDagParams) ([]DagRun, error)
+	// Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
+	// cursor (logical_date, run_id) in the same order, so a deep page costs the
+	// same as the first. run_id is unique per DAG, so it makes the order total. An
+	// empty states array keeps every state.
+	ListDagRunsByDagAfter(ctx context.Context, arg ListDagRunsByDagAfterParams) ([]ListDagRunsByDagAfterRow, error)
 	// See GetDagRunWithVersion. One join rather than a lookup per row.
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
 	ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error)
