@@ -32,7 +32,7 @@ func TestReconcileMigrationAlignsEveryTenantsBuiltInRoles(t *testing.T) {
 	}
 	t.Cleanup(pg.Close)
 	name := uniqueTenant("drift")
-	if _, err = repo.EnsureTenant(ctx, name, "Drift"); err != nil {
+	if _, err = repo.EnsureTenant(ctx, name, "Drift", 0); err != nil {
 		t.Fatal(err)
 	}
 	exec := func(sql string, args ...any) {
