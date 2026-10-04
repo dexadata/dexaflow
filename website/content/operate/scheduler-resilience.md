@@ -31,7 +31,7 @@ see [Lite: which reapers run](#lite-which-reapers-run).
 | Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/dexaflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
-| Run stuck `running` with no active TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
+| Run stuck `running` with no live TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
 
 Every SLA above is a floor: the reapers run every **30 s**, so detection lands
 up to one cycle after the threshold elapses. Worst case end-to-end: a mid-tick
@@ -347,10 +347,32 @@ anything:
 - **Warm-worker-lost reaper** — requires a live LIST of the warm pods (not the
   cache) showing the bound worker gone; a LIST error aborts the pass with zero
   marks. It never deletes a pod: a warm worker outlives its attempts.
-- **Orphan-run reaper** — requires `state = 'running'` AND no active TI on
-  the run. A run with any TI in `scheduled`/`queued`/`running` is left alone
-  (the dispatch-lost reaper unblocks this case by failing the stuck queued
-  TIs first, so a later cycle sees no active TIs).
+- **Orphan-run reaper**: requires `state = 'running'` AND no live TI on
+  the run: every TI must be settled (`success`/`failed`/`skipped`/
+  `upstream_failed`) or never started (`none`). A run with any TI in
+  `scheduled`/`queued`/`running` is left alone (the dispatch-lost reaper
+  unblocks this case by failing the stuck queued TIs first, so a later cycle
+  sees no active TIs). So is a run whose TI is parked waiting for the
+  scheduler to bring it back: `up_for_retry` during its `retry_delay`,
+  `up_for_reschedule` between the pokes of a reschedule-mode sensor, or the
+  reserved `deferred` state. Those states stamp no fresh activity timestamp,
+  so without this rule a `retry_delay` or `poke_interval` of 5 minutes or more
+  would get a healthy run failed as `orphaned`. A TI in `none` does not keep
+  the run alive: once its upstreams settle, the next scheduler tick decides
+  it. Releasing a TI back to `none` for another attempt (a retry, a reschedule
+  poke, an infra re-place, an operator clear) clears its per-attempt
+  timestamps, and it only becomes `scheduled` on the next tick; the release
+  stamps `released_at` (migration 039), which counts as run activity, so the
+  run never looks orphaned in that tick.
+
+  The list is only a snapshot, so the reap re-checks the whole predicate
+  atomically: it share-locks the run's TIs without waiting, then fails the run
+  only if it is still `running`, still has no live TI and its last activity is
+  still older than the threshold. If a TI moved in between (say a retriable
+  failure went to `up_for_retry`, or a TI was scheduled), fresh activity
+  landed, or another transaction is writing one of the run's TIs at that
+  moment, the reap is a no-op: nothing is written, no pod is torn down, and the reaper records
+  `orphan_reap_noop`.
 
 ## Tearing down the reaped task's pod
 
@@ -442,6 +464,7 @@ your Prometheus dashboard:
 | `pod_lost_terminal_pod_defer` | Pod-lost skipped because the attempt's pod is still there in a terminal phase — the reconciler settles it from its termination log; reaping would delete that evidence. Healthy as a *transient*. Sustained past two maintenance cycles means the reconciler is not settling and those task instances are stranded `running`, not about to settle: correlate with `reap_settling_valve_open` and `pod_lost_pod_query_error` |
 | `warm_worker_lost` | TI failed by the warm-worker-lost reaper (its warm worker is gone) |
 | `orphan_reaped` | Run failed by the orphan-run reaper |
+| `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved, fresh activity landed, or a TI was being written); nothing was written and no pod was torn down |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
