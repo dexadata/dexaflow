@@ -9,5 +9,9 @@ body: |-
   can survive a lost agent again, and it deletes the XCom of the attempts it
   clears, so a downstream task can no longer read a value the new attempt did
   not write. The clear is now a single transaction: if the XCom values cannot
-  be deleted, nothing is cleared and the request fails.
+  be deleted, nothing is cleared and the request fails. The agent now reads
+  the attempt budget from the task instance instead of the DAG spec, so
+  `on_failure_callback` fires only on the final attempt of a cleared task, and
+  a task that inherits `default_args.retries` no longer fires it on its first
+  failure.
 time: 2026-10-04T18:00:00.000000000-03:00

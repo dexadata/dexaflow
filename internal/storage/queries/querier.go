@@ -574,10 +574,14 @@ type Querier interface {
 	// tasks on incomplete work, strictly worse than the bug being fixed. The
 	// active-state guard prevents clobbering a terminal row.
 	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) error
-	// The time a reschedule-mode sensor first entered reschedule (NULL until it does).
-	// Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
-	// value and the sensor honors its cumulative timeout across pokes (#380).
-	TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error)
+	// The per-attempt fields the agent spec carries from the task instance row.
+	// first_reschedule_at is the time a reschedule-mode sensor first entered
+	// reschedule (NULL until it does), delivered to each re-dispatched pod so
+	// get_first_reschedule_date returns the real value and the sensor honors its
+	// cumulative timeout across pokes (#380). max_tries is the attempt budget the
+	// scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+	// so the runtime's on_failure_callback gate must read it from here (#424).
+	TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
 	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
 	// Rewrite one row's ciphertext in place during a key rotation. It touches only

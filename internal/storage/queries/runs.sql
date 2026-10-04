@@ -474,11 +474,15 @@ SET state = 'none',
     warm_worker_id = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule';
 
--- name: TaskInstanceFirstRescheduleAt :one
--- The time a reschedule-mode sensor first entered reschedule (NULL until it does).
--- Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
--- value and the sensor honors its cumulative timeout across pokes (#380).
-SELECT first_reschedule_at FROM task_instances
+-- name: TaskInstanceAttemptFields :one
+-- The per-attempt fields the agent spec carries from the task instance row.
+-- first_reschedule_at is the time a reschedule-mode sensor first entered
+-- reschedule (NULL until it does), delivered to each re-dispatched pod so
+-- get_first_reschedule_date returns the real value and the sensor honors its
+-- cumulative timeout across pokes (#380). max_tries is the attempt budget the
+-- scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+-- so the runtime's on_failure_callback gate must read it from here (#424).
+SELECT first_reschedule_at, max_tries FROM task_instances
 WHERE dag_run_id = $1 AND task_id = $2;
 
 -- name: FailTaskInstanceIfActive :exec

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage"
 )
@@ -277,5 +278,32 @@ func TestPinnedClearResetsAlertBookkeeping(t *testing.T) {
 	if alerted || attempts != 0 || nextAttempt {
 		t.Errorf("after a pinned clear alerted_at set=%v alert_attempts=%d next_alert_attempt_at set=%v, want unset/0/unset",
 			alerted, attempts, nextAttempt)
+	}
+}
+
+// TestClearedAttemptSpecCarriesTheRestoredBudget pins the agent side of #1131.
+// The runtime fires on_failure_callback only when try_number >= max_tries
+// (#424), and the agent stamps max_tries from the TaskSpec. Read from the DAG
+// spec (retries + 1), the budget stays at 3 while a clear moves try_number to 2
+// and max_tries to 4: every failed retry of the cleared task would fire the
+// callback as if it were final. The spec has to carry the row's max_tries.
+func TestClearedAttemptSpecCarriesTheRestoredBudget(t *testing.T) {
+	repo, sched, pg, ctx := openInfra(t)
+	exec := storage.NewExecutionStore(pg)
+	dagID := fmt.Sprintf("clear_spec_budget_%d", time.Now().UnixNano())
+	tasks := []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, Retries: intPtr(2)}}
+	runUUID := seedClearRun(t, repo, sched, ctx,
+		domain.DAGSpec{DagID: dagID, DagVersion: "v1", Image: "img:v1", Tasks: tasks}, tasks)
+
+	if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", []string{"t"}, true, domain.ClearOptions{ResetDagRun: true}); err != nil {
+		t.Fatalf("ClearTaskInstances: %v", err)
+	}
+	try, maxTries := tryBudget(t, pg, ctx, runUUID)
+	spec, err := exec.TaskSpec(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "t", TryNumber: try})
+	if err != nil {
+		t.Fatalf("TaskSpec: %v", err)
+	}
+	if spec.MaxTries != maxTries {
+		t.Errorf("TaskSpec.MaxTries after clear = %d, want the row's max_tries %d (try %d); the runtime would treat a retriable failure as final", spec.MaxTries, maxTries, try)
 	}
 }

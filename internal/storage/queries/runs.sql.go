@@ -2359,24 +2359,33 @@ func (q *Queries) SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTa
 	return err
 }
 
-const taskInstanceFirstRescheduleAt = `-- name: TaskInstanceFirstRescheduleAt :one
-SELECT first_reschedule_at FROM task_instances
+const taskInstanceAttemptFields = `-- name: TaskInstanceAttemptFields :one
+SELECT first_reschedule_at, max_tries FROM task_instances
 WHERE dag_run_id = $1 AND task_id = $2
 `
 
-type TaskInstanceFirstRescheduleAtParams struct {
+type TaskInstanceAttemptFieldsParams struct {
 	DagRunID pgtype.UUID `json:"dag_run_id"`
 	TaskID   string      `json:"task_id"`
 }
 
-// The time a reschedule-mode sensor first entered reschedule (NULL until it does).
-// Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
-// value and the sensor honors its cumulative timeout across pokes (#380).
-func (q *Queries) TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, taskInstanceFirstRescheduleAt, arg.DagRunID, arg.TaskID)
-	var first_reschedule_at pgtype.Timestamptz
-	err := row.Scan(&first_reschedule_at)
-	return first_reschedule_at, err
+type TaskInstanceAttemptFieldsRow struct {
+	FirstRescheduleAt pgtype.Timestamptz `json:"first_reschedule_at"`
+	MaxTries          int32              `json:"max_tries"`
+}
+
+// The per-attempt fields the agent spec carries from the task instance row.
+// first_reschedule_at is the time a reschedule-mode sensor first entered
+// reschedule (NULL until it does), delivered to each re-dispatched pod so
+// get_first_reschedule_date returns the real value and the sensor honors its
+// cumulative timeout across pokes (#380). max_tries is the attempt budget the
+// scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+// so the runtime's on_failure_callback gate must read it from here (#424).
+func (q *Queries) TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error) {
+	row := q.db.QueryRow(ctx, taskInstanceAttemptFields, arg.DagRunID, arg.TaskID)
+	var i TaskInstanceAttemptFieldsRow
+	err := row.Scan(&i.FirstRescheduleAt, &i.MaxTries)
+	return i, err
 }
 
 const taskInstancesForDagRuns = `-- name: TaskInstancesForDagRuns :many
