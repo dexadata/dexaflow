@@ -18,12 +18,13 @@ env:
   GO_VERSION: "1.26.6"
 
 # A newer push to the same pull request supersedes this run, so the older one
-# is cancelled instead of holding runners the newer one needs. Pushes to main
-# and release-* keep every run: cut-release.sh gates the tag on the run of the
-# exact merge commit, and it refuses a cancelled one. Grouped by event too, so
-# a scheduled or manual run never cancels another.
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
