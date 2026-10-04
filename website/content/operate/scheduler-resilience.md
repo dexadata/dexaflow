@@ -253,7 +253,11 @@ anything:
   so without this rule a `retry_delay` or `poke_interval` of 5 minutes or more
   would get a healthy run failed as `orphaned`. A TI in `none` does not keep
   the run alive: once its upstreams settle, the next scheduler tick decides
-  it, so a run left with only `none` TIs for 5 minutes is genuinely stuck.
+  it. Known gap: releasing a retry, a reschedule poke or an infra re-place
+  back to `none` clears the TI's timestamps, so during the one scheduler tick
+  before it becomes `scheduled` a run whose other activity is older than
+  5 minutes still looks orphaned, and a reaper pass landing in that tick fails
+  it.
 
 ## Tearing down the reaped task's pod
 

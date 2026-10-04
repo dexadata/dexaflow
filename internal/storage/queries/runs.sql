@@ -703,9 +703,14 @@ WHERE dag_run_id = $1 AND task_id = $2;
 -- than the reaper threshold would otherwise fail a healthy run. Listing the
 -- settled states (rather than the live ones) keeps any future non-terminal
 -- state on the safe side by default. `none` stays reapable: a never-started TI
--- whose upstreams are all settled is decided on the next scheduler tick, so one
--- sitting there past the threshold is the stuck shape, and one whose upstream
--- is still pending already has a live sibling keeping the run out. An
+-- whose upstreams are all settled is decided on the next scheduler tick, and one
+-- whose upstream is still pending already has a live sibling keeping the run
+-- out. Known gap: the age of a `none` TI is not measured. The retry release
+-- (ResetTaskInstanceForRetry), the reschedule re-dispatch
+-- (RedispatchRescheduledTaskInstance) and the infra re-place all clear the TI's
+-- timestamps, so for the one tick between that release and none -> scheduled,
+-- last_activity can already be past the threshold and a reaper pass landing in
+-- that tick still fails a healthy run. An
 -- infra-failed TI parked in its re-place backoff is `failed` and is covered by
 -- the threshold itself, which sits above that backoff. The shape this catches
 -- is the post-crash one: TIs settled (success/failed/skipped/upstream_failed)
