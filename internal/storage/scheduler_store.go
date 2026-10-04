@@ -114,13 +114,20 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 	if err != nil {
 		return nil, fmt.Errorf("listing active runs: %w", err)
 	}
+	tisByRun, err := s.taskInstancesByRun(ctx, runs)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]scheduler.RunState, 0, len(runs))
+	s.specs.beginTick()
 	for _, run := range runs {
 		// The spec is immutable per dag_version_id (see specCache), so N active
 		// runs sharing a version decode it once, not N times. The cached spec is
 		// shared read-only: copy Tasks before applyDefaultRetries so filling a
 		// run's retry defaults never writes through the shared backing array.
-		_, cached, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		// getForTick keeps every version this tick reads cached through the
+		// next tick, so more active versions than the cache bound never thrash.
+		_, cached, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -128,11 +135,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		spec.Tasks = make([]domain.TaskSpec, len(cached.Tasks))
 		copy(spec.Tasks, cached.Tasks)
 		applyDefaultRetries(&spec)
-		tis, err := s.q.ListTaskInstancesByRun(ctx, run.ID)
-		if err != nil {
-			return nil, fmt.Errorf("listing task instances: %w", err)
-		}
-		ts := taskInstanceMaps(tis)
+		ts := taskInstanceMaps(tisByRun[run.ID])
 		// Build per-task retry_delay_seconds from the DAG spec so the planner
 		// can gate `up_for_retry → none` on the user-declared cooldown (#201).
 		// TaskSpec.RetryDelaySeconds is *int (omitempty); nil = no cooldown.
@@ -167,6 +170,36 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		})
 	}
 	return out, nil
+}
+
+// taskInstancesByRun loads the task instances of every given run in one query
+// and groups them by run. One round trip per tick replaces the one-per-run reads
+// that made the tick's database cost grow with the number of active runs. The
+// query orders by (dag_run_id, task_id), so each run's slice keeps the task_id
+// order the per-run query returned. A run with no rows (not yet materialized)
+// is simply absent, which taskInstanceMaps reads as an empty run, as before.
+func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.DagRun) (map[pgtype.UUID][]queries.TaskInstance, error) {
+	if len(runs) == 0 {
+		return map[pgtype.UUID][]queries.TaskInstance{}, nil
+	}
+	ids := make([]pgtype.UUID, len(runs))
+	for i, run := range runs {
+		ids[i] = run.ID
+	}
+	tis, err := s.q.ListTaskInstancesByRuns(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("listing task instances: %w", err)
+	}
+	byRun := make(map[pgtype.UUID][]queries.TaskInstance, len(runs))
+	for start := 0; start < len(tis); {
+		end := start + 1
+		for end < len(tis) && tis[end].DagRunID == tis[start].DagRunID {
+			end++
+		}
+		byRun[tis[start].DagRunID] = tis[start:end:end]
+		start = end
+	}
+	return byRun, nil
 }
 
 // SetWarmExecution records the operator's warm-pool config so ActiveWarmTargets
@@ -245,7 +278,7 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			continue
 		}
 		seen[run.DagVersionID] = true
-		_, spec, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		_, spec, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -549,6 +582,7 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 	out := make([]scheduler.ScheduledDAG, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, scheduler.ScheduledDAG{
+			TenantID:      uuidToString(r.TenantID),
 			DagID:         r.DagID,
 			Schedule:      strOrEmpty(r.Schedule),
 			LastLogical:   timeFromAny(r.LastLogical),
@@ -560,13 +594,19 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 	return out, nil
 }
 
-// CreateScheduledRun inserts a scheduled run for a DAG (idempotent on run_id).
-func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, dagID string, logical time.Time) error {
+// CreateScheduledRun inserts a scheduled run for the DAG dagID owned by the
+// tenant tenantID (a tenant UUID), idempotent on run_id. The tenant is explicit
+// because a dag_id is unique only within its tenant (#209).
+func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error {
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return fmt.Errorf("scheduled run tenant id %q: %w", tenantID, err)
+	}
 	runID := "scheduled__" + logical.UTC().Format(time.RFC3339)
 	return s.q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
 		RunID:       runID,
 		LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
-		Tenant:      "default",
+		TenantID:    tid,
 		DagID:       dagID,
 	})
 }

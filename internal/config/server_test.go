@@ -689,7 +689,7 @@ func TestValidateUIBranding(t *testing.T) {
 }
 
 // TestLoadServerReadsExternalAuthURLsFromEnv locks that both #1288 keys bind
-// from the environment and default to empty (Leoflow's own pages).
+// from the environment and default to empty (Dexaflow's own pages).
 func TestLoadServerReadsExternalAuthURLsFromEnv(t *testing.T) {
 	c, err := LoadServer("", nil)
 	if err != nil {
@@ -712,7 +712,7 @@ func TestLoadServerReadsExternalAuthURLsFromEnv(t *testing.T) {
 
 // TestValidateExternalAuthURLs covers the boot checks: absolute http(s) URLs
 // with a host, so neither setting can become a script URL or a relative
-// redirect back into Leoflow that loops.
+// redirect back into Dexaflow that loops.
 func TestValidateExternalAuthURLs(t *testing.T) {
 	cases := []struct {
 		name            string

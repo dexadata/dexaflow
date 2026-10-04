@@ -1,0 +1,15 @@
+kind: Security
+body: |-
+  **Scheduled DAGs outside the default tenant now fire, in their own tenant.**
+  The scheduler created every cron run with a fixed `default` tenant, so a
+  scheduled DAG registered in any other tenant never ran, and a DAG with the
+  same `dag_id` in the default tenant received its runs instead. Runs are now
+  created in the tenant that owns the DAG, and the per-DAG `max_active_runs`
+  and `max_active_tasks` caps are counted per (tenant, `dag_id`), so two
+  tenants that both own an `etl` DAG no longer share one budget. (#209)
+
+  On upgrade, scheduled DAGs outside the default tenant start firing. One with
+  `catchup: true` and a `start_date` backfills its missed slots, bounded per
+  tick and by `max_active_runs`; pause it or set `catchup: false` first if you
+  do not want that backfill.
+time: 2026-10-04T12:00:00.000000000-03:00

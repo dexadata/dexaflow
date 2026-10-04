@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -77,6 +79,11 @@ type Runner struct {
 	// leaves TMPDIR untouched: a single-shot pod is already destroyed per task, so
 	// its /tmp needs no in-process reset.
 	TmpDir string
+	// HomeDir, when set, is exported to the task as HOME, with the XDG base dirs
+	// under it, so the child's dotfiles, caches and user site-packages land in a
+	// per-attempt directory the caller wipes between attempts. A warm worker on a
+	// read-only root sets it (X3.2); empty leaves HOME and XDG_* as inherited.
+	HomeDir string
 	// TerminationLogPath is where the agent writes its durable outcome record just
 	// before delivering the report, so a pod killed mid-report still leaves the
 	// task's true result behind for the reconciler to recover (ADR 0052). Empty
@@ -283,6 +290,35 @@ func (r *Runner) outputPathEnv() ([]string, error) {
 			return nil, fmt.Errorf("creating per-attempt TMPDIR %q: %w", r.TmpDir, err)
 		}
 		env = append(env, "TMPDIR="+r.TmpDir)
+	}
+	if r.HomeDir != "" {
+		homeEnv, err := attemptHomeEnv(r.HomeDir)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, homeEnv...)
+	}
+	return env, nil
+}
+
+// attemptHomeEnv creates a per-attempt HOME and its XDG base dirs and returns the
+// env that points the child at them. Appended after the task's own env, so it
+// overrides a HOME or XDG_* the image or the DAG set: on a read-only root those
+// would either be unwritable or, under /tmp, shared with the next attempt.
+func attemptHomeEnv(home string) ([]string, error) {
+	dirs := [][2]string{
+		{"HOME", home},
+		{"XDG_CONFIG_HOME", filepath.Join(home, ".config")},
+		{"XDG_CACHE_HOME", filepath.Join(home, ".cache")},
+		{"XDG_DATA_HOME", filepath.Join(home, ".local", "share")},
+		{"XDG_STATE_HOME", filepath.Join(home, ".local", "state")},
+	}
+	env := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if err := os.MkdirAll(d[1], 0o700); err != nil {
+			return nil, fmt.Errorf("creating per-attempt %s %q: %w", d[0], d[1], err)
+		}
+		env = append(env, d[0]+"="+d[1])
 	}
 	return env, nil
 }
@@ -934,10 +970,23 @@ func reportBackoff(attempt int) time.Duration {
 	return d
 }
 
+// jitterDelay spreads a backoff delay over [d/2, d] ("equal jitter"), so agents
+// that failed together retry at different moments instead of hitting a
+// recovering control plane in one synchronized burst on every attempt. It never
+// lengthens the delay, so every cap on d still holds. math/rand is fine here:
+// this is backoff jitter, nothing security-relevant.
+func jitterDelay(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(mathrand.Int64N(int64(half)+1)) //nolint:gosec // G404: backoff jitter, not security-relevant
+}
+
 // reportRequest sends a ReportState request and translates the response's
 // should_terminate signal into an error. A transient RPC failure (the api pod
 // Unavailable, a deadline) is retried until it lands, with the delay between
-// attempts following reportBackoff. Retrying is safe: the server's ReportState
+// attempts following reportBackoff, jittered (jitterDelay). Retrying is safe: the server's ReportState
 // is idempotent (a report that already applied comes back as a stale ack, not a
 // double-apply). A logical rejection or a credential rejection (Unauthenticated,
 // PermissionDenied) is returned immediately, and a canceled context (parent
@@ -989,7 +1038,7 @@ func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequ
 		if !retryableReportErr(err) {
 			return fmt.Errorf("reporting state %v: %w", req.GetState(), err)
 		}
-		delay := reportBackoff(attempt)
+		delay := jitterDelay(reportBackoff(attempt))
 		slog.Warn("report failed; retrying after backoff",
 			"state", req.GetState(), "attempt", attempt, "delay", delay, "error", err)
 		select {
