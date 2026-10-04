@@ -158,6 +158,23 @@ func (q *Queries) CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int
 	return count, err
 }
 
+const countDagRunsByDagStates = `-- name: CountDagRunsByDagStates :one
+SELECT count(*) FROM dag_runs
+WHERE dag_id = $1 AND state::text = ANY($2::text[])
+`
+
+type CountDagRunsByDagStatesParams struct {
+	DagID  pgtype.UUID `json:"dag_id"`
+	States []string    `json:"states"`
+}
+
+func (q *Queries) CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDagRunsByDagStates, arg.DagID, arg.States)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDagsByLatestRunState = `-- name: CountDagsByLatestRunState :many
 SELECT lr.state AS state, count(*) AS n
 FROM dags d
@@ -949,12 +966,105 @@ func (q *Queries) ListDagRunsByDag(ctx context.Context, arg ListDagRunsByDagPara
 	return items, nil
 }
 
+const listDagRunsByDagAfter = `-- name: ListDagRunsByDagAfter :many
+SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.dag_id = $1
+  AND (cardinality($2::text[]) = 0 OR r.state::text = ANY($2::text[]))
+  AND (r.logical_date, r.run_id) < ($3::timestamptz, $4::text)
+ORDER BY r.logical_date DESC, r.run_id DESC
+LIMIT $5
+`
+
+type ListDagRunsByDagAfterParams struct {
+	DagID            pgtype.UUID        `json:"dag_id"`
+	States           []string           `json:"states"`
+	AfterLogicalDate pgtype.Timestamptz `json:"after_logical_date"`
+	AfterRunID       string             `json:"after_run_id"`
+	RowLimit         int32              `json:"row_limit"`
+}
+
+type ListDagRunsByDagAfterRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	DagVersionID       pgtype.UUID        `json:"dag_version_id"`
+	RunID              string             `json:"run_id"`
+	LogicalDate        pgtype.Timestamptz `json:"logical_date"`
+	DataIntervalStart  pgtype.Timestamptz `json:"data_interval_start"`
+	DataIntervalEnd    pgtype.Timestamptz `json:"data_interval_end"`
+	State              DagRunState        `json:"state"`
+	Trigger            DagRunTrigger      `json:"trigger"`
+	Conf               []byte             `json:"conf"`
+	TriggeredBy        pgtype.UUID        `json:"triggered_by"`
+	QueuedAt           pgtype.Timestamptz `json:"queued_at"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	EndedAt            pgtype.Timestamptz `json:"ended_at"`
+	Note               *string            `json:"note"`
+	AlertedAt          pgtype.Timestamptz `json:"alerted_at"`
+	AlertAttempts      int32              `json:"alert_attempts"`
+	NextAlertAttemptAt pgtype.Timestamptz `json:"next_alert_attempt_at"`
+	DagVersionLabel    *string            `json:"dag_version_label"`
+}
+
+// Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
+// cursor (logical_date, run_id) in the same order, so a deep page costs the
+// same as the first. run_id is unique per DAG, so it makes the order total. An
+// empty states array keeps every state.
+func (q *Queries) ListDagRunsByDagAfter(ctx context.Context, arg ListDagRunsByDagAfterParams) ([]ListDagRunsByDagAfterRow, error) {
+	rows, err := q.db.Query(ctx, listDagRunsByDagAfter,
+		arg.DagID,
+		arg.States,
+		arg.AfterLogicalDate,
+		arg.AfterRunID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDagRunsByDagAfterRow{}
+	for rows.Next() {
+		var i ListDagRunsByDagAfterRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagID,
+			&i.DagVersionID,
+			&i.RunID,
+			&i.LogicalDate,
+			&i.DataIntervalStart,
+			&i.DataIntervalEnd,
+			&i.State,
+			&i.Trigger,
+			&i.Conf,
+			&i.TriggeredBy,
+			&i.QueuedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Note,
+			&i.AlertedAt,
+			&i.AlertAttempts,
+			&i.NextAlertAttemptAt,
+			&i.DagVersionLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDagRunsByDagWithVersion = `-- name: ListDagRunsByDagWithVersion :many
 SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
 WHERE r.dag_id = $1
-ORDER BY r.logical_date DESC
+ORDER BY r.logical_date DESC, r.run_id DESC
 LIMIT $2 OFFSET $3
 `
 
