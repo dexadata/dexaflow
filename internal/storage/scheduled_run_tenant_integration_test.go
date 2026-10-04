@@ -4,8 +4,12 @@ package storage_test
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/scheduler"
@@ -19,8 +23,15 @@ import (
 func TestScheduledRunLandsInTheOwningTenantIntegration(t *testing.T) {
 	repo, store, ctx := openRepo(t)
 	tenantA, tenantB := "default", uniqueTenant("sched-b")
-	if _, err := repo.EnsureTenant(ctx, tenantB, tenantB); err != nil {
-		t.Fatalf("EnsureTenant %s: %v", tenantB, err)
+	// A bare tenants row is all scheduling needs. Inserting it directly keeps
+	// this test independent of how tenants are provisioned.
+	pg, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pg.Close)
+	if _, err = pg.Exec(ctx, `INSERT INTO tenants (name, display_name) VALUES ($1, $1)`, tenantB); err != nil {
+		t.Fatalf("inserting tenant %s: %v", tenantB, err)
 	}
 	dagID := fmt.Sprintf("sched_%d", time.Now().UnixNano())
 	schedule := "@hourly"
@@ -33,7 +44,7 @@ func TestScheduledRunLandsInTheOwningTenantIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{tenantA, tenantB} {
-		if _, err := repo.RegisterDagVersion(ctx, name, spec, hash); err != nil {
+		if _, err = repo.RegisterDagVersion(ctx, name, spec, hash); err != nil {
 			t.Fatalf("register %s in %s: %v", dagID, name, err)
 		}
 	}
@@ -66,7 +77,7 @@ func TestScheduledRunLandsInTheOwningTenantIntegration(t *testing.T) {
 	}
 
 	logical := time.Now().UTC().Truncate(time.Hour)
-	if err := store.CreateScheduledRun(ctx, forB.TenantID, forB.DagID, logical); err != nil {
+	if err = store.CreateScheduledRun(ctx, forB.TenantID, forB.DagID, logical); err != nil {
 		t.Fatalf("CreateScheduledRun: %v", err)
 	}
 
@@ -79,5 +90,15 @@ func TestScheduledRunLandsInTheOwningTenantIntegration(t *testing.T) {
 	}
 	if _, totalA, err := repo.ListDagRuns(ctx, tenantA, dagID, 10, 0); err != nil || totalA != 0 {
 		t.Errorf("tenant A must not receive tenant B's scheduled run: total=%d err=%v", totalA, err)
+	}
+}
+
+// TestCreateScheduledRunRejectsAnInvalidTenantIDIntegration: a malformed
+// tenant id fails before any insert instead of matching nothing silently.
+func TestCreateScheduledRunRejectsAnInvalidTenantIDIntegration(t *testing.T) {
+	_, store, ctx := openRepo(t)
+	err := store.CreateScheduledRun(ctx, "not-a-uuid", "etl", time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "not-a-uuid") {
+		t.Errorf("CreateScheduledRun = %v, want an error naming the bad tenant id", err)
 	}
 }

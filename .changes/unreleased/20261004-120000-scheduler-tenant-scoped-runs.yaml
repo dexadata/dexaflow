@@ -1,4 +1,4 @@
-kind: Fixed
+kind: Security
 body: |-
   **Scheduled DAGs outside the default tenant now fire, in their own tenant.**
   The scheduler created every cron run with a fixed `default` tenant, so a
