@@ -111,16 +111,20 @@ The facts this ADR relies on:
    `join`, because `join` is downstream of `task1`. Everything further down is
    reached by trigger rules, not by the branch.
 3. **`None` skips every direct child.** The return value is still pushed as the
-   task's `return_value`, and `{"followed": [...]}` is pushed under
-   `skipmixin_key`.
+   task's `return_value`. When the branch task has downstream tasks,
+   `{"followed": [...]}` is pushed under `skipmixin_key`, where `followed` is the
+   list of **direct children** inside the follow set (not the raw chosen ids).
 4. **The branch task itself ends `success`.** Skipping is a side effect of a
    successful run, not a state of the branch task.
 5. **Clear re-applies the decision.** `NotPreviouslySkippedDep` re-skips a cleared
-   child whose SkipMixin parent already finished and did not follow it.
+   child whose SkipMixin parent already finished and did not follow it. It looks
+   only at **direct** parents, and it is a separate dependency from
+   `TriggerRuleDep`, so it applies to every trigger rule, `always` included.
 6. **`ShortCircuitOperator`** on a falsy condition skips all transitive
    downstream when `ignore_downstream_trigger_rules=True` (the default), or only
    direct children when `False` (letting trigger rules decide below). A truthy
-   condition skips nothing.
+   condition skips nothing. A falsy condition pushes `{"skipped": [...]}` (not
+   `followed`) under `skipmixin_key`, and only when the task has downstream tasks.
 
 ## Decision
 
@@ -144,8 +148,13 @@ makes it. The control plane never runs the callable (ADR 0048).
    one-element list, an iterable of `str` becomes a sorted, de-duplicated list,
    `None` becomes `[]`; anything else, or a non-`str` member, raises (the task
    fails, consuming a retry, as in Airflow). It then checks every id against the
-   DAG's task ids, which the agent passes in `LEOFLOW_BRANCH_TASK_IDS` (from the
-   task spec, so the pod does not need to re-import `dag.py`). An unknown id
+   DAG's task ids, which the agent passes in `LEOFLOW_BRANCH_TASK_IDS`, so the pod
+   does not need to re-import `dag.py`. The agent's `TaskSpec` message
+   (`proto/agent.proto:117-143`) carries neither the DAG's task ids nor the
+   task's direct children today, so `GetTaskSpec` gains two fields filled by the
+   control plane from the pinned spec: `repeated string dag_task_ids` and
+   `repeated string downstream_task_ids` (the latter for the warning below and
+   for building `followed`). An unknown id
    raises with Airflow's message ("'branch_task_ids' must contain only valid
    task_ids"). A valid id that is **not** a direct child is accepted, as in
    Airflow, and logged as a warning in the task log, because it can never select
@@ -170,9 +179,11 @@ makes it. The control plane never runs the callable (ADR 0048).
 
    A proto3 message field has presence, so "no decision" and "skip everything"
    (`follow_task_ids` empty) are distinguishable on the wire.
-5. The agent also pushes `skipmixin_key = {"followed": [...]}` as a custom XCom
-   so the XCom tab matches Airflow. That XCom is **display only**; nothing reads
-   it back.
+5. The agent also pushes `skipmixin_key` as a custom XCom so the XCom tab matches
+   Airflow: `{"followed": [...]}` (the direct children in the follow set) for a
+   branch task, `{"skipped": [...]}` for a falsy short-circuit, and nothing when
+   the task has no downstream tasks or the short-circuit condition was truthy
+   (facts 3 and 6). That XCom is **display only**; nothing reads it back.
 
 **Why the terminal report and not a reserved XCom.** The decision must become
 true in the same write that makes the branch task `success`, or there is a
@@ -230,7 +241,21 @@ is evaluated, a `none` task `T` is set to `skipped` when any direct upstream `P`
 For kind `short_circuit` with `ignore_downstream_trigger_rules=true` and a falsy
 condition, `T` is skipped when `P` is **any ancestor**, not only a direct parent,
 which is Airflow's "all flat relatives" behavior (Dexaflow has no teardown tasks,
-so Airflow's teardown exclusion has nothing to exclude yet).
+so Airflow's teardown exclusion has nothing to exclude yet). On the first run
+this matches Airflow exactly. It is slightly stricter after a clear: Airflow's
+`NotPreviouslySkippedDep` checks only direct parents, so a cleared
+*grandchild* of a falsy short-circuit is re-evaluated by its trigger rule
+there (and runs under, say, `all_done`), while this filter re-skips it. The
+stricter reading is kept on purpose (it never runs work the short-circuit
+meant to stop) and is documented.
+
+The filter applies to every `none` task, whatever its trigger rule, `always`
+included, because `NotPreviouslySkippedDep` is a separate dependency that
+Airflow evaluates for `always` tasks too. Airflow's skip endpoint also
+overwrites `scheduled` and `queued` rows (it spares only `running`,
+`success` and `failed`); this filter touches only `none` rows, so a child
+that a non-`all_success` rule already promoted when the parent decides is
+not pulled back. That is a race either way and is documented, not modelled.
 
 A `success` branch parent with a `NULL` decision imposes no filter. The only way
 to get there is an operator's explicit "mark success" in the UI, and that is
@@ -268,13 +293,25 @@ block (lines 389-427) and the waits / runs columns from its readiness checks
   and changes the **final state** in two cases: a `one_success` task whose
   upstreams all finished without success becomes `upstream_failed` (was
   `skipped`); an upstream `upstream_failed` no longer condemns `all_failed` /
-  `one_failed` / `one_success`. These are bug fixes toward parity; they ship as
-  their own commit with a changelog entry, before branching.
-- `always` is evaluated before the branch filter, as in Airflow, where
-  `TriggerRuleDep` passes immediately (`trigger_rule_dep.py:114-116`) and the
-  skip endpoint does not overwrite a running or finished row. So an `always`
-  child of a branch usually runs before the branch decides and is not skipped.
-  This is Airflow's behavior and is documented, not "fixed".
+  `one_failed` / `one_success`. `all_failed` also skips as soon as one upstream
+  succeeds or is skipped, instead of after all upstreams finish (timing only).
+  These are bug fixes toward parity; they ship as their own change with a
+  changelog entry, before branching.
+- **Release targeting.** The alignment makes tasks run that did not run before
+  on the same DAG and the same inputs (an `all_failed` / `one_failed` cleanup
+  or alert task now fires after an `upstream_failed` upstream; a `one_success`
+  task now starts while its siblings are still running). That is an observable
+  behavior change for unchanged DAGs, so it does **not** ship in a patch
+  release (v0.5.x). It ships in the next minor release (v0.6.0) under
+  **Changed** in the changelog, with an upgrade note listing the affected rules.
+  Branching itself is a new feature and is minor-release material anyway.
+- `always` is not special-cased by the branch filter. In Airflow `TriggerRuleDep`
+  passes immediately (`trigger_rule_dep.py:114-116`), so an `always` child is
+  normally scheduled on the first tick, before its branch parent decides, and
+  the skip endpoint does not overwrite a running or finished row. The same holds
+  here because the filter only touches `none` rows. A cleared `always` child of
+  a branch that did not follow it is re-skipped, as `NotPreviouslySkippedDep`
+  does. This is Airflow's behavior and is documented, not "fixed".
 - `one_done`, `all_skipped`, `all_done_min_one_success` and
   `all_done_setup_success` stay rejected at compile (`compiler.py:24-30`). They
   are cheap to add later on the same evaluator, but no reported DAG needs them,
@@ -282,7 +319,13 @@ block (lines 389-427) and the waits / runs columns from its readiness checks
   model.
 - `FinalizeRun` (`plan.go:367-395`) is unchanged: a run whose tasks are all
   terminal with no `failed` / `upstream_failed` is `success`, so a run where a
-  branch skipped half the graph succeeds, as in Airflow.
+  branch skipped half the graph succeeds, as in Airflow. Note that Airflow
+  decides the run state from **leaf** tasks only
+  (`airflow-core/src/airflow/models/dagrun.py`, `_tis_for_dagrun_state`), while
+  `FinalizeRun` looks at every task. Skipped tasks count as success in both, so
+  branching gives the same run state; the existing divergence for a failed
+  non-leaf followed by a successful `one_failed` / `all_done` leaf is out of
+  scope here and tracked separately.
 - The in-memory transition table needs no change: every skip the planner
   writes is `none -> skipped` (`state_machine.go:24`).
 
@@ -325,16 +368,38 @@ One optional task property, not a new task type:
   alignment (D2) does change the behavior of existing `one_success` /
   `one_failed` / `all_failed` DAGs in the edge cases listed there; that is
   intentional and called out in the changelog.
-- **Forward compatibility is loud.** An older control plane that receives a
-  `dag.json` with `branch` or a new rule rejects it at registration, because
-  task objects are `additionalProperties: false` and the rule is an enum. It
-  never silently runs every branch.
+- **Forward compatibility is loud at registration only.** An older control
+  plane that receives a `dag.json` with `branch` or a new rule rejects it at
+  registration, because task objects are `additionalProperties: false` and the
+  rule is an enum. It does **not** protect versions that are already stored:
+  the scheduler decodes a pinned spec with a plain `json.Unmarshal`
+  (`internal/storage/spec_cache.go:83`), which drops an unknown `branch` field
+  silently, and `EvaluateTriggerRule` returns `DecisionWait` for an unknown rule
+  (`internal/scheduler/state_machine.go:108-109`). So a binary that predates the
+  planner filter, running against a database where branch DAGs are already
+  registered (a Helm rollback, or an old replica during a rolling upgrade; boot
+  only warns on a schema that is ahead, `internal/storage/schema_check.go:171-176`),
+  would run **every** branch of those DAGs, and would leave tasks on the new
+  rules waiting forever. For `branch` this is handled by ordering, not by a
+  runtime check (see Phased path): `TaskSpec.Branch` and the planner filter
+  ship one release **before** the schema and the compiler accept `branch`, so
+  the oldest binary a supported rollback can reach already applies decisions.
+  Rolling back below that release after branch DAGs are registered is
+  unsupported and the upgrade notes say so. The new trigger rules ship in the
+  same release as their evaluator (Phased path step 1); rolling back below it
+  leaves those tasks visibly stuck in `none`, never run wrongly, and the
+  upgrade notes say that too.
 - **Agent / control-plane skew.** An old agent never sends `branch` on its
   report, so a new control plane fails a branch task closed
   (`branch_decision_missing`, D1). This only happens if a DAG that uses
   branching runs on an image with an old agent; the remedy (rebuild the image)
-  is in the error. An old control plane ignores the unknown proto field, but it
-  could never have accepted the `dag.json` in the first place.
+  is in the error. An old control plane ignores the unknown proto field. That
+  matters during a rolling upgrade, where an agent can report to an old replica
+  for a DAG a new replica registered: the old replica would write `success`
+  with no decision, which the planner reads as "no filter" (the mark-success
+  case). The release ordering above closes it, because the oldest replica in a
+  rollout that enables the compiler already persists decisions; upgrading
+  across both releases in one rolling step is unsupported.
 
 ### D4: Scope of the first slice, and what stays a loud reject
 
@@ -385,8 +450,12 @@ Airflow 3.2.x `TaskInstanceState` vocabulary.
   matches Airflow.
 - The XCom tab shows `return_value` and `skipmixin_key` for the branch task,
   as in Airflow (D1 step 5).
-- "Mark skipped" already exists. "Mark success" on a branch task records no
-  decision, so every child is eligible to run (Airflow parity, D2).
+- "Mark skipped" already exists. "Mark success" does not touch
+  `branch_decision`: on a branch task that never succeeded it records no
+  decision, so every child is eligible to run; on one that succeeded before and
+  was then marked failed, the earlier decision is still on the row and is
+  applied again. Both match Airflow, where mark success writes no XCom and an
+  earlier `skipmixin_key` XCom survives (D2).
 
 ### D6: Clear, retries, warm pools and the durable outcome record
 
@@ -427,14 +496,20 @@ Therefore:
   ignored by readers that do not know it.
 - The termination message is capped at about 4 KiB. If the encoded record with
   the decision would exceed the budget, the agent writes **no** success record,
-  and the task degrades to ADR 0052's no-record path (re-drive), never to a
-  decision-less success.
+  and the task degrades to ADR 0052's no-record path, never to a decision-less
+  success. Concretely, a record-less `Succeeded` pod settles nothing
+  (`internal/executor/reconcile.go:85-86`); if the report was also lost, the row
+  stays active until the agent-lost reaper fails it and the retry rail re-runs
+  it. That costs an attempt, which is the accepted price of the rare case.
 - The reconciler settles a branch task's recovered success through a new
   `SucceedBranchTaskInstanceIfActive` (same `id` + `try_number` + active-state
   guard) that also sets `branch_decision`. A success record **without** a
   decision for a task whose pod is labelled as a branch task
-  (`leoflow.io/branch=true`, set by `BuildPod` from the spec) is treated as no
-  record.
+  (`leoflow.io/branch=true`, set by `BuildPod` from the spec) is settled
+  `failed` with reason `branch_decision_missing`, through the existing
+  `FailTaskInstanceIfActive` guard, the same outcome as the D1 table. Treating
+  it as "no record" instead would fall into `settleNothing` above and leave
+  the row to the reaper.
 
 **Warm pools (ADR 0058).** A warm worker cannot use the termination message; it
 reports each attempt in-band through the same `ReportState` RPC (ADR 0058 D3).
@@ -465,8 +540,9 @@ Strict TDD (ADR 0011): every step below starts with the failing test.
    short-circuit falsy with `ignore_downstream_trigger_rules` true (every
    descendant skipped, including a descendant also reachable from a non-skipped
    path) and false (only direct children, cascade by rule); a cleared child
-   re-skipped from the persisted decision; parent in `up_for_retry` keeps
-   children waiting; determinism (same input, same output).
+   re-skipped from the persisted decision; an `always` child
+   scheduled before the parent decides, and re-skipped when cleared after;
+   parent in `up_for_retry` keeps children waiting; determinism (same input, same output).
 3. **Compiler** (`parser/tests/test_compiler.py`, `test_shim_edges.py`).
    `@task.branch`, `BranchPythonOperator`, `@task.short_circuit`,
    `ShortCircuitOperator` compile to the D3 shape and validate against the
@@ -487,7 +563,8 @@ Strict TDD (ADR 0011): every step below starts with the failing test.
    decision is persisted only with a `success` that passes the attempt guard; a
    stale report from a previous `try_number` cannot set a decision; clear resets
    it and archives it to history; the reconciler settles a recovered branch
-   success with its decision, and refuses one without.
+   success with its decision, and settles one without a decision `failed`
+   (`branch_decision_missing`).
 7. **Schema and domain** (`internal/domain`). `branch` round-trips; the hash of
    a `dag.json` without `branch` is unchanged (golden test); `ignore_downstream_trigger_rules`
    with `kind: branch` is rejected.
@@ -507,7 +584,8 @@ Strict TDD (ADR 0011): every step below starts with the failing test.
 - The trigger-rule evaluator becomes a faithful port of Airflow's, which fixes
   existing divergences for `all_failed`, `one_success` and `one_failed`. That is
   a visible behavior change for some existing DAGs and is announced as such.
-- One new column, one new proto message and one optional schema property. No
+- One new column, one new proto message (plus two repeated fields on the
+  agent `TaskSpec`) and one optional schema property. No
   new RPC, no new datastore, no dynamic edges, no change to graph validation.
 - The durable outcome record grows one optional field, and the reconciler gains
   one guarded settle. The invariant "a branch task is never `success` without a
@@ -547,14 +625,23 @@ Strict TDD (ADR 0011): every step below starts with the failing test.
 1. **Trigger-rule parity.** Align the five existing rules and add the four new
    ones (D2 table), parser and schema included. Shippable on its own; branching
    stays rejected.
-2. **Decision channel.** Proto `BranchDecision`, runtime normalisation and file,
-   agent report, `branch_decision` column, server validation, durable record and
-   reconciler settle, `branch` in the schema. Branch tasks still cannot be
-   compiled, so nothing user-visible changes yet.
-3. **Planner filter and compiler.** The D2 branch filter, the D4 allow-list for
-   `@task.branch` / `BranchPythonOperator`, UI operator naming, e2e.
-4. **Short-circuit.** `@task.short_circuit` / `ShortCircuitOperator` on the same
-   channel.
+2. **Decision channel and planner filter (dark).** Proto `BranchDecision` and the
+   new `TaskSpec` fields, runtime normalisation and file, agent report,
+   `branch_decision` column, server validation, durable record and reconciler
+   settle, `TaskSpec.Branch` in the Go domain type, and the D2 branch filter
+   (both kinds). The schema still rejects `branch` and the compiler still
+   rejects branch operators, so no DAG can carry a decision yet and nothing
+   user-visible changes.
+3. **Schema and compiler, one release later.** `branch` in both schema copies,
+   the D4 allow-list for `@task.branch` / `BranchPythonOperator`, UI operator
+   naming, e2e. Shipping this in a **later release** than step 2 is what makes
+   rollback safe (D3): every binary a supported rollback reaches already
+   decodes `branch` and applies the filter. The schema must never accept
+   `branch` in a release whose planner does not apply it, or a hand-written
+   `dag.json` would run every branch.
+4. **Short-circuit compiler.** `@task.short_circuit` / `ShortCircuitOperator`
+   on the same channel and filter (D4 counts it in the first slice; it can ride
+   step 3 or follow it).
 5. **Later, separately:** generic `airflow_operator` branch support (translate
    `DownstreamTasksSkipped`), `LatestOnlyOperator`, `AirflowSkipException`, the
    remaining trigger rules, branch-to-TaskGroup once ADR 0043's generic TaskGroup
