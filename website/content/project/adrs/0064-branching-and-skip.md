@@ -5,8 +5,13 @@ weight: 640
 description: "ADR 0064: How @task.branch, BranchPythonOperator and ShortCircuitOperator report their decision to the control plane, how the Go scheduler cascades skipped with Airflow 3 trigger-rule semantics, and what stays a loud reject."
 ---
 
-**Status:** Proposed
-**Date:** 2026-10-04
+**Status:** Accepted
+**Date:** 2026-10-04 (proposed and accepted the same day by the project owner)
+**Decided at acceptance:** (a) trigger-rule parity with Airflow ships in the
+next minor release, with a **Changed** changelog entry and an upgrade note
+(D2); (b) the two-release phased rollout of branching is accepted, and
+upgrading across both releases in a single rolling jump is documented as
+unsupported (D3, Phased path).
 **Relates:** ADR 0036 (Airflow runtime compatibility shim: one model, one policy seam), ADR 0040 (Airflow operator support; branching was parked as "Phase D"), ADR 0043 (TaskGroup; the generic construct is still rejected), ADR 0048 (no user code in the control plane), ADR 0051 (orchestration vs execution state machines), ADR 0052 (durable task outcome), ADR 0058 (warm worker pools, in-band outcome)
 **Issues:** #787 (this ADR), #225 (the compile-time reject this ADR eventually retires)
 
@@ -302,8 +307,9 @@ block (lines 389-427) and the waits / runs columns from its readiness checks
   or alert task now fires after an `upstream_failed` upstream; a `one_success`
   task now starts while its siblings are still running). That is an observable
   behavior change for unchanged DAGs, so it does **not** ship in a patch
-  release (v0.5.x). It ships in the next minor release (v0.6.0) under
-  **Changed** in the changelog, with an upgrade note listing the affected rules.
+  release (v0.5.x). **Decided at acceptance:** it ships in the next minor
+  release under **Changed** in the changelog, with an upgrade note listing the
+  affected rules and the timing and final-state changes above.
   Branching itself is a new feature and is minor-release material anyway.
 - `always` is not special-cased by the branch filter. In Airflow `TriggerRuleDep`
   passes immediately (`trigger_rule_dep.py:114-116`), so an `always` child is
@@ -399,7 +405,11 @@ One optional task property, not a new task type:
   with no decision, which the planner reads as "no filter" (the mark-success
   case). The release ordering above closes it, because the oldest replica in a
   rollout that enables the compiler already persists decisions; upgrading
-  across both releases in one rolling step is unsupported.
+  across both releases in one rolling step is unsupported. **Decided at
+  acceptance:** the two-release rollout is the accepted plan, and the upgrade
+  notes of the release that enables the compiler state that a single rolling
+  jump from a release before the planner filter is unsupported: the operator
+  upgrades to the planner-filter release first and completes that rollout.
 
 ### D4: Scope of the first slice, and what stays a loud reject
 
@@ -624,7 +634,8 @@ Strict TDD (ADR 0011): every step below starts with the failing test.
 
 1. **Trigger-rule parity.** Align the five existing rules and add the four new
    ones (D2 table), parser and schema included. Shippable on its own; branching
-   stays rejected.
+   stays rejected. Ships in the next minor release with a **Changed**
+   changelog entry and an upgrade note (decided at acceptance, D2).
 2. **Decision channel and planner filter (dark).** Proto `BranchDecision` and the
    new `TaskSpec` fields, runtime normalisation and file, agent report,
    `branch_decision` column, server validation, durable record and reconciler
@@ -638,7 +649,9 @@ Strict TDD (ADR 0011): every step below starts with the failing test.
    rollback safe (D3): every binary a supported rollback reaches already
    decodes `branch` and applies the filter. The schema must never accept
    `branch` in a release whose planner does not apply it, or a hand-written
-   `dag.json` would run every branch.
+   `dag.json` would run every branch. A single rolling jump across the
+   releases of steps 2 and 3 is unsupported, and that release's upgrade notes
+   say so (decided at acceptance, D3).
 4. **Short-circuit compiler.** `@task.short_circuit` / `ShortCircuitOperator`
    on the same channel and filter (D4 counts it in the first slice; it can ride
    step 3 or follow it).
