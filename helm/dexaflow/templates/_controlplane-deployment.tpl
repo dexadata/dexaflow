@@ -261,6 +261,8 @@ spec:
               value: {{ .ctx.Values.logs.sink.bucket | quote }}
             - name: LEOFLOW_LOGS_SINK_PREFIX
               value: {{ .ctx.Values.logs.sink.prefix | quote }}
+            - name: LEOFLOW_LOGS_SINK_LAYOUT
+              value: {{ .ctx.Values.logs.sink.layout | default "single" | quote }}
             {{- if eq .ctx.Values.logs.sink.provider "s3" }}
             - name: LEOFLOW_LOGS_SINK_REGION
               value: {{ .ctx.Values.logs.sink.region | quote }}
