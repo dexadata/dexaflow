@@ -154,7 +154,15 @@ type Dispatcher struct {
 	// handed to the executor so a task pod that declares no timeout still gets a
 	// deadline floor. Zero (unset / disabled) applies no floor.
 	attemptLifetimeCeiling time.Duration
+	// policy is the operator's executor policy (ADR 0063). nil changes nothing.
+	policy *executor.Policy
 }
+
+// SetExecutorPolicy installs the operator's executor policy (ADR 0063). It is
+// applied to every request after the platform defaults and before warm
+// placement or Execute; a refused task returns executor.Refused. nil (the
+// default) leaves every request as the DAG and the defaults built it.
+func (d *Dispatcher) SetExecutorPolicy(p *executor.Policy) { d.policy = p }
 
 // SetAttemptLifetimeCeiling wires the operator's attempt credential ceiling
 // (auth.max_attempt_credential_lifetime) into every dispatched request, where the
@@ -265,6 +273,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		return executor.Rejected, fmt.Errorf("issuing agent token for %s: %w", task.TaskID, err)
 	}
 
+	req := d.buildRequest(r, runID, dagID, task, token)
+	if err := d.policy.Apply(&req); err != nil {
+		return executor.Refused, fmt.Errorf("task %s: %w", task.TaskID, err)
+	}
+
 	// Warm placement (ADR 0058 N1b1-place). With warm pools on, offer the attempt
 	// to a free warm worker of this dag_version, carrying the same identity
 	// (run/dag/task/try) and per-attempt token the dedicated path would use. On a
@@ -284,7 +297,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// cannot run on it (it would silently run as the wrong identity and break keyless
 	// resolution). Such a task takes the dedicated path below, which sets its own SA —
 	// the same degrade-not-strand exclusion as staging (ADR 0058 D5).
-	if d.placer != nil && (r.Staging == nil || !r.Staging.Enabled) && warmSACompatible(task, d.defaultTaskServiceAccount) {
+	// A policy that forces a pod field warm workers do not carry (runtime class,
+	// placement, ServiceAccount) keeps every task on the dedicated path, so a
+	// warm worker is never a way around it (ADR 0063).
+	if d.placer != nil && (r.Staging == nil || !r.Staging.Enabled) && warmSACompatible(task, d.defaultTaskServiceAccount) &&
+		!d.policy.RequiresDedicatedPod() {
 		wa := &agentv1.WorkAssignment{
 			AssignmentId: uuid.NewString(),
 			AttemptToken: token,
@@ -299,6 +316,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		}
 	}
 
+	return d.exec.Execute(ctx, req)
+}
+
+// buildRequest assembles the dedicated-pod request for a resolved attempt:
+// the DAG's task fields with the platform defaults filled in (ADR 0023).
+func (d *Dispatcher) buildRequest(r Resolved, runID, dagID string, task domain.TaskSpec, token string) executor.Request {
 	req := executor.Request{
 		TaskInstanceID:       r.TaskInstanceID,
 		TenantID:             r.TenantID,
@@ -360,7 +383,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	req.AgentTokenTransport = d.tokenTransport
 	req.AgentTokenAudience = d.tokenAudience
 	req.AgentTokenExpirationSeconds = d.tokenExpirationSeconds
-	return d.exec.Execute(ctx, req)
+	return req
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.

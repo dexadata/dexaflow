@@ -509,6 +509,68 @@ across clusters.
 | `DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU` | _(empty)_ | Pro | Default CPU for a task that declares none of its own (a Kubernetes quantity, e.g. `250m`). Applied as **both request and limit**. Guaranteed QoS needs the **memory** default set too — cpu alone leaves the task Burstable with no memory bound at all, and the control plane WARNs at boot naming the missing key; empty leaves it BestEffort unless the DAG sets its own. Helm: `executor.defaults.resources.cpu`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY` | _(empty)_ | Pro | Default memory for a task that declares none of its own (e.g. `256Mi`). Applied as **both request and limit**. Set it together with the CPU default — either one alone is Burstable, not Guaranteed. Helm: `executor.defaults.resources.memory`. |
 
+### Executor policy (`executor.policy`)
+
+An optional, operator-owned policy over the task pods a DAG asks for
+(ADR 0063, proposed in #1365). Off when absent: every pod
+is exactly what the DAG and the defaults above build. It is read only from the
+YAML or JSON config file named by `LEOFLOW_CONFIG` (a policy in a config file of
+another format fails startup), because node labels carry dots and
+the structure cannot travel as env vars, and an invalid policy (an unknown key,
+an unparseable quantity, a malformed toleration) fails startup.
+
+```yaml
+executor:
+  policy:
+    runtime_class_name: gvisor            # forced on every task pod
+    service_account:
+      force: ""                           # force this ServiceAccount, or
+      allowed: [etl-reader, etl-writer]   # refuse any other (default included)
+    placement:
+      node_selector: {pool: tasks}        # merged in; policy keys win
+      tolerations:                        # appended to the DAG's
+        - {key: pool, operator: Equal, value: tasks, effect: NoSchedule}
+      allow_dag_placement: false          # refuse DAG node_selector, tolerations,
+                                          # affinity, topology_spread_constraints
+      allowed_priority_classes: [batch-low]
+    metadata:
+      allowed_label_prefixes: [team.example.com/]
+      allowed_annotation_prefixes: []     # empty list: no DAG annotations
+    resources:
+      max: {cpu: "4", memory: 16Gi, ephemeral_storage: 20Gi}
+    images:
+      allowed: [registry.example.com/dags/, docker.io/library/python]
+```
+
+Every key is optional. **Force** rules set the field whatever the DAG says.
+**Restrict** rules refuse a task whose value is not allowed; they never clamp
+it. A refused task fails on its first dispatch, without dispatch retries, and
+its failure reason names the field and the rule. Rules are applied after the
+defaults above, so the default ServiceAccount and the default resources are
+held to the policy too.
+
+- `resources.max` caps requests and limits. A capped resource with no limit
+  gets the ceiling as its limit and, when it also has no request, an explicit
+  request of `0` (Kubernetes would otherwise default the request to the limit
+  and reserve the whole ceiling).
+- `images.allowed`: an entry ending in `/` is a prefix; any other entry must
+  equal the image without its tag or digest. Matching is literal: `python:3.12`
+  does not match `docker.io/library/python`, so list images the way DAGs
+  write them.
+- An unset list is no rule; an empty list (`allowed: []`) allows nothing.
+- Not covered yet: Dynamic Resource Allocation claims
+  (`execution.resource_claims`), which bypass `resources.max`, and
+  `execution.termination_grace_period_seconds`.
+- The policy cannot be combined with `execution.warm_pools_enabled` yet:
+  warm pods are built outside dispatch and are not subject to it, so the server
+  refuses to start with both.
+- The subprocess executor (`dexaflow lite`) runs no pods and ignores the
+  policy.
+
+Pair it with a platform-owned admission backstop (Pod Security Admission or a
+`ValidatingAdmissionPolicy`) as [ADR 0054](/project/adrs/0054-shared-cluster-coexistence/)
+recommends.
+
 ### Warm worker pools (`execution.*`)
 
 Pro-gated N:1 pod reuse ([ADR 0058](/project/adrs/0058-warm-worker-pools/)). Every field

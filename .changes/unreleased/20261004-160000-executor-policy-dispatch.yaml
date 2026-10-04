@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **An optional executor policy lets the operator force or restrict what a DAG
+  puts on its task pod.** `executor.policy`, read from the server config file,
+  can force the runtime class, the ServiceAccount, a node selector and
+  tolerations, and can restrict the ServiceAccounts, DAG placement, priority
+  classes, label and annotation prefixes, resource ceilings and images a task
+  may use. A refused task fails on its first dispatch with a reason naming the
+  rule, instead of spending dispatch retries. Without a policy nothing changes.
+  It cannot be combined with warm worker pools yet; the server refuses to
+  start with both. (ADR 0063)
+time: 2026-10-04T16:00:00.000000000-03:00

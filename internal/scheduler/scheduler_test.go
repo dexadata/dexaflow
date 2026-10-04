@@ -31,12 +31,13 @@ type fakeStore struct {
 	createdRuns  []string
 	// createdTenants records the tenant of each created scheduled run, in the
 	// same order as createdRuns.
-	createdTenants       []string
-	notes                map[string]string
-	createErr            bool
-	dispatchFailures     []transition
-	dispatchBackpressure []transition
-	dispatchExhausted    []string
+	createdTenants           []string
+	notes                    map[string]string
+	createErr                bool
+	dispatchFailures         []transition
+	dispatchBackpressure     []transition
+	dispatchExhausted        []string
+	dispatchExhaustedReasons []string
 	// alertAttempts mirrors the real per-episode attempt claim: each call
 	// consumes one, and the claim is refused once the budget is spent or the
 	// episode is already delivered. Backoff is not simulated — the fake is for
@@ -136,8 +137,9 @@ func (f *fakeStore) RecordDispatchBackpressure(_ context.Context, runID, taskID 
 	return nil
 }
 
-func (f *fakeStore) FailDispatchExhausted(_ context.Context, runID, taskID, _ string) error {
+func (f *fakeStore) FailDispatchExhausted(_ context.Context, runID, taskID, reason string) error {
 	f.dispatchExhausted = append(f.dispatchExhausted, taskID)
+	f.dispatchExhaustedReasons = append(f.dispatchExhaustedReasons, reason)
 	return nil
 }
 

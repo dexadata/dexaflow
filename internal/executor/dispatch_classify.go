@@ -32,6 +32,11 @@ const (
 	// subprocess executor can return). The scheduler keeps the historical
 	// bounded-backoff → dispatch_failed behavior (ADR 0031 Amendment A).
 	Rejected
+	// Refused means the operator's executor policy does not allow the pod this
+	// task asks for (ADR 0063). Nothing about it changes between attempts, so
+	// the scheduler fails the task at once instead of spending dispatch retries
+	// on it. It is decided before Execute and never returned by an executor.
+	Refused
 )
 
 // String renders the disposition for logs and error notes.
@@ -43,6 +48,8 @@ func (d Disposition) String() string {
 		return "backpressure"
 	case Rejected:
 		return "rejected"
+	case Refused:
+		return "refused"
 	default:
 		return "unknown"
 	}

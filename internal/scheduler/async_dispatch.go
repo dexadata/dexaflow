@@ -58,6 +58,13 @@ func (a *AsyncDispatchFailures) HandleDispatchFailure(ctx context.Context, runID
 	if !active {
 		return nil
 	}
+	if disp == executor.Refused {
+		// The operator's executor policy refused the pod (ADR 0063); retrying
+		// cannot change the answer, so fail the task now, as the synchronous
+		// path does.
+		a.logger.Warn("executor policy refused the task; failing it", "run", runID, "task", taskID, "error", cause)
+		return a.store.MarkTaskDispatchFailed(ctx, runID, taskID, fmt.Sprintf("dispatch_failed: %v", cause))
+	}
 	counted := disp != executor.Backpressure
 	if counted && attempts+1 >= dispatchMaxAttempts {
 		reason := fmt.Sprintf("dispatch_failed after %d attempts: %v", attempts+1, cause)

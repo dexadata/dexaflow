@@ -125,6 +125,12 @@ type ObjectLogSection struct {
 // ExecutorSection configures how tasks are executed.
 type ExecutorSection struct {
 	HTTP HTTPExecutorSection `mapstructure:"http"`
+	// Policy is the raw YAML of executor.policy, the operator's executor policy
+	// (ADR 0063), parsed and validated by executor.ParsePolicy at startup. It is
+	// read straight from the config file named by LEOFLOW_CONFIG because its
+	// node-selector keys carry dots that viper's key delimiter would split, and
+	// its structure cannot travel as env vars. Empty means no policy.
+	Policy []byte `mapstructure:"-"`
 	// TaskNamespace is the Kubernetes namespace the server creates task pods and
 	// per-run staging PVCs in. It MUST match the namespace the Helm chart grants
 	// the executor Role in (chart `taskNamespace` → LEOFLOW_EXECUTOR_TASK_NAMESPACE);
@@ -995,6 +1001,9 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		if err := decodeDottedOIDCMaps(configFile, &c); err != nil {
 			return nil, err
 		}
+		if err := decodeExecutorPolicy(configFile, v.IsSet("executor.policy"), &c); err != nil {
+			return nil, err
+		}
 	}
 	return &c, nil
 }
@@ -1032,6 +1041,46 @@ func decodeDottedOIDCMaps(configFile string, c *ServerConfig) error {
 	}
 	c.Auth.OIDC.RoleMappings = raw.Auth.OIDC.RoleMappings
 	c.Auth.OIDC.TenantClaims = raw.Auth.OIDC.TenantClaims
+	return nil
+}
+
+// decodeExecutorPolicy copies the executor.policy subtree of a YAML or JSON
+// config file into c.Executor.Policy (ADR 0063). Like the OIDC maps it
+// bypasses viper, whose "." key delimiter would split a node label such as
+// "kubernetes.io/os". The subtree is decoded generically first, which resolves
+// anchors and merge keys defined anywhere in the file, then re-encoded for
+// executor.ParsePolicy. A policy in a config file of any other format is an
+// error rather than a silently unenforced policy; set reports whether viper saw
+// one. A null or empty-string policy is no policy.
+func decodeExecutorPolicy(configFile string, set bool, c *ServerConfig) error {
+	switch strings.ToLower(filepath.Ext(configFile)) {
+	case ".yaml", ".yml", ".json", "":
+	default:
+		if set {
+			return fmt.Errorf("executor.policy is only read from a YAML or JSON config file, not %q", configFile)
+		}
+		return nil
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return fmt.Errorf("reading config file %q for executor.policy: %w", configFile, err)
+	}
+	var raw struct {
+		Executor struct {
+			Policy any `yaml:"policy"`
+		} `yaml:"executor"`
+	}
+	if err = yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decoding executor.policy from config file %q: %w", configFile, err)
+	}
+	if p := raw.Executor.Policy; p == nil || p == "" {
+		return nil
+	}
+	out, err := yaml.Marshal(raw.Executor.Policy)
+	if err != nil {
+		return fmt.Errorf("re-encoding executor.policy: %w", err)
+	}
+	c.Executor.Policy = out
 	return nil
 }
 
