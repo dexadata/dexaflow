@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -54,5 +55,34 @@ func TestActivePoolCountsChargesConfinedTasksToDefaultPool(t *testing.T) {
 	}
 	if got := activePoolCounts(runs, budgets, false)[PoolKey(testTenant, "made-up")]; got != 2 {
 		t.Errorf("unconfined made-up occupancy = %d, want 2", got)
+	}
+}
+
+// TestStepChargesConfinedAdmissionsToDefaultPoolAcrossRuns: two runs in one
+// tick each name an undefined pool. Admission is charged to default_pool for
+// both the gate and the within-tick fold, so a 1-slot default_pool admits one
+// task in total, not one per run.
+func TestStepChargesConfinedAdmissionsToDefaultPoolAcrossRuns(t *testing.T) {
+	task := []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython, Pool: "made-up"}}
+	mk := func(id string) RunState {
+		return RunState{
+			RunID: id, DagID: "etl-" + id, TenantID: testTenant, State: domain.DagRunStateRunning,
+			Tasks: task, States: scheduledStates(task),
+			Tries: map[string]int{"a": 0}, MaxTries: map[string]int{"a": 1},
+		}
+	}
+	store := newFakeStore(mk("r1"), mk("r2"))
+	store.poolBudgets = map[string]int{PoolKey(testTenant, defaultPoolName): 1}
+	d := &fakeDispatcher{}
+	s := newScheduler(store)
+	s.SetDispatcher(d)
+	s.EnablePools()
+	s.ConfineUndefinedPools()
+
+	if err := s.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.dispatched) != 1 {
+		t.Errorf("dispatched %v, want exactly one task through the 1-slot default_pool", d.dispatched)
 	}
 }

@@ -373,8 +373,10 @@ type ServerSection struct {
 	// only: create, resize and delete answer 403 for every role, tenant admin
 	// included. It is for an engine shared by many tenants, where the platform
 	// operator sizes each tenant's pools out of band and a tenant must not be
-	// able to raise its own slot budget. Default false keeps pools writable
-	// under write:pool, today's behavior.
+	// able to raise its own slot budget. It also makes the scheduler admit a task
+	// naming a pool its tenant has not defined against default_pool, since a
+	// tenant cannot create pools then. Default false keeps pools writable under
+	// write:pool and undefined pools unlimited, today's behavior.
 	PoolsReadOnly bool `mapstructure:"pools_read_only"`
 }
 
