@@ -281,7 +281,9 @@ type Querier interface {
 	// read them as lost; the warm-worker-lost reaper owns them. The grace period is
 	// applied here, before the LIMIT, so attempts still inside it never take the
 	// slots of those past it; a NULL started_at is never listed (too poorly observed
-	// to reap). The reaper re-checks grace and pod liveness per candidate in Go. The
+	// to reap). The reaper re-checks grace and pod liveness per candidate in Go.
+	// heartbeated lets Lite (no pods) judge a TI whose agent died before its first
+	// heartbeat, which the agent-lost query never lists (#916). The
 	// LIMIT bounds a single tick's reap work even after a large outage; the rest
 	// are picked up next tick.
 	ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error)

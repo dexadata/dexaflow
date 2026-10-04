@@ -93,8 +93,8 @@ func TestAttemptReadsAliveWhileItsTaskGroupRuns(t *testing.T) {
 		t.Fatalf("forgotten agent, live task group: AttemptProcessAlive = (%v, %v), want (true, nil)", alive, err)
 	}
 
-	if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
-		t.Fatal(err)
+	if kerr := syscall.Kill(-pgid, syscall.SIGKILL); kerr != nil {
+		t.Fatal(kerr)
 	}
 	waitGroupGone(t, pgid)
 	if alive, err = e.AttemptProcessAlive(context.Background(), "r", "t", 1); err != nil || alive {

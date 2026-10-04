@@ -41,11 +41,16 @@ type OrphanStopper interface {
 // SetProcessLiveness wires the subprocess liveness seam into the two reapers
 // that act on an attempt whose agent may still be running: agent-lost and
 // dispatch-lost. Each defers while the attempt's agent process is alive or its
-// liveness cannot be read. Nil (the Kubernetes path, which gates on pods) leaves
+// liveness cannot be read. It also turns on agent-lost's Lite-only judgement
+// of a TI that never heartbeated (see runNeverHeartbeated). Nil (the Kubernetes path, which gates on pods) leaves
 // both reapers unchanged.
 func (r *Reaper) SetProcessLiveness(p ProcessLiveness) {
 	r.agentLost.procs = p
 	r.dispatchLost.procs = p
+	r.agentLost.running = nil
+	if p != nil {
+		r.agentLost.running = r.podLost.store
+	}
 }
 
 // processDefers reports whether a reaper must defer an attempt because its
