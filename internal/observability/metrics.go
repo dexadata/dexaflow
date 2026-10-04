@@ -157,8 +157,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 
 		AgentLegacyAttemptTokens: f.NewCounter(prometheus.CounterOpts{
 			Name: "dexaflow_agent_legacy_attempt_token_total",
-			Help: "Agent RPCs authenticated by a task token minted before the attempt_epoch claim existed, accepted as epoch 0. " +
-				"It falls to zero once every pre-upgrade attempt has finished; a later release rejects such tokens.",
+			Help: "Agent RPCs authenticated by a task token without the attempt_epoch claim: one minted before the upgrade, " +
+				"or one an old replica renewed or exchanged during a rolling upgrade. Reports from such a token are read as epoch 0. " +
+				"It falls to zero once the rollout has finished and every pre-upgrade attempt has finished; a later release rejects such tokens.",
 		}),
 
 		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
