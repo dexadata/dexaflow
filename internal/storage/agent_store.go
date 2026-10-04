@@ -269,8 +269,9 @@ func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID stri
 }
 
 // IsTaskInstanceLive reports whether the attempt id names (run, task, try and
-// attempt epoch, a token without an epoch read as epoch 0) is still live (present and in an active, non-terminal state), derived from the
-// same predicate RecordHeartbeat writes on, but as a pure read with no
+// attempt epoch; a token without an epoch is matched on its try alone) is still
+// live (present and in an active, non-terminal state), derived from the same
+// predicate RecordHeartbeat writes on, but as a pure read with no
 // side-effect (ADR 0055). It is the read-only revocation signal the secret path
 // consults: a terminal, superseded (try_number moved on), or reaped attempt is
 // not live, so its token stops resolving secrets even while the signature holds.
@@ -364,11 +365,13 @@ func (s *ExecutionStore) RequeueForRedispatch(ctx context.Context, runID, taskID
 }
 
 // attemptEpochArg is the attempt-epoch argument of the agent-path fence
-// (ADR 0051 amendment): the token's epoch, or nil for a token minted before the
-// claim existed, which the SQL reads as epoch 0 (COALESCE). Every row that
-// predates the upgrade is at epoch 0 and every attempt dispatched after it
-// claims at least 1, so a legacy token matches only its own pre-upgrade
-// attempt.
+// (ADR 0051 amendment): the token's epoch, or nil for a token without the claim
+// (minted before the upgrade, or stripped by an old replica during a rolling
+// upgrade). The report and reschedule queries read nil as epoch 0 (COALESCE):
+// every row that predates the upgrade is at epoch 0 and every attempt
+// dispatched after it claims at least 1, so such a token reports only for its
+// own pre-upgrade attempt. The heartbeat and liveness queries read nil as "any
+// epoch of this try", so a live attempt is not killed for a missing claim.
 func attemptEpochArg(id auth.AgentIdentity) *int32 {
 	if !id.HasAttemptEpoch {
 		return nil
