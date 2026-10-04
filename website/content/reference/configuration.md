@@ -470,6 +470,8 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS` | `1000` | both | Scheduler tick interval, in milliseconds. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency). |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. |
+| `DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS` | `false` | both | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses. See [Alert destinations](#alert-destinations). |
+| `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | *(empty)* | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Applied only while the block is on, but validated at startup either way: an invalid entry fails startup. |
 
 ### Executor (`executor.*`)
 
@@ -518,6 +520,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME` | `1h` | Pro | Wall-clock lifetime of a warm worker before it drains and recycles, independent of the attempt count (D9). A duration string. |
 | `DEXAFLOW_EXECUTION_WORKER_IDLE_TTL` | `5m` | Pro | How long an idle warm worker is kept before it is recycled (D6). A duration string. |
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
+| `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
 
 ### Logs (`logs.*`)
 
@@ -571,6 +574,7 @@ before enabling it in production.
 | `DEXAFLOW_UI_THEME` | _(empty)_ | both | Theme for the UI as a JSON object, the same shape as Airflow's `[api] theme`: `tokens` (Chakra design tokens such as `colors.brand` and `fonts`), `globalCss`, `icon`, `icon_dark_mode`. Served in `/ui/config`, so the UI applies it through its own theming. Boot fails on invalid JSON, an unknown top-level key, or an icon that is not http(s) or root-relative. Helm: `ui.theme` (YAML, rendered as JSON). See [Branding the UI](#branding-the-ui). |
 | `DEXAFLOW_UI_FAVICON_URL` | _(empty)_ | both | Favicon for the UI, http(s) or root-relative. Empty keeps the stock icon. Helm: `ui.faviconUrl`. |
 | `DEXAFLOW_UI_STYLESHEET_URLS` | _(empty)_ | both | Comma-separated stylesheets every UI page loads in `<head>`, typically the web fonts a theme names. Each must be http(s) or root-relative and contain no comma. Helm: `ui.stylesheetUrls`. |
+| `DEXAFLOW_UI_ETAG_REVALIDATION` | `false` | both | Lets the browser revalidate the grid's task summaries (`/ui/grid/ti_summaries/*`), the one UI route that computes an `ETag`: that route answers `Cache-Control: private, no-cache` with `Vary: Authorization, Cookie` instead of `no-store`, so an unchanged poll gets `304 Not Modified` and no body. Every revalidation still runs authentication and authorization. With it on, the browser keeps the last grid body in its private cache after logout (on a shared machine it stays on disk until evicted); it is never shown without a revalidation, so a signed-out user gets `401`, not the cached grid. Off keeps `no-store` on every UI route. Helm: set it through `extraEnv`. |
 
 ### Branding the UI
 
@@ -656,7 +660,21 @@ a user session never reaches them.
 digits or `-`) with the same built-in roles, role permissions and default pool
 as the `default` tenant, copied from it so every tenant's ladder stays equal.
 It answers `201` when the tenant is new and `200` when it already existed; a
-second call fills in anything missing and changes nothing else.
+second call fills in anything missing and, apart from `default_pool_slots`
+below, changes nothing else.
+
+The same body may carry `"default_pool_slots": 8` to size the tenant's
+`default_pool`, the slot cap every task without an explicit pool shares within
+the tenant. Without it a new tenant gets the `default` tenant's size (128
+unless an operator changed it), which on an engine shared by many tenants lets
+each of them run that many tasks at once. Given on a later call, it re-sizes
+the existing pool, including a size a tenant admin set through the pools API,
+so an automation that re-applies its tenants should send the size it wants to
+keep; left out, the pool is not touched. It must be a whole number from 1 to
+2147483647 (`400` otherwise), and the audit entry records it. It sets the pool's size,
+not a ceiling on the tenant: a tenant role that may write pools (`operator`,
+`admin`) can still resize it or create other pools. Pools apply to the Pro
+edition only; Lite ignores the value.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
@@ -679,6 +697,34 @@ The service token is a root-level credential: whoever holds it can create
 tenants and grant any role, `admin` included, in every tenant the trusted
 issuer covers. Keep it in a Secret, give it only to the automation that
 provisions tenants, and rotate it by changing the Secret and restarting.
+
+### Alert destinations
+
+An on-failure alert ([alerting](/author-dags/alerting/)) is posted by the control
+plane to the URL, with the headers, of a connection the DAG's tenant manages.
+When tenants that do not trust each other share one engine, that URL is
+untrusted input: it can name the control plane's own loopback, a private
+service in the cluster, or the cloud metadata endpoint.
+
+Set `scheduler.alerts.block_private_destinations: true` (env
+`DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS`, chart
+`config.alerts.blockPrivateDestinations`) to refuse those destinations. The
+check runs on the address the control plane is about to connect to, after DNS
+resolution, so a host name that resolves to an internal address is refused even
+if it resolved to a public one earlier (DNS rebinding), and every redirect hop
+is checked the same way (at most three redirects are followed). A NAT64
+(`64:ff9b::/96`) or 6to4 address is checked as the IPv4 address it carries, so
+an IPv6-only cluster behind DNS64 still reaches a public IPv4-only endpoint.
+The block also covers the Azure host endpoint `168.63.129.16`, which looks
+public but is node-local. With the block on, alert requests are dialed directly
+and do not use the `HTTP_PROXY` / `HTTPS_PROXY` environment, since through a
+proxy the real destination could not be checked. A refused alert is logged and
+counted as a failed delivery, like any other send error.
+
+If an alert endpoint legitimately lives on a private network (an on-premises
+chat server, for example), list its range in `scheduler.alerts.allowed_cidrs`
+(chart `config.alerts.allowedCIDRs`). A range broad enough to include loopback
+or a metadata endpoint is accepted but logged as a warning at startup.
 
 ### Trusted proxies and the client IP
 

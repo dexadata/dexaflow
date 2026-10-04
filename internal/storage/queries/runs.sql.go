@@ -160,13 +160,15 @@ func (q *Queries) CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int
 
 const countDagsByLatestRunState = `-- name: CountDagsByLatestRunState :many
 SELECT lr.state AS state, count(*) AS n
-FROM (
-    SELECT DISTINCT ON (r.dag_id) r.state
+FROM dags d
+CROSS JOIN LATERAL (
+    SELECT r.state
     FROM dag_runs r
-    JOIN dags d ON d.id = r.dag_id
-    WHERE d.tenant_id = $1
-    ORDER BY r.dag_id, r.logical_date DESC
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
 ) lr
+WHERE d.tenant_id = $1
 GROUP BY lr.state
 `
 
@@ -175,6 +177,8 @@ type CountDagsByLatestRunStateRow struct {
 	N     int64       `json:"n"`
 }
 
+// One index probe per DAG of the tenant for its newest run. DAGs without runs
+// drop out of the CROSS JOIN, so they are not counted.
 func (q *Queries) CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error) {
 	rows, err := q.db.Query(ctx, countDagsByLatestRunState, tenantID)
 	if err != nil {
@@ -294,15 +298,14 @@ const createScheduledRunByDagID = `-- name: CreateScheduledRunByDagID :exec
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, $1, $2, 'queued', 'scheduled'
 FROM dags d
-JOIN tenants t ON t.id = d.tenant_id
-WHERE t.name = $3 AND d.dag_id = $4 AND d.current_version_id IS NOT NULL
+WHERE d.tenant_id = $3 AND d.dag_id = $4 AND d.current_version_id IS NOT NULL
 ON CONFLICT (dag_id, run_id) DO NOTHING
 `
 
 type CreateScheduledRunByDagIDParams struct {
 	RunID       string             `json:"run_id"`
 	LogicalDate pgtype.Timestamptz `json:"logical_date"`
-	Tenant      string             `json:"tenant"`
+	TenantID    pgtype.UUID        `json:"tenant_id"`
 	DagID       string             `json:"dag_id"`
 }
 
@@ -310,7 +313,7 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 	_, err := q.db.Exec(ctx, createScheduledRunByDagID,
 		arg.RunID,
 		arg.LogicalDate,
-		arg.Tenant,
+		arg.TenantID,
 		arg.DagID,
 	)
 	return err
@@ -1131,7 +1134,7 @@ func (q *Queries) ListRunningTasks(ctx context.Context, graceSeconds float64) ([
 }
 
 const listScheduledDags = `-- name: ListScheduledDags :many
-SELECT d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
 WHERE d.is_active = true AND d.is_paused = false
@@ -1139,6 +1142,7 @@ WHERE d.is_active = true AND d.is_paused = false
 `
 
 type ListScheduledDagsRow struct {
+	TenantID      pgtype.UUID        `json:"tenant_id"`
 	DagID         string             `json:"dag_id"`
 	Schedule      *string            `json:"schedule"`
 	Catchup       bool               `json:"catchup"`
@@ -1150,7 +1154,9 @@ type ListScheduledDagsRow struct {
 // Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 // both "is there a slot due?" (schedule + last_logical), "how many slots
 // should I backfill on this tick?" (catchup + start_date, see #129), and
-// "may this DAG take another active run?" (max_active_runs, see #200).
+// "may this DAG take another active run?" (max_active_runs, see #200). The
+// owning tenant is returned because a dag_id is unique only within its tenant
+// (#209).
 func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error) {
 	rows, err := q.db.Query(ctx, listScheduledDags)
 	if err != nil {
@@ -1161,6 +1167,7 @@ func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow
 	for rows.Next() {
 		var i ListScheduledDagsRow
 		if err := rows.Scan(
+			&i.TenantID,
 			&i.DagID,
 			&i.Schedule,
 			&i.Catchup,
@@ -1366,6 +1373,67 @@ ORDER BY task_id
 
 func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error) {
 	rows, err := q.db.Query(ctx, listTaskInstancesByRun, dagRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskInstance{}
+	for rows.Next() {
+		var i TaskInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagRunID,
+			&i.TaskID,
+			&i.MapIndex,
+			&i.TryNumber,
+			&i.MaxTries,
+			&i.State,
+			&i.Pool,
+			&i.Operator,
+			&i.QueuedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DurationSeconds,
+			&i.PodName,
+			&i.NodeName,
+			&i.ExitCode,
+			&i.ErrorMessage,
+			&i.LogUrl,
+			&i.Hostname,
+			&i.Note,
+			&i.ScheduledAt,
+			&i.LastHeartbeatAt,
+			&i.RescheduleAt,
+			&i.FirstRescheduleAt,
+			&i.DispatchAttempts,
+			&i.NextDispatchAt,
+			&i.LastFailureKind,
+			&i.InfraAttempts,
+			&i.WarmWorkerID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id FROM task_instances
+WHERE dag_run_id = ANY($1::uuid[])
+ORDER BY dag_run_id, task_id
+`
+
+// The batched form of ListTaskInstancesByRun for the scheduler tick: every
+// active run's task instances in one round trip instead of one per run. Rows
+// come grouped by run and, within a run, in the same task_id order the per-run
+// query returns, so the caller can split them without re-sorting.
+func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error) {
+	rows, err := q.db.Query(ctx, listTaskInstancesByRuns, dagRunIds)
 	if err != nil {
 		return nil, err
 	}

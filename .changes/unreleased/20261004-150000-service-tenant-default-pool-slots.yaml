@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **The service API can size a new tenant's default pool.**
+  `PUT /api/v2/service/tenants/{tenant}` accepts an optional
+  `default_pool_slots`, which sets the slot cap of the tenant's `default_pool`
+  on creation and re-sizes it on a later call. Without it a new tenant still
+  copies the `default` tenant's size (128 by default), so every tenant on a
+  shared engine could run that many unpooled tasks at once.
+  It is the pool's starting size, not a tenant-wide limit: a tenant role
+  that may write pools can resize it or add pools. Pro edition only.
+time: 2026-10-04T15:00:00.000000000-03:00
