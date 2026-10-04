@@ -363,6 +363,12 @@ type Reconciler struct {
 	// (PR-10). Nil keeps the live LIST (Lite/subprocess, or before the informer
 	// is wired). GC deletes still go straight to the apiserver.
 	snapshot PodSnapshotter
+	// settledRuns, when set, turns on the settled-run collection (see
+	// run_settle_collect.go). Nil keeps the age-based GC only.
+	settledRuns SettledRunChecker
+	// deleteCollectionForbidden latches once the apiserver refused
+	// deletecollection on pods, so later sweeps go straight to per-pod deletes.
+	deleteCollectionForbidden atomic.Bool
 	// lastSweepCompleted is the unix-nano stamp of the last sweep that listed
 	// the task-pod set and visited every pod; 0 = none yet. Read by the reaper's
 	// leader-settling gate (see LastSweepCompletedAt) from another goroutine
@@ -408,9 +414,11 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	runs := newRunTracker(r.settledRuns != nil)
 	for _, pod := range pods {
 		v := classifyPod(pod)
 		if !v.terminal {
+			runs.block(pod)
 			continue
 		}
 		// A terminal pod must have its outcome durably recorded before it is
@@ -420,6 +428,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		// try again next tick.
 		if v.settle != settleNothing {
 			if err := r.settlePod(ctx, pod, v); err != nil {
+				runs.block(pod)
 				continue
 			}
 			// A reschedule pod's record must NOT linger to be re-applied. Reschedule
@@ -438,9 +447,14 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 		if r.now().Sub(pod.CreationTimestamp.Time) > r.ttl {
 			r.collect(ctx, pod)
+			continue
 		}
+		runs.add(pod)
 	}
+	// Every pod was visited: stamp the sweep before the collection, so its
+	// apiserver calls never delay the reaper's settling gate.
 	r.lastSweepCompleted.Store(r.now().UnixNano())
+	r.collectSettledRuns(ctx, runs)
 	return nil
 }
 

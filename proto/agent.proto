@@ -34,6 +34,11 @@ service AgentService {
     // Agent pulls XCom values declared as inputs.
     rpc FetchXCom (FetchXComRequest) returns (FetchXComResponse);
 
+    // Agent pulls several XCom values in one call. Each item is authorized and
+    // scoped exactly like FetchXCom. An older control plane answers Unimplemented
+    // and the agent falls back to FetchXCom per value.
+    rpc FetchXComBatch (FetchXComBatchRequest) returns (FetchXComBatchResponse);
+
     // Agent pushes an XCom value (typically the task return value).
     rpc PushXCom (PushXComRequest) returns (PushXComResponse);
 
@@ -162,6 +167,25 @@ message FetchXComResponse {
     string content_type = 2;                      // 'application/json' by default
     int32 size_bytes = 3;
     google.protobuf.Timestamp created_at = 4;
+}
+
+message FetchXComBatchRequest {
+    repeated FetchXComRequest items = 1;          // at most 256 items
+}
+
+message FetchXComBatchItem {
+    string upstream_task_id = 1;
+    string key = 2;                               // the resolved key ('return_value' when the request left it empty)
+    bool found = 3;                               // false when the value is absent or expired (FetchXCom's NotFound)
+    bool deferred = 4;                            // true when the value did not fit the response size budget; fetch it with FetchXCom
+    bytes value = 5;                              // JSON-encoded payload, set only when found and not deferred
+    string content_type = 6;
+    int32 size_bytes = 7;
+    google.protobuf.Timestamp created_at = 8;
+}
+
+message FetchXComBatchResponse {
+    repeated FetchXComBatchItem items = 1;        // one per request item, in request order
 }
 
 message PushXComRequest {

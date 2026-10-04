@@ -63,9 +63,9 @@ func (e *KubernetesExecutor) ensureStagingClaim(ctx context.Context, req Request
 			Name: req.StagingClaim,
 			Labels: map[string]string{
 				stagingLabel:           "true",
-				"leoflow.io/run-id":    sanitizeLabel(req.RunID),
-				"leoflow.io/dag-id":    sanitizeLabel(req.DagID),
-				"leoflow.io/tenant-id": sanitizeLabel(req.TenantID),
+				"leoflow.io/run-id":    labelValue(req.RunID),
+				"leoflow.io/dag-id":    labelValue(req.DagID),
+				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
 			// The label is sanitized (run IDs contain label-illegal chars); GC needs
 			// the raw run_id to check run state, so keep it as an annotation.

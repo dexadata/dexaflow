@@ -23,13 +23,15 @@ import (
 // (leoflow.io/attempt-epoch, ADR 0051 amendment) is filtered in Go after the
 // list, because a pod stamped before the epoch existed has no such label and is
 // epoch 0, which a label selector cannot express. Deletion is by List-then-Delete,
-// not DeleteCollection: the executor Role grants the `list` and `delete` verbs
-// but NOT `deletecollection` (helm/dexaflow/templates/rbac.yaml), so a
-// DeleteCollection call would 403 in production. Each delete names the pod it
-// listed and pins that pod's UID as a precondition (#901), so the delete can
-// never act on a pod the list did not return. NotFound is always tolerated (a
-// pod may have been garbage-collected between the list and the delete), and so
-// is a failed UID precondition, which means the pod listed is already gone.
+// not DeleteCollection: a reap must judge each pod (see terminalForTeardown
+// below), and a cluster whose Role predates the `deletecollection` grant would
+// 403 it. The settled-run collection (run_settle_collect.go) is the one caller
+// of DeleteCollection, and it falls back to per-pod deletes on a 403. Each
+// per-pod delete names the pod it listed and pins that pod's UID as a
+// precondition (#901), so the delete can never act on a pod the list did not
+// return. NotFound is always tolerated (a pod may have been garbage-collected
+// between the list and the delete), and so is a failed UID precondition, which
+// means the pod listed is already gone.
 //
 // Both methods skip a pod that has already reached a terminal phase (#928) —
 // see terminalForTeardown. That is enforced HERE, at the one delete site, rather
@@ -57,8 +59,8 @@ func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, a Attempt) error
 // run, task and try. The epoch is not in it (see podMatchesEpoch).
 func attemptSelector(a Attempt) string {
 	return fmt.Sprintf("%s=%s,%s=%s,%s=%s",
-		podLabelRunID, sanitizeLabel(a.RunID),
-		podLabelTaskID, sanitizeLabel(a.TaskID),
+		podLabelRunID, labelValue(a.RunID),
+		podLabelTaskID, labelValue(a.TaskID),
 		podLabelTryNumber, strconv.Itoa(a.TryNumber))
 }
 
@@ -103,7 +105,7 @@ func podMatchesEpoch(pod *corev1.Pod, epoch int) bool {
 // a reaper only ever preserves a poke pod for an attempt it has just made
 // terminal. Tolerates NotFound.
 func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) error {
-	selector := fmt.Sprintf("%s=%s", podLabelRunID, sanitizeLabel(runID))
+	selector := fmt.Sprintf("%s=%s", podLabelRunID, labelValue(runID))
 	return e.deletePodsBySelector(ctx, selector, nil)
 }
 

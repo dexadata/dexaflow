@@ -532,12 +532,18 @@ tests:
       logs.sink.region: us-east-1
       logs.sink.endpoint: http://minio.internal:9000
       logs.sink.forcePathStyle: true
+      logs.sink.layout: segmented
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: LEOFLOW_LOGS_BACKEND
             value: s3
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_SINK_LAYOUT
+            value: segmented
       - contains:
           path: spec.template.spec.containers[0].env
           content:

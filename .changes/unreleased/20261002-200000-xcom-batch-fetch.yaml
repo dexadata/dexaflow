@@ -1,0 +1,12 @@
+kind: Changed
+body: |-
+  **Agents read their upstream XCom values in one call.** A task with several
+  upstream values (inputs, fan-in members, a captured operator's
+  `depends_on`) now fetches them with one `FetchXComBatch` RPC per 256
+  upstreams instead of one `FetchXCom` per value, and the control plane reads
+  them from Redis or Postgres in chunks of 16 keys, stopping once a 3 MiB
+  response budget is used; values past it are fetched one by one as before.
+  Mixed versions keep working: an agent talking to an older control plane
+  falls back to one `FetchXCom` per value, and an older agent never calls the
+  new RPC.
+time: 2026-10-02T20:00:00.000000000-03:00

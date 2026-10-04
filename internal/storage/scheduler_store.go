@@ -114,13 +114,20 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 	if err != nil {
 		return nil, fmt.Errorf("listing active runs: %w", err)
 	}
+	tisByRun, err := s.taskInstancesByRun(ctx, runs)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]scheduler.RunState, 0, len(runs))
+	s.specs.beginTick()
 	for _, run := range runs {
 		// The spec is immutable per dag_version_id (see specCache), so N active
 		// runs sharing a version decode it once, not N times. The cached spec is
 		// shared read-only: copy Tasks before applyDefaultRetries so filling a
 		// run's retry defaults never writes through the shared backing array.
-		_, cached, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		// getForTick keeps every version this tick reads cached through the
+		// next tick, so more active versions than the cache bound never thrash.
+		_, cached, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -128,11 +135,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		spec.Tasks = make([]domain.TaskSpec, len(cached.Tasks))
 		copy(spec.Tasks, cached.Tasks)
 		applyDefaultRetries(&spec)
-		tis, err := s.q.ListTaskInstancesByRun(ctx, run.ID)
-		if err != nil {
-			return nil, fmt.Errorf("listing task instances: %w", err)
-		}
-		ts := taskInstanceMaps(tis)
+		ts := taskInstanceMaps(tisByRun[run.ID])
 		// Build per-task retry_delay_seconds from the DAG spec so the planner
 		// can gate `up_for_retry → none` on the user-declared cooldown (#201).
 		// TaskSpec.RetryDelaySeconds is *int (omitempty); nil = no cooldown.
@@ -167,6 +170,36 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		})
 	}
 	return out, nil
+}
+
+// taskInstancesByRun loads the task instances of every given run in one query
+// and groups them by run. One round trip per tick replaces the one-per-run reads
+// that made the tick's database cost grow with the number of active runs. The
+// query orders by (dag_run_id, task_id), so each run's slice keeps the task_id
+// order the per-run query returned. A run with no rows (not yet materialized)
+// is simply absent, which taskInstanceMaps reads as an empty run, as before.
+func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.DagRun) (map[pgtype.UUID][]queries.TaskInstance, error) {
+	if len(runs) == 0 {
+		return map[pgtype.UUID][]queries.TaskInstance{}, nil
+	}
+	ids := make([]pgtype.UUID, len(runs))
+	for i, run := range runs {
+		ids[i] = run.ID
+	}
+	tis, err := s.q.ListTaskInstancesByRuns(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("listing task instances: %w", err)
+	}
+	byRun := make(map[pgtype.UUID][]queries.TaskInstance, len(runs))
+	for start := 0; start < len(tis); {
+		end := start + 1
+		for end < len(tis) && tis[end].DagRunID == tis[start].DagRunID {
+			end++
+		}
+		byRun[tis[start].DagRunID] = tis[start:end:end]
+		start = end
+	}
+	return byRun, nil
 }
 
 // SetWarmExecution records the operator's warm-pool config so ActiveWarmTargets
@@ -245,7 +278,7 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			continue
 		}
 		seen[run.DagVersionID] = true
-		_, spec, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		_, spec, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -453,6 +486,66 @@ func (s *SchedulerStore) RecordDispatchBackpressure(ctx context.Context, runID, 
 		TaskID:         taskID,
 		NextDispatchAt: pgtype.Timestamptz{Time: nextAt, Valid: true},
 	})
+}
+
+// MarkQueued moves a task from the scheduled slot this tick planned to queued
+// after its dispatch was accepted. expectNextDispatchAt is the next_dispatch_at
+// the tick read (nil when unset). It reports false, with no error, when the row
+// has moved on: a buffered worker already failed or re-offered the task, or the
+// agent already reported (see MarkTaskInstanceQueued).
+func (s *SchedulerStore) MarkQueued(ctx context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return false, err
+	}
+	expect := pgtype.Timestamptz{}
+	if expectNextDispatchAt != nil {
+		expect = pgtype.Timestamptz{Time: *expectNextDispatchAt, Valid: true}
+	}
+	n, err := s.q.MarkTaskInstanceQueued(ctx, queries.MarkTaskInstanceQueuedParams{
+		DagRunID:             rid,
+		TaskID:               taskID,
+		ExpectNextDispatchAt: expect,
+	})
+	return n > 0, err
+}
+
+// RequeueDispatch re-offers a task whose buffered dispatch failed in the worker:
+// back to scheduled, held until nextAt, with one more dispatch attempt when
+// countAttempt. It reports false when the task is no longer scheduled or queued.
+func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt bool, nextAt time.Time) (bool, error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return false, err
+	}
+	inc := int32(0)
+	if countAttempt {
+		inc = 1
+	}
+	n, err := s.q.RequeueDispatch(ctx, queries.RequeueDispatchParams{
+		DagRunID:         rid,
+		TaskID:           taskID,
+		NextDispatchAt:   pgtype.Timestamptz{Time: nextAt, Valid: true},
+		AttemptIncrement: inc,
+	})
+	return n > 0, err
+}
+
+// DispatchAttempts returns the consecutive dispatch-failure count of a task
+// still scheduled or queued; active is false when it has moved on.
+func (s *SchedulerStore) DispatchAttempts(ctx context.Context, runID, taskID string) (attempts int, active bool, err error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return 0, false, err
+	}
+	n, err := s.q.DispatchAttemptsForActive(ctx, queries.DispatchAttemptsForActiveParams{DagRunID: rid, TaskID: taskID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return int(n), true, nil
 }
 
 // FailDispatchExhausted fails a scheduled task as dispatch_failed once its

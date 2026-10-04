@@ -182,6 +182,12 @@ func TestResetRailsClearLastHeartbeat(t *testing.T) {
 				t.Fatalf("RequeueForRedispatch: %v", err)
 			}
 		}},
+		{"buffered dispatch requeue", func(t *testing.T, f *staleHeartbeatFixture) {
+			f.setState(t, "queued")
+			if ok, err := f.sched.RequeueDispatch(f.ctx, f.runUUID, "t", true, time.Now()); err != nil || !ok {
+				t.Fatalf("RequeueDispatch ok=%v err=%v", ok, err)
+			}
+		}},
 		{"dispatch failure backoff", func(t *testing.T, f *staleHeartbeatFixture) {
 			f.setState(t, "scheduled")
 			if err := f.sched.RecordDispatchFailure(f.ctx, f.runUUID, "t", time.Now()); err != nil {

@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -78,16 +79,16 @@ func BuildPod(req Request) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName(req),
 			Labels: map[string]string{
-				"leoflow.io/dag-id":     sanitizeLabel(req.DagID),
-				"leoflow.io/task-id":    sanitizeLabel(req.TaskID),
-				"leoflow.io/run-id":     sanitizeLabel(req.RunID),
+				"leoflow.io/dag-id":     labelValue(req.DagID),
+				"leoflow.io/task-id":    labelValue(req.TaskID),
+				"leoflow.io/run-id":     labelValue(req.RunID),
 				"leoflow.io/try-number": strconv.Itoa(req.TryNumber),
 				// The attempt epoch tells two pods of one try apart (ADR 0051
 				// amendment): teardown, presence and the reconciler's settle
 				// all pin it, so a superseded pod is never mistaken for its
 				// replacement (#1130, #901).
 				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
-				"leoflow.io/tenant-id": sanitizeLabel(req.TenantID),
+				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
 			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
 		},
@@ -814,6 +815,29 @@ func sanitizeLabel(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+// maxLabelValueLen is the Kubernetes limit on a label value; a longer value is
+// rejected at CREATE. labelHashLen hex characters of the id's SHA-256 replace
+// the overflow, so two long ids sharing a prefix still get distinct values.
+const (
+	maxLabelValueLen = 63
+	labelHashLen     = 12
+)
+
+// labelValue renders an id as a valid label value for the task-pod and staging
+// labels the reapers and GC select on. An id that fits is sanitized exactly as
+// before, so existing pods keep matching across an upgrade; a longer one is cut
+// to a prefix plus a hash of the raw id. Only selection labels use it: identity
+// is never read back from these values (task pods carry it in an annotation).
+func labelValue(id string) string {
+	v := sanitizeLabel(id)
+	if len(v) <= maxLabelValueLen {
+		return v
+	}
+	sum := sha256.Sum256([]byte(id))
+	prefix := strings.TrimRight(v[:maxLabelValueLen-labelHashLen-1], "-")
+	return prefix + "-" + hex.EncodeToString(sum[:])[:labelHashLen]
 }
 
 func randSuffix() string {
