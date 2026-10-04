@@ -185,3 +185,21 @@ func TestReadAttemptsPropagatesARealFailure(t *testing.T) {
 		t.Errorf("a store failure must propagate, got %v", err)
 	}
 }
+
+// TestReadAttemptsSystemLineCarriesNoTimestamp: the line that introduces an
+// execution marks a boundary, not an event, so it decodes with a zero time and
+// the structured log view renders it without a timestamp instead of showing it
+// at 1970-01-01.
+func TestReadAttemptsSystemLineCarriesNoTimestamp(t *testing.T) {
+	sink := NewObjectSink(context.Background(), newMemStore(), "", nil)
+	writeStream(t, sink, epochRef(1), "first")
+	writeStream(t, sink, epochRef(2), "second")
+	rc, err := ReadAttempts(sink, ref(), []int{0, 1, 2})
+	if err != nil {
+		t.Fatalf("ReadAttempts: %v", err)
+	}
+	first, _, _ := strings.Cut(readAll(t, rc), "\n")
+	if ev := DecodeLine(first); ev.Stream != "system" || !ev.Time.IsZero() {
+		t.Fatalf("system line = %+v, want stream system with a zero time", ev)
+	}
+}
