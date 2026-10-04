@@ -219,3 +219,28 @@ func TestValidateExecutionSanityCaps(t *testing.T) {
 		})
 	}
 }
+
+// TestWarmReadOnlyRootFilesystemDefaultAndEnv locks the X3.2 knob: off by default
+// (a warm pod keeps today's writable root), and reachable from both the
+// DEXAFLOW_* and the legacy LEOFLOW_* env names.
+func TestWarmReadOnlyRootFilesystemDefaultAndEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Execution.WarmReadOnlyRootFilesystem {
+		t.Error("execution.warm_read_only_root_filesystem default = true, want false")
+	}
+	for _, name := range []string{"DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM", "LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "true")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			if !c.Execution.WarmReadOnlyRootFilesystem {
+				t.Errorf("%s=true did not bind execution.warm_read_only_root_filesystem", name)
+			}
+		})
+	}
+}

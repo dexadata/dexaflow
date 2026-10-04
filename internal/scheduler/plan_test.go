@@ -682,6 +682,21 @@ func TestPlanRunPoolFullAdmitsNone(t *testing.T) {
 	}
 }
 
+// TestPlanRunPoolShrunkBelowOccupancyAdmitsNone: a pool re-sized below what it
+// already runs (default_pool_slots lowered through the service API) admits
+// nothing and never computes negative headroom; admission resumes as running
+// tasks drain below the new size.
+func TestPlanRunPoolShrunkBelowOccupancyAdmitsNone(t *testing.T) {
+	tasks := pooledTasks(4, "p")
+	budgets := map[string]int{PoolKey(testTenant, "p"): 2}
+	if got := countQueued(PlanRun(poolRun(tasks, budgets, map[string]int{PoolKey(testTenant, "p"): 5}))); got != 0 {
+		t.Errorf("promoted %d over a shrunk pool, want 0", got)
+	}
+	if got := countQueued(PlanRun(poolRun(tasks, budgets, map[string]int{PoolKey(testTenant, "p"): 1}))); got != 1 {
+		t.Errorf("promoted %d once drained to 1 of 2, want 1", got)
+	}
+}
+
 // TestPlanRunPoolUnsetTaskUsesDefaultPool: a task with no declared pool draws on
 // the implicit default_pool, so a 2-slot default_pool bounds it to 2.
 func TestPlanRunPoolUnsetTaskUsesDefaultPool(t *testing.T) {

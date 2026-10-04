@@ -30,7 +30,7 @@ tests:
             name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
             value: https://portal.example.com/signout
 
-  - it: renders neither when unset, keeping Leoflow's own pages
+  - it: renders neither when unset, keeping Dexaflow's own pages
     template: deployment.yaml
     asserts:
       - notContains:

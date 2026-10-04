@@ -35,14 +35,15 @@ func (q *Queries) CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, e
 }
 
 const countDagsFiltered = `-- name: CountDagsFiltered :one
-WITH latest AS (
-    SELECT DISTINCT ON (r.dag_id) r.dag_id, r.state
-    FROM dag_runs r
-    ORDER BY r.dag_id, r.logical_date DESC
-)
 SELECT count(*)
 FROM dags d
-LEFT JOIN latest l ON l.dag_id = d.id
+LEFT JOIN LATERAL (
+    SELECT r.state
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
 WHERE d.tenant_id = $1 AND d.is_active = true
   AND ($2::bool IS NULL OR d.is_paused = $2)
   AND ($3::dag_run_state IS NULL OR l.state = $3)
@@ -54,6 +55,7 @@ type CountDagsFilteredParams struct {
 	RunState *DagRunState `json:"run_state"`
 }
 
+// Same newest-run lookup as ListDagsFiltered.
 func (q *Queries) CountDagsFiltered(ctx context.Context, arg CountDagsFilteredParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countDagsFiltered, arg.TenantID, arg.Paused, arg.RunState)
 	var count int64
@@ -353,14 +355,15 @@ func (q *Queries) ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, erro
 }
 
 const listDagsFiltered = `-- name: ListDagsFiltered :many
-WITH latest AS (
-    SELECT DISTINCT ON (r.dag_id) r.dag_id, r.state
-    FROM dag_runs r
-    ORDER BY r.dag_id, r.logical_date DESC
-)
 SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at
 FROM dags d
-LEFT JOIN latest l ON l.dag_id = d.id
+LEFT JOIN LATERAL (
+    SELECT r.state
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
 WHERE d.tenant_id = $1 AND d.is_active = true
   AND ($4::bool IS NULL OR d.is_paused = $4)
   AND ($5::dag_run_state IS NULL OR l.state = $5)
@@ -376,6 +379,9 @@ type ListDagsFilteredParams struct {
 	RunState *DagRunState `json:"run_state"`
 }
 
+// The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,
+// one index probe each, instead of a DISTINCT ON over every run in the table.
+// LEFT JOIN keeps DAGs without runs; they match no run_state filter.
 func (q *Queries) ListDagsFiltered(ctx context.Context, arg ListDagsFilteredParams) ([]Dag, error) {
 	rows, err := q.db.Query(ctx, listDagsFiltered,
 		arg.TenantID,
