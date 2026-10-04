@@ -162,3 +162,28 @@ func TestStopOfAGoneGroupIsDone(t *testing.T) {
 		t.Fatalf("Stop of a gone group = (%v, %v), want (true, nil)", stopped, err)
 	}
 }
+
+// TestAliveIgnoresAReusedGroupID: a group id whose leader pid now belongs to a
+// process with another start time is an unrelated group, so the recorded group
+// reads gone; the recorded leader, or a record without a start time, reads alive.
+func TestAliveIgnoresAReusedGroupID(t *testing.T) {
+	pgid := startGroup(t, "sleep 30")
+	time.Sleep(100 * time.Millisecond)
+	start, err := StartTime(pgid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		rec  Record
+		want bool
+	}{
+		{Record{AgentPID: 1, PGID: pgid, LeaderStart: start}, true},
+		{Record{AgentPID: 1, PGID: pgid, LeaderStart: 0}, true},
+		{Record{AgentPID: 1, PGID: pgid, LeaderStart: start + 1}, false},
+	} {
+		got, aerr := Alive(tc.rec)
+		if aerr != nil || got != tc.want {
+			t.Errorf("Alive(%+v) = (%v, %v), want (%v, nil)", tc.rec, got, aerr, tc.want)
+		}
+	}
+}

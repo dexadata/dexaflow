@@ -161,7 +161,7 @@ func TestExecuteHandsTheAgentItsGroupRecord(t *testing.T) {
 	work := t.TempDir()
 	out := filepath.Join(work, "seen")
 	e := NewSubprocessExecutor(writeScript(t,
-		`if [ -d "$(dirname "$LEOFLOW_TASK_PGID_FILE")" ]; then d=yes; else d=no; fi; printf '%s %s' "$LEOFLOW_TASK_PGID_FILE" "$d" > `+out), discardLogger())
+		`if [ -d "$(dirname "$DEXAFLOW_TASK_PGID_FILE")" ]; then d=yes; else d=no; fi; printf '%s %s' "$DEXAFLOW_TASK_PGID_FILE" "$d" > `+out), discardLogger())
 	e.SetWorkDir(work)
 	e.SetPIDDir(filepath.Join(t.TempDir(), "pids"))
 
