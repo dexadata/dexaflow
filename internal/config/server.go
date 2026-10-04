@@ -277,6 +277,14 @@ type ExecutionSection struct {
 	// is turned on. Dedicated task pods are not affected; they follow
 	// executor.defaults.read_only_task_root_filesystem.
 	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
+	// WarmPodResourcesCPU / WarmPodResourcesMemory size every warm worker pod,
+	// each applied as both request and limit (X4). Empty (the default) inherits
+	// executor.defaults.resources_cpu / resources_memory, so a task that declares
+	// no resources gets on a warm worker exactly what its dedicated pod would.
+	// Kubernetes quantities, e.g. "500m" / "512Mi". A task that declares resources
+	// other than these runs on a dedicated pod instead.
+	WarmPodResourcesCPU    string `mapstructure:"warm_pod_resources_cpu"`
+	WarmPodResourcesMemory string `mapstructure:"warm_pod_resources_memory"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -928,6 +936,11 @@ var serverDefaults = map[string]any{
 	"execution.warm_read_only_root_filesystem": false,
 	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
 	"observability.metrics.drop_legacy_names": false,
+	// Warm pod sizing (X4, ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POD_RESOURCES_*; empty inherits
+	// executor.defaults.resources_*.
+	"execution.warm_pod_resources_cpu":    "",
+	"execution.warm_pod_resources_memory": "",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,

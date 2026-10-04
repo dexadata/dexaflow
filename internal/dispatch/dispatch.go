@@ -14,6 +14,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/executor"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"github.com/google/uuid"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // reservedEnvPrefix marks env vars owned by leoflow's control plane / agent. An
@@ -139,6 +140,9 @@ type Dispatcher struct {
 	// worker of its dag_version before falling back to a dedicated pod. nil means
 	// warm pools are off — the dedicated pod path is byte-for-byte today's behavior.
 	placer WarmPlacer
+	// warmPodResources is what warm worker pods are sized with (X4); a task that
+	// declares other resources is kept off them. Nil = warm pods are unsized.
+	warmPodResources *domain.Resources
 	// secretsBackend / secretsBackendKwargs are the operator's external secrets
 	// backend (ADR 0060): the provider class + raw kwargs JSON, injected as
 	// LEOFLOW_SECRETS_* pod env. Empty = no external backend (chain vault-only).
@@ -194,6 +198,106 @@ func warmSACompatible(task domain.TaskSpec, warmSA string) bool {
 	}
 	return task.Execution.ServiceAccount == warmSA
 }
+
+// warmEligible reports whether an attempt may be offered to a warm worker: warm
+// pools are wired, and the task needs nothing a warm pod cannot give it (a
+// staging volume, another ServiceAccount, its own placement, or resources the
+// warm pod does not cover). Any of those takes the dedicated path.
+func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
+	return d.placer != nil && (r.Staging == nil || !r.Staging.Enabled) &&
+		warmSACompatible(task, d.defaultTaskServiceAccount) &&
+		warmPlacementCompatible(task) && warmResourcesCompatible(task, d.warmPodResources)
+}
+
+// warmPlacementCompatible reports whether a task can run on a warm worker as it
+// would on its dedicated pod. A warm worker is created before any task is known,
+// so it carries none of the placement fields and pod metadata BuildPod applies
+// from a task's execution block: node selector, tolerations, affinity, topology
+// spread, priority and runtime class, termination grace, DRA claims, labels and
+// annotations. Placed on a warm worker, such a task would run on the wrong node,
+// without its accelerator, or outside the NetworkPolicy its labels select (X4).
+// The image pull policy is the one field left out: it only matters before the
+// container starts.
+func warmPlacementCompatible(task domain.TaskSpec) bool {
+	e := task.Execution
+	if e == nil {
+		return true
+	}
+	return len(e.NodeSelector) == 0 && len(e.Tolerations) == 0 && len(e.Affinity) == 0 &&
+		len(e.TopologySpreadConstraints) == 0 && e.PriorityClassName == "" &&
+		e.RuntimeClassName == nil && e.TerminationGracePeriodSeconds == nil &&
+		len(e.ResourceClaims) == 0 && len(e.Labels) == 0 && len(e.Annotations) == 0
+}
+
+// warmResourcesCompatible reports whether a warm pod gives a task at least what
+// its dedicated pod would (X4). A task that declares no resources runs with the
+// warm pod's, which default to the platform resources its dedicated pod would
+// get. A task that declares its own runs warm only when, per dimension (cpu,
+// memory, ephemeral-storage), the warm pod requests at least as much (the
+// scheduling guarantee it asked for) and caps the same way: a task limit is
+// covered only by a warm limit at least as high (an unlimited warm pod covers
+// none, since the task asked for a cap, and with it a QoS class and a bound on
+// its neighbors), and a task without a limit is not placed under a warm limit
+// (no earlier OOM kill or throttling than on its dedicated pod). As Kubernetes does, a task limit with no
+// request counts as the request too. A DRA claim never fits, since a warm pod
+// holds none, and an unparseable quantity is treated as not fitting.
+func warmResourcesCompatible(task domain.TaskSpec, warm *domain.Resources) bool {
+	if task.Resources == nil {
+		return true
+	}
+	if len(task.Resources.Claims) > 0 {
+		return false
+	}
+	var warmReq, warmLim *domain.ResourceQuantity
+	if warm != nil {
+		warmReq, warmLim = warm.Requests, warm.Limits
+	}
+	for _, dim := range []func(*domain.ResourceQuantity) string{
+		func(q *domain.ResourceQuantity) string { return q.CPU },
+		func(q *domain.ResourceQuantity) string { return q.Memory },
+		func(q *domain.ResourceQuantity) string { return q.EphemeralStorage },
+	} {
+		taskReq, taskLim := quantityOf(task.Resources.Requests, dim), quantityOf(task.Resources.Limits, dim)
+		if taskReq == "" {
+			taskReq = taskLim
+		}
+		if !covers(quantityOf(warmReq, dim), taskReq) {
+			return false
+		}
+		wl := quantityOf(warmLim, dim)
+		if (wl == "") != (taskLim == "") || !covers(wl, taskLim) {
+			return false
+		}
+	}
+	return true
+}
+
+// quantityOf reads one dimension of an optional quantity; nil reads as unset.
+func quantityOf(q *domain.ResourceQuantity, dim func(*domain.ResourceQuantity) string) string {
+	if q == nil {
+		return ""
+	}
+	return dim(q)
+}
+
+// covers reports whether have is at least want. An unset want is always covered;
+// an unset have covers nothing else.
+func covers(have, want string) bool {
+	if want == "" {
+		return true
+	}
+	if have == "" {
+		return false
+	}
+	h, herr := resource.ParseQuantity(have)
+	w, werr := resource.ParseQuantity(want)
+	return herr == nil && werr == nil && h.Cmp(w) >= 0
+}
+
+// SetWarmPodResources records the resources warm worker pods are created with
+// (X4), so Dispatch keeps a task that declares different ones off them. Nil
+// means warm pods are unsized.
+func (d *Dispatcher) SetWarmPodResources(r *domain.Resources) { d.warmPodResources = r }
 
 // SetDefaultTaskServiceAccount sets the ServiceAccount task pods run as when a
 // DAG's task does not specify execution.service_account. Empty leaves pods on the
@@ -284,7 +388,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// cannot run on it (it would silently run as the wrong identity and break keyless
 	// resolution). Such a task takes the dedicated path below, which sets its own SA —
 	// the same degrade-not-strand exclusion as staging (ADR 0058 D5).
-	if d.placer != nil && (r.Staging == nil || !r.Staging.Enabled) && warmSACompatible(task, d.defaultTaskServiceAccount) {
+	// The same holds for placement, pod metadata and resources (X4): a warm worker
+	// carries none of a task's own, so a task declaring them takes the dedicated
+	// path too (warmPlacementCompatible, warmResourcesCompatible).
+	if d.warmEligible(r, task) {
 		wa := &agentv1.WorkAssignment{
 			AssignmentId: uuid.NewString(),
 			AttemptToken: token,

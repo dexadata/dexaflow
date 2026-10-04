@@ -446,6 +446,16 @@ spec:
             - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
               value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
+            {{- if .ctx.Values.execution.warmPodResources.cpu }}
+            # Warm pod sizing (X4). Unset inherits the executor.defaults.resources
+            # the server already reads, so it is stamped only when set.
+            - name: LEOFLOW_EXECUTION_WARM_POD_RESOURCES_CPU
+              value: {{ .ctx.Values.execution.warmPodResources.cpu | quote }}
+            {{- end }}
+            {{- if .ctx.Values.execution.warmPodResources.memory }}
+            - name: LEOFLOW_EXECUTION_WARM_POD_RESOURCES_MEMORY
+              value: {{ .ctx.Values.execution.warmPodResources.memory | quote }}
+            {{- end }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:

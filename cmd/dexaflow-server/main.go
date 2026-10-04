@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2121,6 +2122,8 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			// X3.2: a read-only root plus a per-attempt HOME, so nothing one attempt
 			// writes to the image survives into the next attempt on this worker.
 			ReadOnlyRootFilesystem: cfg.Execution.WarmReadOnlyRootFilesystem,
+			// X4: sized like the dedicated pod of a task without resources of its own.
+			Resources: warmPodResources(cfg),
 		}
 		if useExchange {
 			// Exchange transport: project an SA token, no plaintext bootstrap token.
@@ -2147,6 +2150,25 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 		}
 		spec.BootstrapToken = token
 		return spec, nil
+	}
+}
+
+// warmPodResources resolves the requests and limits warm worker pods are created
+// with (X4): execution.warm_pod_resources_* where set, else the
+// executor.defaults.resources_* a task without resources gets on a dedicated
+// pod, each dimension on its own and each value as both request and limit, the
+// same convention as platformDefaults. Nil when neither is configured, which
+// leaves warm pods unsized as before. The dispatcher is handed the same value so
+// it keeps a task declaring other resources off warm workers.
+func warmPodResources(cfg *config.ServerConfig) *domain.Resources {
+	cpu := cmp.Or(cfg.Execution.WarmPodResourcesCPU, cfg.Executor.Defaults.ResourcesCPU)
+	memory := cmp.Or(cfg.Execution.WarmPodResourcesMemory, cfg.Executor.Defaults.ResourcesMemory)
+	if cpu == "" && memory == "" {
+		return nil
+	}
+	return &domain.Resources{
+		Requests: &domain.ResourceQuantity{CPU: cpu, Memory: memory},
+		Limits:   &domain.ResourceQuantity{CPU: cpu, Memory: memory},
 	}
 }
 
@@ -2462,6 +2484,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
 	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)
 	dispatcher.SetDefaultTaskServiceAccount(cfg.Executor.TaskServiceAccount)
+	// What warm pods are sized with (X4), so a task declaring other resources
+	// takes a dedicated pod. Read only when a warm placer is wired.
+	dispatcher.SetWarmPodResources(warmPodResources(cfg))
 	// Agent-token transport (ADR 0055 Fix #3). Under the exchange transport the
 	// executor projects a ServiceAccount token instead of the plaintext one; the
 	// default (envvar) leaves the pod spec unchanged. The audience is the shared

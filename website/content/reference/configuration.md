@@ -523,6 +523,8 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_WORKER_IDLE_TTL` | `5m` | Pro | How long an idle warm worker is kept before it is recycled (D6). A duration string. |
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
 | `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
+| `DEXAFLOW_EXECUTION_WARM_POD_RESOURCES_CPU` | _(empty)_ | Pro | CPU request and limit of every warm worker pod. Empty inherits `executor.defaults.resources_cpu`, so a task without resources of its own gets on a warm worker what its dedicated pod would. A task that declares more, or a limit the warm pod would undercut, runs on a dedicated pod. Helm: `execution.warmPodResources.cpu`. |
+| `DEXAFLOW_EXECUTION_WARM_POD_RESOURCES_MEMORY` | _(empty)_ | Pro | Memory request and limit of every warm worker pod; same rules as the CPU value. Helm: `execution.warmPodResources.memory`. |
 
 ### Logs (`logs.*`)
 

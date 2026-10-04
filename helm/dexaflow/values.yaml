@@ -430,6 +430,11 @@ execution:
   maxWarmPodsPerTenant: 100
   # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
   warmReadOnlyRootFilesystem: false
+  warmPodResources:
+    # -- CPU request and limit of every warm pod (e.g. `500m`). Empty inherits `executor.defaults.resources.cpu`, so a task without resources of its own gets on a warm pod what its dedicated pod would. A task declaring resources the warm pod does not cover runs on a dedicated pod. Ignored while `warmPoolsEnabled` is false.
+    cpu: ""
+    # -- Memory request and limit of every warm pod (e.g. `512Mi`). Empty inherits `executor.defaults.resources.memory`. Same rules as `cpu`. Ignored while `warmPoolsEnabled` is false.
+    memory: ""
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see

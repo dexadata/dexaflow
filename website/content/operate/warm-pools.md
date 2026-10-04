@@ -75,6 +75,19 @@ the work, and the same DAG version runs many attempts.
   run's per-run staging PVC. Any DAG that declares `staging.enabled: true`
   **automatically falls back to a dedicated pod per task** — this is detected
   statically, no configuration needed.
+- **Tasks with their own placement or larger resources.** A warm pod is created
+  before any task is known, so it carries none of a task's `execution` placement
+  or pod metadata (node selector, tolerations, affinity, topology spread, priority
+  or runtime class, termination grace, resource claims, labels, annotations) and
+  only the warm pod's own requests and limits (`warmPodResources`, by default the
+  platform default resources). A task that declares any of that placement, or
+  resources the warm pod does not cover, **runs on a dedicated pod**, so it
+  behaves exactly as it would without warm pools. Per dimension (cpu, memory,
+  ephemeral-storage) the warm pod must request at least the task's request (its
+  limit when it declares only a limit, as Kubernetes does), and must have a limit
+  at least as high as the task's limit. So a task that declares a limit runs on a
+  dedicated pod while warm pods are unlimited, and a task that declares requests
+  but no limits runs on a dedicated pod once warm pods have limits.
 - **Non-idempotent tasks.** Warm-pool recovery re-runs an attempt after a worker is
   lost, and the safety argument for "a re-run is harmless" holds only for
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
@@ -435,6 +448,7 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `workerIdleTtl` | `WORKER_IDLE_TTL` | duration | `5m` | How long an idle worker is kept before recycle. Must be > 0. |
 | `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; promised idle floors are always honored. Must be ≥ 1. |
 | `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` and `/dev/shm` emptied around each attempt (see [isolation](#isolation-between-attempts)). Applies to warm pods created after it is turned on. Dedicated task pods are not affected. |
+| `warmPodResources.cpu` / `.memory` | `WARM_POD_RESOURCES_CPU` / `_MEMORY` | Kubernetes quantity | empty | Request **and** limit of every warm pod. Empty inherits `executor.defaults.resources`, the resources a task without its own gets on a dedicated pod. A task declaring resources the warm pod does not cover runs on a dedicated pod. |
 
 Durations accept Go duration strings (`"90s"`, `"5m"`, `"1h"`). When
 `warmPoolsEnabled` is on, the server **validates these at boot and refuses to start**

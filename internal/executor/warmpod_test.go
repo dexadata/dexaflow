@@ -3,6 +3,7 @@ package executor
 import (
 	"testing"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -367,6 +368,31 @@ func TestBuildWarmPodServiceAccount(t *testing.T) {
 	}
 	if got := BuildWarmPod(baseWarmSpec()).Spec.ServiceAccountName; got != "" {
 		t.Errorf("no default SA → empty ServiceAccountName, got %q", got)
+	}
+}
+
+// TestBuildWarmPodSetsResources is X4: a warm worker is sized like the dedicated
+// pod a task without its own resources would get, request and limit, so a task
+// placed on it is neither BestEffort where it would be Guaranteed nor unbounded
+// where it would be limited.
+func TestBuildWarmPodSetsResources(t *testing.T) {
+	spec := baseWarmSpec()
+	spec.Resources = &domain.Resources{
+		Requests: &domain.ResourceQuantity{CPU: "500m", Memory: "512Mi"},
+		Limits:   &domain.ResourceQuantity{CPU: "500m", Memory: "512Mi"},
+	}
+	res := BuildWarmPod(spec).Spec.Containers[0].Resources
+	for _, list := range []corev1.ResourceList{res.Requests, res.Limits} {
+		if got := list[corev1.ResourceCPU]; got.String() != "500m" {
+			t.Errorf("cpu = %s, want 500m", got.String())
+		}
+		if got := list[corev1.ResourceMemory]; got.String() != "512Mi" {
+			t.Errorf("memory = %s, want 512Mi", got.String())
+		}
+	}
+
+	if res := BuildWarmPod(baseWarmSpec()).Spec.Containers[0].Resources; len(res.Requests) != 0 || len(res.Limits) != 0 {
+		t.Errorf("a warm pod with no resources configured must stay unsized, got %+v", res)
 	}
 }
 
