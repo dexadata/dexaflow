@@ -9,8 +9,8 @@ body: |-
   agent's token, and a stale one is told to terminate. The reschedule report
   also gains the try-number check it was missing. A token minted before the
   upgrade is read as epoch 0 for reports. Heartbeats and secret liveness
-  accept such a token on its try number alone, so a task whose token an old
-  replica re-minted during a rolling upgrade is not killed. Such tokens are
-  counted in `dexaflow_agent_legacy_attempt_token_total`. See the upgrade notes
-  for 0.5.1. (#911)
+  accept such a token on its try number alone, so a running task whose token
+  an old replica renewed during a rolling upgrade is not killed mid-run. Such
+  tokens are counted in `dexaflow_agent_legacy_attempt_token_total`. See the
+  upgrade notes for 0.5.1. (#911)
 time: 2026-10-04T22:00:00.000000000-03:00
