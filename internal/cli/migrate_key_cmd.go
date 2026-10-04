@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 )
@@ -60,6 +61,7 @@ func runMigrateKey(cmd *cobra.Command, dryRun, yes bool) error {
 		dryRun: dryRun, yes: yes,
 		confirm: func() bool { return confirmDestructive(cmd) },
 		crashAt: migrateKeyCrashHook,
+		leave:   cleanup,
 	}
 	return r.run(cmdContext(cmd))
 }
@@ -79,10 +81,15 @@ var migrateKeyCrashHook = func(string) {}
 func bringUpKeyDatastores(cmd *cobra.Command, stateDir string) ([]keyDatastore, func(), error) {
 	var dss []keyDatastore
 	var stops []func()
+	var once sync.Once
+	// Idempotent: run calls it before releasing the config lock, and the
+	// caller's defer covers every path that never reached run.
 	cleanup := func() {
-		for i := len(stops) - 1; i >= 0; i-- {
-			stops[i]()
-		}
+		once.Do(func() {
+			for i := len(stops) - 1; i >= 0; i-- {
+				stops[i]()
+			}
+		})
 	}
 	ctx := cmdContext(cmd)
 	if ds, stop, ok, err := bringUpManagedForKeys(ctx, cmd, stateDir); err != nil {

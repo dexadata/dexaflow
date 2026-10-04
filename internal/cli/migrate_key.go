@@ -64,6 +64,10 @@ type migrateKeyRun struct {
 	crashAt    func(point string)
 	getenv     func(string) string
 	write      func(path string, data []byte, opts atomicOpts) error
+	// leave stops the datastores this run brought up. It runs before the
+	// config lock is released, so a `dexaflow lite` waiting on that lock never
+	// goes on against a cluster being stopped under it.
+	leave func()
 }
 
 // errMigrateKeyDeclined reports a declined prompt: the install is not
@@ -108,6 +112,9 @@ func (r *migrateKeyRun) run(ctx context.Context) error {
 		return err
 	}
 	defer release()
+	if r.leave != nil {
+		defer r.leave()
+	}
 
 	cfg, raw, err := r.readConfig()
 	if err != nil {
