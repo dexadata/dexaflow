@@ -131,7 +131,7 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) (started bool
 	// widest dependency set, wider than initdb — and fail with an actionable
 	// message before the confusing startup error.
 	if verr := exec.CommandContext(ctx, filepath.Join(binDir, "postgres"), "--version").Run(); verr != nil { //nolint:gosec // managed binary + fixed arg
-		return false, fmt.Errorf("the managed Postgres can't run on this host — it needs system libraries (ICU, Kerberos) that are missing here (common on Alpine/musl and slim containers): %w\n"+
+		return false, fmt.Errorf("the managed Postgres can't run on this host: it needs system libraries (ICU, Kerberos) that are missing here (common on Alpine/musl and slim containers): %w\n"+
 			"  use `dexaflow lite --postgres docker` (recommended; works everywhere).\n"+
 			"  installing the libs may help if the versions match (Debian/Ubuntu: `apt-get install libicu-dev libgssapi-krb5-2`; Alpine: `apk add icu-libs krb5-libs` — but the bundled build may need exact versions)", verr)
 	}

@@ -111,7 +111,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 		devPrintf(out, "✓ workspace restored to %s (%d files)\n", workspaceDir, len(archive.Workspace))
 	}
 
-	devPrintln(out, "✓ restore complete — run `dexaflow lite` to start.")
+	devPrintln(out, "✓ restore complete; run `dexaflow lite` to start.")
 	return nil
 }
 
