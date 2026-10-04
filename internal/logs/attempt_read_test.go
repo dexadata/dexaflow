@@ -76,7 +76,7 @@ func (s *listingStore) List(_ context.Context, prefix, delimiter string) ([]stri
 	s.memStore.mu.Lock()
 	defer s.memStore.mu.Unlock()
 	seen := map[string]bool{}
-	for k := range s.memStore.objs {
+	for k := range s.objs {
 		if !strings.HasPrefix(k, prefix) {
 			continue
 		}

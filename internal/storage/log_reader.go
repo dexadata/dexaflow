@@ -48,12 +48,13 @@ func (r *LogReader) Tail(ctx context.Context, tenant, dagID, runID, taskID strin
 }
 
 // maxTryLogStreams bounds how many executions' streams one try's log read
-// probes and serves. Every execution of a try has its own attempt epoch (ADR
-// 0051 amendment), and a reschedule-mode sensor starts a new execution on
-// every poke, so a long-running sensor's try can span many epochs. The read
-// keeps the epoch-0 stream and the most recent epochs up to this bound. A
-// dispatch claims an epoch and every reset rail bumps one too, so the bound
-// covers fewer executions than epochs.
+// serves besides epoch 0, the most recent kept; the read opens with a line
+// naming the executions it leaves out. Every execution of a try has its own
+// attempt epoch (ADR 0051 amendment), and a reschedule-mode sensor starts a new
+// execution on every poke, so a long-running sensor's try can span many epochs.
+// A sink that cannot list probes epochs instead, and since a dispatch claims an
+// epoch and every reset rail bumps one too, the bound then covers fewer
+// executions than epochs.
 const maxTryLogStreams = 256
 
 // ReadLogs resolves the run reference (tenant name -> id, run_id -> dag_run id),
@@ -64,7 +65,9 @@ const maxTryLogStreams = 256
 // re-place, a reschedule poke, a repeated dispatch), each storing its stream
 // under its own attempt epoch (#863). The epochs the try can span come from
 // the database (TryAttemptEpochBounds), and logs.ReadAttempts serves every
-// stored one in order. A try that ran once reads exactly as before.
+// stored one in order, listing the stored executions in one call where the
+// sink can and opening each stream only as the read reaches it. A try that ran
+// once reads exactly as before.
 func (r *LogReader) ReadLogs(ctx context.Context, tenant, dagID, runID, taskID string, tryNumber int) (io.ReadCloser, error) {
 	ref, err := r.q.ResolveRunRef(ctx, queries.ResolveRunRefParams{Name: tenant, DagID: dagID, RunID: runID})
 	if err != nil {
@@ -82,31 +85,11 @@ func (r *LogReader) ReadLogs(ctx context.Context, tenant, dagID, runID, taskID s
 		RunID:     uuidToString(ref.DagRunID),
 		TaskID:    taskID,
 		TryNumber: tryNumber,
-	}, tryEpochs(int(bounds.Low), int(bounds.High)))
+	}, logs.TryEpochs{Low: int(bounds.Low), High: int(bounds.High), Max: maxTryLogStreams})
 	if err != nil {
 		return nil, classifyLogReadError(err)
 	}
 	return rc, nil
-}
-
-// tryEpochs is the epochs a try's log read probes: 0, where every log written
-// before the epoch existed lives, then (low, high], capped to the most recent
-// maxTryLogStreams. A try the database has no row for (a client naming a try
-// above the task's current one) has high 0 while earlier tries may have
-// archived a higher low; that range is empty, so only epoch 0 is probed.
-func tryEpochs(low, high int) []int {
-	if high <= low {
-		return []int{0}
-	}
-	if high-low > maxTryLogStreams {
-		low = high - maxTryLogStreams
-	}
-	out := make([]int, 0, high-low+1)
-	out = append(out, 0)
-	for e := max(low+1, 1); e <= high; e++ {
-		out = append(out, e)
-	}
-	return out
 }
 
 // classifyLogReadError maps a sink read error to the API-facing error. Only a

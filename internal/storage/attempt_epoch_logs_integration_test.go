@@ -11,8 +11,12 @@
 package storage_test
 
 import (
+	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,9 +87,32 @@ func streamMessages(t *testing.T, rc io.ReadCloser) []string {
 // a pre-upgrade execution (epoch 0) and two post-upgrade infra re-places of
 // try 1 each keep their log; the try's log holds all three streams in order;
 // the tries endpoint shows try 1 once, with the latest execution's state.
+//
+// It runs on the disk sink and on an object sink in both layouts, with and
+// without a store that can list, since each derives an execution's location
+// from the attempt epoch on its own.
 func TestTryWithSeveralExecutionsKeepsEveryLogAndShowsOnce(t *testing.T) {
-	f := seedStaleHeartbeat(t, "epoch_logs")
-	sink := logs.NewDiskSink(t.TempDir())
+	sinks := map[string]func(t *testing.T) logs.Sink{
+		"disk": func(t *testing.T) logs.Sink { return logs.NewDiskSink(t.TempDir()) },
+		"object single": func(*testing.T) logs.Sink {
+			return logs.NewObjectSink(context.Background(), newMemObjects(true), "", nil)
+		},
+		"object segmented": func(*testing.T) logs.Sink {
+			return logs.NewObjectSink(context.Background(), newMemObjects(true), "", nil, logs.WithObjectLayout(logs.ObjectLayoutSegmented))
+		},
+		"object segmented unlisted": func(*testing.T) logs.Sink {
+			return logs.NewObjectSink(context.Background(), newMemObjects(false), "", nil, logs.WithObjectLayout(logs.ObjectLayoutSegmented))
+		},
+	}
+	n := 0
+	for name, mk := range sinks {
+		n++
+		t.Run(name, func(t *testing.T) { checkSeveralExecutions(t, fmt.Sprintf("epoch_logs_%d", n), mk(t)) })
+	}
+}
+
+func checkSeveralExecutions(t *testing.T, dagID string, sink logs.Sink) {
+	f := seedStaleHeartbeat(t, dagID)
 	reader := storage.NewLogReader(f.pg, sink, nil)
 
 	writeLog(t, sink, f.logRef(1, 0), "legacy execution")
@@ -168,4 +195,63 @@ func TestLegacyLogIsServedAsBefore(t *testing.T) {
 	if got := strings.Join(streamMessages(t, rc), "|"); got != "before the upgrade" {
 		t.Fatalf("got %q", got)
 	}
+}
+
+// memObjects is an in-memory object store; listing adds List, as S3 and GCS
+// have.
+type memObjects struct {
+	mu   sync.Mutex
+	objs map[string][]byte
+}
+
+type listingMemObjects struct{ *memObjects }
+
+func newMemObjects(listing bool) logs.ObjectStore {
+	m := &memObjects{objs: map[string][]byte{}}
+	if listing {
+		return listingMemObjects{m}
+	}
+	return m
+}
+
+func (m *memObjects) Put(_ context.Context, key string, r io.Reader) error {
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.objs[key] = b
+	return nil
+}
+
+func (m *memObjects) Get(_ context.Context, key string) (io.ReadCloser, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.objs[key]
+	if !ok {
+		return nil, logs.ErrObjectNotFound
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+func (l listingMemObjects) List(_ context.Context, prefix, delimiter string) ([]string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	seen := map[string]bool{}
+	for k := range l.objs {
+		rest, ok := strings.CutPrefix(k, prefix)
+		if !ok {
+			continue
+		}
+		if i := strings.Index(rest, delimiter); delimiter != "" && i >= 0 {
+			k = prefix + rest[:i+len(delimiter)]
+		}
+		seen[k] = true
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	return out, nil
 }

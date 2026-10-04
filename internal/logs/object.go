@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -57,7 +58,8 @@ type ObjectSink struct {
 
 // Object layouts. ObjectLayoutSingle (the default) keeps each attempt in one
 // object at {try}.log, rewritten on every flush. ObjectLayoutSegmented writes
-// the attempt as numbered segments under {try}.log.d/, sealing a segment once it
+// the attempt as numbered segments under {try}.log.d/ ({try}.e{epoch}.log.d/
+// for a later execution of the try), sealing a segment once it
 // reaches objectSegmentBytes, so a flush uploads the open segment instead of the
 // whole attempt and the writer holds one segment in memory instead of the whole
 // attempt. A server older than the segmented layout reads only {try}.log, which
@@ -114,10 +116,53 @@ func (o *ObjectSink) key(ref Ref) string {
 }
 
 // segmentKey maps a Ref and a segment number to the segment's object key. The
-// zero-padded number keeps a lexical listing in write order.
+// segments live in a directory named after the single-layout object plus
+// ".d": {try}.log.d for epoch 0, as before the epoch existed, and
+// {try}.e{epoch}.log.d otherwise, so each execution of a try keeps its own
+// segments (ADR 0051 amendment). The zero-padded number keeps a lexical
+// listing in write order.
 func (o *ObjectSink) segmentKey(ref Ref, n int) string {
 	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID,
-		fmt.Sprintf("%d.log.d", ref.TryNumber), fmt.Sprintf("%08d.log", n))
+		ref.fileName()+".d", fmt.Sprintf("%08d.log", n))
+}
+
+// ObjectLister is implemented by object stores that can list keys under a
+// prefix. With a delimiter, a key that continues past the delimiter is
+// returned once as its common prefix, ending in the delimiter, so a segmented
+// attempt lists as one entry. S3Store and GCSStore implement it.
+type ObjectLister interface {
+	List(ctx context.Context, prefix, delimiter string) ([]string, error)
+}
+
+// errNoObjectList reports a store that cannot list.
+var errNoObjectList = errors.New("object store cannot list")
+
+// StoredEpochs lists the attempt epochs with a stored log for ref's try, in
+// either layout, with one listing of the {try}. prefix (see EpochLister). A
+// store without ObjectLister, or a failed listing (S3 without s3:ListBucket),
+// returns an error and the caller probes instead.
+func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
+	if err := ref.validate(); err != nil {
+		return nil, err
+	}
+	lister, ok := o.store.(ObjectLister)
+	if !ok {
+		return nil, errNoObjectList
+	}
+	dir := path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID) + "/"
+	keys, err := lister.List(o.ctx, dir+fmt.Sprintf("%d.", ref.TryNumber), "/")
+	if err != nil {
+		o.logger.Debug("listing a try's log objects failed; probing each execution",
+			"prefix", logSafe(dir), "error", logSafe(err.Error()))
+		return nil, err
+	}
+	var epochs []int
+	for _, key := range keys {
+		if e, ok := parseEpochName(strings.TrimPrefix(key, dir), ref.TryNumber); ok {
+			epochs = append(epochs, e)
+		}
+	}
+	return epochs, nil
 }
 
 // Open validates the ref and returns a writer that keeps the attempt's object

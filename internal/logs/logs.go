@@ -313,6 +313,38 @@ func (d *DiskSink) Prune(now time.Time, retention time.Duration) error {
 	return err
 }
 
+// StoredEpochs lists the attempt epochs with a log file for ref's try, with
+// one directory read (see EpochLister). A task directory that does not exist
+// yet holds none.
+func (d *DiskSink) StoredEpochs(ref Ref) ([]int, error) {
+	if err := ref.validate(); err != nil {
+		return nil, err
+	}
+	dir, err := d.withRoot(func(root *os.Root) (*os.File, error) {
+		return root.Open(filepath.Dir(d.rel(ref)))
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("opening log directory: %w", err)
+	}
+	names, rerr := dir.Readdirnames(-1)
+	if cerr := dir.Close(); rerr == nil {
+		rerr = cerr
+	}
+	if rerr != nil {
+		return nil, fmt.Errorf("listing log directory: %w", rerr)
+	}
+	var epochs []int
+	for _, name := range names {
+		if e, ok := parseEpochName(name, ref.TryNumber); ok {
+			epochs = append(epochs, e)
+		}
+	}
+	return epochs, nil
+}
+
 // Read opens the log file for reading.
 func (d *DiskSink) Read(ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {

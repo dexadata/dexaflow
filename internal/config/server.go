@@ -116,7 +116,8 @@ type ObjectLogSection struct {
 	CredentialsFile string `mapstructure:"credentials_file"`
 	// Layout selects how new attempts are written to the bucket: "single"
 	// (default) keeps one object per attempt at {try}.log, rewritten on every
-	// flush; "segmented" writes numbered segments under {try}.log.d/ so a flush
+	// flush; "segmented" writes numbered segments under {try}.log.d/
+	// ({try}.e{epoch}.log.d/ for a later execution of the try) so a flush
 	// uploads only the open segment. Both layouts are always readable. Turn
 	// segmented on only once every replica runs a version that reads it.
 	Layout string `mapstructure:"layout"`
