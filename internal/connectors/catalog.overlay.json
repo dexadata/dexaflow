@@ -1,5 +1,5 @@
 {
-  "_comment": "Leoflow-owned overlay merged over the GENERATED catalog.json at load (see catalog.go). These are dbt-auth fields that Airflow's provider introspection does not emit — either leoflow-invented selectors (BigQuery `method`) or fields Airflow's form omits (Snowflake key passphrase, the whole Databricks form). Each field mirrors the FlexibleForm shape the SPA renders; `description` becomes the field's help text. Hand-curated on purpose: unlike catalog.json, this file is safe to edit. Keep field names in sync with runtime/python/leoflow_runtime/dbt.py.",
+  "_comment": "Dexaflow-owned overlay merged over the GENERATED catalog.json at load (see catalog.go). These are dbt-auth fields that Airflow's provider introspection does not emit — either leoflow-invented selectors (BigQuery `method`) or fields Airflow's form omits (Snowflake key passphrase, the whole Databricks form). Each field mirrors the FlexibleForm shape the SPA renders; `description` becomes the field's help text. Hand-curated on purpose: unlike catalog.json, this file is safe to edit. Keep field names in sync with runtime/python/leoflow_runtime/dbt.py.",
   "snowflake": {
     "extra_fields": {
       "private_key_passphrase": {

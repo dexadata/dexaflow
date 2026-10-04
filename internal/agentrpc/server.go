@@ -198,6 +198,9 @@ type Server struct {
 	// (scheduler.eager_promotion). It must not block. Unset (the default) changes
 	// nothing. Atomic because it is wired after the gRPC server starts serving.
 	settled atomic.Pointer[func()]
+	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
+	// PushXCom and FetchXCom do not reload the full task spec on every call.
+	attemptSpecs *attemptSpecCache
 }
 
 // SetSettledHook registers fn to run after an agent's terminal state report is
@@ -208,7 +211,9 @@ func (s *Server) SetSettledHook(fn func()) { s.settled.Store(&fn) }
 // NewServer builds an AgentService server backed by the given authenticator,
 // store, and XCom service.
 func NewServer(authn Authenticator, store Store, xcomSvc XComService) *Server {
-	return &Server{auth: authn, store: store, xcom: xcomSvc, now: time.Now}
+	s := &Server{auth: authn, store: store, xcom: xcomSvc, now: time.Now}
+	s.attemptSpecs = newAttemptSpecCache(attemptSpecCacheSize, attemptSpecCacheTTL, func() time.Time { return s.now() })
+	return s
 }
 
 // SetTokenRenewal wires per-attempt token renewal (ADR 0055 Fix #4): on a
@@ -268,6 +273,7 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 	if err != nil {
 		return nil, internalStatus("loading task spec", err, attemptAttrs(id)...)
 	}
+	s.attemptSpecs.put(*id, attemptSpecOf(spec))
 	return &agentv1.TaskSpec{
 		TenantId:                id.TenantID,
 		DagId:                   id.DagID,
@@ -304,6 +310,11 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 	}
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
+	}
+	// Any report but running ends this attempt, so its cached XCom spec goes. A
+	// later RPC of the same attempt (a retried report) just reloads it.
+	if req.GetState() != agentv1.TaskState_TASK_STATE_RUNNING {
+		s.attemptSpecs.drop(*id)
 	}
 	// A reschedule-mode sensor reports up_for_reschedule + its next-poke time; route
 	// it to the dedicated store path that persists reschedule_at, instead of the
@@ -430,7 +441,7 @@ func (s *Server) PushXCom(ctx context.Context, req *agentv1.PushXComRequest) (*a
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
 	}
-	spec, err := s.store.TaskSpec(ctx, *id)
+	spec, err := s.xcomSpec(ctx, id)
 	if err != nil {
 		return nil, internalStatus("loading task spec", err, attemptAttrs(id)...)
 	}
@@ -458,7 +469,7 @@ func (s *Server) FetchXCom(ctx context.Context, req *agentv1.FetchXComRequest) (
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
 	}
-	spec, err := s.store.TaskSpec(ctx, *id)
+	spec, err := s.xcomSpec(ctx, id)
 	if err != nil {
 		return nil, internalStatus("loading task spec", err, attemptAttrs(id)...)
 	}

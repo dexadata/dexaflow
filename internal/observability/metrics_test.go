@@ -14,9 +14,6 @@ import (
 func touchAll(m *Metrics) {
 	m.SchedulerLoopDuration.Observe(0.1)
 	m.SchedulerDecisions.WithLabelValues("schedule").Inc()
-	m.SchedulerLeader.WithLabelValues("r1").Set(1)
-	m.ActiveDAGRuns.WithLabelValues("etl", "running").Set(1)
-	m.QueuedTasks.WithLabelValues("etl").Set(1)
 	m.TaskStateTransitions.WithLabelValues("none", "scheduled", "etl").Inc()
 	m.TaskDuration.WithLabelValues("etl", "t1", "python").Observe(1)
 	m.TaskRetries.WithLabelValues("etl", "t1").Inc()
@@ -30,7 +27,6 @@ func touchAll(m *Metrics) {
 	m.HTTPRequestDuration.WithLabelValues("GET", "/api/v2/dags").Observe(0.01)
 	m.AuthFailures.WithLabelValues("bad_password").Inc()
 	m.PodsCreated.WithLabelValues("etl", "success").Inc()
-	m.PodsRunning.Set(3)
 	m.PodPendingDuration.Observe(1)
 	m.KubernetesAPICalls.WithLabelValues("create_pod", "success").Inc()
 }
@@ -117,9 +113,6 @@ func TestNewMetricsRegistersAllADR0010Metrics(t *testing.T) {
 		"dexaflow_scheduler_loop_duration_seconds",
 		"dexaflow_scheduler_decisions_total",
 		"dexaflow_scheduler_woken_ticks_total",
-		"dexaflow_scheduler_leader",
-		"dexaflow_active_dag_runs",
-		"dexaflow_queued_tasks",
 		"dexaflow_task_state_transitions_total",
 		"dexaflow_task_duration_seconds",
 		"dexaflow_task_retries_total",
@@ -133,7 +126,6 @@ func TestNewMetricsRegistersAllADR0010Metrics(t *testing.T) {
 		"dexaflow_http_request_duration_seconds",
 		"dexaflow_auth_failures_total",
 		"dexaflow_pods_created_total",
-		"dexaflow_pods_running",
 		"dexaflow_pod_pending_duration_seconds",
 		"dexaflow_kubernetes_api_calls_total",
 	}
