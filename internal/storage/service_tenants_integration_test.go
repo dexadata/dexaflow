@@ -79,7 +79,7 @@ func TestEnsureTenantIsIdempotent(t *testing.T) {
 func TestEnsureTenantReconcilesADriftedLadder(t *testing.T) {
 	repo, _, pg, ctx := openInfra(t)
 	name := uniqueTenant("drift")
-	if _, err := repo.EnsureTenant(ctx, name, "Drift"); err != nil {
+	if _, err := repo.EnsureTenant(ctx, name, "Drift", 0); err != nil {
 		t.Fatal(err)
 	}
 	drift := []string{
@@ -106,7 +106,7 @@ func TestEnsureTenantReconcilesADriftedLadder(t *testing.T) {
 		}
 	}
 
-	if _, err := repo.EnsureTenant(ctx, name, "Drift"); err != nil {
+	if _, err := repo.EnsureTenant(ctx, name, "Drift", 0); err != nil {
 		t.Fatal(err)
 	}
 
