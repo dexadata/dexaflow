@@ -114,6 +114,12 @@ type ObjectLogSection struct {
 	// (recommended) uses Application Default Credentials — GKE Workload Identity
 	// keyless. GCS-only.
 	CredentialsFile string `mapstructure:"credentials_file"`
+	// Layout selects how new attempts are written to the bucket: "single"
+	// (default) keeps one object per attempt at {try}.log, rewritten on every
+	// flush; "segmented" writes numbered segments under {try}.log.d/ so a flush
+	// uploads only the open segment. Both layouts are always readable. Turn
+	// segmented on only once every replica runs a version that reads it.
+	Layout string `mapstructure:"layout"`
 }
 
 // ExecutorSection configures how tasks are executed.
@@ -871,6 +877,7 @@ var serverDefaults = map[string]any{
 	"logs.sink.access_key_id":            "",
 	"logs.sink.secret_access_key":        "",
 	"logs.sink.credentials_file":         "",
+	"logs.sink.layout":                   "single",
 	"observability.otel.enabled":         false,
 	"observability.otel.endpoint":        "localhost:4317",
 	"observability.log_level":            "info",
@@ -1092,7 +1099,12 @@ func (c *ServerConfig) validateLogs() error {
 		if c.Logs.Sink.Bucket == "" {
 			return fmt.Errorf(`logs.sink.bucket is required when logs.backend is %q (set LEOFLOW_LOGS_SINK_BUCKET)`, c.Logs.Backend)
 		}
-		return nil
+		switch c.Logs.Sink.Layout {
+		case "", "single", "segmented":
+			return nil
+		default:
+			return fmt.Errorf(`unknown logs.sink.layout %q (want "single" or "segmented")`, c.Logs.Sink.Layout)
+		}
 	default:
 		return fmt.Errorf(`unknown logs.backend %q (want "disk", "s3" or "gcs")`, c.Logs.Backend)
 	}
