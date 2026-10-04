@@ -244,7 +244,10 @@ appends `outcome recovered from the durable record over agent_lost` (or
 and its downstream tasks run as they would have.
 
 The override only ever applies to the attempt the pod's labels name (the same
-try and attempt epoch), so a superseded pod cannot settle its replacement. A
+try and attempt epoch), so a superseded pod cannot settle its replacement. The
+record itself also names the execution that wrote it: a record whose epoch
+differs from the pod's label counts as no record, and the pod settles by its
+phase. A
 FAILED record never overrides a mark: the reaper's own teardown makes the agent
 write one. A task a user marked `failed` is a verdict, not a guess: the
 mark-state action clears the infra kind, so neither the re-place nor the
