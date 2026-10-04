@@ -207,7 +207,10 @@ func TestWarmPodInformerExpectationsAreKeyedByPodName(t *testing.T) {
 		t.Fatal("the cache never saw warm-early")
 	}
 	wi.EndCreate(dv1, "warm-early")
-	if wi.CreatesPending("dv-1") {
+	// The informer updates its store before it runs the add handler, so the
+	// cache can list warm-early before the handler has recorded the sighting.
+	// Either order must converge: wait instead of asserting at once.
+	if !waitFor(t, func() bool { return !wi.CreatesPending("dv-1") }) {
 		t.Error("a pod observed before its create returned must still clear the expectation")
 	}
 }
