@@ -110,6 +110,9 @@ UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
     last_failure_kind = 'infra',
+    -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
+    -- once on Lite (ADR 0052 amendment, part 2).
+    infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
     error_message = 'dispatch_lost: scheduler crashed before dispatch landed; will be retried by the run reaper'
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)
@@ -458,6 +461,7 @@ SET state = 'none',
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
@@ -512,6 +516,7 @@ SET state = 'none',
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
@@ -531,6 +536,11 @@ WHERE ti.dag_run_id = $1 AND ti.task_id = $2 AND ti.state = 'up_for_retry';
 -- outcome is classified fresh.
 -- last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 -- ResetTaskInstanceToNone.
+-- A provisional mark (infra_confirmed_at NULL, ADR 0052 amendment) is not
+-- re-placed until the reconciler confirms it or InfraConfirmMaxWait has passed
+-- since ended_at (the liveness valve), so a durable SUCCESS record can still
+-- settle the attempt it guessed lost. Both halves carry the guard, so a refused
+-- re-place archives nothing.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -542,8 +552,10 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state = 'failed' AND src.last_failure_kind = 'infra'
+      AND (src.infra_confirmed_at IS NOT NULL OR src.ended_at IS NULL
+           OR src.ended_at <= now() - make_interval(secs => sqlc.arg(confirm_max_wait_seconds)::float8))
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
         queued_at = EXCLUDED.queued_at,
@@ -572,12 +584,45 @@ SET state = 'none',
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = ti.infra_attempts + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
-  AND ti.state = 'failed' AND ti.last_failure_kind = 'infra';
+WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
+  AND ti.state = 'failed' AND ti.last_failure_kind = 'infra'
+  AND (ti.infra_confirmed_at IS NOT NULL OR ti.ended_at IS NULL
+       OR ti.ended_at <= now() - make_interval(secs => sqlc.arg(confirm_max_wait_seconds)::float8));
+
+-- name: ConfirmInfraFailure :execrows
+-- The reconciler confirms a provisional infra mark (ADR 0052 amendment, part
+-- 2): the attempt's pods show no SUCCESS record and no task container still
+-- running, so the guess stands and the planner may re-place. Guarded on the
+-- exact attempt and the provisional mark, so a confirmation computed for a
+-- superseded attempt, or a second one, is a no-op.
+UPDATE task_instances
+SET infra_confirmed_at = now()
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'failed' AND last_failure_kind = 'infra'
+  AND infra_confirmed_at IS NULL;
+
+-- name: ListProvisionalInfraFailures :many
+-- Provisional infra marks for the reconciler's confirmation pass (ADR 0052
+-- amendment, part 2), oldest first. The LIMIT bounds one sweep's work; the
+-- rest are picked up next sweep.
+SELECT ti.id AS task_instance_id,
+       ti.dag_run_id,
+       ti.task_id,
+       ti.try_number,
+       ti.attempt_epoch
+FROM task_instances ti
+WHERE ti.state = 'failed'
+  AND ti.last_failure_kind = 'infra'
+  AND ti.infra_confirmed_at IS NULL
+ORDER BY ti.ended_at NULLS FIRST
+LIMIT 100;
 
 -- name: RedispatchRescheduledTaskInstance :exec
 -- Re-dispatch a task parked in up_for_reschedule once its reschedule_at has passed:
@@ -596,6 +641,7 @@ SET state = 'none',
     scheduled_at = NULL,
     reschedule_at = NULL,
     last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = attempt_epoch + 1
@@ -821,6 +867,7 @@ SET state = 'none',
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
@@ -870,6 +917,7 @@ SET state = 'none',
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
@@ -1125,6 +1173,9 @@ UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
     last_failure_kind = 'infra',
+    -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
+    -- once on Lite (ADR 0052 amendment, part 2).
+    infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
     error_message = 'agent_lost: no heartbeat within the threshold — see #128'
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)
@@ -1172,6 +1223,9 @@ UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
     last_failure_kind = 'infra',
+    -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
+    -- once on Lite (ADR 0052 amendment, part 2).
+    infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
     error_message = 'pod_lost: the task pod vanished with no live pod past the grace period — see #527'
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)

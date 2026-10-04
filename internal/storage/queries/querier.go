@@ -55,6 +55,12 @@ type Querier interface {
 	// task's latest try, matching how the dispatcher has always resolved it.
 	ClaimAttemptEpoch(ctx context.Context, arg ClaimAttemptEpochParams) (ClaimAttemptEpochRow, error)
 	ClearDagRuns(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	// The reconciler confirms a provisional infra mark (ADR 0052 amendment, part
+	// 2): the attempt's pods show no SUCCESS record and no task container still
+	// running, so the guess stands and the planner may re-place. Guarded on the
+	// exact attempt and the provisional mark, so a confirmation computed for a
+	// superseded attempt, or a second one, is a no-op.
+	ConfirmInfraFailure(ctx context.Context, arg ConfirmInfraFailureParams) (int64, error)
 	// Grant each copied built-in role the same permissions as its "default" twin.
 	CopyDefaultRolePermissions(ctx context.Context, tenantID pgtype.UUID) error
 	// Give a tenant the built-in roles the migrations seed for "default". Copying
@@ -313,6 +319,10 @@ type Querier interface {
 	// on the next tick (the reaper is a backstop, not a sprint).
 	ListOrphanCandidates(ctx context.Context) ([]ListOrphanCandidatesRow, error)
 	ListPools(ctx context.Context, arg ListPoolsParams) ([]ListPoolsRow, error)
+	// Provisional infra marks for the reconciler's confirmation pass (ADR 0052
+	// amendment, part 2), oldest first. The LIMIT bounds one sweep's work; the
+	// rest are picked up next sweep.
+	ListProvisionalInfraFailures(ctx context.Context) ([]ListProvisionalInfraFailuresRow, error)
 	// Lists every TI currently in `running` alongside the timestamp it entered
 	// running, for the pod-lost reaper (#527). A running TI whose backing pod
 	// vanished before its first heartbeat is invisible to the agent-lost reaper
@@ -654,6 +664,11 @@ type Querier interface {
 	// outcome is classified fresh.
 	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 	// ResetTaskInstanceToNone.
+	// A provisional mark (infra_confirmed_at NULL, ADR 0052 amendment) is not
+	// re-placed until the reconciler confirms it or InfraConfirmMaxWait has passed
+	// since ended_at (the liveness valve), so a durable SUCCESS record can still
+	// settle the attempt it guessed lost. Both halves carry the guard, so a refused
+	// re-place archives nothing.
 	ResetTaskInstanceInfraReplace(ctx context.Context, arg ResetTaskInstanceInfraReplaceParams) (int64, error)
 	// Resets a TI for retry: snapshot the current per-attempt state into
 	// task_instance_history (so the UI's /tries endpoint can render one tab per

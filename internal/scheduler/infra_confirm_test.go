@@ -79,6 +79,7 @@ func TestInfraConfirmValveOpensAfterTheBound(t *testing.T) {
 	if got := planMap(spent)["b"]; got != domain.TaskStateUpstreamFailed {
 		t.Errorf("past the valve a spent budget condemns downstream, got %q", got)
 	}
+	spent.States["b"] = domain.TaskStateUpstreamFailed
 	if _, done := FinalizeRun(spent); !done {
 		t.Error("past the valve a spent budget finalizes the run")
 	}
