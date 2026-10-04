@@ -847,8 +847,8 @@ SELECT EXISTS (
 -- queued write failed is dispatched again on a later tick with no reset rail in
 -- between; without a claim here both pods would share (try_number,
 -- attempt_epoch). Bumping at dispatch gives every execution its own epoch
--- whatever path led to it. The token (A2) and the pod label and annotation (A4)
--- will be minted from the value returned; nothing reads it yet.
+-- whatever path led to it. The token (A2) and the pod label (A4) are minted
+-- from the value returned.
 --
 -- Guarded to the pre-dispatch states. 'queued' is included because the
 -- buffered dispatcher records queued before its worker resolves the row. A row
