@@ -17,6 +17,15 @@ env:
   PYTHON_VERSION: "3.11"
   GOLANGCI_LINT_VERSION: "v2.12.2"
 
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Pushes to main
+# and release-* keep every run: cut-release.sh gates the tag on the run of the
+# exact merge commit, and it refuses a cancelled one. Grouped by event too, so
+# a scheduled or manual run never cancels another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ─────────────────────────────────────────────────────────────────────
   # Lint enforces ADR 0012 (Go Report Card A+ floor)
