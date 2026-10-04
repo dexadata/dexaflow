@@ -667,7 +667,10 @@ each of them run that many tasks at once. Given on a later call, it re-sizes
 the existing pool, including a size a tenant admin set through the pools API,
 so an automation that re-applies its tenants should send the size it wants to
 keep; left out, the pool is not touched. It must be a whole number from 1 to
-2147483647 (`400` otherwise), and the audit entry records it.
+2147483647 (`400` otherwise), and the audit entry records it. It sets the pool's size,
+not a ceiling on the tenant: a tenant role that may write pools (`operator`,
+`admin`) can still resize it or create other pools. Pools apply to the Pro
+edition only; Lite ignores the value.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
