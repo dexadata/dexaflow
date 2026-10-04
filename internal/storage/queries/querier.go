@@ -320,6 +320,11 @@ type Querier interface {
 	// get them via the JOIN.
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
 	ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error)
+	// The batched form of ListTaskInstancesByRun for the scheduler tick: every
+	// active run's task instances in one round trip instead of one per run. Rows
+	// come grouped by run and, within a run, in the same task_id order the per-run
+	// query returns, so the caller can split them without re-sorting.
+	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
 	// "role:action:resource" for every grant of a tenant's built-in roles.
 	ListTenantRolePermissions(ctx context.Context, name string) ([]string, error)
 	// One row per user in the tenant, newest first, with every granted role name

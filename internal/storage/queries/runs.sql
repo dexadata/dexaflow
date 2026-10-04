@@ -209,6 +209,15 @@ SELECT * FROM task_instances
 WHERE dag_run_id = $1
 ORDER BY task_id;
 
+-- name: ListTaskInstancesByRuns :many
+-- The batched form of ListTaskInstancesByRun for the scheduler tick: every
+-- active run's task instances in one round trip instead of one per run. Rows
+-- come grouped by run and, within a run, in the same task_id order the per-run
+-- query returns, so the caller can split them without re-sorting.
+SELECT * FROM task_instances
+WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[])
+ORDER BY dag_run_id, task_id;
+
 -- name: ListTaskInstanceAttempts :many
 -- Returns every attempt for (run, task), oldest first. UNIONs the current
 -- task_instances row with all archived task_instance_history rows so the UI's
