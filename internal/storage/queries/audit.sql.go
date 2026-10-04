@@ -116,3 +116,70 @@ func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([
 	}
 	return items, nil
 }
+
+const listAuditLogsAfter = `-- name: ListAuditLogsAfter :many
+SELECT a.id, a.action, a.resource_type, a.resource_id, a.metadata, a.occurred_at,
+       COALESCE(u.email, '') AS owner
+FROM audit_log a
+LEFT JOIN users u ON u.id = a.user_id
+WHERE a.tenant_id = $1
+  AND ($2::text IS NULL OR a.resource_id = $2)
+  AND (a.occurred_at, a.id) < ($3::timestamptz, $4::bigint)
+ORDER BY a.occurred_at DESC, a.id DESC
+LIMIT $5
+`
+
+type ListAuditLogsAfterParams struct {
+	TenantID        pgtype.UUID        `json:"tenant_id"`
+	DagID           *string            `json:"dag_id"`
+	AfterOccurredAt pgtype.Timestamptz `json:"after_occurred_at"`
+	AfterID         int64              `json:"after_id"`
+	RowLimit        int32              `json:"row_limit"`
+}
+
+type ListAuditLogsAfterRow struct {
+	ID           int64              `json:"id"`
+	Action       string             `json:"action"`
+	ResourceType *string            `json:"resource_type"`
+	ResourceID   *string            `json:"resource_id"`
+	Metadata     []byte             `json:"metadata"`
+	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
+	Owner        string             `json:"owner"`
+}
+
+// Keyset form of ListAuditLogs: the entries strictly before the cursor
+// (occurred_at, id) in the same order, so a deep page costs the same as the
+// first.
+func (q *Queries) ListAuditLogsAfter(ctx context.Context, arg ListAuditLogsAfterParams) ([]ListAuditLogsAfterRow, error) {
+	rows, err := q.db.Query(ctx, listAuditLogsAfter,
+		arg.TenantID,
+		arg.DagID,
+		arg.AfterOccurredAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAuditLogsAfterRow{}
+	for rows.Next() {
+		var i ListAuditLogsAfterRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Action,
+			&i.ResourceType,
+			&i.ResourceID,
+			&i.Metadata,
+			&i.OccurredAt,
+			&i.Owner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
