@@ -835,18 +835,19 @@ func (s *SchedulerStore) ListBusyWarmWorkerPods(ctx context.Context) (map[string
 // reason. The WHERE state='queued' guard makes this idempotent: a TI that
 // has since been dispatched (real progress landed) is left alone, and so is a
 // row on a different (tryNumber, attemptEpoch) than the one listed (ADR 0051
-// amendment).
-func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error {
+// amendment). It returns whether a row was actually updated.
+func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := s.q.MarkTaskDispatchLost(ctx, queries.MarkTaskDispatchLostParams{
+	n, err := s.q.MarkTaskDispatchLost(ctx, queries.MarkTaskDispatchLostParams{
 		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
-	}); err != nil {
-		return fmt.Errorf("marking task dispatch-lost: %w", err)
+	})
+	if err != nil {
+		return false, fmt.Errorf("marking task dispatch-lost: %w", err)
 	}
-	return nil
+	return n > 0, nil
 }
 
 // ListRunningTasks returns the `running`, non-warm TIs that have been running

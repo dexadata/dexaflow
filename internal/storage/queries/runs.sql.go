@@ -1686,7 +1686,7 @@ func (q *Queries) MarkTaskDispatchFailed(ctx context.Context, arg MarkTaskDispat
 	return err
 }
 
-const markTaskDispatchLost = `-- name: MarkTaskDispatchLost :exec
+const markTaskDispatchLost = `-- name: MarkTaskDispatchLost :execrows
 UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
@@ -1711,9 +1711,12 @@ type MarkTaskDispatchLostParams struct {
 // attempt, (try_number, attempt_epoch) (ADR 0051 amendment): a row that was
 // re-placed and re-dispatched between the list and this write is a different
 // attempt, and a mark computed for the old one must not fail it.
-func (q *Queries) MarkTaskDispatchLost(ctx context.Context, arg MarkTaskDispatchLostParams) error {
-	_, err := q.db.Exec(ctx, markTaskDispatchLost, arg.ID, arg.TryNumber, arg.AttemptEpoch)
-	return err
+func (q *Queries) MarkTaskDispatchLost(ctx context.Context, arg MarkTaskDispatchLostParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskDispatchLost, arg.ID, arg.TryNumber, arg.AttemptEpoch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markTaskPodLost = `-- name: MarkTaskPodLost :execrows

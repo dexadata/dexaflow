@@ -401,7 +401,7 @@ type Querier interface {
 	// attempt, (try_number, attempt_epoch) (ADR 0051 amendment): a row that was
 	// re-placed and re-dispatched between the list and this write is a different
 	// attempt, and a mark computed for the old one must not fail it.
-	MarkTaskDispatchLost(ctx context.Context, arg MarkTaskDispatchLostParams) error
+	MarkTaskDispatchLost(ctx context.Context, arg MarkTaskDispatchLostParams) (int64, error)
 	// Fails a running TI whose pod has vanished (deleted/evicted/node lost). The
 	// WHERE state='running' guard makes it idempotent and prevents overwriting a
 	// late terminal report that landed between our list and our write (a live

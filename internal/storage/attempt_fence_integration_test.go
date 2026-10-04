@@ -62,7 +62,7 @@ func TestSupersededAttemptIsFencedAfterInfraReplace(t *testing.T) {
 	f.setState(t, "scheduled")
 	old := f.dispatch(t)
 	f.transition(t, domain.TaskStateQueued)
-	if err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID, old.TryNumber, old.AttemptEpoch); err != nil {
+	if _, err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID, old.TryNumber, old.AttemptEpoch); err != nil {
 		t.Fatalf("MarkTaskDispatchLost: %v", err)
 	}
 	if applied, err := f.sched.ResetForInfraReplace(f.ctx, f.runUUID, "t"); err != nil || !applied {

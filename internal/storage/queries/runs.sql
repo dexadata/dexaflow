@@ -80,7 +80,7 @@ WHERE ti.state = 'queued'
 ORDER BY ti.queued_at NULLS LAST
 LIMIT 100;
 
--- name: MarkTaskDispatchLost :exec
+-- name: MarkTaskDispatchLost :execrows
 -- Fails one queued TI with a dispatch_lost error. The WHERE state='queued'
 -- guard makes the operation idempotent: a second call on a TI that has
 -- since transitioned (real dispatch landed, or already failed) is a no-op,
