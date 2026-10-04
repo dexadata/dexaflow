@@ -7,7 +7,7 @@ name: Pro netpol + RWX (real-cluster verify)
 # demand. It is NOT part of the fast per-PR suite.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     paths:
       - "helm/**"
       - "test/e2e/pro-netpol-rwx.sh"

@@ -17,7 +17,7 @@ name: Helm CI
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     paths:
       - "helm/**"
       - "scripts/helm-template-checks.sh"
