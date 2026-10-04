@@ -89,7 +89,15 @@ the replay succeeded. A replay that fails (disk full, a schema mismatch)
 leaves your current `config.yaml` in place, so the key that opens the
 unchanged datastore is still recorded. The config a restore replaces is kept
 as `~/.dexaflow/config.yaml.pre-restore` (mode `0600`) and the restore prints
-its path; the next `dexaflow lite` that starts successfully removes it.
+its path. It is removed only once a scan that covers every datastore on disk
+finds every stored secret under the keys the restored config records:
+
+- With one datastore, the next `dexaflow lite` that starts and whose boot scan
+  is clean removes it. A boot that finds secrets the restored keys do not open
+  keeps it, since it may hold the key they need.
+- With both a managed and a Docker datastore, a boot scans only the one it runs
+  against, so it keeps the file and says so. A `dexaflow lite migrate-key` that
+  finishes cleanly scans both and removes it.
 
 The archive's `config.yaml` is written as it is. A restore never adds or
 removes an encryption key on Lite's behalf: an archive taken before an install

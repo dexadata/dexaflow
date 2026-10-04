@@ -32,7 +32,9 @@ func newRestoreCommand() *cobra.Command {
 			"manifest against this binary (refuses an archive newer than what this " +
 			"binary knows about), then replays the datastore SQL and, only once that " +
 			"succeeded, restores config and workspace. The config.yaml it replaces is kept " +
-			"as ~/.dexaflow/config.yaml.pre-restore until the next successful `dexaflow lite`. " +
+			"as ~/.dexaflow/config.yaml.pre-restore until a scan of every datastore finds every " +
+			"stored secret under the restored keys: the next `dexaflow lite` when the install has one " +
+			"datastore, else `dexaflow lite migrate-key`. " +
 			"The archive's config is restored as it is: an archive from before this install " +
 			"had a key of its own restores onto the published key, and `dexaflow lite " +
 			"migrate-key` moves it.\n\n" +
@@ -125,7 +127,8 @@ var psqlRestore = runPsqlRestore
 // install, which `dexaflow lite migrate-key` then moves. It is written
 // atomically at 0600 (os.WriteFile kept a loose mode and could leave a torn
 // file, gap 4), and the config it replaces is kept as config.yaml.pre-restore
-// until the next successful `dexaflow lite`.
+// until a scan covering every datastore on disk finds every stored secret
+// under the restored keys (removePreRestore, migrateKeyRun.removePreRestore).
 func restoreConfigFiles(out io.Writer, leoflowHome string, archive archiveContents) error {
 	cfgPath := filepath.Join(leoflowHome, "config.yaml")
 	if len(archive.Config) > 0 {
@@ -134,7 +137,7 @@ func restoreConfigFiles(out io.Writer, leoflowHome string, archive archiveConten
 			if werr := writeFileAtomicWith(pre, cur, atomicOpts{ownerFrom: cfgPath}); werr != nil {
 				return fmt.Errorf("keeping the current config.yaml before replacing it: %w", werr)
 			}
-			devPrintf(out, "✓ kept the config.yaml this restore replaces at %s (removed after the next successful `dexaflow lite`)\n", pre)
+			devPrintf(out, "✓ kept the config.yaml this restore replaces at %s (removed once every stored secret is found under the restored keys: by the next `dexaflow lite` with one datastore, else by `dexaflow lite migrate-key`)\n", pre)
 		}
 		if err := writeFileAtomic(cfgPath, archive.Config); err != nil {
 			return fmt.Errorf("restoring config.yaml: %w", err)

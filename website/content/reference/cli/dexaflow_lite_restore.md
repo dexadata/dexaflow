@@ -11,7 +11,7 @@ Restore a Lite install from an archive produced by `dexaflow lite backup`.
 
 ### Synopsis
 
-restore reads a tar.gz produced by `dexaflow lite backup`, validates the manifest against this binary (refuses an archive newer than what this binary knows about), then replays the datastore SQL and, only once that succeeded, restores config and workspace. The config.yaml it replaces is kept as ~/.dexaflow/config.yaml.pre-restore until the next successful `dexaflow lite`. The archive's config is restored as it is: an archive from before this install had a key of its own restores onto the published key, and `dexaflow lite migrate-key` moves it.
+restore reads a tar.gz produced by `dexaflow lite backup`, validates the manifest against this binary (refuses an archive newer than what this binary knows about), then replays the datastore SQL and, only once that succeeded, restores config and workspace. The config.yaml it replaces is kept as ~/.dexaflow/config.yaml.pre-restore until a scan of every datastore finds every stored secret under the restored keys: the next `dexaflow lite` when the install has one datastore, else `dexaflow lite migrate-key`. The archive's config is restored as it is: an archive from before this install had a key of its own restores onto the published key, and `dexaflow lite migrate-key` moves it.
 
 By default refuses to overwrite a non-empty ~/.dexaflow; pass --force to confirm.
 
