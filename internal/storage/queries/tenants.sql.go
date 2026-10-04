@@ -50,7 +50,8 @@ SELECT $1::uuid, p.name, p.slots, p.description, true
 FROM pools p
 JOIN tenants d ON d.id = p.tenant_id AND d.name = 'default'
 WHERE p.is_default
-ON CONFLICT (tenant_id, name) DO NOTHING
+ON CONFLICT (tenant_id, name) DO UPDATE SET is_default = true, updated_at = now()
+  WHERE NOT pools.is_default
 `
 
 // The implicit default pool every tenant needs (migration 023 seeds it for
@@ -123,4 +124,26 @@ func (q *Queries) TenantHasDefaultPool(ctx context.Context, name string) (bool, 
 	var has_default bool
 	err := row.Scan(&has_default)
 	return has_default, err
+}
+
+const upsertDefaultPoolSlots = `-- name: UpsertDefaultPoolSlots :exec
+INSERT INTO pools (tenant_id, name, slots, description, is_default)
+VALUES ($1::uuid, $2, $3, 'Default pool', true)
+ON CONFLICT (tenant_id, name) DO UPDATE SET slots = EXCLUDED.slots, is_default = true, updated_at = now()
+`
+
+type UpsertDefaultPoolSlotsParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	Name     string      `json:"name"`
+	Slots    int32       `json:"slots"`
+}
+
+// Sizes a tenant's default pool to an explicit slot count: inserts it under the
+// given name with the seed description, or re-sizes the row already there. A
+// row with that name left without is_default (a tenant created before the
+// default pool was seeded per tenant) is marked default, so the delete guard
+// and the pools view treat it as the pool the scheduler falls back to.
+func (q *Queries) UpsertDefaultPoolSlots(ctx context.Context, arg UpsertDefaultPoolSlotsParams) error {
+	_, err := q.db.Exec(ctx, upsertDefaultPoolSlots, arg.TenantID, arg.Name, arg.Slots)
+	return err
 }
