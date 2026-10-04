@@ -1,4 +1,4 @@
-# Leoflow Makefile
+# Dexaflow Makefile
 # All targets assume execution from the repository root.
 
 SHELL := /usr/bin/env bash

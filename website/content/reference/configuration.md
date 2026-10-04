@@ -383,13 +383,13 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER` | _(empty)_ | both | Turns on the [trusted-issuer handoff](#trusted-issuer-handoff): a platform that already authenticates its users opens a UI session for them by posting a token its own issuer signed. The exact `iss` of those tokens. Empty disables it and the endpoint does not exist. Helm: `auth.trustedIssuer.issuer`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME` | _(empty)_ | both | Name of the trusted issuer, 1-40 lowercase letters, digits or `-`. Users the issuer may sign in are linked under `issuer:<name>`, so keep it stable once users exist. Helm: `auth.trustedIssuer.name`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key, so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Leoflow. Helm: `auth.trustedIssuer.audience`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Leoflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Dexaflow. Helm: `auth.trustedIssuer.audience`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Dexaflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS` | _(empty)_ | both | Comma-separated tenants the issuer may sign in to; `*` allows every tenant, for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a handoff token may have, its replay window. `0` uses 120 seconds; at most 600. Helm: `auth.trustedIssuer.maxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
-| `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Leoflow's page, for a Leoflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Leoflow session. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Leoflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
-| `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Leoflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
+| `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
+| `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
 | `DEXAFLOW_AUTH_DEV_NO_AUTH` | `false` | dev-only | Legacy escape hatch — bypasses auth entirely, treating every request as admin. Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite uses a real admin login generated by `dexaflow setup`; set this only for ephemeral test scaffolds. |
 
@@ -472,6 +472,8 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS` | `1000` | both | Scheduler tick interval, in milliseconds. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency). |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. |
+| `DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS` | `false` | both | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses. See [Alert destinations](#alert-destinations). |
+| `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | *(empty)* | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Applied only while the block is on, but validated at startup either way: an invalid entry fails startup. |
 
 ### Executor (`executor.*`)
 
@@ -520,6 +522,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME` | `1h` | Pro | Wall-clock lifetime of a warm worker before it drains and recycles, independent of the attempt count (D9). A duration string. |
 | `DEXAFLOW_EXECUTION_WORKER_IDLE_TTL` | `5m` | Pro | How long an idle warm worker is kept before it is recycled (D6). A duration string. |
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
+| `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
 
 ### Logs (`logs.*`)
 
@@ -573,6 +576,7 @@ before enabling it in production.
 | `DEXAFLOW_UI_THEME` | _(empty)_ | both | Theme for the UI as a JSON object, the same shape as Airflow's `[api] theme`: `tokens` (Chakra design tokens such as `colors.brand` and `fonts`), `globalCss`, `icon`, `icon_dark_mode`. Served in `/ui/config`, so the UI applies it through its own theming. Boot fails on invalid JSON, an unknown top-level key, or an icon that is not http(s) or root-relative. Helm: `ui.theme` (YAML, rendered as JSON). See [Branding the UI](#branding-the-ui). |
 | `DEXAFLOW_UI_FAVICON_URL` | _(empty)_ | both | Favicon for the UI, http(s) or root-relative. Empty keeps the stock icon. Helm: `ui.faviconUrl`. |
 | `DEXAFLOW_UI_STYLESHEET_URLS` | _(empty)_ | both | Comma-separated stylesheets every UI page loads in `<head>`, typically the web fonts a theme names. Each must be http(s) or root-relative and contain no comma. Helm: `ui.stylesheetUrls`. |
+| `DEXAFLOW_UI_ETAG_REVALIDATION` | `false` | both | Lets the browser revalidate the grid's task summaries (`/ui/grid/ti_summaries/*`), the one UI route that computes an `ETag`: that route answers `Cache-Control: private, no-cache` with `Vary: Authorization, Cookie` instead of `no-store`, so an unchanged poll gets `304 Not Modified` and no body. Every revalidation still runs authentication and authorization. With it on, the browser keeps the last grid body in its private cache after logout (on a shared machine it stays on disk until evicted); it is never shown without a revalidation, so a signed-out user gets `401`, not the cached grid. Off keeps `no-store` on every UI route. Helm: set it through `extraEnv`. |
 
 ### Branding the UI
 
@@ -613,9 +617,9 @@ rule, and holds only as long as the bundle keeps the selector it targets.
 
 ### Trusted-issuer handoff
 
-When Leoflow is part of a larger platform that already signs its users in,
-the platform can open a Leoflow UI session for them without Leoflow storing a
-password and without the platform holding Leoflow's signing secret:
+When Dexaflow is part of a larger platform that already signs its users in,
+the platform can open a Dexaflow UI session for them without Dexaflow storing a
+password and without the platform holding Dexaflow's signing secret:
 
 1. The platform's issuer signs a short-lived JWT with its own key, carrying
    `iss`, `aud`, `sub`, `iat`, `exp`, a unique `jti`, the tenant claim and,
@@ -624,19 +628,19 @@ password and without the platform holding Leoflow's signing secret:
    field `token`, with the page to open as `next` (a same-origin path), from a
    page on one of `allowed_origins`. An auto-submitting form is the usual way,
    because a token in a URL ends up in logs and history.
-3. Leoflow verifies the token, finds the active user linked to
+3. Dexaflow verifies the token, finds the active user linked to
    (`issuer:<name>`, `sub`) in the token's tenant, sets the same session cookie
    a password or SSO login sets, and redirects to `next` with `303`.
 
 The token never creates a user and never grants roles: the user must already
-exist and be linked to the issuer, and its roles are the ones Leoflow holds.
+exist and be linked to the issuer, and its roles are the ones Dexaflow holds.
 Refusals set no cookie and answer `400` (no token), `401` (token rejected),
 `403` (origin not allowed, or no active linked user in that tenant) or `500`, with the reason in the
 server log and the audit trail (`issuer.login.success` /
 `issuer.login.failure`), never in the response.
 
 Only pages on `allowed_origins` can post a handoff: browsers send `Origin` on
-every cross-site form post, and Leoflow refuses any other, so a page elsewhere
+every cross-site form post, and Dexaflow refuses any other, so a page elsewhere
 cannot sign a visitor in as someone else. A token must also have been issued
 no later than a minute from now and live no longer than
 `max_lifetime_seconds` (120 seconds unless set, at most 600). Each token opens
@@ -647,7 +651,7 @@ window. Mint each token right before posting it, and never put one in a URL.
 
 ### Operator service API
 
-An operator that serves several organizations from one Leoflow (a hosting
+An operator that serves several organizations from one Dexaflow (a hosting
 provider, an internal platform team) creates tenants and their users from its
 own automation instead of writing to the database. With `auth.service_token`
 set, two idempotent endpoints accept `Authorization: Bearer <service token>`;
@@ -658,7 +662,21 @@ a user session never reaches them.
 digits or `-`) with the same built-in roles, role permissions and default pool
 as the `default` tenant, copied from it so every tenant's ladder stays equal.
 It answers `201` when the tenant is new and `200` when it already existed; a
-second call fills in anything missing and changes nothing else.
+second call fills in anything missing and, apart from `default_pool_slots`
+below, changes nothing else.
+
+The same body may carry `"default_pool_slots": 8` to size the tenant's
+`default_pool`, the slot cap every task without an explicit pool shares within
+the tenant. Without it a new tenant gets the `default` tenant's size (128
+unless an operator changed it), which on an engine shared by many tenants lets
+each of them run that many tasks at once. Given on a later call, it re-sizes
+the existing pool, including a size a tenant admin set through the pools API,
+so an automation that re-applies its tenants should send the size it wants to
+keep; left out, the pool is not touched. It must be a whole number from 1 to
+2147483647 (`400` otherwise), and the audit entry records it. It sets the pool's size,
+not a ceiling on the tenant: a tenant role that may write pools (`operator`,
+`admin`) can still resize it or create other pools. Pools apply to the Pro
+edition only; Lite ignores the value.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
@@ -681,6 +699,34 @@ The service token is a root-level credential: whoever holds it can create
 tenants and grant any role, `admin` included, in every tenant the trusted
 issuer covers. Keep it in a Secret, give it only to the automation that
 provisions tenants, and rotate it by changing the Secret and restarting.
+
+### Alert destinations
+
+An on-failure alert ([alerting](/author-dags/alerting/)) is posted by the control
+plane to the URL, with the headers, of a connection the DAG's tenant manages.
+When tenants that do not trust each other share one engine, that URL is
+untrusted input: it can name the control plane's own loopback, a private
+service in the cluster, or the cloud metadata endpoint.
+
+Set `scheduler.alerts.block_private_destinations: true` (env
+`DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS`, chart
+`config.alerts.blockPrivateDestinations`) to refuse those destinations. The
+check runs on the address the control plane is about to connect to, after DNS
+resolution, so a host name that resolves to an internal address is refused even
+if it resolved to a public one earlier (DNS rebinding), and every redirect hop
+is checked the same way (at most three redirects are followed). A NAT64
+(`64:ff9b::/96`) or 6to4 address is checked as the IPv4 address it carries, so
+an IPv6-only cluster behind DNS64 still reaches a public IPv4-only endpoint.
+The block also covers the Azure host endpoint `168.63.129.16`, which looks
+public but is node-local. With the block on, alert requests are dialed directly
+and do not use the `HTTP_PROXY` / `HTTPS_PROXY` environment, since through a
+proxy the real destination could not be checked. A refused alert is logged and
+counted as a failed delivery, like any other send error.
+
+If an alert endpoint legitimately lives on a private network (an on-premises
+chat server, for example), list its range in `scheduler.alerts.allowed_cidrs`
+(chart `config.alerts.allowedCIDRs`). A range broad enough to include loopback
+or a metadata endpoint is accepted but logged as a warning at startup.
 
 ### Trusted proxies and the client IP
 
