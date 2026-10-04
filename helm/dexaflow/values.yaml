@@ -182,6 +182,22 @@ config:
     enabled: true
     # -- Scheduler loop interval in milliseconds. Lower = faster reactivity, higher CPU. 1000ms is the production-tested default.
     loopIntervalMs: 1000
+    # Buffered dispatch (ADR 0031, #127). With `bufferSize` 0 (the default) the
+    # scheduler creates task pods inline, inside its tick, so a large fan out
+    # stretches the tick by every Kubernetes API call it makes. Above 0, the tick
+    # only enqueues and `workers` goroutines create the pods; a full buffer leaves
+    # the task scheduled for the next tick. A starting point for a busy cluster:
+    # bufferSize 512, workers 16. Unset values render nothing.
+    # Caveat: for now a pod create that fails inside a worker fails the task at
+    # once, including a namespace ResourceQuota rejection (403) or apiserver
+    # throttling (429) that synchronous dispatch holds and re-offers. Keep
+    # bufferSize 0 on a namespace that runs close to its quota until buffered
+    # dispatch re-offers those failures too.
+    dispatch:
+      # -- Depth of the queued-dispatches channel (`scheduler.dispatch.buffer_size`). 0 = synchronous dispatch inside the tick (server default).
+      bufferSize: 0
+      # -- Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Ignored while `bufferSize` is 0; 0 with a buffer means 1.
+      workers: 0
   cors:
     # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
     allowedOrigins: []
