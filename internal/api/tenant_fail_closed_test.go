@@ -77,3 +77,49 @@ func TestDevBypassAuthKeepsTheDefaultTenant(t *testing.T) {
 		t.Errorf("dev mode tenant = %q, want default", got)
 	}
 }
+
+// mixedAuthn: the bearer "tenantless" authenticates to a principal with no
+// tenant, the cookie "good" to a tenanted one.
+type mixedAuthn struct{}
+
+func (mixedAuthn) IssueToken(context.Context, auth.Credentials) (string, error) { return "", nil }
+func (mixedAuthn) Authenticate(_ context.Context, token string) (*auth.User, error) {
+	switch token {
+	case "tenantless":
+		return &auth.User{ID: "u1"}, nil
+	case "good":
+		return &auth.User{ID: "u1", TenantID: "default"}, nil
+	}
+	return nil, auth.ErrInvalidToken
+}
+
+// TestJWTAuthTenantlessBearerFallsBackToTheCookie: refusing a tenantless bearer
+// keeps the bearer-then-cookie fallback the SPA refresh depends on.
+func TestJWTAuthTenantlessBearerFallsBackToTheCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(JWTAuth(mixedAuthn{}))
+	r.GET("/api/v2/dags", func(c *gin.Context) { c.String(http.StatusOK, tenantOf(c)) })
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v2/dags", http.NoBody)
+	req.Header.Set("Authorization", "Bearer tenantless")
+	req.AddCookie(&http.Cookie{Name: authTokenCookie, Value: "good"})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "default" {
+		t.Errorf("got %d %q, want 200 from the cookie's tenant", rec.Code, rec.Body.String())
+	}
+}
+
+// TestShellSessionRejectsATenantlessPrincipal: the SPA shell gate agrees with
+// JWTAuth, so it does not render a shell whose every data call would 401.
+func TestShellSessionRejectsATenantlessPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for token, want := range map[string]bool{"tenantless": false, "good": true} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody)
+		c.Request.Header.Set("Authorization", "Bearer "+token)
+		if got := shellSessionValid(c, mixedAuthn{}); got != want {
+			t.Errorf("token %s: shellSessionValid = %v, want %v", token, got, want)
+		}
+	}
+}

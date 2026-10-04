@@ -106,11 +106,12 @@ func setPaginationLinks(c *gin.Context, total, limit, offset int) {
 
 // tenantOf returns the tenant the request's principal belongs to. It fails
 // closed: a request with no principal, or a principal that names no tenant, gets
-// the empty name, which no tenant can have (the service API only creates names
-// matching serviceTenantName), so every tenant-scoped lookup misses instead of
-// serving the default tenant's data. JWTAuth already refuses a tenantless
-// principal, and DevBypassAuth names the default tenant explicitly, so this
-// only matters for a handler reached without either.
+// the empty name, so every tenant-scoped lookup misses instead of serving the
+// default tenant's data. No tenant is named "" today: the migrations seed
+// "default" and the service API only creates names matching serviceTenantName.
+// The authenticator and JWTAuth already refuse a tenantless principal, and
+// DevBypassAuth names the default tenant explicitly, so this only matters for a
+// handler reached without either.
 func tenantOf(c *gin.Context) string {
 	if u, ok := UserFromContext(c); ok && u.TenantID != "" {
 		return u.TenantID
