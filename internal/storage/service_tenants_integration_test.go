@@ -72,6 +72,70 @@ func TestEnsureTenantIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestEnsureTenantReconcilesADriftedLadder covers #1305: re-running ensure
+// brings a tenant's built-in roles back to default's grants, adding the ones
+// it misses and removing the ones default no longer has, while a custom role's
+// grants are left alone.
+func TestEnsureTenantReconcilesADriftedLadder(t *testing.T) {
+	repo, _, pg, ctx := openInfra(t)
+	name := uniqueTenant("drift")
+	if _, err := repo.EnsureTenant(ctx, name, "Drift"); err != nil {
+		t.Fatal(err)
+	}
+	drift := []string{
+		// A grant a later migration added to default's viewer, missing here.
+		`DELETE FROM role_permissions rp USING roles r, tenants t, permissions p
+		 WHERE rp.role_id = r.id AND r.tenant_id = t.id AND t.name = $1 AND r.name = 'viewer'
+		   AND rp.permission_id = p.id AND p.action = 'read' AND p.resource = 'dag'`,
+		// A grant a later migration revoked from default's viewer, surviving here.
+		`INSERT INTO role_permissions (role_id, permission_id)
+		 SELECT r.id, p.id FROM roles r JOIN tenants t ON t.id = r.tenant_id
+		 JOIN permissions p ON p.action = 'write' AND p.resource = 'dag'
+		 WHERE t.name = $1 AND r.name = 'viewer'`,
+		// A custom role the tenant made for itself, with a grant no built-in has.
+		`INSERT INTO roles (tenant_id, name, description, is_system)
+		 SELECT id, 'deployer', 'custom', false FROM tenants WHERE name = $1`,
+		`INSERT INTO role_permissions (role_id, permission_id)
+		 SELECT r.id, p.id FROM roles r JOIN tenants t ON t.id = r.tenant_id
+		 JOIN permissions p ON p.action = 'write' AND p.resource = 'dag'
+		 WHERE t.name = $1 AND r.name = 'deployer'`,
+	}
+	for _, stmt := range drift {
+		if _, err := pg.Pool.Exec(ctx, stmt, name); err != nil {
+			t.Fatalf("drifting %s: %v", name, err)
+		}
+	}
+
+	if _, err := repo.EnsureTenant(ctx, name, "Drift"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.TenantRolePermissions(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := repo.TenantRolePermissions(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("role permissions of %s after re-ensure differ from default:\n got %v\nwant %v", name, got, want)
+	}
+	var custom bool
+	if err := pg.Pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM role_permissions rp JOIN roles r ON r.id = rp.role_id
+		JOIN tenants t ON t.id = r.tenant_id JOIN permissions p ON p.id = rp.permission_id
+		WHERE t.name = $1 AND r.name = 'deployer' AND p.action = 'write' AND p.resource = 'dag')`,
+		name).Scan(&custom); err != nil {
+		t.Fatal(err)
+	}
+	if !custom {
+		t.Error("re-ensure removed a custom role's grant; only built-in roles are reconciled")
+	}
+}
+
 // TestEnsureIssuerUserCreatesThenReconciles covers the user half of #1283: a
 // passwordless user linked to the issuer is created with its roles, and a
 // second call with other roles sets exactly those roles on the same user.
