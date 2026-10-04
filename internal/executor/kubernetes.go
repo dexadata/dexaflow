@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -135,8 +136,10 @@ func BuildPod(req Request) *corev1.Pod {
 	if req.Execution.ServiceAccount != "" {
 		pod.Spec.ServiceAccountName = req.Execution.ServiceAccount
 	}
-	mergeMetadata(pod.Labels, req.Execution.Labels)
-	mergeMetadata(pod.Annotations, req.Execution.Annotations)
+	dropped := mergeMetadata(pod.Labels, req.Execution.Labels)
+	dropped = append(dropped, mergeMetadata(pod.Annotations, req.Execution.Annotations)...)
+	logDroppedMetadata(dropped, "tenant", req.TenantID, "dag", req.DagID, "run", req.RunID,
+		"task", req.TaskID, "try", req.TryNumber, "pod", pod.Name)
 	mountWritableTmp(pod, req.PodSecurity)
 	mountStagingVolume(pod, req)
 	mountAgentTLSCA(pod, req)
@@ -684,25 +687,49 @@ func buildAffinity(m map[string]any) *corev1.Affinity {
 
 // mergeMetadata overlays operator-declared labels or annotations onto Dexaflow's
 // own pod metadata. It is the single merge point for task and warm pods alike.
-// A declared key under domain.ReservedMetadataPrefix is dropped (and logged by
-// key only, never value) whether or not Dexaflow set it on this pod: other
-// components decide what a pod is from those keys (the token exchange resolves a
-// leoflow.io/warm-worker pod to a warm-worker identity for its
-// leoflow.io/dag-version-id pool, the warm-pool reconciler lists and counts pods
-// by them), so a DAG may neither add nor shadow one.
-// Dexaflow's own keys also win any other collision. The own map is mutated in
-// place; a nil declared map is a no-op.
-func mergeMetadata(own, declared map[string]string) {
+// A declared key under domain.ReservedMetadataPrefix is dropped whether or not
+// Dexaflow set it on this pod: other components decide what a pod is from those
+// keys (the token exchange resolves a leoflow.io/warm-worker pod to a
+// warm-worker identity for its leoflow.io/dag-version-id pool, the warm-pool
+// reconciler lists and counts pods by them), so a DAG may neither add nor
+// shadow one. The dropped keys are returned, sorted, for the caller to log with
+// the pod's identity. The own map is mutated in place; a nil declared map is a
+// no-op.
+func mergeMetadata(own, declared map[string]string) (dropped []string) {
 	for k, v := range declared {
 		if domain.IsReservedMetadataKey(k) {
-			slog.Warn("dropping declared pod metadata under the reserved prefix",
-				"key", k, "prefix", domain.ReservedMetadataPrefix)
+			dropped = append(dropped, k)
 			continue
 		}
 		if _, taken := own[k]; !taken {
 			own[k] = v
 		}
 	}
+	sort.Strings(dropped)
+	return dropped
+}
+
+// maxLoggedKeyLen bounds a dropped key in the log: the key is author-controlled
+// and is dropped before the apiserver would have capped its length.
+const maxLoggedKeyLen = 128
+
+// logDroppedMetadata warns once per pod about declared metadata dropped under
+// the reserved prefix, with the pod's identity so an operator can find the DAG
+// (versions registered before validation refused such keys still dispatch).
+// Keys only, never values.
+func logDroppedMetadata(dropped []string, identity ...any) {
+	if len(dropped) == 0 {
+		return
+	}
+	keys := make([]string, len(dropped))
+	for i, k := range dropped {
+		if len(k) > maxLoggedKeyLen {
+			k = k[:maxLoggedKeyLen] + "..."
+		}
+		keys[i] = k
+	}
+	slog.Warn("dropping declared pod metadata under the reserved prefix",
+		append(identity, "keys", strings.Join(keys, ","), "prefix", domain.ReservedMetadataPrefix)...)
 }
 
 // nonRootFSGroup is the GID the task base image runs as (runtime/Dockerfile:

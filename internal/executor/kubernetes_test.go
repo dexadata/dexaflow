@@ -283,9 +283,9 @@ func TestBuildPodAppliesEphemeralStorage(t *testing.T) {
 }
 
 // TestBuildPodMergesLabelsAndAnnotations asserts operator-declared labels and
-// annotations are merged onto the task pod, but Dexaflow's own leoflow.io/* labels
-// and the task-instance-id annotation win any key collision — a DAG must not be
-// able to shadow the identity the reconciler and terminate path select on.
+// annotations are merged onto the task pod, while a declared key under the
+// reserved leoflow.io/ prefix is dropped, so a DAG cannot shadow the identity
+// the reconciler and terminate path select on.
 func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	req := sampleReq()
 	req.Execution.Labels = map[string]string{
@@ -496,5 +496,20 @@ func TestKubernetesExecutorCreatesPod(t *testing.T) {
 	}
 	if len(pods.Items) != 1 {
 		t.Fatalf("want 1 pod created, got %d", len(pods.Items))
+	}
+}
+
+// TestMergeMetadataReturnsDroppedKeysSorted: the dropped reserved keys come
+// back sorted, so the single per-pod warning is stable.
+func TestMergeMetadataReturnsDroppedKeysSorted(t *testing.T) {
+	own := map[string]string{"leoflow.io/run-id": "r"}
+	dropped := mergeMetadata(own, map[string]string{
+		"leoflow.io/warm-worker": "true", "app": "etl", "leoflow.io/dag-version-id": "v",
+	})
+	if strings.Join(dropped, ",") != "leoflow.io/dag-version-id,leoflow.io/warm-worker" {
+		t.Errorf("dropped = %v", dropped)
+	}
+	if own["app"] != "etl" || own["leoflow.io/run-id"] != "r" || len(own) != 2 {
+		t.Errorf("own = %v", own)
 	}
 }

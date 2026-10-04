@@ -7,7 +7,8 @@ body: |-
   task pod. Under the `exchange` agent token transport with warm pools enabled,
   the token exchange then resolved that task pod as a warm worker of the named
   DAG version, and the warm-pool reconciler listed it as one. The executor now
-  drops every DAG-declared key under `leoflow.io/` and logs the key, and
-  `dexaflow compile` and DAG registration reject a task that declares one. Move
+  drops every DAG-declared key under `leoflow.io/` and logs it with the pod it
+  came from, and `dexaflow.yaml` validation, `dexaflow compile` and DAG
+  registration reject a task that declares one. Move
   any such custom key to a prefix of your own before upgrading.
 time: 2026-10-04T18:00:00.000000000-03:00
