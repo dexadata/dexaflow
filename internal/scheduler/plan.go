@@ -141,7 +141,21 @@ func poolKeyFor(run RunState, t domain.TaskSpec) string {
 	if !run.PoolsEnabled {
 		return ""
 	}
-	return PoolKey(run.TenantID, resolvePool(t.Pool))
+	return effectivePoolKey(run.TenantID, t.Pool, run.PoolBudgets, run.ConfineUndefinedPools)
+}
+
+// effectivePoolKey is the budget key a task's pool is charged to: its declared
+// pool, or default_pool when it declares none. With confine set, a pool the
+// tenant has not defined (absent from budgets) is charged to default_pool too,
+// so naming an unknown pool is not a way around the default budget.
+func effectivePoolKey(tenantID, pool string, budgets map[string]int, confine bool) string {
+	key := PoolKey(tenantID, resolvePool(pool))
+	if confine {
+		if _, defined := budgets[key]; !defined {
+			return PoolKey(tenantID, defaultPoolName)
+		}
+	}
+	return key
 }
 
 // poolHasSlot reports whether the task's pool has a free slot this tick: the

@@ -2270,6 +2270,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
 	if cfg.UI.Edition == "pro" {
 		sched.EnablePools()
+		if cfg.Server.PoolsReadOnly {
+			// Tenants cannot create pools, so an undefined pool name must not be
+			// a way around default_pool (#646).
+			sched.ConfineUndefinedPools()
+		}
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
