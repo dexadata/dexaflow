@@ -230,7 +230,9 @@ keeps the try number, so if the old agent were still alive it could have its
 ([#911](https://github.com/dexadata/dexaflow/issues/911)). Lite therefore
 reaps an attempt only when its agent is provably dead. The server records each
 spawned agent's PID, one file per `(run, task, try)` attempt, under
-`$TMPDIR/dexaflow-agent-pids`; the record lives on disk so a restarted server
+`$TMPDIR/dexaflow-agent-pids-<uid>` (a directory only that user can write;
+the server refuses one that is a symlink, owned by someone else, or writable by
+others); the record lives on disk so a restarted server
 still sees the agents it spawned before the restart. The reaper probes the PID
 with signal 0: alive defers (`agent_lost_process_alive`,
 `dispatch_lost_process_alive`), a probe or read error defers
@@ -248,6 +250,22 @@ What this does **not** cover, plainly:
   its PID to an unrelated process, that attempt reads alive and is deferred
   until that process exits. This can only delay a reap, never cause a false
   one.
+- **An agent killed outright (`kill -9`, a crash) while its task runs.** The
+  task runs in its own process group, so it can outlive the agent. The record
+  names the agent, so the attempt reads dead and is reaped and re-placed while
+  the orphaned task process may still be running. Stop the task's processes
+  too when you kill an agent by hand. An agent stopped with SIGINT or SIGTERM
+  kills its task first.
+- **An agent that dies before its first heartbeat.** Agent-lost only judges a
+  `running` TI that has heartbeated at least once, and the pod-lost reaper that
+  covers that window on Kubernetes has no signal in Lite. Such a TI stays
+  `running` until you fail or clear it by hand.
+- **A record directory that changes across a restart.** The record is found
+  through the server's `$TMPDIR`; a server restarted with a different `TMPDIR`
+  (or after the temp directory was cleaned) sees no record for agents it
+  spawned earlier and treats them as gone. That only matters for an agent that
+  is also silent past the agent-lost threshold or still `queued` past the
+  dispatch-lost threshold.
 - **A task that hangs inside a live agent** is the agent's own
   `execution_timeout_seconds` to stop, exactly as on Kubernetes.
 
