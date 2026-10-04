@@ -290,9 +290,9 @@ type Scheduler struct {
 	leaderSince  atomic.Int64 // unix-nano when leadership was last acquired; 0 = not leading. Drives the execution reaper's leader-settling gate
 	steppingDown atomic.Bool  // true only during a leader step-down — the campaign loop sets it before canceling the run-context so the expected cancel-fanout logs at WARN, not ERROR (#311 tripwire preserved when it's false)
 	// warnedSchedules dedupes the "unparseable schedule" warning per (tenant,
-	// dag_id) (keyed by
-	// the offending expression) so a bad cron logs once, not every tick. Accessed
-	// only from the single-threaded tick (createDueRuns), so it needs no lock.
+	// dag_id), keyed by the offending expression, so a bad cron logs once, not
+	// every tick. Accessed only from the single-threaded tick (createDueRuns),
+	// so it needs no lock.
 	warnedSchedules map[dagRef]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
 	// Stage 3). Pro-only: main calls EnablePools() only when the edition is "pro".
