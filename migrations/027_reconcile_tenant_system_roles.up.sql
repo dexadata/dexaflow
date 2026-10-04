@@ -16,6 +16,11 @@
 -- assignments that reference it. user_roles is never touched, so no account
 -- gains or loses a role here.
 --
+-- default is the reference as it stands in this database: a grant someone added
+-- to or removed from default's built-in roles by hand reaches every tenant, and
+-- a hand edit to another tenant's built-in roles is undone. The product has no
+-- API that edits built-in role grants, so only direct SQL can produce either.
+--
 -- From here on, a migration that changes built-in roles applies to every tenant
 -- by joining on roles.is_system (see CONTRIBUTING.md, "Writing a migration");
 -- migrations/tenant_roles_test.go fails one that filters on the default tenant.

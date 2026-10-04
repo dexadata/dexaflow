@@ -5,4 +5,7 @@ body: |-
   `default` tenant only. A new migration brings the built-in roles of every other
   tenant in line with `default`: it adds the roles and grants a tenant is missing
   and removes grants `default` no longer has. Custom roles and user role
-  assignments are not touched. (#1305)
+  assignments are not touched. If you edited built-in role grants by hand with
+  SQL, the upgrade overwrites those edits in every tenant other than `default`,
+  and copies any hand edit made to `default`'s built-in roles to every tenant;
+  move such grants to a custom role before upgrading. (#1305)

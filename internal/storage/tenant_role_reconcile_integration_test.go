@@ -37,8 +37,8 @@ func TestReconcileMigrationAlignsEveryTenantsBuiltInRoles(t *testing.T) {
 	}
 	exec := func(sql string, args ...any) {
 		t.Helper()
-		if _, err := pg.Pool.Exec(ctx, sql, args...); err != nil {
-			t.Fatalf("%s: %v", sql, err)
+		if _, xerr := pg.Pool.Exec(ctx, sql, args...); xerr != nil {
+			t.Fatalf("%s: %v", sql, xerr)
 		}
 	}
 	// A grant default has that the tenant lost (a later "add" migration).

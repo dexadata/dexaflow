@@ -126,8 +126,8 @@ and applied by golang-migrate on start and by the chart's pre-upgrade Job.
   (join on `roles.is_system` across all tenants), never filter on
   `t.name = 'default'`, and must not touch custom roles (`is_system = false`)
   or `user_roles`. `migrations/tenant_roles_test.go` fails an up migration that
-  writes `roles` or `role_permissions` and filters on the default tenant's
-  name (#1305).
+  writes `roles` or `role_permissions` and names the default tenant
+  (#1305).
 
 ## Development Environment
 
