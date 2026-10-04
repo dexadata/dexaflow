@@ -87,7 +87,7 @@ func (c *fallbackCipher) DecryptStale(ciphertext string) (plaintext string, stal
 // moved, and a value under no recorded key stops the migration. As with
 // fallbackCipher, trying keys in turn is safe only because AES-GCM is
 // authenticated.
-func OpenWith(ciphers []Cipher, ct string) (string, int) {
+func OpenWith(ciphers []Cipher, ct string) (plaintext string, index int) {
 	for i, c := range ciphers {
 		if c == nil {
 			continue

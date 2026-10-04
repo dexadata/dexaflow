@@ -388,8 +388,10 @@ func TestMigrateKeyMixedDatastoreRefuses(t *testing.T) {
 		t.Errorf("rows written by a refused run")
 	}
 	entries, _ := os.ReadDir(state)
-	if len(entries) != 1 {
-		t.Errorf("a refused run left files behind: %v", entries)
+	for _, e := range entries {
+		if e.Name() != "config.yaml" && e.Name() != configLockName {
+			t.Errorf("a refused run left %s behind", e.Name())
+		}
 	}
 }
 

@@ -99,11 +99,11 @@ func TestSetLiteKeysCarriesEveryOtherFieldOver(t *testing.T) {
 		t.Errorf("comments were dropped:\n%s", out)
 	}
 	var before, after map[string]any
-	if err := yaml.Unmarshal([]byte(orig), &before); err != nil {
-		t.Fatal(err)
+	if uerr := yaml.Unmarshal([]byte(orig), &before); uerr != nil {
+		t.Fatal(uerr)
 	}
-	if err := yaml.Unmarshal(out, &after); err != nil {
-		t.Fatal(err)
+	if uerr := yaml.Unmarshal(out, &after); uerr != nil {
+		t.Fatal(uerr)
 	}
 	if after["secret_key"] != "newkey" || after["secret_key_previous"] != "oldkey,constant" {
 		t.Errorf("keys not recorded: %v", after)

@@ -108,3 +108,31 @@ func holdKeyLock(ctx context.Context, cfg *config.ServerConfig, logger *slog.Log
 	}, keyLockCheckInterval)
 	return wctx, func() { cancel(nil); pool.Close() }, nil
 }
+
+// openPostgresHoldingKeyLock opens the verified pool and, for a Lite server,
+// takes the key-migration lock. It returns the context the server runs under.
+func openPostgresHoldingKeyLock(ctx context.Context, cfg *config.ServerConfig, logger *slog.Logger) (*storage.Postgres, context.Context, func(), error) {
+	pg, err := openVerifiedPostgres(ctx, cfg.Database)
+	if err != nil {
+		return nil, ctx, func() {}, fmt.Errorf("postgres: %w", err)
+	}
+	lctx, release, err := holdKeyLock(ctx, cfg, logger)
+	if err != nil {
+		pg.Close()
+		return nil, ctx, func() {}, err
+	}
+	return pg, lctx, release, nil
+}
+
+// keyLockExit turns a shutdown caused by a lost key-migration lock into a
+// non-zero exit, so neither the supervising `dexaflow lite` nor an operator
+// mistakes it for a clean stop.
+func keyLockExit(ctx context.Context, serveErr error) error {
+	if serveErr != nil {
+		return serveErr
+	}
+	if cause := context.Cause(ctx); errors.Is(cause, errKeyLockLost) {
+		return cause
+	}
+	return nil
+}
