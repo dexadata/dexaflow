@@ -58,40 +58,44 @@ func configPathForKeys(cmd *cobra.Command) string {
 //
 // It then scans the encrypted columns read-only and prints the install's key
 // state (section 5).
-func acquireLiteKeyBoot(ctx context.Context, cmd *cobra.Command, out io.Writer, o *devOptions) (*liteKeyLock, error) {
+//
+// The returned keyState is what that scan found; the caller removes
+// config.yaml.pre-restore only when it is clean (ADR 0065 section 8).
+func acquireLiteKeyBoot(ctx context.Context, cmd *cobra.Command, out io.Writer, o *devOptions) (*liteKeyLock, keyState, error) {
 	stateDir, err := leoflowHome()
 	if err != nil {
-		return nil, err
+		return nil, keyState{}, err
 	}
 	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
-		return nil, fmt.Errorf("creating %s: %w", stateDir, mkErr)
+		return nil, keyState{}, fmt.Errorf("creating %s: %w", stateDir, mkErr)
 	}
 	release, err := lockConfigOrWait(stateDir, func(s string) { devPrintln(out, s) })
 	if err != nil {
-		return nil, err
+		return nil, keyState{}, err
 	}
 	defer release()
 	// --fresh drops the local database before it is recreated (#1104); doing
 	// it under the config lock keeps it out of a running migration's way.
 	if derr := provisionDevDatabase(ctx, cmd, out, o.fresh); derr != nil {
-		return nil, derr
+		return nil, keyState{}, derr
 	}
 	if merr := devMigrate(cmd); merr != nil {
-		return nil, merr
+		return nil, keyState{}, merr
 	}
 	lock, keys, err := lockAndReadKeys(ctx, configPathForKeys(cmd))
 	if err != nil {
-		return nil, err
+		return nil, keyState{}, err
 	}
 	o.secretKey, o.secretKeyPrevious = keys.secretKey, strings.Join(keys.previous, ",")
 	if note := envKeyNote(liteSecretKeyList(o.secretKey, o.secretKeyPrevious), os.Getenv); note != "" {
 		devPrintln(out, note)
 	}
-	if serr := printKeyState(ctx, out, lock.conn, keys, describeBootDatastore(o)); serr != nil {
+	st, serr := printKeyState(ctx, out, lock.conn, keys, describeBootDatastore(o))
+	if serr != nil {
 		lock.close(ctx)
-		return nil, serr
+		return nil, keyState{}, serr
 	}
-	return lock, nil
+	return lock, st, nil
 }
 
 // lockAndReadKeys takes the key-migration lock shared on its own session in
@@ -122,19 +126,19 @@ func lockAndReadKeys(ctx context.Context, cfgPath string) (*liteKeyLock, liteKey
 
 // printKeyState scans the encrypted columns this boot's datastore holds
 // (read-only) and prints the install's key state.
-func printKeyState(ctx context.Context, out io.Writer, conn *pgx.Conn, keys liteKeyConfig, scanned string) error {
+func printKeyState(ctx context.Context, out io.Writer, conn *pgx.Conn, keys liteKeyConfig, scanned string) (keyState, error) {
 	vals, err := storage.ReadSecretValues(ctx, conn)
 	if err != nil {
-		return fmt.Errorf("scanning the stored secrets: %w", err)
+		return keyState{}, fmt.Errorf("scanning the stored secrets: %w", err)
 	}
 	st, err := classifyKeyState(keys, vals)
 	if err != nil {
-		return fmt.Errorf("refusing to start: %w", err)
+		return keyState{}, fmt.Errorf("refusing to start: %w", err)
 	}
 	for _, line := range keyStateMessages(st, scanned) {
 		devPrintln(out, line)
 	}
-	return nil
+	return st, nil
 }
 
 // describeBootDatastore names the datastore this boot scanned; it cannot speak
@@ -219,17 +223,24 @@ func resolveServerBin(ctx context.Context, cmd *cobra.Command, explicit string) 
 }
 
 // removePreRestoreAfterBoot is removePreRestore for this user's ~/.dexaflow.
-func removePreRestoreAfterBoot(out io.Writer) {
+func removePreRestoreAfterBoot(out io.Writer, st keyState) {
 	if dir, err := leoflowHome(); err == nil {
-		removePreRestore(out, dir)
+		removePreRestore(out, dir, st)
 	}
 }
 
 // removePreRestore removes the config.yaml a restore replaced, once a boot with
-// the restored config succeeded, and says so.
-func removePreRestore(out io.Writer, stateDir string) {
+// the restored config succeeded and its scan read every stored secret under the
+// keys that config records, and says so. A boot that found Stranded or
+// Unreadable secrets keeps the file: it may hold the key they need (ADR 0065
+// section 8).
+func removePreRestore(out io.Writer, stateDir string, st keyState) {
 	p := filepath.Join(stateDir, preRestoreName)
 	if _, err := os.Stat(p); err != nil {
+		return
+	}
+	if st.stranded > 0 || st.unreadable > 0 {
+		devPrintf(out, "  kept %s (the config a restore replaced): some stored secrets do not open under the restored config's keys, and it may hold the key they need\n", p)
 		return
 	}
 	if err := os.Remove(p); err != nil {

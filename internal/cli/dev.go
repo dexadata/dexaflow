@@ -718,7 +718,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	// Provision the database, take the key-migration lock and read the keys,
 	// in that order and under the config lock (ADR 0065 section 3). The lock
 	// session is held until this process exits.
-	keyLock, kerr := acquireLiteKeyBoot(ctx, cmd, out, &o)
+	keyLock, keySt, kerr := acquireLiteKeyBoot(ctx, cmd, out, &o)
 	if kerr != nil {
 		return kerr
 	}
@@ -760,7 +760,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	if werr := waitForReady(ctx, uiURL); werr != nil {
 		return firstErr(serverExited(), werr)
 	}
-	removePreRestoreAfterBoot(out)
+	removePreRestoreAfterBoot(out, keySt)
 	announceReady(out, o.host, o.port, o.adminEmail, ws.Path, countRegisteredDags(ctx))
 	// Mint an admin token in-process signed with the dev JWT secret; the control
 	// plane validates it by signature + claims, so no login or seeded user is
