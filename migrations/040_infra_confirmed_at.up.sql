@@ -15,11 +15,18 @@
 -- lock_timeout bounds the wait behind a long transaction. If it fires, the
 -- transaction rolls back, golang-migrate marks version 40 dirty and nothing
 -- changed: run `migrate force` to the previous applied version and retry.
+--
+-- The backfill runs after the COMMIT, in its own transaction. Inside the ALTER's
+-- transaction it would scan task_instances (no index covers failed rows) while
+-- holding the ACCESS EXCLUSIVE lock, blocking every reader and writer of the
+-- table, the running previous release included, for the whole scan. Outside it
+-- the UPDATE locks only the rows it stamps. Both statements are idempotent, so
+-- if the backfill fails, `migrate force` to the previous version and rerun.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE task_instances
     ADD COLUMN IF NOT EXISTS infra_confirmed_at TIMESTAMPTZ;
+COMMIT;
 UPDATE task_instances
 SET infra_confirmed_at = COALESCE(ended_at, now())
 WHERE state = 'failed' AND last_failure_kind = 'infra' AND infra_confirmed_at IS NULL;
-COMMIT;

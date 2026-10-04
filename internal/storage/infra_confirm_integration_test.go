@@ -157,3 +157,28 @@ func TestInfraReplaceWaitsForConfirmation(t *testing.T) {
 		t.Fatalf("a confirmed mark re-places at once: ok=%v err=%v", ok, err)
 	}
 }
+
+// TestProvisionalInfraFailuresListOnlyActiveRuns: the confirmation pass reads
+// only marks of queued or running runs. The planner reads only those runs, and
+// the liveness valve is shorter than the orphan threshold, so a mark of a
+// finished run has nothing left to gate. Bounding the list keeps the leader's
+// per-sweep query on the active-run index instead of every failed task
+// instance ever recorded, and keeps old unconfirmed marks (a rollback window,
+// a pod GC lag) from filling the LIMIT ahead of live ones.
+func TestProvisionalInfraFailuresListOnlyActiveRuns(t *testing.T) {
+	f := seedStaleHeartbeat(t, "confirm_finished_run")
+	f.sched.SetProvisionalInfraMarks(true)
+	f.markAgentLost(t)
+	if _, err := f.pg.Pool.Exec(f.ctx, "UPDATE dag_runs SET state = 'failed' WHERE id=$1::uuid", f.runUUID); err != nil {
+		t.Fatalf("finish run: %v", err)
+	}
+	rows, err := f.sched.ListProvisionalInfraFailures(f.ctx)
+	if err != nil {
+		t.Fatalf("ListProvisionalInfraFailures: %v", err)
+	}
+	for _, r := range rows {
+		if r.TaskInstanceID == f.tiID {
+			t.Fatalf("a mark of a finished run must not be listed, got %+v", r)
+		}
+	}
+}
