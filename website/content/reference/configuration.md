@@ -661,7 +661,10 @@ digits or `-`) with the same built-in roles, role permissions and default pool
 as the `default` tenant, copied from it so every tenant's ladder stays equal.
 It answers `201` when the tenant is new and `200` when it already existed; a
 second call fills in anything missing and brings the built-in roles' permissions
-back in line with `default`'s, removing the ones `default` no longer grants.
+back in line with `default`'s: a built-in role keeps exactly the grants its
+`default` counterpart has, so a grant added to it in a tenant by hand is removed
+too. Put tenant-specific grants on a custom role. Custom roles, and a built-in
+role `default` no longer has, are left unchanged.
 Apart from that and `default_pool_slots` below, it changes nothing else.
 
 The same body may carry `"default_pool_slots": 8` to size the tenant's

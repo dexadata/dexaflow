@@ -10,41 +10,41 @@ import (
 	"github.com/dexadata/dexaflow/migrations"
 )
 
-// defaultOnlyRoleMigrations are the up migrations written before the rule in
-// TestBuiltInRoleMigrationsReachEveryTenant existed. Each one writes built-in
-// roles or their grants for the "default" tenant only, which was correct when
-// it ran: "default" was the only tenant, and the service API copies its ladder
-// into every tenant it creates (#1283). They are grandfathered by name so the
-// rule binds every migration after them; do not add to this list.
+// defaultOnlyRoleMigrations are the up migrations the rule in
+// TestBuiltInRoleMigrationsReachEveryTenant exempts, each with its reason.
+//
+// The first two were written before the rule existed and write built-in roles
+// or grants for the "default" tenant only, which was correct when they ran:
+// "default" was the only tenant, and the service API copies its ladder into
+// every tenant it creates (#1283).
+//
+// The rule is deliberately conservative: it also flags a migration that reads
+// "default" as the reference ladder while writing every tenant (the natural way
+// to push a ladder change to existing tenants). Such a migration belongs here,
+// with a reason saying it writes every tenant. A migration that really writes
+// "default" only does not.
 var defaultOnlyRoleMigrations = map[string]string{
 	"001_init_tenants_and_rbac.up.sql": "seeds the admin role before any other tenant can exist",
 	"025_role_ladder.up.sql":           "seeds viewer/editor/operator before the service API could create tenants",
 }
 
 var (
-	// sqlLineComment and sqlBlockComment strip comments, so prose such as
-	// "created for the default tenant" never counts as a filter.
-	sqlLineComment  = regexp.MustCompile(`--[^\n]*`)
-	sqlBlockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	// roleWrite matches a statement that writes rows of roles or
-	// role_permissions, whatever the whitespace or case, including one inside a
-	// CTE or an INSERT ... SELECT.
-	roleWrite = regexp.MustCompile(`(?is)\b(insert\s+into|update|delete\s+from)\s+(roles|role_permissions)\b`)
+	// role_permissions, whatever the whitespace or case, schema qualification or
+	// identifier quoting, including one inside a CTE or an INSERT ... SELECT.
+	roleWrite = regexp.MustCompile(`(?is)\b(insert\s+into|update|delete\s+from|merge\s+into)\s+(?:"?\w+"?\.)?"?(roles|role_permissions)\b`)
 	// defaultTenantFilter matches a predicate that pins a name to 'default',
-	// which in a statement writing roles is the default tenant filter
-	// (t.name = 'default', name = 'default', name IN ('default')).
-	defaultTenantFilter = regexp.MustCompile(`(?is)\bname\s*(=\s*'default'|in\s*\(\s*'default'\s*\))`)
+	// which in a statement writing roles is the default tenant filter:
+	// t.name = 'default', name LIKE 'default', name IN ('default'),
+	// 'default' = t.name, with or without an E'' literal.
+	defaultTenantFilter = regexp.MustCompile(`(?is)\bname"?\s*(=|like)\s*E?'default'|\bname"?\s+in\s*\(\s*E?'default'\s*\)|E?'default'\s*=\s*(?:"?\w+"?\.)?"?name\b`)
 )
 
 // defaultOnlyRoleWrites returns the statements of sql that write roles or
-// role_permissions while filtering on the default tenant by name. It splits on
-// semicolons after stripping comments; the migrations hold no string literals
-// or function bodies where that would cut a statement in a misleading place.
+// role_permissions while filtering on the default tenant by name.
 func defaultOnlyRoleWrites(sql string) []string {
-	sql = sqlBlockComment.ReplaceAllString(sql, "")
-	sql = sqlLineComment.ReplaceAllString(sql, "")
 	var found []string
-	for _, stmt := range strings.Split(sql, ";") {
+	for _, stmt := range sqlStatements(sql) {
 		if roleWrite.MatchString(stmt) && defaultTenantFilter.MatchString(stmt) {
 			found = append(found, strings.Join(strings.Fields(stmt), " "))
 		}
@@ -141,6 +141,40 @@ WHERE tenant_id = (SELECT id FROM tenants WHERE name = 'default') AND name = 'vi
 			want: 1,
 		},
 		{
+			name: "schema-qualified and quoted table, reversed operand",
+			sql: `UPDATE public."roles" SET description = 'x'
+WHERE tenant_id = (SELECT id FROM tenants t WHERE 'default' = t.name);`,
+			want: 1,
+		},
+		{
+			name: "LIKE and an E'' literal",
+			sql: `DELETE FROM role_permissions WHERE role_id IN
+  (SELECT r.id FROM roles r JOIN tenants t ON t.id = r.tenant_id WHERE t.name LIKE E'default');`,
+			want: 1,
+		},
+		{
+			name: "semicolon inside a literal does not hide the filter",
+			sql: `INSERT INTO roles (tenant_id, name, description, is_system)
+SELECT id, 'auditor', 'reads; never writes', true FROM tenants WHERE name = 'default';`,
+			want: 1,
+		},
+		{
+			name: "line comment opening a block marker does not hide code",
+			sql: `-- see /* note
+INSERT INTO roles (tenant_id, name, description, is_system)
+SELECT id, 'auditor', 'x', true FROM tenants WHERE name = 'default';
+-- end */`,
+			want: 1,
+		},
+		{
+			name: "dollar-quoted body stays one statement",
+			sql: `DO $body$ BEGIN
+  INSERT INTO roles (tenant_id, name, description, is_system)
+  SELECT id, 'auditor', 'x', true FROM tenants WHERE name = 'default';
+END $body$;`,
+			want: 1,
+		},
+		{
 			name: "grant to the system role of every tenant",
 			sql: `INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r
@@ -179,4 +213,84 @@ DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE is_sys
 			}
 		})
 	}
+}
+
+// sqlStatements splits sql into statements on semicolons outside string
+// literals, quoted identifiers and dollar-quoted bodies, dropping comments, so
+// prose such as "created for the default tenant" never counts as a filter and
+// a literal containing ";" does not cut a statement in two. Literals are kept
+// in the statement text, since the filter itself is a literal.
+func sqlStatements(sql string) []string {
+	var (
+		stmts []string
+		cur   strings.Builder
+	)
+	for i := 0; i < len(sql); {
+		switch {
+		case strings.HasPrefix(sql[i:], "--"):
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+		case strings.HasPrefix(sql[i:], "/*"):
+			end := strings.Index(sql[i+2:], "*/")
+			if end < 0 {
+				i = len(sql)
+			} else {
+				i += end + 4
+			}
+			cur.WriteByte(' ')
+		case sql[i] == '\'' || sql[i] == '"':
+			j := quotedEnd(sql, i, sql[i])
+			cur.WriteString(sql[i:j])
+			i = j
+		case sql[i] == '$':
+			j := dollarQuotedEnd(sql, i)
+			cur.WriteString(sql[i:j])
+			i = j
+		case sql[i] == ';':
+			stmts = append(stmts, cur.String())
+			cur.Reset()
+			i++
+		default:
+			cur.WriteByte(sql[i])
+			i++
+		}
+	}
+	return append(stmts, cur.String())
+}
+
+// quotedEnd returns the index just past the literal or identifier opened by q
+// at i; a doubled quote is an escaped one. An unterminated quote runs to the end.
+func quotedEnd(sql string, i int, q byte) int {
+	for j := i + 1; j < len(sql); j++ {
+		if sql[j] != q {
+			continue
+		}
+		if j+1 < len(sql) && sql[j+1] == q {
+			j++
+			continue
+		}
+		return j + 1
+	}
+	return len(sql)
+}
+
+// dollarQuotedEnd returns the index just past a $tag$...$tag$ body starting at
+// i, or i+1 when the $ does not open one (a positional parameter like $1).
+func dollarQuotedEnd(sql string, i int) int {
+	end := strings.IndexByte(sql[i+1:], '$')
+	if end < 0 {
+		return i + 1
+	}
+	tag := sql[i : i+end+2]
+	for _, c := range tag[1 : len(tag)-1] {
+		if c != '_' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return i + 1
+		}
+	}
+	close := strings.Index(sql[i+len(tag):], tag)
+	if close < 0 {
+		return len(sql)
+	}
+	return i + len(tag) + close + len(tag)
 }

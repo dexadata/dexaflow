@@ -181,7 +181,12 @@ applies to every tenant: join `roles` on `is_system` across all tenants, not on
 `default` ladder when they are created, so a change made to `default` alone
 never reaches them, and a revoked permission survives there.
 `migrations/role_tenant_guard_test.go` fails on a new migration that writes
-`roles` or `role_permissions` with a `name = 'default'` filter (#1305).
+`roles` or `role_permissions` with a `name = 'default'` filter (#1305). The
+guard is deliberately conservative: a migration that reads `default` as the
+reference ladder while writing every tenant (the usual way to push a ladder
+change to existing tenants) trips it too. Add such a migration to
+`defaultOnlyRoleMigrations` in that test, with a reason saying it writes every
+tenant.
 
 ## 6. The CI gates
 
