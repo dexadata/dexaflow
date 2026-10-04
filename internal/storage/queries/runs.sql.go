@@ -413,6 +413,27 @@ func (q *Queries) DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int
 	return result.RowsAffected(), nil
 }
 
+const dispatchAttemptsForActive = `-- name: DispatchAttemptsForActive :one
+SELECT dispatch_attempts FROM task_instances
+WHERE dag_run_id = $1
+  AND task_id = $2
+  AND state IN ('scheduled', 'queued')
+`
+
+type DispatchAttemptsForActiveParams struct {
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+	TaskID   string      `json:"task_id"`
+}
+
+// The consecutive dispatch-failure count of a task still waiting to run
+// (scheduled or queued); no row means it has moved on.
+func (q *Queries) DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error) {
+	row := q.db.QueryRow(ctx, dispatchAttemptsForActive, arg.DagRunID, arg.TaskID)
+	var dispatch_attempts int32
+	err := row.Scan(&dispatch_attempts)
+	return dispatch_attempts, err
+}
+
 const failDispatchExhausted = `-- name: FailDispatchExhausted :exec
 UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
@@ -1670,6 +1691,37 @@ func (q *Queries) MarkTaskDispatchLost(ctx context.Context, id pgtype.UUID) erro
 	return err
 }
 
+const markTaskInstanceQueued = `-- name: MarkTaskInstanceQueued :execrows
+UPDATE task_instances
+SET state = 'queued',
+    queued_at = COALESCE(queued_at, now())
+WHERE dag_run_id = $1
+  AND task_id = $2
+  AND state = 'scheduled'
+  AND next_dispatch_at IS NOT DISTINCT FROM $3::timestamptz
+`
+
+type MarkTaskInstanceQueuedParams struct {
+	DagRunID             pgtype.UUID        `json:"dag_run_id"`
+	TaskID               string             `json:"task_id"`
+	ExpectNextDispatchAt pgtype.Timestamptz `json:"expect_next_dispatch_at"`
+}
+
+// The scheduler's scheduled -> queued write after a dispatch was accepted.
+// Guarded to the exact slot the tick planned: still 'scheduled', with the
+// next_dispatch_at the tick read. Under buffered dispatch the worker can finish
+// before this write lands: it may have failed the task (MarkTaskDispatchFailed),
+// re-offered it with a new backoff (RequeueDispatch), or the agent may already
+// have reported running. Each of those moves the row off the planned slot, so
+// this write touches zero rows instead of overwriting the newer outcome.
+func (q *Queries) MarkTaskInstanceQueued(ctx context.Context, arg MarkTaskInstanceQueuedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskInstanceQueued, arg.DagRunID, arg.TaskID, arg.ExpectNextDispatchAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markTaskPodLost = `-- name: MarkTaskPodLost :execrows
 UPDATE task_instances
 SET state = 'failed',
@@ -1891,6 +1943,44 @@ func (q *Queries) ReportTaskResult(ctx context.Context, arg ReportTaskResultPara
 		arg.ExitCode,
 		arg.ErrorMessage,
 		arg.TryNumber,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requeueDispatch = `-- name: RequeueDispatch :execrows
+UPDATE task_instances
+SET state = 'scheduled',
+    next_dispatch_at = $1,
+    dispatch_attempts = dispatch_attempts + $2::int,
+    warm_worker_id = NULL
+WHERE dag_run_id = $3
+  AND task_id = $4
+  AND state IN ('scheduled', 'queued')
+`
+
+type RequeueDispatchParams struct {
+	NextDispatchAt   pgtype.Timestamptz `json:"next_dispatch_at"`
+	AttemptIncrement int32              `json:"attempt_increment"`
+	DagRunID         pgtype.UUID        `json:"dag_run_id"`
+	TaskID           string             `json:"task_id"`
+}
+
+// A buffered dispatch failed inside the worker for a retriable reason: re-offer
+// the task the way a synchronous failure is re-offered (RecordDispatchFailure,
+// RecordDispatchBackpressure). Back to 'scheduled' with the next attempt held
+// until next_dispatch_at, adding one dispatch attempt only when counted
+// (backpressure is not). Guarded to scheduled/queued, so a task the agent has
+// since reported on is left alone. warm_worker_id is cleared as in
+// RequeueForRedispatch: the attempt never ran.
+func (q *Queries) RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requeueDispatch,
+		arg.NextDispatchAt,
+		arg.AttemptIncrement,
+		arg.DagRunID,
+		arg.TaskID,
 	)
 	if err != nil {
 		return 0, err

@@ -101,6 +101,9 @@ type Querier interface {
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	DeleteVariable(ctx context.Context, arg DeleteVariableParams) (int64, error)
+	// The consecutive dispatch-failure count of a task still waiting to run
+	// (scheduled or queued); no row means it has moved on.
+	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
 	// The subset of the given conn_ids that exist for the tenant. Used to reject a
 	// DAG that declares an unknown connection at registration (ADR 0055 D6); a name
 	// absent from the result does not exist.
@@ -391,6 +394,14 @@ type Querier interface {
 	// since transitioned (real dispatch landed, or already failed) is a no-op,
 	// never overwriting a more meaningful state.
 	MarkTaskDispatchLost(ctx context.Context, id pgtype.UUID) error
+	// The scheduler's scheduled -> queued write after a dispatch was accepted.
+	// Guarded to the exact slot the tick planned: still 'scheduled', with the
+	// next_dispatch_at the tick read. Under buffered dispatch the worker can finish
+	// before this write lands: it may have failed the task (MarkTaskDispatchFailed),
+	// re-offered it with a new backoff (RequeueDispatch), or the agent may already
+	// have reported running. Each of those moves the row off the planned slot, so
+	// this write touches zero rows instead of overwriting the newer outcome.
+	MarkTaskInstanceQueued(ctx context.Context, arg MarkTaskInstanceQueuedParams) (int64, error)
 	// Fails a running TI whose pod has vanished (deleted/evicted/node lost). The
 	// WHERE state='running' guard makes it idempotent and prevents overwriting a
 	// late terminal report that landed between our list and our write (a live
@@ -489,6 +500,14 @@ type Querier interface {
 	// trading a rare silent corruption for a frequent one. The settled states
 	// (success/failed/skipped/upstream_failed) are what this guard is for.
 	ReportTaskResult(ctx context.Context, arg ReportTaskResultParams) (int64, error)
+	// A buffered dispatch failed inside the worker for a retriable reason: re-offer
+	// the task the way a synchronous failure is re-offered (RecordDispatchFailure,
+	// RecordDispatchBackpressure). Back to 'scheduled' with the next attempt held
+	// until next_dispatch_at, adding one dispatch attempt only when counted
+	// (backpressure is not). Guarded to scheduled/queued, so a task the agent has
+	// since reported on is left alone. warm_worker_id is cleared as in
+	// RequeueForRedispatch: the attempt never ran.
+	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding
 	// an unacked lease, or it acked started=false), so the attempt sits `queued`

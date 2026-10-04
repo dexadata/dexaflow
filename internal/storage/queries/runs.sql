@@ -984,6 +984,47 @@ UPDATE task_instances
 SET next_dispatch_at = $3
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 
+-- name: MarkTaskInstanceQueued :execrows
+-- The scheduler's scheduled -> queued write after a dispatch was accepted.
+-- Guarded to the exact slot the tick planned: still 'scheduled', with the
+-- next_dispatch_at the tick read. Under buffered dispatch the worker can finish
+-- before this write lands: it may have failed the task (MarkTaskDispatchFailed),
+-- re-offered it with a new backoff (RequeueDispatch), or the agent may already
+-- have reported running. Each of those moves the row off the planned slot, so
+-- this write touches zero rows instead of overwriting the newer outcome.
+UPDATE task_instances
+SET state = 'queued',
+    queued_at = COALESCE(queued_at, now())
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state = 'scheduled'
+  AND next_dispatch_at IS NOT DISTINCT FROM sqlc.narg(expect_next_dispatch_at)::timestamptz;
+
+-- name: RequeueDispatch :execrows
+-- A buffered dispatch failed inside the worker for a retriable reason: re-offer
+-- the task the way a synchronous failure is re-offered (RecordDispatchFailure,
+-- RecordDispatchBackpressure). Back to 'scheduled' with the next attempt held
+-- until next_dispatch_at, adding one dispatch attempt only when counted
+-- (backpressure is not). Guarded to scheduled/queued, so a task the agent has
+-- since reported on is left alone. warm_worker_id is cleared as in
+-- RequeueForRedispatch: the attempt never ran.
+UPDATE task_instances
+SET state = 'scheduled',
+    next_dispatch_at = sqlc.arg(next_dispatch_at),
+    dispatch_attempts = dispatch_attempts + sqlc.arg(attempt_increment)::int,
+    warm_worker_id = NULL
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state IN ('scheduled', 'queued');
+
+-- name: DispatchAttemptsForActive :one
+-- The consecutive dispatch-failure count of a task still waiting to run
+-- (scheduled or queued); no row means it has moved on.
+SELECT dispatch_attempts FROM task_instances
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state IN ('scheduled', 'queued');
+
 -- name: RequeueForRedispatch :execrows
 -- Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 -- handed this attempt but demonstrably will NOT run it (its stream ended holding
