@@ -23,7 +23,12 @@ type StaleQueuedCandidate struct {
 	// TryNumber is the attempt the queued row is on, so a best-effort pod
 	// delete after the mark targets exactly that attempt's pod (#474).
 	TryNumber int
-	QueuedAt  time.Time
+	// AttemptEpoch is the epoch the row's current execution was dispatched
+	// with (ADR 0051 amendment). The mark and the pod teardown are pinned to it
+	// as well as to TryNumber, so a row re-placed or re-dispatched between the
+	// list and the write is a different attempt and is left alone.
+	AttemptEpoch int
+	QueuedAt     time.Time
 	// WarmWorkerID is the warm pod durably bound to this attempt (ADR 0058
 	// N1d-a2), or "" for a dedicated task or a warm attempt not yet acked. When
 	// set AND the worker is in the live warm-pod set, the dispatch-lost reaper
@@ -32,6 +37,12 @@ type StaleQueuedCandidate struct {
 	// H3). A warm attempt has no task pod, so the existing pod-presence gate
 	// cannot protect it — this warm check is what does.
 	WarmWorkerID string
+}
+
+// attempt is the execution this candidate names, for the presence reads and
+// the pod teardown.
+func (c StaleQueuedCandidate) attempt() Attempt {
+	return Attempt{RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch}
 }
 
 // IsDispatchLost reports whether a queued TI has been waiting long enough to
@@ -57,7 +68,7 @@ type DispatchLostReapStore interface {
 	// MarkTaskDispatchLost transitions one TI to `failed` with
 	// error_message='dispatch_lost'. The WHERE state='queued' guard makes
 	// this idempotent: a second call on a now-non-queued TI is a no-op.
-	MarkTaskDispatchLost(ctx context.Context, taskInstanceID string) error
+	MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error
 }
 
 // dispatchLostReaper is the scheduler-internal worker that fails TIs whose
@@ -146,12 +157,12 @@ func (r *dispatchLostReaper) run(ctx context.Context) error {
 		// Cache fast-path (PR-10), safe direction only: a cached Pending/Running
 		// pod defers without an apiserver read. A cache MISS is NOT trusted — fall
 		// through to the live read below, preserving the #461 fix.
-		if r.cache != nil && r.cache.CachedPodActive(c.DagRunID, c.TaskID, c.TryNumber) {
+		if r.cache != nil && r.cache.CachedPodActive(c.attempt()) {
 			r.record("dispatch_lost_cache_active")
 			continue
 		}
 		if r.pods != nil {
-			presence, perr := r.pods.TaskPodPresence(ctx, c.DagRunID, c.TaskID, c.TryNumber)
+			presence, perr := r.pods.TaskPodPresence(ctx, c.attempt())
 			if perr != nil {
 				r.logger.Warn("dispatch-lost: pod liveness unknown; deferring",
 					"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "error", perr)
@@ -185,7 +196,7 @@ func (r *dispatchLostReaper) reapOne(ctx context.Context, c StaleQueuedCandidate
 		r.record("dispatch_lost_gate_skip")
 		return
 	}
-	if ferr := r.store.MarkTaskDispatchLost(ctx, c.TaskInstanceID); ferr != nil {
+	if ferr := r.store.MarkTaskDispatchLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch); ferr != nil {
 		r.logger.Error("marking task dispatch-lost",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", ferr)
 		r.record("dispatch_lost_error")
@@ -207,7 +218,7 @@ func (r *dispatchLostReaper) reapOne(ctx context.Context, c StaleQueuedCandidate
 		r.record("dispatch_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.DagRunID, c.TaskID, c.TryNumber); derr != nil {
+	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
 		r.logger.Error("deleting dispatch-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("dispatch_lost_pod_delete_error")

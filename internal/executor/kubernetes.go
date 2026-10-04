@@ -82,7 +82,12 @@ func BuildPod(req Request) *corev1.Pod {
 				"leoflow.io/task-id":    sanitizeLabel(req.TaskID),
 				"leoflow.io/run-id":     sanitizeLabel(req.RunID),
 				"leoflow.io/try-number": strconv.Itoa(req.TryNumber),
-				"leoflow.io/tenant-id":  sanitizeLabel(req.TenantID),
+				// The attempt epoch tells two pods of one try apart (ADR 0051
+				// amendment): teardown, presence and the reconciler's settle
+				// all pin it, so a superseded pod is never mistaken for its
+				// replacement (#1130, #901).
+				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
+				"leoflow.io/tenant-id": sanitizeLabel(req.TenantID),
 			},
 			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
 		},

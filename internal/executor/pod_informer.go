@@ -23,6 +23,11 @@ const (
 	podLabelRunID     = "leoflow.io/run-id"
 	podLabelTaskID    = "leoflow.io/task-id"
 	podLabelTryNumber = "leoflow.io/try-number"
+	// podLabelAttemptEpoch is not part of any server-side selector: a pod
+	// stamped before the epoch existed has no such label and is epoch 0, and a
+	// label selector cannot say "equals 0 or absent". It is filtered in Go by
+	// podMatchesEpoch instead.
+	podLabelAttemptEpoch = "leoflow.io/attempt-epoch"
 )
 
 // errCacheNotSynced is returned by SnapshotTaskPods before the informer's initial
@@ -119,26 +124,30 @@ func (p *PodInformer) Shutdown() {
 }
 
 // CachedPodActive reports whether the cache holds a pod for exactly the
-// (run, task, try) attempt that is Pending or Running — the exact predicate
-// TaskPodPresence uses, pinned to the same attempt (#723). It is the safe
+// (run, task, try, epoch) attempt that is Pending or Running: the exact
+// predicate TaskPodPresence uses, pinned to the same attempt (#723, ADR 0051
+// amendment). It is the safe
 // direction of the asymmetric-trust contract: a true return may DEFER a reap; a
 // false return is NEVER authoritative and the caller must fall through to the live
 // read. Before the cache has synced it returns false, so a cold cache degrades to
 // the live path rather than misreporting absence.
-func (p *PodInformer) CachedPodActive(runID, taskID string, tryNumber int) bool {
+func (p *PodInformer) CachedPodActive(a Attempt) bool {
 	if !p.informer.HasSynced() {
 		return false
 	}
 	selector := labels.SelectorFromSet(labels.Set{
-		podLabelRunID:     sanitizeLabel(runID),
-		podLabelTaskID:    sanitizeLabel(taskID),
-		podLabelTryNumber: strconv.Itoa(tryNumber),
+		podLabelRunID:     sanitizeLabel(a.RunID),
+		podLabelTaskID:    sanitizeLabel(a.TaskID),
+		podLabelTryNumber: strconv.Itoa(a.TryNumber),
 	})
 	pods, err := p.lister.Pods(p.namespace).List(selector)
 	if err != nil {
 		return false
 	}
 	for _, pod := range pods {
+		if !podMatchesEpoch(pod, a.AttemptEpoch) {
+			continue
+		}
 		if phase := pod.Status.Phase; phase == corev1.PodPending || phase == corev1.PodRunning {
 			return true
 		}

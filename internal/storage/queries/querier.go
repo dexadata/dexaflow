@@ -126,11 +126,13 @@ type Querier interface {
 	// reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 	// reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
 	FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error
-	// Settle a task instance failed from the pod reconciler, guarded by BOTH id and
-	// try_number (ADR 0052): try_number bumps IN PLACE on retry (same row id), so a
-	// stale reconciler acting on a previous attempt's lingering pod must not match the
-	// new running attempt and clobber it. The active-state guard prevents clobbering a
-	// terminal row.
+	// Settle a task instance failed from the pod reconciler, guarded by id,
+	// try_number and attempt_epoch (ADR 0052, ADR 0051 amendment): try_number bumps
+	// IN PLACE on retry (same row id), and an infra re-place or reschedule keeps the
+	// try but bumps the epoch, so a stale reconciler acting on a previous attempt's
+	// lingering pod must not match the new attempt and clobber it. The pod's epoch
+	// comes from its leoflow.io/attempt-epoch label, absent meaning 0. The
+	// active-state guard prevents clobbering a terminal row.
 	FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInstanceIfActiveParams) error
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
@@ -320,6 +322,8 @@ type Querier interface {
 	// (the double-run bug). It is NULL for a dedicated attempt and for a warm attempt
 	// not yet acked, in which case the reaper falls back to its existing pod-liveness
 	// gate unchanged.
+	// attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
+	// teardown name exactly the attempt that was listed.
 	ListStaleQueuedTaskInstances(ctx context.Context) ([]ListStaleQueuedTaskInstancesRow, error)
 	// Returns every attempt for (run, task), oldest first. UNIONs the current
 	// task_instances row with all archived task_instance_history rows so the UI's
@@ -380,8 +384,10 @@ type Querier interface {
 	// Fails a TI whose agent went silent. The WHERE state='running' guard
 	// prevents overwriting a TI the agent's last terminal report finally
 	// delivered between our list and our write (defense in depth — a late
-	// report wins over the reaper). Idempotent on a second call.
-	MarkTaskAgentLost(ctx context.Context, id pgtype.UUID) (int64, error)
+	// report wins over the reaper). Idempotent on a second call. Pinned to the
+	// listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
+	// computed for a superseded attempt never fails its replacement.
+	MarkTaskAgentLost(ctx context.Context, arg MarkTaskAgentLostParams) (int64, error)
 	// Fails a TI whose asynchronous dispatch (BufferedDispatcher worker) errored
 	// inside the inner dispatcher. Targets the active row by (dag_run_id,
 	// task_id) and the active states (scheduled/queued) — a TI that already
@@ -391,13 +397,18 @@ type Querier interface {
 	// Fails one queued TI with a dispatch_lost error. The WHERE state='queued'
 	// guard makes the operation idempotent: a second call on a TI that has
 	// since transitioned (real dispatch landed, or already failed) is a no-op,
-	// never overwriting a more meaningful state.
-	MarkTaskDispatchLost(ctx context.Context, id pgtype.UUID) error
+	// never overwriting a more meaningful state. It is also pinned to the listed
+	// attempt, (try_number, attempt_epoch) (ADR 0051 amendment): a row that was
+	// re-placed and re-dispatched between the list and this write is a different
+	// attempt, and a mark computed for the old one must not fail it.
+	MarkTaskDispatchLost(ctx context.Context, arg MarkTaskDispatchLostParams) error
 	// Fails a running TI whose pod has vanished (deleted/evicted/node lost). The
 	// WHERE state='running' guard makes it idempotent and prevents overwriting a
 	// late terminal report that landed between our list and our write (a live
-	// report wins over the reaper). Idempotent on a second call.
-	MarkTaskPodLost(ctx context.Context, id pgtype.UUID) (int64, error)
+	// report wins over the reaper). Idempotent on a second call. Pinned to the
+	// listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
+	// computed for a superseded attempt never fails its replacement.
+	MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams) (int64, error)
 	// Every named pool's slot cap across all tenants, for the scheduler's per-tick
 	// cross-DAG admission budget (ADR 0053 Stage 3). Keyed by (tenant_id, name) so a
 	// pool name is scoped to its tenant. Pro-only: Lite never calls this.
@@ -542,8 +553,9 @@ type Querier interface {
 	// finished); started_at is preserved.
 	RescheduleTaskInstance(ctx context.Context, arg RescheduleTaskInstanceParams) (int64, error)
 	// Settle a lost reschedule from the durable outcome record (ADR 0052): park the TI
-	// in up_for_reschedule with the record's next-poke time, guarded by id AND
-	// try_number (never clobber a different attempt or a terminal row), consuming no
+	// in up_for_reschedule with the record's next-poke time, guarded by id,
+	// try_number and attempt_epoch (never clobber a different attempt or a terminal
+	// row), consuming no
 	// retry budget. Mirrors RescheduleTaskInstance but keyed by id, for the reconciler.
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
 	// Archives every failed attempt in the run into task_instance_history then
@@ -617,8 +629,9 @@ type Querier interface {
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).
 	StampDagRunState(ctx context.Context, arg StampDagRunStateParams) error
 	// Settle a task instance succeeded from its durable outcome record (ADR 0052),
-	// recovering a success whose report was lost. Guarded by id AND try_number so a
-	// stale reconciler never marks a LIVE retry succeeded — which would fire downstream
+	// recovering a success whose report was lost. Guarded by id, try_number and
+	// attempt_epoch so a stale reconciler never marks a LIVE retry or re-place
+	// succeeded (#1130), which would fire downstream
 	// tasks on incomplete work, strictly worse than the bug being fixed. The
 	// active-state guard prevents clobbering a terminal row.
 	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) error

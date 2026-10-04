@@ -63,11 +63,14 @@ WHERE dag_id = $1 AND state IN ('queued', 'running');
 -- (the double-run bug). It is NULL for a dedicated attempt and for a warm attempt
 -- not yet acked, in which case the reaper falls back to its existing pod-liveness
 -- gate unchanged.
+-- attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
+-- teardown name exactly the attempt that was listed.
 SELECT ti.id AS task_instance_id,
        ti.dag_run_id,
        d.dag_id AS dag_id_text,
        ti.task_id,
        ti.try_number,
+       ti.attempt_epoch,
        ti.queued_at,
        ti.warm_worker_id
 FROM task_instances ti
@@ -81,13 +84,19 @@ LIMIT 100;
 -- Fails one queued TI with a dispatch_lost error. The WHERE state='queued'
 -- guard makes the operation idempotent: a second call on a TI that has
 -- since transitioned (real dispatch landed, or already failed) is a no-op,
--- never overwriting a more meaningful state.
+-- never overwriting a more meaningful state. It is also pinned to the listed
+-- attempt, (try_number, attempt_epoch) (ADR 0051 amendment): a row that was
+-- re-placed and re-dispatched between the list and this write is a different
+-- attempt, and a mark computed for the old one must not fail it.
 UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
     last_failure_kind = 'infra',
     error_message = 'dispatch_lost: scheduler crashed before dispatch landed; will be retried by the run reaper'
-WHERE id = $1 AND state = 'queued';
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'queued';
 
 -- name: ListActiveDagRuns :many
 SELECT * FROM dag_runs
@@ -494,37 +503,44 @@ SELECT first_reschedule_at FROM task_instances
 WHERE dag_run_id = $1 AND task_id = $2;
 
 -- name: FailTaskInstanceIfActive :exec
--- Settle a task instance failed from the pod reconciler, guarded by BOTH id and
--- try_number (ADR 0052): try_number bumps IN PLACE on retry (same row id), so a
--- stale reconciler acting on a previous attempt's lingering pod must not match the
--- new running attempt and clobber it. The active-state guard prevents clobbering a
--- terminal row.
+-- Settle a task instance failed from the pod reconciler, guarded by id,
+-- try_number and attempt_epoch (ADR 0052, ADR 0051 amendment): try_number bumps
+-- IN PLACE on retry (same row id), and an infra re-place or reschedule keeps the
+-- try but bumps the epoch, so a stale reconciler acting on a previous attempt's
+-- lingering pod must not match the new attempt and clobber it. The pod's epoch
+-- comes from its leoflow.io/attempt-epoch label, absent meaning 0. The
+-- active-state guard prevents clobbering a terminal row.
 UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = sqlc.arg(error_message)
 WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
 
 -- name: SucceedTaskInstanceIfActive :exec
 -- Settle a task instance succeeded from its durable outcome record (ADR 0052),
--- recovering a success whose report was lost. Guarded by id AND try_number so a
--- stale reconciler never marks a LIVE retry succeeded — which would fire downstream
+-- recovering a success whose report was lost. Guarded by id, try_number and
+-- attempt_epoch so a stale reconciler never marks a LIVE retry or re-place
+-- succeeded (#1130), which would fire downstream
 -- tasks on incomplete work, strictly worse than the bug being fixed. The
 -- active-state guard prevents clobbering a terminal row.
 UPDATE task_instances
 SET state = 'success', ended_at = now(), error_message = NULL
 WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
 
 -- name: RescheduleTaskInstanceByIDIfActive :exec
 -- Settle a lost reschedule from the durable outcome record (ADR 0052): park the TI
--- in up_for_reschedule with the record's next-poke time, guarded by id AND
--- try_number (never clobber a different attempt or a terminal row), consuming no
+-- in up_for_reschedule with the record's next-poke time, guarded by id,
+-- try_number and attempt_epoch (never clobber a different attempt or a terminal
+-- row), consuming no
 -- retry budget. Mirrors RescheduleTaskInstance but keyed by id, for the reconciler.
 UPDATE task_instances
 SET state = 'up_for_reschedule'::task_state,
     reschedule_at = sqlc.arg(reschedule_at),
     first_reschedule_at = COALESCE(first_reschedule_at, now())
 WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('running', 'queued', 'scheduled');
 
 -- name: ReportTaskResult :execrows
@@ -886,6 +902,7 @@ SELECT ti.id AS task_instance_id,
        ti.dag_run_id AS dag_run_id,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
+       ti.attempt_epoch AS attempt_epoch,
        ti.warm_worker_id AS warm_worker_id
 FROM task_instances ti
 WHERE ti.state = 'running'
@@ -935,6 +952,7 @@ SELECT ti.id AS task_instance_id,
        d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
+       ti.attempt_epoch AS attempt_epoch,
        ti.last_heartbeat_at AS last_heartbeat_at
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
@@ -962,13 +980,18 @@ WHERE dag_run_id = $1
 -- Fails a TI whose agent went silent. The WHERE state='running' guard
 -- prevents overwriting a TI the agent's last terminal report finally
 -- delivered between our list and our write (defense in depth — a late
--- report wins over the reaper). Idempotent on a second call.
+-- report wins over the reaper). Idempotent on a second call. Pinned to the
+-- listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
+-- computed for a superseded attempt never fails its replacement.
 UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
     last_failure_kind = 'infra',
     error_message = 'agent_lost: no heartbeat within the threshold — see #128'
-WHERE id = $1 AND state = 'running';
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'running';
 
 -- name: ListRunningTasks :many
 -- Lists every TI currently in `running` alongside the timestamp it entered
@@ -989,6 +1012,7 @@ SELECT ti.id AS task_instance_id,
        d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
+       ti.attempt_epoch AS attempt_epoch,
        ti.started_at AS started_at
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
@@ -1003,13 +1027,18 @@ LIMIT 100;
 -- Fails a running TI whose pod has vanished (deleted/evicted/node lost). The
 -- WHERE state='running' guard makes it idempotent and prevents overwriting a
 -- late terminal report that landed between our list and our write (a live
--- report wins over the reaper). Idempotent on a second call.
+-- report wins over the reaper). Idempotent on a second call. Pinned to the
+-- listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
+-- computed for a superseded attempt never fails its replacement.
 UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
     last_failure_kind = 'infra',
     error_message = 'pod_lost: the task pod vanished with no live pod past the grace period — see #527'
-WHERE id = $1 AND state = 'running';
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'running';
 
 -- name: MarkRunOrphanedRun :execrows
 -- Fails an orphaned dag run. The `state = 'running'` guard makes the reap a
