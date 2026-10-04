@@ -10,5 +10,8 @@ body: |-
   attempt's log and in `dexaflow_reconcile_infra_override_total{mark}`. A
   FAILED record never overrides a mark. Marking a task `failed` from the UI or
   API now clears its infrastructure failure kind, so a user's verdict is never
-  re-placed or overridden. (#1124, #900)
+  re-placed or overridden. Such a task is not terminal, though: if it has tries
+  left, it goes through the normal retry, so its try number goes up and its
+  `retry_delay` applies (before, it was re-placed on the same try without using
+  a retry). (#1124, #900)
 time: 2026-10-05T02:00:00.000000000-03:00
