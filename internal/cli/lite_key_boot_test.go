@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Gap 7: a key exported in the operator's shell must not reach the Lite server.
@@ -120,5 +123,42 @@ func TestManagedCleanupOnlyStopsWhatItStarted(t *testing.T) {
 	managedCleanup(true, stop)()
 	if !stopped {
 		t.Error("did not stop the cluster this run started")
+	}
+}
+
+// The supervisor holds its key-migration lock until the server it supervises
+// exits, and no longer (ADR 0065 section 3). A server that stopped because it
+// lost its lock session must stop `dexaflow lite` too, instead of leaving it
+// watching files for a control plane that is gone.
+func TestSuperviseServerStopsWithTheServer(t *testing.T) {
+	srv := exec.Command("sh", "-c", "exit 3")
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, exited := superviseServer(context.Background(), srv)
+	select {
+	case <-ctx.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor context outlived the server")
+	}
+	err := exited()
+	if !errors.Is(err, errServerExited) || !strings.Contains(err.Error(), "exit status 3") {
+		t.Errorf("exited() = %v, want errServerExited with the exit status", err)
+	}
+}
+
+// A stop the operator asked for (Ctrl-C) is not reported as the server exiting.
+func TestSuperviseServerIgnoresAnOperatorStop(t *testing.T) {
+	srv := exec.Command("sleep", "30")
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Process.Kill() })
+	parent, cancel := context.WithCancel(context.Background())
+	ctx, exited := superviseServer(parent, srv)
+	cancel()
+	<-ctx.Done()
+	if err := exited(); err != nil {
+		t.Errorf("exited() = %v after an operator stop, want nil", err)
 	}
 }
