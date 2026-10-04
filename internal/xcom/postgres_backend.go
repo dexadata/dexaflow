@@ -69,6 +69,39 @@ func (b *PostgresBackend) Fetch(ctx context.Context, key string) (Entry, error) 
 	return e, nil
 }
 
+// FetchMany reads every key with one query, in order. Absent or expired keys
+// come back as not found; a key requested twice is answered twice.
+func (b *PostgresBackend) FetchMany(ctx context.Context, keys []string) ([]Entry, []bool, error) {
+	entries := make([]Entry, len(keys))
+	found := make([]bool, len(keys))
+	if len(keys) == 0 {
+		return entries, found, nil
+	}
+	rows, err := b.db.Query(ctx,
+		`SELECT xcom_key, value, content_type, size_bytes, created_at
+		   FROM xcom_store WHERE xcom_key = ANY($1) AND expires_at > now()`, keys)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading xcom from postgres: %w", err)
+	}
+	defer rows.Close()
+	byKey := make(map[string]Entry, len(keys))
+	for rows.Next() {
+		var k string
+		var e Entry
+		if serr := rows.Scan(&k, &e.Value, &e.ContentType, &e.SizeBytes, &e.CreatedAt); serr != nil {
+			return nil, nil, fmt.Errorf("reading xcom from postgres: %w", serr)
+		}
+		byKey[k] = e
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, nil, fmt.Errorf("reading xcom from postgres: %w", rerr)
+	}
+	for i, k := range keys {
+		entries[i], found[i] = byKey[k]
+	}
+	return entries, found, nil
+}
+
 // Delete removes the entry at key.
 func (b *PostgresBackend) Delete(ctx context.Context, key string) error {
 	if _, err := b.db.Exec(ctx, `DELETE FROM xcom_store WHERE xcom_key = $1`, key); err != nil {
