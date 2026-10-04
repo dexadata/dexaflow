@@ -419,6 +419,25 @@ type DatabaseSection struct {
 	URL          string `mapstructure:"url"`
 	MaxOpenConns int    `mapstructure:"max_open_conns"`
 	MaxIdleConns int    `mapstructure:"max_idle_conns"`
+	// SchedulerMaxConns, when positive, gives the scheduler loop, its reapers
+	// and its janitors a pool of their own with this many connections, so API
+	// traffic that saturates the main pool cannot stall a scheduler tick. Only
+	// a process with scheduler.enabled opens it. 0 (the default) keeps them on
+	// the main pool.
+	SchedulerMaxConns int `mapstructure:"scheduler_max_conns"`
+	// StatementTimeoutMS, when positive, sets statement_timeout on every
+	// connection of the main pool, which serves the API. It is never applied to
+	// the leader election pool (its session holds the scheduler's advisory
+	// lock), the health pool or the scheduler pool, and the few writes that
+	// cascade over a DAG's history lift it for their own transaction. Without a
+	// scheduler pool the scheduler shares the main pool and so the timeout too.
+	// 0 (the default) sets nothing.
+	StatementTimeoutMS int `mapstructure:"statement_timeout_ms"`
+	// ConnMaxLifetimeJitterMS, when positive, adds up to this much random time
+	// to each connection's lifetime in the main, scheduler and health pools, so
+	// replicas started together do not all reconnect at the same moment. 0 (the
+	// default) leaves the pgx default, or what the DSN sets.
+	ConnMaxLifetimeJitterMS int `mapstructure:"conn_max_lifetime_jitter_ms"`
 }
 
 // RedisSection configures the Redis connection.
@@ -750,6 +769,12 @@ var serverDefaults = map[string]any{
 	"database.url":            "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable",
 	"database.max_open_conns": 25,
 	"database.max_idle_conns": 5,
+	// Pool tuning, all off by default (0) so an install that sets none of them
+	// keeps one shared pool, no statement timeout and no lifetime jitter.
+	// Registered so the DEXAFLOW_/LEOFLOW_DATABASE_* variables bind.
+	"database.scheduler_max_conns":         0,
+	"database.statement_timeout_ms":        0,
+	"database.conn_max_lifetime_jitter_ms": 0,
 	// Empty by default: no Redis configured selects the embedded edition (Lite —
 	// XCom on Postgres, in-process log tailer, ADR 0026). Production sets this
 	// explicitly via the Helm chart (external Redis).
