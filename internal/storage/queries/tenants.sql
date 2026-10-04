@@ -36,6 +36,13 @@ JOIN tenants d ON d.id = p.tenant_id AND d.name = 'default'
 WHERE p.is_default
 ON CONFLICT (tenant_id, name) DO NOTHING;
 
+-- name: UpsertDefaultPoolSlots :exec
+-- Sizes a tenant's default pool to an explicit slot count: inserts it (named and
+-- described like the default tenant's) or re-sizes the one already there.
+INSERT INTO pools (tenant_id, name, slots, description, is_default)
+VALUES (sqlc.arg(tenant_id)::uuid, sqlc.arg(name), sqlc.arg(slots), 'Default pool', true)
+ON CONFLICT (tenant_id, name) DO UPDATE SET slots = EXCLUDED.slots, updated_at = now();
+
 -- name: ListTenantRolePermissions :many
 -- "role:action:resource" for every grant of a tenant's built-in roles.
 SELECT (r.name || ':' || p.action || ':' || p.resource)::text AS grant_key

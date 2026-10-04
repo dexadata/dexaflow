@@ -124,3 +124,22 @@ func (q *Queries) TenantHasDefaultPool(ctx context.Context, name string) (bool, 
 	err := row.Scan(&has_default)
 	return has_default, err
 }
+
+const upsertDefaultPoolSlots = `-- name: UpsertDefaultPoolSlots :exec
+INSERT INTO pools (tenant_id, name, slots, description, is_default)
+VALUES ($1::uuid, $2, $3, 'Default pool', true)
+ON CONFLICT (tenant_id, name) DO UPDATE SET slots = EXCLUDED.slots, updated_at = now()
+`
+
+type UpsertDefaultPoolSlotsParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	Name     string      `json:"name"`
+	Slots    int32       `json:"slots"`
+}
+
+// Sizes a tenant's default pool to an explicit slot count: inserts it (named and
+// described like the default tenant's) or re-sizes the one already there.
+func (q *Queries) UpsertDefaultPoolSlots(ctx context.Context, arg UpsertDefaultPoolSlotsParams) error {
+	_, err := q.db.Exec(ctx, upsertDefaultPoolSlots, arg.TenantID, arg.Name, arg.Slots)
+	return err
+}

@@ -612,6 +612,9 @@ type Querier interface {
 	// overwrite.
 	UpsertConnection(ctx context.Context, arg UpsertConnectionParams) error
 	UpsertDag(ctx context.Context, arg UpsertDagParams) (Dag, error)
+	// Sizes a tenant's default pool to an explicit slot count: inserts it (named and
+	// described like the default tenant's) or re-sizes the one already there.
+	UpsertDefaultPoolSlots(ctx context.Context, arg UpsertDefaultPoolSlotsParams) error
 	UpsertImportError(ctx context.Context, arg UpsertImportErrorParams) error
 	UpsertPool(ctx context.Context, arg UpsertPoolParams) error
 	// value is always supplied (the variable IS its value, and the `value` column is
