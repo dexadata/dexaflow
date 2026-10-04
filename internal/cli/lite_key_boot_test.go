@@ -96,7 +96,7 @@ func TestRemovePreRestoreAfterABoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	removePreRestore(&out, dir)
+	removePreRestore(&out, dir, keyState{})
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Errorf("%s survived a successful boot", p)
 	}
@@ -104,9 +104,35 @@ func TestRemovePreRestoreAfterABoot(t *testing.T) {
 		t.Errorf("the boot did not say what it removed: %q", out.String())
 	}
 	out.Reset()
-	removePreRestore(&out, dir)
+	removePreRestore(&out, dir, keyState{})
 	if out.Len() != 0 {
 		t.Errorf("nothing to remove must print nothing, got %q", out.String())
+	}
+}
+
+// ADR 0065 section 8, decided at acceptance: a boot whose scan found secrets
+// that the restored config's keys do not open (Stranded or Unreadable) keeps
+// config.yaml.pre-restore, since it may hold the key those secrets need.
+func TestPreRestoreKeptWhenTheBootScanIsNotClean(t *testing.T) {
+	for name, st := range map[string]keyState{
+		"stranded":   {stranded: 1},
+		"unreadable": {unreadable: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, preRestoreName)
+			if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			removePreRestore(&out, dir, st)
+			if _, err := os.Stat(p); err != nil {
+				t.Fatalf("%s was removed after a boot that is %s: %v", p, name, err)
+			}
+			if !strings.Contains(out.String(), "kept "+p) {
+				t.Errorf("the boot did not say it kept %s: %q", p, out.String())
+			}
+		})
 	}
 }
 
