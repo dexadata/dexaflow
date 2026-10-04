@@ -611,13 +611,19 @@ WHERE id = sqlc.arg(id)
 -- name: ListProvisionalInfraFailures :many
 -- Provisional infra marks for the reconciler's confirmation pass (ADR 0052
 -- amendment, part 2), oldest first. The LIMIT bounds one sweep's work; the
--- rest are picked up next sweep.
+-- rest are picked up next sweep. Only queued or running runs: the planner reads
+-- no other run, and the valve is shorter than the orphan threshold, so a mark
+-- of a finished run gates nothing. The join keeps this per-sweep query on
+-- idx_dag_runs_state and idx_ti_run instead of a scan of every failed task
+-- instance, and keeps old unconfirmed marks (a rollback window, marks written
+-- by a previous release) from filling the LIMIT ahead of live ones.
 SELECT ti.id AS task_instance_id,
        ti.dag_run_id,
        ti.task_id,
        ti.try_number,
        ti.attempt_epoch
 FROM task_instances ti
+JOIN dag_runs dr ON dr.id = ti.dag_run_id AND dr.state IN ('queued', 'running')
 WHERE ti.state = 'failed'
   AND ti.last_failure_kind = 'infra'
   AND ti.infra_confirmed_at IS NULL
