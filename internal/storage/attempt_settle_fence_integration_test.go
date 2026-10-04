@@ -151,12 +151,12 @@ func TestReaperMarksAreFencedOnTheEpoch(t *testing.T) {
 		if !found {
 			t.Fatalf("precondition: the queued TI is a dispatch-lost candidate")
 		}
-		if err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID, 1, cur.AttemptEpoch-1); err != nil {
-			t.Fatalf("MarkTaskDispatchLost: %v", err)
+		if applied, err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID, 1, cur.AttemptEpoch-1); err != nil || applied {
+			t.Fatalf("a stale MarkTaskDispatchLost must be a no-op: applied=%v err=%v", applied, err)
 		}
 		f.wantState(t, "a stale dispatch-lost mark", "queued")
-		if err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID, 1, cur.AttemptEpoch); err != nil {
-			t.Fatalf("MarkTaskDispatchLost: %v", err)
+		if applied, err := f.sched.MarkTaskDispatchLost(f.ctx, f.tiID, 1, cur.AttemptEpoch); err != nil || !applied {
+			t.Fatalf("the current MarkTaskDispatchLost must apply: applied=%v err=%v", applied, err)
 		}
 		f.wantState(t, "the current dispatch-lost mark", "failed")
 	})

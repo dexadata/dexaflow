@@ -65,9 +65,9 @@ func (f *fakeReaperStore) MarkTaskAgentLost(_ context.Context, tiID string, _, _
 func (f *fakeReaperStore) ListStaleQueuedCandidates(context.Context) ([]StaleQueuedCandidate, error) {
 	return f.queuedCands, nil
 }
-func (f *fakeReaperStore) MarkTaskDispatchLost(_ context.Context, tiID string, _, _ int) error {
+func (f *fakeReaperStore) MarkTaskDispatchLost(_ context.Context, tiID string, _, _ int) (bool, error) {
 	f.queuedMarked = append(f.queuedMarked, tiID)
-	return nil
+	return true, nil
 }
 func (f *fakeReaperStore) ListRunningTasks(context.Context, time.Duration) ([]PodLostCandidate, error) {
 	return f.runningCands, nil

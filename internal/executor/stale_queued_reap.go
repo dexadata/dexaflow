@@ -67,8 +67,13 @@ type DispatchLostReapStore interface {
 	ListStaleQueuedCandidates(ctx context.Context) ([]StaleQueuedCandidate, error)
 	// MarkTaskDispatchLost transitions one TI to `failed` with
 	// error_message='dispatch_lost'. The WHERE state='queued' guard makes
-	// this idempotent: a second call on a now-non-queued TI is a no-op.
-	MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error
+	// this idempotent: a second call on a now-non-queued TI is a no-op. It is
+	// pinned to the listed (tryNumber, attemptEpoch) and returns whether a row
+	// was actually updated: false means the row moved on between the list and
+	// this write (its agent reported RUNNING, or a dispatch claimed a new
+	// epoch), so the caller must NOT treat it as reaped (no false log, no pod
+	// delete).
+	MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
 
 // dispatchLostReaper is the scheduler-internal worker that fails TIs whose
@@ -196,10 +201,19 @@ func (r *dispatchLostReaper) reapOne(ctx context.Context, c StaleQueuedCandidate
 		r.record("dispatch_lost_gate_skip")
 		return
 	}
-	if ferr := r.store.MarkTaskDispatchLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch); ferr != nil {
+	applied, ferr := r.store.MarkTaskDispatchLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
+	if ferr != nil {
 		r.logger.Error("marking task dispatch-lost",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", ferr)
 		r.record("dispatch_lost_error")
+		return
+	}
+	if !applied {
+		// The row left the listed attempt between our list and our write: its
+		// agent reported RUNNING, or a dispatch claimed a new epoch. It is not
+		// ours to reap, and the attempt's pod may now be the row's live
+		// execution, so neither log a reap nor tear the pod down.
+		r.record("dispatch_lost_noop")
 		return
 	}
 	r.logger.Warn("task queued past dispatch threshold; failing as dispatch_lost",
@@ -207,7 +221,7 @@ func (r *dispatchLostReaper) reapOne(ctx context.Context, c StaleQueuedCandidate
 		"queued_at", c.QueuedAt)
 	r.record("dispatch_lost")
 	// Best-effort teardown of any lingering pod for this attempt (#474), pinned
-	// to (run, task, try). By here the presence read said no live pod exists (or
+	// to (run, task, try, epoch). By here the presence read said no live pod exists (or
 	// pods is nil), so this normally deletes nothing: a pod that materialized
 	// since the read is stopped, and a pod in a terminal phase is skipped by the
 	// teardown itself and left for the reconciler to settle (#928).

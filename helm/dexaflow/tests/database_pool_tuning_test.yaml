@@ -1,0 +1,58 @@
+suite: control-plane env for database pool tuning (scheduler pool, statement timeout, lifetime jitter)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+# The chart always deploys the Pro edition and refuses to render without agent
+# TLS (#459), so every case needs a cert pair.
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: renders none of the tuning env vars by default, so the pools stay as they were
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS
+          any: true
+
+  - it: renders each tuning value that is set
+    template: deployment.yaml
+    set:
+      database.schedulerMaxConns: 4
+      database.statementTimeoutMs: 30000
+      database.connMaxLifetimeJitterMs: 300000
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
+            value: "4"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
+            value: "30000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS
+            value: "300000"

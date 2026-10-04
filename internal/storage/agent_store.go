@@ -11,6 +11,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -391,8 +392,8 @@ var ErrNotDispatchable = errors.New("task instance is not in a dispatchable stat
 // ResolveTask returns the dispatcher's execution context for a run's task and
 // claims a fresh attempt epoch for the execution it is about to start (ADR 0051
 // amendment). Every call that succeeds moves the row's attempt_epoch forward,
-// so two dispatches of one try never share it. The agent's identity will be
-// minted from the returned value (A2); nothing reads it yet. A row past
+// so two dispatches of one try never share it. The agent's identity (A2) and
+// the pod's attempt-epoch label (A4) are minted from the returned value. A row past
 // dispatch is refused with ErrNotDispatchable and keeps its epoch.
 func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) (dispatch.Resolved, error) {
 	task, spec, ver, _, err := s.resolve(ctx, runID, taskID)
@@ -465,4 +466,34 @@ func (s *ExecutionStore) resolve(ctx context.Context, runID, taskID string) (dom
 	// already holds in its own token.
 	return domain.TaskSpec{}, domain.DAGSpec{}, queries.DagVersion{}, queries.DagRun{},
 		domain.Safef(domain.ErrNotFound, "task %q not found in run %q", taskID, runID)
+}
+
+// SettledRuns reports which of the given (tenant, run) pairs are settled: run
+// in success or failed and no task instance outside success, failed, skipped
+// and upstream_failed. It serves the reconciler's settled-run pod collection.
+// A pair that is not two UUIDs, names no such run, or names a run of another
+// tenant is left out, so its pods are never collected early.
+func (s *ExecutionStore) SettledRuns(ctx context.Context, refs []executor.RunRef) (map[executor.RunRef]bool, error) {
+	tenants := make([]pgtype.UUID, 0, len(refs))
+	runs := make([]pgtype.UUID, 0, len(refs))
+	for _, ref := range refs {
+		tid, terr := parseUUID(ref.Tenant)
+		rid, rerr := parseUUID(ref.Run)
+		if terr == nil && rerr == nil {
+			tenants = append(tenants, tid)
+			runs = append(runs, rid)
+		}
+	}
+	out := make(map[executor.RunRef]bool, len(runs))
+	if len(runs) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.ListSettledRunIDs(ctx, queries.ListSettledRunIDsParams{TenantIds: tenants, RunIds: runs})
+	if err != nil {
+		return nil, fmt.Errorf("listing settled runs: %w", err)
+	}
+	for _, row := range rows {
+		out[executor.RunRef{Tenant: uuidToString(row.TenantID), Run: uuidToString(row.ID)}] = true
+	}
+	return out, nil
 }
