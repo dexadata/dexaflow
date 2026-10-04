@@ -34,7 +34,7 @@ func writeStream(t *testing.T, sink Sink, r Ref, lines ...string) {
 	}
 }
 
-func readAll(t *testing.T, rc io.ReadCloser) string {
+func readBody(t *testing.T, rc io.ReadCloser) string {
 	t.Helper()
 	b, err := io.ReadAll(rc)
 	if err != nil {
@@ -46,8 +46,8 @@ func readAll(t *testing.T, rc io.ReadCloser) string {
 	return string(b)
 }
 
-// messages decodes a JSONL body into (stream, message) pairs, in order.
-func messages(body string) [][2]string {
+// streamMessages decodes a JSONL body into (stream, message) pairs, in order.
+func streamMessages(body string) [][2]string {
 	var out [][2]string
 	for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
 		if line == "" {
@@ -103,11 +103,11 @@ func TestReadAttemptsConcatenatesEveryExecutionOfATry(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			writeStream(t, sink, epochRef(1), "first-a", "first-b")
 			writeStream(t, sink, epochRef(2), "second-a")
-			rc, err := ReadAttempts(sink, ref(), []int{0, 1, 2})
+			rc, err := ReadAttempts(sink, ref(), TryEpochs{High: 2})
 			if err != nil {
 				t.Fatalf("ReadAttempts: %v", err)
 			}
-			got := messages(readAll(t, rc))
+			got := streamMessages(readBody(t, rc))
 			if len(got) != 5 {
 				t.Fatalf("want 2 system lines and 3 task lines, got %v", got)
 			}
@@ -136,11 +136,11 @@ func TestReadAttemptsServesALegacyLogUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := NewObjectSink(context.Background(), store, "", nil)
-	rc, err := ReadAttempts(sink, ref(), []int{0, 1, 2})
+	rc, err := ReadAttempts(sink, ref(), TryEpochs{High: 2})
 	if err != nil {
 		t.Fatalf("ReadAttempts: %v", err)
 	}
-	if got := readAll(t, rc); got != legacy {
+	if got := readBody(t, rc); got != legacy {
 		t.Errorf("a lone legacy stream must be served unchanged, got %q", got)
 	}
 }
@@ -152,11 +152,11 @@ func TestReadAttemptsTerminatesAStreamWithoutANewline(t *testing.T) {
 	store := newMemStore()
 	_ = store.Put(context.Background(), "acme/etl/run-1/extract/1.log", strings.NewReader(`{"stream":"stdout","msg":"cut"}`))
 	_ = store.Put(context.Background(), "acme/etl/run-1/extract/1.e1.log", strings.NewReader(`{"stream":"stdout","msg":"next"}`+"\n"))
-	rc, err := ReadAttempts(NewObjectSink(context.Background(), store, "", nil), ref(), []int{0, 1})
+	rc, err := ReadAttempts(NewObjectSink(context.Background(), store, "", nil), ref(), TryEpochs{High: 1})
 	if err != nil {
 		t.Fatalf("ReadAttempts: %v", err)
 	}
-	got := messages(readAll(t, rc))
+	got := streamMessages(readBody(t, rc))
 	if len(got) != 4 || got[1][1] != "cut" || got[3][1] != "next" {
 		t.Fatalf("want system, cut, system, next; got %v", got)
 	}
@@ -165,11 +165,11 @@ func TestReadAttemptsTerminatesAStreamWithoutANewline(t *testing.T) {
 // TestReadAttemptsNotFound: a try with no stored stream reports the sink's own
 // absence, so the API still answers 404.
 func TestReadAttemptsNotFound(t *testing.T) {
-	_, err := ReadAttempts(NewObjectSink(context.Background(), newMemStore(), "", nil), ref(), []int{0, 4})
+	_, err := ReadAttempts(NewObjectSink(context.Background(), newMemStore(), "", nil), ref(), TryEpochs{High: 4})
 	if !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("object sink: got %v, want ErrObjectNotFound", err)
 	}
-	_, err = ReadAttempts(NewDiskSink(t.TempDir()), ref(), []int{0, 4})
+	_, err = ReadAttempts(NewDiskSink(t.TempDir()), ref(), TryEpochs{High: 4})
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("disk sink: got %v, want os.ErrNotExist", err)
 	}
@@ -181,7 +181,7 @@ func TestReadAttemptsNotFound(t *testing.T) {
 func TestReadAttemptsPropagatesARealFailure(t *testing.T) {
 	store := newMemStore()
 	store.getErr = errors.New("throttled")
-	if _, err := ReadAttempts(NewObjectSink(context.Background(), store, "", nil), ref(), []int{0, 1}); err == nil || errors.Is(err, ErrObjectNotFound) {
+	if _, err := ReadAttempts(NewObjectSink(context.Background(), store, "", nil), ref(), TryEpochs{High: 1}); err == nil || errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("a store failure must propagate, got %v", err)
 	}
 }
@@ -194,11 +194,11 @@ func TestReadAttemptsSystemLineCarriesNoTimestamp(t *testing.T) {
 	sink := NewObjectSink(context.Background(), newMemStore(), "", nil)
 	writeStream(t, sink, epochRef(1), "first")
 	writeStream(t, sink, epochRef(2), "second")
-	rc, err := ReadAttempts(sink, ref(), []int{0, 1, 2})
+	rc, err := ReadAttempts(sink, ref(), TryEpochs{High: 2})
 	if err != nil {
 		t.Fatalf("ReadAttempts: %v", err)
 	}
-	first, _, _ := strings.Cut(readAll(t, rc), "\n")
+	first, _, _ := strings.Cut(readBody(t, rc), "\n")
 	if ev := DecodeLine(first); ev.Stream != "system" || !ev.Time.IsZero() {
 		t.Fatalf("system line = %+v, want stream system with a zero time", ev)
 	}
