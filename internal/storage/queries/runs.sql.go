@@ -1935,7 +1935,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1
+    WHERE src.dag_run_id = $3
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
@@ -1950,15 +1950,33 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1
+WHERE ti.dag_run_id = $3
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 `
 
+type ResetAllFailedTaskInstancesParams struct {
+	SpecRetries []int32     `json:"spec_retries"`
+	SpecTaskIds []string    `json:"spec_task_ids"`
+	DagRunID    pgtype.UUID `json:"dag_run_id"`
+}
+
 // Archives every failed attempt in the run into task_instance_history then
 // resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, dagRunID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, resetAllFailedTaskInstances, dagRunID)
+func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, resetAllFailedTaskInstances, arg.SpecRetries, arg.SpecTaskIds, arg.DagRunID)
 	if err != nil {
 		return 0, err
 	}
@@ -2005,7 +2023,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = $3 AND src.task_id = $4
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
@@ -2020,20 +2038,39 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.dag_run_id = $3 AND ti.task_id = $4
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 `
 
 type ResetFailedTaskInstanceParams struct {
-	DagRunID pgtype.UUID `json:"dag_run_id"`
-	TaskID   string      `json:"task_id"`
+	SpecRetries []int32     `json:"spec_retries"`
+	SpecTaskIds []string    `json:"spec_task_ids"`
+	DagRunID    pgtype.UUID `json:"dag_run_id"`
+	TaskID      string      `json:"task_id"`
 }
 
 // Archives the current attempt into task_instance_history then resets the
 // live row. See ResetTaskInstanceToNone for the per-attempt rationale.
 func (q *Queries) ResetFailedTaskInstance(ctx context.Context, arg ResetFailedTaskInstanceParams) (int64, error) {
-	result, err := q.db.Exec(ctx, resetFailedTaskInstance, arg.DagRunID, arg.TaskID)
+	result, err := q.db.Exec(ctx, resetFailedTaskInstance,
+		arg.SpecRetries,
+		arg.SpecTaskIds,
+		arg.DagRunID,
+		arg.TaskID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -2161,7 +2198,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = $3 AND src.task_id = $4
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
@@ -2177,13 +2214,27 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.dag_run_id = $3 AND ti.task_id = $4
 `
 
 type ResetTaskInstanceToNoneParams struct {
-	DagRunID pgtype.UUID `json:"dag_run_id"`
-	TaskID   string      `json:"task_id"`
+	SpecRetries []int32     `json:"spec_retries"`
+	SpecTaskIds []string    `json:"spec_task_ids"`
+	DagRunID    pgtype.UUID `json:"dag_run_id"`
+	TaskID      string      `json:"task_id"`
 }
 
 // Resets a TI for retry: snapshot the current per-attempt state into
@@ -2199,7 +2250,12 @@ type ResetTaskInstanceToNoneParams struct {
 // ResetTaskInstanceForRetry instead — do not add a guard here or clear-task
 // silently no-ops on non-up_for_retry tasks.
 func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error {
-	_, err := q.db.Exec(ctx, resetTaskInstanceToNone, arg.DagRunID, arg.TaskID)
+	_, err := q.db.Exec(ctx, resetTaskInstanceToNone,
+		arg.SpecRetries,
+		arg.SpecTaskIds,
+		arg.DagRunID,
+		arg.TaskID,
+	)
 	return err
 }
 

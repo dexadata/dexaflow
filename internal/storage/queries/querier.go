@@ -507,7 +507,7 @@ type Querier interface {
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
 	// Archives every failed attempt in the run into task_instance_history then
 	// resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-	ResetAllFailedTaskInstances(ctx context.Context, dagRunID pgtype.UUID) (int64, error)
+	ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) (int64, error)
 	// Clear with run_on_latest_version re-binds the run to the DAG's current
 	// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
 	// re-run after a code/yaml fix picks up the newest image and config — in dev that

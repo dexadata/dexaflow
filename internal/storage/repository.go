@@ -597,7 +597,11 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
-	cleared, err := r.resetTaskInstances(ctx, run.ID, taskIDs, onlyFailed)
+	budget, err := r.loadClearRetryBudget(ctx, dag, run, opts)
+	if err != nil {
+		return 0, err
+	}
+	cleared, err := r.resetTaskInstances(ctx, run.ID, taskIDs, onlyFailed, budget)
 	if err != nil {
 		return cleared, err
 	}
@@ -624,13 +628,16 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 }
 
 // resetTaskInstances applies the clear semantics: a specific task list, or (with
-// an empty list and onlyFailed) every failed task in the run.
-func (r *Repository) resetTaskInstances(ctx context.Context, runID pgtype.UUID, taskIDs []string, onlyFailed bool) (int, error) {
+// an empty list and onlyFailed) every failed task in the run. Each reset restores
+// the task's retry budget from budget.
+func (r *Repository) resetTaskInstances(ctx context.Context, runID pgtype.UUID, taskIDs []string, onlyFailed bool, budget clearRetryBudget) (int, error) {
 	if len(taskIDs) == 0 {
 		if !onlyFailed {
 			return 0, nil
 		}
-		n, err := r.q.ResetAllFailedTaskInstances(ctx, runID)
+		n, err := r.q.ResetAllFailedTaskInstances(ctx, queries.ResetAllFailedTaskInstancesParams{
+			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+		})
 		if err != nil {
 			return 0, fmt.Errorf("clearing failed tasks: %w", err)
 		}
@@ -639,14 +646,18 @@ func (r *Repository) resetTaskInstances(ctx context.Context, runID pgtype.UUID, 
 	cleared := 0
 	for _, taskID := range taskIDs {
 		if onlyFailed {
-			n, err := r.q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{DagRunID: runID, TaskID: taskID})
+			n, err := r.q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{
+				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+			})
 			if err != nil {
 				return cleared, fmt.Errorf("clearing failed task %q: %w", taskID, err)
 			}
 			cleared += int(n)
 			continue
 		}
-		if err := r.q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{DagRunID: runID, TaskID: taskID}); err != nil {
+		if err := r.q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
+			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+		}); err != nil {
 			return cleared, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
 		cleared++
