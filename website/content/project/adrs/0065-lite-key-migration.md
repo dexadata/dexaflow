@@ -10,7 +10,8 @@ description: "ADR 0065: An explicit, operator-triggered `dexaflow lite migrate-k
 **Target release:** v0.5.1.
 **Decided at acceptance:** (a) the Lite server exits when it loses its lock
 session (section 3); (b) `config.yaml.pre-restore` is deleted after the next
-successful boot (section 8).
+successful boot on a single-datastore install, and only by a clean
+`migrate-key` when both datastores are on disk (section 8).
 **Relates:** ADR 0019 (secret encryption at rest; this ADR narrows its "re-encrypt at startup" rule for Lite), ADR 0009 (Postgres advisory locks), ADR 0026, ADR 0029 and ADR 0030 (the Lite datastore, managed or Docker), ADR 0011 (strict TDD, which the test matrix below has to satisfy).
 **Issues:** #1263 (this decision), split from #486. #507 (Variables encrypted at rest) changes what the sweep has to cover. PR #1264 landed the per-install key for new installs and carried the three rejected attempts recorded below.
 
@@ -489,6 +490,12 @@ and that test forces it to.
   (section 5) reads every encrypted column under the keys that config
   records. A boot that ends in the Stranded state, or that fails before the
   scan, keeps the file, since it may hold the key the stranded rows need.
+  A boot scans only the datastore it starts, so when both the managed and the
+  Docker datastore are on disk (the Docker one counts as present when its
+  `dev/db-port` file is recorded) the boot keeps the file and says so, and
+  only a `migrate-key` run that scans every datastore and finishes clean
+  (including "already migrated") removes it. A dry run, a declined run or a
+  failed run keeps it.
   `restore` prints that the file is removed on the next successful boot, and
   the deletion is logged with the path. Until then it holds a key (unless
   the replaced install was Legacy), so it is created `0600` and owned like
@@ -600,9 +607,10 @@ read every connection, and print the Pending warning).
   finishes it. A `restore --force` whose replay fails leaves the current
   `config.yaml` in place.
 - `config.yaml.pre-restore`: present after a successful `restore`; deleted by
-  the next boot whose scan reads every encrypted column; kept by a boot that
-  ends Stranded or fails before the scan; absent from a later `backup`
-  archive.
+  the next boot whose scan reads every encrypted column on a single-datastore
+  install, or by a clean `migrate-key` when both datastores are on disk; kept
+  by a boot that ends Stranded or fails before the scan; absent from a later
+  `backup` archive.
 
 **Two datastores.**
 
