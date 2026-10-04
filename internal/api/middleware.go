@@ -183,6 +183,11 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
 		var unavailable error
 		for _, token := range tokens {
 			user, err := authn.Authenticate(c.Request.Context(), token)
+			if err == nil && user.TenantID == "" {
+				// A principal that names no tenant cannot be scoped. Treat it as
+				// an invalid token rather than serving it any tenant's data.
+				err = auth.ErrInvalidToken
+			}
 			if err == nil {
 				c.Set(contextKeyUser, user)
 				c.Next()

@@ -1,0 +1,12 @@
+kind: Security
+body: |-
+  **A request whose principal names no tenant is refused, not served from the
+  default tenant.** The API resolved the tenant of every tenant-scoped request
+  from the authenticated principal and, when that was missing or empty, fell
+  back to `default`. A token that authenticated without a `tenant_id` claim
+  therefore read and wrote the default tenant's DAGs, runs, connections and
+  users. Such a token is now rejected with `401`, and a handler reached without
+  a tenant resolves to no tenant at all, so its lookups find nothing. The
+  loopback-only `auth.dev_no_auth` mode names the default tenant explicitly and
+  is unchanged.
+time: 2026-10-04T14:00:00.000000000-03:00
