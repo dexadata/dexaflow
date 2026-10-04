@@ -43,12 +43,12 @@ func TestAttemptProcessAliveReadsTheRecordedPID(t *testing.T) {
 		t.Fatalf("live PID: AttemptProcessAlive = (%v, %v), want (true, nil)", alive, err)
 	}
 
-	exited := exec.Command("true")
-	if err := exited.Run(); err != nil {
-		t.Fatalf("running true: %v", err)
+	exited := exec.CommandContext(context.Background(), "true")
+	if runErr := exited.Run(); runErr != nil {
+		t.Fatalf("running true: %v", runErr)
 	}
-	if err := e.recordPID("run", "task", 2, exited.Process.Pid); err != nil {
-		t.Fatalf("recordPID: %v", err)
+	if recErr := e.recordPID("run", "task", 2, exited.Process.Pid); recErr != nil {
+		t.Fatalf("recordPID: %v", recErr)
 	}
 	alive, err = e.AttemptProcessAlive(context.Background(), "run", "task", 2)
 	if err != nil || alive {
@@ -101,8 +101,8 @@ func TestSubprocessExecuteRecordsAgentLiveness(t *testing.T) {
 		t.Fatalf("running agent: AttemptProcessAlive = (%v, %v), want (true, nil)", alive, err)
 	}
 
-	if err := os.WriteFile(release, []byte("go"), 0o600); err != nil {
-		t.Fatal(err)
+	if werr := os.WriteFile(release, []byte("go"), 0o600); werr != nil {
+		t.Fatal(werr)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {

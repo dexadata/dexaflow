@@ -2359,7 +2359,7 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
 	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
 	setWarmPlacer(dispatcher, warmPools)
-	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch)
+	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	var markers logs.MarkerSink
 	if ms, ok := logSink.(logs.MarkerSink); ok {
