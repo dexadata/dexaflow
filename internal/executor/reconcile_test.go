@@ -686,3 +686,22 @@ func TestReconcileSkipsUnparseableAttemptEpoch(t *testing.T) {
 		t.Fatalf("an unparseable epoch label must not settle, settled %v", reporter.settled)
 	}
 }
+
+// TestReconcileSettlesLegacyPodOnEpochZeroRow pins the upgrade path: a pod
+// created by a release without the attempt epoch carries no epoch label and
+// counts as epoch 0, so its record still settles a row no post-upgrade
+// dispatch has claimed (epoch 0), exactly as before the upgrade.
+func TestReconcileSettlesLegacyPodOnEpochZeroRow(t *testing.T) {
+	legacy := withRecord(managedPod("legacy", "ti-1", corev1.PodSucceeded), taskoutcome.Succeeded())
+	if _, has := legacy.Labels[podLabelAttemptEpoch]; has {
+		t.Fatalf("precondition: the legacy pod has no epoch label")
+	}
+	reporter := &epochFencingReporter{try: 1, epoch: 0}
+	r := NewReconciler(fake.NewClientset(legacy), "leoflow", reporter)
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(reporter.settled) != 1 || reporter.settled[0] != "success" {
+		t.Fatalf("an unlabeled pod must settle an epoch-0 row, settled %v", reporter.settled)
+	}
+}
