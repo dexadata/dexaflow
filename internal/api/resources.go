@@ -374,6 +374,10 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 		}
 		limit, offset := pagination(c)
 		states := c.QueryArray("state")
+		if raw := c.Query("cursor"); raw != "" {
+			listDagRunsByCursor(c, repo, raw, states, limit)
+			return
+		}
 		runs, total, err := listRunsFiltered(c, repo, states, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
@@ -384,6 +388,9 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 			out.DagRuns = append(out.DagRuns, toDagRunDTO(r))
 		}
 		setPaginationLinks(c, total, limit, offset)
+		if _, ok := repo.(DagRunPageReader); ok && len(runs) > 0 && offset+len(runs) < total {
+			setNextCursor(c, runCursor(runs[len(runs)-1]), false)
+		}
 		c.JSON(http.StatusOK, out)
 	}
 }

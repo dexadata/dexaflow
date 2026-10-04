@@ -90,10 +90,15 @@ func toEventLogDTO(e domain.AuditLogEntry) eventLogDTO {
 }
 
 // eventLogsHandler implements GET /api/v2/eventLogs (and the per-DAG Audit Log
-// tab via ?dag_id=). limit defaults to 50, capped at 1000.
+// tab via ?dag_id=). limit defaults to 50, capped at 1000. An optional cursor
+// replaces offset with keyset paging (see keyset_pagination.go).
 func eventLogsHandler(reader AuditLogReader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit := clampLimit(c.Query("limit"), 50, 1000)
+		if raw := c.Query("cursor"); raw != "" {
+			listAuditLogsByCursor(c, reader, raw, limit)
+			return
+		}
 		offset := atoiOr(c.Query("offset"), 0)
 		entries, total, err := reader.ListAuditLogs(c.Request.Context(), tenantOf(c), c.Query("dag_id"), limit, offset)
 		if err != nil {
@@ -103,6 +108,9 @@ func eventLogsHandler(reader AuditLogReader) gin.HandlerFunc {
 		out := eventLogCollectionDTO{EventLogs: make([]eventLogDTO, 0, len(entries)), TotalEntries: total}
 		for _, e := range entries {
 			out.EventLogs = append(out.EventLogs, toEventLogDTO(e))
+		}
+		if _, ok := reader.(AuditLogPageReader); ok && len(entries) > 0 && offset+len(entries) < total {
+			setNextCursor(c, auditCursor(entries[len(entries)-1]), false)
 		}
 		c.JSON(http.StatusOK, out)
 	}
