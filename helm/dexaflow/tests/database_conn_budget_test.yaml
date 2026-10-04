@@ -143,3 +143,20 @@ tests:
           pattern: "WARNING: the control plane opens 25 Postgres connections at boot"
       - notMatchRegexRaw:
           pattern: "migration Job"
+
+  # The dedicated scheduler pool counts on top of maxOpenConns. The chart cannot
+  # tell which pod runs the scheduler, so it counts it on every pod (an upper
+  # bound): 2 x (20 + 5 + 3) + 1 = 57.
+  - it: NOTES count database.schedulerMaxConns in the peak
+    template: NOTES.txt
+    set:
+      replicaCount: 2
+      database.schedulerMaxConns: 5
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - matchRegexRaw:
+          pattern: "NOTE: under load the control plane can grow to 57 Postgres connections"
+      - matchRegexRaw:
+          pattern: "2 pod\\(s\\) x \\(database.maxOpenConns=20 \\+ database.schedulerMaxConns=5 \\+ 3\\) \\+ 1 migration Job"

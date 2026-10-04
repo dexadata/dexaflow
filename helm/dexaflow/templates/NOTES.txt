@@ -100,7 +100,9 @@ enforcement. Verify on your CNI before relying on it.
 {{- end }}
 {{- /* Postgres connection budget (#1088). At boot pgxpool opens only its floor,
 database.maxIdleConns, per pod, plus 3 (2 health checks, 1 scheduler leader lock);
-under load each pod grows toward database.maxOpenConns + 3. Nothing scales either
+under load each pod grows toward database.maxOpenConns + 3, plus
+database.schedulerMaxConns on a pod that runs the scheduler (counted on every pod
+here, an upper bound). Nothing scales either
 by the replica count. The pod ceiling is the same one the logs PVC guard uses
 (replicaCount, autoscaling.maxReplicas with the HPA on, split api + scheduler).
 20 is the threshold: the smallest managed tiers cap max_connections near 25 and
@@ -111,7 +113,9 @@ chart cannot see the server's real max_connections. */ -}}
 {{- $connPods := include "leoflow.logMounterCeiling" . | int }}
 {{- $connJob := ternary 1 0 (.Values.migrations.enabled | default false) }}
 {{- $connBoot := add (mul $connPods (add (int .Values.database.maxIdleConns) 3)) $connJob }}
-{{- $connPeak := add (mul $connPods (add (int .Values.database.maxOpenConns) 3)) $connJob }}
+{{- $connSched := int (.Values.database.schedulerMaxConns | default 0) }}
+{{- $connPeak := add (mul $connPods (add (int .Values.database.maxOpenConns) $connSched 3)) $connJob }}
+{{- $connSchedText := ternary (printf " + database.schedulerMaxConns=%d" $connSched) "" (gt $connSched 0) }}
 {{- $connJobText := ternary " + 1 migration Job" "" (eq (int $connJob) 1) }}
 {{- if gt (int $connBoot) 20 }}
 
@@ -125,7 +129,7 @@ replicas, or use a larger server. See #1088.
 {{- if and (gt (int $connPeak) 20) (or (gt (int $connBoot) 20) (gt $connPods 1)) }}
 
 NOTE: under load the control plane can grow to {{ $connPeak }} Postgres connections:
-  {{ $connPods }} pod(s) x (database.maxOpenConns={{ .Values.database.maxOpenConns }} + 3){{ $connJobText }}
+  {{ $connPods }} pod(s) x (database.maxOpenConns={{ .Values.database.maxOpenConns }}{{ $connSchedText }} + 3){{ $connJobText }}
 Size the server's max_connections (minus its reserved slots) for that, or lower
 database.maxOpenConns. See #1088.
 {{- end }}
