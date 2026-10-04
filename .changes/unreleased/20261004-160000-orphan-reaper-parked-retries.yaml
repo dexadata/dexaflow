@@ -1,0 +1,12 @@
+kind: Fixed
+body: |-
+  **The orphan-run reaper no longer fails a run that is waiting on a retry or a
+  sensor reschedule.** It treated a run as abandoned when none of its task
+  instances was `scheduled`, `queued` or `running`, so a run whose only pending
+  task sat in `up_for_retry` (a `retry_delay` of 5 minutes or more) or
+  `up_for_reschedule` (a reschedule-mode sensor with a `poke_interval` of 5
+  minutes or more) was failed as `orphaned` before the retry or the next poke
+  could happen. Any task instance that is neither settled nor `none` now keeps
+  its run out of the reaper; a run whose tasks are all settled or never started
+  is still reaped after 5 minutes.
+time: 2026-10-04T16:00:00.000000000-03:00

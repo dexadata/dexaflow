@@ -259,16 +259,29 @@ type Querier interface {
 	ListFavoriteDagIDs(ctx context.Context, arg ListFavoriteDagIDsParams) ([]string, error)
 	ListImportErrors(ctx context.Context, tenant string) ([]ListImportErrorsRow, error)
 	// Lists dag_runs currently in 'running' whose task instances are ALL terminal
-	// or never-started (no TI in scheduled/queued/running), alongside the
-	// timestamp of their most recent observable activity. The "no active TI"
-	// filter is the critical safety guarantee: a legitimately-active task (slow
-	// image pull, long-running job) keeps its run out of the candidate set, so
-	// the reaper can never kill a live execution. The shape this catches is the
-	// post-crash one: TIs settled (success/failed/skipped/upstream_failed) but
-	// FinalizeRun did not transition the dag_run — e.g. the server died between
+	// or never-started (every TI in none/success/failed/skipped/upstream_failed),
+	// alongside the timestamp of their most recent observable activity. The "no
+	// live TI" filter is the critical safety guarantee: a run that is still
+	// progressing stays out of the candidate set, so the reaper can never kill a
+	// live execution. Live means any state outside that settled set, which covers
+	// a legitimately-active task (scheduled/queued/running: slow image pull,
+	// long-running job) AND a task parked for the scheduler to bring back
+	// (up_for_retry during its retry_delay, up_for_reschedule between sensor pokes,
+	// the reserved deferred state). Parked states stamp no fresh timestamp on entry,
+	// so last_activity cannot protect them: a retry_delay or poke_interval longer
+	// than the reaper threshold would otherwise fail a healthy run. Listing the
+	// settled states (rather than the live ones) keeps any future non-terminal
+	// state on the safe side by default. `none` stays reapable: a never-started TI
+	// whose upstreams are all settled is decided on the next scheduler tick, so one
+	// sitting there past the threshold is the stuck shape, and one whose upstream
+	// is still pending already has a live sibling keeping the run out. An
+	// infra-failed TI parked in its re-place backoff is `failed` and is covered by
+	// the threshold itself, which sits above that backoff. The shape this catches
+	// is the post-crash one: TIs settled (success/failed/skipped/upstream_failed)
+	// but FinalizeRun did not transition the dag_run, e.g. the server died between
 	// the last TI report and the next scheduler tick. The LIMIT bounds a single
-	// tick's reap work even after a multi-hour outage; the rest are picked up
-	// on the next tick (the reaper is a backstop, not a sprint).
+	// tick's reap work even after a multi-hour outage; the rest are picked up on
+	// the next tick (the reaper is a backstop, not a sprint).
 	ListOrphanCandidates(ctx context.Context) ([]ListOrphanCandidatesRow, error)
 	ListPools(ctx context.Context, arg ListPoolsParams) ([]ListPoolsRow, error)
 	// Lists every TI currently in `running` alongside the timestamp it entered
