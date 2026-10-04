@@ -183,6 +183,12 @@ type Store interface {
 	PoolBudgets(ctx context.Context) (map[string]int, error)
 	MaterializeTasks(ctx context.Context, runID string, tasks []domain.TaskSpec) error
 	ApplyTransition(ctx context.Context, runID, taskID string, to domain.TaskState) error
+	// MarkQueued is the scheduled -> queued write after an accepted dispatch,
+	// guarded to the slot the tick planned: still scheduled, with the
+	// next_dispatch_at the tick read. It reports false when the row moved on (a
+	// buffered dispatch worker already failed or re-offered the task, or the
+	// agent already reported), so that newer outcome is never overwritten.
+	MarkQueued(ctx context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error)
 	// ApplyTransitions moves every listed task of a run to the SAME target state
 	// in one statement — the batched form of calling ApplyTransition once per
 	// task. The scheduler groups a tick's plain state-set transitions
@@ -1169,7 +1175,7 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 		if err != nil {
 			return s.handleDispatchFailure(ctx, run, t.TaskID, disp, err)
 		}
-		return s.recordTransition(ctx, run, t.TaskID, domain.TaskStateQueued)
+		return s.recordQueued(ctx, run, t.TaskID)
 	}
 	return s.failUndispatchable(ctx, run, t.TaskID, task.Type)
 }
@@ -1274,6 +1280,29 @@ func (s *Scheduler) failUndispatchable(ctx context.Context, run RunState, taskID
 		s.logger.Warn("setting task note", "run", run.RunID, "task", taskID, "error", nerr)
 	}
 	return s.recordTransition(ctx, run, taskID, domain.TaskStateFailed)
+}
+
+// recordQueued writes scheduled -> queued after an accepted dispatch, guarded to
+// the slot this tick planned. With buffered dispatch the worker may already have
+// failed or re-offered the task, or the agent reported on it; the write then
+// touches nothing and no transition is recorded.
+func (s *Scheduler) recordQueued(ctx context.Context, run RunState, taskID string) error {
+	applied, err := s.store.MarkQueued(ctx, run.RunID, taskID, run.NextDispatchAt[taskID])
+	if err != nil {
+		return fmt.Errorf("applying transition for %s: %w", taskID, err)
+	}
+	if !applied {
+		s.logger.Debug("queued write superseded; the task already moved on", "run", run.RunID, "task", taskID)
+		if s.recorder != nil {
+			s.recorder.RecordSchedulerDecision("queued_superseded")
+		}
+		return nil
+	}
+	if s.recorder != nil {
+		s.recorder.RecordSchedulerDecision(string(domain.TaskStateQueued))
+		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateQueued), run.DagID)
+	}
+	return nil
 }
 
 // recordTransition persists a task transition and records its metrics.

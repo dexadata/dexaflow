@@ -2722,8 +2722,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 // BufferSize > 0 the inner dispatcher is fronted by the worker pool (#127);
 // when BufferSize == 0 the inner dispatcher is used directly (Lite). The
 // caller passes a FailureSink (typically the SchedulerStore) so worker-side
-// dispatch failures fail the TI with a clear reason instead of leaving it
-// stuck `queued`.
+// dispatch failures are re-offered or fail the TI with a clear reason instead
+// of leaving it stuck `queued`.
 // The io.Closer is non-nil only in buffered mode; the caller defers Close() on
 // shutdown so in-flight dispatches drain (workers finish or fail via the sink)
 // instead of leaking goroutines and leaving TIs stuck `queued` (#133).
@@ -2732,6 +2732,12 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 		// Passthrough: keep the inner dispatcher exposed verbatim so the
 		// scheduler sees the same surface it always did in Lite. No pool to close.
 		return inner, nil
+	}
+	// A store that can re-offer (the SchedulerStore) gets the scheduler's
+	// failure policy, so a worker-side dispatch failure is retried like a
+	// synchronous one instead of failing the task at once.
+	if st, ok := sink.(scheduler.AsyncDispatchStore); ok {
+		sink = scheduler.NewAsyncDispatchFailures(st, logger)
 	}
 	bd := dispatch.NewBuffered(inner, sink, logger, metrics, dispatch.BufferConfig{
 		BufferSize: cfg.BufferSize,

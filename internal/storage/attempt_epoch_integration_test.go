@@ -89,6 +89,12 @@ func epochRails() []struct {
 				t.Fatalf("RequeueForRedispatch: %v", err)
 			}
 		}},
+		{"buffered dispatch requeue", func(t *testing.T, f *staleHeartbeatFixture) {
+			f.setState(t, "queued")
+			if ok, err := f.sched.RequeueDispatch(f.ctx, f.runUUID, "t", true, time.Now()); err != nil || !ok {
+				t.Fatalf("RequeueDispatch ok=%v err=%v", ok, err)
+			}
+		}},
 		{"dispatch failure", func(t *testing.T, f *staleHeartbeatFixture) {
 			f.setState(t, "scheduled")
 			if err := f.sched.RecordDispatchFailure(f.ctx, f.runUUID, "t", time.Now()); err != nil {
@@ -135,6 +141,9 @@ func TestAttemptEpochUnchangedWhenRailGuardMisses(t *testing.T) {
 	}
 	if err := f.sched.RecordDispatchFailure(f.ctx, f.runUUID, "t", time.Now()); err != nil {
 		t.Fatalf("RecordDispatchFailure: %v", err)
+	}
+	if ok, err := f.sched.RequeueDispatch(f.ctx, f.runUUID, "t", true, time.Now()); err != nil || ok {
+		t.Fatalf("RequeueDispatch on a running row: ok=%v err=%v", ok, err)
 	}
 	if after := f.attemptEpoch(t); after != before {
 		t.Errorf("a rail whose guard missed must not move attempt_epoch: before=%d after=%d", before, after)
