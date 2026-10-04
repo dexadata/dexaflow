@@ -755,9 +755,10 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 		return serr
 	}
 	defer func() { _ = server.Process.Signal(syscall.SIGTERM) }() //nolint:errcheck // best-effort shutdown of the dev server
+	ctx, serverExited := superviseServer(ctx, server)
 
 	if werr := waitForReady(ctx, uiURL); werr != nil {
-		return werr
+		return firstErr(serverExited(), werr)
 	}
 	removePreRestoreAfterBoot(out)
 	announceReady(out, o.host, o.port, o.adminEmail, ws.Path, countRegisteredDags(ctx))
@@ -782,7 +783,19 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	}
 	del := makeDeleteDag(mintToken, uiURL, home, logf)
 	boot := makeBootReconcile(mintToken, uiURL, ws.Path, projectDagIDs(ws), del, logf)
-	return devWatchLoop(ctx, cmd, ws, makeReload(mintToken), del, boot)
+	// The loop ends when ctx does; only then can serverExited say why.
+	lerr := devWatchLoop(ctx, cmd, ws, makeReload(mintToken), del, boot)
+	return firstErr(serverExited(), lerr)
+}
+
+// firstErr returns the first non-nil error.
+func firstErr(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // makeDeleteDag returns a callback the Lite watcher calls when it notices a

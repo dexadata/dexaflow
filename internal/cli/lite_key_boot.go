@@ -238,3 +238,33 @@ func removePreRestore(out io.Writer, stateDir string) {
 	}
 	devPrintf(out, "  removed %s (the config a restore replaced) now that Lite started with the restored one\n", p)
 }
+
+// errServerExited reports that the control plane `dexaflow lite` supervises
+// stopped on its own.
+var errServerExited = errors.New("the control plane stopped")
+
+// superviseServer returns a context that is canceled when the server process
+// exits, and a function that reports that exit (nil when the context ended
+// for another reason, such as Ctrl-C). `dexaflow lite` holds its key-migration
+// lock until the server it supervises exits (ADR 0065 section 3): a server that
+// stopped because it lost its lock session stops `dexaflow lite` with it,
+// rather than leaving it watching files for a control plane that is gone.
+//
+// It waits on the process, so the caller must not call server.Wait itself.
+func superviseServer(ctx context.Context, server *exec.Cmd) (supervised context.Context, exited func() error) {
+	sctx, cancel := context.WithCancelCause(ctx)
+	go func() {
+		werr := server.Wait()
+		if werr == nil {
+			werr = errors.New("exit status 0")
+		}
+		cancel(fmt.Errorf("%w (%w); see its log above", errServerExited, werr))
+	}()
+	exited = func() error {
+		if cause := context.Cause(sctx); errors.Is(cause, errServerExited) {
+			return cause
+		}
+		return nil
+	}
+	return sctx, exited
+}

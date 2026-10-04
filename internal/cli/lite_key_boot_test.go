@@ -131,7 +131,7 @@ func TestManagedCleanupOnlyStopsWhatItStarted(t *testing.T) {
 // lost its lock session must stop `dexaflow lite` too, instead of leaving it
 // watching files for a control plane that is gone.
 func TestSuperviseServerStopsWithTheServer(t *testing.T) {
-	srv := exec.Command("sh", "-c", "exit 3")
+	srv := exec.CommandContext(context.Background(), "sh", "-c", "exit 3")
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestSuperviseServerStopsWithTheServer(t *testing.T) {
 
 // A stop the operator asked for (Ctrl-C) is not reported as the server exiting.
 func TestSuperviseServerIgnoresAnOperatorStop(t *testing.T) {
-	srv := exec.Command("sleep", "30")
+	srv := exec.CommandContext(context.Background(), "sleep", "30")
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
