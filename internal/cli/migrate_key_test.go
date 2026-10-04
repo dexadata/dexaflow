@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,5 +60,36 @@ func TestMigrateKeyDeclinedPromptWritesNothing(t *testing.T) {
 	raw, _ := os.ReadFile(cfg)
 	if string(raw) != "workspace: /w\n" {
 		t.Errorf("config changed after a declined prompt: %q", raw)
+	}
+}
+
+// The datastores migrate-key brought up are stopped BEFORE the config lock is
+// released (ADR 0065 section 3, "leave the cluster as found"): a `dexaflow
+// lite` waiting on that lock must not go on against a cluster that is being
+// stopped under it.
+func TestMigrateKeyLeavesItsDatastoresBeforeReleasingTheConfigLock(t *testing.T) {
+	dir := t.TempDir()
+	key := strings.Repeat("ab", 32)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("secret_key: "+key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var left bool
+	var lockErr error
+	r := &migrateKeyRun{stateDir: dir, yes: true, leave: func() {
+		left = true
+		release, err := lockConfigDir(dir, configLockShared, false)
+		if err == nil {
+			release()
+		}
+		lockErr = err
+	}}
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("an already migrated install must exit 0: %v", err)
+	}
+	if !left {
+		t.Fatal("run did not leave its datastores")
+	}
+	if !errors.Is(lockErr, errConfigLocked) {
+		t.Errorf("the config lock was free while the datastores were being left (err=%v)", lockErr)
 	}
 }
