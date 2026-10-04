@@ -556,12 +556,22 @@ predicate so the legacy path below is a strict narrowing of today's.
 - **Logs and history.** `logs.Ref` gains `AttemptEpoch`. The key stays
   `{try}.log` for epoch 0, so every log written before the upgrade is still
   found, and becomes `{try}.e{epoch}.log` otherwise. `task_instance_history`
-  gains `attempt_epoch` and its unique constraint becomes
-  `(task_instance_id, try_number, attempt_epoch)`. The Airflow-compatible tries
-  and logs endpoints still address a **try**: they collapse a try's epochs into
-  one entry (the latest epoch's state) and serve its log as the epochs'
-  streams in order, each preceded by one system line naming the re-place. The
-  per-epoch rows are what a native attempts view reads (#863).
+  gains `attempt_epoch`, which every archive writes. Its unique key stays
+  `(task_instance_id, try_number)` in the release that ships the fence: the
+  previous release archives with `ON CONFLICT (task_instance_id, try_number)`,
+  and Postgres refuses that statement once no unique index has exactly those
+  columns, so swapping the key would break every retry, re-place and clear of
+  an old binary during the rolling upgrade (the migration hook runs first) and
+  after a rollback. The swap to `(task_instance_id, try_number, attempt_epoch)`
+  is the contract half of an expand-contract change and ships with PR A6, when
+  no binary older than the fence can run against the schema. Until then a
+  try's second and later executions are not archived as separate rows. The
+  Airflow-compatible tries and logs endpoints still address a **try**: they
+  collapse a try's epochs into one entry (the latest epoch's state) and serve
+  its log as the epochs' streams in order, each preceded by one system line
+  naming the re-place; neither needs per-epoch rows, because the log reader
+  finds the epochs' streams by key. The per-epoch rows are what a native
+  attempts view reads (#863), once the key is swapped.
 - **The outcome record.** See the ADR 0052 amendment: the record carries the
   epoch for transport independence, but on the dedicated-pod path the
   reconciler fences on the **label**, which the control plane wrote and the
@@ -586,12 +596,40 @@ superseded legacy attempt. The one residual case is two legacy attempts that
 already aliased one row before the upgrade (today's bug); they stay
 indistinguishable until that row's next dispatch, exactly as today.
 
+The epoch-0 rule applies to the writes that can settle or move the row:
+`ReportTaskResult`, `RescheduleTaskInstance`, and the warm `BindWarmAttempt`
+and `RequeueForRedispatch` (which always carry an epoch). The heartbeat
+(`RecordTaskHeartbeat`) and the secret liveness read (`IsTaskInstanceLive`)
+match a claim-less token on `try_number` alone and an epoch-carrying token
+exactly:
+
+```sql
+AND try_number = $3
+AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_epoch)::int)
+```
+
+A claim-less token is not always a pre-upgrade one. During a rolling upgrade
+an old replica that renews a new token, or performs the projected-token
+exchange, mints it without the claim it does not know. Fencing its heartbeat
+would tell a live post-upgrade attempt to terminate on its next beat and
+reaping it would re-place it, once per stripped token. Matching heartbeats on
+the try keeps such an attempt alive and resolving its secrets; only its
+terminal report is fenced, so the worst case is one redundant re-place when it
+finishes, never a wrong outcome. #911 stays closed because the superseded
+agent's RUNNING report is fenced (the agent starts user code only after it is
+acknowledged), and #1130 stays closed because the reconciler fences on the pod
+label, not on the token. The cost is that a superseded legacy agent's
+heartbeats keep the replacement's `last_heartbeat_at` fresh until that agent's
+next report tells it to terminate.
+
 ### Rollout and compatibility
 
-- **Migration.** One additive migration (027 on current `main`; renumber if a
-  concurrent migration lands first): the two columns with `DEFAULT 0`, the
-  unique-constraint swap on history (safe, since `(id, try)` was already
-  unique), and nothing else. Down drops them. No backfill.
+- **Migration.** One additive, expand-only migration (038; renumber if a
+  concurrent migration lands first): the two columns with `DEFAULT 0` and
+  nothing else, history first and `task_instances` last so its ACCESS
+  EXCLUSIVE lock is held for the shortest time, under a `lock_timeout`. Down
+  drops them. No backfill. The history key swap waits for PR A6 (see Logs and
+  history above).
 - **In-flight attempts at upgrade.** They hold legacy tokens and run in
   unlabeled pods on rows at epoch 0, so they report, heartbeat, resolve
   secrets and get settled exactly as today. If one of them is reaped and
@@ -608,7 +646,15 @@ indistinguishable until that row's next dispatch, exactly as today.
   one redundant infra re-place for that attempt, never a wrong outcome. An old
   leader also resets and re-places without bumping; the next dispatch by a new
   leader claims a fresh epoch, so that window adds no aliasing beyond today's.
-  The same holds after a rollback followed by a second upgrade.
+  The same holds after a rollback followed by a second upgrade. A second
+  degraded cell is an **old replica re-minting a new token**: a renewal or a
+  projected-token exchange served by an old replica drops the claim. The
+  attempt keeps heartbeating and resolving secrets (the heartbeat and liveness
+  rule above), but its terminal report is read as epoch 0 and fenced, so it is
+  told to terminate when it finishes and is re-placed once. Both cells last
+  only while old replicas serve agent RPCs: HA installs should finish the
+  rollout promptly, or scale the control plane to one replica for the upgrade,
+  to avoid redundant re-placements (`website/content/operate/upgrades.md`).
 - **Retiring legacy tokens.** The release that ships the fence accepts legacy
   tokens under the epoch-0 rule and meters them
   (`agent_legacy_attempt_token_total`). The next minor release rejects a
@@ -616,8 +662,10 @@ indistinguishable until that row's next dispatch, exactly as today.
   the absence, so with `auth.max_attempt_credential_lifetime` enabled no
   legacy token outlives that ceiling; operators who disabled it are told so in
   the release notes.
-- **Rollback.** The old binary ignores the column and the claim; behavior
-  returns to today's. The down migration is only needed to reclaim the column.
+- **Rollback.** The old binary ignores the columns and the claim, and its
+  archive statements still find their `(task_instance_id, try_number)` key, so
+  behavior returns to today's without running the down migration, which is
+  only needed to reclaim the columns.
 
 ### Consequences
 
@@ -659,8 +707,8 @@ tokens.
   every rail listed above bumps `attempt_epoch`; `ResolveTask` claims it.
   Tests: one integration test per rail asserting the epoch strictly
   increases, including two dispatches of one row with no reset between them;
-  migration up/down/up test; history keeps both rows for two infra
-  re-places on one try.
+  migration up/down/up test, including the previous release's archive
+  statement running against the migrated schema.
 - **PR A2: token claim.** `agentClaims`, `AgentIdentity`, mint, renew,
   dispatch, exchange annotation and resolver, `WorkAssignment` and `TaskSpec`
   proto fields. Tests in `internal/auth`: round trip; renewal preserves absent,
@@ -688,6 +736,9 @@ tokens.
   attempts on one try produce two objects and one tries entry whose log holds
   both streams in order; an epoch-0 object written before the change is still
   served.
-- **PR A6, a later minor release (not v0.5.1): reject legacy tokens.** Test: a task
-  token without the claim is `Unauthenticated`; a warm-worker credential is
-  unaffected.
+- **PR A6, a later minor release (not v0.5.1): reject legacy tokens and swap
+  the history key.** Test: a task token without the claim is
+  `Unauthenticated`; a warm-worker credential is unaffected. The migration
+  swaps `task_instance_history_unique` to `(task_instance_id, try_number,
+  attempt_epoch)` and the archive rails' `ON CONFLICT` target with it; test:
+  two infra re-places of one try keep two history rows.
