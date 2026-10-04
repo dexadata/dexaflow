@@ -20,6 +20,7 @@ func validateSchema(value []byte, schema map[string]any) error {
 		return fmt.Errorf("parsing schema: %w", err)
 	}
 	c := jsonschema.NewCompiler()
+	c.UseLoader(noRemoteRefs{})
 	if aerr := c.AddResource("xcom_schema.json", doc); aerr != nil {
 		return fmt.Errorf("loading schema: %w", aerr)
 	}
