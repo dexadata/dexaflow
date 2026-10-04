@@ -241,14 +241,22 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 	// Close stops waiting after cfg.DrainTimeout (#463).
 	// The disposition goes to a RetrySink, which re-offers backpressure and
 	// transient errors like the synchronous path does; a plain sink fails the TI.
+	// A policy refusal (ADR 0063) is the operator's rule working, not an
+	// infrastructure error, so it is logged as a refusal and not counted as an
+	// inner error; the RetrySink fails it at once, a plain sink fails the TI.
 	disp, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task) //nolint:contextcheck // worker intentionally detaches from the caller's ctx
 	if err == nil {
 		return
 	}
-	b.logger.Error("dispatch failed in worker",
-		"run", req.runID, "dag", req.dagID, "task", req.task.TaskID, "disposition", disp.String(), "error", err)
-	if b.metrics != nil {
-		b.metrics.RecordDispatchInnerError()
+	if disp == executor.Refused {
+		b.logger.Warn("executor policy refused the task; failing it",
+			"run", req.runID, "dag", req.dagID, "task", req.task.TaskID, "error", err)
+	} else {
+		b.logger.Error("dispatch failed in worker",
+			"run", req.runID, "dag", req.dagID, "task", req.task.TaskID, "disposition", disp.String(), "error", err)
+		if b.metrics != nil {
+			b.metrics.RecordDispatchInnerError()
+		}
 	}
 	if rs, ok := b.sink.(RetrySink); ok {
 		if herr := rs.HandleDispatchFailure(context.Background(), req.runID, req.task.TaskID, disp, err); herr != nil { //nolint:contextcheck // worker intentionally uses a fresh context for the failure report

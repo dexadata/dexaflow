@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -26,7 +27,9 @@ var ErrPolicyRefused = errors.New("refused by executor policy")
 // rules set a pod field regardless of the DAG; restrict rules refuse a task
 // whose value is not allowed and never clamp it. Every rule is optional, and a
 // nil or zero Policy changes nothing. Build one with ParsePolicy, which
-// validates it; the zero value of each rule means "no rule".
+// validates it and pre-parses the resource ceiling: a Policy built as a
+// literal ignores Resources.Max. The zero value of each rule means "no rule";
+// an empty but set list (allowed: []) allows nothing.
 type Policy struct {
 	// RuntimeClassName, when set, is forced on every task pod.
 	RuntimeClassName string `yaml:"runtime_class_name"`
@@ -72,8 +75,8 @@ type PlacementRule struct {
 }
 
 // MetadataRule restricts the pod labels and annotations a DAG declares
-// (execution.labels / execution.annotations). Dexaflow's own leoflow.io/* keys
-// are added by the executor and are not subject to it.
+// (execution.labels / execution.annotations). It applies to the DAG's keys
+// only; the labels and annotations the executor sets itself are not checked.
 type MetadataRule struct {
 	// AllowedLabelPrefixes, when set, lists the key prefixes a DAG label must
 	// start with. An empty list allows no DAG labels.
@@ -156,9 +159,15 @@ func (p *Policy) validate() error {
 // and uses a known operator and effect, so the policy cannot produce a pod the
 // apiserver rejects on every dispatch.
 func validateToleration(raw map[string]any) error {
-	t, ok := decodeStructured[corev1.Toleration](raw)
-	if !ok {
-		return errors.New("not a toleration")
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("not a toleration: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields() // a misspelled key must not silently widen the toleration
+	var t corev1.Toleration
+	if err := dec.Decode(&t); err != nil {
+		return fmt.Errorf("not a toleration: %w", err)
 	}
 	switch t.Operator {
 	case "", corev1.TolerationOpEqual, corev1.TolerationOpExists:
@@ -169,6 +178,15 @@ func validateToleration(raw map[string]any) error {
 	case "", corev1.TaintEffectNoSchedule, corev1.TaintEffectPreferNoSchedule, corev1.TaintEffectNoExecute:
 	default:
 		return fmt.Errorf("unknown effect %q", t.Effect)
+	}
+	// The apiserver's own rules, so a policy cannot make every pod invalid.
+	switch {
+	case t.Key == "" && t.Operator != corev1.TolerationOpExists:
+		return errors.New(`an empty key requires operator "Exists"`)
+	case t.Operator == corev1.TolerationOpExists && t.Value != "":
+		return errors.New(`operator "Exists" takes no value`)
+	case t.TolerationSeconds != nil && t.Effect != corev1.TaintEffectNoExecute:
+		return errors.New(`tolerationSeconds requires effect "NoExecute"`)
 	}
 	return nil
 }
@@ -187,7 +205,8 @@ func (p *Policy) IsZero() bool {
 }
 
 // RequiresDedicatedPod reports whether the policy forces a pod field a warm
-// worker does not carry (runtime class, placement, ServiceAccount). Until warm
+// worker does not carry (runtime class, placement, ServiceAccount, resource
+// limits). Until warm
 // pods apply the force rules themselves, such a policy keeps every task on the
 // dedicated pod path so a warm worker cannot become a way around it.
 func (p *Policy) RequiresDedicatedPod() bool {
@@ -195,7 +214,8 @@ func (p *Policy) RequiresDedicatedPod() bool {
 		return false
 	}
 	return p.RuntimeClassName != "" || p.ServiceAccount.Force != "" ||
-		len(p.Placement.NodeSelector) > 0 || len(p.Placement.Tolerations) > 0
+		len(p.Placement.NodeSelector) > 0 || len(p.Placement.Tolerations) > 0 ||
+		len(p.maxQuantities) > 0
 }
 
 // Apply enforces the policy on a dispatch request: force rules rewrite req,
@@ -233,6 +253,12 @@ func (p *Policy) Apply(req *Request) error {
 // refuse builds a refusal naming the field and value.
 func refuse(field, value, why string) error {
 	return fmt.Errorf("%w: %s %q %s", ErrPolicyRefused, field, value, why)
+}
+
+// refuseField builds a refusal naming only the field, for structured values
+// too long to be useful in a task note.
+func refuseField(field, why string) error {
+	return fmt.Errorf("%w: %s %s", ErrPolicyRefused, field, why)
 }
 
 // checkImage enforces images.allowed.
@@ -285,13 +311,13 @@ func (p *Policy) applyPlacement(ex *domain.Execution) error {
 	if rule.AllowDAGPlacement != nil && !*rule.AllowDAGPlacement {
 		switch {
 		case len(ex.NodeSelector) > 0:
-			return refuse("execution.node_selector", fmt.Sprint(ex.NodeSelector), "is set but placement.allow_dag_placement is false")
+			return refuseField("execution.node_selector", "is set but placement.allow_dag_placement is false")
 		case len(ex.Tolerations) > 0:
-			return refuse("execution.tolerations", fmt.Sprint(ex.Tolerations), "is set but placement.allow_dag_placement is false")
+			return refuseField("execution.tolerations", "is set but placement.allow_dag_placement is false")
 		case len(ex.Affinity) > 0:
-			return refuse("execution.affinity", fmt.Sprint(ex.Affinity), "is set but placement.allow_dag_placement is false")
+			return refuseField("execution.affinity", "is set but placement.allow_dag_placement is false")
 		case len(ex.TopologySpreadConstraints) > 0:
-			return refuse("execution.topology_spread_constraints", fmt.Sprint(ex.TopologySpreadConstraints), "is set but placement.allow_dag_placement is false")
+			return refuseField("execution.topology_spread_constraints", "is set but placement.allow_dag_placement is false")
 		}
 	}
 	if rule.AllowedPriorityClasses != nil && ex.PriorityClassName != "" &&
@@ -344,8 +370,9 @@ func checkPrefixes(field string, kv map[string]string, allowed *[]string) error 
 
 // applyResources enforces resources.max: any request or limit above the
 // ceiling, or one that does not parse, is refused; a capped resource with no
-// limit gets the ceiling. Limits are copied before being filled, so the DAG
-// spec's (possibly shared) value is never modified.
+// limit gets the ceiling, and an explicit zero request if it had none. Limits
+// and requests are copied before being filled, so the DAG spec's (possibly
+// shared) value is never modified.
 func (p *Policy) applyResources(r *domain.Resources) error {
 	if len(p.maxQuantities) == 0 {
 		return nil
@@ -365,55 +392,78 @@ func (p *Policy) applyResources(r *domain.Resources) error {
 	if r.Limits != nil {
 		limits = *r.Limits
 	}
-	for name, field := range quantityFields(&limits) {
-		if *field == "" {
-			if maxQ, ok := p.maxQuantities[name]; ok {
-				*field = maxQ.String()
-			}
+	requests := domain.ResourceQuantity{}
+	if r.Requests != nil {
+		requests = *r.Requests
+	}
+	reqFields := quantityFields(&requests)
+	filledRequest := false
+	for i, qf := range quantityFields(&limits) {
+		maxQ, capped := p.maxQuantities[qf.name]
+		if *qf.value != "" || !capped {
+			continue
+		}
+		*qf.value = maxQ.String()
+		// Kubernetes defaults a missing request to the limit, which would make
+		// the pod reserve the whole ceiling. A filled limit gets an explicit
+		// zero request instead, so the pod reserves only what it asked for.
+		if *reqFields[i].value == "" {
+			*reqFields[i].value = "0"
+			filledRequest = true
 		}
 	}
 	r.Limits = &limits
+	if filledRequest {
+		r.Requests = &requests
+	}
 	return nil
 }
 
 // checkCeiling compares one side (requests or limits) to the ceiling.
 func (p *Policy) checkCeiling(side string, q domain.ResourceQuantity) error {
-	for name, field := range quantityFields(&q) {
-		if *field == "" {
+	for _, qf := range quantityFields(&q) {
+		if *qf.value == "" {
 			continue
 		}
-		v, err := resource.ParseQuantity(*field)
+		v, err := resource.ParseQuantity(*qf.value)
 		if err != nil {
-			return refuse(side+"."+string(name), *field, "is not a valid quantity")
+			return refuse(side+"."+string(qf.name), *qf.value, "is not a valid quantity")
 		}
-		if maxQ, ok := p.maxQuantities[name]; ok && v.Cmp(maxQ) > 0 {
-			return refuse(side+"."+string(name), *field, "exceeds resources.max "+maxQ.String())
+		if maxQ, ok := p.maxQuantities[qf.name]; ok && v.Cmp(maxQ) > 0 {
+			return refuse(side+"."+string(qf.name), *qf.value, "exceeds resources.max "+maxQ.String())
 		}
 	}
 	return nil
 }
 
-// quantityFields maps each resource name to the field holding it.
-func quantityFields(q *domain.ResourceQuantity) map[corev1.ResourceName]*string {
-	return map[corev1.ResourceName]*string{
-		corev1.ResourceCPU:              &q.CPU,
-		corev1.ResourceMemory:           &q.Memory,
-		corev1.ResourceEphemeralStorage: &q.EphemeralStorage,
+// quantityField pairs a resource name with the field holding it.
+type quantityField struct {
+	name  corev1.ResourceName
+	value *string
+}
+
+// quantityFields lists each resource's field in a fixed order, so the first
+// refusal reported is always the same one.
+func quantityFields(q *domain.ResourceQuantity) [3]quantityField {
+	return [3]quantityField{
+		{corev1.ResourceCPU, &q.CPU},
+		{corev1.ResourceMemory, &q.Memory},
+		{corev1.ResourceEphemeralStorage, &q.EphemeralStorage},
 	}
 }
 
 // parseQuantities parses a ceiling; an unparseable value is an error.
 func parseQuantities(q domain.ResourceQuantity) (map[corev1.ResourceName]resource.Quantity, error) {
 	out := map[corev1.ResourceName]resource.Quantity{}
-	for name, field := range quantityFields(&q) {
-		if *field == "" {
+	for _, qf := range quantityFields(&q) {
+		if *qf.value == "" {
 			continue
 		}
-		v, err := resource.ParseQuantity(*field)
+		v, err := resource.ParseQuantity(*qf.value)
 		if err != nil {
-			return nil, fmt.Errorf("%s %q: %w", name, *field, err)
+			return nil, fmt.Errorf("%s %q: %w", qf.name, *qf.value, err)
 		}
-		out[name] = v
+		out[qf.name] = v
 	}
 	return out, nil
 }

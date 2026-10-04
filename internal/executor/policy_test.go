@@ -265,3 +265,71 @@ func TestPolicyRequiresDedicatedPod(t *testing.T) {
 		}
 	}
 }
+
+// TestPolicyFilledLimitDoesNotInflateTheRequest: Kubernetes defaults a missing
+// request to the limit, so a filled limit carries an explicit zero request and
+// the pod does not reserve the whole ceiling.
+func TestPolicyFilledLimitDoesNotInflateTheRequest(t *testing.T) {
+	p := mustPolicy(t, "resources:\n  max: {cpu: \"4\", memory: 16Gi}\n")
+	req := Request{Resources: domain.Resources{Requests: &domain.ResourceQuantity{CPU: "100m"}}}
+	if err := p.Apply(&req); err != nil {
+		t.Fatal(err)
+	}
+	pod := BuildPod(req)
+	got := pod.Spec.Containers[0].Resources
+	if q := got.Requests.Cpu(); q.String() != "100m" {
+		t.Errorf("cpu request = %s, want the declared 100m", q)
+	}
+	if q := got.Requests.Memory(); !q.IsZero() {
+		t.Errorf("memory request = %s, want an explicit 0 (not the 16Gi limit)", q)
+	}
+	if q := got.Limits.Memory(); q.String() != "16Gi" {
+		t.Errorf("memory limit = %s, want the 16Gi ceiling", q)
+	}
+}
+
+func TestParsePolicyRejectsTolerationsTheAPIServerRejects(t *testing.T) {
+	for name, tol := range map[string]string{
+		"empty key, Equal":          "{value: x, effect: NoSchedule}",
+		"Exists with a value":       "{key: a, operator: Exists, value: b}",
+		"seconds without NoExecute": "{key: a, operator: Exists, effect: NoSchedule, tolerationSeconds: 5}",
+		"misspelled key (efect)":    "{key: pool, value: tasks, efect: NoSchedule}",
+	} {
+		if _, err := ParsePolicy([]byte("placement:\n  tolerations:\n    - " + tol + "\n")); err == nil {
+			t.Errorf("%s: ParsePolicy accepted %s", name, tol)
+		}
+	}
+	if _, err := ParsePolicy([]byte("placement:\n  tolerations:\n    - {key: a, operator: Exists, effect: NoExecute, tolerationSeconds: 5}\n")); err != nil {
+		t.Errorf("a valid NoExecute toleration was rejected: %v", err)
+	}
+}
+
+func TestPolicyRefusalIsDeterministic(t *testing.T) {
+	p := mustPolicy(t, "resources:\n  max: {cpu: \"1\", memory: 1Gi}\n")
+	first := ""
+	for i := range 50 {
+		err := p.Apply(&Request{Resources: domain.Resources{Limits: &domain.ResourceQuantity{CPU: "2", Memory: "2Gi"}}})
+		if i == 0 {
+			first = err.Error()
+		} else if err.Error() != first {
+			t.Fatalf("refusal changed between calls: %q vs %q", first, err)
+		}
+	}
+	if !strings.Contains(first, "cpu") {
+		t.Errorf("refusal = %q, want the first field in order (cpu)", first)
+	}
+}
+
+func TestPolicyDoesNotWriteThroughTheDAGsPlacement(t *testing.T) {
+	p := mustPolicy(t, "placement:\n  node_selector: {pool: tasks}\n  tolerations: [{key: pool, operator: Exists}]\n")
+	dagSelector := map[string]string{"disk": "ssd"}
+	dagTols := make([]map[string]any, 1, 4) // spare capacity: an append would write into it
+	dagTols[0] = map[string]any{"key": "gpu", "operator": "Exists"}
+	req := Request{Execution: domain.Execution{NodeSelector: dagSelector, Tolerations: dagTols}}
+	if err := p.Apply(&req); err != nil {
+		t.Fatal(err)
+	}
+	if len(dagSelector) != 1 || dagTols[:2][1] != nil {
+		t.Errorf("Apply wrote through the DAG spec: selector=%v tolerations=%v", dagSelector, dagTols[:2])
+	}
+}

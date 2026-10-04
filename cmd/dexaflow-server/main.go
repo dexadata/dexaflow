@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -419,8 +418,17 @@ func validateStartup(cfg *config.ServerConfig) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if _, err := executorPolicy(cfg); err != nil {
+	policy, err := executorPolicy(cfg)
+	if err != nil {
 		return err
+	}
+	// Warm pods are created by the warm-pool reconciler from the DAG version's
+	// image with no runtime class, placement or resources, outside dispatch, so
+	// the policy cannot govern them yet (ADR 0063 step 3). Refuse the
+	// combination rather than let warm pods run what the policy forbids.
+	if !policy.IsZero() && cfg.Execution.WarmPoolsEnabled {
+		return errors.New("executor.policy cannot be combined with execution.warm_pools_enabled yet: " +
+			"warm pods are not subject to the policy (ADR 0063); turn one of them off")
 	}
 	return executor.ValidateResilienceLadder(resilienceLadder(cfg))
 }
@@ -2448,7 +2456,7 @@ func setupSubprocessDispatch(cfg *config.ServerConfig, sched *scheduler.Schedule
 	disp, closer := wrapBuffered(dispatcher, sink, logger, metrics, cfg.Scheduler.Dispatch)
 	sched.SetDispatcher(disp)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
-	if len(bytes.TrimSpace(cfg.Executor.Policy)) > 0 {
+	if p, perr := executorPolicy(cfg); perr == nil && !p.IsZero() {
 		// The policy governs task pods; the subprocess executor runs none.
 		logger.Warn("executor.policy is set but ignored by the subprocess executor (ADR 0063)")
 	}

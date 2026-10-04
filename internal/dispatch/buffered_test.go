@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,6 +26,7 @@ type recordingInner struct {
 	mu        sync.Mutex
 	calls     []string
 	err       error
+	disp      executor.Disposition // returned with err; zero means Rejected
 	delay     time.Duration
 	callCount atomic.Int64
 }
@@ -38,6 +40,9 @@ func (r *recordingInner) Dispatch(_ context.Context, _, _, _ string, task domain
 	r.calls = append(r.calls, task.TaskID)
 	r.mu.Unlock()
 	if r.err != nil {
+		if r.disp != executor.Dispatched {
+			return r.disp, r.err
+		}
 		return executor.Rejected, r.err
 	}
 	return executor.Dispatched, nil
@@ -442,5 +447,63 @@ func TestBuffered_WorkerFailureIsReofferedThroughARetrySink(t *testing.T) {
 				t.Errorf("the task was failed outright: %v", got)
 			}
 		})
+	}
+}
+
+// innerErrorCounter counts RecordDispatchInnerError calls.
+type innerErrorCounter struct{ innerErrors atomic.Int64 }
+
+func (*innerErrorCounter) RecordDispatchQueueDepth(int)         {}
+func (*innerErrorCounter) RecordDispatchAtCapacity()            {}
+func (*innerErrorCounter) RecordDispatchLatencySeconds(float64) {}
+func (c *innerErrorCounter) RecordDispatchInnerError()          { c.innerErrors.Add(1) }
+
+// TestBuffered_Async_PolicyRefusalFailsTheTIWithoutAnInnerError: a refusal by
+// the executor policy (ADR 0063) still fails the task with its reason, but is
+// not counted as an infrastructure error.
+func TestBuffered_Async_PolicyRefusalFailsTheTIWithoutAnInnerError(t *testing.T) {
+	inner := &recordingInner{err: errors.New("refused by executor policy: image"), disp: executor.Refused}
+	sink := &recordingSink{}
+	metrics := &innerErrorCounter{}
+	d := dispatch.NewBuffered(inner, sink, discardLogger(), metrics, dispatch.BufferConfig{BufferSize: 4, Workers: 1})
+	defer d.Close()
+
+	if _, err := d.Dispatch(context.Background(), "r1", "etl", "", domain.TaskSpec{TaskID: "refused"}); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(sink.snapshot()) == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := sink.snapshot()
+	if len(got) != 1 || got[0].taskID != "refused" || !strings.Contains(got[0].reason, "executor policy") {
+		t.Errorf("sink failed = %+v, want one failure naming the policy", got)
+	}
+	if n := metrics.innerErrors.Load(); n != 0 {
+		t.Errorf("inner errors recorded = %d, want 0 for a policy refusal", n)
+	}
+}
+
+// TestBuffered_PolicyRefusalReachesTheRetrySinkAsRefused: with a RetrySink the
+// refusal is handed over as Refused, which the scheduler fails at once, and is
+// not counted as an inner error.
+func TestBuffered_PolicyRefusalReachesTheRetrySinkAsRefused(t *testing.T) {
+	sink := &retrySink{}
+	metrics := &innerErrorCounter{}
+	bd := dispatch.NewBuffered(dispositionInner{disp: executor.Refused, err: errors.New("refused by executor policy: image")}, sink, discardLogger(), metrics,
+		dispatch.BufferConfig{BufferSize: 1, Workers: 1})
+	if _, err := bd.Dispatch(context.Background(), "r1", "etl", "v1", domain.TaskSpec{TaskID: "a"}); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if err := bd.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.handled) != 1 || sink.handled[0] != executor.Refused {
+		t.Errorf("handled = %v, want [refused]", sink.handled)
+	}
+	if n := metrics.innerErrors.Load(); n != 0 {
+		t.Errorf("inner errors recorded = %d, want 0 for a policy refusal", n)
 	}
 }

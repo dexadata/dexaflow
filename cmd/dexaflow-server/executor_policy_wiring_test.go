@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/config"
@@ -36,5 +37,26 @@ func TestValidateStartupRejectsAnInvalidExecutorPolicy(t *testing.T) {
 	cfg.Executor.Policy = []byte("resources:\n  max:\n    memory: lots\n")
 	if err := validateStartup(cfg); err == nil {
 		t.Error("validateStartup accepted an invalid executor.policy")
+	}
+}
+
+// TestValidateStartupRefusesPolicyWithWarmPools: warm pods are built outside
+// dispatch and are not subject to the policy yet, so the two cannot be on
+// together.
+func TestValidateStartupRefusesPolicyWithWarmPools(t *testing.T) {
+	cfg, err := config.LoadServer("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Auth.JWT.Secret = "set"
+	cfg.Execution.WarmPoolsEnabled = true
+	cfg.Auth.AgentTokenTransport = "exchange"
+	cfg.Auth.SecretLivenessMode = "enforce"
+	if err := validateStartup(cfg); err != nil {
+		t.Fatalf("warm pools without a policy must validate: %v", err)
+	}
+	cfg.Executor.Policy = []byte("images:\n  allowed: [registry.example.com/]\n")
+	if err := validateStartup(cfg); err == nil || !strings.Contains(err.Error(), "warm_pools_enabled") {
+		t.Errorf("validateStartup = %v, want a refusal naming warm_pools_enabled", err)
 	}
 }

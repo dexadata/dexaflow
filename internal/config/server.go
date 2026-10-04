@@ -1001,7 +1001,7 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		if err := decodeDottedOIDCMaps(configFile, &c); err != nil {
 			return nil, err
 		}
-		if err := decodeExecutorPolicy(configFile, &c); err != nil {
+		if err := decodeExecutorPolicy(configFile, v.IsSet("executor.policy"), &c); err != nil {
 			return nil, err
 		}
 	}
@@ -1044,14 +1044,21 @@ func decodeDottedOIDCMaps(configFile string, c *ServerConfig) error {
 	return nil
 }
 
-// decodeExecutorPolicy copies the executor.policy subtree of a YAML config file
-// verbatim into c.Executor.Policy (ADR 0063). Like the OIDC maps it bypasses
-// viper, whose "." key delimiter would split a node label such as
-// "kubernetes.io/os". A non-YAML config file carries no policy.
-func decodeExecutorPolicy(configFile string, c *ServerConfig) error {
+// decodeExecutorPolicy copies the executor.policy subtree of a YAML or JSON
+// config file into c.Executor.Policy (ADR 0063). Like the OIDC maps it
+// bypasses viper, whose "." key delimiter would split a node label such as
+// "kubernetes.io/os". The subtree is decoded generically first, which resolves
+// anchors and merge keys defined anywhere in the file, then re-encoded for
+// executor.ParsePolicy. A policy in a config file of any other format is an
+// error rather than a silently unenforced policy; set reports whether viper saw
+// one. A null or empty-string policy is no policy.
+func decodeExecutorPolicy(configFile string, set bool, c *ServerConfig) error {
 	switch strings.ToLower(filepath.Ext(configFile)) {
 	case ".yaml", ".yml", ".json", "":
 	default:
+		if set {
+			return fmt.Errorf("executor.policy is only read from a YAML or JSON config file, not %q", configFile)
+		}
 		return nil
 	}
 	data, err := os.ReadFile(configFile)
@@ -1060,16 +1067,16 @@ func decodeExecutorPolicy(configFile string, c *ServerConfig) error {
 	}
 	var raw struct {
 		Executor struct {
-			Policy yaml.Node `yaml:"policy"`
+			Policy any `yaml:"policy"`
 		} `yaml:"executor"`
 	}
 	if err = yaml.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("decoding executor.policy from config file %q: %w", configFile, err)
 	}
-	if raw.Executor.Policy.Kind == 0 {
+	if p := raw.Executor.Policy; p == nil || p == "" {
 		return nil
 	}
-	out, err := yaml.Marshal(&raw.Executor.Policy)
+	out, err := yaml.Marshal(raw.Executor.Policy)
 	if err != nil {
 		return fmt.Errorf("re-encoding executor.policy: %w", err)
 	}

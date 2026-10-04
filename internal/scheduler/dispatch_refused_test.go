@@ -37,3 +37,21 @@ func TestStepRefusedDispatchFailsAtOnce(t *testing.T) {
 		t.Errorf("a refusal must not back off: failures=%v backpressure=%v", store.dispatchFailures, store.dispatchBackpressure)
 	}
 }
+
+// TestAsyncRefusedDispatchFailsAtOnce: a refusal reported by a buffered
+// dispatch worker fails the task on its first attempt, like the synchronous
+// path, instead of being re-offered with a backoff.
+func TestAsyncRefusedDispatchFailsAtOnce(t *testing.T) {
+	st := &fakeAsyncStore{active: true}
+	h := NewAsyncDispatchFailures(st, quietLogger())
+	cause := fmt.Errorf("task a: %w: image \"evil.io/x:1\" is not in images.allowed", executor.ErrPolicyRefused)
+	if err := h.HandleDispatchFailure(context.Background(), "r1", "a", executor.Refused, cause); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.requeued) != 0 {
+		t.Errorf("a refusal was re-offered: %v", st.requeued)
+	}
+	if len(st.failed) != 1 || !strings.Contains(st.failNotes[0], "images.allowed") {
+		t.Errorf("failed = %v, want one failure naming the rule", st.failed)
+	}
+}

@@ -514,7 +514,8 @@ across clusters.
 An optional, operator-owned policy over the task pods a DAG asks for
 (ADR 0063, proposed in #1365). Off when absent: every pod
 is exactly what the DAG and the defaults above build. It is read only from the
-YAML config file named by `LEOFLOW_CONFIG`, because node labels carry dots and
+YAML or JSON config file named by `LEOFLOW_CONFIG` (a policy in a config file of
+another format fails startup), because node labels carry dots and
 the structure cannot travel as env vars, and an invalid policy (an unknown key,
 an unparseable quantity, a malformed toleration) fails startup.
 
@@ -549,12 +550,20 @@ defaults above, so the default ServiceAccount and the default resources are
 held to the policy too.
 
 - `resources.max` caps requests and limits. A capped resource with no limit
-  gets the ceiling as its limit, so no task pod is unbounded.
+  gets the ceiling as its limit and, when it also has no request, an explicit
+  request of `0` (Kubernetes would otherwise default the request to the limit
+  and reserve the whole ceiling).
 - `images.allowed`: an entry ending in `/` is a prefix; any other entry must
-  equal the image without its tag or digest.
-- A policy that forces the runtime class, the ServiceAccount or placement
-  sends every task to a dedicated pod, since warm workers do not carry those
-  fields yet.
+  equal the image without its tag or digest. Matching is literal: `python:3.12`
+  does not match `docker.io/library/python`, so list images the way DAGs
+  write them.
+- An unset list is no rule; an empty list (`allowed: []`) allows nothing.
+- Not covered yet: Dynamic Resource Allocation claims
+  (`execution.resource_claims`), which bypass `resources.max`, and
+  `execution.termination_grace_period_seconds`.
+- The policy cannot be combined with `execution.warm_pools_enabled` yet:
+  warm pods are built outside dispatch and are not subject to it, so the server
+  refuses to start with both.
 - The subprocess executor (`dexaflow lite`) runs no pods and ignores the
   policy.
 

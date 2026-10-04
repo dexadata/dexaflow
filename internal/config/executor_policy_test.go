@@ -55,3 +55,49 @@ func TestLoadServerWithoutAPolicyHasNone(t *testing.T) {
 		t.Errorf("no config file: policy = %q, err = %v", c.Executor.Policy, err)
 	}
 }
+
+// TestLoadServerResolvesAnchorsInThePolicy: an anchor defined outside the
+// policy subtree, and a merge key, resolve instead of failing startup.
+func TestLoadServerResolvesAnchorsInThePolicy(t *testing.T) {
+	c, err := LoadServer(writeServerConfig(t, `pools: &sel
+  kubernetes.io/os: linux
+base: &base
+  runtime_class_name: gvisor
+executor:
+  policy:
+    <<: *base
+    placement:
+      node_selector: *sel
+`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(c.Executor.Policy)
+	for _, want := range []string{"runtime_class_name: gvisor", "kubernetes.io/os: linux"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("policy YAML %q is missing %q", got, want)
+		}
+	}
+}
+
+func TestLoadServerTreatsANullOrEmptyPolicyAsNone(t *testing.T) {
+	for _, v := range []string{"null", `""`, "~"} {
+		c, err := LoadServer(writeServerConfig(t, "executor:\n  policy: "+v+"\n"), nil)
+		if err != nil || len(c.Executor.Policy) != 0 {
+			t.Errorf("policy: %s gave %q, %v; want no policy", v, c.Executor.Policy, err)
+		}
+	}
+}
+
+// TestLoadServerRefusesAPolicyInANonYAMLConfig: the policy is only decoded from
+// YAML or JSON, so one written in another format fails startup instead of
+// being silently ignored.
+func TestLoadServerRefusesAPolicyInANonYAMLConfig(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(p, []byte("[executor.policy]\nruntime_class_name = \"gvisor\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadServer(p, nil); err == nil || !strings.Contains(err.Error(), "executor.policy") {
+		t.Errorf("LoadServer = %v, want a refusal naming executor.policy", err)
+	}
+}
