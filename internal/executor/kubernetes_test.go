@@ -316,6 +316,39 @@ func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	}
 }
 
+// TestBuildPodDropsReservedPrefixMetadata asserts a DAG cannot put ANY key under
+// the executor-owned leoflow.io/ prefix on its task pod, not only the keys the
+// executor itself stamps. A dedicated task pod labeled leoflow.io/warm-worker=true
+// would be resolved as a warm worker by the token exchange and listed as one by
+// the warm-pool reconciler, so such keys are dropped while ordinary keys merge.
+func TestBuildPodDropsReservedPrefixMetadata(t *testing.T) {
+	req := sampleReq()
+	req.Execution.Labels = map[string]string{
+		"team":                      "data-eng",
+		"leoflow.io/warm-worker":    "true",
+		"leoflow.io/dag-version-id": "other-version",
+	}
+	req.Execution.Annotations = map[string]string{
+		"cost-center":               "1234",
+		"leoflow.io/agent-identity": `{"task_instance_id":"forged"}`,
+	}
+	pod := BuildPod(req)
+	for _, k := range []string{"leoflow.io/warm-worker", "leoflow.io/dag-version-id"} {
+		if v, ok := pod.Labels[k]; ok {
+			t.Errorf("DAG-declared reserved label %s=%q reached the pod", k, v)
+		}
+	}
+	if v, ok := pod.Annotations["leoflow.io/agent-identity"]; ok {
+		t.Errorf("DAG-declared reserved annotation leoflow.io/agent-identity=%q reached the pod", v)
+	}
+	if pod.Labels["team"] != "data-eng" || pod.Annotations["cost-center"] != "1234" {
+		t.Errorf("ordinary declared metadata not merged: labels=%v annotations=%v", pod.Labels, pod.Annotations)
+	}
+	if pod.Labels["leoflow.io/dag-id"] != "etl" || pod.Annotations["leoflow.io/task-instance-id"] != "ti-1" {
+		t.Errorf("Dexaflow's own metadata lost: labels=%v annotations=%v", pod.Labels, pod.Annotations)
+	}
+}
+
 func TestBuildPodMountsStagingVolume(t *testing.T) {
 	// Without a staging claim, no extra volume is added.
 	if vols := BuildPod(sampleReq()).Spec.Volumes; len(vols) != 0 {

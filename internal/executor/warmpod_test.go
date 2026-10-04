@@ -137,6 +137,29 @@ func TestBuildWarmPodStampsTenantLabel(t *testing.T) {
 	}
 }
 
+// TestBuildWarmPodDropsReservedPrefixMetadata asserts declared warm-pod metadata
+// cannot use the executor-owned leoflow.io/ prefix even for a key the warm pod
+// does not stamp itself: with no TenantID a declared leoflow.io/tenant-id would
+// otherwise attribute the pod to an arbitrary tenant for the M4 cap.
+func TestBuildWarmPodDropsReservedPrefixMetadata(t *testing.T) {
+	spec := baseWarmSpec()
+	spec.Labels = map[string]string{"team": "data-eng", "leoflow.io/tenant-id": "forged"}
+	spec.Annotations = map[string]string{"cost-center": "1234", "leoflow.io/agent-identity": "forged"}
+	pod := BuildWarmPod(spec)
+	if v, ok := pod.Labels[warmTenantLabelKey]; ok {
+		t.Errorf("declared reserved label %s=%q reached the warm pod", warmTenantLabelKey, v)
+	}
+	if v, ok := pod.Annotations["leoflow.io/agent-identity"]; ok {
+		t.Errorf("declared reserved annotation leoflow.io/agent-identity=%q reached the warm pod", v)
+	}
+	if pod.Labels["team"] != "data-eng" || pod.Annotations["cost-center"] != "1234" {
+		t.Errorf("ordinary declared metadata not merged: labels=%v annotations=%v", pod.Labels, pod.Annotations)
+	}
+	if pod.Labels[warmWorkerLabelKey] != warmWorkerLabelVal {
+		t.Errorf("warm-worker label lost: %v", pod.Labels)
+	}
+}
+
 // TestBuildWarmPodCarriesSelfLifecycleCaps locks the four self-lifecycle caps the
 // warm agent enforces on itself (ADR 0058 D9/D10/D6/H3): the attempt count cap, the
 // wall-clock lifetime cap (seconds), the idle-TTL (seconds), and the per-attempt
