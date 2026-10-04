@@ -103,6 +103,8 @@ func CORS(allowed []string) gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type")
+			// Paging headers a cross-origin client needs to walk a list.
+			c.Header("Access-Control-Expose-Headers", "Link,"+nextCursorHeader)
 		}
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
@@ -180,9 +182,18 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
 		// unavailable holds a backend failure seen while checking a candidate. A
 		// later candidate may still authenticate, so it only decides the answer
 		// once every candidate has been tried.
-		var unavailable error
+		var unavailable, tenantless error
 		for _, token := range tokens {
 			user, err := authn.Authenticate(c.Request.Context(), token)
+			if err == nil && user.TenantID == "" {
+				// A principal that names no tenant cannot be scoped. The
+				// authenticator already refuses one; this guard keeps any other
+				// Authenticator implementation to the same rule.
+				err = errors.Join(auth.ErrInvalidToken, auth.ErrTenantlessToken)
+			}
+			if errors.Is(err, auth.ErrTenantlessToken) {
+				tenantless = err
+			}
 			if err == nil {
 				c.Set(contextKeyUser, user)
 				c.Next()
@@ -203,7 +214,9 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
 			AbortProblemCause(c, http.StatusServiceUnavailable, "service unavailable", "authentication temporarily unavailable", unavailable)
 			return
 		}
-		AbortProblem(c, http.StatusUnauthorized, "unauthorized", "invalid token")
+		// The client hears the same "invalid token" either way; the log keeps the
+		// tenantless cause so an operator can tell it from a bad signature.
+		AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "invalid token", tenantless)
 	}
 }
 
