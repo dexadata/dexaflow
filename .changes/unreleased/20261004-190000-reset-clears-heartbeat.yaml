@@ -8,5 +8,5 @@ body: |-
   re-place on a task that was never lost. It hit the infra re-place after an
   `agent_lost`, an ordinary clear-and-rerun of a task that ran before, and a
   retry whose `retry_delay` exceeds about 75 seconds. Every rail that starts a
-  new execution now clears the heartbeat. (#1130)
+  new execution now clears the heartbeat. (#1391)
 time: 2026-10-04T19:00:00.000000000-03:00
