@@ -64,6 +64,11 @@ type Dependencies struct {
 	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
 	// JSON object at boot. Nil serves null, the stock look (#1289).
 	UITheme json.RawMessage
+	// UIETagRevalidation (ui.etag_revalidation) relaxes no-store to
+	// "private, no-cache" with Vary: Authorization, Cookie on the routes that
+	// compute an ETag, so the browser can revalidate them and get a 304. False
+	// (the default) keeps no-store on every UI route.
+	UIETagRevalidation bool
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
 	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
@@ -274,7 +279,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
-	registerUISummaries(r, deps.TaskSummary)
+	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
 	registerUITasks(r, deps.Specs)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)

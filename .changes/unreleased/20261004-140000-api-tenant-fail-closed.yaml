@@ -1,0 +1,14 @@
+kind: Security
+body: |-
+  **A principal that names no tenant is refused instead of falling back to the
+  default tenant.** Every tenant-scoped API handler resolved its tenant from
+  the authenticated principal and, when that was empty, used `default`. A
+  user loaded from the database always carries its tenant, so this only
+  reached tokens trusted from their signed claims (the local dev token, or a
+  server with no user store), but nothing stopped such a token from naming no
+  tenant. The authenticator now rejects it, at login, on every request and on
+  renewal, with a `401` whose server log says why; and a handler reached
+  without a tenant resolves to no tenant at all, so it finds nothing. The
+  loopback-only `auth.dev_no_auth` mode names the default tenant explicitly and
+  is unchanged.
+time: 2026-10-04T14:00:00.000000000-03:00

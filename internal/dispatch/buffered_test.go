@@ -389,3 +389,58 @@ func TestBuffered_Close_ReturnsWhenWorkerHangs(t *testing.T) {
 		t.Fatal("Close did not return within 3s while a worker was hung — shutdown would block until SIGKILL")
 	}
 }
+
+// dispositionInner fails every dispatch with a fixed disposition, as the real
+// executor classifies a quota 403 / 429 (Backpressure) or anything else
+// (Rejected).
+type dispositionInner struct {
+	disp executor.Disposition
+	err  error
+}
+
+func (d dispositionInner) Dispatch(context.Context, string, string, string, domain.TaskSpec) (executor.Disposition, error) {
+	return d.disp, d.err
+}
+
+// retrySink is a FailureSink that also handles worker failures the way the
+// scheduler handles synchronous ones.
+type retrySink struct {
+	recordingSink
+	mu      sync.Mutex
+	handled []executor.Disposition
+}
+
+func (r *retrySink) HandleDispatchFailure(_ context.Context, _, _ string, disp executor.Disposition, _ error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.handled = append(r.handled, disp)
+	return nil
+}
+
+// TestBuffered_WorkerFailureIsReofferedThroughARetrySink: a worker-side
+// dispatch failure carries its disposition to a sink that can re-offer it, so
+// cluster backpressure and transient errors are retried like on the
+// synchronous path instead of failing the task at once.
+func TestBuffered_WorkerFailureIsReofferedThroughARetrySink(t *testing.T) {
+	for _, disp := range []executor.Disposition{executor.Backpressure, executor.Rejected} {
+		t.Run(disp.String(), func(t *testing.T) {
+			sink := &retrySink{}
+			bd := dispatch.NewBuffered(dispositionInner{disp: disp, err: errors.New("dispatch failed")}, sink, discardLogger(), nil,
+				dispatch.BufferConfig{BufferSize: 1, Workers: 1})
+			if _, err := bd.Dispatch(context.Background(), "r1", "etl", "v1", domain.TaskSpec{TaskID: "a"}); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if err := bd.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			sink.mu.Lock()
+			defer sink.mu.Unlock()
+			if len(sink.handled) != 1 || sink.handled[0] != disp {
+				t.Errorf("handled = %v, want [%v]", sink.handled, disp)
+			}
+			if got := sink.snapshot(); len(got) != 0 {
+				t.Errorf("the task was failed outright: %v", got)
+			}
+		})
+	}
+}

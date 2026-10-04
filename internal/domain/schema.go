@@ -49,7 +49,7 @@ func validateParamSpec(name string, schema, def []byte) error {
 	if err != nil {
 		return fmt.Errorf("param %q: parsing schema: %w", name, err)
 	}
-	c := jsonschema.NewCompiler()
+	c := NewTenantSchemaCompiler()
 	if aerr := c.AddResource("param.json", doc); aerr != nil {
 		return fmt.Errorf("param %q: loading schema: %w", name, aerr)
 	}
