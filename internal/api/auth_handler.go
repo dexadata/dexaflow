@@ -73,6 +73,7 @@ func rateLimitByIPWith(limiter *auth.RateLimiter, blocked gin.HandlerFunc) gin.H
 		ip := c.ClientIP()
 		if limiter.Blocked(ip) {
 			blocked(c)
+			c.Abort() // a refusal must stop the chain even if blocked forgets to
 			return
 		}
 		limiter.Allow(ip)

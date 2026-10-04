@@ -632,14 +632,20 @@ Refusals set no cookie and answer `400` (no token), `401` (token rejected),
 `403` (origin not allowed, or no active linked user in that tenant), `429`
 (more than 30 posts a minute from one address) or `500`, with the reason in
 the server log and the audit trail (`issuer.login.success` /
-`issuer.login.failure`), never in the response.
+`issuer.login.failure`), never in the response body. With an external sign-in
+URL set, only a stable code reaches the browser, as described next.
 
 With `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` set, a refusal
 sends the browser back to that URL with `303 See Other` instead of leaving it
 on a JSON error page, with a stable `error` code appended to the URL's own
 query (`https://portal.example.com/sign-in?lang=pt-BR&error=user_not_linked`).
 Your page can show a message for the code; it must not post a new token on its
-own when `error` is present, or a lasting refusal becomes a redirect loop.
+own when `error` is present, or a lasting refusal becomes a redirect loop. The
+parameter is not authenticated: anyone can link to your page with any
+`?error=` value, so map the known codes below to fixed messages and never print
+the value back. An `error` parameter already in the configured URL is replaced,
+not duplicated. Request metrics and traces count a redirected refusal under the
+status it stands for (`dexaflow.refusal_status` on the span), not as a `303`.
 
 | Refusal | Without the URL | `error` with the URL |
 |---|---|---|

@@ -128,6 +128,9 @@ func TestIssuerSessionRefusalRedirectsToExternalSignIn(t *testing.T) {
 			if setsSessionCookie(rec) {
 				t.Errorf("a refused handoff set a session cookie: %q", rec.Header().Get("Set-Cookie"))
 			}
+			if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+				t.Errorf("redirect Cache-Control = %q, want no-store", cc)
+			}
 		})
 	}
 }
@@ -172,6 +175,8 @@ func TestIssuerSessionRefusalRedirectBuildsTheURL(t *testing.T) {
 		{"https://portal.example.com/login?next=%2Fhome%3Fx%3D1", "https://portal.example.com/login?next=%2Fhome%3Fx%3D1&error=origin_not_allowed"},
 		{"https://portal.example.com/login#top", "https://portal.example.com/login?error=origin_not_allowed#top"},
 		{"https://portal.example.com/login?a=1#top", "https://portal.example.com/login?a=1&error=origin_not_allowed#top"},
+		{"https://portal.example.com/login?error=old&a=1", "https://portal.example.com/login?a=1&error=origin_not_allowed"},
+		{"https://portal.example.com/login?error&a=1&error=x", "https://portal.example.com/login?a=1&error=origin_not_allowed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.signIn, func(t *testing.T) {

@@ -209,11 +209,16 @@ func (d issuerSessionDeps) refuseRateLimited(c *gin.Context) {
 func withError(target *url.URL, code string) string {
 	u := *target
 	param := "error=" + url.QueryEscape(code)
-	if u.RawQuery == "" {
-		u.RawQuery = param
-	} else {
-		u.RawQuery += "&" + param
+	// Keep the configured query byte for byte, minus any error parameter of its
+	// own, so the page never sees two and reads the stale one.
+	kept := make([]string, 0, 4)
+	for _, p := range strings.Split(u.RawQuery, "&") {
+		if p == "" || p == "error" || strings.HasPrefix(p, "error=") {
+			continue
+		}
+		kept = append(kept, p)
 	}
+	u.RawQuery = strings.Join(append(kept, param), "&")
 	u.ForceQuery = false
 	return u.String()
 }
