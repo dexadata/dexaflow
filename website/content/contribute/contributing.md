@@ -173,6 +173,16 @@ Changes to `internal/auth/`, `internal/executor/`, `internal/storage/`,
 accepted from first-time contributors** — open a discussion issue first.
 {{% /alert %}}
 
+### Migrations that change built-in roles
+
+A migration that adds, changes or revokes a built-in role or its permissions
+applies to every tenant: join `roles` on `is_system` across all tenants, not on
+`tenants.name = 'default'`. Tenants created through the service API copy the
+`default` ladder when they are created, so a change made to `default` alone
+never reaches them, and a revoked permission survives there.
+`migrations/role_tenant_guard_test.go` fails on a new migration that writes
+`roles` or `role_permissions` with a `name = 'default'` filter (#1305).
+
 ## 6. The CI gates
 
 Every PR runs, and must pass: the **build + unit/integration tests** with the
