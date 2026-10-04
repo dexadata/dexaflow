@@ -1,0 +1,9 @@
+kind: Security
+body: |-
+  **The Python 3.10 and 3.11 task base images no longer ship a vulnerable
+  setuptools.** Those `python:3.x-slim` images preinstall setuptools 79.0.1,
+  whose vendored `jaraco.context` 5.3.0 (CVE-2026-23949) and `wheel` 0.45.1
+  (CVE-2026-24049) were fixable HIGH findings in the image scan. The base image
+  now upgrades setuptools to 80.10.2 where the base already has it; the 3.12 and
+  3.13 images, which ship no setuptools, are unchanged. 80.10.2 still provides
+  `pkg_resources`. (#1299)
