@@ -108,9 +108,9 @@ func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*Use
 	if err != nil || !parsed.Valid {
 		return nil, errors.Join(ErrInvalidToken, err)
 	}
-	claimed := &User{ID: c.Subject, TenantID: c.TenantID, Email: c.Email, Roles: c.Roles}
+	claimed, cerr := claimsPrincipal(&c)
 	if a.store == nil {
-		return claimed, nil
+		return claimed, cerr
 	}
 	user, active, err := a.store.FindUserByID(ctx, c.Subject)
 	if err != nil {
@@ -121,7 +121,7 @@ func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*Use
 			// claimed roles until the token expires — deletion revokes at once, like
 			// is_active=false.
 			if c.Subject == DevTokenSubject {
-				return claimed, nil
+				return claimed, cerr
 			}
 			return nil, errors.Join(ErrInvalidToken, err)
 		}
@@ -233,6 +233,17 @@ func (a *JWTAuthenticator) RenewUserToken(ctx context.Context, token string, ttl
 	return renewed, true, nil
 }
 
+// claimsPrincipal builds the principal a token's signed claims describe, for
+// the branches that trust them (no store bound, or the dev-token subject). A
+// principal that names no tenant cannot be scoped, so it is refused as an
+// invalid token instead of being served some default tenant.
+func claimsPrincipal(c *jwtClaims) (*User, error) {
+	if c.TenantID == "" {
+		return nil, errors.Join(ErrInvalidToken, ErrTenantlessToken)
+	}
+	return &User{ID: c.Subject, TenantID: c.TenantID, Email: c.Email, Roles: c.Roles}, nil
+}
+
 // reloadForRenewal resolves the principal a renewal will re-mint, preferring the
 // store over the incoming token's claims. It is the read side that makes renewal
 // obey the same revocation rule as request authentication, and it mirrors
@@ -241,15 +252,15 @@ func (a *JWTAuthenticator) RenewUserToken(ctx context.Context, token string, ttl
 // and any other store error fails closed (propagated unchanged, so the handler
 // can tell "rejected" apart from "could not be determined").
 func (a *JWTAuthenticator) reloadForRenewal(ctx context.Context, c *jwtClaims) (*User, error) {
-	claimed := &User{ID: c.Subject, TenantID: c.TenantID, Email: c.Email, Roles: c.Roles}
+	claimed, cerr := claimsPrincipal(c)
 	if a.store == nil {
-		return claimed, nil
+		return claimed, cerr
 	}
 	user, active, err := a.store.FindUserByID(ctx, c.Subject)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			if c.Subject == DevTokenSubject {
-				return claimed, nil
+				return claimed, cerr
 			}
 			return nil, errors.Join(ErrInvalidToken, err)
 		}

@@ -121,7 +121,7 @@ func TestProtectedRouteRequiresToken(t *testing.T) {
 
 func TestRequirePermissionForbidden(t *testing.T) {
 	srv := gin.New()
-	srv.Use(JWTAuth(&fakeAuthn{user: &auth.User{ID: "u1", Roles: []string{"viewer"}}}))
+	srv.Use(JWTAuth(&fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"viewer"}}}))
 	srv.GET("/api/v2/dags", RequirePermission("write", "dag"), func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v2/dags", http.NoBody)
