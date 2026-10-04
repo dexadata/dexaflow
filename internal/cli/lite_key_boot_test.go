@@ -96,7 +96,7 @@ func TestRemovePreRestoreAfterABoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	removePreRestore(&out, dir, keyState{})
+	removePreRestore(&out, dir, keyState{}, false)
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Errorf("%s survived a successful boot", p)
 	}
@@ -104,7 +104,7 @@ func TestRemovePreRestoreAfterABoot(t *testing.T) {
 		t.Errorf("the boot did not say what it removed: %q", out.String())
 	}
 	out.Reset()
-	removePreRestore(&out, dir, keyState{})
+	removePreRestore(&out, dir, keyState{}, false)
 	if out.Len() != 0 {
 		t.Errorf("nothing to remove must print nothing, got %q", out.String())
 	}
@@ -125,7 +125,7 @@ func TestPreRestoreKeptWhenTheBootScanIsNotClean(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			removePreRestore(&out, dir, st)
+			removePreRestore(&out, dir, st, false)
 			if _, err := os.Stat(p); err != nil {
 				t.Fatalf("%s was removed after a boot that is %s: %v", p, name, err)
 			}
@@ -133,6 +133,53 @@ func TestPreRestoreKeptWhenTheBootScanIsNotClean(t *testing.T) {
 				t.Errorf("the boot did not say it kept %s: %q", p, out.String())
 			}
 		})
+	}
+}
+
+// Owner decision on ADR 0065 section 8: with both a managed and a Docker
+// datastore on disk, a boot scans only one of them, so even a clean scan keeps
+// config.yaml.pre-restore. Only a scan covering every datastore (migrate-key)
+// may remove it.
+func TestPreRestoreKeptWhenAnotherDatastoreWasNotScanned(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, preRestoreName)
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	removePreRestore(&out, dir, keyState{}, true)
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("%s was removed although a datastore was not scanned: %v", p, err)
+	}
+	if !strings.Contains(out.String(), "kept "+p) || !strings.Contains(out.String(), "migrate-key") {
+		t.Errorf("the boot must say it kept %s and name migrate-key: %q", p, out.String())
+	}
+}
+
+// The boot sees two datastores on disk when the managed cluster exists and the
+// install has also used the Docker one.
+func TestBootSeesTwoDatastoresOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	if bootHasUnscannedDatastore(dir) {
+		t.Fatal("an empty home has no datastore")
+	}
+	mustWrite := func(rel, body string) {
+		t.Helper()
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite("pgdata/PG_VERSION", "16\n")
+	if bootHasUnscannedDatastore(dir) {
+		t.Fatal("only the managed datastore exists")
+	}
+	mustWrite("dev/db-port", "55432")
+	if !bootHasUnscannedDatastore(dir) {
+		t.Fatal("managed and Docker datastores both exist; the boot scans one")
 	}
 }
 

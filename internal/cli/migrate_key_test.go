@@ -93,3 +93,54 @@ func TestMigrateKeyLeavesItsDatastoresBeforeReleasingTheConfigLock(t *testing.T)
 		t.Errorf("the config lock was free while the datastores were being left (err=%v)", lockErr)
 	}
 }
+
+// Owner decision on ADR 0065 section 8: a migrate-key that finishes clean has
+// scanned every datastore on disk under the config's key alone, so it removes
+// config.yaml.pre-restore. A dry run, or a run that does not finish, keeps it.
+func TestMigrateKeyRemovesPreRestoreOnlyAfterACleanFinish(t *testing.T) {
+	key := strings.Repeat("cd", 32)
+	setup := func(t *testing.T) (dir, pre string) {
+		t.Helper()
+		dir = t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("secret_key: "+key+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		pre = filepath.Join(dir, preRestoreName)
+		if err := os.WriteFile(pre, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir, pre
+	}
+	t.Run("clean finish removes it", func(t *testing.T) {
+		dir, pre := setup(t)
+		var out bytes.Buffer
+		if err := (&migrateKeyRun{out: &out, stateDir: dir, yes: true}).run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(pre); !os.IsNotExist(err) {
+			t.Errorf("%s survived a clean migrate-key", pre)
+		}
+		if !strings.Contains(out.String(), pre) {
+			t.Errorf("the removal was not reported: %q", out.String())
+		}
+	})
+	t.Run("dry run keeps it", func(t *testing.T) {
+		dir, pre := setup(t)
+		if err := (&migrateKeyRun{stateDir: dir, dryRun: true}).run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(pre); err != nil {
+			t.Errorf("a dry run removed %s: %v", pre, err)
+		}
+	})
+	t.Run("declined run keeps it", func(t *testing.T) {
+		dir, pre := setup(t)
+		if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("workspace: /w\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_ = (&migrateKeyRun{stateDir: dir, confirm: func() bool { return false }}).run(context.Background())
+		if _, err := os.Stat(pre); err != nil {
+			t.Errorf("a declined run removed %s: %v", pre, err)
+		}
+	})
+}
