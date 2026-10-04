@@ -54,7 +54,10 @@ type Querier interface {
 	CountDagRunStatesInWindow(ctx context.Context, arg CountDagRunStatesInWindowParams) ([]CountDagRunStatesInWindowRow, error)
 	CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int64, error)
 	CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
+	// One index probe per DAG of the tenant for its newest run. DAGs without runs
+	// drop out of the CROSS JOIN, so they are not counted.
 	CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error)
+	// Same newest-run lookup as ListDagsFiltered.
 	CountDagsFiltered(ctx context.Context, arg CountDagsFilteredParams) (int64, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
@@ -246,6 +249,9 @@ type Querier interface {
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
 	ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error)
 	ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, error)
+	// The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,
+	// one index probe each, instead of a DISTINCT ON over every run in the table.
+	// LEFT JOIN keeps DAGs without runs; they match no run_state filter.
 	ListDagsFiltered(ctx context.Context, arg ListDagsFilteredParams) ([]Dag, error)
 	// The DAG plus the LABEL of its current version. The UI's clear dialog compares
 	// this against the RUN's bundle_version and offers "Run with latest bundle
