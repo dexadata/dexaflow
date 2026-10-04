@@ -321,7 +321,12 @@ type Querier interface {
 	ListPools(ctx context.Context, arg ListPoolsParams) ([]ListPoolsRow, error)
 	// Provisional infra marks for the reconciler's confirmation pass (ADR 0052
 	// amendment, part 2), oldest first. The LIMIT bounds one sweep's work; the
-	// rest are picked up next sweep.
+	// rest are picked up next sweep. Only queued or running runs: the planner reads
+	// no other run, and the valve is shorter than the orphan threshold, so a mark
+	// of a finished run gates nothing. The join keeps this per-sweep query on
+	// idx_dag_runs_state and idx_ti_run instead of a scan of every failed task
+	// instance, and keeps old unconfirmed marks (a rollback window, marks written
+	// by a previous release) from filling the LIMIT ahead of live ones.
 	ListProvisionalInfraFailures(ctx context.Context) ([]ListProvisionalInfraFailuresRow, error)
 	// Lists every TI currently in `running` alongside the timestamp it entered
 	// running, for the pod-lost reaper (#527). A running TI whose backing pod

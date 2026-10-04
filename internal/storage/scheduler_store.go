@@ -229,8 +229,8 @@ func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection) { s.warm
 func (s *SchedulerStore) SetProvisionalInfraMarks(on bool) { s.provisionalInfraMarks = on }
 
 // ListProvisionalInfraFailures returns the provisional infra marks (failed,
-// infra, not yet confirmed), oldest first and bounded, for the reconciler's
-// confirmation pass.
+// infra, not yet confirmed) of queued or running runs, oldest first and
+// bounded, for the reconciler's confirmation pass.
 func (s *SchedulerStore) ListProvisionalInfraFailures(ctx context.Context) ([]executor.ProvisionalInfraFailure, error) {
 	rows, err := s.q.ListProvisionalInfraFailures(ctx)
 	if err != nil {
