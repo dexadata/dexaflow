@@ -128,6 +128,22 @@ executor:
       size: ""
       # -- Default staging PVC StorageClass (e.g. the cluster's RWX class). Empty = cluster default.
       storageClass: ""
+  # Client-side rate limits of the control plane's Kubernetes clients. 0 (the
+  # default) renders nothing and keeps client-go's QPS 5 / burst 10 on one client
+  # shared by dispatch and maintenance. A large fan out is paced by `qps`: at 5,
+  # creating 1,000 task pods takes over three minutes. Raise `qps` and set
+  # `maintenanceQps` together, so the pod informer, reconciler, reapers and GC get
+  # their own token bucket and cannot starve pod creation. A starting point for a
+  # busy cluster: qps 50, burst 100, maintenanceQps 20, maintenanceBurst 40.
+  kubeClient:
+    # -- Requests per second of the dispatch client (task pod creation; the agent token exchange uses its own client with the same limits). 0 = server default (5).
+    qps: 0
+    # -- Token-bucket burst of the dispatch client. 0 = server default (10).
+    burst: 0
+    # -- Requests per second of a SEPARATE maintenance client (informer, reconciler, reapers, staging GC, warm pool reconciler). 0 = share the dispatch client.
+    maintenanceQps: 0
+    # -- Token-bucket burst of the maintenance client. 0 = server default (10). Ignored while maintenanceQps is 0.
+    maintenanceBurst: 0
 
 # -- Ports the leoflow-server listens on. http: API + UI, metrics: Prometheus
 # /metrics, grpc: agent ↔ control plane channel (task pods dial back here).

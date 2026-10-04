@@ -539,6 +539,10 @@ differ from what's committed.
 | executor.defaults.staging | object | `{"size":"","storageClass":""}` | Default size + StorageClass for the per-run staging volume when the DAG enabled staging without pinning them (#743). Env-only override path: the chart mounts no server config file, so these render as LEOFLOW_* env. Empty leaves the PVC on the cluster's default StorageClass and an unset size. |
 | executor.defaults.staging.size | string | `""` | Default staging PVC size (e.g. `10Gi`). Empty = unset. |
 | executor.defaults.staging.storageClass | string | `""` | Default staging PVC StorageClass (e.g. the cluster's RWX class). Empty = cluster default. |
+| executor.kubeClient.burst | int | `0` | Token-bucket burst of the dispatch client. 0 = server default (10). |
+| executor.kubeClient.maintenanceBurst | int | `0` | Token-bucket burst of the maintenance client. 0 = server default (10). Ignored while maintenanceQps is 0. |
+| executor.kubeClient.maintenanceQps | int | `0` | Requests per second of a SEPARATE maintenance client (informer, reconciler, reapers, staging GC, warm pool reconciler). 0 = share the dispatch client. |
+| executor.kubeClient.qps | int | `0` | Requests per second of the dispatch client (task pod creation; the agent token exchange uses its own client with the same limits). 0 = server default (5). |
 | extraEnv | list | `[]` | Extra environment variables appended to the control-plane container, for server settings this chart does not model as a first-class value (see `docs/configuration.md` for the full `LEOFLOW_*` surface). Standard K8s `env` entries, so `valueFrom` works, and a `value` is always rendered as a string (Kubernetes rejects a numeric one). Appended AFTER the chart-managed entries; do not use it to redefine one — the chart refuses to render an entry that shadows a variable whose value it guards (the warm-pool / agent-credential coupling). Example: `[{name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS, value: "4"}]`. |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"ghcr.io/dexadata/dexaflow-server"` | Control-plane image. Published by GoReleaser on every tag, signed with cosign. |
