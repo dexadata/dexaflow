@@ -136,6 +136,9 @@ type Querier interface {
 	// carries no try number, so rows left behind would serve the cleared attempt's
 	// values to the next attempt's downstream.
 	DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error)
+	// The consecutive dispatch-failure count of a task still waiting to run
+	// (scheduled or queued); no row means it has moved on.
+	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
 	// The subset of the given conn_ids that exist for the tenant. Used to reject a
 	// DAG that declares an unknown connection at registration (ADR 0055 D6); a name
 	// absent from the result does not exist.
@@ -509,6 +512,14 @@ type Querier interface {
 	// re-placed and re-dispatched between the list and this write is a different
 	// attempt, and a mark computed for the old one must not fail it.
 	MarkTaskDispatchLost(ctx context.Context, arg MarkTaskDispatchLostParams) (int64, error)
+	// The scheduler's scheduled -> queued write after a dispatch was accepted.
+	// Guarded to the exact slot the tick planned: still 'scheduled', with the
+	// next_dispatch_at the tick read. Under buffered dispatch the worker can finish
+	// before this write lands: it may have failed the task (MarkTaskDispatchFailed),
+	// re-offered it with a new backoff (RequeueDispatch), or the agent may already
+	// have reported running. Each of those moves the row off the planned slot, so
+	// this write touches zero rows instead of overwriting the newer outcome.
+	MarkTaskInstanceQueued(ctx context.Context, arg MarkTaskInstanceQueuedParams) (int64, error)
 	// Fails a running TI whose pod has vanished (deleted/evicted/node lost). The
 	// WHERE state='running' guard makes it idempotent and prevents overwriting a
 	// late terminal report that landed between our list and our write (a live
@@ -626,6 +637,17 @@ type Querier interface {
 	// trading a rare silent corruption for a frequent one. The settled states
 	// (success/failed/skipped/upstream_failed) are what this guard is for.
 	ReportTaskResult(ctx context.Context, arg ReportTaskResultParams) (int64, error)
+	// A buffered dispatch failed inside the worker for a retriable reason: re-offer
+	// the task the way a synchronous failure is re-offered (RecordDispatchFailure,
+	// RecordDispatchBackpressure). Back to 'scheduled' with the next attempt held
+	// until next_dispatch_at, adding one dispatch attempt only when counted
+	// (backpressure is not). Guarded to scheduled/queued, so a task the agent has
+	// since reported on is left alone. warm_worker_id is cleared as in
+	// RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
+	// as on every rail that starts a new execution of the row (ADR 0051
+	// amendment, A0). The requeue is a rail, so attempt_epoch is bumped: a late
+	// start or report from the abandoned dispatch is fenced (ADR 0051, A1).
+	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding
 	// an unacked lease, or it acked started=false), so the attempt sits `queued`
