@@ -353,9 +353,9 @@ var ErrNotDispatchable = errors.New("task instance is not in a dispatchable stat
 // ResolveTask returns the dispatcher's execution context for a run's task and
 // claims a fresh attempt epoch for the execution it is about to start (ADR 0051
 // amendment). Every call that succeeds moves the row's attempt_epoch forward,
-// so two dispatches of one try never share it; the dispatcher mints the agent's
-// identity from the returned value. A row past dispatch is refused with
-// ErrNotDispatchable and keeps its epoch.
+// so two dispatches of one try never share it. The agent's identity will be
+// minted from the returned value (A2); nothing reads it yet. A row past
+// dispatch is refused with ErrNotDispatchable and keeps its epoch.
 func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) (dispatch.Resolved, error) {
 	task, spec, ver, _, err := s.resolve(ctx, runID, taskID)
 	if err != nil {

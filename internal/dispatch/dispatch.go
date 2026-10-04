@@ -75,7 +75,8 @@ type Resolved struct {
 	// AttemptEpoch identifies this execution attempt of the row (ADR 0051
 	// amendment). The resolver claims a fresh value on every dispatch, so two
 	// dispatches of one try never share it, even with no reset rail between
-	// them. The token, pod label and annotation are minted from it.
+	// them. Nothing reads it yet: the token (A2) and the pod label and
+	// annotation (A4) will be minted from it.
 	AttemptEpoch int
 	// Staging carries the DAG's opt-in staging-volume config (ADR 0022); nil or
 	// disabled means no per-run volume.

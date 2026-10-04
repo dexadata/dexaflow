@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +23,6 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5" // registers the "pgx5" migrate scheme
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	"github.com/jackc/pgx/v5"
 )
 
 func (f *staleHeartbeatFixture) attemptEpoch(t *testing.T) int {
@@ -229,50 +227,12 @@ func TestLegacyRowClaimsEpochOneOnFirstDispatch(t *testing.T) {
 	}
 }
 
-// TestHistoryKeepsEveryInfraReplaceOfOneTry: two infra re-places of one try
-// archive two history rows (one per epoch). Before the epoch the unique key
-// was (task_instance_id, try_number) and ON CONFLICT DO NOTHING dropped the
-// second one (#863).
-func TestHistoryKeepsEveryInfraReplaceOfOneTry(t *testing.T) {
-	f := seedStaleHeartbeat(t, "epoch_history")
-	for i := 0; i < 2; i++ {
-		f.setState(t, "scheduled")
-		if _, err := f.exec.ResolveTask(f.ctx, f.runUUID, "t"); err != nil {
-			t.Fatalf("ResolveTask #%d: %v", i+1, err)
-		}
-		f.transition(t, domain.TaskStateRunning)
-		if ok, err := f.sched.MarkTaskAgentLost(f.ctx, f.tiID); err != nil || !ok {
-			t.Fatalf("MarkTaskAgentLost #%d ok=%v err=%v", i+1, ok, err)
-		}
-		if applied, err := f.sched.ResetForInfraReplace(f.ctx, f.runUUID, "t"); err != nil || !applied {
-			t.Fatalf("ResetForInfraReplace #%d applied=%v err=%v", i+1, applied, err)
-		}
-	}
-	rows, err := f.pg.Pool.Query(f.ctx,
-		"SELECT try_number, attempt_epoch FROM task_instance_history WHERE task_instance_id=$1::uuid ORDER BY attempt_epoch", f.tiID)
-	if err != nil {
-		t.Fatalf("select history: %v", err)
-	}
-	type attempt struct{ try, epoch int }
-	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (attempt, error) {
-		var a attempt
-		return a, r.Scan(&a.try, &a.epoch)
-	})
-	if err != nil {
-		t.Fatalf("scan history: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("two infra re-places of one try must archive two history rows, got %+v", got)
-	}
-	if got[0].try != got[1].try || got[0].epoch == got[1].epoch {
-		t.Errorf("the two archived attempts must share the try and differ in epoch, got %+v", got)
-	}
-}
-
 // TestAttemptEpochMigrationUpDownUp applies every migration to a scratch
 // database, rolls the attempt-epoch migration back and forward again, and
-// checks the columns and the history unique key at each step. The down
-// migration must succeed even when history holds two epochs of one try.
+// checks the columns at each step. It also runs the previous release's archive
+// statement against the migrated schema: the migration hook runs before the
+// old pods are replaced, and a rollback does not run the down migration, so the
+// old binary must keep working on this schema (expand only).
 func TestAttemptEpochMigrationUpDownUp(t *testing.T) {
 	raw := os.Getenv("DATABASE_URL")
 	if raw == "" {
@@ -323,7 +283,7 @@ func TestAttemptEpochMigrationUpDownUp(t *testing.T) {
 	defer pg.Close()
 
 	assertEpochSchema(ctx, t, pg, true)
-	seedTwoEpochsOfOneTry(ctx, t, pg)
+	assertPreviousReleaseArchiveRuns(ctx, t, pg)
 
 	if err := m.Steps(-1); err != nil {
 		t.Fatalf("down one step from v%d: %v", latest, err)
@@ -353,16 +313,17 @@ func assertEpochSchema(ctx context.Context, t *testing.T, pg *storage.Postgres, 
 		"SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='task_instance_history_unique'").Scan(&def); err != nil {
 		t.Fatalf("inspect history unique key: %v", err)
 	}
-	if hasEpoch := strings.Contains(def, "attempt_epoch"); hasEpoch != want {
-		t.Errorf("history unique key %q: includes attempt_epoch=%v, want %v", def, hasEpoch, want)
+	if def != "UNIQUE (task_instance_id, try_number)" {
+		t.Errorf("the history unique key must stay (task_instance_id, try_number) for the previous release, got %q", def)
 	}
 }
 
-// seedTwoEpochsOfOneTry writes the shape the new key allows and the old key
-// forbids, so the down migration has to handle it.
-func seedTwoEpochsOfOneTry(ctx context.Context, t *testing.T, pg *storage.Postgres) {
+// assertPreviousReleaseArchiveRuns seeds one task instance and runs the
+// previous release's ResetTaskInstanceToNone text (ON CONFLICT on the old key,
+// no attempt_epoch anywhere) twice against the migrated schema.
+func assertPreviousReleaseArchiveRuns(ctx context.Context, t *testing.T, pg *storage.Postgres) {
 	t.Helper()
-	var tiID string
+	var runID string
 	if err := pg.Pool.QueryRow(ctx, `
 WITH d AS (
     INSERT INTO dags (tenant_id, dag_id) SELECT id, 'epoch_mig' FROM tenants WHERE name = 'default'
@@ -373,16 +334,38 @@ WITH d AS (
 ), r AS (
     INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
     SELECT d.tenant_id, v.dag_id, v.id, 'r1', now(), 'running', 'manual' FROM d, v RETURNING id
+), ti AS (
+    INSERT INTO task_instances (tenant_id, dag_run_id, task_id, try_number, operator)
+    SELECT d.tenant_id, r.id, 't', 1, 'python' FROM d, r RETURNING dag_run_id
 )
-INSERT INTO task_instances (tenant_id, dag_run_id, task_id, try_number, operator)
-SELECT d.tenant_id, r.id, 't', 1, 'python' FROM d, r RETURNING id::text`).Scan(&tiID); err != nil {
+SELECT dag_run_id::text FROM ti`).Scan(&runID); err != nil {
 		t.Fatalf("seed scratch task instance: %v", err)
 	}
-	for epoch := 0; epoch < 2; epoch++ {
-		if _, err := pg.Pool.Exec(ctx,
-			"INSERT INTO task_instance_history (task_instance_id, try_number, state, attempt_epoch) VALUES ($1::uuid, 1, 'failed', $2)",
-			tiID, epoch); err != nil {
-			t.Fatalf("seed history epoch %d: %v", epoch, err)
+	const previousReleaseReset = `
+WITH archived AS (
+    INSERT INTO task_instance_history (
+        task_instance_id, try_number, state,
+        queued_at, scheduled_at, started_at, ended_at, duration_seconds,
+        exit_code, error_message, hostname, pod_name, node_name, note
+    )
+    SELECT
+        src.id, src.try_number, src.state,
+        src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+    FROM task_instances src
+    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    ON CONFLICT (task_instance_id, try_number) DO NOTHING
+    RETURNING task_instance_id
+)
+UPDATE task_instances ti
+SET state = 'none', started_at = NULL, ended_at = NULL, queued_at = NULL,
+    scheduled_at = NULL, dispatch_attempts = 0, next_dispatch_at = NULL,
+    reschedule_at = NULL, first_reschedule_at = NULL, last_failure_kind = NULL,
+    warm_worker_id = NULL, try_number = ti.try_number + 1
+WHERE ti.dag_run_id = $1 AND ti.task_id = $2`
+	for i := 0; i < 2; i++ {
+		if _, err := pg.Pool.Exec(ctx, previousReleaseReset, runID, "t"); err != nil {
+			t.Fatalf("the previous release's archive statement must run on the migrated schema (#%d): %v", i+1, err)
 		}
 	}
 }

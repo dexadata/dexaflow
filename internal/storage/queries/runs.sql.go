@@ -124,8 +124,8 @@ type ClaimAttemptEpochRow struct {
 // queued write failed is dispatched again on a later tick with no reset rail in
 // between; without a claim here both pods would share (try_number,
 // attempt_epoch). Bumping at dispatch gives every execution its own epoch
-// whatever path led to it, and the token, pod label and annotation are minted
-// from the value returned.
+// whatever path led to it. The token (A2) and the pod label and annotation (A4)
+// will be minted from the value returned; nothing reads it yet.
 //
 // Guarded to the pre-dispatch states. 'queued' is included because the
 // buffered dispatcher records queued before its worker resolves the row. A row
@@ -2004,7 +2004,7 @@ WITH archived AS (
     FROM task_instances src
     WHERE src.dag_run_id = $1
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
-    ON CONFLICT (task_instance_id, try_number, attempt_epoch) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -2076,7 +2076,7 @@ WITH archived AS (
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
-    ON CONFLICT (task_instance_id, try_number, attempt_epoch) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -2124,7 +2124,7 @@ WITH archived AS (
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2 AND src.state = 'up_for_retry'
-    ON CONFLICT (task_instance_id, try_number, attempt_epoch) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -2179,7 +2179,7 @@ WITH archived AS (
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
       AND src.state = 'failed' AND src.last_failure_kind = 'infra'
-    ON CONFLICT (task_instance_id, try_number, attempt_epoch) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -2239,7 +2239,7 @@ WITH archived AS (
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
-    ON CONFLICT (task_instance_id, try_number, attempt_epoch) DO NOTHING
+    ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
@@ -2284,8 +2284,10 @@ type ResetTaskInstanceToNoneParams struct {
 // window.
 // The same rails bump attempt_epoch (ADR 0051 amendment, A1), so a reset alone
 // already fences the attempt it superseded before the next dispatch claims its
-// own epoch (ClaimAttemptEpoch). The archive row carries the superseded
-// attempt's epoch, so two executions of one try are two history rows.
+// own epoch (ClaimAttemptEpoch). The archive row records the superseded
+// attempt's epoch. The archive key stays (task_instance_id, try_number) for
+// compatibility with the previous release, so a second execution of one try is
+// still dropped by ON CONFLICT until the key is widened (ADR 0051 amendment, A5).
 func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error {
 	_, err := q.db.Exec(ctx, resetTaskInstanceToNone, arg.DagRunID, arg.TaskID)
 	return err
