@@ -206,6 +206,22 @@ spec:
             - name: LEOFLOW_SERVER_TRUSTED_PROXIES
               value: {{ join "," .ctx.Values.config.trustedProxies | quote }}
             {{- end }}
+            {{- with .ctx.Values.config.alerts }}
+            {{- if .blockPrivateDestinations }}
+            # Refuse on-failure alert requests to loopback, private, link-local and
+            # metadata addresses (scheduler.alerts.block_private_destinations). An
+            # alert URL is a tenant's connection, so on a shared engine it is
+            # untrusted. Omitted when off, which leaves the server default (off).
+            - name: LEOFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
+              value: "true"
+            {{- end }}
+            {{- if .allowedCIDRs }}
+            # Ranges exempted from that block, comma-joined like trustedProxies;
+            # viper splits the env var back into scheduler.alerts.allowed_cidrs.
+            - name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
+              value: {{ join "," .allowedCIDRs | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set
@@ -277,7 +293,7 @@ spec:
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}
-            # The operator's own sign-in and sign-out in place of Leoflow's
+            # The operator's own sign-in and sign-out in place of Dexaflow's
             # pages (#1288). Omitted when unset; validated at boot.
             - name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
               value: {{ . | quote }}
@@ -412,6 +428,12 @@ spec:
             # env it did before this knob existed (the server default is false).
             - name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
               value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
+            {{- end }}
+            {{- if .ctx.Values.execution.warmReadOnlyRootFilesystem }}
+            # Stamped only when on, so enabling warm pools alone renders the same
+            # env it did before this knob existed (the server default is false).
+            - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+              value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL

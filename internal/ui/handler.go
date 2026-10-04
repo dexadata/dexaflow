@@ -3,15 +3,19 @@ package ui
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"html"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // baseHrefPlaceholder is the Jinja token Airflow leaves in index.html for the
@@ -119,6 +123,7 @@ func homeLinkHTML(label, href string) string {
 // an index.html fallback for client-side routes.
 type Server struct {
 	fsys         fs.FS
+	static       *staticCache
 	version      string
 	liteBanner   bool
 	proBanner    bool
@@ -174,7 +179,7 @@ func New() *Server { return NewFromFS(Assets(), Version()) }
 // NewFromFS builds a Server over an arbitrary asset filesystem, so tests can
 // inject a fixture instead of the embedded bundle.
 func NewFromFS(fsys fs.FS, version string) *Server {
-	return &Server{fsys: fsys, version: version}
+	return &Server{fsys: fsys, version: version, static: &staticCache{fsys: fsys}}
 }
 
 // Version returns the pinned upstream Airflow tag the bundle was built from.
@@ -186,13 +191,18 @@ func (s *Server) Version() string { return s.version }
 // everything else gets a short cache. Compressible assets are gzipped when the
 // client accepts it. Missing files yield 404 (no SPA fallback here); directories
 // are not listed.
+//
+// Each file is read, hashed and gzipped once (by Precompress, or else on its
+// first request) and served from memory afterwards with a strong ETag, so a
+// conditional request gets a 304 and a cold one costs a copy instead of a fresh
+// compression.
 func (s *Server) StaticHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/")), "/")
 		if name == "" {
 			name = "index.html"
 		}
-		data, err := fs.ReadFile(s.fsys, name)
+		entry, err := s.static.lookup(name)
 		if err != nil {
 			// Lima Bug #11 / 2026-06-01: occasional 404 on /static/* paths whose
 			// exact name we never captured. Logging the resolved name + the SPA
@@ -207,14 +217,125 @@ func (s *Server) StaticHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Cache-Control", cacheControl(r.URL.Path))
-		w.Header().Set("Content-Type", contentType(name, data))
-		if acceptsGzip(r) && compressible(name) {
-			writeGzip(w, data)
+		h := w.Header()
+		h.Set("Cache-Control", cacheControl(r.URL.Path))
+		h.Set("Content-Type", entry.contentType)
+		if entry.gzip != nil {
+			h.Add("Vary", "Accept-Encoding")
+			if acceptsGzip(r) {
+				h.Set("Content-Encoding", "gzip")
+				h.Set("ETag", entry.gzipETag)
+				// The payload is the pinned, compile-time-embedded SPA bundle served
+				// with an explicit Content-Type: a trusted static asset, not user input.
+				http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(entry.gzip))
+				return
+			}
+		}
+		h.Set("ETag", entry.etag)
+		s.serveIdentity(w, r, name)
+	})
+}
+
+// serveIdentity streams a file uncompressed straight from the asset filesystem.
+// The embedded bundle already lives in the binary, so no heap copy is kept for
+// it; an embedded file is an io.ReadSeeker, which gives Range support.
+func (s *Server) serveIdentity(w http.ResponseWriter, r *http.Request, name string) {
+	f, err := s.fsys.Open(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			slog.Debug("ui static close failed", "err", cerr)
+		}
+	}()
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		data, rerr := io.ReadAll(f)
+		if rerr != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
-		writeIdentity(w, data)
+		rs = bytes.NewReader(data)
+	}
+	http.ServeContent(w, r, name, time.Time{}, rs)
+}
+
+// Precompress reads and gzips every compressible file of the bundle up front, so
+// the first browser after a restart does not pay the compression. It is meant to
+// run in its own goroutine at startup; a request that arrives first for a file
+// waits for that file's build instead of compressing it a second time.
+func (s *Server) Precompress() {
+	// An unreadable entry is skipped: a request for it still gets its 404.
+	walkErr := fs.WalkDir(s.fsys, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !compressible(name) {
+			return nil //nolint:nilerr // skip the entry, keep walking.
+		}
+		if _, lerr := s.static.lookup(name); lerr != nil {
+			slog.Debug("ui static precompress skipped a file", "name", name, "err", lerr)
+		}
+		return nil
 	})
+	if walkErr != nil {
+		slog.Debug("ui static precompress stopped", "err", walkErr)
+	}
+}
+
+// staticCache holds the served form of every static file built so far. A name
+// whose read fails is removed again, so unknown paths cannot grow the cache and
+// its size is bounded by the gzipped bundle (about 3 MB for the pinned Airflow
+// UI): the raw bytes are not kept, identity is streamed from the bundle.
+type staticCache struct {
+	fsys    fs.FS
+	entries sync.Map // name -> *staticEntry
+}
+
+// staticEntry is one file ready to serve: its type, the gzip encoding when the
+// type is compressible, and a strong ETag per encoding. once guards the build so
+// concurrent first requests compress the file a single time.
+type staticEntry struct {
+	once        sync.Once
+	err         error
+	contentType string
+	etag        string
+	gzip        []byte
+	gzipETag    string
+}
+
+// lookup returns the entry for name, building it on first use.
+func (c *staticCache) lookup(name string) (*staticEntry, error) {
+	v, _ := c.entries.LoadOrStore(name, &staticEntry{})
+	e, ok := v.(*staticEntry)
+	if !ok {
+		return nil, fs.ErrInvalid // unreachable: only *staticEntry is stored.
+	}
+	e.once.Do(func() { e.build(c.fsys, name) })
+	if e.err != nil {
+		c.entries.CompareAndDelete(name, e)
+		return nil, e.err
+	}
+	return e, nil
+}
+
+// build reads the file, hashes it and, for a compressible type, gzips it at the
+// best compression level. That costs once what the old path paid on every
+// request. A compression error leaves the file served as identity only.
+func (e *staticEntry) build(fsys fs.FS, name string) {
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		e.err = err
+		return
+	}
+	sum := sha256.Sum256(data)
+	tag := hex.EncodeToString(sum[:16])
+	e.contentType = contentType(name, data)
+	e.etag = `"` + tag + `"`
+	if compressible(name) {
+		if gz, gerr := gzipBytes(data); gerr == nil {
+			e.gzip, e.gzipETag = gz, `"`+tag+`-gzip"`
+		}
+	}
 }
 
 // contentType resolves a response Content-Type, forcing application/wasm (which
@@ -246,38 +367,22 @@ func compressible(name string) bool {
 	return compressibleExts[strings.ToLower(filepath.Ext(name))]
 }
 
-// writeGzip compresses data and writes it with the gzip Content-Encoding and the
-// compressed Content-Length, falling back to identity on a compression error.
-func writeGzip(w http.ResponseWriter, data []byte) {
+// gzipBytes compresses data at gzip.BestCompression.
+func gzipBytes(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
+	gz, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := gz.Write(data); err != nil {
-		writeIdentity(w, data)
-		return
+		return nil, err
 	}
 	if err := gz.Close(); err != nil {
-		writeIdentity(w, data)
-		return
+		return nil, err
 	}
-	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Add("Vary", "Accept-Encoding")
-	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
-	w.WriteHeader(http.StatusOK)
-	// The payload is the pinned, compile-time-embedded SPA bundle served with an
-	// explicit Content-Type — a trusted static asset, not user-controlled input.
-	if _, err := w.Write(buf.Bytes()); err != nil { //nolint:gosec // trusted embedded asset
-		return // client hung up mid-write.
-	}
-}
-
-// writeIdentity writes data uncompressed with its Content-Length.
-func writeIdentity(w http.ResponseWriter, data []byte) {
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	w.WriteHeader(http.StatusOK)
-	// Trusted compile-time-embedded asset served with an explicit Content-Type.
-	if _, err := w.Write(data); err != nil { //nolint:gosec // trusted embedded asset
-		return // client hung up mid-write.
-	}
+	// Clone so the cache holds exactly the compressed bytes, not the slack the
+	// buffer grew while writing.
+	return bytes.Clone(buf.Bytes()), nil
 }
 
 // Index writes the SPA shell with <base href> set to basePath, so the bundled

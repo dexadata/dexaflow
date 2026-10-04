@@ -108,6 +108,11 @@ tests:
           content:
             name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
             value: "false"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            value: "false"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -133,6 +138,7 @@ tests:
       execution.workerIdleTtl: 90s
       execution.maxWarmPodsPerTenant: 40
       execution.warmPoolEventRefill: true
+      execution.warmReadOnlyRootFilesystem: true
       auth.agentTokenTransport: exchange
       auth.secretLivenessMode: enforce
     asserts:
@@ -170,6 +176,11 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
             value: "true"
 
   # ADR 0058 D2 is a security coupling, not a preference: the server refuses to

@@ -91,9 +91,28 @@ func TestReportBackoffRampsThenHoldsAtHeartbeatInterval(t *testing.T) {
 		}
 	}
 
-	// The loop uses exactly that schedule: capture the delays it sleeps for.
+	// The loop follows that schedule, jittered down by at most half: every sleep
+	// lies in [ramp/2, ramp] and never past the heartbeat-interval cap.
+	delays := captureReportDelays(t, len(want))
+	if len(delays) != len(want) {
+		t.Fatalf("slept %d times, want %d", len(delays), len(want))
+	}
+	for i, d := range delays {
+		if d < want[i]/2 || d > want[i] {
+			t.Errorf("sleep %d = %v, want within [%v, %v]", i+1, d, want[i]/2, want[i])
+		}
+		if d > DefaultHeartbeatInterval {
+			t.Errorf("sleep %d = %v exceeds the heartbeat-interval cap", i+1, d)
+		}
+	}
+}
+
+// captureReportDelays runs one report through `failures` Unavailable answers and
+// returns the delays the retry loop slept for.
+func captureReportDelays(t *testing.T, failures int) []time.Duration {
+	t.Helper()
 	var delays []time.Duration
-	client := &fakeClient{reportFailCode: codes.Unavailable, reportFailTimes: len(want)}
+	client := &fakeClient{reportFailCode: codes.Unavailable, reportFailTimes: failures}
 	r := &Runner{
 		Client:   client,
 		Hostname: "pod-1",
@@ -108,16 +127,28 @@ func TestReportBackoffRampsThenHoldsAtHeartbeatInterval(t *testing.T) {
 	if err := r.report(context.Background(), agentv1.TaskState_TASK_STATE_SUCCESS, 0, ""); err != nil {
 		t.Fatalf("report: %v", err)
 	}
-	if len(delays) != len(want) {
-		t.Fatalf("slept %d times, want %d", len(delays), len(want))
+	return delays
+}
+
+// TestReportRetryDelaysAreJittered: when the control plane comes back from an
+// outage, every task pod that was retrying a report must not retry on the same
+// beat. Agents that failed together would otherwise stay in lockstep and hit the
+// recovering API with a synchronized burst on every attempt. Two agents walking
+// the same retry schedule must sleep different delays.
+func TestReportRetryDelaysAreJittered(t *testing.T) {
+	const failures = 6
+	a, b := captureReportDelays(t, failures), captureReportDelays(t, failures)
+	if len(a) != failures || len(b) != failures {
+		t.Fatalf("slept %d and %d times, want %d each", len(a), len(b), failures)
 	}
-	for i, d := range delays {
-		if d != want[i] {
-			t.Errorf("sleep %d = %v, want %v", i+1, d, want[i])
+	same := 0
+	for i := range a {
+		if a[i] == b[i] {
+			same++
 		}
-		if d > DefaultHeartbeatInterval {
-			t.Errorf("sleep %d = %v exceeds the heartbeat-interval cap", i+1, d)
-		}
+	}
+	if same == failures {
+		t.Errorf("two agents slept the identical schedule %v: report retries are not jittered", a)
 	}
 }
 

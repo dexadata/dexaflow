@@ -35,6 +35,7 @@ type Repository struct {
 	pool        txBeginner
 	cipher      secrets.Cipher
 	extCoverage externalSecretCoverage
+	specs       *specCache
 }
 
 // externalSecretCoverage reports whether a declared name is served by a
@@ -49,7 +50,7 @@ type externalSecretCoverage interface {
 
 // NewRepository builds a Repository backed by the given Postgres connection.
 func NewRepository(pg *Postgres) *Repository {
-	return &Repository{q: pg.Queries, pool: pg.Pool}
+	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg)}
 }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
@@ -977,13 +978,20 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 	if err != nil {
 		return domain.DAGSpec{}, err
 	}
-	raw, err := r.q.GetCurrentDagSpec(ctx, queries.GetCurrentDagSpecParams{TenantID: tid, DagID: dagID})
+	// Only the current version id is read here; the spec itself comes from the
+	// shared cache keyed by that immutable id, so a grid or graph poll neither
+	// ships the spec JSON over the wire nor decodes it again. The returned spec
+	// is shared and must not be mutated (see specCache).
+	dag, err := r.q.GetDagByDagID(ctx, queries.GetDagByDagIDParams{TenantID: tid, DagID: dagID})
 	if err != nil {
 		return domain.DAGSpec{}, mapNotFound(err)
 	}
-	var spec domain.DAGSpec
-	if err := json.Unmarshal(raw, &spec); err != nil {
-		return domain.DAGSpec{}, fmt.Errorf("decoding current spec: %w", err)
+	if !dag.CurrentVersionID.Valid {
+		return domain.DAGSpec{}, domain.ErrNotFound
+	}
+	_, spec, err := r.specs.getCurrent(ctx, r.q, currentSpecKey{tenant: tid, dagID: dagID}, dag.CurrentVersionID)
+	if err != nil {
+		return domain.DAGSpec{}, fmt.Errorf("loading current spec: %w", err)
 	}
 	return spec, nil
 }
@@ -1990,8 +1998,11 @@ func (r *Repository) ClearImportError(ctx context.Context, tenant, filename stri
 // EnsureTenant creates the tenant name with the built-in roles, their
 // permissions and the default pool copied from the "default" tenant, all in
 // one transaction (#1283). It is idempotent: for an existing tenant it fills in
-// anything missing and reports created=false.
-func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string) (created bool, err error) {
+// anything missing and reports created=false. A positive defaultPoolSlots sizes
+// the tenant's default pool to that many slots, on creation or later; a
+// non-positive value leaves an existing pool alone and gives a new one the
+// default tenant's size.
+func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int) (created bool, err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("beginning ensure-tenant tx: %w", err)
@@ -2012,13 +2023,32 @@ func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string)
 	if err := qtx.CopyDefaultRolePermissions(ctx, t.ID); err != nil {
 		return false, fmt.Errorf("seeding role permissions: %w", err)
 	}
-	if err := qtx.InsertDefaultPool(ctx, t.ID); err != nil {
-		return false, fmt.Errorf("seeding default pool: %w", err)
+	if err := ensureDefaultPool(ctx, qtx, t.ID, defaultPoolSlots); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("committing ensure-tenant tx: %w", err)
 	}
 	return n > 0, nil
+}
+
+// ensureDefaultPool gives the tenant its default pool: sized to slots when
+// slots is positive, otherwise copied from the default tenant if missing (a
+// non-positive slots means "not given"). The caller bounds slots to the int32
+// column; toInt32 saturates rather than wrapping if it ever does not.
+func ensureDefaultPool(ctx context.Context, q *queries.Queries, tenantID pgtype.UUID, slots int) error {
+	if slots <= 0 {
+		if err := q.InsertDefaultPool(ctx, tenantID); err != nil {
+			return fmt.Errorf("seeding default pool: %w", err)
+		}
+		return nil
+	}
+	if err := q.UpsertDefaultPoolSlots(ctx, queries.UpsertDefaultPoolSlotsParams{
+		TenantID: tenantID, Name: domain.DefaultPoolName, Slots: toInt32(slots),
+	}); err != nil {
+		return fmt.Errorf("sizing default pool: %w", err)
+	}
+	return nil
 }
 
 // TenantRolePermissions lists a tenant's built-in role grants as
