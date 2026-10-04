@@ -89,6 +89,11 @@ type agentLostReaper struct {
 	// log stream so a killed task's log does not end in a silent truncation
 	// (#861). Nil disables the marker; the reap itself is unaffected.
 	sink logSink
+	// procs is the Lite liveness seam (see ProcessLiveness): a silent attempt
+	// whose agent process is still alive is deferred, because Lite has no pod
+	// delete to stop it and a re-placed attempt would run beside it. Nil on the
+	// pod path, where the teardown above stops the abandoned container.
+	procs ProcessLiveness
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
 }
@@ -119,6 +124,9 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 	}
 	for _, c := range candidates {
 		if !IsAgentLost(c, r.threshold, now) {
+			continue
+		}
+		if processDefers(ctx, r.procs, r.logger, r.record, "agent_lost", c.TaskInstanceID, c.DagRunID, c.TaskID, c.TryNumber) {
 			continue
 		}
 		r.reapOne(ctx, c, now)

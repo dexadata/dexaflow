@@ -91,7 +91,7 @@ func TestLiteReaperDefersOnLiveAgentProcess(t *testing.T) {
 }
 
 // TestLiteReaperDefersWhenLivenessUnknown: a liveness read that fails is "do no
-// harm" — the reaper defers rather than guess, exactly as the pod path defers on
+// harm": the reaper defers rather than guess, exactly as the pod path defers on
 // a failed pod LIST.
 func TestLiteReaperDefersWhenLivenessUnknown(t *testing.T) {
 	store := staleEverythingStore()

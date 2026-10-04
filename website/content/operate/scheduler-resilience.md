@@ -18,8 +18,9 @@ This applies to **both editions**: Lite (single-process) and Pro
 (multi-replica with [leader election](/project/adrs/0009-leader-election/)). The
 reapers run only on the leader — reaping writes state, and we want one writer
 across the fleet. On Kubernetes they run from the leader's **maintenance loop**
-(every 30 s, after the pod reconciler's sweep — see below); in Lite there are no
-pods, so no pod-based reaper applies and the loop is not started.
+(every 30 s, after the pod reconciler's sweep; see below). Lite runs its own
+maintenance loop with the subset of reapers that mean something without pods;
+see [Lite: which reapers run](#lite-which-reapers-run).
 
 ## Recovery SLAs
 
@@ -201,6 +202,55 @@ start if a constant was moved out of order:
 and `2 × maintenance interval (60 s) < settling grace`, so at least two whole
 reconcile-then-reap cycles complete inside the grace.
 
+## Lite: which reapers run
+
+Lite (the subprocess executor behind `dexaflow lite`) has no pods, no pod
+informer and no pod reconciler. Its agent is a host process, detached from the
+server so it survives a server restart. Before
+[#916](https://github.com/dexadata/dexaflow/issues/916) Lite ran no reaper at
+all, so a run whose agent died without reporting stayed `running` forever. Lite
+now starts a maintenance loop of its own: every 30 s, on the leader only, it
+runs the reaper pass under the **same leader-settling gate** (the 180 s grace
+since leadership; the informer and sweep conditions do not exist in Lite and
+are satisfied). There is no reconcile phase because there are no pods to sweep.
+
+| Reaper | Lite | Why |
+|---|---|---|
+| Orphan-run | **Runs** | Purely a metadatabase signal: a `running` run with no active TI. |
+| TI heartbeat (agent-lost) | **Runs, gated on the agent process** | Fails a silent `running` TI only when its agent process is gone. A silent agent that is still alive (for example a laptop resuming from sleep) is deferred. |
+| Dispatch-lost | **Runs, gated on the agent process** | Fails a stale `queued` TI only when no agent process for the attempt is alive. |
+| Pod-lost | No-op | There is no pod to lose. A "no pod" signal would read every live subprocess as lost. |
+| Warm-worker-lost | No-op | Warm pools are Kubernetes-only. |
+
+**Why the process gate.** On Kubernetes a reaper that fails a TI also deletes
+its pod, so the abandoned agent stops. Lite has no equivalent: it never kills
+an agent. The infra re-place that follows an `agent_lost` or `dispatch_lost`
+keeps the try number, so if the old agent were still alive it could have its
+`RUNNING` report accepted and run user code next to the new agent
+([#911](https://github.com/dexadata/dexaflow/issues/911)). Lite therefore
+reaps an attempt only when its agent is provably dead. The server records each
+spawned agent's PID, one file per `(run, task, try)` attempt, under
+`$TMPDIR/dexaflow-agent-pids`; the record lives on disk so a restarted server
+still sees the agents it spawned before the restart. The reaper probes the PID
+with signal 0: alive defers (`agent_lost_process_alive`,
+`dispatch_lost_process_alive`), a probe or read error defers
+(`*_process_query_error`), and a missing record or a dead PID lets the reap
+proceed. If the server cannot write the record when it spawns an agent, it
+stops that agent and fails the dispatch rather than run an agent the reapers
+cannot see.
+
+What this does **not** cover, plainly:
+
+- **An agent that is alive but wedged** (the process exists, its heartbeat
+  stopped) is never reaped by Lite. Stop the process yourself; the next cycle
+  then reaps the TI as `agent_lost`.
+- **PID reuse.** If the agent died while the server was down and the OS hands
+  its PID to an unrelated process, that attempt reads alive and is deferred
+  until that process exits. This can only delay a reap, never cause a false
+  one.
+- **A task that hangs inside a live agent** is the agent's own
+  `execution_timeout_seconds` to stop, exactly as on Kubernetes.
+
 ## Tuning the thresholds
 
 The thresholds and the settling grace are **build-time constants**
@@ -290,8 +340,11 @@ durable DB transition, each reaper tears the pod down:
 These teardown steps are best-effort and off the critical path: a delete
 failure is logged and metered but never undoes the DB reap, and the pod's own
 `activeDeadlineSeconds` plus the reconciler's GC remain backstops. In Lite
-(subprocess executor) there are no pods, so only the DB transition and the
-`should_terminate` signal apply.
+(subprocess executor) there are no pods and no teardown: the reapers only fail
+an attempt whose agent process is already dead (see
+[Lite: which reapers run](#lite-which-reapers-run)), so there is nothing left to
+stop, and a run failed by the orphan-run reaper stops any agent still attached
+to it through the `should_terminate` signal.
 
 A terminal pod the teardown skips is collected by the reconciler, so a
 reconciler that is not sweeping leaves those pod objects behind. That is not a
@@ -338,6 +391,8 @@ your Prometheus dashboard:
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
 | `agent_lost_list_error`, `dispatch_lost_list_error`, `orphan_list_error`, `pod_lost_list_error`, `warm_worker_lost_list_error` | Reaper's list query failed; the next cycle will retry |
 | `dispatch_lost_pod_query_error`, `pod_lost_pod_query_error` | Pod liveness could not be read (K8s API error); the reaper deferred rather than risk a false positive |
+| `agent_lost_process_alive`, `dispatch_lost_process_alive` | Lite only: the attempt's agent process is still alive, so the reaper deferred. Sustained `agent_lost_process_alive` for one attempt means a wedged agent; stop it by hand |
+| `agent_lost_process_query_error`, `dispatch_lost_process_query_error` | Lite only: the agent's PID record could not be read or probed; the reaper deferred |
 | `agent_lost_pod_delete_error`, `dispatch_lost_pod_delete_error`, `orphan_pod_delete_error`, `pod_lost_pod_delete_error` | Pod teardown after a reap failed; the DB reap stands and the pod's `activeDeadlineSeconds`/GC are backstops |
 
 A sustained non-zero rate on any of these is worth investigating — reapers
