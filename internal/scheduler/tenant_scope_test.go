@@ -1,7 +1,10 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,10 +73,10 @@ func TestActiveTaskCountsArePerTenant(t *testing.T) {
 		{DagID: "etl", TenantID: tenantB, States: map[string]domain.TaskState{"a": domain.TaskStateRunning}},
 	}
 	counts := activeTaskCounts(runs)
-	if got := counts[dagKey(tenantA, "etl")]; got != 2 {
+	if got := counts[dagRef{tenantA, "etl"}]; got != 2 {
 		t.Errorf("tenant A etl active tasks = %d, want 2", got)
 	}
-	if got := counts[dagKey(tenantB, "etl")]; got != 1 {
+	if got := counts[dagRef{tenantB, "etl"}]; got != 1 {
 		t.Errorf("tenant B etl active tasks = %d, want 1", got)
 	}
 }
@@ -105,4 +108,48 @@ func TestStepMaxActiveTasksIsPerTenant(t *testing.T) {
 		}
 	}
 	t.Errorf("tenant B's task must be admitted despite tenant A's full cap, transitions=%v", store.transitions)
+}
+
+// TestStepSameTickCreationsAreChargedPerTenant: with no active run and a
+// backfill due, max_active_runs=1 lets each tenant's etl create exactly one run
+// in the tick; one tenant's creation must not use up the other's headroom.
+func TestStepSameTickCreationsAreChargedPerTenant(t *testing.T) {
+	last := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour)
+	store := newFakeStore()
+	store.scheduled = []ScheduledDAG{
+		{TenantID: tenantA, DagID: "etl", Schedule: "@hourly", LastLogical: &last, Catchup: true, MaxActiveRuns: 1},
+		{TenantID: tenantB, DagID: "etl", Schedule: "@hourly", LastLogical: &last, Catchup: true, MaxActiveRuns: 1},
+	}
+	if err := newScheduler(store).Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	perTenant := map[string]int{}
+	for _, tn := range store.createdTenants {
+		perTenant[tn]++
+	}
+	if perTenant[tenantA] != 1 || perTenant[tenantB] != 1 {
+		t.Errorf("runs created per tenant = %v, want one each", perTenant)
+	}
+}
+
+// TestUnparseableScheduleWarningIsPerTenant: two tenants whose etl DAGs carry
+// different bad schedules each warn once, and the two entries do not evict
+// each other into a warning on every tick.
+func TestUnparseableScheduleWarningIsPerTenant(t *testing.T) {
+	store := newFakeStore()
+	store.scheduled = []ScheduledDAG{
+		{TenantID: tenantA, DagID: "etl", Schedule: "*/3 * * *"},
+		{TenantID: tenantB, DagID: "etl", Schedule: "* * *"},
+	}
+	var buf bytes.Buffer
+	s := NewScheduler(store, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})), time.Millisecond)
+	s.SetLeading(true)
+	for range 3 {
+		if err := s.Step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(buf.String(), "unparseable cron schedule"); n != 2 {
+		t.Errorf("warnings over 3 ticks = %d, want 2 (one per tenant)\n%s", n, buf.String())
+	}
 }

@@ -11,17 +11,16 @@ import (
 	"github.com/dexadata/dexaflow/internal/scheduler"
 )
 
-// TestScheduledRunLandsInTheOwningTenantIntegration covers #209: two tenants
-// each own a scheduled DAG with the same dag_id. ScheduledDAGs reports each
-// with its own tenant, and a scheduled run created for one tenant lands on that
-// tenant's DAG only, never on the other tenant's same-named DAG.
+// TestScheduledRunLandsInTheOwningTenantIntegration covers #209: the default
+// tenant and a second tenant each own a scheduled DAG with the same dag_id.
+// ScheduledDAGs reports each with its own tenant, and a scheduled run created
+// for the second tenant lands on its DAG only. Before the fix it landed on the
+// default tenant's same-named DAG, which is what tenant A stands for here.
 func TestScheduledRunLandsInTheOwningTenantIntegration(t *testing.T) {
 	repo, store, ctx := openRepo(t)
-	tenantA, tenantB := uniqueTenant("sched-a"), uniqueTenant("sched-b")
-	for _, name := range []string{tenantA, tenantB} {
-		if _, err := repo.EnsureTenant(ctx, name, name); err != nil {
-			t.Fatalf("EnsureTenant %s: %v", name, err)
-		}
+	tenantA, tenantB := "default", uniqueTenant("sched-b")
+	if _, err := repo.EnsureTenant(ctx, tenantB, tenantB); err != nil {
+		t.Fatalf("EnsureTenant %s: %v", tenantB, err)
 	}
 	dagID := fmt.Sprintf("sched_%d", time.Now().UnixNano())
 	schedule := "@hourly"
