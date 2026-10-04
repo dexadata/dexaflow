@@ -272,6 +272,7 @@ spec:
             - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
               value: {{ .maintenanceBurst | quote }}
             {{- end }}
+            {{- end }}
             {{- if .ctx.Values.executor.collectSettledRunPods }}
             # Opt-in: collect a settled run's finished task pods in one
             # DeleteCollection instead of one delete per pod after the grace period.
