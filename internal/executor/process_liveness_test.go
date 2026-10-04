@@ -139,3 +139,86 @@ func TestLiteReaperHeldBySettlingGate(t *testing.T) {
 			store.reapedRuns, store.agentMarked, store.queuedMarked)
 	}
 }
+
+// fakeOrphanStopper is a liveness seam that can also stop an orphaned task
+// process group. stopped decides the answer per attempt; err fails every stop.
+type fakeOrphanStopper struct {
+	fakeProcessLiveness
+	stopped map[string]bool
+	stopErr error
+	stops   []string
+}
+
+func (f *fakeOrphanStopper) StopOrphanedTask(_ context.Context, runID, taskID string, tryNumber int) (bool, error) {
+	key := fmt.Sprintf("%s/%s/%d", runID, taskID, tryNumber)
+	f.stops = append(f.stops, key)
+	if f.stopErr != nil {
+		return false, f.stopErr
+	}
+	return f.stopped[key], nil
+}
+
+// TestLiteReaperStopsAnOrphanedTaskBeforeReaping: an attempt whose agent died
+// but whose task process group is still running reads alive. When the seam can
+// stop that orphan (it verified the agent is dead and the group is the one the
+// agent recorded), the reaper stops it and then reaps, so the infra re-place
+// that follows never starts a second copy beside the first one.
+func TestLiteReaperStopsAnOrphanedTaskBeforeReaping(t *testing.T) {
+	store := staleEverythingStore()
+	procs := &fakeOrphanStopper{
+		fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true}},
+		stopped:             map[string]bool{"r1/t/1": true, "r2/t/1": true},
+	}
+	rec := &capturingRecorder{}
+	r := newLiteTestReaper(store, procs, rec)
+
+	if err := r.ReapOnce(context.Background()); err != nil {
+		t.Fatalf("ReapOnce: %v", err)
+	}
+	if len(store.agentMarked) != 1 || len(store.queuedMarked) != 1 {
+		t.Errorf("a stopped orphan must let the reap proceed: agentMarked=%v queuedMarked=%v", store.agentMarked, store.queuedMarked)
+	}
+	for _, want := range []string{"agent_lost_orphan_stopped", "dispatch_lost_orphan_stopped"} {
+		if rec.count(want) == 0 {
+			t.Errorf("the stop must be metered as %q; got %v", want, rec.decisions)
+		}
+	}
+}
+
+// TestLiteReaperDefersWhenTheOrphanCannotBeStopped: when the seam declines to
+// stop (the agent is alive, or the group could not be verified as the one the
+// agent recorded) or fails, the attempt stays deferred: alive means alive.
+func TestLiteReaperDefersWhenTheOrphanCannotBeStopped(t *testing.T) {
+	for name, procs := range map[string]*fakeOrphanStopper{
+		"declined": {
+			fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true}},
+			stopped:             map[string]bool{},
+		},
+		"failed": {
+			fakeProcessLiveness: fakeProcessLiveness{alive: map[string]bool{"r1/t/1": true, "r2/t/1": true}},
+			stopErr:             errors.New("kill: operation not permitted"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := staleEverythingStore()
+			rec := &capturingRecorder{}
+			r := newLiteTestReaper(store, procs, rec)
+			if err := r.ReapOnce(context.Background()); err != nil {
+				t.Fatalf("ReapOnce: %v", err)
+			}
+			if len(store.agentMarked)+len(store.queuedMarked) != 0 {
+				t.Errorf("an orphan that was not stopped must defer: agentMarked=%v queuedMarked=%v", store.agentMarked, store.queuedMarked)
+			}
+			if len(procs.stops) == 0 {
+				t.Error("the reaper must try to stop an orphan before deferring")
+			}
+			want := "agent_lost_process_alive"
+			if procs.stopErr != nil {
+				want = "agent_lost_orphan_stop_error"
+			}
+			if rec.count(want) == 0 {
+				t.Errorf("the deferral must be metered as %q; got %v", want, rec.decisions)
+			}
+		})
+	}
+}
