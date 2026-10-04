@@ -487,6 +487,10 @@ statement:
 - `RecordDispatchFailure` (`runs.sql:947-958`): a synchronous dispatch failure
   is ambiguous (a create that timed out may still have created the pod), so the
   next dispatch gets a new epoch;
+- `RequeueDispatch` (added by #1347, queued or scheduled back to scheduled):
+  whichever of #1347 and PR A1 merges second adds
+  `attempt_epoch = attempt_epoch + 1` and `last_heartbeat_at = NULL` to it, so
+  it follows the same rule as every other rail;
 - **the dispatch itself.** `launchQueued` creates the pod before it records
   `queued` (`internal/scheduler/scheduler.go:1053-1064`), and pod names carry a
   random suffix (`internal/executor/kubernetes.go:785-793`). A dispatch whose
@@ -610,12 +614,18 @@ AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_
 
 A claim-less token is not always a pre-upgrade one. During a rolling upgrade
 an old replica that renews a new token, or performs the projected-token
-exchange, mints it without the claim it does not know. Fencing its heartbeat
-would tell a live post-upgrade attempt to terminate on its next beat and
-reaping it would re-place it, once per stripped token. Matching heartbeats on
-the try keeps such an attempt alive and resolving its secrets; only its
-terminal report is fenced, so the worst case is one redundant re-place when it
-finishes, never a wrong outcome. #911 stays closed because the superseded
+exchange, mints it without the claim it does not know. The two differ in when
+the claim is lost. The exchange happens before the agent's RUNNING report, so
+an exchange-stripped token is fenced at that report: the pod stops before user
+code starts, and the dispatch-lost reaper re-places the row. A renewal happens
+while the task runs, so a renewal-stripped token is the only kind that reaches
+the final report. Fencing its heartbeat would tell a live post-upgrade attempt
+to terminate on its next beat and reaping it would re-place it, once per
+stripped token. Matching heartbeats on the try keeps such an attempt alive and
+resolving its secrets; only its terminal report is fenced, so the worst case
+is one redundant re-place when it finishes, never a wrong outcome. A
+claim-less final report is never accepted on a row past epoch 0: accepting it
+would reopen #911 for every legacy token. #911 stays closed because the superseded
 agent's RUNNING report is fenced (the agent starts user code only after it is
 acknowledged), and #1130 stays closed because the reconciler fences on the pod
 label, not on the token. The cost is that a superseded legacy agent's
@@ -635,6 +645,13 @@ next report tells it to terminate.
   secrets and get settled exactly as today. If one of them is reaped and
   re-placed after the upgrade, the replacement is epoch 1 and the legacy
   attempt is fenced out. No in-flight attempt is killed by the upgrade itself.
+  The exception is a second upgrade after a rollback: a rollback keeps the
+  column, so a row 0.5.1 dispatched before the rollback stays at epoch 1 or
+  higher, and a task 0.5.0 started on that row holds a claim-less token that
+  no longer matches. After the second upgrade its final report is rejected and
+  it is re-placed and runs again. This is a documented degraded case, not a
+  wrong outcome: the runbook says to let in-flight tasks drain (or pause
+  dispatch) before upgrading again after a rollback.
 - **Mixed versions during a rolling upgrade.** A new verifier with a token
   from an old minter: legacy rule above. An old verifier with a new token:
   the JSON decoder ignores the unknown claim and fences on `try_number` as
@@ -651,7 +668,10 @@ next report tells it to terminate.
   projected-token exchange served by an old replica drops the claim. The
   attempt keeps heartbeating and resolving secrets (the heartbeat and liveness
   rule above), but its terminal report is read as epoch 0 and fenced, so it is
-  told to terminate when it finishes and is re-placed once. Both cells last
+  told to terminate when it finishes and is re-placed once. That holds for a
+  renewal only; an exchange happens before the RUNNING report, so an
+  exchange-stripped attempt is fenced at that report, stops before user code
+  starts, and is re-placed by the dispatch-lost reaper. Both cells last
   only while old replicas serve agent RPCs: HA installs should finish the
   rollout promptly, or scale the control plane to one replica for the upgrade,
   to avoid redundant re-placements (`website/content/operate/upgrades.md`).
@@ -665,7 +685,11 @@ next report tells it to terminate.
 - **Rollback.** The old binary ignores the columns and the claim, and its
   archive statements still find their `(task_instance_id, try_number)` key, so
   behavior returns to today's without running the down migration, which is
-  only needed to reclaim the columns.
+  only needed to reclaim the columns. The columns keep their values across the
+  rollback, which matters only for a second upgrade: tasks 0.5.0 started on
+  rows already at epoch 1 or higher are rejected at their final report and
+  re-run (see In-flight attempts at upgrade). Before upgrading again after a
+  rollback, let in-flight tasks drain or pause dispatch.
 
 ### Consequences
 
