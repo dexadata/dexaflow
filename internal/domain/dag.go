@@ -5,6 +5,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -266,11 +267,24 @@ type Execution struct {
 	// one by naming it in Resources.Claims.
 	ResourceClaims []map[string]any `json:"resource_claims,omitempty" yaml:"resource_claims,omitempty"`
 	// Labels and Annotations are operator-declared pod metadata merged onto the task
-	// pod. Dexaflow's own leoflow.io/* labels and the task-instance-id annotation win
-	// any key collision (the reconciler and terminate path select on them), so a DAG
-	// cannot shadow them.
+	// pod. Keys under ReservedMetadataPrefix belong to Dexaflow (the reconciler,
+	// terminate path, warm-pool reconciler and token exchange select on them), so
+	// Validate refuses them and the executor drops any that still arrive.
 	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty" yaml:"annotations,omitempty"`
+}
+
+// ReservedMetadataPrefix is the label and annotation key prefix Dexaflow owns on
+// the pods it creates. Components decide what a pod is from these keys (a task
+// attempt's identity, a warm worker and the pool it serves, the owning tenant),
+// so a DAG-declared key under it would let a DAG change how its own pod is
+// treated.
+const ReservedMetadataPrefix = "leoflow.io/"
+
+// IsReservedMetadataKey reports whether a label or annotation key falls under
+// ReservedMetadataPrefix and therefore may only be set by Dexaflow itself.
+func IsReservedMetadataKey(key string) bool {
+	return strings.HasPrefix(key, ReservedMetadataPrefix)
 }
 
 // EffectiveExecutionMode returns the task's execution mode, defaulting to pod
@@ -315,7 +329,51 @@ func (d *DAGSpec) Validate() error {
 	if err := d.validateGraph(); err != nil {
 		return err
 	}
+	if err := d.validateExecutionMetadata(); err != nil {
+		return err
+	}
 	return d.validateResourceQuantities()
+}
+
+// validateExecutionMetadata rejects a task whose execution.labels or
+// execution.annotations declare a key under ReservedMetadataPrefix. The executor
+// drops such keys at pod build regardless (that is the guarantee); refusing them
+// here tells the author at compile/registration time instead of leaving the key
+// silently missing from the pod. The lexically smallest offending key is reported
+// so the error is the same on every run.
+func (d *DAGSpec) validateExecutionMetadata() error {
+	for _, t := range d.Tasks {
+		if t.Execution == nil {
+			continue
+		}
+		for _, m := range []struct {
+			field string
+			keys  map[string]string
+		}{
+			{"labels", t.Execution.Labels},
+			{"annotations", t.Execution.Annotations},
+		} {
+			if key, ok := firstReservedKey(m.keys); ok {
+				return fmt.Errorf(
+					"task %q declares execution.%s key %q, but the %q prefix is reserved for Dexaflow's own pod metadata. "+
+						"Use a key under your own prefix (e.g. \"example.com/%s\") or no prefix",
+					t.TaskID, m.field, key, ReservedMetadataPrefix, strings.TrimPrefix(key, ReservedMetadataPrefix))
+			}
+		}
+	}
+	return nil
+}
+
+// firstReservedKey returns the lexically smallest key of m under
+// ReservedMetadataPrefix, and whether there is one.
+func firstReservedKey(m map[string]string) (string, bool) {
+	first, found := "", false
+	for k := range m {
+		if IsReservedMetadataKey(k) && (!found || k < first) {
+			first, found = k, true
+		}
+	}
+	return first, found
 }
 
 // validateResourceQuantities rejects a CPU or memory value Kubernetes cannot

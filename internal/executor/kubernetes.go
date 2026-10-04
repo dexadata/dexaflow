@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"strings"
@@ -682,12 +683,22 @@ func buildAffinity(m map[string]any) *corev1.Affinity {
 }
 
 // mergeMetadata overlays operator-declared labels or annotations onto Dexaflow's
-// own pod metadata, but Dexaflow's keys always win a collision: the leoflow.io/*
-// identity labels and the task-instance-id annotation are load-bearing (the
-// reconciler and terminate path select on them), so a DAG cannot shadow them. The
-// own map is mutated in place; a nil declared map is a no-op.
+// own pod metadata. It is the single merge point for task and warm pods alike.
+// A declared key under domain.ReservedMetadataPrefix is dropped (and logged by
+// key only, never value) whether or not Dexaflow set it on this pod: other
+// components decide what a pod is from those keys (the token exchange resolves a
+// leoflow.io/warm-worker pod to a warm-worker identity for its
+// leoflow.io/dag-version-id pool, the warm-pool reconciler lists and counts pods
+// by them), so a DAG may neither add nor shadow one.
+// Dexaflow's own keys also win any other collision. The own map is mutated in
+// place; a nil declared map is a no-op.
 func mergeMetadata(own, declared map[string]string) {
 	for k, v := range declared {
+		if domain.IsReservedMetadataKey(k) {
+			slog.Warn("dropping declared pod metadata under the reserved prefix",
+				"key", k, "prefix", domain.ReservedMetadataPrefix)
+			continue
+		}
 		if _, taken := own[k]; !taken {
 			own[k] = v
 		}

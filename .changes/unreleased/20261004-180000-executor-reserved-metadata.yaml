@@ -1,0 +1,13 @@
+kind: Security
+body: |-
+  **A DAG can no longer put `leoflow.io/` labels or annotations on its pods.**
+  `execution.labels` and `execution.annotations` only protected the keys the
+  executor had already set on that pod, so a DAG could add others, for example
+  `leoflow.io/warm-worker: "true"` with a `leoflow.io/dag-version-id` on its own
+  task pod. Under the `exchange` agent token transport with warm pools enabled,
+  the token exchange then resolved that task pod as a warm worker of the named
+  DAG version, and the warm-pool reconciler listed it as one. The executor now
+  drops every DAG-declared key under `leoflow.io/` and logs the key, and
+  `dexaflow compile` and DAG registration reject a task that declares one. Move
+  any such custom key to a prefix of your own before upgrading.
+time: 2026-10-04T18:00:00.000000000-03:00

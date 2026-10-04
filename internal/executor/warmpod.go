@@ -126,7 +126,8 @@ type WarmPodSpec struct {
 	AnchorUID  types.UID
 
 	// Labels / Annotations are operator-declared metadata overlaid onto the pod;
-	// Dexaflow's own warm-worker labels always win a collision (see mergeMetadata).
+	// keys under domain.ReservedMetadataPrefix are dropped and Dexaflow's own
+	// warm-worker labels always win a collision (see mergeMetadata).
 	Labels      map[string]string
 	Annotations map[string]string
 }
