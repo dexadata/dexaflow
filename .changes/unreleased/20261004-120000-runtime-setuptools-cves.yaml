@@ -6,4 +6,8 @@ body: |-
   (CVE-2026-24049) were fixable HIGH findings in the image scan. The base image
   now upgrades setuptools to 80.10.2 where the base already has it; the 3.12 and
   3.13 images, which ship no setuptools, are unchanged. 80.10.2 still provides
-  `pkg_resources`. (#1299)
+  `pkg_resources`, but its import warning is now a `UserWarning` (shown by
+  default) instead of a `DeprecationWarning` (hidden by default when a library
+  imports it), so a task whose dependencies import `pkg_resources` logs one new
+  warning line, and a warnings filter that turns `UserWarning` into an error now
+  fails on it. (#1299)

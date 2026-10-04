@@ -124,7 +124,12 @@ RUN pip install --no-cache-dir "apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERS
 # fixable HIGH findings in the daily image scan (#1299). 80.10.2 is the first
 # release vendoring the fixed versions of both (jaraco.context 6.1.0, wheel
 # 0.46.3), and it stays on the 80.x line on purpose: setuptools 82 removed
-# pkg_resources, which user DAG code on these lines may still import. The 3.12
+# pkg_resources, which user DAG code on these lines may still import. One
+# visible change comes with it: 79.0.1 warns about importing pkg_resources with a
+# DeprecationWarning, hidden by default when a library does the import, while
+# 80.10.2 raises a UserWarning, which is shown by default. A task whose
+# dependencies import pkg_resources gains that warning line in its log, and a
+# filter that turns UserWarning into an error now trips on it. The 3.12
 # and 3.13 images ship no setuptools at all, and installing it there would add
 # a package (and its findings) that the image does not have today, hence the
 # guard rather than an unconditional install. Run after the Task SDK install so
