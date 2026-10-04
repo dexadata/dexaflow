@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -969,10 +970,23 @@ func reportBackoff(attempt int) time.Duration {
 	return d
 }
 
+// jitterDelay spreads a backoff delay over [d/2, d] ("equal jitter"), so agents
+// that failed together retry at different moments instead of hitting a
+// recovering control plane in one synchronized burst on every attempt. It never
+// lengthens the delay, so every cap on d still holds. math/rand is fine here:
+// this is backoff jitter, nothing security-relevant.
+func jitterDelay(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(mathrand.Int64N(int64(half)+1)) //nolint:gosec // G404: backoff jitter, not security-relevant
+}
+
 // reportRequest sends a ReportState request and translates the response's
 // should_terminate signal into an error. A transient RPC failure (the api pod
 // Unavailable, a deadline) is retried until it lands, with the delay between
-// attempts following reportBackoff. Retrying is safe: the server's ReportState
+// attempts following reportBackoff, jittered (jitterDelay). Retrying is safe: the server's ReportState
 // is idempotent (a report that already applied comes back as a stale ack, not a
 // double-apply). A logical rejection or a credential rejection (Unauthenticated,
 // PermissionDenied) is returned immediately, and a canceled context (parent
@@ -1024,7 +1038,7 @@ func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequ
 		if !retryableReportErr(err) {
 			return fmt.Errorf("reporting state %v: %w", req.GetState(), err)
 		}
-		delay := reportBackoff(attempt)
+		delay := jitterDelay(reportBackoff(attempt))
 		slog.Warn("report failed; retrying after backoff",
 			"state", req.GetState(), "attempt", attempt, "delay", delay, "error", err)
 		select {
