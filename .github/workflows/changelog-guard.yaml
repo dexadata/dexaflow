@@ -13,7 +13,7 @@
 name: CHANGELOG guard
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 # pull-requests: read is what lets the exemption step ask the API for the
@@ -85,8 +85,8 @@ jobs:
           fi
       # base_ref goes through the environment rather than into the command text:
       # ${{ }} is substituted before the shell sees it, and git refnames permit
-      # ';', '$(' and backticks. Unreachable while `branches: [main]` pins it,
-      # but nothing would catch it if that pin were widened (#970).
+      # ';', '$(' and backticks. The pin is main and release-* (ADR 0062), and
+      # nothing would catch a refname from a wider pin (#970).
       - name: Fetch the base branch tip
         if: steps.exempt.outputs.exempt != 'true'
         env:
