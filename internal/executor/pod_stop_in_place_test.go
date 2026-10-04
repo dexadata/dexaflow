@@ -181,3 +181,28 @@ func TestRunTeardownStopsStartedPodsInPlace(t *testing.T) {
 		t.Fatalf("activeDeadlineSeconds = %v, want 1", d)
 	}
 }
+
+// TestTeardownDoesNotMeterARecreatedPod: when the listed pod was deleted and a
+// new one created under its name, the apiserver answers the patch's UID with
+// 422 Invalid (metadata.uid is immutable on update; a patch carries no UID
+// precondition) and the fallback delete with 409 Conflict (its UID
+// precondition). The listed pod is gone, so this is not a refused stop: no
+// fallback is metered and nothing is reported.
+func TestTeardownDoesNotMeterARecreatedPod(t *testing.T) {
+	cs := fake.NewClientset(startedPod("p", "run-a", "extract", 1, corev1.PodRunning))
+	cs.PrependReactor("patch", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "p", nil)
+	})
+	cs.PrependReactor("delete", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "p", nil)
+	})
+	e := NewKubernetesExecutor(cs, "leoflow")
+	rec := &decisions{}
+	e.SetTeardownRecorder(rec)
+	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+		t.Fatalf("DeleteTaskPod: %v", err)
+	}
+	if len(rec.got) != 0 {
+		t.Errorf("a recreated pod is not a refused stop, got %v", rec.got)
+	}
+}
