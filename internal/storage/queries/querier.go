@@ -288,7 +288,9 @@ type Querier interface {
 	// Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 	// both "is there a slot due?" (schedule + last_logical), "how many slots
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
-	// "may this DAG take another active run?" (max_active_runs, see #200).
+	// "may this DAG take another active run?" (max_active_runs, see #200). The
+	// owning tenant is returned because a dag_id is unique only within its tenant
+	// (#209).
 	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
 	// Lists every TI currently in `queued` alongside its queued_at timestamp for
 	// the dispatch-lost reaper (#202). The reaper applies the threshold per
@@ -612,6 +614,12 @@ type Querier interface {
 	// overwrite.
 	UpsertConnection(ctx context.Context, arg UpsertConnectionParams) error
 	UpsertDag(ctx context.Context, arg UpsertDagParams) (Dag, error)
+	// Sizes a tenant's default pool to an explicit slot count: inserts it under the
+	// given name with the seed description, or re-sizes the row already there. A
+	// row with that name left without is_default (a tenant created before the
+	// default pool was seeded per tenant) is marked default, so the delete guard
+	// and the pools view treat it as the pool the scheduler falls back to.
+	UpsertDefaultPoolSlots(ctx context.Context, arg UpsertDefaultPoolSlotsParams) error
 	UpsertImportError(ctx context.Context, arg UpsertImportErrorParams) error
 	UpsertPool(ctx context.Context, arg UpsertPoolParams) error
 	// value is always supplied (the variable IS its value, and the `value` column is

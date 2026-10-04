@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -422,9 +423,9 @@ type TrustedIssuerSection struct {
 	// JWKSURL is where the issuer publishes its public signing keys: https, or
 	// http on a loopback host for local development.
 	JWKSURL string `mapstructure:"jwks_url"`
-	// Audience is the `aud` the tokens must carry for this Leoflow.
+	// Audience is the `aud` the tokens must carry for this Dexaflow.
 	Audience string `mapstructure:"audience"`
-	// TenantClaim names the string claim carrying the Leoflow tenant name.
+	// TenantClaim names the string claim carrying the Dexaflow tenant name.
 	TenantClaim string `mapstructure:"tenant_claim"`
 	// AllowedTenants lists the tenants the issuer may sign in to; "*" allows
 	// every tenant.
@@ -459,14 +460,14 @@ type AuthSection struct {
 	// Secret. Empty disables the API.
 	ServiceToken string `mapstructure:"service_token"`
 	// ExternalSignInURL hands unauthenticated UI visitors to the operator's own
-	// sign-in instead of Leoflow's page, with the requested path in a `next`
+	// sign-in instead of Dexaflow's page, with the requested path in a `next`
 	// query parameter (#1288). The operator's flow is expected to return them
-	// with a Leoflow session. Empty keeps Leoflow's page; `?local=1` reaches it
+	// with a Dexaflow session. Empty keeps Dexaflow's page; `?local=1` reaches it
 	// either way.
 	ExternalSignInURL string `mapstructure:"external_signin_url"`
 	// ExternalSignOutURL is where sign-out lands after clearing the session, so
 	// the operator can end their own session too (#1288). Empty returns to
-	// Leoflow's sign-in page.
+	// Dexaflow's sign-in page.
 	ExternalSignOutURL string `mapstructure:"external_signout_url"`
 	// DevNoAuth disables authentication entirely, treating every request as an
 	// admin. It exists ONLY for `dexaflow lite` (local, unsandboxed). It is false by
@@ -652,6 +653,26 @@ type SchedulerSection struct {
 	LoopIntervalMS int             `mapstructure:"loop_interval_ms"`
 	Enabled        bool            `mapstructure:"enabled"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
+	Alerts         AlertsSection   `mapstructure:"alerts"`
+}
+
+// AlertsSection guards the destinations of native on-failure alerts (#424).
+// An alert's URL and headers come from a tenant's connection, so on a shared
+// engine a tenant could otherwise point one at the control plane's own network:
+// loopback, a private service, or the cloud metadata endpoint.
+type AlertsSection struct {
+	// BlockPrivateDestinations refuses alert requests to loopback, private,
+	// link-local (including 169.254.169.254), shared, unspecified, multicast and
+	// broadcast addresses. The check runs on the address actually dialed, after
+	// DNS resolution and on every redirect, and the guarded client does not use
+	// the proxy environment. Off by default, so an existing install that alerts
+	// an in-cluster endpoint keeps working.
+	BlockPrivateDestinations bool `mapstructure:"block_private_destinations"`
+	// AllowedCIDRs exempts these ranges (CIDRs or single addresses) from the
+	// block, e.g. an on-premises chat server. Validated at startup even while the
+	// block is off, so a typo surfaces before anyone turns it on; applied only
+	// while it is on.
+	AllowedCIDRs []string `mapstructure:"allowed_cidrs"`
 }
 
 // DispatchSection sizes the BufferedDispatcher (#127). BufferSize=0 keeps the
@@ -789,6 +810,12 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_name":             "",
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+
+	// Alert egress guard: an alert's URL is tenant data (#424). The []string
+	// binds from one comma-separated env var, like server.trusted_proxies.
+	"scheduler.alerts.block_private_destinations": false,
+	"scheduler.alerts.allowed_cidrs":              []string{},
+
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE /
 	// _STORAGE_CLASS (the env-only Helm override path, #743, same class as #725).
 	// Empty leaves the L0 default unset, so a staging PVC inherits the cluster's
@@ -997,6 +1024,9 @@ func (c *ServerConfig) Validate() error {
 	}
 	if err := c.validatePlatformIntegration(); err != nil {
 		return err
+	}
+	if _, err := egress.NewPolicy(c.Scheduler.Alerts.AllowedCIDRs); err != nil {
+		return fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
 	// verify), so the JWT secret is required for either.
@@ -1252,7 +1282,7 @@ func tenantPinHint(c *ServerConfig) string {
 }
 
 // validatePlatformIntegration checks the settings an operator uses to serve
-// Leoflow from inside a larger platform: external sign-in and sign-out (#1288),
+// Dexaflow from inside a larger platform: external sign-in and sign-out (#1288),
 // the trusted issuer (#1284), the service API token (#1283), the home link
 // (#1290) and branding (#1289).
 func (c *ServerConfig) validatePlatformIntegration() error {
@@ -1276,7 +1306,7 @@ func (c *ServerConfig) validatePlatformIntegration() error {
 
 // validateExternalAuthURL checks one of the #1288 settings: empty, or an
 // absolute http(s) URL with a host. A relative URL would send the browser back
-// into Leoflow, where the sign-in route redirects again: a loop.
+// into Dexaflow, where the sign-in route redirects again: a loop.
 func validateExternalAuthURL(key, raw string) error {
 	if raw == "" {
 		return nil

@@ -171,6 +171,11 @@ config:
     allowedOrigins: []
   # -- Proxy IPs/CIDRs whose `X-Forwarded-For` the server honors when resolving the client IP (`server.trusted_proxies`). Empty (default) trusts NO proxy, so a spoofed XFF cannot forge the client IP. Behind an ingress this MUST be set to the ingress/pod CIDR, otherwise every request is attributed to the ingress IP and the per-IP login rate-limit locks out the whole deployment on a few bad logins (#725). Rendered as a comma-joined `LEOFLOW_SERVER_TRUSTED_PROXIES` env var, which viper splits into a list.
   trustedProxies: []
+  alerts:
+    # -- Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses (`scheduler.alerts.block_private_destinations`). An alert's URL and headers come from a tenant's connection, so turn this on when tenants that do not trust each other share the engine. The check runs on the address actually dialed, after DNS resolution and on every redirect; with it on, alert requests ignore `HTTP_PROXY`/`HTTPS_PROXY`. Off by default, so an existing in-cluster alert endpoint keeps working.
+    blockPrivateDestinations: false
+    # -- CIDRs or single addresses exempted from `blockPrivateDestinations` (`scheduler.alerts.allowed_cidrs`), e.g. an on-premises chat server. Rendered as a comma-joined `LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS`. An invalid entry fails server startup.
+    allowedCIDRs: []
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
 
@@ -250,7 +255,7 @@ redis:
 auth:
   # Trusted-issuer handoff (#1284): a platform that already signs its users in
   # opens a UI session for them by posting a short-lived token its own issuer
-  # signed to POST /api/v2/auth/session. Leoflow verifies it against the
+  # signed to POST /api/v2/auth/session. Dexaflow verifies it against the
   # issuer's public JWKS and signs in the existing user linked to the token's
   # subject; it never creates users or grants roles. Off until `issuer` is set.
   trustedIssuer:
@@ -260,9 +265,9 @@ auth:
     name: ""
     # -- Where the issuer publishes its public signing keys. `https`, or `http` on a loopback host.
     jwksUrl: ""
-    # -- The `aud` the tokens must carry for this Leoflow.
+    # -- The `aud` the tokens must carry for this Dexaflow.
     audience: ""
-    # -- The string claim naming the Leoflow tenant.
+    # -- The string claim naming the Dexaflow tenant.
     tenantClaim: tenant_id
     # -- Tenants the issuer may sign in to; `["*"]` allows every tenant. Required when `issuer` is set.
     allowedTenants: []
@@ -280,9 +285,9 @@ auth:
   serviceToken: ""
   # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.
   serviceTokenExistingSecret: ""
-  # -- Send UI visitors without a session to your own sign-in instead of Leoflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Leoflow session. Absolute `http(s)` URL; empty (the default) keeps Leoflow's page. `/api/v2/auth/login?local=1` still reaches Leoflow's page, so break-glass access survives an outage of your sign-in.
+  # -- Send UI visitors without a session to your own sign-in instead of Dexaflow's page (#1288), for deployments served from a larger platform. The requested page travels in a `next` query parameter, and your flow is expected to return the user with a Dexaflow session. Absolute `http(s)` URL; empty (the default) keeps Dexaflow's page. `/api/v2/auth/login?local=1` still reaches Dexaflow's page, so break-glass access survives an outage of your sign-in.
   externalSigninUrl: ""
-  # -- Where sign-out lands after clearing the Leoflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Leoflow's sign-in page.
+  # -- Where sign-out lands after clearing the Dexaflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Dexaflow's sign-in page.
   externalSignoutUrl: ""
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
