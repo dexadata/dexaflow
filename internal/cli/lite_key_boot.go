@@ -225,22 +225,38 @@ func resolveServerBin(ctx context.Context, cmd *cobra.Command, explicit string) 
 // removePreRestoreAfterBoot is removePreRestore for this user's ~/.dexaflow.
 func removePreRestoreAfterBoot(out io.Writer, st keyState) {
 	if dir, err := leoflowHome(); err == nil {
-		removePreRestore(out, dir, st)
+		removePreRestore(out, dir, st, bootHasUnscannedDatastore(dir))
 	}
 }
 
-// removePreRestore removes the config.yaml a restore replaced, once a boot with
-// the restored config succeeded and its scan read every stored secret under the
-// keys that config records, and says so. A boot that found Stranded or
-// Unreadable secrets keeps the file: it may hold the key they need (ADR 0065
-// section 8).
-func removePreRestore(out io.Writer, stateDir string, st keyState) {
+// bootHasUnscannedDatastore reports whether the install has both a managed and
+// a Docker datastore on disk. A boot scans only the one it runs against, so it
+// cannot vouch for the other (ADR 0065 gap 9); only `dexaflow lite migrate-key`
+// scans both. The Docker one counts as present once a Lite run recorded its
+// port, the same test migrate-key uses when Docker is off.
+func bootHasUnscannedDatastore(stateDir string) bool {
+	_, docker := readPort(filepath.Join(stateDir, "dev", "db-port"))
+	return docker && fileExists(filepath.Join(stateDir, "pgdata", "PG_VERSION"))
+}
+
+// removePreRestore removes the config.yaml a restore replaced once a scan that
+// covers every datastore on disk read every stored secret under the keys the
+// restored config records, and says so (ADR 0065 section 8, owner decision).
+// It keeps the file, and says why, when this boot's scan found Stranded or
+// Unreadable secrets (the file may hold the key they need), or when another
+// datastore exists that this boot did not scan; a clean `dexaflow lite
+// migrate-key`, which scans every datastore, then removes it.
+func removePreRestore(out io.Writer, stateDir string, st keyState, unscanned bool) {
 	p := filepath.Join(stateDir, preRestoreName)
 	if _, err := os.Stat(p); err != nil {
 		return
 	}
-	if st.stranded > 0 || st.unreadable > 0 {
+	switch {
+	case st.stranded > 0 || st.unreadable > 0:
 		devPrintf(out, "  kept %s (the config a restore replaced): some stored secrets do not open under the restored config's keys, and it may hold the key they need\n", p)
+		return
+	case unscanned:
+		devPrintf(out, "  kept %s (the config a restore replaced): this install also has a datastore this boot did not scan; `dexaflow lite migrate-key` scans both and removes it when every secret opens under the restored keys\n", p)
 		return
 	}
 	if err := os.Remove(p); err != nil {

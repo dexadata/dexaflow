@@ -66,6 +66,7 @@ func (r *migrateKeyRun) migrate(ctx context.Context, cfg liteKeyConfig, raw []by
 	}
 	r.crashAt(kpAfterDrop)
 	r.cleanupPreImage(ctx, liteKeyConfig{exists: true, secretKey: encKey}, dss)
+	r.removePreRestore()
 	r.say("  Done. %s is now the only copy of the key that opens these secrets:", r.configPath())
 	r.say("  back it up with `dexaflow lite backup`, and copy it out before any `dexaflow uninstall`.")
 	r.say("  Start Lite with `dexaflow lite`.")

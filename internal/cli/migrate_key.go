@@ -376,6 +376,25 @@ func (r *migrateKeyRun) finishAlreadyMigrated(ctx context.Context, cfg liteKeyCo
 		countOf(pf.total, "stored secret", "stored secrets"))
 	if !r.dryRun {
 		r.cleanupPreImage(ctx, cfg, dss)
+		r.removePreRestore()
 	}
 	return nil
+}
+
+// removePreRestore removes the config.yaml a restore replaced. It runs only at
+// the end of a run that finished clean: every datastore on disk was scanned
+// and every stored secret opens under the config's key alone, so the replaced
+// config holds no key anything still needs (ADR 0065 section 8, owner
+// decision).
+func (r *migrateKeyRun) removePreRestore() {
+	p := filepath.Join(r.stateDir, preRestoreName)
+	if _, err := os.Stat(p); err != nil {
+		return
+	}
+	if err := os.Remove(p); err != nil {
+		r.say("  could not remove %s: %v", p, err)
+		return
+	}
+	_ = syncDir(r.stateDir) //nolint:errcheck // best effort; a surviving copy is harmless
+	r.say("  removed %s (the config a restore replaced): every datastore was scanned and every stored secret opens under this install's key", p)
 }
