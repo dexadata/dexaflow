@@ -73,3 +73,4 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0059: OpenLineage emission from the Go control plane → OpenMetadata](/project/adrs/0059-openlineage-emission/)
 - [ADR 0060: External secrets resolution — pod-side, provider-neutral SecretResolver](/project/adrs/0060-external-secrets-resolution/)
 - [ADR 0061: Secret locality — private scratch, masked on read](/project/adrs/0061-secret-locality/)
+- [ADR 0065: Lite key migration off the published key (Proposed)](/project/adrs/0065-lite-key-migration/)
