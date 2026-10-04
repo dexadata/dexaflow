@@ -5,8 +5,12 @@ weight: 650
 description: "ADR 0065: An explicit, operator-triggered `dexaflow lite migrate-key` that records every key before touching a row, re-encrypts in one verified transaction, and drops the predecessor only after a clean pass."
 ---
 
-**Status:** Proposed
-**Date:** 2026-10-04
+**Status:** Accepted
+**Date:** 2026-10-04 (proposed and accepted the same day by the project owner)
+**Target release:** v0.5.1.
+**Decided at acceptance:** (a) the Lite server exits when it loses its lock
+session (section 3); (b) `config.yaml.pre-restore` is deleted after the next
+successful boot (section 8).
 **Relates:** ADR 0019 (secret encryption at rest; this ADR narrows its "re-encrypt at startup" rule for Lite), ADR 0009 (Postgres advisory locks), ADR 0026, ADR 0029 and ADR 0030 (the Lite datastore, managed or Docker), ADR 0011 (strict TDD, which the test matrix below has to satisfy).
 **Issues:** #1263 (this decision), split from #486. #507 (Variables encrypted at rest) changes what the sweep has to cover. PR #1264 landed the per-install key for new installs and carried the three rejected attempts recorded below.
 
@@ -325,7 +329,10 @@ commit, so there is no "some rows moved, report nothing changed".
     its connection drops (a Docker Postgres restart, ADR 0009). The server
     treats losing it as fatal and exits rather than continuing to write
     unprotected; reacquiring is not enough, since a migration may have run in
-    between.
+    between. **Decided at acceptance:** exiting is the accepted behavior. A
+    Docker Postgres restart therefore also stops a running Lite server, and
+    the operator (or the service manager) starts it again, which takes the
+    lock afresh and re-reads the config.
   - **No lock, no boot.** `dexaflow lite` can be pointed at a `dexaflow-server`
     from `PATH` or `./bin` (`--server-bin`), which may predate this ADR and
     take no lock. `dexaflow lite` checks that the server binary supports the
@@ -476,7 +483,16 @@ and that test forces it to.
   therefore replays the dump first and writes the config only after the replay
   succeeded, and keeps the config it replaces as
   `config.yaml.pre-restore` (`0600`, in `~/.dexaflow`, never in the
-  datastore) and prints its path.
+  datastore) and prints its path. **Decided at acceptance:** the file is
+  deleted after the next successful boot, meaning the next `dexaflow lite`
+  boot that starts the server with the restored config and whose boot scan
+  (section 5) reads every encrypted column under the keys that config
+  records. A boot that ends in the Stranded state, or that fails before the
+  scan, keeps the file, since it may hold the key the stranded rows need.
+  `restore` prints that the file is removed on the next successful boot, and
+  the deletion is logged with the path. Until then it holds a key (unless
+  the replaced install was Legacy), so it is created `0600` and owned like
+  `config.yaml`, and `backup` never includes it.
 - **Retiring the constant, two releases.** In the release after this ships, an
   install still in the Legacy state no longer falls back silently: `dexaflow
   lite` refuses to start and names `migrate-key`. `migrate-key` keeps the
@@ -583,6 +599,10 @@ read every connection, and print the Pending warning).
 - `restore` of a pre-migration archive lands in Legacy, and `migrate-key`
   finishes it. A `restore --force` whose replay fails leaves the current
   `config.yaml` in place.
+- `config.yaml.pre-restore`: present after a successful `restore`; deleted by
+  the next boot whose scan reads every encrypted column; kept by a boot that
+  ends Stranded or fails before the scan; absent from a later `backup`
+  archive.
 
 **Two datastores.**
 
@@ -604,8 +624,8 @@ read every connection, and print the Pending warning).
   writer that broke attempt 3; Lite is single-user and local, so it is a short
   interruption the operator chooses.
 - **Lite diverges from ADR 0019 on one point:** its server does not re-encrypt
-  at boot. Pro is unchanged. ADR 0019 gets a dated note pointing here when this
-  is accepted.
+  at boot. Pro is unchanged. ADR 0019 gets a dated note pointing here in the
+  implementation PR, when the Lite boot sweep is switched off.
 - **Every Lite boot scans the encrypted columns once** to choose its message.
   Lite tables are small; Pro is not affected.
 - **After migration, `config.yaml` is the only copy of the key.** Before it, a
