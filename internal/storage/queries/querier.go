@@ -54,7 +54,10 @@ type Querier interface {
 	CountDagRunStatesInWindow(ctx context.Context, arg CountDagRunStatesInWindowParams) ([]CountDagRunStatesInWindowRow, error)
 	CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int64, error)
 	CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
+	// One index probe per DAG of the tenant for its newest run. DAGs without runs
+	// drop out of the CROSS JOIN, so they are not counted.
 	CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error)
+	// Same newest-run lookup as ListDagsFiltered.
 	CountDagsFiltered(ctx context.Context, arg CountDagsFilteredParams) (int64, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
@@ -200,6 +203,10 @@ type Querier interface {
 	ListActiveDagRuns(ctx context.Context) ([]DagRun, error)
 	// run_id is the dag_run's UUID (StagingClaimName uses it), so join on dag_runs.id,
 	// which is globally unique. run_state is NULL only when the run row is truly gone.
+	// The join compares uuids so it probes dag_runs_pkey; casting dag_runs.id to text
+	// instead read every run. run_id is TEXT and older rows may hold something else,
+	// so the CASE casts only the canonical lower case form, the one id::text produces,
+	// and leaves anything else unmatched rather than failing the cast.
 	ListActiveStagingVolumes(ctx context.Context) ([]ListActiveStagingVolumesRow, error)
 	// Lists running TIs that have heartbeated at least once and whose latest
 	// heartbeat is non-null, alongside enough identity to log + observe.
@@ -250,6 +257,9 @@ type Querier interface {
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
 	ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error)
 	ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, error)
+	// The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,
+	// one index probe each, instead of a DISTINCT ON over every run in the table.
+	// LEFT JOIN keeps DAGs without runs; they match no run_state filter.
 	ListDagsFiltered(ctx context.Context, arg ListDagsFilteredParams) ([]Dag, error)
 	// The DAG plus the LABEL of its current version. The UI's clear dialog compares
 	// this against the RUN's bundle_version and offers "Run with latest bundle
@@ -292,7 +302,9 @@ type Querier interface {
 	// Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 	// both "is there a slot due?" (schedule + last_logical), "how many slots
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
-	// "may this DAG take another active run?" (max_active_runs, see #200).
+	// "may this DAG take another active run?" (max_active_runs, see #200). The
+	// owning tenant is returned because a dag_id is unique only within its tenant
+	// (#209).
 	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
 	// Lists every TI currently in `queued` alongside its queued_at timestamp for
 	// the dispatch-lost reaper (#202). The reaper applies the threshold per
@@ -314,6 +326,11 @@ type Querier interface {
 	// get them via the JOIN.
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
 	ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error)
+	// The batched form of ListTaskInstancesByRun for the scheduler tick: every
+	// active run's task instances in one round trip instead of one per run. Rows
+	// come grouped by run and, within a run, in the same task_id order the per-run
+	// query returns, so the caller can split them without re-sorting.
+	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
 	// "role:action:resource" for every grant of a tenant's built-in roles.
 	ListTenantRolePermissions(ctx context.Context, name string) ([]string, error)
 	// One row per user in the tenant, newest first, with every granted role name
@@ -616,6 +633,12 @@ type Querier interface {
 	// overwrite.
 	UpsertConnection(ctx context.Context, arg UpsertConnectionParams) error
 	UpsertDag(ctx context.Context, arg UpsertDagParams) (Dag, error)
+	// Sizes a tenant's default pool to an explicit slot count: inserts it under the
+	// given name with the seed description, or re-sizes the row already there. A
+	// row with that name left without is_default (a tenant created before the
+	// default pool was seeded per tenant) is marked default, so the delete guard
+	// and the pools view treat it as the pool the scheduler falls back to.
+	UpsertDefaultPoolSlots(ctx context.Context, arg UpsertDefaultPoolSlotsParams) error
 	UpsertImportError(ctx context.Context, arg UpsertImportErrorParams) error
 	UpsertPool(ctx context.Context, arg UpsertPoolParams) error
 	// value is always supplied (the variable IS its value, and the `value` column is
