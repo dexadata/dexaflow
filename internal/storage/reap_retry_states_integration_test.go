@@ -303,3 +303,52 @@ func assertRunAndTask(t *testing.T, pg *pgxpool.Pool, ctx context.Context, runUU
 		t.Errorf("%s state = %s, want %s", taskID, tiState, want)
 	}
 }
+
+// TestReapRunSkipsRunWithLockedTaskInstanceIntegration pins that the reap never
+// waits on a task instance another transaction is writing. A writer holding a
+// row lock on one of the run's task instances is activity, so the reap reports
+// a no-op at once instead of queueing behind it. Waiting would let the reap's
+// share locks form a cycle with a writer that locks several task instances of
+// the run in a different order (a multi-task clear, a batched scheduler
+// transition), which Postgres breaks by aborting one side.
+func TestReapRunSkipsRunWithLockedTaskInstanceIntegration(t *testing.T) {
+	repo, sched, ctx := openRepo(t)
+	pg, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pg.Close)
+	tasks := []domain.TaskSpec{
+		{TaskID: "extract", Type: domain.TaskTypePython},
+		{TaskID: "load", Type: domain.TaskTypePython, DependsOn: []string{"extract"}},
+	}
+	runUUID := newBackdatedRun(t, repo, sched, pg, ctx, "reap_locked", tasks, domain.TaskStateFailed)
+
+	writer, err := pg.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.Rollback(context.Background()) }() //nolint:errcheck,contextcheck // best-effort test cleanup
+	if _, err := writer.Exec(ctx, `SELECT id FROM task_instances WHERE dag_run_id = $1 AND task_id = 'load' FOR UPDATE`, runUUID); err != nil {
+		t.Fatalf("writer lock: %v", err)
+	}
+
+	reapCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	reaped, rerr := sched.ReapRun(reapCtx, runUUID, time.Now().UTC().Add(-orphanThreshold))
+	if rerr != nil {
+		t.Fatalf("ReapRun must not wait on a locked task instance, got error %v", rerr)
+	}
+	if reaped {
+		t.Errorf("ReapRun must be a no-op while a task instance of the run is being written")
+	}
+	if err := writer.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertRunAndTask(t, pg, ctx, runUUID, "extract", domain.TaskStateFailed)
+
+	reaped, rerr = sched.ReapRun(ctx, runUUID, time.Now().UTC().Add(-orphanThreshold))
+	if rerr != nil || !reaped {
+		t.Fatalf("once the writer is gone the stuck run must be reaped, got reaped=%v err=%v", reaped, rerr)
+	}
+}
