@@ -1,0 +1,18 @@
+kind: Fixed
+body: |-
+  **Two replicas on a small managed Postgres boot at the chart defaults, and
+  running out of connections names the setting.** Each control-plane pod opens
+  up to `database.maxOpenConns` connections plus 3 (health checks and the
+  scheduler leader lock), and nothing scales that by the replica count. At the
+  old default of 20, `replicaCount: 2` asked for 46 connections, beyond the
+  smallest managed tiers (Cloud SQL `db-f1-micro`, the smallest RDS and Azure
+  Flexible sizes cap `max_connections` near 25), and the pods never became
+  ready. The chart now defaults `database.maxOpenConns` to 6 and
+  `database.maxIdleConns` to 2, so two replicas and the migration Job need 19.
+  Values you set yourself are kept; if you relied on the old default for a
+  high-throughput deployment on a larger server, set `database.maxOpenConns: 20`
+  and `database.maxIdleConns: 5`. The install notes print the total when it
+  exceeds 20, and when Postgres refuses a connection with SQLSTATE 53300 at boot
+  the error now names `database.max_open_conns`, its value and the per-replica
+  arithmetic instead of only "remaining connection slots are reserved". (#1088)
+time: 2026-10-04T15:00:00.000000000+00:00
