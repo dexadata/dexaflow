@@ -1380,6 +1380,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		UIETagRevalidation:           cfg.UI.ETagRevalidation,
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
+		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
 
 		Dags:            repo,
 		DagRuns:         repo,

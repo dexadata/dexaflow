@@ -369,6 +369,13 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
+	// only: create, resize and delete answer 403 for every role, tenant admin
+	// included. It is for an engine shared by many tenants, where the platform
+	// operator sizes each tenant's pools out of band and a tenant must not be
+	// able to raise its own slot budget. Default false keeps pools writable
+	// under write:pool, today's behavior.
+	PoolsReadOnly bool `mapstructure:"pools_read_only"`
 }
 
 // Server roles (ADR 0049).
@@ -740,7 +747,10 @@ var serverDefaults = map[string]any{
 	// comma-separated env var into a list, so the env-only Helm override path
 	// works without a config file — this is what the chart renders (#725). Empty
 	// (the default) trusts no proxy.
-	"server.trusted_proxies":  []string{},
+	"server.trusted_proxies": []string{},
+	// Off by default: pools stay writable through the tenant-facing API under
+	// write:pool. Registered so AutomaticEnv binds the Helm-rendered env var.
+	"server.pools_read_only":  false,
 	"database.url":            "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable",
 	"database.max_open_conns": 25,
 	"database.max_idle_conns": 5,

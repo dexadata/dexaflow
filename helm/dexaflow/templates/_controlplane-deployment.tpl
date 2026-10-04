@@ -222,6 +222,13 @@ spec:
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
             {{- end }}
+            {{- if .ctx.Values.config.poolsReadOnly }}
+            # Tenant-facing pool API serves reads only (server.pools_read_only):
+            # no tenant role, admin included, can create, resize or delete a pool.
+            # Omitted when false, which keeps the server default (writable).
+            - name: LEOFLOW_SERVER_POOLS_READ_ONLY
+              value: "true"
+            {{- end }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set
