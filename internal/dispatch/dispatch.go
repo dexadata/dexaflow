@@ -72,6 +72,11 @@ type Resolved struct {
 	Image           string
 	ImagePullPolicy string
 	TryNumber       int
+	// AttemptEpoch identifies this execution attempt of the row (ADR 0051
+	// amendment). The resolver claims a fresh value on every dispatch, so two
+	// dispatches of one try never share it, even with no reset rail between
+	// them. The token, pod label and annotation are minted from it.
+	AttemptEpoch int
 	// Staging carries the DAG's opt-in staging-volume config (ADR 0022); nil or
 	// disabled means no per-run volume.
 	Staging *domain.StagingConfig
