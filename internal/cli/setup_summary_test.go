@@ -18,7 +18,7 @@ func TestPrintSetupSummaryHighlightsCredentials(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"═",                            // strong visual divider above + below
-		"LEOFLOW LITE ADMIN",           // uppercased, unmissable title
+		"DEXAFLOW LITE ADMIN",          // uppercased, unmissable title
 		"SAVE NOW",                     // tells the user to save it
 		"admin@leoflow.local",          // user line
 		"blueturtle42",                 // the password value, verbatim
@@ -40,7 +40,7 @@ func TestPrintSetupSummaryOnRerun(t *testing.T) {
 	var buf bytes.Buffer
 	printSetupSummary(&buf, liteSettings{AdminEmail: "admin@leoflow.local", Port: 8088}, "")
 	out := buf.String()
-	if strings.Contains(out, "LEOFLOW LITE ADMIN") {
+	if strings.Contains(out, "DEXAFLOW LITE ADMIN") {
 		t.Errorf("re-run must not flash the credentials block, got:\n%s", out)
 	}
 	if !strings.Contains(out, "reset-password") {

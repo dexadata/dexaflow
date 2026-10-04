@@ -60,7 +60,7 @@ func (f *flakyStore) PoolBudgets(context.Context) (map[string]int, error) {
 	return map[string]int{}, nil
 }
 
-func (f *flakyStore) CreateScheduledRun(_ context.Context, dagID string, _ time.Time) error {
+func (f *flakyStore) CreateScheduledRun(_ context.Context, _, dagID string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErrOn[dagID] {

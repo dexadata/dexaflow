@@ -68,6 +68,11 @@ type Dependencies struct {
 	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
 	// JSON object at boot. Nil serves null, the stock look (#1289).
 	UITheme json.RawMessage
+	// UIETagRevalidation (ui.etag_revalidation) relaxes no-store to
+	// "private, no-cache" with Vary: Authorization, Cookie on the routes that
+	// compute an ETag, so the browser can revalidate them and get a 304. False
+	// (the default) keeps no-store on every UI route.
+	UIETagRevalidation bool
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
 	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
@@ -137,7 +142,7 @@ type Dependencies struct {
 	OIDCSettings config.OIDCSection
 	// ExternalSignInURL and ExternalSignOutURL are auth.external_signin_url and
 	// auth.external_signout_url (#1288): the operator's own sign-in and
-	// sign-out, used in place of Leoflow's pages. Empty keeps Leoflow's.
+	// sign-out, used in place of Dexaflow's pages. Empty keeps Dexaflow's.
 	ExternalSignInURL  string
 	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).
@@ -281,7 +286,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
-	registerUISummaries(r, deps.TaskSummary)
+	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
 	registerUITasks(r, deps.Specs)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)

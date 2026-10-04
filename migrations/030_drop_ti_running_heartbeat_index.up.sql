@@ -1,0 +1,18 @@
+-- Drop idx_ti_running_heartbeat (from 015, performance item D3) so heartbeat
+-- updates can be HOT.
+--
+-- RecordTaskHeartbeat sets last_heartbeat_at on every running task every few
+-- seconds, the most frequent write in the system. An update is HOT (writes no
+-- index entry) only when no index references a column it changes, and this
+-- index was the only one on last_heartbeat_at, so every heartbeat added an
+-- entry to every task_instances index.
+--
+-- Its one reader, ListAgentLostCandidates (state = 'running' AND
+-- last_heartbeat_at IS NOT NULL ORDER BY last_heartbeat_at LIMIT 100), reads
+-- the running rows through the partial idx_ti_state instead and sorts them:
+-- about 3.5 ms against 1.3 ms with this index, for 710 running task instances
+-- among 5M rows.
+--
+-- CONCURRENTLY, one statement, no transaction: see 028. If it is interrupted,
+-- re-run the statement by hand, then `migrate force 30`.
+DROP INDEX CONCURRENTLY IF EXISTS idx_ti_running_heartbeat;
