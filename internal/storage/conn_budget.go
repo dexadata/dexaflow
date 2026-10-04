@@ -8,9 +8,11 @@ import (
 )
 
 // sqlstateTooManyConnections is Postgres' too_many_connections. The server
-// answers it both as "sorry, too many clients already" and, once only the
-// reserved slots are left, as "remaining connection slots are reserved for
-// ...". Either way the server is out of connection slots.
+// answers it as "sorry, too many clients already" and, once only the reserved
+// slots are left, as "remaining connection slots are reserved for ...". It also
+// uses the same code for a per-role or per-database CONNECTION LIMIT ("too many
+// connections for role ..."), which managed providers commonly set, so the
+// explanation names both budgets.
 const sqlstateTooManyConnections = "53300"
 
 // perPodExtraConns is what every control-plane process opens on top of the
@@ -38,7 +40,8 @@ func explainConnBudget(err error, maxConns int32) error {
 		"opens up to database.max_open_conns=%d connections (Helm database.maxOpenConns, "+
 		"env DEXAFLOW_DATABASE_MAX_OPEN_CONNS) + %d (health checks and the scheduler leader lock), "+
 		"and the total across every replica, rolling-update surge pod and the migration Job "+
-		"must fit the server's max_connections minus its reserved slots. Lower "+
-		"database.max_open_conns, run fewer replicas, or raise max_connections (see #1088)",
+		"must fit the server's max_connections minus its reserved slots, and any CONNECTION LIMIT "+
+		"set on the database role or the database. Lower database.max_open_conns, run fewer "+
+		"replicas, or raise the limit that was hit (see #1088)",
 		err, maxConns, perPodExtraConns)
 }

@@ -72,6 +72,23 @@ func TestExplainConnBudgetCoversTooManyClients(t *testing.T) {
 	}
 }
 
+// TestExplainConnBudgetCoversRoleConnectionLimit: a per-role CONNECTION LIMIT
+// (common on managed providers) is reported with the same SQLSTATE. Raising
+// max_connections would not help there, so the explanation must name the role
+// and database limits as well.
+func TestExplainConnBudgetCoversRoleConnectionLimit(t *testing.T) {
+	pgErr := &pgconn.PgError{Severity: "FATAL", Code: "53300", Message: `too many connections for role "dexaflow"`}
+	got := explainConnBudget(pgErr, 6)
+	if got == nil {
+		t.Fatal("explainConnBudget returned nil for a 53300 error")
+	}
+	for _, want := range []string{"max_open_conns=6", "CONNECTION LIMIT", "max_connections"} {
+		if !strings.Contains(got.Error(), want) {
+			t.Errorf("role limit error must mention %q; got:\n%s", want, got)
+		}
+	}
+}
+
 // TestExplainConnBudgetLeavesOtherErrorsAlone: a wrong password or an
 // unreachable host has nothing to do with the pool size, and saying otherwise
 // would send the operator after the wrong knob.
