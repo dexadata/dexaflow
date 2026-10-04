@@ -288,7 +288,9 @@ type Querier interface {
 	// Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 	// both "is there a slot due?" (schedule + last_logical), "how many slots
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
-	// "may this DAG take another active run?" (max_active_runs, see #200).
+	// "may this DAG take another active run?" (max_active_runs, see #200). The
+	// owning tenant is returned because a dag_id is unique only within its tenant
+	// (#209).
 	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
 	// Lists every TI currently in `queued` alongside its queued_at timestamp for
 	// the dispatch-lost reaper (#202). The reaper applies the threshold per
