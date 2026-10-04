@@ -8,5 +8,13 @@ body: |-
   minutes or more) was failed as `orphaned` before the retry or the next poke
   could happen. Any task instance that is neither settled nor `none` now keeps
   its run out of the reaper; a run whose tasks are all settled or never started
-  is still reaped after 5 minutes.
+  is still reaped after 5 minutes. Two narrower windows with the same effect
+  are closed too. Sending a task back for another attempt (a retry, a sensor
+  re-poke, an infra re-place, an operator clear) now counts as activity, so a
+  run is no longer reaped in the scheduler tick between that release and the
+  task being scheduled (for a sensor poking every minute that happened more
+  often than not within an hour). And the reap re-checks the orphan rule atomically, so a run that
+  resumes between the reaper's list and its reap is left alone, pods included,
+  and counted as `orphan_reap_noop`. Adds migration 039
+  (`task_instances.released_at`).
 time: 2026-10-04T16:00:00.000000000-03:00
