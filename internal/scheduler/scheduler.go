@@ -140,6 +140,9 @@ type RunState struct {
 // leader has been down across multiple slots, catchup=true backfills every
 // missed slot while catchup=false jumps straight to the most recent one.
 type ScheduledDAG struct {
+	// TenantID is the UUID of the tenant that owns the DAG. A dag_id is unique
+	// only within its tenant, so every per-DAG decision keys on the pair (#209).
+	TenantID    string
 	DagID       string
 	Schedule    string
 	LastLogical *time.Time
@@ -216,7 +219,7 @@ type Store interface {
 	// a new episode mid-send, and a stamp from the superseded one must not land.
 	MarkRunAlertDelivered(ctx context.Context, runID string, attempt int) error
 	ScheduledDAGs(ctx context.Context) ([]ScheduledDAG, error)
-	CreateScheduledRun(ctx context.Context, dagID string, logical time.Time) error
+	CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error
 	// SetTaskNote attaches operational context to a task instance (shown in the
 	// UI), e.g. why it is queued but not running.
 	SetTaskNote(ctx context.Context, runID, taskID, note string) error
@@ -540,13 +543,14 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	}
 	for i := range runs {
 		run := runs[i]
-		activeByDAG[run.DagID]++
-		run.ActiveTaskCount = activeTasksByDAG[run.DagID] + admittedTasksByDAG[run.DagID]
+		key := dagKey(run.TenantID, run.DagID)
+		activeByDAG[key]++
+		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
 		run.PoolsEnabled = s.poolsEnabled
 		run.PoolBudgets = poolBudgets
 		run.PoolActive = poolOccupied
 		admitted, admittedByPool := s.advanceSafely(ctx, run)
-		admittedTasksByDAG[run.DagID] += admitted
+		admittedTasksByDAG[key] += admitted
 		for k, n := range admittedByPool {
 			poolOccupied[k] += n
 		}
@@ -564,11 +568,19 @@ func activeTaskCounts(runs []RunState) map[string]int {
 	for i := range runs {
 		for _, st := range runs[i].States {
 			if st == domain.TaskStateQueued || st == domain.TaskStateRunning {
-				counts[runs[i].DagID]++
+				counts[dagKey(runs[i].TenantID, runs[i].DagID)]++
 			}
 		}
 	}
 	return counts
+}
+
+// dagKey identifies a DAG across tenants. A dag_id is unique only within its
+// tenant, so the per-DAG caps (max_active_runs, max_active_tasks) and the
+// once-per-schedule warnings key on the (tenant, dag_id) pair: two tenants that
+// both own an "etl" DAG never share a budget (#209).
+func dagKey(tenantID, dagID string) string {
+	return tenantID + "\x00" + dagID
 }
 
 // loadPoolBudget prepares the cross-DAG named-pool admission state for a tick
@@ -647,14 +659,15 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]in
 	now := time.Now().UTC()
 	createdThisTick := make(map[string]int, len(dags))
 	for _, d := range dags {
+		key := dagKey(d.TenantID, d.DagID)
 		if domain.IsOnceSchedule(d.Schedule) {
 			// @once: fire exactly one run on first sight, then never again. Once
 			// the run exists, the DAG's LastLogical is non-nil and this is
 			// skipped — that single-shot semantic already prevents any cap
 			// breach, so no headroom check is needed here.
 			if d.LastLogical == nil {
-				s.createScheduledRun(ctx, d.DagID, now)
-				createdThisTick[d.DagID]++
+				s.createScheduledRun(ctx, d, now)
+				createdThisTick[key]++
 			}
 			continue
 		}
@@ -669,10 +682,10 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]in
 		// validation (domain.ValidateSchedule) catches this earlier; this is the
 		// backstop for DAGs registered before the fix.
 		if !scheduleParseable(d.Schedule) {
-			if s.warnedSchedules[d.DagID] != d.Schedule {
+			if s.warnedSchedules[key] != d.Schedule {
 				s.logger.Warn("DAG has an unparseable cron schedule; it will not run on a schedule until fixed",
 					"dag", d.DagID, "schedule", d.Schedule)
-				s.warnedSchedules[d.DagID] = d.Schedule
+				s.warnedSchedules[key] = d.Schedule
 			}
 			continue
 		}
@@ -689,8 +702,8 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]in
 				s.recordCapSkip(d.DagID)
 				continue
 			}
-			s.createScheduledRun(ctx, d.DagID, logical)
-			createdThisTick[d.DagID]++
+			s.createScheduledRun(ctx, d, logical)
+			createdThisTick[key]++
 			continue
 		}
 		slots := dueScheduledSlots(d.Schedule, d.LastLogical, d.StartDate, now, d.Catchup, maxCatchupSlotsPerTick)
@@ -699,8 +712,8 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[string]in
 				s.recordCapSkip(d.DagID)
 				break
 			}
-			s.createScheduledRun(ctx, d.DagID, logical)
-			createdThisTick[d.DagID]++
+			s.createScheduledRun(ctx, d, logical)
+			createdThisTick[key]++
 		}
 	}
 	return nil
@@ -719,7 +732,8 @@ func (s *Scheduler) hasHeadroom(d ScheduledDAG, active map[string]int, justCreat
 	if d.MaxActiveRuns <= 0 {
 		return true
 	}
-	return active[d.DagID]+justCreated[d.DagID] < d.MaxActiveRuns
+	key := dagKey(d.TenantID, d.DagID)
+	return active[key]+justCreated[key] < d.MaxActiveRuns
 }
 
 // recordCapSkip logs (once per DAG between successful creations) and meters
@@ -734,9 +748,9 @@ func (s *Scheduler) recordCapSkip(dagID string) {
 // createScheduledRun creates one scheduled run for a DAG, isolating per-DAG
 // failures: a single DAG's creation error is logged and metered but never blocks
 // run creation for the other scheduled DAGs in this tick.
-func (s *Scheduler) createScheduledRun(ctx context.Context, dagID string, logical time.Time) {
-	if err := s.store.CreateScheduledRun(ctx, dagID, logical); err != nil {
-		s.logger.Error("creating scheduled run", "dag", dagID, "error", err)
+func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logical time.Time) {
+	if err := s.store.CreateScheduledRun(ctx, d.TenantID, d.DagID, logical); err != nil {
+		s.logger.Error("creating scheduled run", "tenant", d.TenantID, "dag", d.DagID, "error", err)
 		s.record("create_run_error")
 		return
 	}
