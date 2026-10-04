@@ -1111,6 +1111,17 @@ func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, tas
 	if disp == executor.Backpressure {
 		return s.backoffBackpressure(ctx, run, taskID, cause)
 	}
+	if disp == executor.Refused {
+		// The operator's executor policy refused the pod (ADR 0063). Retrying
+		// cannot change the answer, so fail the task now and say why.
+		reason := fmt.Sprintf("dispatch_failed: %v", cause)
+		s.logger.Warn("executor policy refused the task; failing it",
+			"run", run.RunID, "dag", run.DagID, "task", taskID, "error", cause)
+		if err := s.store.FailDispatchExhausted(ctx, run.RunID, taskID, reason); err != nil {
+			s.logger.Error("failing refused task", "run", run.RunID, "task", taskID, "error", err)
+		}
+		return nil
+	}
 	attempts := run.DispatchAttempts[taskID] + 1
 	if attempts >= dispatchMaxAttempts {
 		reason := fmt.Sprintf("dispatch_failed after %d attempts: %v", attempts, cause)

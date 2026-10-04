@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -418,7 +419,18 @@ func validateStartup(cfg *config.ServerConfig) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if _, err := executorPolicy(cfg); err != nil {
+		return err
+	}
 	return executor.ValidateResilienceLadder(resilienceLadder(cfg))
+}
+
+// executorPolicy parses the operator's executor.policy (ADR 0063). No policy
+// is the zero Policy, which leaves every task pod as the DAG and the platform
+// defaults built it; an invalid one is an error, so startup fails instead of
+// silently enforcing nothing.
+func executorPolicy(cfg *config.ServerConfig) (*executor.Policy, error) {
+	return executor.ParsePolicy(cfg.Executor.Policy)
 }
 
 // warnStartup surfaces the boot-time settings validateStartup accepts but that
@@ -2436,6 +2448,10 @@ func setupSubprocessDispatch(cfg *config.ServerConfig, sched *scheduler.Schedule
 	disp, closer := wrapBuffered(dispatcher, sink, logger, metrics, cfg.Scheduler.Dispatch)
 	sched.SetDispatcher(disp)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
+	if len(bytes.TrimSpace(cfg.Executor.Policy)) > 0 {
+		// The policy governs task pods; the subprocess executor runs none.
+		logger.Warn("executor.policy is set but ignored by the subprocess executor (ADR 0063)")
+	}
 	return true, closer
 }
 
@@ -2462,6 +2478,18 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// BuildPod.
 	dispatcher.SetAgentTokenTransport(cfg.Auth.AgentTokenTransport, executor.DefaultAgentTokenAudience, 0)
 	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
+	// Operator executor policy (ADR 0063), applied after the platform defaults.
+	// validateStartup already parsed it, so an error here cannot happen; refuse
+	// to dispatch rather than run unpoliced if it somehow does.
+	policy, err := executorPolicy(cfg)
+	if err != nil {
+		logger.Error("pod dispatch disabled: invalid executor.policy", "error", err)
+		return false, nil
+	}
+	if !policy.IsZero() {
+		logger.Info("executor policy active", "dedicated_pods_only", policy.RequiresDedicatedPod())
+	}
+	dispatcher.SetExecutorPolicy(policy)
 	// Deadline floor for task pods that declare no execution timeout: the agent's
 	// reports retry for as long as the control plane is unreachable, so a pod
 	// with no deadline of its own would outlive a total outage indefinitely. The
