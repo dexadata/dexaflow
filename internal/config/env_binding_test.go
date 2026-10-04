@@ -263,3 +263,27 @@ func TestLoadReadsTheNewPrefix(t *testing.T) {
 		t.Fatalf("Token = %q, want tok-new", c.Token)
 	}
 }
+
+// TestLoadServerPoolsReadOnly proves server.pools_read_only defaults to false,
+// so an upgrade changes nothing, and binds from the environment, the only
+// override path a Helm install has. Consequence when unbound: an operator who
+// turned the lock on to protect the slot budgets of a shared engine would see it
+// silently ignored, and every tenant's admin could still resize its pools.
+func TestLoadServerPoolsReadOnly(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if c.Server.PoolsReadOnly {
+		t.Fatal("server.pools_read_only must default to false")
+	}
+
+	t.Setenv("DEXAFLOW_SERVER_POOLS_READ_ONLY", "true")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if !c.Server.PoolsReadOnly {
+		t.Fatal("DEXAFLOW_SERVER_POOLS_READ_ONLY=true did not bind server.pools_read_only")
+	}
+}
