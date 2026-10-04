@@ -256,7 +256,7 @@ anything:
   it. Releasing a TI back to `none` for another attempt (a retry, a reschedule
   poke, an infra re-place, an operator clear) clears its per-attempt
   timestamps, and it only becomes `scheduled` on the next tick; the release
-  stamps `released_at` (migration 039), which counts as run activity, so the
+  stamps `released_at` (migration 036), which counts as run activity, so the
   run never looks orphaned in that tick.
 
   The list is only a snapshot, so the reap re-checks the whole predicate
