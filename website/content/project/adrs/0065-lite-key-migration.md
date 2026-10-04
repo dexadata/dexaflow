@@ -128,9 +128,35 @@ implementation has to fix or account for.
    nothing tells the operator how to get them back.
 6. **Stale claims in comments.** The GoDoc of `config.Config.SecretKey` says the
    constant is handed to the server "so existing rows are re-encrypted rather
-   than orphaned", and `SecretKeyPrevious` says "Nothing writes it". Both stop
-   being true or were never true. They are the attempt 1 defect class, and
-   they are corrected in the same PR as the command.
+   than orphaned", and `SecretKeyPrevious` says "Nothing writes it"
+   (`internal/config/config.go`). The GoDoc of `generateSecretKey`
+   (`internal/cli/setup.go`) repeats "the previous install's rows are
+   re-encrypted rather than orphaned because the old key travels to the server
+   as a read-only fallback", which no code does; `liteSecretKeyList`
+   (`internal/cli/dev.go`) explains an empty key by "the backfill could not
+   run", a backfill that was removed with attempt 2. All of them stop being
+   true or were never true. They are the attempt 1 defect class, and they are
+   corrected in the same PR as the command.
+7. **A Lite boot takes its keys from the environment over the file.**
+   `loadLiteAdmin` reads the config through `config.Load`, which overlays
+   `DEXAFLOW_SECRET_KEY` and `LEOFLOW_SECRET_KEY` on top of `secret_key` (checked:
+   with `secret_key: "filekey"` in the file and `LEOFLOW_SECRET_KEY=envkey`
+   exported, `Config.SecretKey` is `envkey`). An operator with that variable in
+   their shell (this repository's end-to-end scripts export it) runs a Lite
+   server that encrypts new rows under a key `config.yaml` does not record.
+   `configFileSecrets` exists precisely because of this overlay, but only the
+   rewriting commands use it; the boot path does not.
+8. **`configFileSecrets` returns empty for an unparseable file**, by design for
+   the best-effort `reset-password` sync. `migrate-key` needs the opposite
+   (refuse), so it uses a strict variant. Likewise `writeLiteConfig` rewrites a
+   fixed set of fields and drops any other key in the file, so it cannot be the
+   writer for a command that promises to carry every other field over.
+9. **An install can have two datastores.** `--postgres auto` resolves per run
+   (Docker when the daemon answers, else managed, ADR 0030), and `devDSNs`
+   picks the managed socket when it exists, else the Docker port. A laptop
+   whose Docker daemon is sometimes off has rows in `~/.dexaflow/pgdata` **and**
+   in the Docker volume; `uninstall` already names both. Both are under the
+   keys of the same `config.yaml`.
 
 ## Decision
 
@@ -150,10 +176,16 @@ dexaflow lite migrate-key [--dry-run] [--yes]
   and what it would do, and writes nothing, anywhere.
 - **`--yes`** skips the confirmation prompt. Nothing else changes.
 - **Preconditions it enforces, not documents:** the Lite server is stopped (see
-  section 3), `config.yaml` exists and parses, and the datastore is reachable.
-  The command brings up the datastore the same way `dexaflow lite` does (managed
-  Postgres or the Docker container, per ADR 0030) without starting the server,
-  and leaves it in the state it found it.
+  section 3), `config.yaml` exists and parses, and every datastore the install
+  has is reachable. "Every datastore" means each one that exists on disk, not
+  the one `--postgres auto` happens to pick on this run (gap 9): the managed
+  cluster when `~/.dexaflow/pgdata/PG_VERSION` exists, and the Docker datastore
+  when this install's volume exists. The command brings each up without
+  starting the server, runs steps 0, 4 and 5 against each, and leaves each in
+  the state it found it (it stops a managed cluster only if it started it). If
+  a datastore exists but cannot be brought up (Docker installed but the daemon
+  is off), the command refuses before step 1 and names it: a predecessor can be
+  dropped only once every datastore that might hold rows under it was scanned.
 - **Exit status:** `0` when the install ends fully migrated (including "already
   migrated, nothing to do"); non-zero in every other case. A non-zero exit
   always prints which recoverable state the install is in, from the table in
@@ -175,11 +207,13 @@ $ dexaflow lite migrate-key
   The Lite server must stay stopped until this finishes.
   Continue? [y/N] y
   ✓ saved your current config to ~/.dexaflow/config.yaml.pre-migrate-key
-  ✓ recorded the new key AND the published key in ~/.dexaflow/config.yaml (verified on disk)
+  ✓ recorded the new key AND the published key in ~/.dexaflow/config.yaml (fsynced, read back)
   ✓ re-encrypted 14 secrets in one transaction; verified all 14 open under the new key alone
   ✓ re-checked after commit: 0 secrets need any other key
-  ✓ removed the published key from ~/.dexaflow/config.yaml (verified on disk)
-  Done. Start Lite with `dexaflow lite`.
+  ✓ removed the published key from ~/.dexaflow/config.yaml (fsynced, read back)
+  Done. ~/.dexaflow/config.yaml is now the only copy of the key that opens
+  these secrets: back it up with `dexaflow lite backup`, and copy it out before
+  any `dexaflow uninstall`. Start Lite with `dexaflow lite`.
 ```
 
 ### 2. Order of operations: record every key before touching any row
@@ -193,12 +227,12 @@ The invariant the whole design serves:
 Steps, in this order, under the locks of section 3:
 
 0. **Preflight (read only).** Parse `config.yaml` as YAML with no environment
-   overlay (`configFileSecrets`). A file that exists but does not parse is a
-   refusal, never "empty". Build the candidate key set: `secret_key`, every
+   overlay (a strict variant of `configFileSecrets`, gap 8). A file that exists
+   but does not parse is a refusal, never "empty". Build the candidate key set: `secret_key`, every
    entry of `secret_key_previous` (a comma-separated list, parsed with
    `ParseKeys`), and the published constant **always**, because rows can be
    under it even when the config does not say so (gap 5). Read every encrypted
-   column and classify it: opens under `secret_key`, opens under a predecessor
+   column, in every datastore of section 1, and classify it: opens under `secret_key`, opens under a predecessor
    (record which), or opens under no candidate. If any column opens under no
    candidate, **refuse and change nothing**: list the `conn_id`s and columns,
    and say plainly that those values are already under a key nobody recorded;
@@ -211,18 +245,25 @@ Steps, in this order, under the locks of section 3:
 1. **Pre-image.** Copy `config.yaml` to `config.yaml.pre-migrate-key` (atomic,
    `0600`, owner preserved, file and directory fsynced). If a pre-image already
    exists from an interrupted run, keep the older one: it is the true pre-state.
-2. **Record both keys.** Choose the encrypting key: on a first run, generate one
-   with `generateSecretKey`; on a resumed run (a predecessor is already
-   recorded), reuse the recorded `secret_key` and never generate another. Write
-   `secret_key: <new>` and `secret_key_previous: <every predecessor that opened
-   a row, as literal values>`, including the published constant written out
-   literally rather than implied by an empty field. Every other field of the
-   file is carried over unchanged. The write is `writeFileAtomic`, with the
-   directory fsync added (gap 3).
-3. **Verify on disk.** Re-read the file from disk through the same YAML path
-   and require the recorded keys to equal, byte for byte, the ones held in
-   memory. Mismatch means stop before any row is touched.
-4. **One transaction.** `BEGIN`; `LOCK TABLE connections IN SHARE ROW EXCLUSIVE
+2. **Record both keys.** Choose the encrypting key: if the config already has a
+   `secret_key` (a resumed run, the Stranded state, a hand-set rotation), reuse
+   it and never generate another; only when `secret_key` is absent (Legacy),
+   generate one with `generateSecretKey`. Write `secret_key: <encrypting key>`
+   and `secret_key_previous: <every key the config already recorded, plus every
+   other candidate that opened a row>`, including the published constant
+   written out literally rather than implied by an empty field. No key the
+   config recorded leaves it in this step, even one that opened nothing: keys
+   leave only in step 6, after a clean pass. Every other field of the file is
+   carried over unchanged, which means editing the parsed YAML document, not
+   regenerating it with `writeLiteConfig` (gap 8). The write is
+   `writeFileAtomic`, with the directory fsync added (gap 3).
+3. **Read back.** Re-read the file through the same strict YAML path and
+   require the recorded keys to equal, byte for byte, the ones held in memory.
+   Mismatch means stop before any row is touched. (This reads what the kernel
+   holds after a successful fsync of file and directory; durability rests on
+   that fsync, and messages say "fsynced, read back", not "verified on
+   disk".)
+4. **One transaction per datastore.** `BEGIN`; `LOCK TABLE connections IN SHARE ROW EXCLUSIVE
    MODE` (and every other table in the sweep registry, see section 7); select
    every encrypted column; decrypt with the full recorded key list; re-encrypt
    every value a predecessor opened under the new key; `UPDATE` with the
@@ -235,12 +276,14 @@ Steps, in this order, under the locks of section 3:
    not open or does not match. Only a fully clean pass issues `COMMIT`. The sweep
    returns a result with `migrated`, `skipped` and `unreadable` counts, and the
    caller treats anything but `skipped == 0 && unreadable == 0` as incomplete
-   (gap 1).
+   (gap 1). With two datastores this runs once in each; the two commits are not
+   atomic together, and do not need to be, because both keys are already
+   recorded and step 6 waits for both.
 5. **Re-check after commit.** In a fresh read, outside the transaction, open
    every non-empty column with the new key alone. This catches anything that
    reached the datastore outside the transaction's view.
 6. **Drop the predecessor.** Only if step 5 found zero columns needing another
-   key: rewrite `config.yaml` without `secret_key_previous` (atomic, fsynced),
+   key in every datastore of section 1: rewrite `config.yaml` without `secret_key_previous` (atomic, fsynced),
    then re-read and verify as in step 3.
 7. **Clean up.** Remove the pre-image, which by now records only keys that open
    nothing, and print the summary. On any earlier failure the pre-image is kept
@@ -265,13 +308,53 @@ commit, so there is no "some rows moved, report nothing changed".
   migration is in progress". This works identically for the managed and the
   Docker datastore, and does not depend on PID files or a port probe (a probe
   of the Lite HTTP port is kept as an earlier, friendlier message, not as the
-  guarantee).
+  guarantee). An advisory lock lives in one Postgres cluster, so with two
+  datastores (gap 9) `migrate-key` takes it in each, and a server running
+  against either one blocks the migration. These details make the lock an
+  actual guarantee rather than a likely one:
+  - **Lock before reading the config.** `dexaflow lite` takes the shared lock
+    on its own session **before** it reads `config.yaml` to build the server's
+    key list, and holds it until the server it supervises exits. Otherwise a
+    boot that read the Legacy config, then waited while a whole migration ran
+    and released the lock, starts a server holding only the constant: it reads
+    none of the migrated rows and writes new ones under the published key.
+  - **The CLI and the server both hold it.** The server takes its own shared
+    lock as well, so a server left running after its `dexaflow lite`
+    supervisor was killed still blocks a migration.
+  - **A lost lock session stops the server.** A session lock is released when
+    its connection drops (a Docker Postgres restart, ADR 0009). The server
+    treats losing it as fatal and exits rather than continuing to write
+    unprotected; reacquiring is not enough, since a migration may have run in
+    between.
+  - **No lock, no boot.** `dexaflow lite` can be pointed at a `dexaflow-server`
+    from `PATH` or `./bin` (`--server-bin`), which may predate this ADR and
+    take no lock. `dexaflow lite` checks that the server binary supports the
+    lock (by version, or by a capability the server reports at startup; the
+    mechanism is the implementation's choice) and refuses to run one that does
+    not. The CLI's own lock already covers that server's lifetime; the check
+    keeps the "both hold it" property true.
+  - **Leave the cluster as found.** `bringUpDependencies` today returns a stop
+    function for the managed cluster even when it found it already running. A
+    `dexaflow lite` refused by the lock must not stop a cluster that a running
+    `migrate-key` brought up (that would kill the migration's session, which is
+    safe by rollback but makes the command fail until the operator notices),
+    and `migrate-key` must not stop a cluster it did not start.
 - **Config lock.** Every command that rewrites `~/.dexaflow/config.yaml`
   (`setup`, `reset-password`, `restore`, `uninstall`, `migrate-key`) takes an
   exclusive `flock` on `~/.dexaflow/.config.lock` for the duration of its
-  read-modify-write. `backup` takes it shared, so an archive never pairs a
-  post-commit datastore with a pre-migration config. `restore` also moves to
-  `writeFileAtomic` (gap 4).
+  read-modify-write. For `migrate-key` that is the whole run: the flock is
+  taken **before** step 0 reads the config and released after step 7.
+  Otherwise two `migrate-key` runs against different datastores (the advisory
+  locks of two clusters do not conflict) could each read the Legacy config,
+  each generate a key, and the second write would erase the key the first
+  had already committed rows under. Lock order is fixed for every command:
+  the config flock first, then the advisory lock(s), so two commands cannot
+  deadlock. `backup` takes the flock shared, so an archive never pairs a
+  post-commit datastore with a pre-migration config. `dexaflow lite` takes it
+  shared while it reads the config at boot. `restore` also moves to
+  `writeFileAtomic` (gap 4). The lock file is created `0600` and owned like
+  `config.yaml` (the `sudo` path of `writeFileAtomic`), so a later non-root
+  command can still open it.
 - **Belt and braces.** Even with both locks, step 6 is gated on the full re-scan
   of step 5 with the new key alone, so a writer that somehow slipped past the
   lock under the old key blocks the drop instead of being orphaned by it.
@@ -313,6 +396,11 @@ never writes):
 | Pending | `secret_key_previous` recorded | "a key migration was started and has not finished; both keys are still needed; run `dexaflow lite migrate-key` to finish it". It must **not** say "re-encrypted", "complete" or suggest removing anything by hand |
 | Stranded | `secret_key` set, no predecessor, and some rows open only under the published constant (gap 5) | "N stored secrets are under the published key and this install cannot read them; run `dexaflow lite migrate-key` to recover them" |
 | Migrated | every row opens under `secret_key` alone, no predecessor | nothing. In particular no message saying the published key is "removed" or "gone": the constant still exists in the binary until section 8 completes |
+| Unreadable (alongside any state above) | some rows open under no recorded key and not under the constant | "N stored secrets open under no key this install records; they cannot be used until their key is added to `secret_key_previous` or they are re-entered". Without this row, an install whose only problem is an unrecorded key would match no state and print nothing |
+
+The scan covers the datastore this boot runs against, and the boot output says
+which one it scanned: it cannot claim anything about the other datastore of gap
+9, which only `migrate-key` scans.
 
 The server's own rotation logs (`finishKeyRotation`) are not emitted for Lite,
 since the boot sweep is off there. Where they remain (Pro), the "rotation
@@ -343,7 +431,12 @@ this run, which is checkable: steps 1 to 6 never ran.
 - **Environment.** `DEXAFLOW_SECRET_KEY` or `LEOFLOW_SECRET_KEY` exported in the
   operator's shell is ignored by the command (the file is the source of truth,
   as `configFileSecrets` already establishes), and if set the command says so
-  in one line so nobody believes it was used.
+  in one line so nobody believes it was used. The same rule applies to the
+  Lite boot (gap 7): `dexaflow lite` builds the server's key list from the file
+  alone, and prints one line when either variable is set and differs.
+  Otherwise the invariant of section 2 is broken by a plain boot, before any
+  migration: the server would encrypt new rows under a key the file does not
+  record.
 
 ### 7. What the sweep covers: connections now, Variables when #507 lands
 
@@ -371,10 +464,19 @@ and that test forces it to.
   binary would ignore the key and read nothing.
 - **Old backups.** A `dexaflow lite backup` archive made before migration holds
   a config with no `secret_key` and a dump under the published key. `restore`
-  of such an archive writes the published constant literally into
-  `secret_key_previous` alongside a freshly generated `secret_key`, and prints
-  that `migrate-key` finishes the job. The restored install is then in the
-  Pending state, never in Stranded.
+  writes that config as it is (atomically, gap 4) and generates no key: section
+  1 forbids `restore` from adding or removing keys on Lite's behalf. The
+  restored install is in the Legacy state, and `migrate-key` finishes the job
+  as for any Legacy install.
+- **A failed restore must not take the current key.** `restore` today writes
+  the archive's `config.yaml` **before** it replays the dump, and the replay is
+  a single `psql` transaction that can fail (disk full, a schema mismatch). The
+  datastore is then unchanged, still under the current key, while the config
+  that recorded that key has been replaced by the archive's. `restore`
+  therefore replays the dump first and writes the config only after the replay
+  succeeded, and keeps the config it replaces as
+  `config.yaml.pre-restore` (`0600`, in `~/.dexaflow`, never in the
+  datastore) and prints its path.
 - **Retiring the constant, two releases.** In the release after this ships, an
   install still in the Legacy state no longer falls back silently: `dexaflow
   lite` refuses to start and names `migrate-key`. `migrate-key` keeps the
@@ -453,7 +555,18 @@ read every connection, and print the Pending warning).
 
 **Exclusion.**
 
-- Server running: refusal before step 1, nothing written.
+- Server running: refusal before step 1, nothing written. Run once per
+  datastore flavor, and with the server on the Docker datastore while the
+  migration also has a managed one.
+- A `dexaflow lite` boot that has read the Legacy config and is paused before
+  starting the server while a migration runs: it must block on the lock taken
+  before the read, then boot with the migrated config.
+- The server's lock session terminated (`pg_terminate_backend`): the server
+  exits.
+- A `dexaflow-server` binary without lock support: `dexaflow lite` refuses it.
+- Two `migrate-key` runs at once, one forced to each datastore: the second
+  waits or refuses on the config flock; exactly one key is generated.
+- A `dexaflow lite` refused by the lock leaves the managed cluster running.
 - Server started while the migration holds the lock: the server refuses to start.
 - `reset-password`, `restore`, `uninstall` and `setup` during a migration: they
   wait or refuse on the config lock. `backup` during a migration: the archive
@@ -467,8 +580,18 @@ read every connection, and print the Pending warning).
 - Golden tests for boot output in each state of section 5, asserting the
   forbidden phrases ("re-encrypted", "complete", "nothing was changed") appear
   only where section 5 allows them.
-- `restore` of a pre-migration archive lands in Pending, and `migrate-key`
-  finishes it.
+- `restore` of a pre-migration archive lands in Legacy, and `migrate-key`
+  finishes it. A `restore --force` whose replay fails leaves the current
+  `config.yaml` in place.
+
+**Two datastores.**
+
+- Rows under the published key in both the managed and the Docker datastore:
+  both migrated, predecessor dropped only after both re-checks.
+- A second datastore that exists but cannot be brought up: refusal before
+  step 1, nothing written.
+- A Lite boot with `LEOFLOW_SECRET_KEY` exported and different from the file:
+  the file's keys reach the server, and new rows open under `secret_key`.
 
 ## Consequences
 
@@ -485,6 +608,12 @@ read every connection, and print the Pending warning).
   is accepted.
 - **Every Lite boot scans the encrypted columns once** to choose its message.
   Lite tables are small; Pro is not affected.
+- **After migration, `config.yaml` is the only copy of the key.** Before it, a
+  Legacy install survived `uninstall` and a reinstall because the key was in
+  the binary. After it, a plain `uninstall` that keeps the datastore leaves it
+  unreadable (the existing `uninstall` warning already says so for any install
+  with a `secret_key`). The final output of `migrate-key` says this and
+  points at `dexaflow lite backup`.
 - **New cross-command locking** (`.config.lock`, the advisory lock id) is
   surface that every future config writer must take. The registry test and the
   exclusion tests are what keep that honest.
