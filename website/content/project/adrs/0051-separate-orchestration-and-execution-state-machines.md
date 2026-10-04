@@ -19,7 +19,7 @@ that makes the warm-pool safe; it is a prerequisite for ADR 0053 (admission +
 placement) and for PR-N1 (the warm-worker / shared-pod executor).
 **Relates:** ADR 0031 (scheduler architecture — reconciliation loop, two-phase dispatch, two-layer reaping), ADR 0027 (editions: executors + delivery), ADR 0015 (Kubernetes-only container execution), ADR 0002 (pod-per-task), ADR 0004 (thin agent), ADR 0010 (observability), ADR 0049 (split API/scheduler roles)
 **Issues:** #543 (agent exit code conflates task outcome with report delivery), infra-vs-task retry conflation (this ADR)
-**Amendment proposed:** 2026-10-04, an attempt epoch fences an infra re-place from the attempt it replaced (#1130, #911). See the section at the end.
+**Amendment accepted:** 2026-10-04, an attempt epoch fences an infra re-place from the attempt it replaced (#1130, #911). See the section at the end.
 
 ## Why now — the motivation, strengthened
 
@@ -374,10 +374,14 @@ Each phase ships **independently**, **failing-test-first** (ADR 0011), and is
 - Argo Workflows — pods carry workflow-coordinate labels the controller reads; the
   project added a SQL backend after etcd pressure.
 
-## Proposed amendment (2026-10-04): an attempt epoch fences an infra re-place from the attempt it replaced
+## Amendment (2026-10-04): an attempt epoch fences an infra re-place from the attempt it replaced
 
-**Status of this amendment:** Proposed. The ADR above stays Accepted; this
-section changes nothing until it is accepted.
+**Status of this amendment:** Accepted (proposed and accepted 2026-10-04 by
+the project owner). The ADR above stays Accepted; this section extends it.
+**Target release:** v0.5.1 ships PR A0 to A5 below; PR A6 (rejecting legacy
+tokens) ships in a later minor release.
+**Decided at acceptance:** the attempt epoch is claimed at dispatch, at the
+cost of one extra write per dispatch (see "the dispatch itself" below).
 **Issues:** #1130, #911 (primary); #901, #863 (same root cause); #896 (the drill
 that surfaced the class).
 
@@ -496,6 +500,12 @@ statement:
   epoch whatever path led to it; the reset-rail bumps above stay, so that a
   reset alone already fences the attempt it superseded before the next
   dispatch runs.
+
+  **Decided:** the claim at dispatch is accepted. It costs one extra write
+  per dispatch (the `ResolveTask` read becomes a guarded `UPDATE ...
+  RETURNING`), which is the price of every execution carrying its own epoch
+  whatever path led to it, including a dispatch repeated after a lost
+  `queued` write.
 
 The epoch is never reset. The attempt identity becomes
 `(task_instance_id, try_number, attempt_epoch)`; `try_number` stays in every
@@ -636,7 +646,10 @@ indistinguishable until that row's next dispatch, exactly as today.
 
 ### Implementation plan
 
-Each PR is one logical change, failing test first (ADR 0011).
+Each PR is one logical change, failing test first (ADR 0011). PR A0 to A5
+target v0.5.1, together with PR B1, B2, B3 and B5 of the ADR 0052 amendment.
+PR A6 ships in a later minor release, after the release that meters legacy
+tokens.
 
 - **PR A0: reset rails clear `last_heartbeat_at`.** Independent of the epoch;
   ship first. Test first (integration, `internal/storage`): a TI that
@@ -675,6 +688,6 @@ Each PR is one logical change, failing test first (ADR 0011).
   attempts on one try produce two objects and one tries entry whose log holds
   both streams in order; an epoch-0 object written before the change is still
   served.
-- **PR A6, one minor release later: reject legacy tokens.** Test: a task
+- **PR A6, a later minor release (not v0.5.1): reject legacy tokens.** Test: a task
   token without the claim is `Unauthenticated`; a warm-worker credential is
   unaffected.

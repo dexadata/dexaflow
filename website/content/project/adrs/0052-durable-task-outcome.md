@@ -9,11 +9,11 @@ weight: 520
 description: "ADR 0052: Durable task outcome — decouple the task result from report delivery"
 ---
 
-**Status:** Proposed
-**Date:** 2026-08-13
+**Status:** Accepted
+**Date:** 2026-08-13 (proposed); accepted 2026-10-04 together with the amendment below
 **Relates:** ADR 0051 (separate the orchestration and execution state machines — this ADR is its Phase 2), ADR 0031 (scheduler reconciliation loop + two-layer reaping), ADR 0015 (Kubernetes-only container execution), ADR 0004 (thin agent), ADR 0002 (pod-per-task — an assumption this ADR is careful not to deepen)
 **Issues:** #543 (agent exit code conflates task outcome with report delivery); follow-up to #542 (in-process report retry)
-**Amendment proposed:** 2026-10-04, a durable SUCCESS overrides an infra guess (#1124, #900). See the section at the end.
+**Amendment accepted:** 2026-10-04, a durable SUCCESS overrides an infra guess (#1124, #900). See the section at the end.
 
 ## Context
 
@@ -215,7 +215,8 @@ is not on the reconciler path.)
   over-claimed.
 - **Kubernetes-only.** Lite (subprocess, no pod, in-process delivery) gains
   nothing and is unchanged — #542's in-process retry is Lite's primary fix.
-- **Additive and back-compatible.** No schema change; an agent that does not write
+- **Additive and back-compatible.** Two additive columns (via the ADR 0051
+  amendment); an agent that does not write
   the record degrades to phase-based behavior.
 - **Transport is bound to the dedicated-pod case; the contract is not.** The
   termination message is a per-container-*exit* artifact: it can carry a task's
@@ -337,9 +338,15 @@ is not on the reconciler path.)
 - #424 — native on_failure_callback gating
 - `internal/agent/runner.go` (terminal path), `internal/executor/reconcile.go` (`classifyPod`, `reportFailure`), `internal/executor/kubernetes.go` (container spec / policy prerequisite), `internal/storage/queries/runs.sql` (the `ReportTaskResult` vs `FailTaskInstanceIfActive` guard asymmetry)
 
-## Proposed amendment (2026-10-04): a durable SUCCESS overrides an infra guess
+## Amendment (2026-10-04): a durable SUCCESS overrides an infra guess
 
-**Status of this amendment:** Proposed, alongside the ADR itself.
+**Status of this amendment:** Accepted 2026-10-04 by the project owner,
+together with the ADR itself.
+**Target release:** v0.5.1 ships PR B1, B2, B3 and B5 below. PR B4 is dropped.
+**Decided at acceptance:** the override applies only while the planner still
+treats the task as active (the guard in part 1 carries
+`infra_confirmed_at IS NULL AND ended_at > now() - infraConfirmMaxWait`), so
+no downstream re-derivation rule is needed (see "Downstream tasks").
 **Issues:** #1124, #900 (primary); #948 (the trust posture this must respect);
 #896 (the drill); depends on the ADR 0051 attempt-epoch amendment (#1130, #911).
 
@@ -415,6 +422,8 @@ WHERE ti.id = sqlc.arg(id)
   AND ti.try_number = sqlc.arg(try_number)
   AND ti.attempt_epoch = sqlc.arg(attempt_epoch)
   AND ti.state = 'failed' AND ti.last_failure_kind = 'infra'
+  AND ti.infra_confirmed_at IS NULL
+  AND ti.ended_at > now() - sqlc.arg(infra_confirm_max_wait)::interval
   AND dr.id = ti.dag_run_id AND dr.state = 'running';
 ```
 
@@ -428,6 +437,13 @@ WHERE ti.id = sqlc.arg(id)
   re-place" burden on its own (#900's original sketch relied on it alone,
   which is not enough while the reconciler re-reads the same terminal pod for
   ten minutes).
+- `infra_confirmed_at IS NULL AND ended_at > now() - infraConfirmMaxWait`:
+  the override is legal only while the mark is still provisional and the
+  liveness valve (part 2) has not opened, which is exactly the window in which
+  the planner treats the task as active. Once the reconciler has confirmed the
+  failure, or the valve has let the planner act on the guess, a later record
+  is ignored and metered like a record for a finalized run. The planner's view
+  and the override therefore never disagree.
 - `dr.state = 'running'`: the reconciler never mutates a finalized run. A
   record that arrives after finalization is ignored and metered; the operator's
   clear-task is the recovery.
@@ -619,33 +635,31 @@ task is marked `upstream_failed` on a guess, whatever the remaining infra
 budget. In the normal path the override therefore lands before any downstream
 decision and the run simply continues.
 
-Two paths can still meet a downstream `upstream_failed`:
+Because the override guard requires the mark to be provisional and inside
+`infraConfirmMaxWait` (part 1), the override can only land while the planner
+still treats the task as active. Two paths therefore leave a downstream
+`upstream_failed` (or a failure-triggered branch) standing, and both are
+handled by refusing the override rather than by re-deriving downstream state:
 
 - **The valve opened** (no confirmation within `infraConfirmMaxWait`, so the
-  planner acted on the guess) and a record surfaces later while the run is
-  still running. The planner gains one narrow rule: a task in
-  `upstream_failed` whose upstreams are no longer failed returns to `none`
-  (a transition the state machine already allows,
-  `internal/scheduler/state_machine.go:33`, but never emits; #896 item 3). It is level-triggered and only fires in a running run.
+  planner acted on the guess). A record that surfaces later no longer matches
+  the guard; it is ignored and metered, and the planner's decision stands.
 - **The run already finalized.** The override's `dr.state='running'` clause
   refuses it; the record is metered and the operator clears the task.
 
-The B4 rule covers only `upstream_failed`. Once the valve has opened and the
-planner has treated the task as terminally failed, a downstream whose trigger
-rule fires on failure (`one_failed`, `all_failed`, `all_done`,
-`none_success`, and the like) may already have run, and a later override would
-leave the run recording both the failure branch and the success. B4 also
-fires for any `upstream_failed` whose upstream later reads success, including
-one a user marked `success` by hand, which Airflow does not do. **Open question
-for acceptance:** add `AND ti.ended_at > now() - infraConfirmMaxWait` (and
-`ti.infra_confirmed_at IS NULL`) to the override guard, so the override is
-legal only while the planner provably still treats the task as active. The
-planner's view and the override then never disagree, and B4 is unnecessary.
+**Decided at acceptance (2026-10-04): no downstream re-derivation.** The
+proposal carried a planner rule (PR B4) returning an `upstream_failed` task to
+`none` when its upstreams were no longer failed. It was dropped: it covered
+only `upstream_failed`, not a failure-triggered downstream (`one_failed`,
+`all_failed`, `all_done`, `none_success`, and the like) that may already have
+run, and it would also have fired for an upstream a user marked `success` by
+hand, which Airflow does not do. Bounding the override to the window in which
+the planner treats the task as active removes the need for it.
 
 ### Changes to the text above
 
-When accepted: "Additive and back-compatible. No schema change" in Key
-properties becomes "two additive columns (via the ADR 0051 amendment)", the
+With this amendment accepted, "No schema change" in Key properties reads
+"two additive columns (via the ADR 0051 amendment)" (updated above), the
 reconciler doc comment at `reconcile.go:338-343` loses its "dropped" sentence,
 and the record schema gains an optional `attempt_epoch` field. `v` stays `1`:
 `Decode` ignores unknown fields (`internal/taskoutcome/record.go:164-187`), so
@@ -655,15 +669,18 @@ field as "use the label".
 ### Implementation plan
 
 Depends on PR A0 to A4 of the ADR 0051 amendment (the epoch must exist before
-any settle relies on it). Each PR is failing test first.
+any settle relies on it). Each PR is failing test first. PR B1, B2, B3 and B5
+target v0.5.1. The override guard reads `infra_confirmed_at`, so PR B3's
+migration lands before PR B1, or the two merge together.
 
 - **PR B1: the override query and reconciler branch.** Test first, the one
   #1124 asks for, written so it goes red the day the fix lands: in
   `internal/storage`, mark a TI `running`, run `MarkTaskAgentLost`, call
   `SucceedTask`; today the row stays `failed`/infra. Then the new behavior,
   integration: override succeeds for a matching `(try, epoch)`; is a no-op for
-  a different epoch, for an app failure, for a finalized run, and for a FAILED
-  record. Unit, `internal/executor`: the reconciler falls back to the override
+  a different epoch, for an app failure, for a finalized run, for a FAILED
+  record, for a confirmed mark (`infra_confirmed_at` set), and for a mark older
+  than `infraConfirmMaxWait`. Unit, `internal/executor`: the reconciler falls back to the override
   only for a SUCCESS verdict and only after a zero-row active settle; the log
   marker and metric fire once.
 - **PR B2: stop-in-place teardown.** Fake-clientset tests: a started
@@ -679,9 +696,9 @@ any settle relies on it). Each PR is failing test first.
   reconciler tests (confirms on absent pod, leaves a terminating pod, overrides
   on SUCCESS); ladder rejects a valve below termination grace plus two
   intervals.
-- **PR B4: downstream re-derivation.** Plan test: a running run with
-  `upstream_failed` downstream of a task that became `success` returns the
-  downstream to `none`; a finalized run is untouched.
+- **PR B4: dropped at acceptance.** Downstream re-derivation is not
+  implemented; the override guard's provisional-window clauses make it
+  unnecessary (see "Downstream tasks").
 - **PR B5: epoch in the record.** `taskoutcome.Record.AttemptEpoch`, the
   `TaskSpec` field the agent reads it from, the mismatch rule. Tests: an old
   record decodes; a mismatching epoch falls back to phase.
