@@ -983,6 +983,22 @@ main() {
     fi
   fi
 
+  # A patch ships everything main gained since vX.Y.0 unless it was skipped on
+  # purpose (scripts/release-gap.sh). Nothing carries a change across on its
+  # own, so without this check a fix merged on main can miss the patch
+  # silently. --resume skips it: the prepare half already passed it.
+  if [ "$base" != main ] && [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
+    local gap_out
+    if ! gap_out="$("$ROOT/scripts/release-gap.sh" "$version" --fetch 2>&1)"; then
+      printf '%s\n' "$gap_out" >&2
+      if [ "$dry" = 1 ]; then
+        warn "$base is missing commits from main (above); the real cut will refuse until each is cherry-picked or listed in .github/release-skip.txt"
+      else
+        die "$base is missing commits from main (above): cherry-pick each one, or list it with a reason in .github/release-skip.txt on $base"
+      fi
+    fi
+  fi
+
   if [ "$dry" = 1 ] && [ "$resume" = 1 ]; then
     log "DRY RUN (--resume) — no tag, no push:"
     [ "$base_ok" = 1 ] || die "$base does not exist on origin, so there is nothing to resume"
