@@ -75,6 +75,12 @@ type agentClaims struct {
 	// how many times its token is re-minted (ADR 0055 Fix #4). Absent on tokens
 	// minted before this field existed; renewal then falls back to iat.
 	OriginIssuedAt *jwt.NumericDate `json:"oiat,omitempty"`
+	// AttemptEpoch is the execution of try_number this task credential belongs
+	// to (ADR 0051 amendment). A pointer so that "absent" (a token minted before
+	// the claim existed, or a warm-worker credential) is distinguishable from
+	// epoch 0; omitempty keeps an absent claim off the wire, so renewal
+	// preserves the absence instead of writing a zero.
+	AttemptEpoch *int64 `json:"attempt_epoch,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -109,6 +115,7 @@ func (a *JWTAuthenticator) mintAgentToken(id AgentIdentity, ttl time.Duration, o
 		Scope:          id.Scope,
 		DagVersionID:   id.DagVersionID,
 		OriginIssuedAt: jwt.NewNumericDate(origin),
+		AttemptEpoch:   epochClaim(id),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   subject,
 			Issuer:    tokenIssuer,
@@ -201,5 +208,22 @@ func identityFromClaims(c agentClaims) AgentIdentity {
 	} else {
 		id.TaskInstanceID = c.Subject
 	}
+	if c.AttemptEpoch != nil {
+		id.AttemptEpoch = int(*c.AttemptEpoch)
+		id.HasAttemptEpoch = true
+	}
 	return id
+}
+
+// epochClaim is the attempt_epoch claim for an identity: nil (absent) unless
+// the identity carries an epoch. Only a task credential can: a warm-worker
+// credential names no attempt. Because identityFromClaims sets the presence bit
+// only when the claim was there, a renewal re-mints exactly what it was given
+// and never upgrades a legacy token to an epoch.
+func epochClaim(id AgentIdentity) *int64 {
+	if !id.HasAttemptEpoch || id.Scope == ScopeWarmWorker {
+		return nil
+	}
+	n := int64(id.AttemptEpoch)
+	return &n
 }

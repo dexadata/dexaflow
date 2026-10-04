@@ -369,6 +369,7 @@ type agentToken struct {
 // agentTokenOf projects a Request's token fields into the shared carrier, stamping
 // the task-instance identity so the exchange path is byte-identical to before.
 func agentTokenOf(req Request) agentToken {
+	epoch := req.AttemptEpoch
 	return agentToken{
 		transport:         req.AgentTokenTransport,
 		token:             req.AgentToken,
@@ -379,6 +380,7 @@ func agentTokenOf(req Request) agentToken {
 		identity: &PodIdentity{
 			TaskInstanceID: req.TaskInstanceID, TenantID: req.TenantID, DagID: req.DagID,
 			RunID: req.RunID, TaskID: req.TaskID, TryNumber: req.TryNumber,
+			AttemptEpoch: &epoch,
 		},
 	}
 }
