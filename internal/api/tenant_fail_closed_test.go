@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/gin-gonic/gin"
@@ -120,6 +121,33 @@ func TestShellSessionRejectsATenantlessPrincipal(t *testing.T) {
 		c.Request.Header.Set("Authorization", "Bearer "+token)
 		if got := shellSessionValid(c, mixedAuthn{}); got != want {
 			t.Errorf("token %s: shellSessionValid = %v, want %v", token, got, want)
+		}
+	}
+}
+
+// TestJWTAuthWithTheRealAuthenticator: end to end through the JWT
+// authenticator, a dev token without a tenant claim is a 401 and one with a
+// tenant is served in that tenant.
+func TestJWTAuthWithTheRealAuthenticator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const secret = "test-secret-with-enough-length-0123456789"
+	r := gin.New()
+	r.Use(JWTAuth(auth.NewJWTAuthenticator(nil, secret, time.Hour)))
+	r.GET("/api/v2/dags", func(c *gin.Context) { c.String(http.StatusOK, tenantOf(c)) })
+	for _, tc := range []struct {
+		tenant   string
+		wantCode int
+	}{{"", http.StatusUnauthorized}, {"default", http.StatusOK}} {
+		tok, err := auth.MintUserToken(secret, time.Hour, auth.User{ID: auth.DevTokenSubject, TenantID: tc.tenant, Roles: []string{"admin"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v2/dags", http.NoBody)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != tc.wantCode {
+			t.Errorf("tenant %q: status = %d, want %d", tc.tenant, rec.Code, tc.wantCode)
 		}
 	}
 }

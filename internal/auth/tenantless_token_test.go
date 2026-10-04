@@ -49,3 +49,16 @@ func TestAuthenticateKeepsATenantedDevToken(t *testing.T) {
 		t.Errorf("tenanted dev token: %+v, %v", u, err)
 	}
 }
+
+// TestAuthenticateTakesTheTenantFromTheStore: for a user with a row, the
+// tenant comes from the store, not the token, so a token minted without a
+// tenant claim still resolves to the user's tenant.
+func TestAuthenticateTakesTheTenantFromTheStore(t *testing.T) {
+	const secret = "minted-secret"
+	tok, _ := MintUserToken(secret, time.Hour, User{ID: "u-1", Roles: []string{"viewer"}})
+	store := &fakeStore{byIDUser: &User{ID: "u-1", TenantID: "acme", Roles: []string{"viewer"}}}
+	u, err := NewJWTAuthenticator(store, secret, time.Hour).Authenticate(context.Background(), tok)
+	if err != nil || u.TenantID != "acme" {
+		t.Errorf("store-backed user: %+v, %v; want tenant acme from the store", u, err)
+	}
+}
