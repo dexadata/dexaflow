@@ -332,6 +332,10 @@ type PodIdentity struct {
 	RunID          string `json:"run"`
 	TaskID         string `json:"task"`
 	TryNumber      int    `json:"try"`
+	// AttemptEpoch is the execution of TryNumber this pod runs (ADR 0051
+	// amendment). nil on a pod created before the epoch existed, which the
+	// exchange then mints a legacy token for.
+	AttemptEpoch *int `json:"epoch,omitempty"`
 }
 
 // ParseAgentIdentity decodes the AgentIdentityAnnotation payload. It is the read

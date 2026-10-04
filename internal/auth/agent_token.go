@@ -33,6 +33,16 @@ type AgentIdentity struct {
 	RunID          string
 	TaskID         string
 	TryNumber      int
+	// AttemptEpoch identifies which execution of TryNumber this credential
+	// belongs to (ADR 0051 amendment): an infra re-place, a reschedule poke or a
+	// repeated dispatch reuses the try but never the epoch. It is meaningful
+	// only when HasAttemptEpoch is set.
+	AttemptEpoch int
+	// HasAttemptEpoch is the presence bit for AttemptEpoch. It is false for a
+	// token minted before the epoch existed (a legacy token, which the fence
+	// treats as epoch 0) and for a warm-worker credential, so "absent" stays
+	// distinguishable from epoch 0.
+	HasAttemptEpoch bool
 	// Scope is "" for a task credential (the default, byte-compatible with every
 	// token minted before this field existed) or ScopeWarmWorker for a warm
 	// worker's control-channel-only bootstrap credential.

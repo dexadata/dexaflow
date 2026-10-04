@@ -571,6 +571,7 @@ type TaskSpec struct {
 	OnFailureCallback       bool                      `protobuf:"varint,23,opt,name=on_failure_callback,json=onFailureCallback,proto3" json:"on_failure_callback,omitempty"`    // The task declares an Airflow on_failure_callback (#424). The agent stamps LEOFLOW_ON_FAILURE_CALLBACK=1 so the runtime re-imports dag.py and runs it in-process on the task's final failure. The callable itself is not carried.
 	DeclaredVariables       []string                  `protobuf:"bytes,24,rep,name=declared_variables,json=declaredVariables,proto3" json:"declared_variables,omitempty"`       // The variable names this task declared (dexaflow.yaml). The agent asks a pod-side external secret resolver only for declared names, so declaration stays the scope authority for externally-sourced secrets too (ADR 0060 / ADR 0055).
 	DeclaredConnections     []string                  `protobuf:"bytes,25,rep,name=declared_connections,json=declaredConnections,proto3" json:"declared_connections,omitempty"` // The connection ids this task declared (dexaflow.yaml). Same role as declared_variables for connections.
+	AttemptEpoch            int64                     `protobuf:"varint,26,opt,name=attempt_epoch,json=attemptEpoch,proto3" json:"attempt_epoch,omitempty"`                     // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -778,6 +779,13 @@ func (x *TaskSpec) GetDeclaredConnections() []string {
 		return x.DeclaredConnections
 	}
 	return nil
+}
+
+func (x *TaskSpec) GetAttemptEpoch() int64 {
+	if x != nil {
+		return x.AttemptEpoch
+	}
+	return 0
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one
@@ -1385,6 +1393,7 @@ type WorkAssignment struct {
 	TryNumber     int32                  `protobuf:"varint,5,opt,name=try_number,json=tryNumber,proto3" json:"try_number,omitempty"`
 	DagVersionId  string                 `protobuf:"bytes,6,opt,name=dag_version_id,json=dagVersionId,proto3" json:"dag_version_id,omitempty"` // the pool identity this assignment belongs to
 	LeaseSeconds  int64                  `protobuf:"varint,7,opt,name=lease_seconds,json=leaseSeconds,proto3" json:"lease_seconds,omitempty"`  // ack deadline: unacked within it => the attempt is reclaimed
+	AttemptEpoch  int64                  `protobuf:"varint,8,opt,name=attempt_epoch,json=attemptEpoch,proto3" json:"attempt_epoch,omitempty"`  // the execution of try_number this assignment is (ADR 0051 amendment); also carried in attempt_token, which is what the control plane fences on
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1464,6 +1473,13 @@ func (x *WorkAssignment) GetDagVersionId() string {
 func (x *WorkAssignment) GetLeaseSeconds() int64 {
 	if x != nil {
 		return x.LeaseSeconds
+	}
+	return 0
+}
+
+func (x *WorkAssignment) GetAttemptEpoch() int64 {
+	if x != nil {
+		return x.AttemptEpoch
 	}
 	return 0
 }
@@ -1824,7 +1840,7 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12;\n" +
 	"\vserver_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"serverTime\"\x14\n" +
-	"\x12GetTaskSpecRequest\"\xc3\t\n" +
+	"\x12GetTaskSpecRequest\"\xe8\t\n" +
 	"\bTaskSpec\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x15\n" +
 	"\x06dag_id\x18\x02 \x01(\tR\x05dagId\x12\x1f\n" +
@@ -1857,7 +1873,8 @@ const file_agent_proto_rawDesc = "" +
 	"\tmax_tries\x18\x16 \x01(\x05R\bmaxTries\x12.\n" +
 	"\x13on_failure_callback\x18\x17 \x01(\bR\x11onFailureCallback\x12-\n" +
 	"\x12declared_variables\x18\x18 \x03(\tR\x11declaredVariables\x121\n" +
-	"\x14declared_connections\x18\x19 \x03(\tR\x13declaredConnections\x1a>\n" +
+	"\x14declared_connections\x18\x19 \x03(\tR\x13declaredConnections\x12#\n" +
+	"\rattempt_epoch\x18\x1a \x01(\x03R\fattemptEpoch\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1ad\n" +
@@ -1909,7 +1926,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0ecustom_metrics\x18\x02 \x03(\v25.leoflow.agent.v1.HeartbeatRequest.CustomMetricsEntryR\rcustomMetrics\x1a@\n" +
 	"\x12CustomMetricsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\xfb\x01\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\xa0\x02\n" +
 	"\x0eWorkAssignment\x12#\n" +
 	"\rassignment_id\x18\x01 \x01(\tR\fassignmentId\x12#\n" +
 	"\rattempt_token\x18\x02 \x01(\tR\fattemptToken\x12\x1c\n" +
@@ -1919,7 +1936,8 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"try_number\x18\x05 \x01(\x05R\ttryNumber\x12$\n" +
 	"\x0edag_version_id\x18\x06 \x01(\tR\fdagVersionId\x12#\n" +
-	"\rlease_seconds\x18\a \x01(\x03R\fleaseSeconds\"\xc6\x01\n" +
+	"\rlease_seconds\x18\a \x01(\x03R\fleaseSeconds\x12#\n" +
+	"\rattempt_epoch\x18\b \x01(\x03R\fattemptEpoch\"\xc6\x01\n" +
 	"\rWorkerMessage\x12>\n" +
 	"\bregister\x18\x01 \x01(\v2 .leoflow.agent.v1.WorkerRegisterH\x00R\bregister\x123\n" +
 	"\x03ack\x18\x02 \x01(\v2\x1f.leoflow.agent.v1.AssignmentAckH\x00R\x03ack\x129\n" +
