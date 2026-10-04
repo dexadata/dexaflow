@@ -294,7 +294,19 @@ durable DB transition, each reaper tears the pod down:
   `reap teardown: task pod is already in a terminal phase` at INFO to see which
   pods were left behind; a failed *delete* is the `*_pod_delete_error` decision
   below, which is a different thing.
-- A pod in phase `Unknown` **is** deleted. It may still be running a container,
+- **A started pod is stopped in place, not deleted.** The teardown lowers its
+  `activeDeadlineSeconds` to 1 second (the deadline counts from the pod's start,
+  so it has always elapsed). The kubelet stops the containers with the pod's
+  normal termination grace, the pod goes `Failed` with reason
+  `DeadlineExceeded`, and the pod object stays, with the task container's
+  outcome record. The reaped attempt stops running user code exactly as before
+  (#474); if it had in fact finished, the reconciler can still read its SUCCESS
+  record. A pod that never started (no start time) has no container and no
+  record, and a `Pending` pod can still start the task, so it is deleted. The
+  executor Role needs `patch` on pods for this; if the patch is refused (a
+  hand-maintained Role, an admission webhook rejecting pod updates), the
+  teardown deletes the pod as before and meters `reap_teardown_delete_fallback`.
+- A pod in phase `Unknown` **is** torn down. It may still be running a container,
   which is the case teardown exists for, and the reconciler treats `Unknown` as
   non-terminal — it neither settles nor collects it — so nothing else would.
 - Belt and suspenders: the control plane also answers a **stale** agent
@@ -356,6 +368,7 @@ your Prometheus dashboard:
 | `orphan_reaped` | Run failed by the orphan-run reaper |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
+| `reap_teardown_delete_fallback` | A reap could not stop a started pod in place (the `patch` was refused) and deleted it instead, losing its outcome record; grant `patch` on pods to the executor Role |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
 | `agent_lost_list_error`, `dispatch_lost_list_error`, `orphan_list_error`, `pod_lost_list_error`, `warm_worker_lost_list_error` | Reaper's list query failed; the next cycle will retry |
 | `dispatch_lost_pod_query_error`, `pod_lost_pod_query_error` | Pod liveness could not be read (K8s API error); the reaper deferred rather than risk a false positive |
