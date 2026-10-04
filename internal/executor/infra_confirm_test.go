@@ -124,3 +124,24 @@ func TestReconcilerConfirmListErrorIsNotFatal(t *testing.T) {
 		t.Error("the settle sweep must still be stamped")
 	}
 }
+
+// TestReconcilerConfirmMatchesLongIDPods: a task pod's run and task labels
+// are the label values BuildPod stamps, hashed past 63 characters (#1320), so
+// a live pod of an attempt with long ids must still hold its mark back.
+func TestReconcilerConfirmMatchesLongIDPods(t *testing.T) {
+	runID, taskID := "manual__"+longID, longID
+	pod := BuildPod(Request{DagID: "etl", TaskID: taskID, RunID: runID, TryNumber: 1, AttemptEpoch: 2, Image: "python:3.12"})
+	pod.Namespace = "leoflow"
+	pod.Status.Phase = corev1.PodRunning
+	withTaskContainer(pod, false, 0)
+	cs := fake.NewClientset(pod)
+	c := &fakeConfirmer{rows: []ProvisionalInfraFailure{{TaskInstanceID: "ti-1", DagRunID: runID, TaskID: taskID, TryNumber: 1, AttemptEpoch: 2}}}
+	r := NewReconciler(cs, "leoflow", &fakeReporter{})
+	r.SetInfraConfirmer(c)
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(c.confirmed) != 0 {
+		t.Fatalf("a running task container of the attempt must hold the mark back, got %+v", c.confirmed)
+	}
+}
