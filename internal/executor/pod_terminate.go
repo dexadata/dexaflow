@@ -20,10 +20,12 @@ import (
 //
 // Every selector below reuses the exact label scheme BuildPod stamps
 // (leoflow.io/run-id, /task-id, /try-number). Deletion is by List-then-Delete,
-// not DeleteCollection: the executor Role grants the `list` and `delete` verbs
-// but NOT `deletecollection` (helm/dexaflow/templates/rbac.yaml), so a
-// DeleteCollection call would 403 in production. NotFound is always tolerated —
-// a pod may have been garbage-collected between the list and the delete.
+// not DeleteCollection: a reap must judge each pod (see terminalForTeardown
+// below), and a cluster whose Role predates the `deletecollection` grant would
+// 403 it. The settled-run collection (run_settle_collect.go) is the one caller
+// of DeleteCollection, and it falls back to per-pod deletes on a 403. NotFound
+// is always tolerated: a pod may have been garbage-collected between the list
+// and the delete.
 //
 // Both methods skip a pod that has already reached a terminal phase (#928) —
 // see terminalForTeardown. That is enforced HERE, at the one delete site, rather
@@ -40,7 +42,7 @@ import (
 // Tolerates NotFound.
 func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, runID, taskID string, tryNumber int) error {
 	selector := fmt.Sprintf("leoflow.io/run-id=%s,leoflow.io/task-id=%s,leoflow.io/try-number=%s",
-		sanitizeLabel(runID), sanitizeLabel(taskID), strconv.Itoa(tryNumber))
+		labelValue(runID), labelValue(taskID), strconv.Itoa(tryNumber))
 	return e.deletePodsBySelector(ctx, selector)
 }
 
@@ -62,7 +64,7 @@ func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, runID, taskID st
 // a reaper only ever preserves a poke pod for an attempt it has just made
 // terminal. Tolerates NotFound.
 func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) error {
-	selector := fmt.Sprintf("leoflow.io/run-id=%s", sanitizeLabel(runID))
+	selector := fmt.Sprintf("leoflow.io/run-id=%s", labelValue(runID))
 	return e.deletePodsBySelector(ctx, selector)
 }
 
@@ -170,7 +172,7 @@ func terminalForTeardown(pod *corev1.Pod) bool {
 // attempt the reaper is about to fail is the correct liveness question.
 func (e *KubernetesExecutor) TaskPodPresence(ctx context.Context, runID, taskID string, tryNumber int) (PodPresence, error) {
 	selector := fmt.Sprintf("leoflow.io/run-id=%s,leoflow.io/task-id=%s,leoflow.io/try-number=%s",
-		sanitizeLabel(runID), sanitizeLabel(taskID), strconv.Itoa(tryNumber))
+		labelValue(runID), labelValue(taskID), strconv.Itoa(tryNumber))
 	pods, err := e.clientset.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		// PodPresenceLive is the zero value on purpose: a caller that drops the

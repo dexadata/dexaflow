@@ -29,8 +29,26 @@ SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
 WHERE r.dag_id = $1
-ORDER BY r.logical_date DESC
+ORDER BY r.logical_date DESC, r.run_id DESC
 LIMIT $2 OFFSET $3;
+
+-- name: ListDagRunsByDagAfter :many
+-- Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
+-- cursor (logical_date, run_id) in the same order, so a deep page costs the
+-- same as the first. run_id is unique per DAG, so it makes the order total. An
+-- empty states array keeps every state.
+SELECT r.*, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.dag_id = sqlc.arg(dag_id)
+  AND (cardinality(sqlc.arg(states)::text[]) = 0 OR r.state::text = ANY(sqlc.arg(states)::text[]))
+  AND (r.logical_date, r.run_id) < (sqlc.arg(after_logical_date)::timestamptz, sqlc.arg(after_run_id)::text)
+ORDER BY r.logical_date DESC, r.run_id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: CountDagRunsByDagStates :one
+SELECT count(*) FROM dag_runs
+WHERE dag_id = sqlc.arg(dag_id) AND state::text = ANY(sqlc.arg(states)::text[]);
 
 -- name: DeleteDagRun :execrows
 -- Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
@@ -208,6 +226,15 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 SELECT * FROM task_instances
 WHERE dag_run_id = $1
 ORDER BY task_id;
+
+-- name: ListTaskInstancesByRuns :many
+-- The batched form of ListTaskInstancesByRun for the scheduler tick: every
+-- active run's task instances in one round trip instead of one per run. Rows
+-- come grouped by run and, within a run, in the same task_id order the per-run
+-- query returns, so the caller can split them without re-sorting.
+SELECT * FROM task_instances
+WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[])
+ORDER BY dag_run_id, task_id;
 
 -- name: ListTaskInstanceAttempts :many
 -- Returns every attempt for (run, task), oldest first. UNIONs the current
@@ -975,6 +1002,47 @@ UPDATE task_instances
 SET next_dispatch_at = $3
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 
+-- name: MarkTaskInstanceQueued :execrows
+-- The scheduler's scheduled -> queued write after a dispatch was accepted.
+-- Guarded to the exact slot the tick planned: still 'scheduled', with the
+-- next_dispatch_at the tick read. Under buffered dispatch the worker can finish
+-- before this write lands: it may have failed the task (MarkTaskDispatchFailed),
+-- re-offered it with a new backoff (RequeueDispatch), or the agent may already
+-- have reported running. Each of those moves the row off the planned slot, so
+-- this write touches zero rows instead of overwriting the newer outcome.
+UPDATE task_instances
+SET state = 'queued',
+    queued_at = COALESCE(queued_at, now())
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state = 'scheduled'
+  AND next_dispatch_at IS NOT DISTINCT FROM sqlc.narg(expect_next_dispatch_at)::timestamptz;
+
+-- name: RequeueDispatch :execrows
+-- A buffered dispatch failed inside the worker for a retriable reason: re-offer
+-- the task the way a synchronous failure is re-offered (RecordDispatchFailure,
+-- RecordDispatchBackpressure). Back to 'scheduled' with the next attempt held
+-- until next_dispatch_at, adding one dispatch attempt only when counted
+-- (backpressure is not). Guarded to scheduled/queued, so a task the agent has
+-- since reported on is left alone. warm_worker_id is cleared as in
+-- RequeueForRedispatch: the attempt never ran.
+UPDATE task_instances
+SET state = 'scheduled',
+    next_dispatch_at = sqlc.arg(next_dispatch_at),
+    dispatch_attempts = dispatch_attempts + sqlc.arg(attempt_increment)::int,
+    warm_worker_id = NULL
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state IN ('scheduled', 'queued');
+
+-- name: DispatchAttemptsForActive :one
+-- The consecutive dispatch-failure count of a task still waiting to run
+-- (scheduled or queued); no row means it has moved on.
+SELECT dispatch_attempts FROM task_instances
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state IN ('scheduled', 'queued');
+
 -- name: RequeueForRedispatch :execrows
 -- Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 -- handed this attempt but demonstrably will NOT run it (its stream ended holding
@@ -1012,3 +1080,21 @@ UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
     next_dispatch_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
+
+-- name: ListSettledRunIDs :many
+-- Of the given (tenant, run) pairs, the settled runs: run in success or failed
+-- and no task instance outside success, failed, skipped and upstream_failed.
+-- This is the same "settled" the retention janitor's LockExpiredSettledRuns
+-- uses (duplicated there on purpose, keep the two identical). A run marked
+-- failed while a task still runs is not settled, so the reconciler never
+-- collects a pod whose outcome it may not have recorded yet. The pairs come
+-- from the pods' tenant and run labels; a pair whose tenant does not own the
+-- run matches nothing.
+SELECT r.id, r.tenant_id FROM dag_runs r
+WHERE (r.tenant_id, r.id) IN (
+    SELECT unnest(sqlc.arg(tenant_ids)::uuid[]), unnest(sqlc.arg(run_ids)::uuid[]))
+  AND r.state IN ('success', 'failed')
+  AND NOT EXISTS (
+    SELECT 1 FROM task_instances ti
+    WHERE ti.dag_run_id = r.id
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'));
