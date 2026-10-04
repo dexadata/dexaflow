@@ -334,6 +334,11 @@ WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = ANY(sqlc.arg(task_ids)::te
 -- it carries no source-state guard. The scheduler's retry rail uses the guarded
 -- ResetTaskInstanceForRetry instead — do not add a guard here or clear-task
 -- silently no-ops on non-up_for_retry tasks.
+-- last_heartbeat_at is cleared on this and every other rail that starts a new
+-- execution of the row (ADR 0051 amendment, A0): the next attempt reports
+-- RUNNING one heartbeat interval before its first beat, and an inherited value
+-- from the previous attempt would make the agent-lost reaper fail it in that
+-- window.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -361,6 +366,7 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2;
 
@@ -399,6 +405,7 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2 AND ti.state = 'up_for_retry';
 
@@ -413,6 +420,7 @@ WHERE ti.dag_run_id = $1 AND ti.task_id = $2 AND ti.state = 'up_for_retry';
 -- failure may re-place off-budget (an app failure at state='failed' must fall to
 -- the normal retry rail). last_failure_kind is cleared so the next attempt's
 -- outcome is classified fresh.
+-- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -441,6 +449,7 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     infra_attempts = ti.infra_attempts + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
   AND ti.state = 'failed' AND ti.last_failure_kind = 'infra';
@@ -452,6 +461,7 @@ WHERE ti.dag_run_id = $1 AND ti.task_id = $2
 -- and reschedule_at cleared. Unlike ResetTaskInstanceToNone (retry), try_number is
 -- PRESERVED and no task_instance_history row is archived: reschedule is not a retry,
 -- it consumes no attempt (#380). Guarded to the parked state so it is idempotent.
+-- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 UPDATE task_instances
 SET state = 'none',
     started_at = NULL,
@@ -460,7 +470,8 @@ SET state = 'none',
     scheduled_at = NULL,
     reschedule_at = NULL,
     last_failure_kind = NULL,
-    warm_worker_id = NULL
+    warm_worker_id = NULL,
+    last_heartbeat_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule';
 
 -- name: TaskInstanceFirstRescheduleAt :one
@@ -646,6 +657,7 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
@@ -679,6 +691,7 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $1
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
@@ -952,9 +965,11 @@ WHERE id = $1 AND state = 'running';
 -- tick. Guarded to 'scheduled' so a report that raced the dispatch cannot clobber
 -- a row that has since progressed. try_number is untouched: this is infra, not a
 -- task failure.
+-- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 UPDATE task_instances
 SET dispatch_attempts = dispatch_attempts + 1,
-    next_dispatch_at = $3
+    next_dispatch_at = $3,
+    last_heartbeat_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 
 -- name: RecordDispatchBackpressure :exec
@@ -993,9 +1008,11 @@ WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 -- (ListBusyWarmWorkerPods), a stale binding would falsely mark the OLD (gone)
 -- worker busy. This is a same-row re-dispatch (the try_number is preserved), so
 -- the clear must happen here; a fresh try lands on a new row that is already NULL.
+-- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 UPDATE task_instances
 SET state = 'scheduled',
-    warm_worker_id = NULL
+    warm_worker_id = NULL,
+    last_heartbeat_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3 AND state = 'queued';
 
 -- name: FailDispatchExhausted :exec
