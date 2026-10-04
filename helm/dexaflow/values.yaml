@@ -144,6 +144,13 @@ executor:
     maintenanceQps: 0
     # -- Token-bucket burst of the maintenance client. 0 = server default (10). Ignored while maintenanceQps is 0.
     maintenanceBurst: 0
+  # -- Collect a settled run's finished task pods as soon as every outcome is
+  # recorded, in one DeleteCollection by the run's label, instead of one delete
+  # per pod after the 10 minute grace period. Off by default, so finished pods
+  # stay inspectable with kubectl for the grace period. Turning it on also
+  # grants the executor Role `deletecollection` on pods; without that verb the
+  # server deletes the pods one by one.
+  collectSettledRunPods: false
 
 # -- Ports the leoflow-server listens on. http: API + UI, metrics: Prometheus
 # /metrics, grpc: agent ↔ control plane channel (task pods dial back here).

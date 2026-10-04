@@ -257,6 +257,12 @@ spec:
               value: {{ .maintenanceBurst | quote }}
             {{- end }}
             {{- end }}
+            {{- if .ctx.Values.executor.collectSettledRunPods }}
+            # Opt-in: collect a settled run's finished task pods in one
+            # DeleteCollection instead of one delete per pod after the grace period.
+            - name: LEOFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
+              value: "true"
+            {{- end }}
             - name: LEOFLOW_LOGS_DIR
               value: {{ .ctx.Values.config.logsDir | quote }}
             - name: LEOFLOW_LOGS_TAIL_PUBLISH
