@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -652,6 +653,24 @@ type SchedulerSection struct {
 	LoopIntervalMS int             `mapstructure:"loop_interval_ms"`
 	Enabled        bool            `mapstructure:"enabled"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
+	Alerts         AlertsSection   `mapstructure:"alerts"`
+}
+
+// AlertsSection guards the destinations of native on-failure alerts (#424).
+// An alert's URL and headers come from a tenant's connection, so on a shared
+// engine a tenant could otherwise point one at the control plane's own network:
+// loopback, a private service, or the cloud metadata endpoint.
+type AlertsSection struct {
+	// BlockPrivateDestinations refuses alert requests to loopback, private,
+	// link-local (including 169.254.169.254), shared, unspecified, multicast and
+	// broadcast addresses. The check runs on the address actually dialed, after
+	// DNS resolution and on every redirect, and the guarded client does not use
+	// the proxy environment. Off by default, so an existing install that alerts
+	// an in-cluster endpoint keeps working.
+	BlockPrivateDestinations bool `mapstructure:"block_private_destinations"`
+	// AllowedCIDRs exempts these ranges (CIDRs or single addresses) from the
+	// block, e.g. an on-premises chat server. Ignored while the block is off.
+	AllowedCIDRs []string `mapstructure:"allowed_cidrs"`
 }
 
 // DispatchSection sizes the BufferedDispatcher (#127). BufferSize=0 keeps the
@@ -789,6 +808,12 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_name":             "",
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+
+	// Alert egress guard: an alert's URL is tenant data (#424). The []string
+	// binds from one comma-separated env var, like server.trusted_proxies.
+	"scheduler.alerts.block_private_destinations": false,
+	"scheduler.alerts.allowed_cidrs":              []string{},
+
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE /
 	// _STORAGE_CLASS (the env-only Helm override path, #743, same class as #725).
 	// Empty leaves the L0 default unset, so a staging PVC inherits the cluster's
@@ -997,6 +1022,9 @@ func (c *ServerConfig) Validate() error {
 	}
 	if err := c.validatePlatformIntegration(); err != nil {
 		return err
+	}
+	if _, err := egress.NewPolicy(c.Scheduler.Alerts.AllowedCIDRs); err != nil {
+		return fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
 	// verify), so the JWT secret is required for either.
