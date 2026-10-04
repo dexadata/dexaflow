@@ -126,10 +126,9 @@ func TestReconcilerConfirmListErrorIsNotFatal(t *testing.T) {
 }
 
 // TestReconcilerConfirmMatchesLongIDPods: a task pod's run and task labels
-// are the label values BuildPod stamps, so a live pod of an attempt with long
-// ids must still hold its mark back.
+// are the label values BuildPod stamps, hashed past 63 characters (#1320), so
+// a live pod of an attempt with long ids must still hold its mark back.
 func TestReconcilerConfirmMatchesLongIDPods(t *testing.T) {
-	longID := "ingest_group.customer_accounts_subgroup.load_customer_accounts_into_warehouse_partitioned"
 	runID, taskID := "manual__"+longID, longID
 	pod := BuildPod(Request{DagID: "etl", TaskID: taskID, RunID: runID, TryNumber: 1, AttemptEpoch: 2, Image: "python:3.12"})
 	pod.Namespace = "leoflow"

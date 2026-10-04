@@ -76,8 +76,8 @@ func attemptEvidence(pods []*corev1.Pod, a Attempt) infraEvidence {
 func podIsAttempt(pod *corev1.Pod, a Attempt) bool {
 	try, epoch, ok := attemptOf(pod)
 	return ok && try == a.TryNumber && epoch == a.AttemptEpoch &&
-		pod.Labels[podLabelRunID] == sanitizeLabel(a.RunID) &&
-		pod.Labels[podLabelTaskID] == sanitizeLabel(a.TaskID)
+		pod.Labels[podLabelRunID] == labelValue(a.RunID) &&
+		pod.Labels[podLabelTaskID] == labelValue(a.TaskID)
 }
 
 // taskContainerTerminated reports whether the pod's task container has
