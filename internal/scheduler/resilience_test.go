@@ -146,6 +146,7 @@ func (r *capturingRecorder) RecordTaskTransition(_, _, _ string)       {}
 func (r *capturingRecorder) RecordUndispatchable(string)               {}
 func (r *capturingRecorder) RecordSchedulerStepDown(string)            {}
 func (r *capturingRecorder) ObserveSchedulerReacquire(_ time.Duration) {}
+func (r *capturingRecorder) RecordSchedulerWokenTick()                 {}
 func (r *capturingRecorder) RecordAlert(dagID, channelType, result string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
