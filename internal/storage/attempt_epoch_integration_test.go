@@ -283,7 +283,7 @@ func TestAttemptEpochMigrationUpDownUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	dbName := fmt.Sprintf("epoch_mig_%d", time.Now().UnixNano())
 	if _, err := admin.Pool.Exec(ctx, "CREATE DATABASE "+dbName); err != nil {
 		skipOrFatal(t, "creating scratch database", err)

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -343,7 +345,17 @@ func (s *ExecutionStore) RequeueForRedispatch(ctx context.Context, runID, taskID
 	return err
 }
 
-// ResolveTask returns the dispatcher's execution context for a run's task.
+// ErrNotDispatchable is returned by ResolveTask when the task's row is no
+// longer in a pre-dispatch state (none, scheduled or queued): it is running or
+// settled, so dispatching it again would start a second execution.
+var ErrNotDispatchable = errors.New("task instance is not in a dispatchable state")
+
+// ResolveTask returns the dispatcher's execution context for a run's task and
+// claims a fresh attempt epoch for the execution it is about to start (ADR 0051
+// amendment). Every call that succeeds moves the row's attempt_epoch forward,
+// so two dispatches of one try never share it; the dispatcher mints the agent's
+// identity from the returned value. A row past dispatch is refused with
+// ErrNotDispatchable and keeps its epoch.
 func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) (dispatch.Resolved, error) {
 	task, spec, ver, _, err := s.resolve(ctx, runID, taskID)
 	if err != nil {
@@ -353,13 +365,12 @@ func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) 
 	if err != nil {
 		return dispatch.Resolved{}, err
 	}
-	tis, err := s.q.ListTaskInstancesByRun(ctx, rid)
-	if err != nil {
-		return dispatch.Resolved{}, fmt.Errorf("listing task instances: %w", err)
+	ti, err := s.q.ClaimAttemptEpoch(ctx, queries.ClaimAttemptEpochParams{DagRunID: rid, TaskID: taskID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dispatch.Resolved{}, fmt.Errorf("task %q in run %q: %w", taskID, runID, ErrNotDispatchable)
 	}
-	ti, ok := latestTry(tis, taskID)
-	if !ok {
-		return dispatch.Resolved{}, fmt.Errorf("no task instance for task %q in run %q", taskID, runID)
+	if err != nil {
+		return dispatch.Resolved{}, fmt.Errorf("claiming attempt epoch: %w", err)
 	}
 	image := ver.ImageReference
 	if image == "" {
@@ -375,6 +386,7 @@ func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) 
 		Image:           image,
 		ImagePullPolicy: pullPolicy,
 		TryNumber:       int(ti.TryNumber),
+		AttemptEpoch:    int(ti.AttemptEpoch),
 		Staging:         spec.Staging,
 		// Materialize source on the executor side (Lite only); Pro ignores it.
 		Source: spec.Source,
@@ -415,16 +427,4 @@ func (s *ExecutionStore) resolve(ctx context.Context, runID, taskID string) (dom
 	// already holds in its own token.
 	return domain.TaskSpec{}, domain.DAGSpec{}, queries.DagVersion{}, queries.DagRun{},
 		domain.Safef(domain.ErrNotFound, "task %q not found in run %q", taskID, runID)
-}
-
-// latestTry returns the highest try_number task instance for the given task.
-func latestTry(tis []queries.TaskInstance, taskID string) (queries.TaskInstance, bool) {
-	var best queries.TaskInstance
-	found := false
-	for _, ti := range tis {
-		if ti.TaskID == taskID && (!found || ti.TryNumber > best.TryNumber) {
-			best, found = ti, true
-		}
-	}
-	return best, found
 }
