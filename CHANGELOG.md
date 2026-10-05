@@ -6,6 +6,595 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in revalidation for the grid's task summaries.** The grid computes an
+  `ETag` for `/ui/grid/ti_summaries/*`, but every UI response carried
+  `Cache-Control: no-store`, so the browser never kept a copy to revalidate and
+  every poll paid for the full body. With `ui.etag_revalidation: true`
+  (`DEXAFLOW_UI_ETAG_REVALIDATION`, or the legacy `LEOFLOW_` name) that route
+  answers `private, no-cache` with `Vary: Authorization, Cookie`, so an
+  unchanged grid gets `304 Not Modified`. Each revalidation still goes through
+  authentication and authorization, so a revoked session gets `401`, never a
+  cached grid. The browser does keep the last grid body in its private cache
+  after logout, revalidated before any use. The default keeps `no-store`
+  everywhere.
+
+  The ETag fingerprint itself is now an order-independent hash computed in one
+  pass with no allocation (it used to build, sort and join one string per task
+  instance: 13 ms and 4 MB per poll at 25,000 rows, now 1.6 ms and none), and it
+  also covers the try number and the start and end times that reach the body.
+- **An opt-in to serve metrics under their `dexaflow_*` names only.** `/metrics`
+  publishes every `dexaflow_*` family twice, once under its pre-rename
+  `leoflow_*` name, so dashboards and alerts written against either name work.
+  That copy is made on every scrape and doubles the scrape size. Operators who
+  do not need the `leoflow_*` names may set
+  `observability.metrics.drop_legacy_names: true`
+  (`DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES`, or the legacy `LEOFLOW_`
+  name) to serve each family once. The default is `false` and keeps both names.
+- **Segmented task-log uploads for the object-store log backend.** With
+  `logs.sink.layout: segmented` (`DEXAFLOW_LOGS_SINK_LAYOUT`, Helm
+  `logs.sink.layout`), the s3 and gcs log sinks write each attempt as
+  numbered segments under `{try}.log.d/` and a flush uploads only the open
+  segment (up to 4 MiB) instead of the whole accumulated log, cutting the
+  bytes uploaded for a long log from about 8.8x its size to 2.5x and the
+  control-plane memory per attempt from the whole log to one segment. The
+  default stays `single`. Both layouts are always readable, so turning the
+  setting on or off never hides a stored log; enable it only once every
+  replica runs this version. Before downgrading to an older version,
+  switch back to `single`: attempts already written as segments stay
+  unreadable by older versions. On S3, `segmented` needs `s3:ListBucket`
+  on the bucket so that a missing segment answers not-found. Independently of the layout, a flush no longer
+  holds the buffer lock during the upload, so a slow bucket no longer stalls
+  the task's log stream.
+- **A read-only root filesystem for warm workers.** With
+  `execution.warm_read_only_root_filesystem` (Helm:
+  `execution.warmReadOnlyRootFilesystem`) on, every warm worker pod mounts its
+  root filesystem read only, each attempt gets its own `HOME` and XDG dirs inside
+  the scratch the worker wipes between attempts, and the `/tmp` emptyDir and
+  the pod's `/dev/shm` are emptied before each attempt and again as soon as it
+  ends. A file one attempt writes (a module on the working
+  directory, a `~/.local` package, a generated dbt profile) can no longer be read
+  or run by the next attempt on the same worker. Off by default: a task that
+  writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on.
+  It takes effect on warm pods created after it is turned on; running warm pods
+  keep their spec until they recycle. Dedicated task pods are not affected. See [Warm worker
+  pools](https://dexaflow.dexadata.ai/operate/warm-pools/#isolation-between-attempts).
+- **Configurable Kubernetes client rate limits, with a separate client for
+  maintenance work.** The control plane talked to Kubernetes through client-go's
+  default limits (QPS 5, burst 10), which paces a large fan out: creating 1,000
+  task pods takes over three minutes. `executor.kube_client.qps` and
+  `executor.kube_client.burst` (Helm: `executor.kubeClient.qps` / `.burst`) now
+  set the limits of the dispatch client, and the agent token exchange's own
+  client uses the same values. Setting `executor.kube_client.maintenance_qps`
+  (and `maintenance_burst`) gives the pod informer, reconciler, reapers, staging
+  GC and warm pool reconciler their own client and token bucket, so maintenance
+  cannot starve pod creation. The defaults keep today's limits on one shared
+  client; raise `qps` together with `maintenance_qps` (for example 50/100 and
+  20/40) on a busy cluster.
+- **Opt-in on-demand live log publishing.** With `logs.tail.publish:
+  on_demand` (`DEXAFLOW_LOGS_TAIL_PUBLISH`, Helm `logs.tail.publish`), the
+  control plane publishes task log lines for the live tail only while a
+  follower is subscribed to that attempt, instead of one Redis round trip per
+  line for every attempt (checked with `PUBSUB NUMSUB` at most once per second
+  per running log stream; any pattern subscriber keeps every attempt
+  publishing). A follower that subscribes between two checks still receives
+  the lines that arrived after it subscribed: up to 1024 lines or 1 MiB held
+  since the last check are replayed first, and the follow view skips the
+  replayed lines it already read from the stored log. A new follower can see
+  its first live lines up to about a second late. The default stays
+  `always`, which publishes every line as before; enable `on_demand` once every
+  API replica runs this version. Independently of the setting, each line is
+  now encoded once for storage and publishing.
+- **Buffered dispatch can be turned on from Helm.** `config.scheduler.dispatch.bufferSize`
+  and `config.scheduler.dispatch.workers` set `scheduler.dispatch.buffer_size`
+  and `scheduler.dispatch.workers`. With a buffer, the scheduler tick only
+  enqueues task pods and a pool of workers creates them, so a large fan out no
+  longer stretches the tick by every Kubernetes API call. The default stays 0
+  (synchronous dispatch inside the tick) and renders nothing, so an upgrade
+  changes nothing. A starting point for a busy cluster is a buffer of 512 with
+  16 workers. A pod create that fails inside a dispatch worker is handled
+  like a synchronous one (see the buffered dispatch fix in this release).
+- **Database pool tuning: a scheduler pool, an API statement timeout and
+  connection lifetime jitter.** Three settings, all off by default so nothing
+  changes until you set them. `database.scheduler_max_conns` (Helm:
+  `database.schedulerMaxConns`) gives the scheduler loop, its reapers and its
+  janitors a pool of their own, so API traffic that holds every main pool
+  connection can no longer stall a scheduler tick; it is opened in addition to
+  `max_open_conns`, and only by a process that runs the scheduler. `database.statement_timeout_ms` (Helm:
+  `database.statementTimeoutMs`) sets `statement_timeout` on the main pool,
+  which serves the API; about 30000 bounds a runaway query. It never reaches
+  the leader election connection, the health checks, the scheduler pool or
+  migrations, and deleting a DAG, clearing its history and the XCom janitor
+  lift it for their own transaction; without a scheduler pool the scheduler
+  shares the main pool and its timeout, so set both together. It is applied
+  with `SET` after connecting, so it works through PgBouncer in session mode;
+  in transaction mode set it on the database role instead. `database.conn_max_lifetime_jitter_ms` (Helm:
+  `database.connMaxLifetimeJitterMs`) spreads connection recycling so replicas
+  started together do not reconnect at once. Each is also read from the
+  matching `DEXAFLOW_DATABASE_*` or `LEOFLOW_DATABASE_*` variable. See
+  [Database](https://dexaflow.dexadata.ai/reference/configuration/#database-database).
+- Helm: `goMemLimit.enabled` (default `false`) renders `GOMEMLIMIT` on the control-plane container as `goMemLimit.percent` (default `80`) of `resources.limits.memory`, so the Go GC collects harder near the container limit instead of being OOM-killed. Any Kubernetes byte quantity is read, including decimals (`1.5Gi`), the `P`/`Pi`/`E`/`Ei` suffixes and decimal exponents (`1e9`); the render fails when the limit is missing or uses a sign or a sub-byte suffix (`m`, `u`, `n`).
+- **Keyset pagination for DAG runs and the event log.** `GET
+  /api/v2/dags/{dag_id}/dagRuns` and `GET /api/v2/eventLogs` accept an optional
+  opaque `cursor` query parameter in place of `offset`, and every page with a
+  successor names its cursor in the `Dexaflow-Next-Cursor` response header. A
+  cursor page costs the same as the first page however deep it is (0.4 ms
+  instead of 180 ms at offset 150000 of a DAG's runs, 0.2 ms instead of 500 ms
+  at offset 700000 of the event log). Without a cursor the endpoints answer
+  exactly as before, with the same body for Airflow 3.2 clients; runs that
+  share a logical date are now ordered by run id, so offset pages are stable.
+- **Collect a settled run's task pods in one call (opt-in).** With
+  `executor.collect_settled_run_pods` (Helm: `executor.collectSettledRunPods`)
+  the reconciler deletes a settled run's finished pods as soon as every outcome
+  is recorded and none of its tasks is still pending, in one `DeleteCollection`
+  by the run's and tenant's labels limited to finished phases, instead of one
+  delete per pod after the 10 minute grace period: one apiserver call per run
+  instead of one per pod, at most 50 runs per sweep. Off by default. The chart's
+  executor Role grants `deletecollection` on pods only when the value is on;
+  without the verb the server falls back to per-pod deletes.
+- **The service API can size a new tenant's default pool.**
+  `PUT /api/v2/service/tenants/{tenant}` accepts an optional
+  `default_pool_slots`, which sets the slot cap of the tenant's `default_pool`
+  on creation and re-sizes it on a later call. Without it a new tenant still
+  copies the `default` tenant's size (128 by default), so every tenant on a
+  shared engine could run that many unpooled tasks at once.
+  It is the pool's starting size, not a tenant-wide limit: a tenant role
+  that may write pools can resize it or add pools. Pro edition only.
+- **Pools can be made read-only for tenants with `server.pools_read_only`.**
+  On an engine shared by many tenants the platform operator sizes each
+  tenant's pools, but a tenant `operator` holds `write:pool` and a tenant
+  `admin` can grant itself anything, so either could raise its own slot budget
+  through `/api/v2/pools`. With the option on, create, resize and delete on
+  that API answer `403` with a stable detail for every tenant role, admin
+  included, and list and get keep working. Pools are then changed only out of
+  band by the platform. A task that names a pool its tenant has not defined is
+  then admitted against `default_pool` instead of running unlimited, so DAGs
+  using such names start sharing it. Off by default, so nothing changes on
+  upgrade; in the chart set `config.poolsReadOnly: true` (#646).
+- **Operators can cap what each tenant schedules.** The operator service API
+  (`PUT /api/v2/service/tenants/{tenant}`) accepts optional `max_dags`,
+  `max_runs_per_day` and `min_schedule_interval_seconds` (0 or absent means
+  unlimited; a field left out keeps its value). Registering a DAG past
+  `max_dags`, or one whose schedule fires more often than the minimum
+  interval, and triggering a run past the tenant's daily cap (manual and
+  scheduled runs together, per UTC day) answer `403` naming the limit. A
+  scheduled run past the daily cap is skipped with one warning per tenant and
+  day and created once the day turns. Existing tenants are unlimited.
+  Migration 040 adds the columns to `tenants`. (#1420)
+
+### Changed
+
+- **The UI bundle is compressed once instead of on every request.** The static
+  handler used to read and gzip each file per request, so every cache-cold
+  browser cost the server about half a second of CPU for the 5 MB main bundle.
+  Each file is now gzipped once (in the background at startup, or on its first
+  request) and the gzipped copy is served from memory; uncompressed responses
+  stream straight from the bundle embedded in the binary. Both carry a strong
+  `ETag`, so a conditional request is answered with `304 Not Modified`, and
+  `Range` requests get `206 Partial Content`. The cache policy is unchanged:
+  hashed assets stay immutable for a year and the HTML shell is never cached.
+  The compressed copies add about 3 MB of memory per API replica.
+- **Faster DAG list state filter and dashboard DAG counters.** Filtering the
+  DAG list by latest run state, its total, and the dashboard's failed, running
+  and queued DAG counters now look up each DAG's newest run through an index
+  instead of reading every run in the database. On a tenant with 1,000 DAGs
+  and 1,000,000 runs they went from 380 to 510 ms to under 7 ms. Results are
+  unchanged.
+- **Faster DAG deletion and cheaper task instance writes.** Migrations 027 to
+  031 add an index on `dag_runs.dag_version_id`, which takes deleting a DAG
+  with 51 versions on a database with 1,000,000 runs from 5.4 s to about
+  60 ms, and drop three `task_instances` indexes that were redundant
+  (`idx_ti_run`, `idx_ti_task`) or blocked HOT updates
+  (`idx_ti_running_heartbeat`), about 330 MB at 5,000,000 task instances.
+  `task_instances` now keeps 15% of each new page free (`fillfactor` 85), so
+  task heartbeats rewrite no index entries. Every index change runs
+  `CONCURRENTLY` and does not block traffic. If the migration job is
+  interrupted while building `idx_dag_runs_version`, drop the INVALID index it
+  leaves (`DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_version`), run
+  `migrate force 26` and retry; the migration files describe the same steps
+  for the others. The `fillfactor` change waits at most 5 s for its table
+  lock; if that wait times out, run `migrate force 30` and retry.
+- **The scheduler reads task instances for all active runs in one query.**
+  Each tick used to load task instances with one query per active run, so the
+  database work of a tick grew with the number of runs in flight. It is now a
+  single query per tick whatever the number of runs. With 1,000 active runs of
+  20 tasks the read went from 1,001 queries to 2 and from about 200 ms to
+  about 110 ms on a local Postgres 16. Scheduling decisions are unchanged.
+- **Faster pool occupancy and staging volume cleanup.** The pool occupancy
+  behind `/api/v2/pools` and the pools page now reads a new partial index of
+  active task instances (migration 035, `idx_ti_active_tenant`, built
+  `CONCURRENTLY`) instead of every task instance of the tenant, and the
+  staging volume GC that runs every minute finds each volume's run by primary
+  key. On a database with 5,000,000 task instances and 1,000,000 runs they went
+  from about 260 ms and 375 ms to under 2 ms each. Results are unchanged. If
+  the migration job is interrupted while building the index, drop the INVALID
+  index it leaves (`DROP INDEX CONCURRENTLY IF EXISTS idx_ti_active_tenant`),
+  run `migrate force 34` and retry.
+- **Wide fan-outs dispatch in linear time.** The scheduler looked each queued
+  task up by scanning the run's task list, so promoting a fan-out of N tasks in
+  one tick cost time proportional to N squared: 5,000 ready tasks took about
+  117 ms of planning per tick before any dispatch work. Each DAG version's
+  tasks are now indexed once, the first time the scheduler plans a run of it,
+  and the planner works on that index. The same 5,000-task tick takes about 2.4 ms, and a
+  steady tick over 1,000 runs of 20 tasks drops from about 4.4 ms to 2.5 ms.
+  Scheduling decisions are unchanged.
+- **Agents spread their report retries.** When a task pod cannot deliver a state
+  report it retries with a backoff of 1s, 2s, 4s, 8s and then the heartbeat
+  interval. Every pod that failed during the same control plane outage used to
+  retry on exactly that schedule, so they came back in synchronized bursts. Each
+  delay is now drawn at random between half and all of the step, never longer,
+  so a large fan out reaches a recovering control plane spread out instead of
+  all at once. The warm worker's reconnect backoff keeps the same jitter it
+  already had.
+- **Agents read their upstream XCom values in one call.** A task with several
+  upstream values (inputs, fan-in members, a captured operator's
+  `depends_on`) now fetches them with one `FetchXComBatch` RPC per 256
+  upstreams instead of one `FetchXCom` per value, and the control plane reads
+  them from Redis or Postgres in chunks of 16 keys, stopping once a 3 MiB
+  response budget is used; values past it are fetched one by one as before.
+  Mixed versions keep working: an agent talking to an older control plane
+  falls back to one `FetchXCom` per value, and an older agent never calls the
+  new RPC.
+- **Every execution of a task instance now carries its own attempt epoch.**
+  Migration 038 adds `attempt_epoch` to `task_instances` and
+  `task_instance_history` (expand only: the previous release keeps working on
+  the migrated schema, during a rolling upgrade and after a rollback). Every
+  rail that can start a new execution (retry, clear, infra re-place, reschedule
+  re-dispatch, warm requeue, dispatch-failure backoff) bumps it, and the
+  dispatcher claims a fresh value each time it dispatches a task, so two
+  executions of one try are no longer indistinguishable. A
+  dispatch that reaches a task which is already running or settled is refused
+  instead of starting a second execution. This change lays the groundwork for
+  the fences of ADR 0051's amendment and does not change any of them yet.
+  (ADR 0051, #1130)
+- **Agent credentials now name the exact execution they were minted for.** The
+  task-scoped agent token carries an `attempt_epoch` claim, taken from the
+  epoch the dispatcher claims, and so does the pod identity annotation that
+  the token exchange reads. Renewal keeps the claim as it is, and a token
+  minted before this release stays without it, so no running attempt is
+  affected by the upgrade. `TaskSpec` and `WorkAssignment` gain an additive
+  `attempt_epoch` field, and agent binaries need no change. Nothing is enforced
+  yet: the report and heartbeat fences that use the claim ship next. (ADR 0051,
+  #911)
+- **Cheaper DAG version registration.** Migrations 032 to 034 index
+  `dag_versions` by `(dag_id, spec_hash)`, the lookup every bundle push runs,
+  drop the `spec_hash` index it replaces and drop the GIN index on `spec`,
+  which no query used and which every version insert had to update. Every
+  change runs `CONCURRENTLY` and does not block registration. If the migration
+  job is interrupted while building `idx_dag_versions_dag_hash`, drop the
+  INVALID index it leaves (`DROP INDEX CONCURRENTLY IF EXISTS
+  idx_dag_versions_dag_hash`), run `migrate force 31` and retry. If it is
+  interrupted in 033 or 034, re-run that file's single `DROP INDEX
+  CONCURRENTLY` statement by hand, then `migrate force 33` or `migrate force
+  34`.
+- **Going back from 0.5.1 to 0.5.0, and restoring a backup.** 0.5.1 adds
+  migrations 027 to 035, and the 0.5.0 migrate job refuses a database that is
+  ahead of it ("no migration found for version 35"). To go back, use `helm
+  rollback`, or install 0.5.0 with `migrations.enabled=false`: the 0.5.0
+  server runs on the newer schema. On a large `task_instances` table the index
+  builds can outlast Helm's default 5 minute hook timeout, so pass a larger
+  `--timeout` to the upgrade. After restoring a Postgres backup into a running
+  installation, restart the control plane: it caches tenant ids for its
+  lifetime.
+- **The 0.5.1 upgrade notes now carry the schema migration runbook.** The
+  upgrade page describes what migrations 027 to 039 do (and 040 when it ships),
+  how the chart's pre-upgrade Job applies them, why a `CONCURRENTLY` index build
+  or drop waits for every open transaction in the database (so the hook can
+  take longer than before and should run in a window without long-running
+  transactions, with the query that finds them), how to recover from an
+  interrupted migration (the dirty version, the INVALID index, the
+  `migrate force` value each migration file names, and the shipped migrate
+  image to run it with), how a rollback to 0.5.0 behaves on Pro (`helm
+  rollback` keeps the schema, which 0.5.0 accepts) and on Lite (whose drift
+  check refuses it, so the snapshot or a down migration to 026 is needed) and
+  what a rollback loses, which behaviour changes ship without a flag, and the
+  new opt-in settings with their defaults. The chart's install notes point at
+  the runbook.
+
+### Fixed
+
+- **Tenants created through the service API get the same built-in role grants as `default`.**
+  Built-in role changes made by migrations, such as the role ladder, reached the
+  `default` tenant only. A new migration brings the built-in roles of every other
+  tenant in line with `default`: it adds the roles and grants a tenant is missing
+  and removes grants `default` no longer has. Custom roles and user role
+  assignments are not touched. If you edited built-in role grants by hand with
+  SQL, the upgrade overwrites those edits in every tenant other than `default`,
+  and copies any hand edit made to `default`'s built-in roles to every tenant;
+  move such grants to a custom role before upgrading. (#1305)
+- **A full dispatch buffer no longer counts as a failed dispatch.** With
+  buffered dispatch on (`scheduler.dispatch.buffer_size` above 0), a task
+  offered while the queue was full was charged a dispatch attempt and backed
+  off, and a large fan out could exhaust the budget and fail tasks as
+  `dispatch_failed` although nothing had been sent to Kubernetes. A full (or
+  draining) buffer is now treated as backpressure: the task stays scheduled
+  and is offered again on the next tick, with no attempt charged and no
+  backoff. `dexaflow_dispatch_at_capacity_total` still counts each refusal.
+  After the first refusal the tick stops offering dispatches, and the next
+  tick starts at the run after the one that was refused, so one large run
+  cannot take every freed buffer slot tick after tick.
+- **`dexaflow_pods_running` no longer reports a constant 0.** The gauge was
+  registered but nothing ever set it, so every scrape served
+  `dexaflow_pods_running 0` (and its `leoflow_` twin) whatever was running, a
+  value a dashboard reads as a real measurement. It is removed, together with
+  three gauges that were declared and never written, so they never produced a
+  series: `dexaflow_scheduler_leader`, `dexaflow_active_dag_runs` and
+  `dexaflow_queued_tasks`. A panel built on `dexaflow_pods_running` now shows no
+  data instead of a wrong zero; count task pods with kube-state-metrics instead.
+- **A task that prints a very long line no longer loses the rest of its log.**
+  The agent buffered output with no newline (progress bars, binary dumps)
+  without limit, and a line past the control plane's 4 MiB gRPC message limit
+  ended the whole log stream, so every later line of the attempt was dropped.
+  The agent now sends a line longer than just under 4 MiB in pieces, cut on a
+  UTF-8 boundary, and logs a warning with the number of extra lines. Lines
+  that were deliverable before are sent unchanged.
+- **Tasks with long DAG, task or run ids no longer fail to dispatch.** Task pods
+  and staging volumes carry the DAG, task, run and tenant ids as Kubernetes
+  labels, and Kubernetes rejects a label value longer than 63 characters, so a
+  deeply nested task group or a long run id failed every dispatch attempt and
+  ended as `dispatch_failed`. A value that does not fit is now cut to a prefix
+  plus a hash of the full id, which keeps it valid and distinct; values that
+  already fit are unchanged, so pods created before the upgrade are still found
+  by the reapers and the GC.
+- **Buffered dispatch retries cluster backpressure instead of failing the
+  task, and no longer overwrites a task's outcome with `queued`.** With
+  `scheduler.dispatch.buffer_size` above 0, a pod create that failed inside a
+  dispatch worker failed the task at once, so a namespace at its
+  ResourceQuota (a 403) or an apiserver shedding load (a 429) failed tasks
+  that the synchronous path holds and re-offers. Worker failures are now
+  handled like synchronous ones: backpressure puts the task back to
+  `scheduled` and re-offers it without spending the dispatch budget, and any
+  other error (a 5xx, a timeout, a rejection) is re-offered with a growing
+  backoff until the dispatch budget is spent, then fails the task as
+  `dispatch_failed`. Separately, the scheduler's `queued` write could land
+  after a fast worker had already failed the task or the agent had reported
+  it running, leaving the task stuck `queued`; that write now only applies to
+  the scheduled slot it was planned for. Synchronous dispatch (the default,
+  `buffer_size: 0`) keeps its failure handling.
+- **Lite now reaps runs whose agent died.** Lite ran no reaper at all, so a run whose agent subprocess died without reporting sat `running` forever. Lite now runs the orphan-run, agent-lost and dispatch-lost reapers every 30 s on the leader, behind the same post-election settling grace as Pro. Agent-lost and dispatch-lost act only once the attempt's agent process is gone (checked by its recorded PID), so a live agent is never re-placed beside a second one. The task's own process group counts as well: an agent killed outright leaves its task running, so the agent records the task's process group and the attempt reads alive while any process of it exists; once the agent is confirmed dead, the reaper stops that orphaned group (SIGTERM, then SIGKILL, only for a group this server recorded and could verify) before it re-places the attempt, so two copies of a task never run on one try. A TI whose agent died after reporting RUNNING but before its first heartbeat is also failed as agent_lost in Lite, once it has run past the agent-lost threshold and only when its agent and task process group are both gone. (#916)
+- **Two replicas on a small managed Postgres boot at the chart defaults, and
+  running out of connections names the setting.** At boot each control-plane
+  pod opens its pool floor, `database.maxIdleConns`, plus 3 (health checks and
+  the scheduler leader lock), and nothing scales that by the replica count. At
+  the old floor of 5, `replicaCount: 2` and the migration Job asked for 17
+  connections at once, more than the smallest managed tiers (Cloud SQL
+  `db-f1-micro`, the smallest RDS and Azure Flexible sizes cap
+  `max_connections` near 25 and reserve several) had left, and the pods never
+  became ready. The chart now defaults `database.maxIdleConns` to 2, so two
+  replicas boot with 11. `database.maxOpenConns` stays at 20, the ceiling each
+  pool grows to under load; v0.6.0 may revisit that default alongside the
+  separate scheduler pool (#1339). Values you set yourself are kept. The install
+  notes warn when the boot total exceeds 20 and, with more than one pod, print
+  the peak total (`pods x (maxOpenConns + 3)`, plus 1 for the migration Job) so
+  you can size `max_connections` or lower `database.maxOpenConns`. When Postgres
+  refuses a connection with SQLSTATE 53300 at boot, the error now names
+  `database.max_open_conns`, its value, the per-replica arithmetic and the role
+  or database `CONNECTION LIMIT` instead of only "remaining connection slots
+  are reserved". (#1088)
+- **The orphan-run reaper no longer fails a run that is waiting on a retry or a
+  sensor reschedule.** It treated a run as abandoned when none of its task
+  instances was `scheduled`, `queued` or `running`, so a run whose only pending
+  task sat in `up_for_retry` (a `retry_delay` of 5 minutes or more) or
+  `up_for_reschedule` (a reschedule-mode sensor with a `poke_interval` of 5
+  minutes or more) was failed as `orphaned` before the retry or the next poke
+  could happen. Any task instance that is neither settled nor `none` now keeps
+  its run out of the reaper; a run whose tasks are all settled or never started
+  is still reaped after 5 minutes. Two narrower windows with the same effect
+  are closed too. Sending a task back for another attempt (a retry, a sensor
+  re-poke, an infra re-place, an operator clear) now counts as activity, so a
+  run is no longer reaped in the scheduler tick between that release and the
+  task being scheduled (for a sensor poking every minute that happened more
+  often than not within an hour). And the reap re-checks the orphan rule atomically, so a run that
+  resumes between the reaper's list and its reap is left alone, pods included,
+  and counted as `orphan_reap_noop`. Adds migration 036
+  (`task_instances.released_at`).
+- **Clearing a task gives it back its retries, its infra tolerance and a clean
+  XCom slate** (#1131). A clear bumped `try_number` but never touched
+  `max_tries`, so one clear spent every retry for the rest of the task's life
+  and the UI showed "try 4 of 3". A clear now sets `max_tries` from the task's
+  `retries` in the version the re-run executes, as Apache Airflow does. It also
+  resets `infra_attempts`, so a task that had used up its infra re-placements
+  can survive a lost agent again, and it deletes the XCom of the attempts it
+  clears, so a downstream task can no longer read a value the new attempt did
+  not write. The clear is now a single transaction: if the XCom values cannot
+  be deleted, nothing is cleared and the request fails. The agent now reads
+  the attempt budget from the task instance instead of the DAG spec, so
+  `on_failure_callback` fires only on the final attempt of a cleared task, and
+  a task that inherits `default_args.retries` no longer fires it on its first
+  failure.
+- **A retried, cleared or re-placed task is no longer failed as `agent_lost`
+  before its first heartbeat.** The reset rails left the previous attempt's
+  `last_heartbeat_at` on the row, and the new attempt reports `running` one
+  heartbeat interval before it beats. A maintenance sweep in that window read
+  the inherited value as stale and failed the new attempt, spending an infra
+  re-place on a task that was never lost. It hit the infra re-place after an
+  `agent_lost`, an ordinary clear-and-rerun of a task that ran before, and a
+  retry whose `retry_delay` exceeds about 75 seconds. Every rail that starts a
+  new execution now clears the heartbeat. (#1391)
+- **A superseded task agent can no longer report over the attempt that
+  replaced it.** After an infra re-place, a reschedule poke or a repeated
+  dispatch, the old and new executions shared a try number, so the old agent's
+  `running` report (on Lite, a detached subprocess that kept retrying) could
+  land on the replacement and start the task twice. State reports, reschedule
+  reports, warm-worker bindings and requeues now match the attempt epoch in the
+  agent's token, and a stale one is told to terminate. The reschedule report
+  also gains the try-number check it was missing. A token minted before the
+  upgrade is read as epoch 0 for reports. Heartbeats and secret liveness
+  accept such a token on its try number alone, so a running task whose token
+  an old replica renewed during a rolling upgrade is not killed mid-run. Such
+  tokens are counted in `dexaflow_agent_legacy_attempt_token_total`. See the
+  upgrade notes for 0.5.1. (#911)
+- **A superseded task pod can no longer settle or tear down the attempt that
+  replaced it.** Task pods now carry a `leoflow.io/attempt-epoch` label. The
+  reconciler settles a finished pod's outcome only against the attempt its
+  labels name, so a leftover pod's `success` record no longer marks a
+  re-placed task succeeded without running it (#1130). Reaper teardown, the pod
+  presence checks and the reapers' marks are pinned to the same attempt, and
+  each delete names the listed pod and its UID, so reaping an old execution no
+  longer deletes its replacement's pod (#901). Pods created before the upgrade
+  have no epoch label and count as epoch 0.
+- **A re-placed task no longer overwrites the log of the execution it
+  replaced.** When the control plane re-placed a task after an infrastructure
+  failure, or re-poked a reschedule-mode sensor, every execution of that try
+  wrote the same log object, so only the last one survived. Each execution now
+  writes its own object at `{try}.e{epoch}.log` (logs written before the
+  upgrade keep `{try}.log` and are still served; the segmented layout writes
+  `{try}.e{epoch}.log.d/`), and the log endpoint serves all of a try's
+  executions in order, each introduced by one system line. It lists the stored
+  executions in one call where the store allows it (the disk sink, or S3 and
+  GCS with list permission), opens one stream at a time, and serves at most the
+  256 most recent executions of a try, plus a log written before the upgrade,
+  saying so in a system line when it leaves older ones out. The tries list
+  still shows each try once, with its latest execution's state.
+  Tooling that reads log objects or files directly must expect the new name,
+  and a control plane rolled back to 0.5.0 does not show logs written by 0.5.1
+  (see the upgrade notes). (#863)
+- **On Kubernetes, a task the reapers marked as an infrastructure failure is
+  no longer re-placed while it may still have succeeded.** The agent-lost,
+  pod-lost and dispatch-lost marks are now provisional until the reconciler
+  confirms them: it does so once the attempt has no pod left, or its task
+  container exited without a SUCCESS record. Until then the planner neither
+  re-places the task nor fails its downstream tasks. If no confirmation arrives
+  within 2 minutes the planner acts anyway and meters
+  `infra_confirm_valve_open`. Lite confirms at mark time and is unchanged.
+  Adds the `task_instances.infra_confirmed_at` column (migration 039); marks
+  made before the upgrade count as confirmed.
+- **Buffered dispatch no longer fails or doubles a re-offered task, and invalid
+  UTF-8 in task output no longer ends the log stream.** A task the dispatch
+  worker re-offered (quota backpressure, a retriable error) kept the `queued_at`
+  of its first queued episode, so once that was older than the dispatch-lost
+  threshold the reaper failed the task as `dispatch_lost` as soon as it was
+  queued again; a re-offer now clears it. A dispatch accepted into the buffer
+  with an expired tick context (an overrun tick, a lost leadership) was sent to
+  the cluster while its queued write failed, so the next tick dispatched the
+  same try again; such a request is now deferred. On the agent, one line of
+  task output that was not valid UTF-8 failed the gRPC marshal and closed the
+  whole log stream, losing that line and every later one; invalid bytes are now
+  replaced with U+FFFD.
+- **Segmented object logs no longer lose or cut short a stored log when the
+  bucket refuses a probe.** With `logs.sink.layout: segmented`, the sink finds
+  where an attempt's log ends by asking the bucket for a segment that should
+  not exist. On a bucket that answers that request with an error instead of
+  not-found (S3 without `s3:ListBucket` answers `AccessDenied`; a transient
+  `503` does the same for a moment), a reconnecting agent's second log stream
+  started over at segment zero and erased the first stream's lines, and every
+  read of a segmented attempt ended in `reading log segment: api error
+  AccessDenied` right after its last line. The probe is now retried with a
+  short backoff; when it still fails, the new stream is refused (the task keeps
+  running, and the lines already stored stay intact) and a warning says why, a
+  read serves every segment it got and ends at the first one it cannot reach,
+  and a read that reaches nothing reports the bucket's error instead of
+  showing "no logs". The server now also checks at startup that the bucket
+  answers a missing key with not-found and refuses to start otherwise, naming
+  the permission to grant. Separately, a log line carrying a timestamp outside
+  years 1 to 9999 is rejected instead of being stored unencoded, where a
+  newline in its message became a second log line of the sender's own making;
+  the encoder now always produces one JSON object per line and stamps such a
+  line with the current time.
+- **With `logs.tail.publish: on_demand`, a follower of a fast-logging task no
+  longer misses lines.** The control plane checked for followers at most once a
+  second and kept at most 1024 lines or 1 MiB for a follower it had not noticed
+  yet, so a follower that subscribed right after a check lost the oldest lines
+  of a task producing more than that before the next check (the stored log
+  still had them). It now checks again as soon as the lines kept since the last
+  check reach half of either bound, so a follower receives every line that
+  arrived after it subscribed whatever the task's output rate, and the checks
+  come at most once a second, or once per 512 lines or 512 KiB of output when
+  the task logs faster than that. A single line larger than 1 MiB is still
+  never kept for a replay: a follower already there receives it live, and one
+  that subscribes later reads it from the stored log. The default `always` is
+  unaffected.
+
+### Security
+
+- **The Python 3.10 and 3.11 task base images no longer ship a vulnerable
+  setuptools.** Those `python:3.x-slim` images preinstall setuptools 79.0.1,
+  whose vendored `jaraco.context` 5.3.0 (CVE-2026-23949) and `wheel` 0.45.1
+  (CVE-2026-24049) were fixable HIGH findings in the image scan. The base image
+  now upgrades setuptools to 80.10.2 where the base already has it; the 3.12 and
+  3.13 images, which ship no setuptools, are unchanged. 80.10.2 still provides
+  `pkg_resources`, but its import warning is now a `UserWarning` (shown by
+  default) instead of a `DeprecationWarning` (hidden by default when a library
+  imports it), so a task whose dependencies import `pkg_resources` logs one new
+  warning line, and a warnings filter that turns `UserWarning` into an error now
+  fails on it. (#1299)
+- **Warm workers no longer let a process from one attempt run into the next.**
+  A task could detach a child with `setsid`, escape the process-group kill at the
+  end of its attempt, and keep running, with that attempt's environment and
+  secrets, while the next attempt ran on the same warm worker. After every
+  attempt the worker now kills every process descended from it and checks that
+  none is left before it accepts another assignment; if one cannot be killed the
+  worker exits and the pool replaces the pod. The warm agent is also no longer
+  dumpable, so a task cannot read the worker's credentials from
+  `/proc/<agent>/environ` or its memory; as a consequence a crashing warm agent
+  leaves no core dump. Only warm pools are affected; dedicated
+  task pods are unchanged.
+- **Tenant JSON Schemas can no longer read the control plane's local files.**
+  A DAG's `xcom_schema` (compiled when a task pushes a value) and its param
+  schemas (compiled at registration and when a run is triggered with `conf`)
+  were compiled with the schema library's default loader, which reads local
+  files: a `$ref` to a `file://` URL, or a relative one resolved against the
+  server's working directory, made the control plane read that JSON file, and
+  the validation error returned to the task or the API caller could quote its
+  content. These schemas now resolve only references into themselves (such as
+  `#/$defs/...`) and the standard JSON Schema meta-schemas; any other `$ref`
+  is refused, so the push, the registration or the trigger fails with a
+  schema error.
+- **Scheduled DAGs outside the default tenant now fire, in their own tenant.**
+  The scheduler created every cron run with a fixed `default` tenant, so a
+  scheduled DAG registered in any other tenant never ran, and a DAG with the
+  same `dag_id` in the default tenant received its runs instead. Runs are now
+  created in the tenant that owns the DAG, and the per-DAG `max_active_runs`
+  and `max_active_tasks` caps are counted per (tenant, `dag_id`), so two
+  tenants that both own an `etl` DAG no longer share one budget. (#209)
+
+  On upgrade, scheduled DAGs outside the default tenant start firing. One with
+  `catchup: true` and a `start_date` backfills its missed slots, bounded per
+  tick and by `max_active_runs`; pause it or set `catchup: false` first if you
+  do not want that backfill.
+- **On-failure alerts can be kept off the control plane's own network.** An
+  alert is posted to the URL, with the headers, of a connection the DAG's
+  tenant manages, so on an engine shared by tenants that do not trust each
+  other that URL could name loopback, a private service, or the cloud metadata
+  endpoint. Set `scheduler.alerts.block_private_destinations: true` (chart
+  `config.alerts.blockPrivateDestinations`) to refuse loopback, private,
+  link-local (including `169.254.169.254`), shared, unspecified, multicast and
+  broadcast destinations. The check runs on the address actually dialed, after
+  DNS resolution and on every redirect, so DNS rebinding does not get past it.
+  `scheduler.alerts.allowed_cidrs` exempts a range you trust. Off by default.
+- **A principal that names no tenant is refused instead of falling back to the
+  default tenant.** Every tenant-scoped API handler resolved its tenant from
+  the authenticated principal and, when that was empty, used `default`. A
+  user loaded from the database always carries its tenant, so this only
+  reached tokens trusted from their signed claims (the local dev token, or a
+  server with no user store), but nothing stopped such a token from naming no
+  tenant. The authenticator now rejects it, at login, on every request and on
+  renewal, with a `401` whose server log says why; and a handler reached
+  without a tenant resolves to no tenant at all, so it finds nothing. The
+  loopback-only `auth.dev_no_auth` mode names the default tenant explicitly and
+  is unchanged.
+- **An existing Lite install can now move off the encryption key published in
+  this repository.** Stop Lite and run `dexaflow lite migrate-key` (try
+  `--dry-run` first): it records a new per-install key next to the old one in
+  `~/.dexaflow/config.yaml` before it touches a row, re-encrypts every stored
+  connection secret in one transaction per datastore that commits only after
+  every value was verified under the new key alone, scans both the managed and
+  the Docker datastore when an install has both, and drops the old key only
+  after a re-check of every datastore. An interrupted run is finished by
+  running the same command again. `dexaflow lite` now reports, from a
+  read-only scan at boot, whether the install is still on the published key,
+  has a migration that has not finished, has secrets under the published key it
+  cannot read, or has secrets under no recorded key. The Lite server no longer
+  re-encrypts at startup, takes its keys from `config.yaml` only (an exported
+  `DEXAFLOW_SECRET_KEY` or `LEOFLOW_SECRET_KEY` is ignored), holds a lock that
+  keeps a migration and a running server apart, and exits if it loses that
+  lock. `dexaflow lite restore` now replays the datastore before it writes
+  `config.yaml`, so a failed replay keeps the current key, and keeps the
+  replaced config as `config.yaml.pre-restore` until the next successful boot.
+  The Pro boot-time rotation logs "complete" only when it moved every row.
+  (#1263, #486)
+
 ## [0.5.0] - 2026-10-02
 
 ### Added
