@@ -99,8 +99,23 @@ type agentLostReaper struct {
 	// log stream so a killed task's log does not end in a silent truncation
 	// (#861). Nil disables the marker; the reap itself is unaffected.
 	sink logSink
+	// procs is the Lite liveness seam (see ProcessLiveness): a silent attempt
+	// whose agent process is still alive is deferred, because Lite has no pod
+	// delete to stop it and a re-placed attempt would run beside it. Nil on the
+	// pod path, where the teardown above stops the abandoned container.
+	procs ProcessLiveness
+	// running lists running TIs with whether each has heartbeated. Lite only
+	// (set with procs): it is how this reaper sees an agent that died before
+	// its first heartbeat, which ListAgentLostCandidates never returns and
+	// pod-lost cannot judge without pods (#916).
+	running runningLister
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
+}
+
+// runningLister is the ListRunningTasks slice of PodLostReapStore.
+type runningLister interface {
+	ListRunningTasks(ctx context.Context, grace time.Duration) ([]PodLostCandidate, error)
 }
 
 func newAgentLostReaper(store HeartbeatReapStore, logger *slog.Logger, threshold time.Duration, rec DecisionRecorder) *agentLostReaper {
@@ -131,9 +146,76 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 		if !IsAgentLost(c, r.threshold, now) {
 			continue
 		}
+		if processDefers(ctx, r.procs, r.logger, r.record, "agent_lost", c.TaskInstanceID, c.DagRunID, c.TaskID, c.TryNumber) {
+			continue
+		}
 		r.reapOne(ctx, c, now)
 	}
+	return r.runNeverHeartbeated(ctx, now)
+}
+
+// runNeverHeartbeated is the Lite-only half of agent-lost: a TI that reported
+// RUNNING but never heartbeated, running longer than the agent-lost threshold,
+// is failed as agent_lost when its agent AND its task process group both read
+// dead. Without it such a TI stays running forever in Lite: this reaper's list
+// skips it, pod-lost needs pods, and orphan-run skips a run with a running TI.
+// Unlike the heartbeated path it never stops an orphaned task group: anything
+// alive defers, so the reap needs both dead outright. Nil procs or running
+// (the pod path, where pod-lost owns this window) makes it a no-op.
+func (r *agentLostReaper) runNeverHeartbeated(ctx context.Context, now time.Time) error {
+	if r.procs == nil || r.running == nil {
+		return nil
+	}
+	candidates, err := r.running.ListRunningTasks(ctx, r.threshold)
+	if err != nil {
+		return err
+	}
+	for _, c := range candidates {
+		if c.Heartbeated || !IsPodLostCandidate(c, r.threshold, now) {
+			continue
+		}
+		alive, perr := r.procs.AttemptProcessAlive(ctx, c.DagRunID, c.TaskID, c.TryNumber)
+		if perr != nil {
+			r.logger.Warn("agent-lost: process liveness of a never-heartbeated task unknown; deferring",
+				"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", perr)
+			r.record("agent_lost_never_heartbeated_process_query_error")
+			continue
+		}
+		if alive {
+			r.record("agent_lost_never_heartbeated_process_alive")
+			continue
+		}
+		r.reapNeverHeartbeated(ctx, c, now)
+	}
 	return nil
+}
+
+// reapNeverHeartbeated fails one never-heartbeated TI whose agent and task
+// group are both dead, through the same guarded write and log marker as a
+// silent agent.
+func (r *agentLostReaper) reapNeverHeartbeated(ctx context.Context, c PodLostCandidate, now time.Time) {
+	if !gateOpen(r.gate, ctx) {
+		r.record("agent_lost_gate_skip")
+		return
+	}
+	applied, err := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID)
+	if err != nil {
+		r.logger.Error("marking never-heartbeated task agent-lost",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", err)
+		r.record("agent_lost_error")
+		return
+	}
+	if !applied {
+		r.record("agent_lost_noop")
+		return
+	}
+	r.logger.Warn("task agent died before its first heartbeat; failing as agent_lost",
+		"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "running_since", c.RunningSince)
+	r.record("agent_lost_never_heartbeated")
+	r.writeAgentLostMarker(AgentLostCandidate{
+		TaskInstanceID: c.TaskInstanceID, TenantID: c.TenantID, DagRunID: c.DagRunID, DagID: c.DagID,
+		TaskID: c.TaskID, TryNumber: c.TryNumber,
+	}, now)
 }
 
 // reapOne fails one silent TI, writes its log marker and tears down its pod,
@@ -197,12 +279,16 @@ func (r *agentLostReaper) writeAgentLostMarker(c AgentLostCandidate, now time.Ti
 	if r.sink == nil {
 		return
 	}
+	msg := fmt.Sprintf("killed: agent_lost (last heartbeat %s, silent past %s threshold)", c.LastHeartbeat.UTC().Format(time.RFC3339), r.threshold)
+	if c.LastHeartbeat.IsZero() {
+		msg = fmt.Sprintf("killed: agent_lost (no heartbeat ever, agent and task processes gone, running past %s threshold)", r.threshold)
+	}
 	ref := logs.Ref{TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber}
 	ev := logs.Event{
 		Time:    now,
 		Level:   "error",
 		Stream:  "system",
-		Message: fmt.Sprintf("killed: agent_lost (last heartbeat %s, silent past %s threshold)", c.LastHeartbeat.UTC().Format(time.RFC3339), r.threshold),
+		Message: msg,
 	}
 	if err := r.sink.AppendEvent(ref, ev); err != nil {
 		r.record("agent_lost_log_marker_error")

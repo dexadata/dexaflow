@@ -282,32 +282,9 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 
 	// On first setup, generate the admin password, store ONLY its hash, and return
 	// the plaintext for the one-time display. A re-run leaves the config untouched.
-	var generated string
-	if !liteConfigExists(leoflowHome) {
-		pw, hash, herr := generateAdminCredential()
-		if herr != nil {
-			return "", herr
-		}
-		// Per-install JWT secret: a reinstall (which rewrites this file) invalidates
-		// every token the previous install minted, so the SPA stops silently
-		// accepting a stale browser token and the fresh login screen appears (#121).
-		jwtSecret, jerr := generateJWTSecret()
-		if jerr != nil {
-			return "", jerr
-		}
-		// Per-install connection-encryption key. Lite shipped a constant
-		// compiled into this repository, so every install shared it and a
-		// database file gave up every credential in it (#486).
-		//
-		key, kerr := generateSecretKey()
-		if kerr != nil {
-			return "", kerr
-		}
-		sec := liteFileSecrets{jwtSecret: jwtSecret, secretKey: key}
-		if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, sec); wErr != nil {
-			return "", fmt.Errorf("writing config: %w", wErr)
-		}
-		generated = pw
+	generated, gerr := writeFirstLiteConfig(leoflowHome, parserCmd, lc)
+	if gerr != nil {
+		return "", gerr
 	}
 
 	if wsErr := os.MkdirAll(lc.Workspace, 0o750); wsErr != nil {
@@ -321,6 +298,52 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 		return "", fmt.Errorf("writing setup manifest: %w", wErr)
 	}
 	return generated, nil
+}
+
+// writeFirstLiteConfig writes config.yaml when there is none yet, under the
+// config lock (ADR 0065 section 3), and returns the generated admin password
+// ("" when a config already existed and was left untouched).
+//
+// It generates a fresh per-install key. When the datastore already holds rows
+// under the published key (a config.yaml deleted by hand, an uninstall that
+// kept the datastore), those rows do not open under it; they are not touched,
+// and `dexaflow lite` reports them as Stranded and names
+// `dexaflow lite migrate-key`, which recovers them.
+func writeFirstLiteConfig(leoflowHome, parserCmd string, lc liteSettings) (string, error) {
+	if mkErr := os.MkdirAll(leoflowHome, 0o700); mkErr != nil {
+		return "", fmt.Errorf("creating %s: %w", leoflowHome, mkErr)
+	}
+	release, lerr := lockConfigDir(leoflowHome, configLockExclusive, false)
+	if lerr != nil {
+		return "", lerr
+	}
+	defer release()
+	if liteConfigExists(leoflowHome) {
+		return "", nil
+	}
+	pw, hash, herr := generateAdminCredential()
+	if herr != nil {
+		return "", herr
+	}
+	// Per-install JWT secret: a reinstall (which rewrites this file) invalidates
+	// every token the previous install minted, so the SPA stops silently
+	// accepting a stale browser token and the fresh login screen appears (#121).
+	jwtSecret, jerr := generateJWTSecret()
+	if jerr != nil {
+		return "", jerr
+	}
+	// Per-install connection-encryption key. Lite shipped a constant compiled
+	// into this repository, so every install shared it and a database file gave
+	// up every credential in it (#486).
+	key, kerr := generateSecretKey()
+	if kerr != nil {
+		return "", kerr
+	}
+	sec := liteFileSecrets{jwtSecret: jwtSecret, secretKey: key}
+	if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, sec); wErr != nil {
+		return "", fmt.Errorf("writing config: %w", wErr)
+	}
+	return pw, nil
 }
 
 // generateAdminCredential returns a humanized plaintext password and its bcrypt
@@ -433,10 +456,10 @@ func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash s
 }
 
 // generateSecretKey returns a fresh per-install connection-encryption key (32
-// random bytes, hex-encoded). Same shape and lifecycle as the JWT secret: a
-// reinstall rotates it, and the previous install's rows are re-encrypted rather
-// than orphaned because the old key travels to the server as a read-only
-// fallback (#486).
+// random bytes, hex-encoded), for `dexaflow setup` on a new install and for
+// `dexaflow lite migrate-key` on a Legacy one (#486, ADR 0065). Nothing
+// re-encrypts rows under it implicitly: rows under any other key stay as they
+// are until `dexaflow lite migrate-key` moves them.
 func generateSecretKey() (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {

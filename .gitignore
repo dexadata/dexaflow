@@ -26,6 +26,10 @@ dist/
 /leoflow
 /leoflow-server
 /leoflow-agent
+/dexaflow-mcp
+/dexaflow
+/dexaflow-server
+/dexaflow-agent
 *.exe
 *.exe~
 *.dll
