@@ -25,6 +25,19 @@ tests:
             name: GOMEMLIMIT
           any: true
 
+  # An upgrade with --reuse-values from a release whose values predate the
+  # knob carries no goMemLimit key at all; the template must still render.
+  - it: renders without a goMemLimit key at all
+    template: deployment.yaml
+    set:
+      goMemLimit: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+          any: true
+
   # 80% of the shipped 512Mi limit, in whole MiB (Go accepts the MiB suffix).
   - it: sets GOMEMLIMIT to 80% of the shipped memory limit when enabled
     set:
