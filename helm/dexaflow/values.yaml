@@ -261,7 +261,7 @@ logs:
     bucket: ""
     # -- Optional key prefix under which attempt objects are laid out (`{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`).
     prefix: ""
-    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found.
+    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found; the server checks this at startup and refuses to start when a missing key is not answered with not-found.
     layout: single
     # -- [s3] Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores.
     region: ""
