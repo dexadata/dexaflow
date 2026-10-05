@@ -21,8 +21,8 @@ type Querier interface {
 	// Guarded on state IN ('queued', 'running') — the same active predicate the
 	// heartbeat and liveness queries use — so a settled attempt is never bound: an
 	// ack that races a reaper settling the row must not stamp a worker onto a
-	// terminal TI. Bounded by (dag_run_id, task_id, try_number) to match exactly the
-	// attempt the assignment named. Returns the affected row count; zero means the
+	// terminal TI. Bounded by (dag_run_id, task_id, try_number, attempt_epoch) to
+	// match exactly the attempt the assignment named. Returns the affected row count; zero means the
 	// attempt already moved on (terminal or superseded), and the caller treats that
 	// as a benign no-op, never an error.
 	BindWarmAttempt(ctx context.Context, arg BindWarmAttemptParams) (int64, error)
@@ -218,6 +218,9 @@ type Querier interface {
 	// "run is not current / archived / logical_date in the past" clause: a recency
 	// term would deny a legitimate clear-and-rerun of an old run — credential
 	// lifetime binds to the attempt, never to the run's age or logical date.
+	//
+	// The epoch term is the heartbeat's: exact for a token carrying attempt_epoch,
+	// absent for a claim-less one (ADR 0051 amendment).
 	IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error)
 	LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsParams) ([]LatestRunsForDagsRow, error)
 	ListActiveDagRuns(ctx context.Context) ([]DagRun, error)
@@ -514,6 +517,12 @@ type Querier interface {
 	// already settled the row terminal — the same "moved on" predicate the state
 	// report is guarded by (#467). The agent RPC turns a zero here into a
 	// should_terminate signal so a reaped-but-alive pod stops itself (#474).
+	//
+	// A token carrying attempt_epoch must match it exactly (ADR 0051 amendment). A
+	// claim-less token matches on try_number alone: it is either a pre-upgrade
+	// token or one an old replica re-minted during a rolling upgrade, which drops
+	// the claim it does not know. Fencing its heartbeat would kill a live attempt
+	// for a missing claim; its reports are still fenced as epoch 0.
 	RecordTaskHeartbeat(ctx context.Context, arg RecordTaskHeartbeatParams) (int64, error)
 	RecordXCom(ctx context.Context, arg RecordXComParams) error
 	// Re-dispatch a task parked in up_for_reschedule once its reschedule_at has passed:
@@ -558,6 +567,13 @@ type Querier interface {
 	//     bumps try_number in place rather than inserting a new row.
 	// The agent token already carries the try_number it was dispatched with, so the
 	// value that tells the attempts apart is present at the call site.
+	//
+	// try_number alone is not enough: an infra re-place, a reschedule poke and a
+	// repeated dispatch reuse it. attempt_epoch (ADR 0051 amendment) is the
+	// execution within the try. A token minted without the claim is read as epoch
+	// 0: it matches its own pre-upgrade attempt (rows migrate at 0) and never an
+	// attempt dispatched after the upgrade (the dispatch claim makes those >= 1).
+	// That keeps a superseded agent's RUNNING report off its replacement (#911).
 	// Returns the affected row count so the caller can tell a real write from a
 	// rejected late report instead of dropping it silently.
 	//
@@ -579,8 +595,8 @@ type Querier interface {
 	// that is already `queued`, which is why a no-op reclaim left it stuck until the
 	// 3-minute dispatch-lost reaper).
 	//
-	// Guarded to state='queued' — bounded by (dag_run_id, task_id, try_number) to the
-	// exact attempt the assignment named — so it never disturbs a running or settled
+	// Guarded to state='queued' and bounded by (dag_run_id, task_id, try_number,
+	// attempt_epoch) to the exact attempt the assignment named, so it never disturbs a running or settled
 	// TI: zero rows is the guard working, a benign no-op, never an error. It does NOT
 	// bump try_number or infra_attempts: the attempt never ran, this is a re-offer of
 	// the SAME attempt, and the existing dispatch_attempts/backoff on the re-dispatch
@@ -598,9 +614,12 @@ type Querier interface {
 	// A reschedule-mode sensor (mode='reschedule') poked not-ready: park the active TI
 	// in up_for_reschedule with its next-poke time ($3) so the scheduler re-dispatches
 	// it once reschedule_at passes (#380), without consuming retry budget. Guarded to
-	// the active states so a late report never clobbers a terminal row. ended_at is
-	// left untouched (the task is not finished); started_at is preserved.
-	RescheduleTaskInstance(ctx context.Context, arg RescheduleTaskInstanceParams) error
+	// the active states so a late report never clobbers a terminal row, and on the
+	// attempt (try_number and attempt_epoch, the same rule as ReportTaskResult) so a
+	// poke from a superseded attempt never parks its replacement. Returns the row
+	// count; zero is a stale report. ended_at is left untouched (the task is not
+	// finished); started_at is preserved.
+	RescheduleTaskInstance(ctx context.Context, arg RescheduleTaskInstanceParams) (int64, error)
 	// Settle a lost reschedule from the durable outcome record (ADR 0052): park the TI
 	// in up_for_reschedule with the record's next-poke time, guarded by id AND
 	// try_number (never clobber a different attempt or a terminal row), consuming no

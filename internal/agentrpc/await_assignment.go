@@ -193,7 +193,7 @@ func (s *Server) pumpWorkerMessages(stream agentv1.AgentService_AwaitAssignmentS
 // worker that is already running the attempt. The reaper degrades gracefully to
 // per-pod liveness for an attempt whose binding did not land.
 func (s *Server) bindWarmAttempt(ctx context.Context, b *WarmBinding) {
-	if err := s.store.BindWarmAttempt(ctx, b.RunID, b.TaskID, b.TryNumber, b.PodName); err != nil {
+	if err := s.store.BindWarmAttempt(ctx, b.RunID, b.TaskID, b.TryNumber, b.AttemptEpoch, b.PodName); err != nil {
 		slog.Warn("persisting warm attempt binding (best-effort; worker keeps serving)",
 			"run", b.RunID, "task", b.TaskID, "try", b.TryNumber, "pod_name", b.PodName, "error", err)
 	}

@@ -122,7 +122,7 @@ type Store interface {
 	// attempt is never bound (a benign no-op, not an error). Called only on a warm
 	// ack — with warm pools off no assignment is ever acked, so it is never called
 	// and warm_worker_id stays NULL.
-	BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber int, workerPod string) error
+	BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int, workerPod string) error
 }
 
 // XComService stores and retrieves XCom values for the agent.
@@ -192,6 +192,8 @@ type Server struct {
 	// indefinitely on a peer must select on this. nil (the default) keeps streams
 	// open until the peer ends them.
 	shutdown <-chan struct{}
+	// legacyTokens meters task tokens without an attempt_epoch claim (nil: off).
+	legacyTokens LegacyTokenRecorder
 }
 
 // NewServer builds an AgentService server backed by the given authenticator,
@@ -300,6 +302,12 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 	// generic state write (#380).
 	if req.GetState() == agentv1.TaskState_TASK_STATE_UP_FOR_RESCHEDULE {
 		if rerr := s.store.Reschedule(ctx, *id, req.GetRescheduleAt().AsTime()); rerr != nil {
+			// The poke came from a superseded attempt (or onto a settled row): the
+			// same "moved on" answer a stale state report gets (ADR 0051 amendment).
+			if errors.Is(rerr, ErrStaleReport) {
+				slog.Warn("ignoring stale reschedule report; signaling terminate", attemptAttrs(id)...)
+				return &agentv1.ReportStateResponse{Acknowledged: true, ShouldTerminate: true}, nil
+			}
 			return nil, internalStatus("recording reschedule", rerr, attemptAttrs(id)...)
 		}
 		return &agentv1.ReportStateResponse{Acknowledged: true}, nil

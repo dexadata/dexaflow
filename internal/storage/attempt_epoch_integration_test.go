@@ -85,7 +85,7 @@ func epochRails() []struct {
 		}},
 		{"warm requeue", func(t *testing.T, f *staleHeartbeatFixture) {
 			f.setState(t, "queued")
-			if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t)); err != nil {
+			if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t), f.attemptEpoch(t)); err != nil {
 				t.Fatalf("RequeueForRedispatch: %v", err)
 			}
 		}},
@@ -130,7 +130,7 @@ func TestAttemptEpochUnchangedWhenRailGuardMisses(t *testing.T) {
 	if err := f.sched.RedispatchReschedule(f.ctx, f.runUUID, "t"); err != nil {
 		t.Fatalf("RedispatchReschedule: %v", err)
 	}
-	if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t)); err != nil {
+	if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t), f.attemptEpoch(t)); err != nil {
 		t.Fatalf("RequeueForRedispatch: %v", err)
 	}
 	if err := f.sched.RecordDispatchFailure(f.ctx, f.runUUID, "t", time.Now()); err != nil {
