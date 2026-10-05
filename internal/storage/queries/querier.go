@@ -753,6 +753,12 @@ type Querier interface {
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
 	SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag, error)
 	SetTaskInstanceNote(ctx context.Context, arg SetTaskInstanceNoteParams) error
+	// The mark-state endpoint's write (mark success / mark failed). Same stamping
+	// as UpdateTaskInstanceStateByRunTask, and a user's state is a verdict, not a
+	// guess: it clears last_failure_kind and confirms the row, so a reaped task a
+	// user marks failed is neither re-placed nor overridden by a late SUCCESS
+	// record (ADR 0052 amendment).
+	SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskInstanceStateByUserParams) error
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).
@@ -762,8 +768,21 @@ type Querier interface {
 	// attempt_epoch so a stale reconciler never marks a LIVE retry or re-place
 	// succeeded (#1130), which would fire downstream
 	// tasks on incomplete work, strictly worse than the bug being fixed. The
-	// active-state guard prevents clobbering a terminal row.
-	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) error
+	// active-state guard prevents clobbering a terminal row. It reports the rows
+	// it changed, so the reconciler can tell a settle that found nothing active
+	// (a reaper may have marked the attempt meanwhile) and try
+	// SucceedTaskInstanceOverInfraMark (ADR 0052 amendment).
+	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) (int64, error)
+	// A durable SUCCESS overrides a reaper's infra guess (ADR 0052 amendment,
+	// part 1). Admits only a provisional infra mark (agent_lost, pod_lost,
+	// dispatch_lost) of exactly the attempt the pod's labels name, while the
+	// planner still treats it as active: not yet confirmed by the reconciler and
+	// inside the confirmation valve. A run that already finalized is never
+	// touched. An application failure, a user's verdict (SetTaskInstanceStateByUser
+	// clears the infra kind) and every other state are left alone. Returns the
+	// overridden mark (the reaper's reason prefix) and the attempt's log location;
+	// no row means nothing was overridden.
+	SucceedTaskInstanceOverInfraMark(ctx context.Context, arg SucceedTaskInstanceOverInfraMarkParams) (SucceedTaskInstanceOverInfraMarkRow, error)
 	// The per-attempt fields the agent spec carries from the task instance row.
 	// first_reschedule_at is the time a reschedule-mode sensor first entered
 	// reschedule (NULL until it does), delivered to each re-dispatched pod so

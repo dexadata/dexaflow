@@ -1001,7 +1001,10 @@ func (r *Repository) RecordSecretLivenessDenial(ctx context.Context, tenantID, d
 }
 
 // SetTaskInstanceState sets a task instance's state directly, backing the UI's
-// "mark success"/"mark failed" actions. It does not run the task.
+// "mark success"/"mark failed" actions. It does not run the task. A user's
+// state is a verdict, so it clears an infra failure kind and confirms the row:
+// a reaped task marked failed is neither re-placed nor overridden by a late
+// SUCCESS record (ADR 0052 amendment).
 func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, runID, taskID, state string) error {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -1011,7 +1014,7 @@ func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, ru
 	if err != nil {
 		return mapNotFound(err)
 	}
-	if err := r.q.UpdateTaskInstanceStateByRunTask(ctx, queries.UpdateTaskInstanceStateByRunTaskParams{
+	if err := r.q.SetTaskInstanceStateByUser(ctx, queries.SetTaskInstanceStateByUserParams{
 		State: queries.TaskState(state), DagRunID: run.ID, TaskID: taskID,
 	}); err != nil {
 		return fmt.Errorf("setting task %q state: %w", taskID, err)

@@ -348,11 +348,16 @@ const podGCGracePeriod = 10 * time.Minute
 // finished pods once they age out.
 //
 // Outcome recovery is best-effort (ADR 0052 is a School-A optimization on the
-// School-B re-drive floor): the settle guards on the active states, so if a reaper
-// settles the still-running TI failed first (heartbeat timeout, ~90s) before this
-// loop recovers the success record (~30s), the recovered success is dropped and the
-// task degrades to the safe retry path. The 30s vs 90s cadence makes the reconciler
-// win the common case; the loss is a correctness-safe re-run, not a wrong result.
+// School-B re-drive floor): the settle guards on the active states. If a reaper
+// marked the attempt as an infra failure first (agent_lost, pod_lost,
+// dispatch_lost), a durable SUCCESS record still wins while the mark is
+// provisional (ADR 0052 amendment): the reconciler falls back to
+// SucceedTaskOverInfraMark, which settles success only for that exact attempt,
+// before the mark is confirmed or the planner's confirmation valve opens, on a
+// running run. Past that window the success is dropped and the task degrades
+// to the safe retry path, a correctness-safe re-run, not a wrong result. A
+// FAILED record never overrides a mark: the reap's own teardown makes the
+// agent write one.
 type Reconciler struct {
 	clientset kubernetes.Interface
 	namespace string
@@ -377,6 +382,10 @@ type Reconciler struct {
 	// confirmer, when set, runs the infra confirmation pass after the settle
 	// loop of every sweep (ADR 0052 amendment, part 2). Nil: no pass.
 	confirmer InfraConfirmer
+	// overrideRecorder and overrideSink make a durable SUCCESS settled over an
+	// infra mark visible (ADR 0052 amendment, part 1); nil leaves them off.
+	overrideRecorder InfraOverrideRecorder
+	overrideSink     logSink
 }
 
 // NewReconciler builds a Reconciler over the given cluster and outcome reporter.
@@ -529,7 +538,7 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber, epoch int, v verdict) error {
 	switch v.settle {
 	case settleSucceeded:
-		return r.reporter.SucceedTask(ctx, tiID, tryNumber, epoch)
+		return r.succeedFromRecord(ctx, tiID, tryNumber, epoch, v.fromRecord)
 	case settleReschedule:
 		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, epoch, v.at)
 	case settleFailed:
