@@ -15,6 +15,6 @@ body: |-
   task being scheduled (for a sensor poking every minute that happened more
   often than not within an hour). And the reap re-checks the orphan rule atomically, so a run that
   resumes between the reaper's list and its reap is left alone, pods included,
-  and counted as `orphan_reap_noop`. Adds migration 039
+  and counted as `orphan_reap_noop`. Adds migration 036
   (`task_instances.released_at`).
 time: 2026-10-04T16:00:00.000000000-03:00
