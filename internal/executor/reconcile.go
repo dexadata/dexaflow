@@ -98,17 +98,37 @@ func classifyPod(pod *corev1.Pod) verdict {
 
 // outcomeRecord decodes the durable outcome record from the terminated task
 // container's termination message, if present and valid. A missing, running, or
-// undecodable message returns false so the caller falls back to pod phase.
+// undecodable message returns false so the caller falls back to pod phase, and
+// so does a record of another attempt epoch than the pod's label
+// (recordMatchesPod). Every reader (the settle, the infra confirmation, the
+// teardown's terminal test) goes through here, so the epoch rule holds for all.
 func outcomeRecord(pod *corev1.Pod) (taskoutcome.Record, bool) {
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.Name != taskContainerName {
 			continue
 		}
 		if t := cs.State.Terminated; t != nil && t.Message != "" {
-			return taskoutcome.Decode(t.Message)
+			rec, ok := taskoutcome.Decode(t.Message)
+			if !ok || !recordMatchesPod(rec, pod) {
+				return taskoutcome.Record{}, false
+			}
+			return rec, true
 		}
 	}
 	return taskoutcome.Record{}, false
+}
+
+// recordMatchesPod applies the epoch rule (ADR 0052 amendment): the pod's
+// labels, which the control plane wrote, name the attempt. A record that names
+// another epoch was not written by this execution, so it counts as no record.
+// A record without an epoch (an older agent, or epoch 0) is read against the
+// label alone, as before.
+func recordMatchesPod(rec taskoutcome.Record, pod *corev1.Pod) bool {
+	if rec.AttemptEpoch == nil {
+		return true
+	}
+	epoch, ok := podEpoch(pod)
+	return ok && int64(epoch) == *rec.AttemptEpoch
 }
 
 // failedReason picks the better of the two descriptions of one failure.
