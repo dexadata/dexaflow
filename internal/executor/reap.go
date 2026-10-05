@@ -41,9 +41,13 @@ type ReapStore interface {
 	// whether each one has been quiet for too long.
 	ListReapCandidates(ctx context.Context) ([]ReapCandidate, error)
 	// ReapRun transitions a run to 'failed' with an "orphaned" note and fails
-	// any still-active task instances. It is idempotent: a second call on the
-	// same run is a no-op.
-	ReapRun(ctx context.Context, runID string) error
+	// any still-active task instances, but only if the run is still orphaned
+	// at that moment: the store re-checks the orphan predicate atomically,
+	// with quietBefore as the last-activity cutoff, because the list is only a
+	// snapshot. It reports false, with no error, when the run is no longer an
+	// orphan and nothing was touched. It is idempotent: a second call on the
+	// same run reports false.
+	ReapRun(ctx context.Context, runID string, quietBefore time.Time) (bool, error)
 }
 
 // orphanReaper is the scheduler-internal worker that fails dag runs whose
@@ -81,25 +85,36 @@ func (r *orphanReaper) run(ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
+	quietBefore := now.Add(-r.threshold)
 	for _, c := range candidates {
 		if !IsOrphaned(c, r.threshold, now) {
 			continue
 		}
-		r.reapOne(ctx, c)
+		r.reapOne(ctx, c, quietBefore)
 	}
 	return nil
 }
 
 // reapOne fails one orphaned run and tears down its pods, re-checking the
-// destructive gate immediately before each write.
-func (r *orphanReaper) reapOne(ctx context.Context, c ReapCandidate) {
+// destructive gate immediately before each write. quietBefore is the
+// last-activity cutoff the store re-checks atomically; when the run turns out to
+// be no longer orphaned the reap is a no-op and the pods are left alone.
+func (r *orphanReaper) reapOne(ctx context.Context, c ReapCandidate, quietBefore time.Time) {
 	if !gateOpen(r.gate, ctx) {
 		r.record("orphan_gate_skip")
 		return
 	}
-	if rerr := r.store.ReapRun(ctx, c.RunID); rerr != nil {
+	reaped, rerr := r.store.ReapRun(ctx, c.RunID, quietBefore)
+	if rerr != nil {
 		r.logger.Error("reaping orphan run", "run", c.RunID, "dag", c.DagID, "error", rerr)
 		r.record("orphan_reap_error")
+		return
+	}
+	if !reaped {
+		// The run resumed (or was finalized) between the list and the reap. It
+		// is live again, so its pods are doing its work: no teardown.
+		r.logger.Info("orphan candidate no longer orphaned at reap time", "run", c.RunID, "dag", c.DagID, "last_activity", c.LastActivity)
+		r.record("orphan_reap_noop")
 		return
 	}
 	r.logger.Warn("reaped orphan run", "run", c.RunID, "dag", c.DagID, "last_activity", c.LastActivity)
