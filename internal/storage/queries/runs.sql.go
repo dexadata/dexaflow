@@ -158,6 +158,23 @@ func (q *Queries) CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int
 	return count, err
 }
 
+const countDagRunsByDagStates = `-- name: CountDagRunsByDagStates :one
+SELECT count(*) FROM dag_runs
+WHERE dag_id = $1 AND state::text = ANY($2::text[])
+`
+
+type CountDagRunsByDagStatesParams struct {
+	DagID  pgtype.UUID `json:"dag_id"`
+	States []string    `json:"states"`
+}
+
+func (q *Queries) CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDagRunsByDagStates, arg.DagID, arg.States)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDagsByLatestRunState = `-- name: CountDagsByLatestRunState :many
 SELECT lr.state AS state, count(*) AS n
 FROM dags d
@@ -948,12 +965,105 @@ func (q *Queries) ListDagRunsByDag(ctx context.Context, arg ListDagRunsByDagPara
 	return items, nil
 }
 
+const listDagRunsByDagAfter = `-- name: ListDagRunsByDagAfter :many
+SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.dag_id = $1
+  AND (cardinality($2::text[]) = 0 OR r.state::text = ANY($2::text[]))
+  AND (r.logical_date, r.run_id) < ($3::timestamptz, $4::text)
+ORDER BY r.logical_date DESC, r.run_id DESC
+LIMIT $5
+`
+
+type ListDagRunsByDagAfterParams struct {
+	DagID            pgtype.UUID        `json:"dag_id"`
+	States           []string           `json:"states"`
+	AfterLogicalDate pgtype.Timestamptz `json:"after_logical_date"`
+	AfterRunID       string             `json:"after_run_id"`
+	RowLimit         int32              `json:"row_limit"`
+}
+
+type ListDagRunsByDagAfterRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	DagVersionID       pgtype.UUID        `json:"dag_version_id"`
+	RunID              string             `json:"run_id"`
+	LogicalDate        pgtype.Timestamptz `json:"logical_date"`
+	DataIntervalStart  pgtype.Timestamptz `json:"data_interval_start"`
+	DataIntervalEnd    pgtype.Timestamptz `json:"data_interval_end"`
+	State              DagRunState        `json:"state"`
+	Trigger            DagRunTrigger      `json:"trigger"`
+	Conf               []byte             `json:"conf"`
+	TriggeredBy        pgtype.UUID        `json:"triggered_by"`
+	QueuedAt           pgtype.Timestamptz `json:"queued_at"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	EndedAt            pgtype.Timestamptz `json:"ended_at"`
+	Note               *string            `json:"note"`
+	AlertedAt          pgtype.Timestamptz `json:"alerted_at"`
+	AlertAttempts      int32              `json:"alert_attempts"`
+	NextAlertAttemptAt pgtype.Timestamptz `json:"next_alert_attempt_at"`
+	DagVersionLabel    *string            `json:"dag_version_label"`
+}
+
+// Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
+// cursor (logical_date, run_id) in the same order, so a deep page costs the
+// same as the first. run_id is unique per DAG, so it makes the order total. An
+// empty states array keeps every state.
+func (q *Queries) ListDagRunsByDagAfter(ctx context.Context, arg ListDagRunsByDagAfterParams) ([]ListDagRunsByDagAfterRow, error) {
+	rows, err := q.db.Query(ctx, listDagRunsByDagAfter,
+		arg.DagID,
+		arg.States,
+		arg.AfterLogicalDate,
+		arg.AfterRunID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDagRunsByDagAfterRow{}
+	for rows.Next() {
+		var i ListDagRunsByDagAfterRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagID,
+			&i.DagVersionID,
+			&i.RunID,
+			&i.LogicalDate,
+			&i.DataIntervalStart,
+			&i.DataIntervalEnd,
+			&i.State,
+			&i.Trigger,
+			&i.Conf,
+			&i.TriggeredBy,
+			&i.QueuedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Note,
+			&i.AlertedAt,
+			&i.AlertAttempts,
+			&i.NextAlertAttemptAt,
+			&i.DagVersionLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDagRunsByDagWithVersion = `-- name: ListDagRunsByDagWithVersion :many
 SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
 WHERE r.dag_id = $1
-ORDER BY r.logical_date DESC
+ORDER BY r.logical_date DESC, r.run_id DESC
 LIMIT $2 OFFSET $3
 `
 
@@ -1196,6 +1306,55 @@ func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow
 			&i.MaxActiveRuns,
 			&i.LastLogical,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSettledRunIDs = `-- name: ListSettledRunIDs :many
+SELECT r.id, r.tenant_id FROM dag_runs r
+WHERE (r.tenant_id, r.id) IN (
+    SELECT unnest($1::uuid[]), unnest($2::uuid[]))
+  AND r.state IN ('success', 'failed')
+  AND NOT EXISTS (
+    SELECT 1 FROM task_instances ti
+    WHERE ti.dag_run_id = r.id
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+`
+
+type ListSettledRunIDsParams struct {
+	TenantIds []pgtype.UUID `json:"tenant_ids"`
+	RunIds    []pgtype.UUID `json:"run_ids"`
+}
+
+type ListSettledRunIDsRow struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Of the given (tenant, run) pairs, the settled runs: run in success or failed
+// and no task instance outside success, failed, skipped and upstream_failed.
+// This is the same "settled" the retention janitor's LockExpiredSettledRuns
+// uses (duplicated there on purpose, keep the two identical). A run marked
+// failed while a task still runs is not settled, so the reconciler never
+// collects a pod whose outcome it may not have recorded yet. The pairs come
+// from the pods' tenant and run labels; a pair whose tenant does not own the
+// run matches nothing.
+func (q *Queries) ListSettledRunIDs(ctx context.Context, arg ListSettledRunIDsParams) ([]ListSettledRunIDsRow, error) {
+	rows, err := q.db.Query(ctx, listSettledRunIDs, arg.TenantIds, arg.RunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSettledRunIDsRow{}
+	for rows.Next() {
+		var i ListSettledRunIDsRow
+		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2081,7 +2240,7 @@ func (q *Queries) RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg Re
 	return err
 }
 
-const resetAllFailedTaskInstances = `-- name: ResetAllFailedTaskInstances :execrows
+const resetAllFailedTaskInstances = `-- name: ResetAllFailedTaskInstances :many
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -2093,7 +2252,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1
+    WHERE src.dag_run_id = $3
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
@@ -2108,19 +2267,51 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1
+WHERE ti.dag_run_id = $3
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
+RETURNING ti.task_id
 `
 
+type ResetAllFailedTaskInstancesParams struct {
+	SpecRetries []int32     `json:"spec_retries"`
+	SpecTaskIds []string    `json:"spec_task_ids"`
+	DagRunID    pgtype.UUID `json:"dag_run_id"`
+}
+
 // Archives every failed attempt in the run into task_instance_history then
-// resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, dagRunID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, resetAllFailedTaskInstances, dagRunID)
+// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+// task ids it reset, so the clear can delete exactly their XCom.
+func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, resetAllFailedTaskInstances, arg.SpecRetries, arg.SpecTaskIds, arg.DagRunID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var task_id string
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resetDagRunToVersion = `-- name: ResetDagRunToVersion :exec
@@ -2163,7 +2354,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = $3 AND src.task_id = $4
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
@@ -2178,20 +2369,39 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.dag_run_id = $3 AND ti.task_id = $4
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 `
 
 type ResetFailedTaskInstanceParams struct {
-	DagRunID pgtype.UUID `json:"dag_run_id"`
-	TaskID   string      `json:"task_id"`
+	SpecRetries []int32     `json:"spec_retries"`
+	SpecTaskIds []string    `json:"spec_task_ids"`
+	DagRunID    pgtype.UUID `json:"dag_run_id"`
+	TaskID      string      `json:"task_id"`
 }
 
 // Archives the current attempt into task_instance_history then resets the
 // live row. See ResetTaskInstanceToNone for the per-attempt rationale.
 func (q *Queries) ResetFailedTaskInstance(ctx context.Context, arg ResetFailedTaskInstanceParams) (int64, error) {
-	result, err := q.db.Exec(ctx, resetFailedTaskInstance, arg.DagRunID, arg.TaskID)
+	result, err := q.db.Exec(ctx, resetFailedTaskInstance,
+		arg.SpecRetries,
+		arg.SpecTaskIds,
+		arg.DagRunID,
+		arg.TaskID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -2319,7 +2529,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = $3 AND src.task_id = $4
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
@@ -2335,13 +2545,27 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.dag_run_id = $3 AND ti.task_id = $4
 `
 
 type ResetTaskInstanceToNoneParams struct {
-	DagRunID pgtype.UUID `json:"dag_run_id"`
-	TaskID   string      `json:"task_id"`
+	SpecRetries []int32     `json:"spec_retries"`
+	SpecTaskIds []string    `json:"spec_task_ids"`
+	DagRunID    pgtype.UUID `json:"dag_run_id"`
+	TaskID      string      `json:"task_id"`
 }
 
 // Resets a TI for retry: snapshot the current per-attempt state into
@@ -2357,7 +2581,12 @@ type ResetTaskInstanceToNoneParams struct {
 // ResetTaskInstanceForRetry instead — do not add a guard here or clear-task
 // silently no-ops on non-up_for_retry tasks.
 func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error {
-	_, err := q.db.Exec(ctx, resetTaskInstanceToNone, arg.DagRunID, arg.TaskID)
+	_, err := q.db.Exec(ctx, resetTaskInstanceToNone,
+		arg.SpecRetries,
+		arg.SpecTaskIds,
+		arg.DagRunID,
+		arg.TaskID,
+	)
 	return err
 }
 
@@ -2447,24 +2676,33 @@ func (q *Queries) SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTa
 	return err
 }
 
-const taskInstanceFirstRescheduleAt = `-- name: TaskInstanceFirstRescheduleAt :one
-SELECT first_reschedule_at FROM task_instances
+const taskInstanceAttemptFields = `-- name: TaskInstanceAttemptFields :one
+SELECT first_reschedule_at, max_tries FROM task_instances
 WHERE dag_run_id = $1 AND task_id = $2
 `
 
-type TaskInstanceFirstRescheduleAtParams struct {
+type TaskInstanceAttemptFieldsParams struct {
 	DagRunID pgtype.UUID `json:"dag_run_id"`
 	TaskID   string      `json:"task_id"`
 }
 
-// The time a reschedule-mode sensor first entered reschedule (NULL until it does).
-// Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
-// value and the sensor honors its cumulative timeout across pokes (#380).
-func (q *Queries) TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, taskInstanceFirstRescheduleAt, arg.DagRunID, arg.TaskID)
-	var first_reschedule_at pgtype.Timestamptz
-	err := row.Scan(&first_reschedule_at)
-	return first_reschedule_at, err
+type TaskInstanceAttemptFieldsRow struct {
+	FirstRescheduleAt pgtype.Timestamptz `json:"first_reschedule_at"`
+	MaxTries          int32              `json:"max_tries"`
+}
+
+// The per-attempt fields the agent spec carries from the task instance row.
+// first_reschedule_at is the time a reschedule-mode sensor first entered
+// reschedule (NULL until it does), delivered to each re-dispatched pod so
+// get_first_reschedule_date returns the real value and the sensor honors its
+// cumulative timeout across pokes (#380). max_tries is the attempt budget the
+// scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+// so the runtime's on_failure_callback gate must read it from here (#424).
+func (q *Queries) TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error) {
+	row := q.db.QueryRow(ctx, taskInstanceAttemptFields, arg.DagRunID, arg.TaskID)
+	var i TaskInstanceAttemptFieldsRow
+	err := row.Scan(&i.FirstRescheduleAt, &i.MaxTries)
+	return i, err
 }
 
 const taskInstancesForDagRuns = `-- name: TaskInstancesForDagRuns :many

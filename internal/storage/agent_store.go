@@ -10,6 +10,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -58,11 +59,23 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 	// entered reschedule so its get_first_reschedule_date returns the real value and
 	// cumulative timeout works (#380). Best-effort: empty falls back to per-poke
 	// timing, never blocks the spec. Empty on the first attempt (column is NULL).
+	//
+	// The attempt budget comes from the same row: a clear restores it to the new
+	// try number + retries (#1131), past the spec's retries + 1, and the runtime
+	// fires on_failure_callback only when try_number >= max_tries (#424). Reading
+	// the spec value there would fire the callback on every retry of a cleared
+	// task. The spec value is the fallback when the row cannot be read.
 	var firstRescheduleAt string
+	attemptBudget := maxTries(task)
 	if rid, perr := parseUUID(id.RunID); perr == nil {
-		if fr, ferr := s.q.TaskInstanceFirstRescheduleAt(ctx,
-			queries.TaskInstanceFirstRescheduleAtParams{DagRunID: rid, TaskID: id.TaskID}); ferr == nil && fr.Valid {
-			firstRescheduleAt = fr.Time.UTC().Format(time.RFC3339)
+		if row, ferr := s.q.TaskInstanceAttemptFields(ctx,
+			queries.TaskInstanceAttemptFieldsParams{DagRunID: rid, TaskID: id.TaskID}); ferr == nil {
+			if row.FirstRescheduleAt.Valid {
+				firstRescheduleAt = row.FirstRescheduleAt.Time.UTC().Format(time.RFC3339)
+			}
+			if row.MaxTries > 0 {
+				attemptBudget = int(row.MaxTries)
+			}
 		}
 	}
 	var timeout int
@@ -109,7 +122,7 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 		DataIntervalEnd:   dataIntervalEnd,
 		ParamsJSON:        paramsJSON,
 		FirstRescheduleAt: firstRescheduleAt,
-		MaxTries:          maxTries(task),
+		MaxTries:          attemptBudget,
 		OnFailureCallback: task.OnFailureCallback,
 		// Carry the declared secret set (ADR 0045, ADR 0055) so a later increment
 		// can scope delivery. Data only here — no secret is filtered by it yet.
@@ -427,4 +440,34 @@ func latestTry(tis []queries.TaskInstance, taskID string) (queries.TaskInstance,
 		}
 	}
 	return best, found
+}
+
+// SettledRuns reports which of the given (tenant, run) pairs are settled: run
+// in success or failed and no task instance outside success, failed, skipped
+// and upstream_failed. It serves the reconciler's settled-run pod collection.
+// A pair that is not two UUIDs, names no such run, or names a run of another
+// tenant is left out, so its pods are never collected early.
+func (s *ExecutionStore) SettledRuns(ctx context.Context, refs []executor.RunRef) (map[executor.RunRef]bool, error) {
+	tenants := make([]pgtype.UUID, 0, len(refs))
+	runs := make([]pgtype.UUID, 0, len(refs))
+	for _, ref := range refs {
+		tid, terr := parseUUID(ref.Tenant)
+		rid, rerr := parseUUID(ref.Run)
+		if terr == nil && rerr == nil {
+			tenants = append(tenants, tid)
+			runs = append(runs, rid)
+		}
+	}
+	out := make(map[executor.RunRef]bool, len(runs))
+	if len(runs) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.ListSettledRunIDs(ctx, queries.ListSettledRunIDsParams{TenantIds: tenants, RunIds: runs})
+	if err != nil {
+		return nil, fmt.Errorf("listing settled runs: %w", err)
+	}
+	for _, row := range rows {
+		out[executor.RunRef{Tenant: uuidToString(row.TenantID), Run: uuidToString(row.ID)}] = true
+	}
+	return out, nil
 }
