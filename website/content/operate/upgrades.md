@@ -203,6 +203,15 @@ column, so its token without the epoch no longer matches, its final state
 report is rejected, and it is re-placed and runs again. Let such tasks finish
 before upgrading again, or accept the one re-run.
 
+0.5.1 also stores each execution's log under its own name,
+`{try}.e{epoch}.log` instead of `{try}.log`, so a re-placed execution no longer
+overwrites the one before it. 0.5.0 reads only `{try}.log`. While old replicas
+serve the API during the rollout, and after a rollback to 0.5.0, the log view
+shows "No logs available" for tasks that 0.5.1 ran. Those logs are not deleted:
+they show again once 0.5.1 serves the API. Logs written before the upgrade keep
+`{try}.log` and stay readable by both versions. If you read log objects or files
+directly, expect both names.
+
 ## Related issues
 
 - #136 — this contract.

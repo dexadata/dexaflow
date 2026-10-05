@@ -387,6 +387,9 @@ type Querier interface {
 	// Returns every attempt for (run, task), oldest first. UNIONs the current
 	// task_instances row with all archived task_instance_history rows so the UI's
 	// /tries endpoint can render one navigable tab per attempt (Lima bug #241).
+	// One entry per try (ADR 0051 amendment, #863): an infra re-place archives the
+	// try and keeps it on the current row, so a history row for the current try is
+	// left out and the current row, the try's latest execution, stands for it.
 	// Each row carries the per-attempt fields PLUS the run-constant fields
 	// (operator, max_tries, map_index) copied from the current TI; archived rows
 	// get them via the JOIN.
@@ -697,8 +700,12 @@ type Querier interface {
 	// already fences the attempt it superseded before the next dispatch claims its
 	// own epoch (ClaimAttemptEpoch). The archive row records the superseded
 	// attempt's epoch. The archive key stays (task_instance_id, try_number) for
-	// compatibility with the previous release, so a second execution of one try is
-	// still dropped by ON CONFLICT until the key is widened (ADR 0051 amendment, A5).
+	// compatibility with the previous release until PR A6 widens it, so one try
+	// keeps one history row: a later execution of the try (higher epoch) replaces
+	// the row an earlier one archived, and the row always holds the try's latest
+	// execution, which is what the tries endpoint shows (ADR 0051 amendment, A5).
+	// An older binary archives with DO NOTHING against the same key, which still
+	// plans and runs. Each execution's log is kept apart by its epoch-keyed object.
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
@@ -725,6 +732,15 @@ type Querier interface {
 	TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
 	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
+	// The range of attempt epochs one try's executions can have, for the log
+	// reader (ADR 0051 amendment, #863). Epochs grow monotonically per row and the
+	// try only grows, so every execution of try N has an epoch above the latest
+	// epoch archived for an earlier try (low, exclusive) and at most the try's own
+	// latest epoch (high, inclusive): the current row's when it is still on try N,
+	// else the try's history row, which holds its latest archived execution. A row
+	// the previous release archived carries epoch 0, so its try reads as epoch 0
+	// alone. Epoch 0 is always read as well, since every pre-upgrade log has it.
+	TryAttemptEpochBounds(ctx context.Context, arg TryAttemptEpochBoundsParams) (TryAttemptEpochBoundsRow, error)
 	// Rewrite one row's ciphertext in place during a key rotation. It touches only
 	// the two encrypted columns, so a re-encryption can never alter a connection's
 	// identity, host, or any field a user set.
