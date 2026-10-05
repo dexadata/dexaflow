@@ -1,0 +1,340 @@
+name: E2E performance gates
+
+# Every performance gate merged for 0.5.1 ships off by default, and the end to
+# end jobs in ci.yaml run the defaults, so the production wiring of those gates
+# (the dedicated scheduler pool and the statement timeout, buffered dispatch,
+# settled-run pod collection, the metric rename, grid revalidation, on-demand
+# tail publishing, the segmented object log layout) was executed by no test and
+# no CI job (performance audit, finding M-09). This workflow runs the Lite login
+# leg and the k3d operators leg with every gate the leg can honour turned on,
+# and then asserts against the live process, Postgres and Redis that each one
+# took effect: a gate that silently did not apply fails the job
+# (test/e2e/perf-gates-on.sh and the steps after each leg).
+#
+# Not on pull requests: the runner queue is saturated and the k3d leg costs
+# about fifteen minutes. Pushes to main and release-* carry it, and it can be
+# started by hand. cut-release.sh judges every workflow run of the commit it
+# tags, so on release-* this is one of the runs a patch cut waits for.
+on:
+  push:
+    branches: [main, "release-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The concurrency pattern every workflow here uses. A newer push to the same
+# pull request supersedes this run, so the older one is cancelled instead of
+# holding runners the newer one needs. Every other run (pushes to main and
+# release-*, tags, schedules, manual runs) gets a group of its own, keyed by run
+# id: a shared group would still cancel a WAITING run when a third one arrives,
+# whatever cancel-in-progress says, and cut-release.sh refuses to tag a commit
+# whose run was cancelled. This workflow has no pull_request trigger, so every
+# run of it stands alone.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: "1.26.6"
+  PYTHON_VERSION: "3.11"
+
+  # The gates both legs honour, under the DEXAFLOW_ names the configuration
+  # reference documents (the server binds the legacy LEOFLOW_ names too). The
+  # scripts start the control plane with their own LEOFLOW_* variables for
+  # other keys and inherit these from the job, so no script is edited to set a
+  # gate. Each value is what the docs recommend for a small cluster.
+  #
+  # Buffered dispatch (ADR 0031, #127): the tick enqueues, four workers create
+  # the pods. On Lite the dispatcher is the subprocess one; on k3d every task
+  # pod of e2e.sh goes through the worker pool.
+  DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE: "64"
+  DEXAFLOW_SCHEDULER_DISPATCH_WORKERS: "4"
+  # A pool of its own for the scheduler loop, its reapers and its janitors, and
+  # the API statement timeout the docs say to set together with it.
+  DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS: "4"
+  DEXAFLOW_DATABASE_STATEMENT_TIMEOUT_MS: "30000"
+  # Each metric family once, under its dexaflow_ name (ADR 0062 gate).
+  DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES: "true"
+  # The grid's ti_summaries route answers private, no-cache with its ETag.
+  DEXAFLOW_UI_ETAG_REVALIDATION: "true"
+  # Live-tail lines are published only while someone follows the attempt. Both
+  # legs run it (the Lite leg with the Redis tailer, the k3d leg too, below);
+  # only the k3d leg produces task logs, so only it can show the gate working.
+  DEXAFLOW_LOGS_TAIL_PUBLISH: on_demand
+
+  # Not turned on anywhere, on purpose:
+  # execution.warm_read_only_root_filesystem applies to warm worker pods only,
+  # and no e2e leg runs warm pools (they need token-exchange transport,
+  # liveness enforcement and a TokenReview-capable cluster); with warm pools
+  # off the knob is a no-op, so turning it on here would prove nothing.
+
+  # The e2e scripts run this against the live control plane before they stop
+  # it, with BASE, TOKEN and METRICS; it is what makes a gate that did not
+  # apply a red job rather than a green one that tested the defaults.
+  LEOFLOW_E2E_EXTRA_CHECKS: ${{ github.workspace }}/test/e2e/perf-gates-on.sh
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # The Lite login leg (ci.yaml e2e-lite) with every gate Lite can honour.
+  # Not on this leg: executor.collect_settled_run_pods (no cluster, no pods)
+  # and logs.sink.layout=segmented (no object store, and Lite's login path
+  # writes no task log that a sink could segment).
+  # ─────────────────────────────────────────────────────────────────────
+  e2e-lite-gates:
+    name: E2E Lite (all performance gates on)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # Lite's executor is the subprocess one (dexaflow lite sets
+      # LEOFLOW_EXECUTOR_TYPE=subprocess). e2e-lite leaves the kubernetes
+      # default, and on a runner with no cluster setupK8sDispatch logs "pod
+      # dispatch disabled" and wires no dispatcher at all; the buffered pool
+      # fronts a dispatcher, so this leg needs one, and the subprocess executor
+      # is the one Lite ships with. The login path dispatches no task.
+      DEXAFLOW_EXECUTOR_TYPE: subprocess
+      PERF_GATES_LEG: lite
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # database.statement_timeout_ms leaves no trace a client can see: the
+      # server runs SET statement_timeout on each main pool connection as it
+      # opens, and no view shows another session's settings. The service
+      # container's own log is the one place it shows, so turn statement
+      # logging on before the control plane opens its pools; the last step
+      # reads it back. ALTER SYSTEM survives the leoflow_dev reset the script
+      # does: it is a server setting, not a database's.
+      - name: Log every statement Postgres receives
+        env:
+          PG: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec "$PG" psql -v ON_ERROR_STOP=1 -U leoflow -d postgres \
+            -c "ALTER SYSTEM SET log_statement = 'all'" -c "SELECT pg_reload_conf()"
+
+      - name: Lite happy path with every gate on, then the gate assertions
+        run: bash test/e2e/lite-login.sh
+
+      - name: statement_timeout reached the main pool (database.statement_timeout_ms)
+        env:
+          PG: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          n="$(docker logs "$PG" 2>&1 | grep -c 'SET statement_timeout = 30000' || true)"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no main pool connection ran SET statement_timeout = 30000: database.statement_timeout_ms did not apply" >&2
+            exit 1
+          fi
+          echo "statement_timeout = 30000 was set on ${n} connection(s)"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # The k3d operators leg (ci.yaml operator-e2e) with every gate on, in the
+  # shape the Helm chart deploys: Redis as the shared datastore and an object
+  # store for the task logs. Every task pod of e2e.sh is created through the
+  # buffered dispatcher, its logs are written as segments to S3 and read back
+  # from there by the script's own log assertions, and its runs' finished pods
+  # are collected by the settled-run collection instead of the age-based GC.
+  # ─────────────────────────────────────────────────────────────────────
+  e2e-operators-gates:
+    name: E2E operators (k3d, all performance gates on)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+      # The object store the segmented layout is proved against: LocalStack's
+      # S3, which secrets-e2e.yaml already relies on. The minio/minio image is
+      # not published on Docker Hub any more (nor, therefore, on the mirror),
+      # and a service container has to come from a registry that does not
+      # rate-limit anonymous pulls by shared source IP (#1007), which
+      # check-service-image-registry.sh enforces for exactly this block. The 4
+      # line validates the integrity checksums the AWS SDK sends by default and
+      # answers a GET of a missing key with NoSuchKey, which is what the
+      # segmented writer's segment probe needs from a store. No health command:
+      # the step that creates the bucket waits for the store itself, so one
+      # that never comes up fails there with its log, not in the container
+      # initialisation.
+      localstack:
+        image: mirror.gcr.io/localstack/localstack:4
+        env:
+          SERVICES: s3
+        ports: [4566:4566]
+    env:
+      # The control plane runs on the runner; k3d pods dial it via host.k3d.internal
+      # (Linux only; Docker Desktop uses host.docker.internal, the e2e default).
+      LEOFLOW_E2E_HOST_ADDR: host.k3d.internal
+      # leoflow compile spawns `python3 -m leoflow_parser`; the parser ships under
+      # parser/ and needs no install, just PYTHONPATH (the airflow-free shim).
+      PYTHONPATH: parser
+      # Redis, which operator-e2e provides and e2e.sh does not use: the Pro
+      # shape the chart mandates (shared XCom, locks), and the Redis tailer is
+      # what logs.tail.publish=on_demand probes with PUBSUB NUMSUB; the step
+      # after the leg reads that probe back from Redis.
+      DEXAFLOW_REDIS_URL: redis://localhost:6379/0
+      # One DeleteCollection per settled run instead of one delete per pod
+      # after the grace period. The host kubeconfig k3d writes is cluster
+      # admin, so the deletecollection verb the chart grants for it is there.
+      DEXAFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS: "true"
+      # The segmented object layout needs an object store: the LocalStack S3
+      # service above, reached with static keys and path-style addressing, as a
+      # MinIO or Ceph install would be. The bucket is created by a step below,
+      # before the control plane starts.
+      DEXAFLOW_LOGS_BACKEND: s3
+      DEXAFLOW_LOGS_SINK_BUCKET: dexaflow-e2e-logs
+      DEXAFLOW_LOGS_SINK_REGION: us-east-1
+      DEXAFLOW_LOGS_SINK_ENDPOINT: http://localhost:4566
+      DEXAFLOW_LOGS_SINK_FORCE_PATH_STYLE: "true"
+      DEXAFLOW_LOGS_SINK_ACCESS_KEY_ID: test
+      DEXAFLOW_LOGS_SINK_SECRET_ACCESS_KEY: test
+      DEXAFLOW_LOGS_SINK_LAYOUT: segmented
+      PERF_GATES_LEG: k3d
+      # e2e.sh writes the control plane's log to its own stdout; the leg tees
+      # it here, where the extra checks read the boot echoes from.
+      SERVER_LOG: ${{ github.workspace }}/e2e-gates-server.log
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install k3d + kubectl + migrate
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/v5.7.4/install.sh | TAG=v5.7.4 bash
+          curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+      - name: Apply migrations
+        run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
+      - name: Build binaries
+        run: make build
+
+      # The bucket is created with curl's own SigV4 signing (LocalStack accepts
+      # any key pair), so no aws CLI and no extra image is needed; the listing
+      # below uses the same call. The health request after the loop is what
+      # fails, with the store's log, when the store never came up, so that
+      # shows here and not as a boot error of the control plane.
+      - name: Wait for LocalStack (S3) and create the log bucket
+        env:
+          LOCALSTACK: ${{ job.services.localstack.id }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:4566/_localstack/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          if ! curl -fsS http://localhost:4566/_localstack/health >/dev/null; then
+            docker logs --tail 50 "$LOCALSTACK" 2>&1 || true
+            echo "::error::LocalStack never answered /_localstack/health, so there is no object store to prove the segmented layout against" >&2
+            exit 1
+          fi
+          curl -fsS -o /dev/null --aws-sigv4 "aws:amz:us-east-1:s3" --user test:test \
+            -X PUT "http://localhost:4566/dexaflow-e2e-logs"
+          echo "bucket dexaflow-e2e-logs is ready at http://localhost:4566"
+
+      # See the Lite leg: the statement timeout is only visible in Postgres's
+      # own log. The migrations above ran before this, so the log holds the
+      # control plane's statements only.
+      - name: Log every statement Postgres receives
+        env:
+          PG: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec "$PG" psql -v ON_ERROR_STOP=1 -U leoflow -d postgres \
+            -c "ALTER SYSTEM SET log_statement = 'all'" -c "SELECT pg_reload_conf()"
+
+      # pipefail on purpose: the default shell has -e only, and the tee must not
+      # turn a failed script into a green step.
+      - name: Run the k3d operator e2e with every gate on, then the gate assertions
+        run: |
+          set -euo pipefail
+          bash test/e2e/e2e.sh 2>&1 | tee "$SERVER_LOG"
+
+      - name: Task logs landed as numbered segments (logs.sink.layout=segmented)
+        run: |
+          set -euo pipefail
+          curl -fsS --aws-sigv4 "aws:amz:us-east-1:s3" --user test:test \
+            "http://localhost:4566/dexaflow-e2e-logs?list-type=2" > listing.xml
+          # An empty bucket is a finding, not a broken pipeline: grep's 1 must
+          # not end the step before the message below names the gate.
+          grep -oE '<Key>[^<]+</Key>' listing.xml | sed -E 's#</?Key>##g' > keys.txt || true
+          total="$(wc -l < keys.txt)"
+          segments="$(grep -cE '\.log\.d/[0-9]{8}\.log$' keys.txt || true)"
+          echo "${total} object(s) in the bucket, ${segments} of them segments; the first few:"
+          head -5 keys.txt
+          if [ "$segments" -eq 0 ]; then
+            echo "::error::no {try}.log.d/NNNNNNNN.log segment in the bucket: logs.sink.layout=segmented did not apply" >&2
+            exit 1
+          fi
+
+      # With on_demand the gate asks Redis (PUBSUB NUMSUB) whether anyone follows
+      # the attempt before publishing a line, and nothing in e2e.sh follows a
+      # live tail, so Redis must have seen the probes and no PUBLISH at all.
+      # Under the default every line is published and nothing is probed, so
+      # either half alone tells the two apart. The tailer is the only publisher
+      # in the control plane.
+      - name: on_demand tail publishing probed Redis and published to nobody (logs.tail.publish)
+        env:
+          REDIS: ${{ job.services.redis.id }}
+        run: |
+          set -euo pipefail
+          docker exec "$REDIS" redis-cli INFO commandstats | tr -d '\r' > commandstats.txt
+          grep -E '^cmdstat_(pubsub|publish)' commandstats.txt || true
+          if ! grep -qE '^cmdstat_pubsub' commandstats.txt; then
+            echo "::error::Redis saw no PUBSUB NUMSUB: the tail gate never probed for followers, so logs.tail.publish=on_demand did not apply" >&2
+            exit 1
+          fi
+          if grep -qE '^cmdstat_publish:' commandstats.txt; then
+            echo "::error::Redis saw PUBLISH although nothing followed a task log: logs.tail.publish=on_demand did not apply (the default publishes every line)" >&2
+            exit 1
+          fi
+
+      - name: statement_timeout reached the main pool (database.statement_timeout_ms)
+        env:
+          PG: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          n="$(docker logs "$PG" 2>&1 | grep -c 'SET statement_timeout = 30000' || true)"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no main pool connection ran SET statement_timeout = 30000: database.statement_timeout_ms did not apply" >&2
+            exit 1
+          fi
+          echo "statement_timeout = 30000 was set on ${n} connection(s)"
+
+      - name: LocalStack log (on failure)
+        if: failure()
+        env:
+          LOCALSTACK: ${{ job.services.localstack.id }}
+        run: docker logs --tail 100 "$LOCALSTACK" 2>&1 || true
