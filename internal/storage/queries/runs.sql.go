@@ -1625,7 +1625,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UU
 }
 
 const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at FROM task_instances
 WHERE dag_run_id = ANY($1::uuid[])
 ORDER BY dag_run_id, task_id
 `
@@ -1674,6 +1674,7 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 			&i.LastFailureKind,
 			&i.InfraAttempts,
 			&i.WarmWorkerID,
+			&i.ReleasedAt,
 		); err != nil {
 			return nil, err
 		}
