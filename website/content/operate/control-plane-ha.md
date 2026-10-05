@@ -345,10 +345,12 @@ database:
 | Pool | Size | Opened by |
 |---|---|---|
 | Requests and scheduling | `database.maxOpenConns` (chart default `20`) | every pod |
+| Scheduler (only when set) | `database.schedulerMaxConns` (chart default `0`, off) | every pod that runs the scheduler |
 | Health checks (`/readyz`, the UI database widget) | `2` | every pod |
 | Scheduler leader lock | `1` | every pod that runs the scheduler (`all` and `scheduler` roles) |
 
-So one pod can hold up to `maxOpenConns + 3` connections, and the cluster-wide
+So one pod can hold up to `maxOpenConns + 3` connections (plus
+`schedulerMaxConns` on a pod that runs the scheduler, when it is set), and the cluster-wide
 ceiling is that number times the most pods that can be up at once: the HPA's
 `maxReplicas` (or `replicaCount`, or `split.api.replicaCount + 1` in split
 mode), plus the surge pods a rolling update starts before it stops old ones.

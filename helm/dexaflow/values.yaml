@@ -194,12 +194,10 @@ config:
     # stretches the tick by every Kubernetes API call it makes. Above 0, the tick
     # only enqueues and `workers` goroutines create the pods; a full buffer leaves
     # the task scheduled for the next tick. A starting point for a busy cluster:
-    # bufferSize 512, workers 16. Unset values render nothing.
-    # Caveat: for now a pod create that fails inside a worker fails the task at
-    # once, including a namespace ResourceQuota rejection (403) or apiserver
-    # throttling (429) that synchronous dispatch holds and re-offers. Keep
-    # bufferSize 0 on a namespace that runs close to its quota until buffered
-    # dispatch re-offers those failures too.
+    # bufferSize 512, workers 16. Unset values render nothing. A pod create
+    # that fails inside a worker is handled like a synchronous one: a quota
+    # rejection (403) or apiserver throttling (429) puts the task back to
+    # scheduled, and other errors are retried until the dispatch budget is spent.
     dispatch:
       # -- Depth of the queued-dispatches channel (`scheduler.dispatch.buffer_size`). 0 = synchronous dispatch inside the tick (server default).
       bufferSize: 0
