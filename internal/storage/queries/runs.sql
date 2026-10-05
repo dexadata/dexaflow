@@ -351,12 +351,25 @@ FROM dags d
 WHERE d.is_active = true AND d.is_paused = false
   AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL;
 
--- name: CreateScheduledRunByDagID :exec
+-- name: CreateScheduledRunByDagID :execrows
+-- Zero rows means the slot's run already exists (or the DAG has no current
+-- version): the caller then rolls back the charge it took from the tenant's
+-- daily run cap.
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, sqlc.arg(run_id), sqlc.arg(logical_date), 'queued', 'scheduled'
 FROM dags d
 WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_id = sqlc.arg(dag_id) AND d.current_version_id IS NOT NULL
 ON CONFLICT (dag_id, run_id) DO NOTHING;
+
+-- name: DagRunExistsByDagID :one
+-- Whether run_id of the DAG dag_id in tenant tenant_id exists: the read behind
+-- a refused daily run cap charge, so a run that already exists keeps its usual
+-- answer (a no-op for a scheduled slot, a conflict for a manual run id) instead
+-- of a refusal, and nothing is written (createRunWithinDailyLimit).
+SELECT EXISTS (
+    SELECT 1 FROM dag_runs r JOIN dags d ON d.id = r.dag_id
+    WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_id = sqlc.arg(dag_id) AND r.run_id = sqlc.arg(run_id)
+)::bool AS run_exists;
 
 -- name: GetDagVersionByID :one
 SELECT * FROM dag_versions WHERE id = $1;
