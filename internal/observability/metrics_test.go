@@ -156,3 +156,20 @@ func TestEveryRegisteredMetricHasItsLegacyTwin(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordInfraOverrideCountsByMark: every durable SUCCESS the reconciler
+// settles over an infra mark is counted under the mark it overrode (ADR 0052
+// amendment), so a recovered success is never silent.
+func TestRecordInfraOverrideCountsByMark(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	m.RecordInfraOverride("agent_lost")
+	m.RecordInfraOverride("agent_lost")
+	m.RecordInfraOverride("pod_lost")
+	if got := counterTotal(t, reg, "dexaflow_reconcile_infra_override_total"); got != 3 {
+		t.Errorf("dexaflow_reconcile_infra_override_total = %v, want 3", got)
+	}
+	if got := m.ReconcileInfraOverrides.WithLabelValues("agent_lost"); got == nil {
+		t.Fatal("the counter must be labeled by mark")
+	}
+}
