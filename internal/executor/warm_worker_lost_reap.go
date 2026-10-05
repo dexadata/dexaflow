@@ -55,7 +55,10 @@ type WarmBoundTI struct {
 	DagRunID       string
 	TaskID         string
 	TryNumber      int
-	WarmWorkerID   string
+	// AttemptEpoch pins the failover mark to the bound execution (ADR 0051
+	// amendment).
+	AttemptEpoch int
+	WarmWorkerID string
 }
 
 // WarmWorkerLostReapStore is the slice of the store the warm-worker-lost reaper
@@ -69,7 +72,7 @@ type WarmWorkerLostReapStore interface {
 	// through the same infra path with the same idempotency guard (WHERE
 	// state='running'). applied=false means a late settle raced the mark — a
 	// benign skip, never a false reap.
-	MarkTaskPodLost(ctx context.Context, taskInstanceID string) (bool, error)
+	MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
 
 // warmWorkerLostReaper recovers a dead warm worker's in-flight attempts (ADR 0058
@@ -161,7 +164,7 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 			r.record("warm_worker_lost_gate_skip")
 			continue
 		}
-		applied, ferr := r.store.MarkTaskPodLost(ctx, ti.TaskInstanceID)
+		applied, ferr := r.store.MarkTaskPodLost(ctx, ti.TaskInstanceID, ti.TryNumber, ti.AttemptEpoch)
 		if ferr != nil {
 			r.logger.Error("marking warm-worker-lost task pod-lost",
 				"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID, "error", ferr)
