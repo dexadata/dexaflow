@@ -31,7 +31,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -o /out/dexaflow-server ./cmd/dexaflow-server
 
 # Minimal, non-root runtime.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/dexaflow-server /dexaflow-server
 EXPOSE 8080 9090
 USER nonroot:nonroot
