@@ -118,6 +118,27 @@ RUN pip install --no-cache-dir /opt/leoflow-runtime
 ARG AIRFLOW_TASK_SDK_VERSION=1.3.1
 RUN pip install --no-cache-dir "apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERSION}"
 
+# setuptools is upgraded ONLY where the base image already ships it. The
+# python:3.10 and 3.11 slim images preinstall setuptools 79.0.1, whose vendored
+# jaraco.context 5.3.0 (CVE-2026-23949) and wheel 0.45.1 (CVE-2026-24049) are
+# fixable HIGH findings in the daily image scan (#1299). 80.10.2 is the first
+# release vendoring the fixed versions of both (jaraco.context 6.1.0, wheel
+# 0.46.3), and it stays on the 80.x line on purpose: setuptools 82 removed
+# pkg_resources, which user DAG code on these lines may still import. One
+# visible change comes with it: 79.0.1 warns about importing pkg_resources with a
+# DeprecationWarning, hidden by default when a library does the import, while
+# 80.10.2 raises a UserWarning, which is shown by default. A task whose
+# dependencies import pkg_resources gains that warning line in its log, and a
+# filter that turns UserWarning into an error now trips on it. The 3.12
+# and 3.13 images ship no setuptools at all, and installing it there would add
+# a package (and its findings) that the image does not have today, hence the
+# guard rather than an unconditional install. Run after the Task SDK install so
+# no later resolver step can move it back.
+ARG SETUPTOOLS_VERSION=80.10.2
+RUN if pip show --quiet setuptools >/dev/null 2>&1; then \
+      pip install --no-cache-dir "setuptools==${SETUPTOOLS_VERSION}"; \
+    fi
+
 # dbt defaults its writable artifacts (target/, logs/, profiles.yml) to the project
 # directory, but a compiled DAG image COPYs the project read-only (root-owned), so
 # dbt would explode writing there. Point them at an ephemeral, always-writable /tmp

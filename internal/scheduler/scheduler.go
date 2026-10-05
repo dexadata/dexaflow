@@ -60,7 +60,11 @@ type RunState struct {
 	TenantID     string
 	State        domain.DagRunState
 	Tasks        []domain.TaskSpec
-	States       map[string]domain.TaskState
+	// Graph is the task index for Tasks, built once per dag_version by the store
+	// and shared read-only by every run of that version. Nil means "build it
+	// when needed", so callers that construct a RunState by hand need not set it.
+	Graph  *TaskGraph
+	States map[string]domain.TaskState
 	// Tries and MaxTries hold the current and maximum attempt counts per task,
 	// driving retry decisions. Absent entries mean no retry budget.
 	Tries    map[string]int
@@ -286,6 +290,12 @@ type Scheduler struct {
 	stepTimeout time.Duration
 	recorder    Recorder
 	dispatcher  Dispatcher
+	// deferredRun is the run whose dispatch the buffered dispatcher deferred
+	// (its queue was full) during the current tick, "" when none was. Once set,
+	// the rest of the tick offers no more dispatches, and the next tick starts
+	// at the run after it, so one large run cannot take every freed buffer slot
+	// tick after tick. Touched only by the tick goroutine.
+	deferredRun string
 	alerter     Alerter
 	// alertSem bounds concurrent on-failure alert dispatches (#424): a mass
 	// failure must not spawn an unbounded burst of alert goroutines/POSTs. A
@@ -554,8 +564,10 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for i := range runs {
-		run := runs[i]
+	start := rotateAfter(runs, s.deferredRun)
+	s.deferredRun = ""
+	for k := range runs {
+		run := runs[(start+k)%len(runs)]
 		key := dagRef{run.TenantID, run.DagID}
 		activeByDAG[key]++
 		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
@@ -569,6 +581,21 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		}
 	}
 	return s.createDueRuns(ctx, activeByDAG)
+}
+
+// rotateAfter returns the index the tick starts advancing runs at: right after
+// the run whose dispatch was deferred last tick, or 0 when none was (or it is no
+// longer active), which keeps the store's order whenever the buffer kept up.
+func rotateAfter(runs []RunState, deferredRun string) int {
+	if deferredRun == "" {
+		return 0
+	}
+	for i := range runs {
+		if runs[i].RunID == deferredRun {
+			return (i + 1) % len(runs)
+		}
+	}
+	return 0
 }
 
 // activeTaskCounts tallies, per DAG, the task instances that already occupy a
@@ -788,6 +815,9 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, ad
 		}
 		return 0, nil, nil
 	}
+	// Resolve the task index once so planning and every dispatch below share it;
+	// a run without the store's prebuilt graph gets one built here.
+	run.Graph = run.taskGraph()
 	poolOf := taskPools(run) // taskID → pool key; nil when the pool gate is off.
 	// Plain state-set transitions (no side effect beyond the write + metric) are
 	// collected and flushed grouped by target state in one UPDATE each, instead of
@@ -1086,11 +1116,16 @@ func (s *Scheduler) redispatchReschedule(ctx context.Context, run RunState, task
 // appropriate transition. A transient failure leaves the task scheduled so the
 // next tick retries.
 func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTransition) error {
-	task, ok := findTask(run.Tasks, t.TaskID)
+	task, ok := findTask(run, t.TaskID)
 	if !ok {
 		return fmt.Errorf("task %s not found in run %s", t.TaskID, run.RunID)
 	}
 	if s.dispatcher != nil {
+		if s.deferredRun != "" {
+			// The buffer refused a dispatch earlier this tick: leave the task
+			// scheduled, untouched, for the next tick instead of another refusal.
+			return nil
+		}
 		disp, err := s.dispatcher.Dispatch(ctx, run.RunID, run.DagID, run.DagVersionID, task)
 		if err != nil {
 			return s.handleDispatchFailure(ctx, run, t.TaskID, disp, err)
@@ -1111,7 +1146,9 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 // does not abort the tick. A dispatch failure is infrastructure, not a task
 // failure, so it never consumes the task's try_number.
 //
-// Cluster backpressure (a ResourceQuota 403 or an APF 429) is split out first
+// A Deferred dispatch (the buffered dispatch queue was full) is split out first:
+// nothing was attempted, so nothing is recorded and the next tick re-offers it.
+// Cluster backpressure (a ResourceQuota 403 or an APF 429) is split out next
 // (ADR 0053): it is retriable-forever, so it is backed off WITHOUT touching the
 // dispatch-attempt counter and can never reach the dispatch_failed give-up below.
 // Dexaflow holds the task and re-offers it until the cluster has room, rather than
@@ -1120,6 +1157,16 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 // arrives typed over the seam (ADR 0051 Phase 4), so the scheduler never inspects
 // Kubernetes error types itself.
 func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, taskID string, disp executor.Disposition, cause error) error {
+	if disp == executor.Deferred {
+		// The dispatch never left the control plane (the buffered dispatch queue
+		// is full or draining). Leave the task scheduled and write nothing: the
+		// next tick re-offers it, and local backpressure must never spend the
+		// dispatch-attempt budget or drive the task to dispatch_failed.
+		s.logger.Debug("dispatch deferred; buffer at capacity, re-offering next tick",
+			"run", run.RunID, "task", taskID, "error", cause)
+		s.deferredRun = run.RunID
+		return nil
+	}
 	if disp == executor.Backpressure {
 		return s.backoffBackpressure(ctx, run, taskID, cause)
 	}
@@ -1226,12 +1273,13 @@ func (s *Scheduler) recordTransition(ctx context.Context, run RunState, taskID s
 	return nil
 }
 
-// findTask returns the task with the given ID from the run topology.
-func findTask(tasks []domain.TaskSpec, taskID string) (domain.TaskSpec, bool) {
-	for _, task := range tasks {
-		if task.TaskID == taskID {
-			return task, true
-		}
+// findTask returns the task with the given ID from the run topology. It looks
+// the task up through the run's task index, so dispatching a whole fan-out is
+// linear in its width rather than quadratic.
+func findTask(run RunState, taskID string) (domain.TaskSpec, bool) {
+	i, ok := run.taskGraph().Lookup(taskID)
+	if !ok {
+		return domain.TaskSpec{}, false
 	}
-	return domain.TaskSpec{}, false
+	return run.Tasks[i], true
 }

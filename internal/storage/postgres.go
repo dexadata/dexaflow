@@ -163,7 +163,7 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 	}
 	if err := connectWithRetry(ctx, pool.Ping, pgStartupBudget, pgStartupBackoff); err != nil {
 		pool.Close()
-		return nil, err
+		return nil, explainConnBudget(err, pc.MaxConns)
 	}
 	// Opened here rather than wired by the caller: a probe that shares the
 	// request pool is the failure mode this exists to prevent (#1042), and a
@@ -183,7 +183,7 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 	if err := connectWithRetry(ctx, health.Ping, pgStartupBudget, pgStartupBackoff); err != nil {
 		health.Close()
 		pool.Close()
-		return nil, err
+		return nil, explainConnBudget(err, pc.MaxConns)
 	}
 	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health}, nil
 }

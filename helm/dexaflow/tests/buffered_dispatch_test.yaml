@@ -1,0 +1,47 @@
+suite: buffered dispatch (config.scheduler.dispatch)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  # The default renders nothing, so the server keeps synchronous dispatch
+  # (buffer_size 0) and an upgrade changes nothing.
+  - it: no dispatch buffer env by default
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+          any: true
+
+  - it: config.scheduler.dispatch renders the buffer size and worker count
+    template: deployment.yaml
+    set:
+      config.scheduler.dispatch.bufferSize: 512
+      config.scheduler.dispatch.workers: 16
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+            value: "512"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+            value: "16"

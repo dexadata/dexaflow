@@ -51,9 +51,9 @@ type fakeReaperStore struct {
 func (f *fakeReaperStore) ListReapCandidates(context.Context) ([]ReapCandidate, error) {
 	return f.orphanCands, nil
 }
-func (f *fakeReaperStore) ReapRun(_ context.Context, runID string) error {
+func (f *fakeReaperStore) ReapRun(_ context.Context, runID string, _ time.Time) (bool, error) {
 	f.reapedRuns = append(f.reapedRuns, runID)
-	return nil
+	return true, nil
 }
 func (f *fakeReaperStore) ListAgentLostCandidates(context.Context) ([]AgentLostCandidate, error) {
 	return f.agentCands, nil

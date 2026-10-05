@@ -43,6 +43,7 @@ dexaflow-mcp --version
 | `command not found: dexaflow` | The binary is not on `PATH` — re-run `curl … \| sh`, or open a fresh shell to pick up the install-script's PATH line. Building from source? `go install .../cmd/dexaflow@latest` and add `$(go env GOPATH)/bin` to `PATH`. |
 | `dexaflow setup` says "python: none on PATH" but you have `python3.12` | Older Dexaflow versions only matched literal `python3.11`. Update to the latest release — `setup` now accepts any `python3.11`+ that's on `PATH`. |
 | Install on Alpine / musl fails fetching CPython | The musl-libc relocatable CPython build can be missing system libs. `dexaflow lite --postgres docker` falls back to the Docker Postgres path instead of the embedded managed one. |
+| Control plane never becomes ready; logs show `remaining connection slots are reserved` or `too many connections` (SQLSTATE 53300) | Every control-plane pod opens `database.maxIdleConns` + 3 connections at boot and can grow to `database.maxOpenConns` + 3 under load, plus 1 for the migration Job. On a small managed Postgres (Cloud SQL `db-f1-micro`, the smallest RDS or Azure tiers, about 25 slots) that can exceed `max_connections`, or a per-role or per-database `CONNECTION LIMIT`. The boot error names the setting; lower `database.maxOpenConns` / `database.maxIdleConns` in the chart values, or raise the server's limit. `helm install` prints the estimated boot and peak demand in its notes. |
 
 ## `dexaflow lite` boot
 

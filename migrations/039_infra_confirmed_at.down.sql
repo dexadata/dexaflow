@@ -1,4 +1,4 @@
--- Reverses 040: drops the infra confirmation column.
+-- Reverses 039: drops the infra confirmation column.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE task_instances

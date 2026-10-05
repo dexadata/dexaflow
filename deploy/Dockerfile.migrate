@@ -73,9 +73,8 @@ RUN set -eux; \
 		-ldflags="-s -w -X main.Version=${version}" \
 		-o /out/migrate github.com/golang-migrate/migrate/v4/cmd/migrate
 
-# Distroless static, Debian 13 (trixie). Same family as leoflow-server, which is
-# still on debian12 — not the same suite, and this is the suite
-# runtime/Dockerfile moved to in #1038.
+# Distroless static, Debian 13 (trixie): the same base as leoflow-server
+# (#1400) and the suite runtime/Dockerfile moved to in #1038.
 #
 # It carries a CA bundle, /etc/passwd with the nonroot user, and six base
 # packages (base-files, ca-certificates, media-types, netbase, tzdata,
