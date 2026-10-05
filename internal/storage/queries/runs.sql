@@ -432,7 +432,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
         queued_at = EXCLUDED.queued_at,
@@ -452,6 +452,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -465,8 +466,20 @@ SET state = 'none',
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2;
+WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
 
 -- name: ResetTaskInstanceForRetry :execrows
 -- The scheduler retry rail's reset: identical to ResetTaskInstanceToNone but
@@ -507,6 +520,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -575,6 +589,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -641,6 +656,7 @@ LIMIT 100;
 -- ResetTaskInstanceToNone.
 UPDATE task_instances
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -653,11 +669,15 @@ SET state = 'none',
     attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule';
 
--- name: TaskInstanceFirstRescheduleAt :one
--- The time a reschedule-mode sensor first entered reschedule (NULL until it does).
--- Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
--- value and the sensor honors its cumulative timeout across pokes (#380).
-SELECT first_reschedule_at FROM task_instances
+-- name: TaskInstanceAttemptFields :one
+-- The per-attempt fields the agent spec carries from the task instance row.
+-- first_reschedule_at is the time a reschedule-mode sensor first entered
+-- reschedule (NULL until it does), delivered to each re-dispatched pod so
+-- get_first_reschedule_date returns the real value and the sensor honors its
+-- cumulative timeout across pokes (#380). max_tries is the attempt budget the
+-- scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+-- so the runtime's on_failure_callback gate must read it from here (#424).
+SELECT first_reschedule_at, max_tries FROM task_instances
 WHERE dag_run_id = $1 AND task_id = $2;
 
 -- name: FailTaskInstanceIfActive :exec
@@ -845,7 +865,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -866,6 +886,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -877,13 +898,26 @@ SET state = 'none',
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
 
--- name: ResetAllFailedTaskInstances :execrows
+-- name: ResetAllFailedTaskInstances :many
 -- Archives every failed attempt in the run into task_instance_history then
--- resets. See ResetTaskInstanceToNone for the per-attempt rationale.
+-- resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+-- task ids it reset, so the clear can delete exactly their XCom.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -895,7 +929,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $1
+    WHERE src.dag_run_id = sqlc.arg(dag_run_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -916,6 +950,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -927,9 +962,22 @@ SET state = 'none',
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = ti.attempt_epoch + 1,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1
-  AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
+WHERE ti.dag_run_id = sqlc.arg(dag_run_id)
+  AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
+RETURNING ti.task_id;
 
 -- name: SetTaskInstanceNote :exec
 UPDATE task_instances
@@ -938,21 +986,41 @@ WHERE dag_run_id = $1 AND task_id = $2;
 
 -- name: ListOrphanCandidates :many
 -- Lists dag_runs currently in 'running' whose task instances are ALL terminal
--- or never-started (no TI in scheduled/queued/running), alongside the
--- timestamp of their most recent observable activity. The "no active TI"
--- filter is the critical safety guarantee: a legitimately-active task (slow
--- image pull, long-running job) keeps its run out of the candidate set, so
--- the reaper can never kill a live execution. The shape this catches is the
--- post-crash one: TIs settled (success/failed/skipped/upstream_failed) but
--- FinalizeRun did not transition the dag_run — e.g. the server died between
+-- or never-started (every TI in none/success/failed/skipped/upstream_failed),
+-- alongside the timestamp of their most recent observable activity. The "no
+-- live TI" filter is the critical safety guarantee: a run that is still
+-- progressing stays out of the candidate set, so the reaper can never kill a
+-- live execution. Live means any state outside that settled set, which covers
+-- a legitimately-active task (scheduled/queued/running: slow image pull,
+-- long-running job) AND a task parked for the scheduler to bring back
+-- (up_for_retry during its retry_delay, up_for_reschedule between sensor pokes,
+-- the reserved deferred state). Parked states stamp no fresh timestamp on entry,
+-- so last_activity cannot protect them: a retry_delay or poke_interval longer
+-- than the reaper threshold would otherwise fail a healthy run. Listing the
+-- settled states (rather than the live ones) keeps any future non-terminal
+-- state on the safe side by default. `none` stays reapable: a never-started TI
+-- whose upstreams are all settled is decided on the next scheduler tick, and one
+-- whose upstream is still pending already has a live sibling keeping the run
+-- out. A TI released back to `none` for another attempt (the retry release,
+-- the reschedule re-dispatch, the infra re-place, an operator clear) has its
+-- per-attempt timestamps cleared and only becomes `scheduled` on the next
+-- tick, so each release stamps released_at and last_activity counts it: the
+-- release itself is activity, and a run is never reaped in the tick between a
+-- release and none -> scheduled. An infra-failed TI parked in its re-place backoff is `failed` and is covered by
+-- the threshold itself, which sits above that backoff. The shape this catches
+-- is the post-crash one: TIs settled (success/failed/skipped/upstream_failed)
+-- but FinalizeRun did not transition the dag_run, e.g. the server died between
 -- the last TI report and the next scheduler tick. The LIMIT bounds a single
--- tick's reap work even after a multi-hour outage; the rest are picked up
--- on the next tick (the reaper is a backstop, not a sprint).
+-- tick's reap work even after a multi-hour outage; the rest are picked up on
+-- the next tick (the reaper is a backstop, not a sprint). The list is only a
+-- snapshot: MarkRunOrphanedRun re-checks the same predicate atomically, so keep
+-- the two in step.
 SELECT dr.id AS id,
        d.dag_id AS dag_id_text,
        GREATEST(
            COALESCE(MAX(ti.ended_at), 'epoch'::timestamptz),
            COALESCE(MAX(ti.started_at), 'epoch'::timestamptz),
+           COALESCE(MAX(ti.released_at), 'epoch'::timestamptz),
            COALESCE(dr.started_at, 'epoch'::timestamptz),
            dr.queued_at
        )::timestamptz AS last_activity
@@ -963,7 +1031,7 @@ WHERE dr.state = 'running'
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state IN ('scheduled', 'queued', 'running')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
   )
 GROUP BY dr.id, d.dag_id, dr.started_at, dr.queued_at
 ORDER BY dr.queued_at
@@ -1199,16 +1267,20 @@ WHERE id = sqlc.arg(id)
 -- read them as lost; the warm-worker-lost reaper owns them. The grace period is
 -- applied here, before the LIMIT, so attempts still inside it never take the
 -- slots of those past it; a NULL started_at is never listed (too poorly observed
--- to reap). The reaper re-checks grace and pod liveness per candidate in Go. The
+-- to reap). The reaper re-checks grace and pod liveness per candidate in Go.
+-- heartbeated lets Lite (no pods) judge a TI whose agent died before its first
+-- heartbeat, which the agent-lost query never lists (#916). The
 -- LIMIT bounds a single tick's reap work even after a large outage; the rest
 -- are picked up next tick.
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
        d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
-       ti.started_at AS started_at
+       ti.started_at AS started_at,
+       (ti.last_heartbeat_at IS NOT NULL)::boolean AS heartbeated
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
@@ -1238,16 +1310,47 @@ WHERE id = sqlc.arg(id)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state = 'running';
 
+-- name: LockRunTaskInstancesForReap :exec
+-- Share-locks every task instance of a run inside the reap transaction, before
+-- MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
+-- snapshot under READ COMMITTED) sees committed state and no TI of the run can
+-- change until the reap commits or rolls back. NOWAIT: a TI another transaction
+-- is writing right now is activity, so the reap gives up (lock_not_available,
+-- treated as a no-op by ReapRun) instead of waiting. Waiting would let these
+-- share locks, taken in scan order, form a cycle with a writer that locks
+-- several TIs of the run in another order (a multi-task clear, a batched
+-- scheduler transition); a reap that never waits on a TI cannot be in one.
+SELECT id FROM task_instances
+WHERE dag_run_id = $1
+FOR SHARE NOWAIT;
+
 -- name: MarkRunOrphanedRun :execrows
--- Fails an orphaned dag run. The `state = 'running'` guard makes the reap a
--- safety net, never a takeover: a competing finalizer (the normal scheduler
--- path) cannot be overwritten. Idempotent: a second call on a run already
--- failed updates zero rows.
-UPDATE dag_runs
+-- Fails an orphaned dag run, but only if it is STILL orphaned: the same
+-- predicate ListOrphanCandidates applies (running, no live TI, last activity at
+-- or before the reaper's cutoff) is re-checked in this statement, because the
+-- list is a snapshot and a TI may have moved (failed -> up_for_retry, none ->
+-- scheduled) or fresh activity may have landed since. Keep the two in step. The
+-- `state = 'running'` guard also makes the reap a safety net, never a takeover:
+-- a competing finalizer (the normal scheduler path) cannot be overwritten.
+-- Zero rows means the run is no longer an orphan and nothing may be touched.
+-- Idempotent: a second call on a run already failed updates zero rows.
+UPDATE dag_runs dr
 SET state = 'failed',
     ended_at = now(),
     note = 'orphaned: no scheduler activity within the orphan window — see #120'
-WHERE id = $1 AND state = 'running';
+WHERE dr.id = sqlc.arg(id)
+  AND dr.state = 'running'
+  AND NOT EXISTS (
+      SELECT 1 FROM task_instances ti2
+      WHERE ti2.dag_run_id = dr.id
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+  )
+  AND GREATEST(
+          COALESCE((SELECT GREATEST(MAX(ti.ended_at), MAX(ti.started_at), MAX(ti.released_at))
+                    FROM task_instances ti WHERE ti.dag_run_id = dr.id), 'epoch'::timestamptz),
+          COALESCE(dr.started_at, 'epoch'::timestamptz),
+          dr.queued_at
+      ) <= sqlc.arg(quiet_before)::timestamptz;
 
 -- name: RecordDispatchFailure :exec
 -- A synchronous dispatch attempt failed (ADR 0031 Amendment A). Increment the

@@ -34,3 +34,22 @@ func TestAgentLostMarkerLandsOnTheReapedExecutionsLog(t *testing.T) {
 		t.Fatalf("marker appended to %+v, want try 2 epoch 6", sink.refs)
 	}
 }
+
+// TestNeverHeartbeatedMarkerLandsOnTheReapedExecutionsLog: Lite's
+// never-heartbeated agent-lost reap appends its marker to the reaped
+// execution's log too, keyed by the candidate's attempt epoch.
+func TestNeverHeartbeatedMarkerLandsOnTheReapedExecutionsLog(t *testing.T) {
+	store := &fakeReaperStore{runningCands: []PodLostCandidate{{
+		TaskInstanceID: "ti", TenantID: "tnt", DagRunID: "run", DagID: "dag", TaskID: "task",
+		TryNumber: 2, AttemptEpoch: 6, RunningSince: time.Now().UTC().Add(-time.Hour),
+	}}}
+	r := newLiteTestReaper(store, &fakeProcessLiveness{alive: map[string]bool{}}, &capturingRecorder{})
+	sink := &refRecordingSink{}
+	r.agentLost.sink = sink
+	if err := r.agentLost.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(sink.refs) != 1 || sink.refs[0].TryNumber != 2 || sink.refs[0].AttemptEpoch != 6 {
+		t.Fatalf("marker appended to %+v, want try 2 epoch 6", sink.refs)
+	}
+}

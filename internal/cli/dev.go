@@ -140,12 +140,12 @@ type devOptions struct {
 	// ~/.dexaflow/config.yaml; empty on a legacy install (resolveLiteJWTSecret
 	// then falls back to devJWTSecret with a one-shot warning).
 	jwtSecret string
-	// secretKey is the per-install connection-encryption key from
-	// ~/.dexaflow/config.yaml (#486).
+	// secretKey is the per-install connection-encryption key, read from
+	// ~/.dexaflow/config.yaml alone (never the environment) after the
+	// key-migration lock is held (#486, ADR 0065).
 	secretKey string
-	// secretKeyPrevious is a decrypt-only predecessor. Nothing writes it: it is
-	// a hand-set escape hatch for an install whose key was changed by hand and
-	// still has rows under the old one.
+	// secretKeyPrevious is the comma-separated decrypt-only predecessor list:
+	// recorded by an unfinished `dexaflow lite migrate-key`, or set by hand.
 	secretKeyPrevious string
 }
 
@@ -390,27 +390,6 @@ func (o *devOptions) liteEnv() liteEnvParams {
 	}
 }
 
-// warnIfSharedSecretKey tells a user still on the key published in this
-// repository what that costs them.
-//
-// It does not offer a fix, because there is not one yet, and a warning that
-// names a command which does not exist is worse than one that admits the gap.
-// Migrating an existing install means re-encrypting every stored credential;
-// three security reviews of an attempt at it found ordering, interruption and
-// privilege defects that each destroyed credentials, so it was pulled out and
-// is tracked separately rather than shipped half-right (#486).
-func warnIfSharedSecretKey(out io.Writer, key string) {
-	if key != "" {
-		return
-	}
-	devPrintln(out, "  WARNING: your connection passwords are encrypted with a key published in this")
-	devPrintln(out, "           repository, which every Lite install shares. Anyone who obtains your")
-	devPrintln(out, "           datastore file can read them.")
-	devPrintln(out, "           Moving an existing install to its own key means re-encrypting every stored")
-	devPrintln(out, "           secret; that migration is tracked and not available yet. Until it ships,")
-	devPrintln(out, "           treat this datastore as holding readable credentials.")
-}
-
 // liteSecretKeyList builds LEOFLOW_SECRET_KEY: the encrypting key first, then
 // any decrypt-only predecessor, comma separated. Same rule as Airflow's
 // fernet_key.
@@ -425,16 +404,13 @@ func warnIfSharedSecretKey(out io.Writer, key string) {
 // downgrade that install from "ciphertext needs my key" to "ciphertext needs a
 // key published on GitHub", for no benefit.
 //
-// An empty key means the backfill could not run (a read-only home, a config
-// this tool could not parse). Falling back to the constant keeps such an
-// install working rather than making its credentials unreadable, with a warning
-// that says what is at stake.
+// An empty key is an install that predates per-install keys (Legacy): its rows
+// are under the published constant, which is then the encrypting key, and the
+// boot warns and names `dexaflow lite migrate-key`. A predecessor recorded
+// without a key of its own still travels after the constant.
 func liteSecretKeyList(key, previous string) string {
 	if key == "" {
-		// An install that predates per-install keys. Its rows are under the
-		// published constant, so that is the only key that can read them;
-		// warnIfSharedSecretKey has already said what that costs.
-		return devSecretKey
+		key = devSecretKey
 	}
 	if previous == "" {
 		return key
@@ -446,7 +422,7 @@ func liteSecretKeyList(key, previous string) string {
 // caller defers. It resolves the "auto" --postgres for the host first (Docker
 // Postgres when Docker is present, else a managed relocatable PG), then: the
 // Docker path is a no-op cleanup (its container is left up across runs); the
-// managed path returns a stop, since this run owns the cluster.
+// managed path returns a stop only when this run started the cluster.
 func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions) (func(), error) {
 	noop := func() {}
 	if o.noUp {
@@ -457,11 +433,14 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 		// Managed relocatable Postgres, no Docker at all: Lite is Redis-free (XCom
 		// on Postgres, in-process log tailer — ADR 0026), so nothing comes up via
 		// docker compose.
-		if perr := startManagedPostgres(ctx, cmd); perr != nil {
+		started, perr := startManagedPostgres(ctx, cmd)
+		if perr != nil {
 			return noop, perr
 		}
+		// Stop it on the way out only if this run started it (ADR 0065
+		// section 3): a cluster found running may be a migration's.
 		//nolint:contextcheck // stop runs at shutdown with a fresh context; the run's ctx is already canceled
-		return func() { stopManagedPostgres(cmd) }, nil
+		return managedCleanup(started, func() { stopManagedPostgres(cmd) }), nil
 	}
 	// Docker datastore: only Postgres (Lite needs no Redis). Pick a host port that
 	// is free (so a foreign Postgres on 5432 — system or another project — never
@@ -549,6 +528,7 @@ func newLiteCommand() *cobra.Command {
 	cmd.AddCommand(newForgetCommand())
 	cmd.AddCommand(newBackupCommand())
 	cmd.AddCommand(newRestoreCommand())
+	cmd.AddCommand(newMigrateKeyCommand())
 	return cmd
 }
 
@@ -720,8 +700,6 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	// With it, Lite enforces real auth; without it, fall back to no-auth + warn.
 	id := resolveLiteAdmin(cmd, out)
 	o.adminHash, o.adminEmail, o.jwtSecret = id.adminHash, id.adminEmail, id.jwtSecret
-	o.secretKey, o.secretKeyPrevious = id.secretKey, id.secretKeyPrevious
-	warnIfSharedSecretKey(out, o.secretKey)
 
 	ctx, stop := signal.NotifyContext(cmdContext(cmd), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -736,26 +714,20 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	if uerr != nil {
 		return uerr
 	}
-	defer cleanupDeps() // stops managed Postgres on exit; no-op for the Docker path
-	// --fresh drops the local database before it is recreated, so a session
-	// starts with nothing registered. State under ~/.dexaflow/dev otherwise
-	// outlives every session: a DAG from an old spike stays registered, keeps
-	// being scheduled, and fails inside a run that has nothing to do with it
-	// (#1104). Destructive by definition, and scoped to the Lite dev database —
-	// it is the same drop `dexaflow db reset` performs.
-	// Provision the isolated dev state: own database + own venv (never the
-	// product's database or the system Python).
-	if derr := provisionDevDatabase(ctx, cmd, out, o.fresh); derr != nil {
-		return derr
+	defer cleanupDeps() // stops managed Postgres on exit if this run started it; no-op for the Docker path
+	// Provision the database, take the key-migration lock and read the keys,
+	// in that order and under the config lock (ADR 0065 section 3). The lock
+	// session is held until this process exits.
+	keyLock, keySt, kerr := acquireLiteKeyBoot(ctx, cmd, out, &o)
+	if kerr != nil {
+		return kerr
 	}
-	if merr := devMigrate(cmd); merr != nil {
-		return merr
-	}
+	defer keyLock.close(ctx)
 	home, herr := devHome()
 	if herr != nil {
 		return herr
 	}
-	serverBin, berr := resolveAndReport(cmdContext(cmd), cmd, o.serverBin, "server")
+	serverBin, berr := resolveServerBin(cmdContext(cmd), cmd, o.serverBin)
 	if berr != nil {
 		return berr
 	}
@@ -783,10 +755,12 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 		return serr
 	}
 	defer func() { _ = server.Process.Signal(syscall.SIGTERM) }() //nolint:errcheck // best-effort shutdown of the dev server
+	ctx, serverExited := superviseServer(ctx, server)
 
 	if werr := waitForReady(ctx, uiURL); werr != nil {
-		return werr
+		return firstErr(serverExited(), werr)
 	}
+	removePreRestoreAfterBoot(out, keySt)
 	announceReady(out, o.host, o.port, o.adminEmail, ws.Path, countRegisteredDags(ctx))
 	// Mint an admin token in-process signed with the dev JWT secret; the control
 	// plane validates it by signature + claims, so no login or seeded user is
@@ -809,7 +783,19 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	}
 	del := makeDeleteDag(mintToken, uiURL, home, logf)
 	boot := makeBootReconcile(mintToken, uiURL, ws.Path, projectDagIDs(ws), del, logf)
-	return devWatchLoop(ctx, cmd, ws, makeReload(mintToken), del, boot)
+	// The loop ends when ctx does; only then can serverExited say why.
+	lerr := devWatchLoop(ctx, cmd, ws, makeReload(mintToken), del, boot)
+	return firstErr(serverExited(), lerr)
+}
+
+// firstErr returns the first non-nil error.
+func firstErr(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // makeDeleteDag returns a callback the Lite watcher calls when it notices a
@@ -1684,11 +1670,12 @@ type liteEnvParams struct {
 	adminEmail string
 	jwtSecret  string
 	// secretKey is the per-install connection-encryption key from config.yaml;
-	// empty on a legacy install, which resolveLiteSecretKey maps to the
-	// published constant.
+	// empty on a legacy install, which liteSecretKeyList maps to the published
+	// constant.
 	secretKey string
-	// secretKeyPrevious is a decrypt-only predecessor recorded when the install
-	// was migrated off the published constant; empty once nothing needs it.
+	// secretKeyPrevious is the comma-separated decrypt-only predecessor list a
+	// `dexaflow lite migrate-key` that has not finished recorded (or an operator
+	// set by hand); empty once a migration finished.
 	secretKeyPrevious string
 }
 
@@ -1733,6 +1720,12 @@ func sharedServerEnv(p liteEnvParams) []string {
 		// install that still has rows under it: a fresh install never wrote a
 		// byte with it and must not accept it as a valid key.
 		"LEOFLOW_SECRET_KEY=" + liteSecretKeyList(p.secretKey, p.secretKeyPrevious),
+		// Lite never re-encrypts at boot: keys move only through
+		// `dexaflow lite migrate-key` (ADR 0065 gap 2). And the server holds the
+		// key-migration lock for its lifetime, refusing to start during a
+		// migration and exiting if it loses the lock.
+		"LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=false",
+		"LEOFLOW_SECRET_KEY_MIGRATION_LOCK=true",
 		"LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true",
 	}
 	if adminHash != "" {
@@ -1811,6 +1804,11 @@ func resolveLiteAdmin(cmd *cobra.Command, out io.Writer) liteEnvParams {
 // only) and the per-install JWT secret (rotated by `dexaflow setup` so a reinstall
 // invalidates the prior install's tokens — #121) from ~/.dexaflow/config.yaml.
 // Returns an empty hash when no admin is configured.
+//
+// It does NOT read the encryption keys: config.Load overlays DEXAFLOW_SECRET_KEY
+// and LEOFLOW_SECRET_KEY from the environment, and a key from the operator's
+// shell would make the server encrypt new rows under a key config.yaml does not
+// record (ADR 0065 gap 7). acquireLiteKeyBoot reads them from the file alone.
 func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
 	c, err := config.Load(configFilePath(cmd), nil)
 	if err != nil || c == nil {
@@ -1824,9 +1822,6 @@ func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
 		adminHash:  c.AdminPasswordHash,
 		adminEmail: email,
 		jwtSecret:  c.JWTSecret,
-		secretKey:  c.SecretKey,
-
-		secretKeyPrevious: c.SecretKeyPrevious,
 	}
 }
 
@@ -1866,7 +1861,7 @@ func clusterServerEnv(p liteEnvParams, kubeconfig string) []string {
 func startDevServer(ctx context.Context, cmd *cobra.Command, serverBin string, env []string) (*exec.Cmd, error) {
 	devPrintln(cmd.OutOrStdout(), "▸ starting control plane …")
 	srv := exec.CommandContext(ctx, serverBin) //nolint:gosec // serverBin is operator-resolved on the dev CLI
-	srv.Env = append(os.Environ(), env...)
+	srv.Env = liteServerEnviron(os.Environ(), env)
 	srv.Stdout, srv.Stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
 	if err := srv.Start(); err != nil {
 		return nil, fmt.Errorf("starting control plane: %w", err)

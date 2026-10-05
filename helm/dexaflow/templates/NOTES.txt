@@ -98,6 +98,41 @@ NetworkPolicy — kindnet enforces nothing and the AWS VPC CNI enforces only wit
 its network-policy agent enabled, so a rendered policy is not proof of
 enforcement. Verify on your CNI before relying on it.
 {{- end }}
+{{- /* Postgres connection budget (#1088). At boot pgxpool opens only its floor,
+database.maxIdleConns, per pod, plus 3 (2 health checks, 1 scheduler leader lock);
+under load each pod grows toward database.maxOpenConns + 3, plus
+database.schedulerMaxConns on a pod that runs the scheduler (counted on every pod
+here, an upper bound). Nothing scales either
+by the replica count. The pod ceiling is the same one the logs PVC guard uses
+(replicaCount, autoscaling.maxReplicas with the HPA on, split api + scheduler).
+20 is the threshold: the smallest managed tiers cap max_connections near 25 and
+reserve several of those. Boot demand over 20 is a WARNING (the pods may never
+become ready); peak demand over 20 with more than one pod is an informational
+NOTE, so a default single-replica install stays quiet. Notes, not a fail: the
+chart cannot see the server's real max_connections. */ -}}
+{{- $connPods := include "leoflow.logMounterCeiling" . | int }}
+{{- $connJob := ternary 1 0 (.Values.migrations.enabled | default false) }}
+{{- $connBoot := add (mul $connPods (add (int .Values.database.maxIdleConns) 3)) $connJob }}
+{{- $connSched := int (.Values.database.schedulerMaxConns | default 0) }}
+{{- $connPeak := add (mul $connPods (add (int .Values.database.maxOpenConns) $connSched 3)) $connJob }}
+{{- $connSchedText := ternary (printf " + database.schedulerMaxConns=%d" $connSched) "" (gt $connSched 0) }}
+{{- $connJobText := ternary " + 1 migration Job" "" (eq (int $connJob) 1) }}
+{{- if gt (int $connBoot) 20 }}
+
+WARNING: the control plane opens {{ $connBoot }} Postgres connections at boot:
+  {{ $connPods }} pod(s) x (database.maxIdleConns={{ .Values.database.maxIdleConns }} + 3){{ $connJobText }}
+(the 3 are each pod's health checks and scheduler leader lock). The smallest
+managed tiers cap max_connections near 25 and reserve some of those; there the
+pods fail to boot with SQLSTATE 53300. Lower database.maxIdleConns, run fewer
+replicas, or use a larger server. See #1088.
+{{- end }}
+{{- if and (gt (int $connPeak) 20) (or (gt (int $connBoot) 20) (gt $connPods 1)) }}
+
+NOTE: under load the control plane can grow to {{ $connPeak }} Postgres connections:
+  {{ $connPods }} pod(s) x (database.maxOpenConns={{ .Values.database.maxOpenConns }}{{ $connSchedText }} + 3){{ $connJobText }}
+Size the server's max_connections (minus its reserved slots) for that, or lower
+database.maxOpenConns. See #1088.
+{{- end }}
 {{- if not (or .Values.database.existingSecret .Values.database.url) }}
 
 WARNING: no database URL set. Provide .Values.database.url or .Values.database.existingSecret (key databaseUrl).

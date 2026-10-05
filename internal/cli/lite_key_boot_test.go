@@ -1,0 +1,237 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Gap 7: a key exported in the operator's shell must not reach the Lite server.
+// The server prefers DEXAFLOW_* over LEOFLOW_*, so an inherited
+// DEXAFLOW_SECRET_KEY would have silently beaten the LEOFLOW_SECRET_KEY Lite
+// builds from config.yaml, and new rows would land under a key the file does
+// not record.
+func TestLiteServerEnvironIgnoresAnExportedKey(t *testing.T) {
+	base := []string{
+		"PATH=/bin",
+		"DEXAFLOW_SECRET_KEY=from-the-shell",
+		"LEOFLOW_SECRET_KEY=also-from-the-shell",
+		"DEXAFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=true",
+		"LEOFLOW_SECRET_KEY_MIGRATION_LOCK=false",
+	}
+	env := liteServerEnviron(base, sharedServerEnv(liteEnvParams{secretKey: "from-the-file"}))
+	joined := strings.Join(env, "\n")
+	for _, bad := range []string{"from-the-shell", "SECRET_KEY_REENCRYPT_ON_BOOT=true", "SECRET_KEY_MIGRATION_LOCK=false"} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("inherited %q reached the server:\n%s", bad, joined)
+		}
+	}
+	for _, want := range []string{"PATH=/bin", "LEOFLOW_SECRET_KEY=from-the-file", "LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=false", "LEOFLOW_SECRET_KEY_MIGRATION_LOCK=true"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+// One line says the exported key was ignored, so nobody believes it was used.
+func TestEnvKeyNoteSaysAnExportedKeyIsIgnored(t *testing.T) {
+	env := map[string]string{"LEOFLOW_SECRET_KEY": "envkey"}
+	getenv := func(k string) string { return env[k] }
+	if note := envKeyNote("filekey", getenv); !strings.Contains(note, "LEOFLOW_SECRET_KEY") || !strings.Contains(note, "ignored") {
+		t.Errorf("note %q must name the variable and say it is ignored", note)
+	}
+	if note := envKeyNote("envkey", getenv); note != "" {
+		t.Errorf("an exported key equal to the file's needs no note, got %q", note)
+	}
+	if note := envKeyNote("filekey", func(string) string { return "" }); note != "" {
+		t.Errorf("no variable, no note; got %q", note)
+	}
+}
+
+// Degenerate config: a predecessor with no secret_key is Legacy with an extra
+// predecessor, so the server must read with both (ADR 0065 section 6).
+func TestSecretKeyListLegacyWithAHandSetPredecessor(t *testing.T) {
+	if got := liteSecretKeyList("", "hand-set"); got != devSecretKey+",hand-set" {
+		t.Errorf("got %q, want the constant then the hand-set key", got)
+	}
+}
+
+func fakeServer(t *testing.T, versionOut string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "dexaflow-server")
+	script := "#!/bin/sh\nif [ \"$1\" = version ]; then printf '" + versionOut + "'; exit 0; fi\necho booted >&2; exit 3\n"
+	if err := os.WriteFile(p, []byte(script), 0o700); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	return p
+}
+
+// "No lock, no boot": `dexaflow lite` refuses a server binary that does not
+// advertise the key-migration lock (an older binary found on PATH or passed
+// with --server-bin would ignore the setting and run unprotected).
+func TestCheckServerKeyLock(t *testing.T) {
+	ok := fakeServer(t, `dexaflow-server v0.5.1 (commit x)\ncapabilities: lite-key-lock\n`)
+	if err := checkServerKeyLock(context.Background(), ok); err != nil {
+		t.Errorf("a server advertising the lock was refused: %v", err)
+	}
+	old := fakeServer(t, `dexaflow-server v0.5.0 (commit y)\n`)
+	err := checkServerKeyLock(context.Background(), old)
+	if err == nil || !strings.Contains(err.Error(), old) || !strings.Contains(err.Error(), "--server-bin") {
+		t.Errorf("an old server must be refused, naming it and --server-bin; got %v", err)
+	}
+}
+
+// The owner's rule for restore: config.yaml.pre-restore is kept until the next
+// successful boot, then removed, and the boot says so.
+func TestRemovePreRestoreAfterABoot(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, preRestoreName)
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	removePreRestore(&out, dir, keyState{}, false)
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("%s survived a successful boot", p)
+	}
+	if !strings.Contains(out.String(), p) {
+		t.Errorf("the boot did not say what it removed: %q", out.String())
+	}
+	out.Reset()
+	removePreRestore(&out, dir, keyState{}, false)
+	if out.Len() != 0 {
+		t.Errorf("nothing to remove must print nothing, got %q", out.String())
+	}
+}
+
+// ADR 0065 section 8, decided at acceptance: a boot whose scan found secrets
+// that the restored config's keys do not open (Stranded or Unreadable) keeps
+// config.yaml.pre-restore, since it may hold the key those secrets need.
+func TestPreRestoreKeptWhenTheBootScanIsNotClean(t *testing.T) {
+	for name, st := range map[string]keyState{
+		"stranded":   {stranded: 1},
+		"unreadable": {unreadable: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, preRestoreName)
+			if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			removePreRestore(&out, dir, st, false)
+			if _, err := os.Stat(p); err != nil {
+				t.Fatalf("%s was removed after a boot that is %s: %v", p, name, err)
+			}
+			if !strings.Contains(out.String(), "kept "+p) {
+				t.Errorf("the boot did not say it kept %s: %q", p, out.String())
+			}
+		})
+	}
+}
+
+// Owner decision on ADR 0065 section 8: with both a managed and a Docker
+// datastore on disk, a boot scans only one of them, so even a clean scan keeps
+// config.yaml.pre-restore. Only a scan covering every datastore (migrate-key)
+// may remove it.
+func TestPreRestoreKeptWhenAnotherDatastoreWasNotScanned(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, preRestoreName)
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	removePreRestore(&out, dir, keyState{}, true)
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("%s was removed although a datastore was not scanned: %v", p, err)
+	}
+	if !strings.Contains(out.String(), "kept "+p) || !strings.Contains(out.String(), "migrate-key") {
+		t.Errorf("the boot must say it kept %s and name migrate-key: %q", p, out.String())
+	}
+}
+
+// The boot sees two datastores on disk when the managed cluster exists and the
+// install has also used the Docker one.
+func TestBootSeesTwoDatastoresOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	if bootHasUnscannedDatastore(dir) {
+		t.Fatal("an empty home has no datastore")
+	}
+	mustWrite := func(rel, body string) {
+		t.Helper()
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite("pgdata/PG_VERSION", "16\n")
+	if bootHasUnscannedDatastore(dir) {
+		t.Fatal("only the managed datastore exists")
+	}
+	mustWrite("dev/db-port", "55432")
+	if !bootHasUnscannedDatastore(dir) {
+		t.Fatal("managed and Docker datastores both exist; the boot scans one")
+	}
+}
+
+// A `dexaflow lite` that did not start the managed cluster must not stop it on
+// the way out: the cluster may belong to a running migration (ADR 0065 section
+// 3, "leave the cluster as found").
+func TestManagedCleanupOnlyStopsWhatItStarted(t *testing.T) {
+	stopped := false
+	stop := func() { stopped = true }
+	managedCleanup(false, stop)()
+	if stopped {
+		t.Error("stopped a cluster this run found already running")
+	}
+	managedCleanup(true, stop)()
+	if !stopped {
+		t.Error("did not stop the cluster this run started")
+	}
+}
+
+// The supervisor holds its key-migration lock until the server it supervises
+// exits, and no longer (ADR 0065 section 3). A server that stopped because it
+// lost its lock session must stop `dexaflow lite` too, instead of leaving it
+// watching files for a control plane that is gone.
+func TestSuperviseServerStopsWithTheServer(t *testing.T) {
+	srv := exec.CommandContext(context.Background(), "sh", "-c", "exit 3")
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, exited := superviseServer(context.Background(), srv)
+	select {
+	case <-ctx.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor context outlived the server")
+	}
+	err := exited()
+	if !errors.Is(err, errServerExited) || !strings.Contains(err.Error(), "exit status 3") {
+		t.Errorf("exited() = %v, want errServerExited with the exit status", err)
+	}
+}
+
+// A stop the operator asked for (Ctrl-C) is not reported as the server exiting.
+func TestSuperviseServerIgnoresAnOperatorStop(t *testing.T) {
+	srv := exec.CommandContext(context.Background(), "sleep", "30")
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Process.Kill() })
+	parent, cancel := context.WithCancel(context.Background())
+	ctx, exited := superviseServer(parent, srv)
+	cancel()
+	<-ctx.Done()
+	if err := exited(); err != nil {
+		t.Errorf("exited() = %v after an operator stop, want nil", err)
+	}
+}

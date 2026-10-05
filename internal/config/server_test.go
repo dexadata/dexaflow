@@ -906,3 +906,48 @@ func TestValidateServiceToken(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadServerLogsTailPublish pins the live-tail publish gate: it defaults to
+// "always" (every line published, as before), binds from the DEXAFLOW_* and the
+// legacy LEOFLOW_* variable and from a legacy leoflow.yaml, and rejects an
+// unknown value.
+func TestLoadServerLogsTailPublish(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Logs.Tail.Publish != "always" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"always\" by default", c.Logs.Tail.Publish)
+	}
+	for _, env := range []string{"DEXAFLOW_LOGS_TAIL_PUBLISH", "LEOFLOW_LOGS_TAIL_PUBLISH"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "on_demand")
+			fromEnv, lerr := LoadServer("", nil)
+			if lerr != nil {
+				t.Fatalf("LoadServer: %v", lerr)
+			}
+			if fromEnv.Logs.Tail.Publish != "on_demand" {
+				t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from %s", fromEnv.Logs.Tail.Publish, env)
+			}
+		})
+	}
+	file := filepath.Join(t.TempDir(), "leoflow.yaml")
+	if werr := os.WriteFile(file, []byte("logs:\n  tail:\n    publish: on_demand\n"), 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+	c, err = LoadServer(file, nil)
+	if err != nil {
+		t.Fatalf("LoadServer(leoflow.yaml): %v", err)
+	}
+	if c.Logs.Tail.Publish != "on_demand" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from leoflow.yaml", c.Logs.Tail.Publish)
+	}
+	bad := &ServerConfig{}
+	bad.Auth.Provider = AuthProviderJWT
+	bad.Auth.JWT.Secret = "set"
+	bad.Server.HTTPAddr = "0.0.0.0:8080"
+	bad.Logs.Tail.Publish = "sometimes"
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate() accepted an unknown logs.tail.publish")
+	}
+}

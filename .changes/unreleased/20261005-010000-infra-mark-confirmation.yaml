@@ -8,6 +8,6 @@ body: |-
   re-places the task nor fails its downstream tasks. If no confirmation arrives
   within 2 minutes the planner acts anyway and meters
   `infra_confirm_valve_open`. Lite confirms at mark time and is unchanged.
-  Adds the `task_instances.infra_confirmed_at` column (migration 040); marks
+  Adds the `task_instances.infra_confirmed_at` column (migration 039); marks
   made before the upgrade count as confirmed.
 time: 2026-10-05T01:00:00.000000000-03:00

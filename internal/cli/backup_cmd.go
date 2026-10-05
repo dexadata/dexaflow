@@ -54,6 +54,14 @@ func runBackup(cmd *cobra.Command, output string) error {
 	if _, err := os.Stat(leoflowHome); err != nil {
 		return fmt.Errorf("no Lite install found at %s — run `dexaflow setup` first", leoflowHome)
 	}
+	// Shared config lock for the whole backup (ADR 0065 section 3): an archive
+	// never pairs a datastore a key migration has committed with the config
+	// from before it.
+	release, lerr := lockConfigDir(leoflowHome, configLockShared, false)
+	if lerr != nil {
+		return lerr
+	}
+	defer release()
 	cfg := loadUserConfig(home)
 	if cfg == nil {
 		return fmt.Errorf("could not read %s/config.yaml", leoflowHome)

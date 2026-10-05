@@ -37,6 +37,18 @@ func newResetPasswordCommand() *cobra.Command {
 func runResetPassword(cmd *cobra.Command, userEmail string) error {
 	out := cmd.OutOrStdout()
 	home := invokingUserHome()
+	// The config lock first, before anything else (ADR 0065 section 3): this
+	// command rewrites config.yaml and must not interleave with a key
+	// migration or another writer.
+	if home != "" {
+		if _, serr := os.Stat(stateDirIn(home)); serr == nil {
+			release, lerr := lockConfigDir(stateDirIn(home), configLockExclusive, false)
+			if lerr != nil {
+				return lerr
+			}
+			defer release()
+		}
+	}
 	cfg := loadUserConfig(home)
 	email := resolveAdminEmail(userEmail, cfg)
 
