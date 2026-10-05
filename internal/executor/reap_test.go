@@ -49,18 +49,27 @@ type fakeReapStore struct {
 	listErr    error
 	reaped     []string
 	reapErr    error
+	// noop lists runs whose atomic re-check finds them no longer orphaned, so
+	// ReapRun reports a no-op for them.
+	noop map[string]bool
+	// quietBefore records the cutoff passed with each ReapRun call.
+	quietBefore []time.Time
 }
 
 func (f *fakeReapStore) ListReapCandidates(_ context.Context) ([]ReapCandidate, error) {
 	return f.candidates, f.listErr
 }
 
-func (f *fakeReapStore) ReapRun(_ context.Context, runID string) error {
+func (f *fakeReapStore) ReapRun(_ context.Context, runID string, quietBefore time.Time) (bool, error) {
+	f.quietBefore = append(f.quietBefore, quietBefore)
 	if f.reapErr != nil {
-		return f.reapErr
+		return false, f.reapErr
+	}
+	if f.noop[runID] {
+		return false, nil
 	}
 	f.reaped = append(f.reaped, runID)
-	return nil
+	return true, nil
 }
 
 // TestReapOrphans_MarksStaleRuns: only candidates older than the threshold are
@@ -112,11 +121,11 @@ func (p *panicReapStore) ListReapCandidates(context.Context) ([]ReapCandidate, e
 	}
 	return []ReapCandidate{{RunID: "doomed", LastActivity: time.Now().Add(-1 * time.Hour)}}, nil
 }
-func (p *panicReapStore) ReapRun(context.Context, string) error {
+func (p *panicReapStore) ReapRun(context.Context, string, time.Time) (bool, error) {
 	if p.panicOnReap {
 		panic("boom: ReapRun")
 	}
-	return nil
+	return true, nil
 }
 
 // TestReapOrphans_PanicInListDoesNotCrash is the most critical resilience pin:
