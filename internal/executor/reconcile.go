@@ -286,30 +286,42 @@ func boundReason(reason string) string {
 	return taskoutcome.TruncateReason(reason, taskoutcome.MaxReasonLen)
 }
 
-// tryNumberOf reads the attempt the pod ran, from the leoflow.io/try-number label
-// BuildPod sets. It guards the settle against clobbering a different attempt, so a
-// pod whose label is missing or unparseable is not settled (ok is false).
-func tryNumberOf(pod *corev1.Pod) (int, bool) {
-	s := pod.Labels["leoflow.io/try-number"]
+// attemptOf reads the attempt the pod ran from the labels BuildPod sets: the
+// try from leoflow.io/try-number and the epoch from leoflow.io/attempt-epoch
+// (ADR 0051 amendment). They guard the settle against clobbering a different
+// attempt, so a pod whose try label is missing or unparseable, or whose epoch
+// label is present but unparseable, is not settled (ok is false). A missing
+// epoch label is epoch 0: the pod was created before the epoch existed, and it
+// can only settle a row that no post-upgrade dispatch has claimed (#1130).
+//
+// The reconciler fences on the label, never on the outcome record's own epoch:
+// the control plane wrote the label, and the task cannot change it.
+func attemptOf(pod *corev1.Pod) (try, epoch int, ok bool) {
+	s := pod.Labels[podLabelTryNumber]
 	if s == "" {
-		return 0, false
+		return 0, 0, false
 	}
-	n, err := strconv.Atoi(s)
+	try, err := strconv.Atoi(s)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	return n, true
+	epoch, ok = podEpoch(pod)
+	if !ok {
+		return 0, 0, false
+	}
+	return try, epoch, true
 }
 
 // OutcomeReporter records a terminal task-instance outcome the reconciler
 // recovered from a pod (its durable outcome record, or its phase). Every method is
-// guarded by the attempt (try_number) so a stale reconciler acting on a previous
-// attempt's pod never clobbers a live retry, and is idempotent: a settle on an
-// already-terminal instance is a no-op, not an error.
+// guarded by the attempt (try_number and attempt_epoch, from the pod's labels) so
+// a stale reconciler acting on a previous attempt's pod never clobbers a live
+// retry or re-place (#1130), and is idempotent: a settle on an already-terminal
+// or superseded instance is a no-op, not an error.
 type OutcomeReporter interface {
-	FailTask(ctx context.Context, taskInstanceID string, tryNumber int, reason string) error
-	SucceedTask(ctx context.Context, taskInstanceID string, tryNumber int) error
-	RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber int, at time.Time) error
+	FailTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error
+	SucceedTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error
+	RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, at time.Time) error
 }
 
 // PodSnapshotter supplies the reconciler's task-pod set from a local cache instead
@@ -420,12 +432,14 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 				continue
 			}
 			// A reschedule pod's record must NOT linger to be re-applied. Reschedule
-			// redispatch reuses the same try_number (it consumes no attempt, #380), so
-			// the attempt guard cannot tell a stale poke pod from the re-dispatched
-			// live one — a lingering poke pod would re-park the live attempt with an
-			// already-elapsed reschedule_at and flap the sensor. It exited cleanly
-			// (nothing to inspect), so collect it now instead of after the grace
-			// period, well before the next redispatch. (ADR 0052)
+			// redispatch reuses the same try_number (it consumes no attempt, #380). The
+			// attempt epoch now tells a stale poke pod from the re-dispatched live one
+			// (ADR 0051 amendment), but a poke pod stamped before the epoch existed
+			// is epoch 0, as is a legacy row's next poke during a rolling upgrade, and
+			// a lingering one would re-park the live attempt with an already-elapsed
+			// reschedule_at and flap the sensor. It exited cleanly (nothing to
+			// inspect), so collect it now instead of after the grace period, well
+			// before the next redispatch. (ADR 0052)
 			if v.settle == settleReschedule {
 				r.collect(ctx, pod)
 				continue
@@ -486,19 +500,19 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 	if tiID == "" {
 		return nil
 	}
-	tryNumber, ok := tryNumberOf(pod)
+	tryNumber, epoch, ok := attemptOf(pod)
 	if !ok {
-		// Anomalous pod — BuildPod always sets the label, so this is a hand-created
-		// or old-version pod. Without the attempt we cannot guard the settle, and
+		// Anomalous pod: BuildPod always sets the try label and never an
+		// unparseable epoch, so this is a hand-created or old-version pod. Without the attempt we cannot guard the settle, and
 		// settling unguarded could clobber a different attempt. Skip the settle and
 		// let the pod age out normally (the heartbeat reaper is the task instance's
 		// backstop); returning an error here would leak the pod forever, since the
 		// label will never appear on a later tick.
-		slog.Error("cannot settle task pod without a try-number; leaving the TI to the reaper",
+		slog.Error("cannot settle task pod without a valid try-number and attempt epoch; leaving the TI to the reaper",
 			"pod", pod.Name, "task_instance", tiID)
 		return nil
 	}
-	if err := r.recordOutcome(ctx, tiID, tryNumber, v); err != nil {
+	if err := r.recordOutcome(ctx, tiID, tryNumber, epoch, v); err != nil {
 		slog.Error("recording task pod outcome", "pod", pod.Name, "task_instance", tiID,
 			"settle", v.settle, "from_record", v.fromRecord, "error", err)
 		return err
@@ -506,14 +520,14 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 	return nil
 }
 
-func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber int, v verdict) error {
+func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber, epoch int, v verdict) error {
 	switch v.settle {
 	case settleSucceeded:
-		return r.reporter.SucceedTask(ctx, tiID, tryNumber)
+		return r.reporter.SucceedTask(ctx, tiID, tryNumber, epoch)
 	case settleReschedule:
-		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, v.at)
+		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, epoch, v.at)
 	case settleFailed:
-		return r.reporter.FailTask(ctx, tiID, tryNumber, v.reason)
+		return r.reporter.FailTask(ctx, tiID, tryNumber, epoch, v.reason)
 	case settleNothing:
 		return nil
 	default:

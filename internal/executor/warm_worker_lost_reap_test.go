@@ -31,7 +31,7 @@ func (f *fakeWarmBoundStore) ListWarmBoundRunningTIs(context.Context) ([]WarmBou
 	return f.bound, f.listErr
 }
 
-func (f *fakeWarmBoundStore) MarkTaskPodLost(_ context.Context, id string) (bool, error) {
+func (f *fakeWarmBoundStore) MarkTaskPodLost(_ context.Context, id string, _, _ int) (bool, error) {
 	if f.markErr != nil {
 		return false, f.markErr
 	}
@@ -223,7 +223,9 @@ type panickyWarmStore struct{}
 func (panickyWarmStore) ListWarmBoundRunningTIs(context.Context) ([]WarmBoundTI, error) {
 	panic("boom")
 }
-func (panickyWarmStore) MarkTaskPodLost(context.Context, string) (bool, error) { return true, nil }
+func (panickyWarmStore) MarkTaskPodLost(context.Context, string, int, int) (bool, error) {
+	return true, nil
+}
 
 // TestWarmWorkerLostReaper_PanicRecovered: a panic anywhere in run is recovered,
 // mirroring the sibling reapers, so one bad tick never crashes the scheduler.

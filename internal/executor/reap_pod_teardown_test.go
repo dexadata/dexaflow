@@ -36,11 +36,11 @@ type deletedTask struct {
 	try    int
 }
 
-func (f *fakePodManager) DeleteTaskPod(_ context.Context, runID, taskID string, try int) error {
+func (f *fakePodManager) DeleteTaskPod(_ context.Context, a Attempt) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
-	f.deletedTasks = append(f.deletedTasks, deletedTask{runID, taskID, try})
+	f.deletedTasks = append(f.deletedTasks, deletedTask{a.RunID, a.TaskID, a.TryNumber})
 	return nil
 }
 
@@ -56,12 +56,12 @@ func (f *fakePodManager) DeleteRunPods(_ context.Context, runID string) error {
 // fixtures here are about a pod that is gone. Absence is the one presence that
 // AUTHORIZES a reap, so a test about deferral must populate `active` or
 // `terminal` explicitly rather than rely on the zero-configuration default.
-func (f *fakePodManager) TaskPodPresence(_ context.Context, runID, taskID string, try int) (PodPresence, error) {
+func (f *fakePodManager) TaskPodPresence(_ context.Context, a Attempt) (PodPresence, error) {
 	f.activeCalls++
 	if f.activeErr != nil {
 		return PodPresenceLive, f.activeErr
 	}
-	key := fmt.Sprintf("%s/%s/%d", runID, taskID, try)
+	key := fmt.Sprintf("%s/%s/%d", a.RunID, a.TaskID, a.TryNumber)
 	switch {
 	case f.active[key]:
 		return PodPresenceLive, nil

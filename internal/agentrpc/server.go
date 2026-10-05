@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/auth"
@@ -193,8 +194,9 @@ type Server struct {
 	// indefinitely on a peer must select on this. nil (the default) keeps streams
 	// open until the peer ends them.
 	shutdown <-chan struct{}
-	// legacyTokens meters task tokens without an attempt_epoch claim (nil: off).
-	legacyTokens LegacyTokenRecorder
+	// legacyTokens meters task tokens without an attempt_epoch claim (unset or
+	// nil recorder: off). Atomic because it is attached after Serve starts.
+	legacyTokens atomic.Pointer[legacyRecorderBox]
 	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
 	// PushXCom and FetchXCom do not reload the full task spec on every call.
 	attemptSpecs *attemptSpecCache

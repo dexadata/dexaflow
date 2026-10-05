@@ -46,7 +46,7 @@ func epochRails() []struct {
 		rail func(t *testing.T, f *staleHeartbeatFixture)
 	}{
 		{"infra re-place", func(t *testing.T, f *staleHeartbeatFixture) {
-			if ok, err := f.sched.MarkTaskAgentLost(f.ctx, f.tiID); err != nil || !ok {
+			if ok, err := f.sched.MarkTaskAgentLost(f.ctx, f.tiID, f.tryNumber(t), f.attemptEpoch(t)); err != nil || !ok {
 				t.Fatalf("MarkTaskAgentLost ok=%v err=%v", ok, err)
 			}
 			if applied, err := f.sched.ResetForInfraReplace(f.ctx, f.runUUID, "t"); err != nil || !applied {

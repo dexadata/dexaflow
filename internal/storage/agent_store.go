@@ -307,10 +307,10 @@ func (s *ExecutionStore) IsTaskInstanceLive(ctx context.Context, id auth.AgentId
 }
 
 // FailTask marks a task instance failed by its ID, guarded by the attempt
-// (try_number) and the active states so it never clobbers a different attempt or a
+// (try_number and attempt_epoch, from the pod's labels) and the active states so it never clobbers a different attempt or a
 // terminal row. It implements part of executor.OutcomeReporter for the pod
 // reconciler (ADR 0052).
-func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tryNumber int, reason string) error {
+func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return err
@@ -319,6 +319,7 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 	return s.q.FailTaskInstanceIfActive(ctx, queries.FailTaskInstanceIfActiveParams{
 		ID:           tid,
 		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
 		ErrorMessage: &msg,
 	})
 }
@@ -326,21 +327,22 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 // SucceedTask marks a task instance succeeded by its ID — recovering a success
 // whose report was lost (ADR 0052) — guarded by the attempt and the active states.
 // A settle on an already-terminal or superseded row is a no-op.
-func (s *ExecutionStore) SucceedTask(ctx context.Context, taskInstanceID string, tryNumber int) error {
+func (s *ExecutionStore) SucceedTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return err
 	}
 	return s.q.SucceedTaskInstanceIfActive(ctx, queries.SucceedTaskInstanceIfActiveParams{
-		ID:        tid,
-		TryNumber: toInt32(tryNumber),
+		ID:           tid,
+		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
 	})
 }
 
 // RescheduleTask parks a task instance in up_for_reschedule with the recovered
 // next-poke time, guarded by the attempt and the active states, consuming no retry
 // budget (ADR 0052). Used by the reconciler when a reschedule report was lost.
-func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber int, at time.Time) error {
+func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, at time.Time) error {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return err
@@ -348,6 +350,7 @@ func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID stri
 	return s.q.RescheduleTaskInstanceByIDIfActive(ctx, queries.RescheduleTaskInstanceByIDIfActiveParams{
 		ID:           tid,
 		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
 		RescheduleAt: pgtype.Timestamptz{Time: at, Valid: true},
 	})
 }
@@ -401,8 +404,8 @@ var ErrNotDispatchable = errors.New("task instance is not in a dispatchable stat
 // ResolveTask returns the dispatcher's execution context for a run's task and
 // claims a fresh attempt epoch for the execution it is about to start (ADR 0051
 // amendment). Every call that succeeds moves the row's attempt_epoch forward,
-// so two dispatches of one try never share it. The agent's identity will be
-// minted from the returned value (A2); nothing reads it yet. A row past
+// so two dispatches of one try never share it. The agent's identity (A2) and
+// the pod's attempt-epoch label (A4) are minted from the returned value. A row past
 // dispatch is refused with ErrNotDispatchable and keeps its epoch.
 func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) (dispatch.Resolved, error) {
 	task, spec, ver, _, err := s.resolve(ctx, runID, taskID)

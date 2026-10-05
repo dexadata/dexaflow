@@ -289,8 +289,9 @@ func TestBuildPodAppliesEphemeralStorage(t *testing.T) {
 func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	req := sampleReq()
 	req.Execution.Labels = map[string]string{
-		"team":              "data-eng",
-		"leoflow.io/dag-id": "hijacked", // collision: Dexaflow must win
+		"team":                     "data-eng",
+		"leoflow.io/dag-id":        "hijacked", // collision: Dexaflow must win
+		"leoflow.io/attempt-epoch": "99",       // the settle fence reads it: Dexaflow must win
 	}
 	req.Execution.Annotations = map[string]string{
 		"cost-center":                 "1234",
@@ -303,15 +304,18 @@ func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	if pod.Labels["leoflow.io/dag-id"] != "etl" {
 		t.Errorf("Dexaflow label overridden by DAG: %q, want etl", pod.Labels["leoflow.io/dag-id"])
 	}
+	if pod.Labels["leoflow.io/attempt-epoch"] != "0" {
+		t.Errorf("attempt-epoch label overridden by DAG: %q, want 0", pod.Labels["leoflow.io/attempt-epoch"])
+	}
 	if pod.Annotations["cost-center"] != "1234" {
 		t.Errorf("declared annotation not merged: %v", pod.Annotations)
 	}
 	if pod.Annotations["leoflow.io/task-instance-id"] != "ti-1" {
 		t.Errorf("Dexaflow annotation overridden by DAG: %q, want ti-1", pod.Annotations["leoflow.io/task-instance-id"])
 	}
-	// Omission leaves only Dexaflow's own metadata (5 labels, 1 annotation).
+	// Omission leaves only Dexaflow's own metadata (6 labels, 1 annotation).
 	base := BuildPod(sampleReq())
-	if len(base.Labels) != 5 || len(base.Annotations) != 1 {
+	if len(base.Labels) != 6 || len(base.Annotations) != 1 {
 		t.Errorf("unexpected base metadata: labels=%v annotations=%v", base.Labels, base.Annotations)
 	}
 }

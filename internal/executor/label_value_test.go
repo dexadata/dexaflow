@@ -67,7 +67,7 @@ func TestDeleteTaskPodFindsPodWithLongIDs(t *testing.T) {
 	cs := fake.NewSimpleClientset(pod)
 	e := NewKubernetesExecutor(cs, "leoflow")
 
-	if err := e.DeleteTaskPod(context.Background(), runID, taskID, 2); err != nil {
+	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: runID, TaskID: taskID, TryNumber: 2}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	if got := podNames(t, cs); got[pod.Name] {
