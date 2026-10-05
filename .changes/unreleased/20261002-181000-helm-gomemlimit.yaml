@@ -1,0 +1,4 @@
+kind: Added
+body: |-
+  Helm: `goMemLimit.enabled` (default `false`) renders `GOMEMLIMIT` on the control-plane container as `goMemLimit.percent` (default `80`) of `resources.limits.memory`, so the Go GC collects harder near the container limit instead of being OOM-killed. Any Kubernetes byte quantity is read, including decimals (`1.5Gi`), the `P`/`Pi`/`E`/`Ei` suffixes and decimal exponents (`1e9`); the render fails when the limit is missing or uses a sign or a sub-byte suffix (`m`, `u`, `n`).
+time: 2026-10-02T18:10:00.000000000-03:00

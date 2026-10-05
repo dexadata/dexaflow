@@ -15,8 +15,8 @@ type fakePresenceCache struct {
 	active map[string]bool // "runID/taskID/try" -> cached Pending/Running
 }
 
-func (c *fakePresenceCache) CachedPodActive(runID, taskID string, try int) bool {
-	return c.active[fmt.Sprintf("%s/%s/%d", runID, taskID, try)]
+func (c *fakePresenceCache) CachedPodActive(a Attempt) bool {
+	return c.active[fmt.Sprintf("%s/%s/%d", a.RunID, a.TaskID, a.TryNumber)]
 }
 
 // --- pod-lost reaper -------------------------------------------------------

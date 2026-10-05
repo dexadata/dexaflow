@@ -1,0 +1,12 @@
+kind: Changed
+body: |-
+  **Agent credentials now name the exact execution they were minted for.** The
+  task-scoped agent token carries an `attempt_epoch` claim, taken from the
+  epoch the dispatcher claims, and so does the pod identity annotation that
+  the token exchange reads. Renewal keeps the claim as it is, and a token
+  minted before this release stays without it, so no running attempt is
+  affected by the upgrade. `TaskSpec` and `WorkAssignment` gain an additive
+  `attempt_epoch` field, and agent binaries need no change. Nothing is enforced
+  yet: the report and heartbeat fences that use the claim ship next. (ADR 0051,
+  #911)
+time: 2026-10-04T21:00:00.000000000-03:00

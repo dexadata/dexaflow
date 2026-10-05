@@ -47,21 +47,45 @@ func (r *LogReader) Tail(ctx context.Context, tenant, dagID, runID, taskID strin
 	return lines, cancel, nil
 }
 
+// maxTryLogStreams bounds how many executions' streams one try's log read
+// serves besides epoch 0, the most recent kept; the read opens with a line
+// naming the executions it leaves out. Every execution of a try has its own
+// attempt epoch (ADR 0051 amendment), and a reschedule-mode sensor starts a new
+// execution on every poke, so a long-running sensor's try can span many epochs.
+// A sink that cannot list probes epochs instead, and since a dispatch claims an
+// epoch and every reset rail bumps one too, the bound then covers fewer
+// executions than epochs.
+const maxTryLogStreams = 256
+
 // ReadLogs resolves the run reference (tenant name -> id, run_id -> dag_run id),
 // then opens the stored log for the task attempt. It returns domain.ErrNotFound
 // when the run or its log file is absent. See issue #21 for the resolution cost.
+//
+// The API addresses a try, and one try can have several executions (an infra
+// re-place, a reschedule poke, a repeated dispatch), each storing its stream
+// under its own attempt epoch (#863). The epochs the try can span come from
+// the database (TryAttemptEpochBounds), and logs.ReadAttempts serves every
+// stored one in order, listing the stored executions in one call where the
+// sink can and opening each stream only as the read reaches it. A try that ran
+// once reads exactly as before.
 func (r *LogReader) ReadLogs(ctx context.Context, tenant, dagID, runID, taskID string, tryNumber int) (io.ReadCloser, error) {
 	ref, err := r.q.ResolveRunRef(ctx, queries.ResolveRunRefParams{Name: tenant, DagID: dagID, RunID: runID})
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
-	rc, err := r.sink.Read(logs.Ref{
+	bounds, err := r.q.TryAttemptEpochBounds(ctx, queries.TryAttemptEpochBoundsParams{
+		DagRunID: ref.DagRunID, TaskID: taskID, TryNumber: toInt32(tryNumber),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolving the try's attempt epochs: %w", err)
+	}
+	rc, err := logs.ReadAttempts(r.sink, logs.Ref{
 		TenantID:  uuidToString(ref.TenantID),
 		DagID:     dagID,
 		RunID:     uuidToString(ref.DagRunID),
 		TaskID:    taskID,
 		TryNumber: tryNumber,
-	})
+	}, logs.TryEpochs{Low: int(bounds.Low), High: int(bounds.High), Max: maxTryLogStreams})
 	if err != nil {
 		return nil, classifyLogReadError(err)
 	}

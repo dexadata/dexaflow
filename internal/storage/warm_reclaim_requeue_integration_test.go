@@ -27,7 +27,7 @@ func TestRequeueForRedispatchMovesQueuedToScheduled(t *testing.T) {
 	dagID := fmt.Sprintf("warm_requeue_queued_%d", time.Now().UnixNano())
 	runUUID := seedQueuedTaskNoBind(t, repo, sched, ctx, dagID, "load")
 
-	if err := exec.RequeueForRedispatch(ctx, runUUID, "load", 1); err != nil {
+	if err := exec.RequeueForRedispatch(ctx, runUUID, "load", 1, 0); err != nil {
 		t.Fatalf("RequeueForRedispatch on a queued TI = %v, want nil", err)
 	}
 
@@ -44,7 +44,7 @@ func TestRequeueForRedispatchNoOpOnRunningTI(t *testing.T) {
 	dagID := fmt.Sprintf("warm_requeue_running_%d", time.Now().UnixNano())
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 
-	if err := exec.RequeueForRedispatch(ctx, runUUID, "load", 1); err != nil {
+	if err := exec.RequeueForRedispatch(ctx, runUUID, "load", 1, 0); err != nil {
 		t.Fatalf("RequeueForRedispatch on a running TI = %v, want nil (a guarded no-op is not an error)", err)
 	}
 
@@ -65,7 +65,7 @@ func TestRequeueForRedispatchNoOpOnTerminalTI(t *testing.T) {
 		t.Fatalf("ApplyTransition to failed: %v", err)
 	}
 
-	if err := exec.RequeueForRedispatch(ctx, runUUID, "load", 1); err != nil {
+	if err := exec.RequeueForRedispatch(ctx, runUUID, "load", 1, 0); err != nil {
 		t.Fatalf("RequeueForRedispatch on a terminal TI = %v, want nil (a guarded no-op is not an error)", err)
 	}
 

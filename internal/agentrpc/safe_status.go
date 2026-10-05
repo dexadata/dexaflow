@@ -103,5 +103,6 @@ func attemptAttrs(id *auth.AgentIdentity) []any {
 	return []any{
 		"ti", id.TaskInstanceID, "tenant", id.TenantID, "dag", id.DagID,
 		"run", id.RunID, "task", id.TaskID, "try", id.TryNumber,
+		"epoch", id.AttemptEpoch, "has_epoch", id.HasAttemptEpoch,
 	}
 }

@@ -30,6 +30,19 @@ the model Kubernetes uses:
   fragment with it: patch notes are folded from the fragments on the release
   branch. Only bug, regression and security fixes and release docs are
   cherry-picked, plus what the ADR records as an exception.
+- **Every PR to `main` names its release as a milestone** (`v0.5.1`,
+  `v0.5.2`, ...). The milestone guard check fails a PR without one. A PR
+  milestoned for the patch being cut needs its cherry-pick; one milestoned for
+  a later release stays on `main` until then.
+- **Nothing on `main` is left behind by accident.** `scripts/release-gap.sh
+  X.Y.Z` lists every commit on `main` since `vX.Y.0` that `release-X.Y` does
+  not carry, ignoring PRs milestoned for a later release and the lines of
+  `.github/release-skip.txt` on the release branch (`#N reason` or
+  `<sha> reason`, for what will never ship in this minor, such as an ADR).
+  The cut runs it and refuses a patch while the list is not empty. The
+  commits the cut itself lands on `main` (release prep, docs promotion) never
+  count; a Dependabot bump has no milestone, so it shows in the list until it
+  is cherry-picked or skipped.
 - **Only the newest release branch takes patches.** An older one gets a
   security fix only when the owner decides so for that fix.
 
@@ -161,6 +174,9 @@ scripts/cut-release.sh v0.4.4-rc.1
 
 # Promote it to GA once the RC is validated in staging
 scripts/cut-release.sh v0.4.4
+
+# What main carries that the patch would miss (the cut refuses while non-empty)
+scripts/release-gap.sh 0.5.1 --fetch
 
 # A patch of a minor that already shipped is cut from release-0.5
 scripts/cut-release.sh v0.5.1-rc.1

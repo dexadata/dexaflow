@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +38,10 @@ type Repository struct {
 	cipher      secrets.Cipher
 	extCoverage externalSecretCoverage
 	xcomValues  XComValueDeleter
+	specs       *specCache
+	// tenants caches tenant name -> id (see tenantID). Bounded by the number
+	// of tenants that exist, since only successful lookups are stored.
+	tenants *sync.Map
 }
 
 // XComValueDeleter deletes a stored XCom value by its backend key. xcom.Backend
@@ -61,7 +67,7 @@ type externalSecretCoverage interface {
 
 // NewRepository builds a Repository backed by the given Postgres connection.
 func NewRepository(pg *Postgres) *Repository {
-	return &Repository{q: pg.Queries, pool: pg.Pool}
+	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
 }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
@@ -110,10 +116,27 @@ func mapConflict(err error) error {
 	return err
 }
 
+// tenantID resolves a tenant name to its id. Nearly every repository method
+// starts with it, so a resolved id is cached for the life of the process: a
+// tenant is never renamed or deleted (no query does either), so name -> id
+// cannot change. A miss is not cached, so a tenant created later is found.
+// The one way the mapping changes under a running process is outside it:
+// restoring a backup whose tenants carry different ids. Restart the control
+// plane after such a restore, or every query keeps using the old ids.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
+	if r.tenants != nil {
+		if id, ok := r.tenants.Load(name); ok {
+			if uid, ok := id.(pgtype.UUID); ok {
+				return uid, nil
+			}
+		}
+	}
 	t, err := r.q.GetTenantByName(ctx, name)
 	if err != nil {
 		return pgtype.UUID{}, mapNotFound(err)
+	}
+	if r.tenants != nil {
+		r.tenants.Store(name, t.ID)
 	}
 	return t.ID, nil
 }
@@ -159,24 +182,22 @@ func (r *Repository) FindUserByID(ctx context.Context, id string) (*auth.User, b
 	if err != nil {
 		return nil, false, auth.ErrUserNotFound
 	}
-	row, err := r.q.GetUserByID(ctx, uid)
+	// One round trip: this runs on every authenticated request, so the user,
+	// its roles and its permissions come back from a single statement.
+	row, err := r.q.GetUserPrincipalByID(ctx, uid)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, auth.ErrUserNotFound
 		}
 		return nil, false, fmt.Errorf("loading user by id: %w", err)
 	}
-	roles, err := r.q.GetUserRoles(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading roles: %w", err)
+	var perms [][2]string
+	if err := json.Unmarshal(row.Permissions, &perms); err != nil {
+		return nil, false, fmt.Errorf("decoding permissions: %w", err)
 	}
-	perms, err := r.q.GetUserPermissions(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading permissions: %w", err)
-	}
-	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: roles}
+	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: row.Roles}
 	for _, p := range perms {
-		user.Permissions = append(user.Permissions, auth.Permission{Action: p.Action, Resource: p.Resource})
+		user.Permissions = append(user.Permissions, auth.Permission{Action: p[0], Resource: p[1]})
 	}
 	return user, row.IsActive, nil
 }
@@ -434,6 +455,41 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 		return nil, 0, fmt.Errorf("listing dag runs: %w", err)
 	}
 	total, err := r.q.CountDagRunsByDag(ctx, dag.ID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
+	}
+	out := make([]domain.DagRun, 0, len(rows))
+	for _, run := range rows {
+		out = append(out, mapDagRunWithVersion(queries.GetDagRunWithVersionRow(run), dagID))
+	}
+	return out, int(total), nil
+}
+
+// ListDagRunsAfter returns up to limit of a DAG's runs strictly before the
+// cursor, newest first, and the number of runs matching states (all runs when
+// states is empty). It is the keyset form of ListDagRuns: the same order, but a
+// deep page is an index range scan instead of a scan past every skipped row.
+func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string, states []string, after domain.PageCursor, limit int) ([]domain.DagRun, int, error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListDagRunsByDagAfter(ctx, queries.ListDagRunsByDagAfterParams{
+		DagID: dag.ID, States: states, AfterLogicalDate: pgtype.Timestamptz{Time: after.At, Valid: true},
+		AfterRunID: after.Key, RowLimit: toInt32(limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing dag runs: %w", err)
+	}
+	var total int64
+	if len(states) == 0 {
+		total, err = r.q.CountDagRunsByDag(ctx, dag.ID)
+	} else {
+		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{DagID: dag.ID, States: states})
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
 	}
@@ -945,7 +1001,10 @@ func (r *Repository) RecordSecretLivenessDenial(ctx context.Context, tenantID, d
 }
 
 // SetTaskInstanceState sets a task instance's state directly, backing the UI's
-// "mark success"/"mark failed" actions. It does not run the task.
+// "mark success"/"mark failed" actions. It does not run the task. A user's
+// state is a verdict, so it clears an infra failure kind and confirms the row:
+// a reaped task marked failed is neither re-placed nor overridden by a late
+// SUCCESS record (ADR 0052 amendment).
 func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, runID, taskID, state string) error {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -955,7 +1014,7 @@ func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, ru
 	if err != nil {
 		return mapNotFound(err)
 	}
-	if err := r.q.UpdateTaskInstanceStateByRunTask(ctx, queries.UpdateTaskInstanceStateByRunTaskParams{
+	if err := r.q.SetTaskInstanceStateByUser(ctx, queries.SetTaskInstanceStateByUserParams{
 		State: queries.TaskState(state), DagRunID: run.ID, TaskID: taskID,
 	}); err != nil {
 		return fmt.Errorf("setting task %q state: %w", taskID, err)
@@ -1056,13 +1115,20 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 	if err != nil {
 		return domain.DAGSpec{}, err
 	}
-	raw, err := r.q.GetCurrentDagSpec(ctx, queries.GetCurrentDagSpecParams{TenantID: tid, DagID: dagID})
+	// Only the current version id is read here; the spec itself comes from the
+	// shared cache keyed by that immutable id, so a grid or graph poll neither
+	// ships the spec JSON over the wire nor decodes it again. The returned spec
+	// is shared and must not be mutated (see specCache).
+	dag, err := r.q.GetDagByDagID(ctx, queries.GetDagByDagIDParams{TenantID: tid, DagID: dagID})
 	if err != nil {
 		return domain.DAGSpec{}, mapNotFound(err)
 	}
-	var spec domain.DAGSpec
-	if err := json.Unmarshal(raw, &spec); err != nil {
-		return domain.DAGSpec{}, fmt.Errorf("decoding current spec: %w", err)
+	if !dag.CurrentVersionID.Valid {
+		return domain.DAGSpec{}, domain.ErrNotFound
+	}
+	_, spec, err := r.specs.getCurrent(ctx, r.q, currentSpecKey{tenant: tid, dagID: dagID}, dag.CurrentVersionID)
+	if err != nil {
+		return domain.DAGSpec{}, fmt.Errorf("loading current spec: %w", err)
 	}
 	return spec, nil
 }
@@ -1447,15 +1513,54 @@ func (r *Repository) ListAuditLogs(ctx context.Context, tenant, dagID string, li
 	}
 	out := make([]domain.AuditLogEntry, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.AuditLogEntry{
-			ID:           row.ID,
-			When:         timeVal(row.OccurredAt),
-			Action:       row.Action,
-			ResourceType: strOrEmpty(row.ResourceType),
-			ResourceID:   strOrEmpty(row.ResourceID),
-			Owner:        row.Owner,
-			Extra:        string(row.Metadata),
-		})
+		out = append(out, mapAuditLogEntry(row))
+	}
+	return out, int(total), nil
+}
+
+func mapAuditLogEntry(row queries.ListAuditLogsRow) domain.AuditLogEntry {
+	return domain.AuditLogEntry{
+		ID:           row.ID,
+		When:         timeVal(row.OccurredAt),
+		Action:       row.Action,
+		ResourceType: strOrEmpty(row.ResourceType),
+		ResourceID:   strOrEmpty(row.ResourceID),
+		Owner:        row.Owner,
+		Extra:        string(row.Metadata),
+	}
+}
+
+// ListAuditLogsAfter returns up to limit of the tenant's audit entries
+// strictly before the cursor, newest first, optionally filtered to one DAG, and
+// the number of entries matching the filter. It is the keyset form of
+// ListAuditLogs; the cursor key is the entry id.
+func (r *Repository) ListAuditLogsAfter(ctx context.Context, tenant, dagID string, after domain.PageCursor, limit int) ([]domain.AuditLogEntry, int, error) {
+	afterID, err := strconv.ParseInt(after.Key, 10, 64)
+	if err != nil {
+		return nil, 0, domain.Safef(domain.ErrValidation, "invalid audit log cursor")
+	}
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return nil, 0, err
+	}
+	var dagFilter *string
+	if dagID != "" {
+		dagFilter = &dagID
+	}
+	rows, err := r.q.ListAuditLogsAfter(ctx, queries.ListAuditLogsAfterParams{
+		TenantID: tid, DagID: dagFilter, AfterOccurredAt: pgtype.Timestamptz{Time: after.At, Valid: true},
+		AfterID: afterID, RowLimit: toInt32(limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing audit logs: %w", err)
+	}
+	total, err := r.q.CountAuditLogs(ctx, queries.CountAuditLogsParams{TenantID: tid, DagID: dagFilter})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting audit logs: %w", err)
+	}
+	out := make([]domain.AuditLogEntry, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapAuditLogEntry(queries.ListAuditLogsRow(row)))
 	}
 	return out, int(total), nil
 }
@@ -1467,7 +1572,14 @@ func (r *Repository) DeleteDag(ctx context.Context, tenant, dagID string) error 
 	if err != nil {
 		return err
 	}
-	rows, err := r.q.DeleteDag(ctx, queries.DeleteDagParams{TenantID: tid, DagID: dagID})
+	// The cascade covers every version, run and task instance of the DAG, so
+	// it runs without the API statement timeout.
+	var rows int64
+	err = withoutStatementTimeout(ctx, r.pool, r.q, func(q *queries.Queries) error {
+		var derr error
+		rows, derr = q.DeleteDag(ctx, queries.DeleteDagParams{TenantID: tid, DagID: dagID})
+		return derr
+	})
 	if err != nil {
 		return fmt.Errorf("deleting dag: %w", err)
 	}
@@ -2019,7 +2131,13 @@ func (r *Repository) ClearDagHistory(ctx context.Context, tenant, dagID string) 
 	if err != nil {
 		return err
 	}
-	if _, err := r.q.ClearDagRuns(ctx, dag.ID); err != nil {
+	// Like DeleteDag, the cascade covers every run and task instance of the
+	// DAG, so it runs without the API statement timeout.
+	err = withoutStatementTimeout(ctx, r.pool, r.q, func(q *queries.Queries) error {
+		_, cerr := q.ClearDagRuns(ctx, dag.ID)
+		return cerr
+	})
+	if err != nil {
 		return fmt.Errorf("clearing dag history: %w", err)
 	}
 	return nil

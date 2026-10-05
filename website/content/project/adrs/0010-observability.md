@@ -36,9 +36,15 @@ The following metrics **must exist** before the MVP is considered complete. They
 |---|---|---|
 | `leoflow_scheduler_loop_duration_seconds` | Histogram | — |
 | `leoflow_scheduler_decisions_total` | Counter | `decision_type` (schedule/skip/defer) |
-| `leoflow_scheduler_leader` | Gauge | `replica_id` |
-| `leoflow_active_dag_runs` | Gauge | `dag_id`, `state` |
-| `leoflow_queued_tasks` | Gauge | `dag_id` |
+| ~~`leoflow_scheduler_leader`~~ | Gauge | `replica_id` |
+| ~~`leoflow_active_dag_runs`~~ | Gauge | `dag_id`, `state` |
+| ~~`leoflow_queued_tasks`~~ | Gauge | `dag_id` |
+
+> **Superseded in part by #1323.** The three gauges struck out above were
+> registered but nothing ever set them, so they never produced a series. They
+> are removed from the binary and from this required set. Leadership and run
+> and queue depth can be read from the database or the API until a gauge is
+> wired to a real source.
 
 ### Task Lifecycle
 
@@ -72,9 +78,14 @@ The following metrics **must exist** before the MVP is considered complete. They
 | Metric | Type | Labels |
 |---|---|---|
 | `leoflow_pods_created_total` | Counter | `dag_id`, `result` (success/error) |
-| `leoflow_pods_running` | Gauge | — |
+| ~~`leoflow_pods_running`~~ | Gauge | none |
 | `leoflow_pod_pending_duration_seconds` | Histogram | — |
 | `leoflow_kubernetes_api_calls_total` | Counter | `operation`, `result` |
+
+> **Superseded in part by #1323.** `leoflow_pods_running` (and its `dexaflow_`
+> name) was registered but never set, so every scrape reported a constant `0`
+> that a dashboard reads as a real measurement. It is removed; count task pods
+> with kube-state-metrics.
 
 ## Tracing
 

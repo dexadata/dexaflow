@@ -38,8 +38,18 @@ type AgentLostCandidate struct {
 	// bumps try_number in place and dispatches a new pod with a new
 	// try-number label, so pinning it here means a newer live attempt's pod
 	// can never be deleted by mistake.
-	TryNumber     int
+	TryNumber int
+	// AttemptEpoch is the epoch the row's current execution was dispatched
+	// with (ADR 0051 amendment). The mark and the pod teardown are pinned to it
+	// as well as to TryNumber, so a row re-placed or re-dispatched between the
+	// list and the write is a different attempt and is left alone.
+	AttemptEpoch  int
 	LastHeartbeat time.Time
+}
+
+// attempt is the execution this candidate names, for the pod teardown.
+func (c AgentLostCandidate) attempt() Attempt {
+	return Attempt{RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch}
 }
 
 // IsAgentLost reports whether the agent has been silent long enough to be
@@ -69,7 +79,7 @@ type HeartbeatReapStore interface {
 	// idempotent. It returns whether a row was actually updated: false means a
 	// late terminal report transitioned the TI between the list and this write,
 	// so the caller must NOT treat it as reaped (no false log, no pod delete).
-	MarkTaskAgentLost(ctx context.Context, taskInstanceID string) (bool, error)
+	MarkTaskAgentLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
 
 // agentLostReaper is the scheduler-internal worker that fails TIs whose agent
@@ -188,7 +198,7 @@ func (r *agentLostReaper) reapNeverHeartbeated(ctx context.Context, c PodLostCan
 		r.record("agent_lost_gate_skip")
 		return
 	}
-	applied, err := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID)
+	applied, err := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if err != nil {
 		r.logger.Error("marking never-heartbeated task agent-lost",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", err)
@@ -204,7 +214,7 @@ func (r *agentLostReaper) reapNeverHeartbeated(ctx context.Context, c PodLostCan
 	r.record("agent_lost_never_heartbeated")
 	r.writeAgentLostMarker(AgentLostCandidate{
 		TaskInstanceID: c.TaskInstanceID, TenantID: c.TenantID, DagRunID: c.DagRunID, DagID: c.DagID,
-		TaskID: c.TaskID, TryNumber: c.TryNumber,
+		TaskID: c.TaskID, TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
 	}, now)
 }
 
@@ -215,7 +225,7 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 		r.record("agent_lost_gate_skip")
 		return
 	}
-	applied, ferr := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID)
+	applied, ferr := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if ferr != nil {
 		r.logger.Error("marking task agent-lost",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", ferr)
@@ -238,7 +248,7 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 	// (#861) — the log stream stops the moment the pod is gone.
 	r.writeAgentLostMarker(c, now)
 	// The TI is now durably failed; delete its pod so a partitioned-but-alive
-	// container stops (#474). Pinned to (run, task, try) so a retry's newer
+	// container stops (#474). Pinned to (run, task, try, epoch) so a newer
 	// pod is never touched. Only reached after the DB mark, so we never delete
 	// a pod for a TI we did not settle. Best-effort: a delete error is logged.
 	//
@@ -254,7 +264,7 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 		r.record("agent_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.DagRunID, c.TaskID, c.TryNumber); derr != nil {
+	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
 		r.logger.Error("deleting agent-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("agent_lost_pod_delete_error")
@@ -273,7 +283,10 @@ func (r *agentLostReaper) writeAgentLostMarker(c AgentLostCandidate, now time.Ti
 	if c.LastHeartbeat.IsZero() {
 		msg = fmt.Sprintf("killed: agent_lost (no heartbeat ever, agent and task processes gone, running past %s threshold)", r.threshold)
 	}
-	ref := logs.Ref{TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber}
+	ref := logs.Ref{
+		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,
+		TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
+	}
 	ev := logs.Event{
 		Time:    now,
 		Level:   "error",

@@ -128,9 +128,9 @@ func TestBuffered_Async_AcceptsAndDrains(t *testing.T) {
 
 // TestBuffered_Async_BackpressureWhenChannelFull is the load-bearing
 // backpressure contract: when the channel cannot accept a new request,
-// Dispatch returns ErrAtCapacity. The scheduler treats this exactly like a
-// transient inner-dispatcher error: log + metric + leave TI as scheduled so
-// the next tick re-tries. This is what bounds tick latency under load.
+// Dispatch returns (Deferred, ErrAtCapacity). The scheduler leaves the TI
+// scheduled so a later tick re-tries, without charging a dispatch attempt
+// (review item S2). This is what bounds tick latency under load.
 func TestBuffered_Async_BackpressureWhenChannelFull(t *testing.T) {
 	// One slow worker, channel-of-one — the second Dispatch must fail fast
 	// because the first is blocking the only worker and the channel is full.
@@ -145,9 +145,12 @@ func TestBuffered_Async_BackpressureWhenChannelFull(t *testing.T) {
 	// first call, the channel has only one slot, and the test floods the queue.
 	hitCapacity := false
 	for i := 0; i < 10 && !hitCapacity; i++ {
-		_, err := d.Dispatch(context.Background(), "r1", "etl", "", domain.TaskSpec{TaskID: "flood"})
+		disp, err := d.Dispatch(context.Background(), "r1", "etl", "", domain.TaskSpec{TaskID: "flood"})
 		if errors.Is(err, dispatch.ErrAtCapacity) {
 			hitCapacity = true
+			if disp != executor.Deferred {
+				t.Errorf("a full buffer must classify as Deferred, got %v", disp)
+			}
 		}
 	}
 	if !hitCapacity {
@@ -301,9 +304,12 @@ func TestBuffered_DispatchAfterClose_ReturnsAtCapacity(t *testing.T) {
 	if err := d.Close(); err != nil {
 		t.Fatalf("Close err = %v", err)
 	}
-	_, err := d.Dispatch(context.Background(), "r", "d", "", domain.TaskSpec{TaskID: "t"})
+	disp, err := d.Dispatch(context.Background(), "r", "d", "", domain.TaskSpec{TaskID: "t"})
 	if !errors.Is(err, dispatch.ErrAtCapacity) {
 		t.Fatalf("Dispatch after Close = %v, want ErrAtCapacity (must not panic)", err)
+	}
+	if disp != executor.Deferred {
+		t.Errorf("Dispatch after Close must classify as Deferred, got %v", disp)
 	}
 }
 
@@ -387,5 +393,60 @@ func TestBuffered_Close_ReturnsWhenWorkerHangs(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Close did not return within 3s while a worker was hung — shutdown would block until SIGKILL")
+	}
+}
+
+// dispositionInner fails every dispatch with a fixed disposition, as the real
+// executor classifies a quota 403 / 429 (Backpressure) or anything else
+// (Rejected).
+type dispositionInner struct {
+	disp executor.Disposition
+	err  error
+}
+
+func (d dispositionInner) Dispatch(context.Context, string, string, string, domain.TaskSpec) (executor.Disposition, error) {
+	return d.disp, d.err
+}
+
+// retrySink is a FailureSink that also handles worker failures the way the
+// scheduler handles synchronous ones.
+type retrySink struct {
+	recordingSink
+	mu      sync.Mutex
+	handled []executor.Disposition
+}
+
+func (r *retrySink) HandleDispatchFailure(_ context.Context, _, _ string, disp executor.Disposition, _ error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.handled = append(r.handled, disp)
+	return nil
+}
+
+// TestBuffered_WorkerFailureIsReofferedThroughARetrySink: a worker-side
+// dispatch failure carries its disposition to a sink that can re-offer it, so
+// cluster backpressure and transient errors are retried like on the
+// synchronous path instead of failing the task at once.
+func TestBuffered_WorkerFailureIsReofferedThroughARetrySink(t *testing.T) {
+	for _, disp := range []executor.Disposition{executor.Backpressure, executor.Rejected} {
+		t.Run(disp.String(), func(t *testing.T) {
+			sink := &retrySink{}
+			bd := dispatch.NewBuffered(dispositionInner{disp: disp, err: errors.New("dispatch failed")}, sink, discardLogger(), nil,
+				dispatch.BufferConfig{BufferSize: 1, Workers: 1})
+			if _, err := bd.Dispatch(context.Background(), "r1", "etl", "v1", domain.TaskSpec{TaskID: "a"}); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if err := bd.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			sink.mu.Lock()
+			defer sink.mu.Unlock()
+			if len(sink.handled) != 1 || sink.handled[0] != disp {
+				t.Errorf("handled = %v, want [%v]", sink.handled, disp)
+			}
+			if got := sink.snapshot(); len(got) != 0 {
+				t.Errorf("the task was failed outright: %v", got)
+			}
+		})
 	}
 }
