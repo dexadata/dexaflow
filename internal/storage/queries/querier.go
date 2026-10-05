@@ -102,6 +102,11 @@ type Querier interface {
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	DeleteVariable(ctx context.Context, arg DeleteVariableParams) (int64, error)
+	// Removes the XCom index rows of task instances a clear is resetting (#1131) and
+	// returns their backend keys, so the stored values can be deleted too. XCom
+	// carries no try number, so rows left behind would serve the cleared attempt's
+	// values to the next attempt's downstream.
+	DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error)
 	// The consecutive dispatch-failure count of a task still waiting to run
 	// (scheduled or queued); no row means it has moved on.
 	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
@@ -166,6 +171,10 @@ type Querier interface {
 	// the active flag the login gates on. Never selects password_hash.
 	GetUserByOIDCSubject(ctx context.Context, arg GetUserByOIDCSubjectParams) (GetUserByOIDCSubjectRow, error)
 	GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([]GetUserPermissionsRow, error)
+	// The per-request authz reload in ONE round trip: what GetUserByID,
+	// GetUserRoles and GetUserPermissions return, folded into a single statement.
+	// Permissions are a JSON array of distinct [action, resource] pairs.
+	GetUserPrincipalByID(ctx context.Context, id pgtype.UUID) (GetUserPrincipalByIDRow, error)
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
@@ -561,8 +570,9 @@ type Querier interface {
 	// retry budget. Mirrors RescheduleTaskInstance but keyed by id, for the reconciler.
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
 	// Archives every failed attempt in the run into task_instance_history then
-	// resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-	ResetAllFailedTaskInstances(ctx context.Context, dagRunID pgtype.UUID) (int64, error)
+	// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+	// task ids it reset, so the clear can delete exactly their XCom.
+	ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error)
 	// Clear with run_on_latest_version re-binds the run to the DAG's current
 	// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
 	// re-run after a code/yaml fix picks up the newest image and config — in dev that
@@ -623,10 +633,14 @@ type Querier interface {
 	// tasks on incomplete work, strictly worse than the bug being fixed. The
 	// active-state guard prevents clobbering a terminal row.
 	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) error
-	// The time a reschedule-mode sensor first entered reschedule (NULL until it does).
-	// Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
-	// value and the sensor honors its cumulative timeout across pokes (#380).
-	TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error)
+	// The per-attempt fields the agent spec carries from the task instance row.
+	// first_reschedule_at is the time a reschedule-mode sensor first entered
+	// reschedule (NULL until it does), delivered to each re-dispatched pod so
+	// get_first_reschedule_date returns the real value and the sensor honors its
+	// cumulative timeout across pokes (#380). max_tries is the attempt budget the
+	// scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+	// so the runtime's on_failure_callback gate must read it from here (#424).
+	TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
 	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
 	// Rewrite one row's ciphertext in place during a key rotation. It touches only

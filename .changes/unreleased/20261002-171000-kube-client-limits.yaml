@@ -1,0 +1,15 @@
+kind: Added
+body: |-
+  **Configurable Kubernetes client rate limits, with a separate client for
+  maintenance work.** The control plane talked to Kubernetes through client-go's
+  default limits (QPS 5, burst 10), which paces a large fan out: creating 1,000
+  task pods takes over three minutes. `executor.kube_client.qps` and
+  `executor.kube_client.burst` (Helm: `executor.kubeClient.qps` / `.burst`) now
+  set the limits of the dispatch client, and the agent token exchange's own
+  client uses the same values. Setting `executor.kube_client.maintenance_qps`
+  (and `maintenance_burst`) gives the pod informer, reconciler, reapers, staging
+  GC and warm pool reconciler their own client and token bucket, so maintenance
+  cannot starve pod creation. The defaults keep today's limits on one shared
+  client; raise `qps` together with `maintenance_qps` (for example 50/100 and
+  20/40) on a busy cluster.
+time: 2026-10-02T17:10:00.000000000-03:00

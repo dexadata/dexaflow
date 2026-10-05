@@ -79,6 +79,28 @@ type LogsSection struct {
 	// Sink configures the object-store backend; read only when Backend is "s3" or
 	// "gcs".
 	Sink ObjectLogSection `mapstructure:"sink"`
+	// Tail configures the live-tail fan-out of task log lines.
+	Tail LogTailSection `mapstructure:"tail"`
+}
+
+// Live-tail publish modes (logs.tail.publish).
+const (
+	// LogTailPublishAlways publishes every received log line for the live
+	// tail as it arrives (the default).
+	LogTailPublishAlways = "always"
+	// LogTailPublishOnDemand publishes only while a follower is subscribed,
+	// probing at most once a second per log stream and replaying the lines
+	// held since the last probe that found nobody.
+	LogTailPublishOnDemand = "on_demand"
+)
+
+// LogTailSection configures the live-tail fan-out.
+type LogTailSection struct {
+	// Publish is "always" (default: every line is published, as before) or
+	// "on_demand" (lines are published only while someone follows the attempt;
+	// a new follower may see its first live lines up to about a second late).
+	// Bind via DEXAFLOW_LOGS_TAIL_PUBLISH (legacy LEOFLOW_LOGS_TAIL_PUBLISH).
+	Publish string `mapstructure:"publish"`
 }
 
 // ObjectLogSection configures the object-store log backend for both the "s3" and
@@ -174,6 +196,29 @@ type ExecutorSection struct {
 	// finished pods stay for the grace period, so they can be inspected with
 	// kubectl.
 	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
+	// KubeClient sets the client-side rate limits of the control plane's
+	// Kubernetes clients.
+	KubeClient KubeClientSection `mapstructure:"kube_client"`
+}
+
+// KubeClientSection sets the client-side rate limits (client-go token buckets)
+// of the control plane's Kubernetes clients. The dispatch client creates task
+// pods; the agent token exchange builds its own client with the same limits.
+// Maintenance work (pod informer, reconciler, reapers, staging GC, warm pool
+// reconciler) shares the dispatch client unless MaintenanceQPS is set, in which
+// case it gets a separate client and token bucket so a maintenance burst cannot
+// starve pod creation.
+type KubeClientSection struct {
+	// QPS and Burst limit the dispatch client. Defaults are client-go's own
+	// (5 and 10); a non-positive value falls back to them.
+	QPS   float64 `mapstructure:"qps"`
+	Burst int     `mapstructure:"burst"`
+	// MaintenanceQPS and MaintenanceBurst limit a separate maintenance client.
+	// 0 (default) keeps maintenance on the dispatch client, one shared budget as
+	// before. A non-positive burst with a positive QPS falls back to client-go's
+	// default burst.
+	MaintenanceQPS   float64 `mapstructure:"maintenance_qps"`
+	MaintenanceBurst int     `mapstructure:"maintenance_burst"`
 }
 
 // PlatformDefaultsSection configures the lowest-precedence (L0) task defaults,
@@ -889,6 +934,12 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// client-go's own defaults on one shared client, so an unconfigured install
+	// keeps its effective apiserver budget.
+	"executor.kube_client.qps":               5.0,
+	"executor.kube_client.burst":             10,
+	"executor.kube_client.maintenance_qps":   0.0,
+	"executor.kube_client.maintenance_burst": 0,
 
 	// Alert egress guard: an alert's URL is tenant data (#424). The []string
 	// binds from one comma-separated env var, like server.trusted_proxies.
@@ -923,6 +974,7 @@ var serverDefaults = map[string]any{
 	"execution.max_warm_pods_per_tenant": 100,
 	"logs.dir":                           "/var/log/leoflow",
 	"logs.backend":                       "disk",
+	"logs.tail.publish":                  LogTailPublishAlways,
 	"logs.sink.bucket":                   "",
 	"logs.sink.prefix":                   "",
 	"logs.sink.region":                   "",
@@ -1151,6 +1203,11 @@ func isLoopbackListenAddr(addr string) bool {
 // boot instead of losing every task log to a nonexistent bucket. Empty and
 // "disk" are always valid — the on-disk default is unaffected.
 func (c *ServerConfig) validateLogs() error {
+	switch c.Logs.Tail.Publish {
+	case "", LogTailPublishAlways, LogTailPublishOnDemand:
+	default:
+		return fmt.Errorf(`unknown logs.tail.publish %q (want %q or %q)`, c.Logs.Tail.Publish, LogTailPublishAlways, LogTailPublishOnDemand)
+	}
 	switch c.Logs.Backend {
 	case "", "disk":
 		return nil

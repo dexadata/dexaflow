@@ -493,6 +493,10 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_EXECUTOR_AGENT_PATH` | `leoflow-agent` | dev-only | The agent binary the subprocess executor runs (`leoflow-agent`, a link to `dexaflow-agent`, so agents from before the rename are found too). |
 | `DEXAFLOW_EXECUTOR_SUBPROCESS_WORKDIR` | _(empty)_ | dev-only | Working directory the subprocess executor runs the agent in (so it can import the project's `dag.py`). Empty keeps the server's working directory. |
 | `DEXAFLOW_EXECUTOR_HTTP_USER_AGENT` | `leoflow/0.1` | both | Default `User-Agent` header for HTTP requests a task image may make on the platform's behalf. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS` | `5` | Pro | Client-side request rate (queries per second) of the Kubernetes client that creates task pods. The agent token exchange builds its own client with the same limits. `5` is client-go's default; a 1,000-task fan out at 5 QPS takes over three minutes just to create pods, so a large deployment raises it (for example `50`). Non-positive falls back to `5`. Helm: `executor.kubeClient.qps`. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_BURST` | `10` | Pro | Burst of the same client's token bucket. Non-positive falls back to `10`. Helm: `executor.kubeClient.burst`. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS` | `0` | Pro | When above `0`, maintenance work (pod informer, reconciler, reapers, staging GC, warm pool reconciler) gets its own Kubernetes client and rate limiter at this QPS, so a maintenance burst cannot starve pod creation. `0` keeps maintenance on the dispatch client, one shared budget. Set it whenever you raise `KUBE_CLIENT_QPS`. Helm: `executor.kubeClient.maintenanceQps`. |
+| `DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST` | `0` | Pro | Burst of the separate maintenance client. Ignored while `KUBE_CLIENT_MAINTENANCE_QPS` is `0`; non-positive falls back to `10`. Helm: `executor.kubeClient.maintenanceBurst`. |
 
 ### Executor task defaults (`executor.defaults.*`)
 
@@ -534,6 +538,7 @@ dedicated pod per task attempt.
 |---|---|---|---|
 | `DEXAFLOW_LOGS_DIR` | `/var/log/leoflow` | both | Task-log sink directory (used by the default `disk` backend). |
 | `DEXAFLOW_LOGS_BACKEND` | `disk` | Pro | Durable task-log store: `disk` (default — the on-disk sink, unchanged; the only backend Lite uses), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage, native SDK). See [ADR 0056](/project/adrs/0056-task-log-object-sink/). |
+| `DEXAFLOW_LOGS_TAIL_PUBLISH` | `always` | both | When the control plane publishes received task-log lines for live followers. `always` publishes every line as it arrives. `on_demand` publishes only while someone follows the attempt: each log stream checks for followers at most once a second (Redis `PUBSUB NUMSUB`/`NUMPAT`) and replays to a new follower the lines received since the last check that found none (at most 1024 lines or 1 MiB). A new follower can see its first live lines up to about a second late. Enable `on_demand` once every API replica runs a version that skips replayed lines, or followers on older replicas may see a few lines twice. |
 | `DEXAFLOW_LOGS_SINK_BUCKET` | _(empty)_ | Pro | Target bucket. Required when the backend is `s3` or `gcs` (boot fails otherwise). |
 | `DEXAFLOW_LOGS_SINK_PREFIX` | _(empty)_ | Pro | Optional key prefix; objects are laid out at `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`. |
 | `DEXAFLOW_LOGS_SINK_REGION` | _(empty)_ | Pro | **s3-only.** Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores. |
