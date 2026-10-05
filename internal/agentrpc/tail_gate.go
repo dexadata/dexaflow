@@ -19,15 +19,25 @@ type LogSubscriberProbe interface {
 
 // tailProbeInterval bounds how often one log stream asks whether its attempt is
 // tailed: one probe per interval while lines flow, instead of one PUBLISH per
-// line. It is also how late a new tail can be noticed, which the replay covers.
-// var (not const) so tests and benchmarks can change it.
+// line, plus one whenever the lines held since the last probe reach half of
+// the replay bounds (see tailReplayMaxLines), so a probe is never more than an
+// interval or half a ring of output away. It is also how late a new tail can be
+// noticed, which the replay covers. var (not const) so tests and benchmarks can
+// change it.
 var tailProbeInterval = time.Second
 
 // tailReplayMaxLines and tailReplayMaxBytes bound what a gate holds for replay
-// between probes; past either bound the oldest held lines are dropped. Lines can
-// be close to the 4 MiB message limit, so the byte bound is what keeps a stream
-// nobody follows from holding gigabytes. vars (not consts) so tests can lower
-// them.
+// between probes. The gate probes again as soon as what it holds reaches half of
+// either bound, or before a line that would not fit in what is left, so the
+// held lines never overflow between two probes however fast the task logs: the
+// replay is complete whatever the output rate, and the probes (a Redis round
+// trip each) stay at least half a ring of output apart. The one line that
+// cannot be held is a single line larger than the whole byte budget (lines can
+// be close to the 4 MiB message limit): the gate probes right before it, so a
+// follower already there receives it live; with nobody there it is dropped from
+// the replay and a follower who subscribes later reads it from the stored log.
+// The byte bound is what keeps a stream nobody follows from holding gigabytes.
+// vars (not consts) so tests can lower them.
 var (
 	tailReplayMaxLines = 1024
 	tailReplayMaxBytes = 1 << 20 // 1 MiB
@@ -36,13 +46,20 @@ var (
 // tailGate decides, per log stream, whether a line is published for the live
 // tail. While a probe has found nobody, lines are held instead of published.
 // When a later probe finds a subscriber, the held lines are published first, in
-// order, so a tail that subscribed between two probes still receives every line
-// that arrived after it subscribed: the held lines are exactly those received
-// since the last probe that found nobody, the earliest moment that subscriber
-// can have been listening. A probe that finds nobody drops what was held, since
-// nobody could have been waiting for it. Replayed lines carry the replay flag
-// (logs.MarkReplay), and the tail reader skips only flagged lines it already
-// served from the stored log (see the api package).
+// order and ahead of the line that triggered the probe, so a tail that
+// subscribed between two probes receives every line that arrived after it
+// subscribed: the held lines are exactly those received since the last probe
+// that found nobody, the earliest moment that subscriber can have been
+// listening, and the gate probes again before holding a line could cost a held
+// line its place (see tailReplayMaxLines), so the guarantee does not depend on
+// how fast the task logs. A probe that finds nobody drops what was held, since
+// nobody could have been waiting for it. A probe that fails counts as a
+// subscriber, so a broken probe never costs a watcher its lines. The gate probes
+// only when a line arrives: a follower that subscribes while the task is silent
+// is noticed, and the lines held before that replayed, when the task's next
+// line comes. Replayed lines carry the replay flag (logs.MarkReplay), and the
+// tail reader skips only flagged lines it already served from the stored log
+// (see the api package).
 //
 // A gate belongs to one stream's receive loop and is not safe for concurrent use.
 type tailGate struct {
@@ -70,7 +87,7 @@ func newTailGate(pub LogPublisher, ref logs.Ref, now func() time.Time, onDemand 
 
 // publish offers one encoded line to the live tail.
 func (g *tailGate) publish(ctx context.Context, line string) {
-	if g.probe != nil && (g.probedAt.IsZero() || g.now().Sub(g.probedAt) >= tailProbeInterval) {
+	if g.probe != nil && g.probeDue(line) {
 		g.refresh(ctx)
 	}
 	if g.probe != nil && !g.listening {
@@ -78,6 +95,18 @@ func (g *tailGate) publish(ctx context.Context, line string) {
 		return
 	}
 	g.send(ctx, line)
+}
+
+// probeDue reports whether the gate asks for subscribers before offering line:
+// on the first line, once the last probe is tailProbeInterval old, and, while
+// lines are being held, once the ring is half full or line would not fit in it,
+// so that no held line is dropped between two probes. While a subscriber is
+// known the ring is empty and only the interval counts.
+func (g *tailGate) probeDue(line string) bool {
+	if g.probedAt.IsZero() || g.now().Sub(g.probedAt) >= tailProbeInterval {
+		return true
+	}
+	return !g.listening && g.held.nearFull(line)
 }
 
 // refresh probes for subscribers and applies the transition: replay what was
@@ -109,12 +138,23 @@ func (g *tailGate) hold(line string) { g.held.push(line) }
 // tailReplayMaxLines and tailReplayMaxBytes, as a ring so that holding a line
 // costs O(1) however full the ring is. What it holds is always a contiguous run
 // ending at the newest line: a line larger than the whole byte budget empties
-// the ring rather than leave a replay with a gap.
+// the ring rather than leave a replay with a gap. The gate probes, and so
+// empties the ring, before a push that would drop a line (see nearFull), so the
+// drop in push is the ring's own safety net for its memory bound.
 type replayRing struct {
 	lines []string // ring storage, grown on demand up to tailReplayMaxLines
 	head  int      // index of the oldest held line
 	n     int      // number of held lines
 	bytes int      // total length of the held lines
+}
+
+// nearFull reports whether the ring holds at least half of either bound, or
+// cannot take line without dropping a held line: the point at which the gate
+// probes again, so what the ring holds between two probes is never dropped.
+// Because the ring is emptied by every probe, what it holds is exactly what
+// arrived since the last one, so this needs no counter of its own.
+func (r *replayRing) nearFull(line string) bool {
+	return r.n >= tailReplayMaxLines/2 || r.bytes >= tailReplayMaxBytes/2 || r.bytes+len(line) > tailReplayMaxBytes
 }
 
 // push holds line, dropping the oldest lines past either bound.
