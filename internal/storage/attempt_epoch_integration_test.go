@@ -283,16 +283,39 @@ func TestAttemptEpochMigrationUpDownUp(t *testing.T) {
 	defer pg.Close()
 
 	assertEpochSchema(ctx, t, pg, true)
+	assertInfraConfirmedSchema(ctx, t, pg, true)
 	assertPreviousReleaseArchiveRuns(ctx, t, pg)
 
+	// Later migrations (039, ADR 0052 amendment) sit above 038; step down to
+	// 038 first, then below it.
+	if err := m.Migrate(38); err != nil {
+		t.Fatalf("down from v%d to v38: %v", latest, err)
+	}
+	assertInfraConfirmedSchema(ctx, t, pg, false)
+	assertEpochSchema(ctx, t, pg, true)
 	if err := m.Steps(-1); err != nil {
-		t.Fatalf("down one step from v%d: %v", latest, err)
+		t.Fatalf("down one step from v38: %v", err)
 	}
 	assertEpochSchema(ctx, t, pg, false)
 	if err := m.Up(); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
 	assertEpochSchema(ctx, t, pg, true)
+	assertInfraConfirmedSchema(ctx, t, pg, true)
+}
+
+// assertInfraConfirmedSchema checks migration 039's column (ADR 0052
+// amendment).
+func assertInfraConfirmedSchema(ctx context.Context, t *testing.T, pg *storage.Postgres, want bool) {
+	t.Helper()
+	var present bool
+	if err := pg.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'task_instances' AND column_name = 'infra_confirmed_at')`).Scan(&present); err != nil {
+		t.Fatalf("checking infra_confirmed_at: %v", err)
+	}
+	if present != want {
+		t.Errorf("task_instances.infra_confirmed_at present=%v, want %v", present, want)
+	}
 }
 
 func assertEpochSchema(ctx context.Context, t *testing.T, pg *storage.Postgres, want bool) {

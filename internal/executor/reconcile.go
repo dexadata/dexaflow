@@ -368,6 +368,9 @@ type Reconciler struct {
 	// leader-settling gate (see LastSweepCompletedAt) from another goroutine
 	// than the one that writes it at the end of Reconcile, hence atomic.
 	lastSweepCompleted atomic.Int64
+	// confirmer, when set, runs the infra confirmation pass after the settle
+	// loop of every sweep (ADR 0052 amendment, part 2). Nil: no pass.
+	confirmer InfraConfirmer
 }
 
 // NewReconciler builds a Reconciler over the given cluster and outcome reporter.
@@ -441,6 +444,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 	}
 	r.lastSweepCompleted.Store(r.now().UnixNano())
+	// Confirm the provisional infra marks against this sweep's pods (ADR 0052
+	// amendment, part 2).
+	r.confirmInfraMarks(ctx, pods)
 	return nil
 }
 
