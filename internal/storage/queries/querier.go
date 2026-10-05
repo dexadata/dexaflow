@@ -494,6 +494,7 @@ type Querier interface {
 	// tick. Guarded to 'scheduled' so a report that raced the dispatch cannot clobber
 	// a row that has since progressed. try_number is untouched: this is infra, not a
 	// task failure.
+	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
 	RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error
 	// Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
@@ -515,6 +516,7 @@ type Querier interface {
 	// and reschedule_at cleared. Unlike ResetTaskInstanceToNone (retry), try_number is
 	// PRESERVED and no task_instance_history row is archived: reschedule is not a retry,
 	// it consumes no attempt (#380). Guarded to the parked state so it is idempotent.
+	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 	RedispatchRescheduledTaskInstance(ctx context.Context, arg RedispatchRescheduledTaskInstanceParams) error
 	RemoveFavorite(ctx context.Context, arg RemoveFavoriteParams) error
 	// The same re-open as ResetDagRunToVersion, WITHOUT touching dag_version_id: the
@@ -568,7 +570,9 @@ type Querier interface {
 	// until next_dispatch_at, adding one dispatch attempt only when counted
 	// (backpressure is not). Guarded to scheduled/queued, so a task the agent has
 	// since reported on is left alone. warm_worker_id is cleared as in
-	// RequeueForRedispatch: the attempt never ran.
+	// RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
+	// as on every rail that starts a new execution of the row (ADR 0051
+	// amendment, A0).
 	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding
@@ -591,6 +595,7 @@ type Querier interface {
 	// (ListBusyWarmWorkerPods), a stale binding would falsely mark the OLD (gone)
 	// worker busy. This is a same-row re-dispatch (the try_number is preserved), so
 	// the clear must happen here; a fresh try lands on a new row that is already NULL.
+	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 	RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error)
 	// A reschedule-mode sensor (mode='reschedule') poked not-ready: park the active TI
 	// in up_for_reschedule with its next-poke time ($3) so the scheduler re-dispatches
@@ -639,6 +644,7 @@ type Querier interface {
 	// failure may re-place off-budget (an app failure at state='failed' must fall to
 	// the normal retry rail). last_failure_kind is cleared so the next attempt's
 	// outcome is classified fresh.
+	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 	ResetTaskInstanceInfraReplace(ctx context.Context, arg ResetTaskInstanceInfraReplaceParams) (int64, error)
 	// Resets a TI for retry: snapshot the current per-attempt state into
 	// task_instance_history (so the UI's /tries endpoint can render one tab per
@@ -652,6 +658,11 @@ type Querier interface {
 	// it carries no source-state guard. The scheduler's retry rail uses the guarded
 	// ResetTaskInstanceForRetry instead — do not add a guard here or clear-task
 	// silently no-ops on non-up_for_retry tasks.
+	// last_heartbeat_at is cleared on this and every other rail that starts a new
+	// execution of the row (ADR 0051 amendment, A0): the next attempt reports
+	// RUNNING one heartbeat interval before its first beat, and an inherited value
+	// from the previous attempt would make the agent-lost reaper fail it in that
+	// window.
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
