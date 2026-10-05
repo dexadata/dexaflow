@@ -164,6 +164,9 @@ func run() error {
 	defer dsCleanup()
 
 	repo := storage.NewRepository(pg)
+	// A clear deletes the stored XCom of the attempts it clears, not just their
+	// index rows, since agents fetch values by key (#1131).
+	repo.SetXComBackend(xcomBackend)
 	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
