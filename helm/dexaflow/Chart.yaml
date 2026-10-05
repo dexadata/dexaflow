@@ -5,8 +5,8 @@ type: application
 # version is the chart version; appVersion tracks the leoflow-server image.
 # Both move in lockstep with the release tag (ADR 0028); decouple only if the
 # chart ever needs a cadence of its own for a template-only fix.
-version: 0.5.0
-appVersion: "0.5.0"
+version: 0.5.1-rc.1
+appVersion: "0.5.1-rc.1"
 home: https://github.com/dexadata/dexaflow
 sources:
   - https://github.com/dexadata/dexaflow
