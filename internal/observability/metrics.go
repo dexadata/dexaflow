@@ -40,6 +40,10 @@ type Metrics struct {
 	HTTPRequestDuration *prometheus.HistogramVec
 	AuthFailures        *prometheus.CounterVec
 
+	// Agent credentials: task tokens authenticated without an attempt_epoch
+	// claim, accepted under the epoch-0 rule (ADR 0051 amendment).
+	AgentLegacyAttemptTokens prometheus.Counter
+
 	// Executor (Kubernetes)
 	PodsCreated        *prometheus.CounterVec
 	PodsRunning        prometheus.Gauge
@@ -150,6 +154,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		AuthFailures: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_auth_failures_total", Help: "Authentication failures by reason.",
 		}, []string{"reason"}),
+
+		AgentLegacyAttemptTokens: f.NewCounter(prometheus.CounterOpts{
+			Name: "dexaflow_agent_legacy_attempt_token_total",
+			Help: "Agent RPCs authenticated by a task token minted before the attempt_epoch claim existed, accepted as epoch 0. " +
+				"It falls to zero once every pre-upgrade attempt has finished; a later release rejects such tokens.",
+		}),
 
 		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_pods_created_total", Help: "Pods created by dag and result.",
@@ -308,6 +318,11 @@ func (m *Metrics) RecordDispatchAtCapacity() { m.DispatchAtCapacity.Inc() }
 func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 	m.DispatchLatency.Observe(seconds)
 }
+
+// RecordLegacyAttemptToken counts one agent RPC authenticated by a task token
+// without an attempt_epoch claim (ADR 0051 amendment). It satisfies
+// agentrpc.LegacyTokenRecorder.
+func (m *Metrics) RecordLegacyAttemptToken() { m.AgentLegacyAttemptTokens.Inc() }
 
 // RecordDispatchInnerError counts one error returned by the inner dispatcher
 // inside a worker — typically a Kubernetes API failure or pod-create rejection.

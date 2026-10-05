@@ -138,7 +138,7 @@ func TestListRunningTasksExcludesWarmAttemptsIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := exec.BindWarmAttempt(ctx, runUUID, "warm", 1, "warm-worker-0"); err != nil {
+	if err := exec.BindWarmAttempt(ctx, runUUID, "warm", 1, 0, "warm-worker-0"); err != nil {
 		t.Fatalf("BindWarmAttempt: %v", err)
 	}
 

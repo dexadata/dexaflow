@@ -35,6 +35,9 @@ type ReclaimEvent struct {
 	RunID        string
 	TaskID       string
 	TryNumber    int
+	// AttemptEpoch is the execution of TryNumber the assignment was dispatched as
+	// (ADR 0051 amendment), so the re-place is fenced to exactly that attempt.
+	AttemptEpoch int
 }
 
 // WarmBinding is the durable binding an ack (started=true) establishes: the warm
@@ -47,7 +50,10 @@ type WarmBinding struct {
 	RunID     string
 	TaskID    string
 	TryNumber int
-	PodName   string
+	// AttemptEpoch is the execution of TryNumber this binding is for (ADR 0051
+	// amendment), so an ack never binds a worker onto a later attempt.
+	AttemptEpoch int
+	PodName      string
 }
 
 // registeredWorker is one warm worker's registry entry. send is the handler's
@@ -74,7 +80,9 @@ type leaseState struct {
 	runID      string
 	taskID     string
 	tryNumber  int
-	timer      *time.Timer
+	// attemptEpoch is the epoch the dispatcher claimed for this assignment.
+	attemptEpoch int
+	timer        *time.Timer
 }
 
 // WorkerRegistry is the concurrency-safe home of the warm-worker fleet and the
@@ -159,6 +167,7 @@ func (r *WorkerRegistry) Deregister(w *registeredWorker) {
 				RunID:        ls.runID,
 				TaskID:       ls.taskID,
 				TryNumber:    ls.tryNumber,
+				AttemptEpoch: ls.attemptEpoch,
 			})
 		}
 	}
@@ -192,11 +201,12 @@ func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bo
 	}
 	aid := a.GetAssignmentId()
 	ls := &leaseState{
-		worker:     w,
-		dagVersion: dagVersion,
-		runID:      a.GetDagRunId(),
-		taskID:     a.GetTaskId(),
-		tryNumber:  int(a.GetTryNumber()),
+		worker:       w,
+		dagVersion:   dagVersion,
+		runID:        a.GetDagRunId(),
+		taskID:       a.GetTaskId(),
+		tryNumber:    int(a.GetTryNumber()),
+		attemptEpoch: int(a.GetAttemptEpoch()),
 	}
 	ls.timer = time.AfterFunc(r.leaseFor(a), func() { r.onLeaseExpire(aid) })
 	r.leases[aid] = ls
@@ -222,10 +232,11 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 	if started {
 		ls.worker.busy = true
 		binding := &WarmBinding{
-			RunID:     ls.runID,
-			TaskID:    ls.taskID,
-			TryNumber: ls.tryNumber,
-			PodName:   ls.worker.podName,
+			RunID:        ls.runID,
+			TaskID:       ls.taskID,
+			TryNumber:    ls.tryNumber,
+			AttemptEpoch: ls.attemptEpoch,
+			PodName:      ls.worker.podName,
 		}
 		r.mu.Unlock()
 		return binding, true
@@ -237,6 +248,7 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 		RunID:        ls.runID,
 		TaskID:       ls.taskID,
 		TryNumber:    ls.tryNumber,
+		AttemptEpoch: ls.attemptEpoch,
 	}
 	r.mu.Unlock()
 	r.emitReclaim(ev)
@@ -284,6 +296,7 @@ func (r *WorkerRegistry) onLeaseExpire(assignmentID string) {
 		RunID:        ls.runID,
 		TaskID:       ls.taskID,
 		TryNumber:    ls.tryNumber,
+		AttemptEpoch: ls.attemptEpoch,
 	}
 	r.mu.Unlock()
 	r.emitReclaim(ev)
