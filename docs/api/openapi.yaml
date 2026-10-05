@@ -417,6 +417,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Cursor"
         - name: state
           in: query
           schema:
@@ -666,6 +667,19 @@ components:
       name: offset
       in: query
       schema: { type: integer, minimum: 0, default: 0 }
+    Cursor:
+      name: cursor
+      in: query
+      description: >-
+        Dexaflow extension. Opaque keyset cursor taken from the
+        Dexaflow-Next-Cursor response header of the previous page. When set,
+        offset is ignored and the page holds the rows after the cursor in the
+        same order, at the cost of the first page whatever the depth. The
+        response body is unchanged. With a state filter, offset paging filters
+        the newest 10000 runs and counts total_entries within them, while
+        cursor paging filters and counts every run of the DAG, so the two
+        modes can report different totals for a DAG with more runs than that.
+      schema: { type: string }
     DagID:
       name: dag_id
       in: path

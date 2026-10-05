@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **Collect a settled run's task pods in one call (opt-in).** With
+  `executor.collect_settled_run_pods` (Helm: `executor.collectSettledRunPods`)
+  the reconciler deletes a settled run's finished pods as soon as every outcome
+  is recorded and none of its tasks is still pending, in one `DeleteCollection`
+  by the run's and tenant's labels limited to finished phases, instead of one
+  delete per pod after the 10 minute grace period: one apiserver call per run
+  instead of one per pod, at most 50 runs per sweep. Off by default. The chart's
+  executor Role grants `deletecollection` on pods only when the value is on;
+  without the verb the server falls back to per-pod deletes.
+time: 2026-10-02T19:00:00.000000000-03:00

@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **A task that prints a very long line no longer loses the rest of its log.**
+  The agent buffered output with no newline (progress bars, binary dumps)
+  without limit, and a line past the control plane's 4 MiB gRPC message limit
+  ended the whole log stream, so every later line of the attempt was dropped.
+  The agent now sends a line longer than just under 4 MiB in pieces, cut on a
+  UTF-8 boundary, and logs a warning with the number of extra lines. Lines
+  that were deliverable before are sent unchanged.
+time: 2026-10-02T17:10:00.000000000-03:00
