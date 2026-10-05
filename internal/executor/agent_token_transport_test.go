@@ -2,6 +2,7 @@ package executor
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -127,8 +128,9 @@ func TestBuildPodExchangeTransportProjectsToken(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
 		t.Fatalf("identity annotation is not valid JSON: %v", err)
 	}
-	want := PodIdentity{TaskInstanceID: "ti-1", TenantID: "default", DagID: "etl", RunID: "r1", TaskID: "extract", TryNumber: 1}
-	if got != want {
+	epoch := 0
+	want := PodIdentity{TaskInstanceID: "ti-1", TenantID: "default", DagID: "etl", RunID: "r1", TaskID: "extract", TryNumber: 1, AttemptEpoch: &epoch}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("identity annotation = %+v, want %+v", got, want)
 	}
 }
