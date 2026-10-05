@@ -22,3 +22,9 @@ var ErrValidation = errors.New("invalid input")
 // sends an operator to the migration Job and the other to the connection pool,
 // and a probe that conflates them costs an on-call hour.
 var ErrSchemaNotCurrent = errors.New("database schema is not current")
+
+// ErrLimitExceeded is returned when a write would take a tenant past one of the
+// limits the operator set for it (TenantLimits). The API maps it to 403: the
+// request is well formed, and repeating it will not succeed until the limit or
+// the tenant's usage changes.
+var ErrLimitExceeded = errors.New("tenant limit exceeded")

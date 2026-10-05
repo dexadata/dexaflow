@@ -656,18 +656,29 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 
 // CreateScheduledRun inserts a scheduled run for the DAG dagID owned by the
 // tenant tenantID (a tenant UUID), idempotent on run_id. The tenant is explicit
-// because a dag_id is unique only within its tenant (#209).
+// because a dag_id is unique only within its tenant (#209). A tenant at its
+// max_runs_per_day gets domain.ErrLimitExceeded and no run.
 func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error {
 	tid, err := parseUUID(tenantID)
 	if err != nil {
 		return fmt.Errorf("scheduled run tenant id %q: %w", tenantID, err)
 	}
 	runID := "scheduled__" + logical.UTC().Format(time.RFC3339)
-	return s.q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
-		RunID:       runID,
-		LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
-		TenantID:    tid,
-		DagID:       dagID,
+	return createRunWithinDailyLimit(ctx, s.q, s.pool, tid, runCreation{
+		insert: func(q *queries.Queries) (bool, error) {
+			n, err := q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
+				RunID:       runID,
+				LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
+				TenantID:    tid,
+				DagID:       dagID,
+			})
+			return n > 0, err
+		},
+		// A slot that already exists is a no-op (ON CONFLICT DO NOTHING), at
+		// the cap too.
+		exists: func(q *queries.Queries) (bool, error) {
+			return q.DagRunExistsByDagID(ctx, queries.DagRunExistsByDagIDParams{TenantID: tid, DagID: dagID, RunID: runID})
+		},
 	})
 }
 
