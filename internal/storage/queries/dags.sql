@@ -79,14 +79,18 @@ DELETE FROM dags
 WHERE tenant_id = $1 AND dag_id = $2;
 
 -- name: ListDagsFiltered :many
-WITH latest AS (
-    SELECT DISTINCT ON (r.dag_id) r.dag_id, r.state
-    FROM dag_runs r
-    ORDER BY r.dag_id, r.logical_date DESC
-)
+-- The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,
+-- one index probe each, instead of a DISTINCT ON over every run in the table.
+-- LEFT JOIN keeps DAGs without runs; they match no run_state filter.
 SELECT d.*
 FROM dags d
-LEFT JOIN latest l ON l.dag_id = d.id
+LEFT JOIN LATERAL (
+    SELECT r.state
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
 WHERE d.tenant_id = $1 AND d.is_active = true
   AND (sqlc.narg('paused')::bool IS NULL OR d.is_paused = sqlc.narg('paused'))
   AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'))
@@ -94,14 +98,16 @@ ORDER BY d.dag_id
 LIMIT $2 OFFSET $3;
 
 -- name: CountDagsFiltered :one
-WITH latest AS (
-    SELECT DISTINCT ON (r.dag_id) r.dag_id, r.state
-    FROM dag_runs r
-    ORDER BY r.dag_id, r.logical_date DESC
-)
+-- Same newest-run lookup as ListDagsFiltered.
 SELECT count(*)
 FROM dags d
-LEFT JOIN latest l ON l.dag_id = d.id
+LEFT JOIN LATERAL (
+    SELECT r.state
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
 WHERE d.tenant_id = $1 AND d.is_active = true
   AND (sqlc.narg('paused')::bool IS NULL OR d.is_paused = sqlc.narg('paused'))
   AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'));
