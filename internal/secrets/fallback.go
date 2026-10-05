@@ -77,3 +77,24 @@ func (c *fallbackCipher) DecryptStale(ciphertext string) (plaintext string, stal
 	// the key the operator configured, so its failure is the one worth reading.
 	return "", false, perr
 }
+
+// OpenWith tries each cipher in order and returns the plaintext together with
+// the index of the first cipher that opened ct, or -1 when none did. Nil
+// entries are skipped.
+//
+// A key migration needs to know WHICH key opened a value, not only that one
+// did: a value under the encrypting key stays, a value under a predecessor is
+// moved, and a value under no recorded key stops the migration. As with
+// fallbackCipher, trying keys in turn is safe only because AES-GCM is
+// authenticated.
+func OpenWith(ciphers []Cipher, ct string) (plaintext string, index int) {
+	for i, c := range ciphers {
+		if c == nil {
+			continue
+		}
+		if plain, err := c.Decrypt(ct); err == nil {
+			return plain, i
+		}
+	}
+	return "", -1
+}

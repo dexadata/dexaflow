@@ -18,8 +18,9 @@ This applies to **both editions**: Lite (single-process) and Pro
 (multi-replica with [leader election](/project/adrs/0009-leader-election/)). The
 reapers run only on the leader — reaping writes state, and we want one writer
 across the fleet. On Kubernetes they run from the leader's **maintenance loop**
-(every 30 s, after the pod reconciler's sweep — see below); in Lite there are no
-pods, so no pod-based reaper applies and the loop is not started.
+(every 30 s, after the pod reconciler's sweep; see below). Lite runs its own
+maintenance loop with the subset of reapers that mean something without pods;
+see [Lite: which reapers run](#lite-which-reapers-run).
 
 ## Recovery SLAs
 
@@ -30,7 +31,7 @@ pods, so no pod-based reaper applies and the loop is not started.
 | Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/dexaflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
-| Run stuck `running` with no active TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
+| Run stuck `running` with no live TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
 
 Every SLA above is a floor: the reapers run every **30 s**, so detection lands
 up to one cycle after the threshold elapses. Worst case end-to-end: a mid-tick
@@ -200,6 +201,148 @@ start if a constant was moved out of order:
 `heartbeat (15 s) < agent-lost threshold (90 s) < settling grace (180 s) < attempt token TTL (10 min)`,
 and `2 × maintenance interval (60 s) < settling grace`, so at least two whole
 reconcile-then-reap cycles complete inside the grace.
+On Kubernetes it also checks
+`task termination grace (30 s) + 2 × maintenance interval < infra confirmation valve (2 min) < orphan threshold (5 min)`
+(see below).
+
+## Infra marks wait for confirmation (Kubernetes)
+
+The agent-lost, pod-lost and dispatch-lost reapers judge from the control
+plane's side: a silent heartbeat or a missing pod. That is a guess about what
+the task did, and the task may in fact have finished and written a durable
+SUCCESS record that the reconciler has not read yet. So on Kubernetes an infra
+mark is **provisional**: the task instance is `failed` with
+`last_failure_kind = infra`, but `infra_confirmed_at` stays empty and the
+planner treats the task as still active. It neither re-places it nor lets a
+downstream task fail on it.
+
+Each reconcile sweep then looks at the pods of the exact attempt the mark names
+(the same try and attempt epoch). It confirms the mark when no pod of that
+attempt is left, or when every task container of the attempt has terminated
+without a SUCCESS record. It reads the container's terminated state, not the
+pod phase, because a pod stopped in place can report `Failed` while its
+container still runs. A container still running, or still inside its
+termination grace, holds the mark back. Once the mark is confirmed, the planner
+re-places the task, or fails it when the infra budget is spent, exactly as
+before.
+
+A broken reconciler must not hold a task forever, so the planner also acts on a
+mark once the **infra confirmation valve** (2 minutes after the mark) has passed
+without a confirmation, and meters it as `infra_confirm_valve_open`. The ladder
+above keeps that valve longer than a container's termination grace plus two
+sweeps, and shorter than the orphan threshold, so a run waiting on a
+confirmation is never reaped as orphaned.
+
+On Lite there is no reconciler and no pod to wait for: the mark is confirmed
+when it is made, and nothing changes. Marks made before the upgrade count as
+confirmed. Every rail that starts a new execution of the task (retry, clear,
+re-place, reschedule) clears `infra_confirmed_at` again.
+
+## Lite: which reapers run
+
+Lite (the subprocess executor behind `dexaflow lite`) has no pods, no pod
+informer and no pod reconciler. Its agent is a host process, detached from the
+server so it survives a server restart. Before
+[#916](https://github.com/dexadata/dexaflow/issues/916) Lite ran no reaper at
+all, so a run whose agent died without reporting stayed `running` forever. Lite
+now starts a maintenance loop of its own: every 30 s, on the leader only, it
+runs the reaper pass under the **same leader-settling gate** (the 180 s grace
+since leadership; the informer and sweep conditions do not exist in Lite and
+are satisfied). There is no reconcile phase because there are no pods to sweep.
+
+| Reaper | Lite | Why |
+|---|---|---|
+| Orphan-run | **Runs** | Purely a metadatabase signal: a `running` run with no active TI. |
+| TI heartbeat (agent-lost) | **Runs, gated on the agent process** | Fails a silent `running` TI only when its agent process is gone. A silent agent that is still alive (for example a laptop resuming from sleep) is deferred. Also covers a TI that never heartbeated (see below). |
+| Dispatch-lost | **Runs, gated on the agent process** | Fails a stale `queued` TI only when no agent process for the attempt is alive. |
+| Pod-lost | No-op | There is no pod to lose. A "no pod" signal would read every live subprocess as lost. |
+| Warm-worker-lost | No-op | Warm pools are Kubernetes-only. |
+
+**Why the process gate.** On Kubernetes a reaper that fails a TI also deletes
+its pod, so the abandoned agent stops. Lite has no equivalent: it never kills
+an agent. The infra re-place that follows an `agent_lost` or `dispatch_lost`
+keeps the try number, so if the old agent were still alive it could have its
+`RUNNING` report accepted and run user code next to the new agent
+([#911](https://github.com/dexadata/dexaflow/issues/911)). Lite therefore
+reaps an attempt only when its agent is provably dead. The server records each
+spawned agent's PID, one file per `(run, task, try)` attempt, under
+`$TMPDIR/dexaflow-agent-pids-<uid>` (a directory only that user can write;
+the server refuses one that is a symlink, owned by someone else, or writable by
+others); the record lives on disk so a restarted server
+still sees the agents it spawned before the restart. The reaper probes the PID
+with signal 0: alive defers (`agent_lost_process_alive`,
+`dispatch_lost_process_alive`), a probe or read error defers
+(`*_process_query_error`), and a missing record or a dead PID lets the reap
+proceed. If the server cannot write the record when it spawns an agent, it
+stops that agent and fails the dispatch rather than run an agent the reapers
+cannot see.
+
+**The task's process group counts too.** The agent runs the user task as the
+leader of its own process group, so a task can outlive an agent that is killed
+outright (`kill -9`, a crash, the OOM killer): it is reparented and keeps
+running. Only the agent learns the group id, so the agent writes it into the
+same directory as soon as the task starts, one `.pgid` file per attempt next to
+the agent's `.pid` file, together with its own PID and the group leader's start
+time. A task whose group the agent cannot record is stopped and its run fails,
+the same rule as for the agent record. An attempt reads alive while its agent
+is alive **or** while any process of its recorded task group exists (signal 0
+to the whole group; a member owned by another user still counts as alive).
+A group id whose leader PID now belongs to a process with a different start
+time names an unrelated group (the OS never reuses a PID while it is still a
+group id, so nothing of the recorded group is left), and reads dead.
+
+**An agent that dies before its first heartbeat.** Agent-lost normally judges
+only a `running` TI that has heartbeated at least once, and on Kubernetes the
+window before the first heartbeat belongs to pod-lost, which has no signal in
+Lite. So in Lite, and only there, agent-lost also looks at a `running` TI that
+never heartbeated and entered `running` longer ago than the agent-lost
+threshold (90 s): it is failed as `agent_lost` (`agent_lost_never_heartbeated`)
+only when its agent **and** its task process group both read dead. Anything
+alive defers (`agent_lost_never_heartbeated_process_alive`), a liveness error
+defers (`agent_lost_never_heartbeated_process_query_error`), and such an
+attempt's orphaned task group is never stopped, only waited for. The Kubernetes
+path is unchanged.
+
+**An orphaned task is stopped before the attempt is re-placed.** When an
+attempt reads alive only because of its task group, and the agent that
+recorded that group is confirmed dead, the reaper stops the group before it
+reaps: `SIGTERM` to the whole group, up to 10 s to exit, then `SIGKILL`, then
+up to 5 s more. Only once no process of the group is left does the reap go
+ahead (`agent_lost_orphan_stopped`, `dispatch_lost_orphan_stopped`), so the
+re-placed attempt never runs beside the old copy. The server signals only a
+group recorded in its own record directory, and only when the group's leader is
+still the very process that was recorded (same PID, same start time); a group
+it cannot verify that way (its leader exited while other members run on, or
+the start time could not be read) is never signaled, and the attempt keeps
+deferring as alive until the group exits. A stop that fails defers too
+(`*_orphan_stop_error`). This runs on Linux and macOS; elsewhere a task group
+cannot be probed, so the reapers keep deferring.
+
+What this does **not** cover, plainly:
+
+- **An agent that is alive but wedged** (the process exists, its heartbeat
+  stopped) is never reaped by Lite. Stop the process yourself; the next cycle
+  then reaps the TI as `agent_lost`.
+- **PID reuse.** If the agent died while the server was down and the OS hands
+  its PID to an unrelated process, that attempt reads alive and is deferred
+  until that process exits. This can only delay a reap, never cause a false
+  one.
+- **A task process that leaves its process group.** A descendant that calls
+  `setsid` (or is handed to a service manager) is outside the recorded group,
+  so it neither keeps the attempt alive nor is stopped with the orphan. This is
+  the same boundary the agent's own execution timeout has.
+- **An agent killed in the instant between starting its task and recording the
+  task's group.** That task has no record, so it is invisible to the reapers,
+  exactly as before. The window is the few microseconds between the fork and
+  one small file write.
+- **A record directory that changes across a restart.** The record is found
+  through the server's `$TMPDIR`; a server restarted with a different `TMPDIR`
+  (or after the temp directory was cleaned) sees no record for agents it
+  spawned earlier and treats them as gone. That only matters for an agent that
+  is also silent past the agent-lost threshold or still `queued` past the
+  dispatch-lost threshold.
+- **A task that hangs inside a live agent** is the agent's own
+  `execution_timeout_seconds` to stop, exactly as on Kubernetes.
 
 ## Tuning the thresholds
 
@@ -224,7 +367,14 @@ anything:
 
 - **TI heartbeat reaper** — only fires on TIs that *did* heartbeat at least
   once and then went silent. A TI that never heartbeated (e.g. a pod that never
-  started, so no agent ever reported) is left alone.
+  started, so no agent ever reported) is left alone. "At least once" means
+  in the current attempt: every rail that starts a new execution of a task
+  (retry, clear, infra re-place, reschedule re-dispatch, warm requeue,
+  dispatch-failure backoff) clears the previous attempt's heartbeat, so a new
+  attempt is not reaped in the interval between reporting `running` and its
+  first heartbeat. In Lite, a TI that never heartbeated is judged only on the
+  positive signal that its agent and its task process group are both gone (see
+  "Lite: which reapers run").
 - **Dispatch-lost reaper** — requires a non-zero `queued_at` older than the
   threshold AND, on Kubernetes, confirmation that no live pod for the TI
   exists. If a pod for the TI is `Pending`/`Running`, the dispatch actually
@@ -241,10 +391,32 @@ anything:
 - **Warm-worker-lost reaper** — requires a live LIST of the warm pods (not the
   cache) showing the bound worker gone; a LIST error aborts the pass with zero
   marks. It never deletes a pod: a warm worker outlives its attempts.
-- **Orphan-run reaper** — requires `state = 'running'` AND no active TI on
-  the run. A run with any TI in `scheduled`/`queued`/`running` is left alone
-  (the dispatch-lost reaper unblocks this case by failing the stuck queued
-  TIs first, so a later cycle sees no active TIs).
+- **Orphan-run reaper**: requires `state = 'running'` AND no live TI on
+  the run: every TI must be settled (`success`/`failed`/`skipped`/
+  `upstream_failed`) or never started (`none`). A run with any TI in
+  `scheduled`/`queued`/`running` is left alone (the dispatch-lost reaper
+  unblocks this case by failing the stuck queued TIs first, so a later cycle
+  sees no active TIs). So is a run whose TI is parked waiting for the
+  scheduler to bring it back: `up_for_retry` during its `retry_delay`,
+  `up_for_reschedule` between the pokes of a reschedule-mode sensor, or the
+  reserved `deferred` state. Those states stamp no fresh activity timestamp,
+  so without this rule a `retry_delay` or `poke_interval` of 5 minutes or more
+  would get a healthy run failed as `orphaned`. A TI in `none` does not keep
+  the run alive: once its upstreams settle, the next scheduler tick decides
+  it. Releasing a TI back to `none` for another attempt (a retry, a reschedule
+  poke, an infra re-place, an operator clear) clears its per-attempt
+  timestamps, and it only becomes `scheduled` on the next tick; the release
+  stamps `released_at` (migration 036), which counts as run activity, so the
+  run never looks orphaned in that tick.
+
+  The list is only a snapshot, so the reap re-checks the whole predicate
+  atomically: it share-locks the run's TIs without waiting, then fails the run
+  only if it is still `running`, still has no live TI and its last activity is
+  still older than the threshold. If a TI moved in between (say a retriable
+  failure went to `up_for_retry`, or a TI was scheduled), fresh activity
+  landed, or another transaction is writing one of the run's TIs at that
+  moment, the reap is a no-op: nothing is written, no pod is torn down, and the reaper records
+  `orphan_reap_noop`.
 
 ## Tearing down the reaped task's pod
 
@@ -254,10 +426,24 @@ that work commits or a retry runs it again
 ([#474](https://github.com/dexadata/dexaflow/issues/474)). So, **after** the
 durable DB transition, each reaper tears the pod down:
 
-- The **heartbeat** and **dispatch-lost** reapers delete exactly the reaped
-  TI's pod, pinned by `(run-id, task-id, try-number)` labels — a retry
-  dispatches a new pod with a new try-number, so a newer live attempt can
-  never be the one deleted.
+- The **heartbeat**, **dispatch-lost** and **pod-lost** reapers delete
+  exactly the reaped attempt's pod, pinned by its `(run-id, task-id,
+  try-number)` labels and its `leoflow.io/attempt-epoch` label. A retry
+  dispatches a new pod with a new try-number, and every other new execution of
+  the same try (an infra re-place, a reschedule poke, a repeated dispatch)
+  carries a new attempt epoch, so a newer live attempt can never be the one
+  deleted ([#901](https://github.com/dexadata/dexaflow/issues/901)). A pod
+  created before 0.5.1 has no epoch label and counts as epoch 0. Each delete
+  names the pod the reaper listed and pins its UID, so a pod created between
+  the list and the delete is never touched. The reaper's mark is pinned to the
+  same `(try, epoch)`, so a row re-placed between the list and the mark is left
+  alone, and the pod-presence check that defers a reap only counts the
+  attempt's own pod.
+- The **reconciler** settles a finished pod's outcome only against the
+  attempt named by that pod's labels, try and epoch. A superseded pod's
+  `success` record can no longer settle the replacement that shares its try
+  ([#1130](https://github.com/dexadata/dexaflow/issues/1130)). The labels are
+  written by the control plane, and the task cannot change them.
 - The **orphan-run** reaper deletes every pod of the abandoned run (the
   run-id is unique per run, so no other run's pod can match).
 - **A pod that already reached a terminal phase (`Succeeded`/`Failed`) is
@@ -282,16 +468,21 @@ durable DB transition, each reaper tears the pod down:
   `ReportState`/`Heartbeat` — one whose attempt no longer matches the live
   row — with `should_terminate`, so a reaped-but-still-alive pod that we
   couldn't delete (e.g. during a K8s API outage) cancels its own work. The
-  "stale" test is exactly the source-state + `try_number` guard the state
-  write already uses ([#467](https://github.com/dexadata/dexaflow/issues/467)):
+  "stale" test is exactly the source-state, `try_number` and attempt-epoch
+  guard the state write already uses
+  ([#467](https://github.com/dexadata/dexaflow/issues/467),
+  [#911](https://github.com/dexadata/dexaflow/issues/911)):
   the report applies for the live, matching attempt, so a live execution is
   never told to stop.
 
 These teardown steps are best-effort and off the critical path: a delete
 failure is logged and metered but never undoes the DB reap, and the pod's own
 `activeDeadlineSeconds` plus the reconciler's GC remain backstops. In Lite
-(subprocess executor) there are no pods, so only the DB transition and the
-`should_terminate` signal apply.
+(subprocess executor) there are no pods and no teardown: the reapers only fail
+an attempt whose agent process is already dead (see
+[Lite: which reapers run](#lite-which-reapers-run)), so there is nothing left to
+stop, and a run failed by the orphan-run reaper stops any agent still attached
+to it through the `should_terminate` signal.
 
 A terminal pod the teardown skips is collected by the reconciler, so a
 reconciler that is not sweeping leaves those pod objects behind. That is not a
@@ -333,11 +524,19 @@ your Prometheus dashboard:
 | `pod_lost_terminal_pod_defer` | Pod-lost skipped because the attempt's pod is still there in a terminal phase — the reconciler settles it from its termination log; reaping would delete that evidence. Healthy as a *transient*. Sustained past two maintenance cycles means the reconciler is not settling and those task instances are stranded `running`, not about to settle: correlate with `reap_settling_valve_open` and `pod_lost_pod_query_error` |
 | `warm_worker_lost` | TI failed by the warm-worker-lost reaper (its warm worker is gone) |
 | `orphan_reaped` | Run failed by the orphan-run reaper |
+| `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved, fresh activity landed, or a TI was being written); nothing was written and no pod was torn down |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
+| `infra_confirm_valve_open` | The planner acted on a provisional infra mark that the reconciler did not confirm within 2 min; the reconciler is not sweeping or cannot read pods. **Alert on this** |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
 | `agent_lost_list_error`, `dispatch_lost_list_error`, `orphan_list_error`, `pod_lost_list_error`, `warm_worker_lost_list_error` | Reaper's list query failed; the next cycle will retry |
 | `dispatch_lost_pod_query_error`, `pod_lost_pod_query_error` | Pod liveness could not be read (K8s API error); the reaper deferred rather than risk a false positive |
+| `agent_lost_process_alive`, `dispatch_lost_process_alive` | Lite only: the attempt's agent process, or a process of its recorded task group that could not be stopped as an orphan, is still alive, so the reaper deferred. Sustained `agent_lost_process_alive` for one attempt means a wedged agent; stop it by hand |
+| `agent_lost_process_query_error`, `dispatch_lost_process_query_error` | Lite only: the agent's PID record could not be read or probed; the reaper deferred |
+| `agent_lost_orphan_stopped`, `dispatch_lost_orphan_stopped` | Lite only: the attempt's agent was dead but its task process group was still running; the reaper stopped that group (SIGTERM, then SIGKILL) and then reaped |
+| `agent_lost_orphan_stop_error`, `dispatch_lost_orphan_stop_error` | Lite only: stopping an orphaned task process group failed; the reaper deferred and retries next cycle |
+| `agent_lost_never_heartbeated` | Lite only: a `running` TI that never heartbeated, past the agent-lost threshold, whose agent and task process group are both gone, was failed as `agent_lost` |
+| `agent_lost_never_heartbeated_process_alive`, `agent_lost_never_heartbeated_process_query_error` | Lite only: such a TI's agent or task group is alive, or its liveness could not be read; the reaper deferred |
 | `agent_lost_pod_delete_error`, `dispatch_lost_pod_delete_error`, `orphan_pod_delete_error`, `pod_lost_pod_delete_error` | Pod teardown after a reap failed; the DB reap stands and the pod's `activeDeadlineSeconds`/GC are backstops |
 
 A sustained non-zero rate on any of these is worth investigating — reapers

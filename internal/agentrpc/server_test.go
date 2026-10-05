@@ -75,7 +75,7 @@ func (s *fakeStore) RecordHeartbeat(_ context.Context, id auth.AgentIdentity) er
 	return s.heartbeatErr
 }
 
-func (s *fakeStore) BindWarmAttempt(_ context.Context, runID, taskID string, tryNumber int, workerPod string) error {
+func (s *fakeStore) BindWarmAttempt(_ context.Context, runID, taskID string, tryNumber, _ int, workerPod string) error {
 	s.warmMu.Lock()
 	s.warmBindings = append(s.warmBindings, warmBindingCall{runID, taskID, tryNumber, workerPod})
 	s.warmMu.Unlock()

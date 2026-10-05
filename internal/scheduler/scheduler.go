@@ -95,6 +95,12 @@ type RunState struct {
 	// re-places without consuming the task's retry budget (ADR 0051 Phase 1) — an
 	// infrastructure fault is not the user's task failing.
 	InfraFailed map[string]bool
+	// InfraProvisional marks an InfraFailed task whose mark the pod reconciler
+	// has not confirmed yet (infra_confirmed_at NULL, ADR 0052 amendment). Until
+	// it is confirmed, or InfraConfirmMaxWait has passed since ended_at, the
+	// task is active: no re-place and no downstream condemnation, so a durable
+	// SUCCESS record can still settle it. Absent entries mean confirmed.
+	InfraProvisional map[string]bool
 	// InfraAttempts counts asynchronous infra re-placements per task — the
 	// try_number-free analog of DispatchAttempts for agent/pod/dispatch-lost faults.
 	// It bounds the re-place at infraMaxAttempts so a poison placement cannot loop
@@ -1109,6 +1115,12 @@ func (s *Scheduler) resetForInfraReplace(ctx context.Context, run RunState, task
 		return nil
 	}
 	if s.recorder != nil {
+		// A re-place of a mark the reconciler never confirmed means the
+		// liveness valve opened (ADR 0052 amendment, part 2): the planner acted
+		// on the guess without the record's evidence.
+		if run.InfraProvisional[taskID] {
+			s.recorder.RecordSchedulerDecision("infra_confirm_valve_open")
+		}
 		s.recorder.RecordSchedulerDecision("infra_replace")
 		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateNone), run.DagID)
 	}

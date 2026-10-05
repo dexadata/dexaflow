@@ -39,6 +39,10 @@ type Request struct {
 	RunID          string
 	TaskID         string
 	TryNumber      int
+	// AttemptEpoch is the execution of TryNumber the dispatcher claimed for this
+	// request (ADR 0051 amendment). It is stamped into the pod's identity
+	// annotation so the exchanged token names this execution.
+	AttemptEpoch int
 
 	Image           string
 	ImagePullPolicy string
