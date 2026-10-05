@@ -100,17 +100,43 @@ func containsAny(s string, subs ...string) bool {
 
 // EncodeLine serializes an Event to the same JSON line used for storage, so the
 // live-tail channel carries the full event (level + stream + timestamp), not
-// just the message text. On the unlikely marshal error it falls back to the raw
-// message, so a line is never dropped.
+// just the message text. The result is always one JSON object: a zero time is
+// stamped with the current time, and so is a time JSON cannot encode (a year
+// outside 0 to 9999, which time.MarshalJSON refuses). It used to hand the raw
+// message back on that marshal error, and a raw message holding a newline is
+// stored as two lines, so whoever controls the message text and the timestamp
+// (the agent of an attempt, through its own token) could forge a stored log
+// entry that way.
 func EncodeLine(ev Event) string {
-	if ev.Time.IsZero() {
+	if ev.Time.IsZero() || !jsonEncodableTime(ev.Time) {
 		ev.Time = time.Now().UTC()
 	}
 	encoded, err := json.Marshal(ev)
+	if err == nil {
+		return string(encoded)
+	}
+	// Not reachable: the time is in range and the other fields are strings,
+	// which encoding/json always encodes (invalid UTF-8 is replaced, not
+	// refused). Kept so that no future field brings the raw message back:
+	// the strings alone, still as one JSON object.
+	encoded, err = json.Marshal(struct {
+		Level   string `json:"level"`
+		Stream  string `json:"stream"`
+		Message string `json:"msg"`
+	}{ev.Level, ev.Stream, ev.Message})
 	if err != nil {
-		return ev.Message
+		// Three strings always encode; an empty object is the last resort,
+		// never the raw message.
+		return "{}"
 	}
 	return string(encoded)
+}
+
+// jsonEncodableTime reports whether encoding/json can encode t: time.MarshalJSON
+// refuses a year outside 0 to 9999, the four digits RFC 3339 has for it.
+func jsonEncodableTime(t time.Time) bool {
+	y := t.Year()
+	return y >= 0 && y <= 9999
 }
 
 // Ref identifies a task instance's log stream and maps to its storage location.
