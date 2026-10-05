@@ -26,6 +26,11 @@ type SchedulerStore struct {
 	// to resolve each active dag_version's effective warm target (ADR 0058 N1b2b).
 	// Zero value = warm pools off, so ActiveWarmTargets reports every target as 0.
 	warmExec config.ExecutionSection
+	// provisionalInfraMarks makes the reapers' infra marks provisional
+	// (infra_confirmed_at NULL) for the reconciler to confirm (ADR 0052
+	// amendment, part 2). Set only where a reconciler runs (Kubernetes); false
+	// (Lite) confirms each mark at mark time, which behaves exactly as before.
+	provisionalInfraMarks bool
 }
 
 // poolBeginner is the slice of pgxpool.Pool the store uses to start the orphan
@@ -53,6 +58,7 @@ type taskMaps struct {
 	dispatchAttempts map[string]int
 	nextDispatchAt   map[string]*time.Time
 	infraFailed      map[string]bool
+	infraProvisional map[string]bool
 	infraAttempts    map[string]int
 }
 
@@ -69,6 +75,7 @@ func taskInstanceMaps(tis []queries.TaskInstance) taskMaps {
 		dispatchAttempts: make(map[string]int, n),
 		nextDispatchAt:   make(map[string]*time.Time, n),
 		infraFailed:      make(map[string]bool, n),
+		infraProvisional: make(map[string]bool, n),
 		infraAttempts:    make(map[string]int, n),
 	}
 	for _, ti := range tis {
@@ -100,6 +107,11 @@ func taskInstanceMaps(tis []queries.TaskInstance) taskMaps {
 		if ti.LastFailureKind != nil && *ti.LastFailureKind == "infra" &&
 			domain.TaskState(ti.State) == domain.TaskStateFailed {
 			m.infraFailed[ti.TaskID] = true
+			// Not yet confirmed by the reconciler (ADR 0052 amendment, part 2):
+			// the planner holds it as active until confirmation or the valve.
+			if !ti.InfraConfirmedAt.Valid {
+				m.infraProvisional[ti.TaskID] = true
+			}
 		}
 		if ti.InfraAttempts > 0 {
 			m.infraAttempts[ti.TaskID] = int(ti.InfraAttempts)
@@ -166,6 +178,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			NextDispatchAt:    ts.nextDispatchAt,
 			DispatchAttempts:  ts.dispatchAttempts,
 			InfraFailed:       ts.infraFailed,
+			InfraProvisional:  ts.infraProvisional,
 			InfraAttempts:     ts.infraAttempts,
 			Now:               time.Now(),
 			Alerts:            spec.Alerts,
@@ -210,6 +223,51 @@ func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.
 // only when warm pools are enabled; left unset, warm pools read as off (every
 // target 0).
 func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection) { s.warmExec = exec }
+
+// SetProvisionalInfraMarks makes every reaper infra mark provisional until the
+// pod reconciler confirms it (ADR 0052 amendment, part 2). main.go calls it
+// only when the Kubernetes reconciler is wired with this store as its
+// confirmer; without a confirmer a provisional mark would wait for the
+// liveness valve on every reap.
+func (s *SchedulerStore) SetProvisionalInfraMarks(on bool) { s.provisionalInfraMarks = on }
+
+// ListProvisionalInfraFailures returns the provisional infra marks (failed,
+// infra, not yet confirmed) of queued or running runs, oldest first and
+// bounded, for the reconciler's confirmation pass.
+func (s *SchedulerStore) ListProvisionalInfraFailures(ctx context.Context) ([]executor.ProvisionalInfraFailure, error) {
+	rows, err := s.q.ListProvisionalInfraFailures(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing provisional infra failures: %w", err)
+	}
+	out := make([]executor.ProvisionalInfraFailure, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, executor.ProvisionalInfraFailure{
+			TaskInstanceID: uuidToString(r.TaskInstanceID),
+			DagRunID:       uuidToString(r.DagRunID),
+			TaskID:         r.TaskID,
+			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
+		})
+	}
+	return out, nil
+}
+
+// ConfirmInfraFailure stamps a provisional infra mark confirmed, guarded on
+// the exact attempt and on the mark still being provisional. It reports
+// whether a row was confirmed.
+func (s *SchedulerStore) ConfirmInfraFailure(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := s.q.ConfirmInfraFailure(ctx, queries.ConfirmInfraFailureParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("confirming infra failure: %w", err)
+	}
+	return n == 1, nil
+}
 
 // activeWarmVersion is one active dag_version's warm-relevant spec fields — the
 // pure input to warmTargets, extracted so the projection is unit-testable without
@@ -452,8 +510,9 @@ func (s *SchedulerStore) ResetForInfraReplace(ctx context.Context, runID, taskID
 		return false, err
 	}
 	n, err := s.q.ResetTaskInstanceInfraReplace(ctx, queries.ResetTaskInstanceInfraReplaceParams{
-		DagRunID: rid,
-		TaskID:   taskID,
+		DagRunID:              rid,
+		TaskID:                taskID,
+		ConfirmMaxWaitSeconds: scheduler.InfraConfirmMaxWait.Seconds(),
 	})
 	if err != nil {
 		return false, err
@@ -866,7 +925,8 @@ func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID s
 		return false, err
 	}
 	n, err := s.q.MarkTaskAgentLost(ctx, queries.MarkTaskAgentLostParams{
-		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+		Provisional: s.provisionalInfraMarks,
+		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
 	})
 	if err != nil {
 		return false, fmt.Errorf("marking task agent-lost: %w", err)
@@ -959,7 +1019,8 @@ func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceI
 		return false, err
 	}
 	n, err := s.q.MarkTaskDispatchLost(ctx, queries.MarkTaskDispatchLostParams{
-		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+		Provisional: s.provisionalInfraMarks,
+		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
 	})
 	if err != nil {
 		return false, fmt.Errorf("marking task dispatch-lost: %w", err)
@@ -1006,7 +1067,8 @@ func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID str
 		return false, err
 	}
 	n, err := s.q.MarkTaskPodLost(ctx, queries.MarkTaskPodLostParams{
-		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+		Provisional: s.provisionalInfraMarks,
+		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
 	})
 	if err != nil {
 		return false, fmt.Errorf("marking task pod-lost: %w", err)
