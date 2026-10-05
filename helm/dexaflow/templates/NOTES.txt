@@ -186,4 +186,10 @@ Migrations run as a pre-install/pre-upgrade Job using image
 which bundles the Dexaflow migrations at "{{ .Values.migrations.path }}"
 (build/publish it with `make migrate-image`). Override migrations.image or set
 migrations.enabled=false to migrate out of band.
+Index migrations (0.5.1 ships eight) run CONCURRENTLY: each waits for every
+transaction that was open in the database when it started, so the Job can take
+longer than usual behind a session idle in transaction or a long query. Upgrade
+in a window without long-running transactions. If the Job is interrupted, every
+retry stops at "Dirty database version N. Fix and force version."; the recovery
+runbook is at https://dexaflow.dexadata.ai/operate/upgrades/#an-interrupted-migration
 {{- end }}
