@@ -383,11 +383,16 @@ type TaskStateHistory struct {
 }
 
 type Tenant struct {
-	ID          pgtype.UUID        `json:"id"`
-	Name        string             `json:"name"`
-	DisplayName *string            `json:"display_name"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	Name                       string             `json:"name"`
+	DisplayName                *string            `json:"display_name"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	MaxDags                    int32              `json:"max_dags"`
+	MaxRunsPerDay              int32              `json:"max_runs_per_day"`
+	MinScheduleIntervalSeconds int32              `json:"min_schedule_interval_seconds"`
+	RunsDay                    pgtype.Date        `json:"runs_day"`
+	RunsDayCount               int32              `json:"runs_day_count"`
 }
 
 type User struct {

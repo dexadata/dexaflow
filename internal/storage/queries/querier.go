@@ -72,11 +72,14 @@ type Querier interface {
 	CountLocalPasswordUser(ctx context.Context, arg CountLocalPasswordUserParams) (int64, error)
 	CountPools(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountTaskInstanceStatesInWindow(ctx context.Context, arg CountTaskInstanceStatesInWindowParams) ([]CountTaskInstanceStatesInWindowRow, error)
+	CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountUsers(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountVariables(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateDagRun(ctx context.Context, arg CreateDagRunParams) (DagRun, error)
-	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) error
+	// Zero rows means the slot's run already exists (or the DAG has no current
+	// version): the caller then takes nothing from the tenant's daily run cap.
+	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error)
 	// try_number starts at 1 to match Airflow (1-based attempts): the first run's
 	// logs live at .../1.log, which is where the UI's log view looks. Retries bump
 	// it via ResetForRetry.
@@ -160,6 +163,7 @@ type Querier interface {
 	// no row, which the reconcile turns into a fail-closed error.
 	GetRoleIDForUserTenant(ctx context.Context, arg GetRoleIDForUserTenantParams) (pgtype.UUID, error)
 	GetTenantByName(ctx context.Context, name string) (GetTenantByNameRow, error)
+	GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error)
 	GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (GetUserByEmailRow, error)
 	// The by-id lookup backing the per-request authz reload. Returns the tenant
 	// name (not the uuid) so the reconstructed principal matches the login path's
@@ -569,6 +573,13 @@ type Querier interface {
 	// try_number (never clobber a different attempt or a terminal row), consuming no
 	// retry budget. Mirrors RescheduleTaskInstance but keyed by id, for the reconciler.
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
+	// Takes one of the tenant's runs for the current UTC day, resetting the count
+	// when the day has turned. Zero rows means the tenant has no daily cap or has
+	// reached it; the caller tells the two apart from the limit it read. The UPDATE
+	// locks the tenant row until the caller's transaction ends, and Postgres
+	// re-checks the WHERE against the row a concurrent winner committed, so the
+	// count can never pass the cap.
+	ReserveTenantDailyRun(ctx context.Context, id pgtype.UUID) (int64, error)
 	// Archives every failed attempt in the run into task_instance_history then
 	// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
 	// task ids it reset, so the clear can delete exactly their XCom.
@@ -670,6 +681,9 @@ type Querier interface {
 	// and flushes each group through this query. task_id = ANY keeps every row's CASE
 	// self-referential, so an already-stamped row is never re-stamped.
 	UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) error
+	// Sets the limits given and keeps the others: a NULL argument leaves that
+	// column as it is, 0 makes the limit unlimited (migration 036).
+	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error)
 	// Tri-state write (#887): COALESCE(EXCLUDED.col, connections.col) preserves the
 	// stored value when the param is NULL, overwrites it when the param is a value,

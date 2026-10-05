@@ -306,7 +306,9 @@ FROM dags d
 WHERE d.is_active = true AND d.is_paused = false
   AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL;
 
--- name: CreateScheduledRunByDagID :exec
+-- name: CreateScheduledRunByDagID :execrows
+-- Zero rows means the slot's run already exists (or the DAG has no current
+-- version): the caller then takes nothing from the tenant's daily run cap.
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, sqlc.arg(run_id), sqlc.arg(logical_date), 'queued', 'scheduled'
 FROM dags d

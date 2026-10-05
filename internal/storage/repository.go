@@ -539,7 +539,8 @@ func (r *Repository) DeleteDagRun(ctx context.Context, tenant, dagID, runID stri
 // match the scheduler path (see `Scheduler.hasHeadroom`). The check
 // races with concurrent inserts, but the small overshoot window is
 // bounded by the number of concurrent writers and lets us avoid an
-// advisory lock on the hot path.
+// advisory lock on the hot path. The tenant's max_runs_per_day, when set, is
+// charged exactly (createRunWithinDailyLimit).
 func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run domain.DagRun) (domain.DagRun, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -561,19 +562,27 @@ func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run
 	if len(conf) == 0 || string(conf) == "null" {
 		conf = []byte("{}")
 	}
-	created, err := r.q.CreateDagRun(ctx, queries.CreateDagRunParams{
-		TenantID:     dag.TenantID,
-		DagID:        dag.ID,
-		DagVersionID: dag.CurrentVersionID,
-		RunID:        run.RunID,
-		LogicalDate:  pgtype.Timestamptz{Time: run.LogicalDate, Valid: true},
-		State:        queries.DagRunState(run.State),
-		Trigger:      queries.DagRunTrigger(run.RunType),
-		Note:         strPtr(run.Note),
-		Conf:         conf,
+	var created queries.DagRun
+	err = createRunWithinDailyLimit(ctx, r.q, r.pool, dag.TenantID, func(q *queries.Queries) (bool, error) {
+		var ierr error
+		created, ierr = q.CreateDagRun(ctx, queries.CreateDagRunParams{
+			TenantID:     dag.TenantID,
+			DagID:        dag.ID,
+			DagVersionID: dag.CurrentVersionID,
+			RunID:        run.RunID,
+			LogicalDate:  pgtype.Timestamptz{Time: run.LogicalDate, Valid: true},
+			State:        queries.DagRunState(run.State),
+			Trigger:      queries.DagRunTrigger(run.RunType),
+			Note:         strPtr(run.Note),
+			Conf:         conf,
+		})
+		if ierr != nil {
+			return false, fmt.Errorf("creating dag run: %w", mapConflict(ierr))
+		}
+		return true, nil
 	})
 	if err != nil {
-		return domain.DagRun{}, fmt.Errorf("creating dag run: %w", mapConflict(err))
+		return domain.DagRun{}, err
 	}
 	// The trigger's audit entry is written by the API handler, where the acting
 	// user is known (so the Audit Log shows the owner).
@@ -1143,6 +1152,11 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 	// pre-declaration DAG is ever rejected.
 	if verr := r.validateDeclaredSecrets(ctx, tid, spec); verr != nil {
 		return false, verr
+	}
+	// The tenant's limits (max_dags, min_schedule_interval_seconds), also
+	// before any write.
+	if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
+		return false, lerr
 	}
 	maxRuns := spec.MaxActiveRuns
 	if maxRuns == 0 {
@@ -2187,8 +2201,9 @@ func (r *Repository) ClearImportError(ctx context.Context, tenant, filename stri
 // anything missing and reports created=false. A positive defaultPoolSlots sizes
 // the tenant's default pool to that many slots, on creation or later; a
 // non-positive value leaves an existing pool alone and gives a new one the
-// default tenant's size.
-func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int) (created bool, err error) {
+// default tenant's size. limits sets the tenant limits it carries and leaves
+// the others as they are (a new tenant starts with none).
+func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int, limits domain.TenantLimitsUpdate) (created bool, err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("beginning ensure-tenant tx: %w", err)
@@ -2210,6 +2225,9 @@ func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string,
 		return false, fmt.Errorf("seeding role permissions: %w", err)
 	}
 	if err := ensureDefaultPool(ctx, qtx, t.ID, defaultPoolSlots); err != nil {
+		return false, err
+	}
+	if err := applyTenantLimits(ctx, qtx, t.ID, limits); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {

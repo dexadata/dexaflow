@@ -311,7 +311,7 @@ func (q *Queries) CreateDagRun(ctx context.Context, arg CreateDagRunParams) (Dag
 	return i, err
 }
 
-const createScheduledRunByDagID = `-- name: CreateScheduledRunByDagID :exec
+const createScheduledRunByDagID = `-- name: CreateScheduledRunByDagID :execrows
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, $1, $2, 'queued', 'scheduled'
 FROM dags d
@@ -326,14 +326,19 @@ type CreateScheduledRunByDagIDParams struct {
 	DagID       string             `json:"dag_id"`
 }
 
-func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) error {
-	_, err := q.db.Exec(ctx, createScheduledRunByDagID,
+// Zero rows means the slot's run already exists (or the DAG has no current
+// version): the caller then takes nothing from the tenant's daily run cap.
+func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createScheduledRunByDagID,
 		arg.RunID,
 		arg.LogicalDate,
 		arg.TenantID,
 		arg.DagID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createTaskInstance = `-- name: CreateTaskInstance :one
