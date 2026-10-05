@@ -132,6 +132,12 @@ type RunState struct {
 	// non-Pro deployment leave it false, so the pool gate is a no-op and planning
 	// is byte-identical to the max_active_tasks-only path.
 	PoolsEnabled bool
+	// ConfineUndefinedPools makes a task that names a pool its tenant has not
+	// defined draw on default_pool instead of running unlimited. The Step loop
+	// sets it when tenant pool writes are locked (server.pools_read_only): a
+	// tenant cannot create pools then, so an undefined name would otherwise be a
+	// way around the default_pool budget (#646).
+	ConfineUndefinedPools bool
 	// PoolBudgets is the per-pool slot cap keyed by PoolKey(TenantID, pool). A pool
 	// with a non-positive or absent budget is unlimited (fail open, never
 	// deadlock). The Step loop sets it from the once-per-tick PoolBudgets snapshot;
@@ -311,6 +317,9 @@ type Scheduler struct {
 	// byte-identically. Set once at construction (before ticking), read on the
 	// single-threaded tick, so it needs no lock.
 	poolsEnabled bool
+	// confineUndefinedPools threads RunState.ConfineUndefinedPools; set once by
+	// ConfineUndefinedPools before the scheduler starts ticking.
+	confineUndefinedPools bool
 }
 
 // NewScheduler builds a Scheduler over the given store, ticking every interval.
@@ -424,6 +433,11 @@ func (s *Scheduler) SetDispatcher(d Dispatcher) { s.dispatcher = d }
 // queries pool budgets, so Lite plans byte-identically. Call once before the
 // scheduler starts ticking.
 func (s *Scheduler) EnablePools() { s.poolsEnabled = true }
+
+// ConfineUndefinedPools makes tasks that name an undefined pool draw on their
+// tenant's default_pool (see RunState.ConfineUndefinedPools). Main calls it
+// when server.pools_read_only is on. Call once before the scheduler ticks.
+func (s *Scheduler) ConfineUndefinedPools() { s.confineUndefinedPools = true }
 
 // SetAlerter attaches the on-failure alerter (optional; #424). Without it, or
 // for a DAG with no alert rules, the scheduler finalizes failures silently.
@@ -558,6 +572,7 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		activeByDAG[key]++
 		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
 		run.PoolsEnabled = s.poolsEnabled
+		run.ConfineUndefinedPools = s.confineUndefinedPools
 		run.PoolBudgets = poolBudgets
 		run.PoolActive = poolOccupied
 		admitted, admittedByPool := s.advanceSafely(ctx, run)
@@ -611,20 +626,22 @@ func (s *Scheduler) loadPoolBudget(ctx context.Context, runs []RunState) (budget
 	if err != nil {
 		return nil, nil, fmt.Errorf("loading pool budgets: %w", err)
 	}
-	return budgets, activePoolCounts(runs), nil
+	return budgets, activePoolCounts(runs, budgets, s.confineUndefinedPools), nil
 }
 
 // activePoolCounts tallies, per pool (keyed by PoolKey), the task instances that
 // already occupy a slot — those queued or running across every active run,
 // cross-DAG (ADR 0053 Stage 3). A task instance's pool is its spec pool, or the
 // implicit default pool. Reuses the runs Step already loaded, so it adds no
-// per-tick query. Only built on the Pro path (see loadPoolBudget).
-func activePoolCounts(runs []RunState) map[string]int {
+// per-tick query. Only built on the Pro path (see loadPoolBudget). With confine
+// set, an undefined pool is charged to default_pool, the same pool admission
+// charges it to.
+func activePoolCounts(runs []RunState, budgets map[string]int, confine bool) map[string]int {
 	counts := make(map[string]int, len(runs))
 	for i := range runs {
 		for _, t := range runs[i].Tasks {
 			if st := runs[i].States[t.TaskID]; st == domain.TaskStateQueued || st == domain.TaskStateRunning {
-				counts[PoolKey(runs[i].TenantID, resolvePool(t.Pool))]++
+				counts[effectivePoolKey(runs[i].TenantID, t.Pool, budgets, confine)]++
 			}
 		}
 	}
@@ -833,7 +850,7 @@ func taskPools(run RunState) map[string]string {
 	}
 	m := make(map[string]string, len(run.Tasks))
 	for _, t := range run.Tasks {
-		m[t.TaskID] = PoolKey(run.TenantID, resolvePool(t.Pool))
+		m[t.TaskID] = effectivePoolKey(run.TenantID, t.Pool, run.PoolBudgets, run.ConfineUndefinedPools)
 	}
 	return m
 }
