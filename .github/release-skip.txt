@@ -4,3 +4,5 @@
 #1358 docs promotion for v0.5.0, release mechanics with nothing to ship in 0.5.x
 #1359 README install instructions for v0.5.0, docs that live on main only
 #1407 ADR 0052 amendment B1 deferred to v0.5.2 by Alisson's decision
+#1409 ADR 0052 amendment B5 deferred to v0.5.2 by Alisson's decision
+#1408 ADR 0052 amendment B2 deferred to v0.5.2 by Alisson's decision
