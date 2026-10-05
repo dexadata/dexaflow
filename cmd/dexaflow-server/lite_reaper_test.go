@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 // TI queued well past the dispatch-lost threshold.
 type liteReapStore struct {
 	reapedRuns, agentMarked, queuedMarked, podMarked []string
+	// agentPins records each agent-lost mark as "ti/try/epoch".
+	agentPins []string
 }
 
 func (s *liteReapStore) ListReapCandidates(context.Context) ([]executor.ReapCandidate, error) {
@@ -23,23 +27,24 @@ func (s *liteReapStore) ReapRun(_ context.Context, id string) error {
 	return nil
 }
 func (s *liteReapStore) ListAgentLostCandidates(context.Context) ([]executor.AgentLostCandidate, error) {
-	return []executor.AgentLostCandidate{{TaskInstanceID: "dead-agent", DagRunID: "r1", TaskID: "t", TryNumber: 1, LastHeartbeat: time.Now().Add(-time.Hour)}}, nil
+	return []executor.AgentLostCandidate{{TaskInstanceID: "dead-agent", DagRunID: "r1", TaskID: "t", TryNumber: 1, AttemptEpoch: 2, LastHeartbeat: time.Now().Add(-time.Hour)}}, nil
 }
-func (s *liteReapStore) MarkTaskAgentLost(_ context.Context, id string) (bool, error) {
+func (s *liteReapStore) MarkTaskAgentLost(_ context.Context, id string, try, epoch int) (bool, error) {
 	s.agentMarked = append(s.agentMarked, id)
+	s.agentPins = append(s.agentPins, fmt.Sprintf("%s/%d/%d", id, try, epoch))
 	return true, nil
 }
 func (s *liteReapStore) ListStaleQueuedCandidates(context.Context) ([]executor.StaleQueuedCandidate, error) {
 	return []executor.StaleQueuedCandidate{{TaskInstanceID: "live-queued", DagRunID: "r2", TaskID: "t", TryNumber: 1, QueuedAt: time.Now().Add(-time.Hour)}}, nil
 }
-func (s *liteReapStore) MarkTaskDispatchLost(_ context.Context, id string) error {
+func (s *liteReapStore) MarkTaskDispatchLost(_ context.Context, id string, _, _ int) (bool, error) {
 	s.queuedMarked = append(s.queuedMarked, id)
-	return nil
+	return true, nil
 }
 func (s *liteReapStore) ListRunningTasks(context.Context, time.Duration) ([]executor.PodLostCandidate, error) {
-	return []executor.PodLostCandidate{{TaskInstanceID: "no-pod", DagRunID: "r3", TaskID: "t", TryNumber: 1, RunningSince: time.Now().Add(-time.Hour)}}, nil
+	return []executor.PodLostCandidate{{TaskInstanceID: "no-pod", DagRunID: "r3", TaskID: "t", TryNumber: 1, AttemptEpoch: 3, RunningSince: time.Now().Add(-time.Hour)}}, nil
 }
-func (s *liteReapStore) MarkTaskPodLost(_ context.Context, id string) (bool, error) {
+func (s *liteReapStore) MarkTaskPodLost(_ context.Context, id string, _, _ int) (bool, error) {
 	s.podMarked = append(s.podMarked, id)
 	return true, nil
 }
@@ -100,6 +105,11 @@ func TestLiteReaperWiring(t *testing.T) {
 	if len(store.reapedRuns) != 1 || len(store.agentMarked) != 2 {
 		t.Errorf("settled Lite leader must reap the orphan run and both dead agents: reapedRuns=%v agentMarked=%v",
 			store.reapedRuns, store.agentMarked)
+	}
+	// Both agent-lost marks are pinned to the listed attempt (ADR 0051 A4), so
+	// a row re-placed between the list and the write is left alone.
+	if want := []string{"dead-agent/1/2", "no-pod/1/3"}; !slices.Equal(store.agentPins, want) {
+		t.Errorf("agent-lost marks must carry the listed try and epoch: got %v, want %v", store.agentPins, want)
 	}
 	if len(store.queuedMarked) != 0 {
 		t.Errorf("dispatch-lost must defer on a live agent process (#911): queuedMarked=%v", store.queuedMarked)

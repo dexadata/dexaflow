@@ -2,6 +2,19 @@ package executor
 
 import "context"
 
+// Attempt names exactly one execution of a task instance: its run, its task,
+// the try it is on and the attempt epoch the dispatcher claimed for it (ADR 0051
+// amendment). The try alone is not enough: an infra re-place, a reschedule poke
+// or a repeated dispatch starts a new execution on the same try, and only the
+// epoch tells two pods of one try apart. A pod stamped before the epoch existed
+// carries no epoch label and is epoch 0.
+type Attempt struct {
+	RunID        string
+	TaskID       string
+	TryNumber    int
+	AttemptEpoch int
+}
+
 // PodManager is the slice of the Kubernetes executor the reapers use to (1)
 // tear down a reaped task's pod and (2) check whether a queued TI's pod is
 // actually live before declaring its dispatch lost (#474, #461).
@@ -17,10 +30,12 @@ import "context"
 // The Kubernetes executor implements this; the interface lives here so the
 // scheduler depends on a capability, not on the executor package.
 type PodManager interface {
-	// DeleteTaskPod deletes the pod for exactly one reaped task instance —
-	// the (run, task, try) tuple. Pinning try-number guarantees a newer live
-	// attempt (dispatched with a new try-number) is never deleted. Tolerates
-	// a missing pod.
+	// DeleteTaskPod deletes the pod for exactly one reaped attempt: the
+	// (run, task, try, epoch) tuple. Pinning try-number and the attempt epoch
+	// guarantees a newer live attempt (a retry on a new try, or an infra
+	// re-place on the same try with a new epoch) is never deleted (#901). Each
+	// pod is deleted by name with a UID precondition, so a pod the call did not
+	// list is never acted on. Tolerates a missing pod.
 	//
 	// A pod already in a terminal phase is SKIPPED, not deleted (#928): the
 	// teardown exists to stop a running container, a terminal pod has none, and
@@ -29,19 +44,19 @@ type PodManager interface {
 	// after its mark without reading presence first — the guard is at the delete
 	// site, so it holds for every reaper including the ones (agent-lost,
 	// orphan-run) that read no presence at all.
-	DeleteTaskPod(ctx context.Context, runID, taskID string, tryNumber int) error
+	DeleteTaskPod(ctx context.Context, a Attempt) error
 	// DeleteRunPods deletes every task pod of one reaped run. Used by the
 	// orphan-run reaper, which abandons the whole run. The run-id is unique
 	// per run, so no other run's pod can match. Tolerates missing pods. The
 	// terminal-phase skip above applies per pod within the run (#928).
 	DeleteRunPods(ctx context.Context, runID string) error
 	// TaskPodPresence reports what the apiserver holds for exactly the
-	// (run, task, try) attempt: a live pod, a present-but-finished pod, or
-	// nothing. A reaper defers on a live pod — the dispatch landed, the node is
-	// merely slow (#461). Try-number is pinned so a retried TI's liveness gate
-	// asks about the attempt it is about to fail, not any older attempt whose
-	// pod may still linger (#723).
-	TaskPodPresence(ctx context.Context, runID, taskID string, tryNumber int) (PodPresence, error)
+	// (run, task, try, epoch) attempt: a live pod, a present-but-finished pod,
+	// or nothing. A reaper defers on a live pod: the dispatch landed, the node
+	// is merely slow (#461). Try-number and epoch are pinned so a retried or
+	// re-placed TI's liveness gate asks about the attempt it is about to fail,
+	// not any older attempt whose pod may still linger (#723).
+	TaskPodPresence(ctx context.Context, a Attempt) (PodPresence, error)
 }
 
 // PodPresence is the three-way answer to "what does the apiserver hold for this
@@ -118,9 +133,9 @@ func (p PodPresence) String() string {
 // and before the informer warms: every candidate then uses the live path.
 type PodPresenceCache interface {
 	// CachedPodActive reports whether the cache holds a Pending/Running pod for
-	// exactly the (run, task, try) attempt. Only a true return is trusted (to
-	// defer); false is a "no speedup" signal that must not drive a reap.
-	// Try-number is pinned so the cache gate cannot defer on an older attempt's
-	// lingering pod (#723).
-	CachedPodActive(runID, taskID string, tryNumber int) bool
+	// exactly the (run, task, try, epoch) attempt. Only a true return is
+	// trusted (to defer); false is a "no speedup" signal that must not drive a
+	// reap. Try-number and epoch are pinned so the cache gate cannot defer on an
+	// older attempt's lingering pod (#723).
+	CachedPodActive(a Attempt) bool
 }

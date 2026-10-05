@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/auth"
@@ -192,8 +193,9 @@ type Server struct {
 	// indefinitely on a peer must select on this. nil (the default) keeps streams
 	// open until the peer ends them.
 	shutdown <-chan struct{}
-	// legacyTokens meters task tokens without an attempt_epoch claim (nil: off).
-	legacyTokens LegacyTokenRecorder
+	// legacyTokens meters task tokens without an attempt_epoch claim (unset or
+	// nil recorder: off). Atomic because it is attached after Serve starts.
+	legacyTokens atomic.Pointer[legacyRecorderBox]
 }
 
 // NewServer builds an AgentService server backed by the given authenticator,

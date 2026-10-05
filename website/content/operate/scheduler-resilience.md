@@ -368,10 +368,24 @@ that work commits or a retry runs it again
 ([#474](https://github.com/dexadata/dexaflow/issues/474)). So, **after** the
 durable DB transition, each reaper tears the pod down:
 
-- The **heartbeat** and **dispatch-lost** reapers delete exactly the reaped
-  TI's pod, pinned by `(run-id, task-id, try-number)` labels — a retry
-  dispatches a new pod with a new try-number, so a newer live attempt can
-  never be the one deleted.
+- The **heartbeat**, **dispatch-lost** and **pod-lost** reapers delete
+  exactly the reaped attempt's pod, pinned by its `(run-id, task-id,
+  try-number)` labels and its `leoflow.io/attempt-epoch` label. A retry
+  dispatches a new pod with a new try-number, and every other new execution of
+  the same try (an infra re-place, a reschedule poke, a repeated dispatch)
+  carries a new attempt epoch, so a newer live attempt can never be the one
+  deleted ([#901](https://github.com/dexadata/dexaflow/issues/901)). A pod
+  created before 0.5.1 has no epoch label and counts as epoch 0. Each delete
+  names the pod the reaper listed and pins its UID, so a pod created between
+  the list and the delete is never touched. The reaper's mark is pinned to the
+  same `(try, epoch)`, so a row re-placed between the list and the mark is left
+  alone, and the pod-presence check that defers a reap only counts the
+  attempt's own pod.
+- The **reconciler** settles a finished pod's outcome only against the
+  attempt named by that pod's labels, try and epoch. A superseded pod's
+  `success` record can no longer settle the replacement that shares its try
+  ([#1130](https://github.com/dexadata/dexaflow/issues/1130)). The labels are
+  written by the control plane, and the task cannot change them.
 - The **orphan-run** reaper deletes every pod of the abandoned run (the
   run-id is unique per run, so no other run's pod can match).
 - **A pod that already reached a terminal phase (`Succeeded`/`Failed`) is
@@ -396,8 +410,10 @@ durable DB transition, each reaper tears the pod down:
   `ReportState`/`Heartbeat` — one whose attempt no longer matches the live
   row — with `should_terminate`, so a reaped-but-still-alive pod that we
   couldn't delete (e.g. during a K8s API outage) cancels its own work. The
-  "stale" test is exactly the source-state + `try_number` guard the state
-  write already uses ([#467](https://github.com/dexadata/dexaflow/issues/467)):
+  "stale" test is exactly the source-state, `try_number` and attempt-epoch
+  guard the state write already uses
+  ([#467](https://github.com/dexadata/dexaflow/issues/467),
+  [#911](https://github.com/dexadata/dexaflow/issues/911)):
   the report applies for the live, matching attempt, so a live execution is
   never told to stop.
 
