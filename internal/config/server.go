@@ -196,6 +196,29 @@ type ExecutorSection struct {
 	// finished pods stay for the grace period, so they can be inspected with
 	// kubectl.
 	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
+	// KubeClient sets the client-side rate limits of the control plane's
+	// Kubernetes clients.
+	KubeClient KubeClientSection `mapstructure:"kube_client"`
+}
+
+// KubeClientSection sets the client-side rate limits (client-go token buckets)
+// of the control plane's Kubernetes clients. The dispatch client creates task
+// pods; the agent token exchange builds its own client with the same limits.
+// Maintenance work (pod informer, reconciler, reapers, staging GC, warm pool
+// reconciler) shares the dispatch client unless MaintenanceQPS is set, in which
+// case it gets a separate client and token bucket so a maintenance burst cannot
+// starve pod creation.
+type KubeClientSection struct {
+	// QPS and Burst limit the dispatch client. Defaults are client-go's own
+	// (5 and 10); a non-positive value falls back to them.
+	QPS   float64 `mapstructure:"qps"`
+	Burst int     `mapstructure:"burst"`
+	// MaintenanceQPS and MaintenanceBurst limit a separate maintenance client.
+	// 0 (default) keeps maintenance on the dispatch client, one shared budget as
+	// before. A non-positive burst with a positive QPS falls back to client-go's
+	// default burst.
+	MaintenanceQPS   float64 `mapstructure:"maintenance_qps"`
+	MaintenanceBurst int     `mapstructure:"maintenance_burst"`
 }
 
 // PlatformDefaultsSection configures the lowest-precedence (L0) task defaults,
@@ -900,6 +923,12 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// client-go's own defaults on one shared client, so an unconfigured install
+	// keeps its effective apiserver budget.
+	"executor.kube_client.qps":               5.0,
+	"executor.kube_client.burst":             10,
+	"executor.kube_client.maintenance_qps":   0.0,
+	"executor.kube_client.maintenance_burst": 0,
 
 	// Alert egress guard: an alert's URL is tenant data (#424). The []string
 	// binds from one comma-separated env var, like server.trusted_proxies.
