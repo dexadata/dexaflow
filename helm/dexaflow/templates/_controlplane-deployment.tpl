@@ -139,6 +139,12 @@ spec:
             # the served SPA shell, mirroring Lite's silver LITE pill.
             - name: LEOFLOW_UI_EDITION
               value: "pro"
+            {{- if .ctx.Values.goMemLimit.enabled }}
+            # Soft memory limit for the Go GC, a fraction of the container's
+            # hard limit (leoflow.goMemLimit). Omitted when off.
+            - name: GOMEMLIMIT
+              value: {{ include "leoflow.goMemLimit" .ctx | quote }}
+            {{- end }}
             {{- with .ctx.Values.ui.autoRefreshIntervalSeconds }}
             # Omitted entirely when unset, so the server's own default decides.
             # Rendering an empty string here would bind the variable to "" and
@@ -246,8 +252,16 @@ spec:
             - name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
               value: {{ .ctx.Values.executor.defaults.staging.storageClass | quote }}
             {{- end }}
+            {{- if .ctx.Values.executor.collectSettledRunPods }}
+            # Opt-in: collect a settled run's finished task pods in one
+            # DeleteCollection instead of one delete per pod after the grace period.
+            - name: LEOFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
+              value: "true"
+            {{- end }}
             - name: LEOFLOW_LOGS_DIR
               value: {{ .ctx.Values.config.logsDir | quote }}
+            - name: LEOFLOW_LOGS_TAIL_PUBLISH
+              value: {{ (.ctx.Values.logs.tail).publish | default "always" | quote }}
             {{- if ne .ctx.Values.logs.sink.provider "disk" }}
             # Object-store log backend (opt-in, ADR 0035/0056 keyless-first). With
             # provider s3 or gcs, task logs ship to a bucket instead of the PVC; set
@@ -261,6 +275,8 @@ spec:
               value: {{ .ctx.Values.logs.sink.bucket | quote }}
             - name: LEOFLOW_LOGS_SINK_PREFIX
               value: {{ .ctx.Values.logs.sink.prefix | quote }}
+            - name: LEOFLOW_LOGS_SINK_LAYOUT
+              value: {{ .ctx.Values.logs.sink.layout | default "single" | quote }}
             {{- if eq .ctx.Values.logs.sink.provider "s3" }}
             - name: LEOFLOW_LOGS_SINK_REGION
               value: {{ .ctx.Values.logs.sink.region | quote }}
@@ -286,10 +302,35 @@ spec:
               value: {{ .ctx.Values.config.scheduler.enabled | quote }}
             - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
               value: {{ .ctx.Values.config.scheduler.loopIntervalMs | quote }}
+            {{- with .ctx.Values.config.scheduler.dispatch }}
+            {{- if .bufferSize }}
+            # Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
+            # the pods. Unset keeps the server default, synchronous dispatch.
+            - name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+              value: {{ .bufferSize | quote }}
+            {{- end }}
+            {{- if .workers }}
+            - name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+              value: {{ .workers | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
               value: {{ .ctx.Values.database.maxOpenConns | quote }}
             - name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
               value: {{ .ctx.Values.database.maxIdleConns | quote }}
+            {{- /* Pool tuning, each omitted at its default 0 so the pools stay as they were. */}}
+            {{- with .ctx.Values.database.schedulerMaxConns }}
+            - name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.database.statementTimeoutMs }}
+            - name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ctx.Values.database.connMaxLifetimeJitterMs }}
+            - name: LEOFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS
+              value: {{ . | quote }}
+            {{- end }}
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}

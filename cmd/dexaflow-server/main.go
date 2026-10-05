@@ -164,6 +164,9 @@ func run() error {
 	defer dsCleanup()
 
 	repo := storage.NewRepository(pg)
+	// A clear deletes the stored XCom of the attempts it clears, not just their
+	// index rows, since agents fetch values by key (#1131).
+	repo.SetXComBackend(xcomBackend)
 	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
@@ -261,10 +264,19 @@ func run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
-	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks), ReadHeaderTimeout: 10 * time.Second}
+	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), ReadHeaderTimeout: 10 * time.Second}
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
 	return serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv)
+}
+
+// observabilityOptions maps the observability.metrics config onto the metrics
+// listener.
+func observabilityOptions(cfg *config.ServerConfig) []api.ObservabilityOption {
+	if cfg.Observability.Metrics.DropLegacyNames {
+		return []api.ObservabilityOption{api.WithoutLegacyMetricNames()}
+	}
+	return nil
 }
 
 // awaitShutdown blocks until a server errors or the context is canceled, then
@@ -1118,18 +1130,33 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
+	// The scheduler loop, its reapers and the janitors run on their own pool
+	// when database.scheduler_max_conns is set, so API traffic cannot starve
+	// them; unset, schedPG is pg and nothing changes. The agent gRPC handlers
+	// above stay on the main pool with the repository they share with the API.
+	schedPG, releaseSchedPG, perr := pg.ForScheduler(ctx, schedulerDatabase(cfg))
+	if perr != nil {
+		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		return nil, false, nil, fmt.Errorf("scheduler pool: %w", perr)
+	}
+	schedExec := execStore
+	if schedPG != pg {
+		schedExec = storage.NewExecutionStore(schedPG)
+		logger.Info("scheduler uses a dedicated database pool", "max_conns", cfg.Database.SchedulerMaxConns)
+	}
 	// XCom-TTL and log-retention janitors are maintenance the scheduler owns; the
 	// api role runs no background writers.
-	startCleanup(ctx, storage.NewXComIndex(pg), logSink, cfg.Logs.Dir, logger)
+	startCleanup(ctx, storage.NewXComIndex(schedPG), logSink, cfg.Logs.Dir, logger)
 
 	drain := func() {}
 	if cfg.Scheduler.Enabled {
-		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, pg, repo, execStore, authn, warmReg, logSink, logger, metrics)
+		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, schedPG, repo, schedExec, authn, warmReg, logSink, logger, metrics)
 		if serr != nil {
+			releaseSchedPG()
 			// Bounded, like every other stop of this server. At boot no stream is
 			// open yet, so the unbounded form could not actually hang here — but a
 			// second way to stop the same server is a way for the two to drift, and
@@ -1156,6 +1183,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	stop = func() {
 		drain()
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		releaseSchedPG()
 	}
 	return health, podDispatch, stop, nil
 }
@@ -1469,7 +1497,7 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, servesAPI bool, apiSrv,
 // channel is plaintext (dev). The per-task bearer token in metadata authenticates
 // each call regardless. inflight (required) is installed on the interceptor
 // chain so the bounded stop can report the handlers it leaves running.
-func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -1482,6 +1510,9 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	agentSrv.SetShutdown(ctx)
 	agentSrv.SetLogSink(logSink)
 	agentSrv.SetLogPublisher(logTailer)
+	// logs.tail.publish: "always" (default) publishes every line; "on_demand"
+	// publishes only while someone follows the attempt.
+	agentSrv.SetTailPublishOnDemand(tailOnDemand)
 	agentSrv.SetSecrets(secretsStore, allowInsecureSecrets)
 	// Refresh a live attempt's bearer on every heartbeat (ADR 0055 Fix #4) with the
 	// same short per-attempt TTL used at dispatch, so a long task keeps a working
@@ -1673,8 +1704,8 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 			return nil, fmt.Errorf("building s3 log store: %w", err)
 		}
 		logger.Info("task logs: s3 object-store backend enabled",
-			"bucket", cfg.Logs.Sink.Bucket, "endpoint", cfg.Logs.Sink.Endpoint, "prefix", cfg.Logs.Sink.Prefix)
-		return logs.NewDurableSink(ctx, "s3", "", store, cfg.Logs.Sink.Prefix, logger)
+			"bucket", cfg.Logs.Sink.Bucket, "endpoint", cfg.Logs.Sink.Endpoint, "prefix", cfg.Logs.Sink.Prefix, "layout", cfg.Logs.Sink.Layout)
+		return logs.NewDurableSink(ctx, "s3", "", store, cfg.Logs.Sink.Prefix, logger, logs.WithObjectLayout(cfg.Logs.Sink.Layout))
 	case "gcs":
 		store, err := logs.NewGCSStore(ctx, logs.GCSConfig{
 			Bucket:          cfg.Logs.Sink.Bucket,
@@ -1684,8 +1715,8 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 			return nil, fmt.Errorf("building gcs log store: %w", err)
 		}
 		logger.Info("task logs: gcs object-store backend enabled",
-			"bucket", cfg.Logs.Sink.Bucket, "prefix", cfg.Logs.Sink.Prefix)
-		return logs.NewDurableSink(ctx, "gcs", "", store, cfg.Logs.Sink.Prefix, logger)
+			"bucket", cfg.Logs.Sink.Bucket, "prefix", cfg.Logs.Sink.Prefix, "layout", cfg.Logs.Sink.Layout)
+		return logs.NewDurableSink(ctx, "gcs", "", store, cfg.Logs.Sink.Prefix, logger, logs.WithObjectLayout(cfg.Logs.Sink.Layout))
 	default:
 		return nil, fmt.Errorf("unknown logs.backend %q", cfg.Logs.Backend)
 	}
@@ -1722,6 +1753,18 @@ func startCleanup(ctx context.Context, idx *storage.XComIndex, sink logs.Sink, d
 			}
 		}
 	}()
+}
+
+// schedulerDatabase is the database section the scheduler side opens its
+// pool from. The dedicated pool (database.scheduler_max_conns) is only for a
+// process that runs the scheduler loop; with scheduler.enabled=false the
+// janitors stay on the main pool and no extra connections are opened.
+func schedulerDatabase(cfg *config.ServerConfig) config.DatabaseSection {
+	db := cfg.Database
+	if !cfg.Scheduler.Enabled {
+		db.SchedulerMaxConns = 0
+	}
+	return db
 }
 
 // lowDisk reports whether free is below the threshold (both in bytes).
@@ -1951,8 +1994,13 @@ func buildPodInformer(ctx context.Context, cfg *config.ServerConfig, cs kubernet
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
+	// Opt-in (executor.collect_settled_run_pods): collect a settled run's
+	// finished pods in one DeleteCollection; nil keeps the age-based GC only.
+	if settled != nil {
+		rec.SetSettledRunCollection(settled)
+	}
 	// Read task pods from the shared informer cache instead of a live LIST every
 	// tick when the informer is wired (PR-10); nil keeps the live LIST.
 	if snapshotter != nil {
@@ -1962,6 +2010,15 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 	startGatedTicker(ctx, "maintenance", reconcileInterval, leading, logger, func() {
 		maintenanceCycle(ctx, maintenancePhaseTimeout, rec.Reconcile, reaper.ReapOnce, logger)
 	})
+}
+
+// settledRunCollection returns the reconciler's settled-run checker when the
+// operator turned executor.collect_settled_run_pods on, and nil otherwise.
+func settledRunCollection(sec config.ExecutorSection, store executor.SettledRunChecker) executor.SettledRunChecker {
+	if !sec.CollectSettledRunPods {
+		return nil
+	}
+	return store
 }
 
 // maintenancePhaseTimeout bounds each phase of a maintenance cycle — the
@@ -2556,7 +2613,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// draining or stepping-down leader from marking TIs failed or deleting pods
 	// on its way out — the successor redoes the reap under its own settling gate.
 	reaper.SetLeading(sched.IsLeading)
-	startMaintenance(ctx, cs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter)
+	startMaintenance(ctx, cs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
 	startStagingGC(ctx, cs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with
@@ -2586,8 +2643,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 // BufferSize > 0 the inner dispatcher is fronted by the worker pool (#127);
 // when BufferSize == 0 the inner dispatcher is used directly (Lite). The
 // caller passes a FailureSink (typically the SchedulerStore) so worker-side
-// dispatch failures fail the TI with a clear reason instead of leaving it
-// stuck `queued`.
+// dispatch failures are re-offered or fail the TI with a clear reason instead
+// of leaving it stuck `queued`.
 // The io.Closer is non-nil only in buffered mode; the caller defers Close() on
 // shutdown so in-flight dispatches drain (workers finish or fail via the sink)
 // instead of leaking goroutines and leaving TIs stuck `queued` (#133).
@@ -2596,6 +2653,12 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 		// Passthrough: keep the inner dispatcher exposed verbatim so the
 		// scheduler sees the same surface it always did in Lite. No pool to close.
 		return inner, nil
+	}
+	// A store that can re-offer (the SchedulerStore) gets the scheduler's
+	// failure policy, so a worker-side dispatch failure is retried like a
+	// synchronous one instead of failing the task at once.
+	if st, ok := sink.(scheduler.AsyncDispatchStore); ok {
+		sink = scheduler.NewAsyncDispatchFailures(st, logger)
 	}
 	bd := dispatch.NewBuffered(inner, sink, logger, metrics, dispatch.BufferConfig{
 		BufferSize: cfg.BufferSize,

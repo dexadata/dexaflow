@@ -128,6 +128,13 @@ executor:
       size: ""
       # -- Default staging PVC StorageClass (e.g. the cluster's RWX class). Empty = cluster default.
       storageClass: ""
+  # -- Collect a settled run's finished task pods as soon as every outcome is
+  # recorded, in one DeleteCollection by the run's label, instead of one delete
+  # per pod after the 10 minute grace period. Off by default, so finished pods
+  # stay inspectable with kubectl for the grace period. Turning it on also
+  # grants the executor Role `deletecollection` on pods; without that verb the
+  # server deletes the pods one by one.
+  collectSettledRunPods: false
 
 # -- Ports the leoflow-server listens on. http: API + UI, metrics: Prometheus
 # /metrics, grpc: agent ↔ control plane channel (task pods dial back here).
@@ -166,6 +173,22 @@ config:
     enabled: true
     # -- Scheduler loop interval in milliseconds. Lower = faster reactivity, higher CPU. 1000ms is the production-tested default.
     loopIntervalMs: 1000
+    # Buffered dispatch (ADR 0031, #127). With `bufferSize` 0 (the default) the
+    # scheduler creates task pods inline, inside its tick, so a large fan out
+    # stretches the tick by every Kubernetes API call it makes. Above 0, the tick
+    # only enqueues and `workers` goroutines create the pods; a full buffer leaves
+    # the task scheduled for the next tick. A starting point for a busy cluster:
+    # bufferSize 512, workers 16. Unset values render nothing.
+    # Caveat: for now a pod create that fails inside a worker fails the task at
+    # once, including a namespace ResourceQuota rejection (403) or apiserver
+    # throttling (429) that synchronous dispatch holds and re-offers. Keep
+    # bufferSize 0 on a namespace that runs close to its quota until buffered
+    # dispatch re-offers those failures too.
+    dispatch:
+      # -- Depth of the queued-dispatches channel (`scheduler.dispatch.buffer_size`). 0 = synchronous dispatch inside the tick (server default).
+      bufferSize: 0
+      # -- Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Ignored while `bufferSize` is 0; 0 with a buffer means 1.
+      workers: 0
   cors:
     # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
     allowedOrigins: []
@@ -214,6 +237,9 @@ logs:
   # ServiceAccounts and both need the identity: the scheduler writes task logs and
   # any api replica reads them back. Retention is owned by the bucket's lifecycle policy,
   # not the in-cluster log janitor.
+  tail:
+    # -- When received task-log lines are published for live followers: `always` (default) publishes every line as it arrives; `on_demand` publishes only while someone follows the attempt, checking at most once a second per log stream and replaying to a new follower the lines received since the last check (at most 1024 lines or 1 MiB). Enable `on_demand` once every replica runs a version that skips replayed lines.
+    publish: always
   sink:
     # -- Durable task-log backend: `disk` (default — the PVC above), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage). Object storage is opt-in; `disk` leaves the on-disk path unchanged.
     provider: disk
@@ -221,6 +247,8 @@ logs:
     bucket: ""
     # -- Optional key prefix under which attempt objects are laid out (`{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`).
     prefix: ""
+    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found.
+    layout: single
     # -- [s3] Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores.
     region: ""
     # -- [s3] Endpoint override for S3-compatible stores (MinIO, Ceph RGW). Empty uses the AWS default. NOT the way to reach GCS — use `provider: gcs`.
@@ -242,6 +270,12 @@ database:
   maxOpenConns: 20
   # -- Max idle DB connections kept in the pool. Should be ≤ `maxOpenConns`.
   maxIdleConns: 5
+  # -- Size of a dedicated pool for the scheduler loop, its reapers and janitors, so API traffic that holds every `maxOpenConns` connection cannot stall a scheduler tick. Counts on top of `maxOpenConns`, and is opened only by a replica that runs the scheduler (`config.scheduler.enabled`). 0 (default) keeps them on the main pool.
+  schedulerMaxConns: 0
+  # -- `statement_timeout` in milliseconds for the main pool, which serves the API (30000 is a reasonable bound). Never applied to the leader election connection, the health checks, the scheduler pool or migrations; deleting a DAG, clearing its history and the XCom janitor lift it for their own transaction. Without `schedulerMaxConns` the scheduler shares the main pool and so this timeout, so set both together. Applied with `SET` after each connection opens, so it works through PgBouncer in session mode; in transaction mode set `statement_timeout` on the database role instead and leave this at 0. 0 (default) sets none.
+  statementTimeoutMs: 0
+  # -- Random extra lifetime, in milliseconds, added to each pooled connection so replicas started together do not all reconnect at once. 0 (default) adds none.
+  connMaxLifetimeJitterMs: 0
 
 # Redis (XCom + locks).
 redis:
@@ -558,6 +592,13 @@ resources:
   limits:
     cpu: "1"
     memory: 512Mi
+
+# Soft memory limit for the Go runtime in the control-plane container.
+goMemLimit:
+  # -- Render `GOMEMLIMIT` as `percent` of `resources.limits.memory`, in whole MiB (80% of the shipped 512Mi is `409MiB`). The Go runtime does not read the container limit on its own, so without it the GC paces on heap growth alone and a burst can be OOM-killed before a collection runs; with it the GC works harder near the ceiling instead. Off by default, so the rendered env is unchanged. Requires `resources.limits.memory`: any Kubernetes byte quantity is read, whole or decimal (`512Mi`, `1.5Gi`, `.5Gi`), with a `Ki` to `Ei` or `k` to `E` suffix or a decimal exponent (`1e9`). The render fails on anything else (a sign, or the `m`/`u`/`n` sub-byte suffixes); for those leave this off and set `GOMEMLIMIT` through `extraEnv`. Applies to both Deployments in split mode.
+  enabled: false
+  # -- Share of `resources.limits.memory` given to `GOMEMLIMIT`, from 1 to 100. The rest is headroom for memory the Go runtime does not track but the container is charged for, such as cgo allocations and kernel page cache.
+  percent: 80
 
 # -- Liveness/readiness probes for the leoflow-server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: /readyz bounds its own work at 2s so it answers before the kubelet gives up, and a shorter kubelet timeout inverts that and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
 probes:
