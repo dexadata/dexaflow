@@ -1043,7 +1043,7 @@ func loginRateLimit(cfg *config.ServerConfig) int {
 // attempt (ADR 0058 N1d-c, H2). *storage.ExecutionStore satisfies it; a fake
 // records the calls in tests.
 type redispatchStore interface {
-	RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber int) error
+	RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int) error
 }
 
 // reclaimShouldRequeue reports whether a reclaimed warm assignment may be
@@ -1077,7 +1077,7 @@ func handleReclaim(ctx context.Context, store redispatchStore, logger *slog.Logg
 	if !reclaimShouldRequeue(ev.Reason) {
 		return
 	}
-	if err := store.RequeueForRedispatch(ctx, ev.RunID, ev.TaskID, ev.TryNumber); err != nil {
+	if err := store.RequeueForRedispatch(ctx, ev.RunID, ev.TaskID, ev.TryNumber, ev.AttemptEpoch); err != nil {
 		logger.Error("warm reclaim re-placement failed", "run", ev.RunID, "task", ev.TaskID, "try", ev.TryNumber, "err", err)
 	}
 }
@@ -1127,6 +1127,10 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
+	}
+	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment).
+	if metrics != nil {
+		agentSrv.SetLegacyTokenRecorder(metrics)
 	}
 	// XCom-TTL and log-retention janitors are maintenance the scheduler owns; the
 	// api role runs no background writers.

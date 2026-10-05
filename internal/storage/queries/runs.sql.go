@@ -17,6 +17,7 @@ SET warm_worker_id = $4
 WHERE dag_run_id = $1
   AND task_id = $2
   AND try_number = $3
+  AND attempt_epoch = COALESCE($5::int, 0)
   AND state IN ('queued', 'running')
 `
 
@@ -25,6 +26,7 @@ type BindWarmAttemptParams struct {
 	TaskID       string      `json:"task_id"`
 	TryNumber    int32       `json:"try_number"`
 	WarmWorkerID *string     `json:"warm_worker_id"`
+	AttemptEpoch *int32      `json:"attempt_epoch"`
 }
 
 // Records the durable warm-attempt binding (ADR 0058 N1d-a1): the warm worker
@@ -35,8 +37,8 @@ type BindWarmAttemptParams struct {
 // Guarded on state IN ('queued', 'running') — the same active predicate the
 // heartbeat and liveness queries use — so a settled attempt is never bound: an
 // ack that races a reaper settling the row must not stamp a worker onto a
-// terminal TI. Bounded by (dag_run_id, task_id, try_number) to match exactly the
-// attempt the assignment named. Returns the affected row count; zero means the
+// terminal TI. Bounded by (dag_run_id, task_id, try_number, attempt_epoch) to
+// match exactly the attempt the assignment named. Returns the affected row count; zero means the
 // attempt already moved on (terminal or superseded), and the caller treats that
 // as a benign no-op, never an error.
 func (q *Queries) BindWarmAttempt(ctx context.Context, arg BindWarmAttemptParams) (int64, error) {
@@ -45,6 +47,7 @@ func (q *Queries) BindWarmAttempt(ctx context.Context, arg BindWarmAttemptParams
 		arg.TaskID,
 		arg.TryNumber,
 		arg.WarmWorkerID,
+		arg.AttemptEpoch,
 	)
 	if err != nil {
 		return 0, err
@@ -673,14 +676,16 @@ SELECT EXISTS (
     WHERE dag_run_id = $1
       AND task_id = $2
       AND try_number = $3
+      AND ($4::int IS NULL OR attempt_epoch = $4::int)
       AND state IN ('queued', 'running')
 )
 `
 
 type IsTaskInstanceLiveParams struct {
-	DagRunID  pgtype.UUID `json:"dag_run_id"`
-	TaskID    string      `json:"task_id"`
-	TryNumber int32       `json:"try_number"`
+	DagRunID     pgtype.UUID `json:"dag_run_id"`
+	TaskID       string      `json:"task_id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch *int32      `json:"attempt_epoch"`
 }
 
 // Reports whether the attempt (dag_run_id, task_id, try_number) is still live:
@@ -696,8 +701,16 @@ type IsTaskInstanceLiveParams struct {
 // "run is not current / archived / logical_date in the past" clause: a recency
 // term would deny a legitimate clear-and-rerun of an old run — credential
 // lifetime binds to the attempt, never to the run's age or logical date.
+//
+// The epoch term is the heartbeat's: exact for a token carrying attempt_epoch,
+// absent for a claim-less one (ADR 0051 amendment).
 func (q *Queries) IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isTaskInstanceLive, arg.DagRunID, arg.TaskID, arg.TryNumber)
+	row := q.db.QueryRow(ctx, isTaskInstanceLive,
+		arg.DagRunID,
+		arg.TaskID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -1738,13 +1751,15 @@ SET last_heartbeat_at = now()
 WHERE dag_run_id = $1
   AND task_id = $2
   AND try_number = $3
+  AND ($4::int IS NULL OR attempt_epoch = $4::int)
   AND state IN ('queued', 'running')
 `
 
 type RecordTaskHeartbeatParams struct {
-	DagRunID  pgtype.UUID `json:"dag_run_id"`
-	TaskID    string      `json:"task_id"`
-	TryNumber int32       `json:"try_number"`
+	DagRunID     pgtype.UUID `json:"dag_run_id"`
+	TaskID       string      `json:"task_id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch *int32      `json:"attempt_epoch"`
 }
 
 // Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
@@ -1758,8 +1773,19 @@ type RecordTaskHeartbeatParams struct {
 // already settled the row terminal — the same "moved on" predicate the state
 // report is guarded by (#467). The agent RPC turns a zero here into a
 // should_terminate signal so a reaped-but-alive pod stops itself (#474).
+//
+// A token carrying attempt_epoch must match it exactly (ADR 0051 amendment). A
+// claim-less token matches on try_number alone: it is either a pre-upgrade
+// token or one an old replica re-minted during a rolling upgrade, which drops
+// the claim it does not know. Fencing its heartbeat would kill a live attempt
+// for a missing claim; its reports are still fenced as epoch 0.
 func (q *Queries) RecordTaskHeartbeat(ctx context.Context, arg RecordTaskHeartbeatParams) (int64, error) {
-	result, err := q.db.Exec(ctx, recordTaskHeartbeat, arg.DagRunID, arg.TaskID, arg.TryNumber)
+	result, err := q.db.Exec(ctx, recordTaskHeartbeat,
+		arg.DagRunID,
+		arg.TaskID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -1836,6 +1862,7 @@ SET state = $3::task_state,
         THEN EXTRACT(EPOCH FROM (now() - started_at)) ELSE duration_seconds END
 WHERE dag_run_id = $1 AND task_id = $2
   AND try_number = $6
+  AND attempt_epoch = COALESCE($7::int, 0)
   AND state IN ('none', 'scheduled', 'queued', 'running')
 `
 
@@ -1846,6 +1873,7 @@ type ReportTaskResultParams struct {
 	ExitCode     *int32      `json:"exit_code"`
 	ErrorMessage *string     `json:"error_message"`
 	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch *int32      `json:"attempt_epoch"`
 }
 
 // $3 is cast to task_state in every usage: without the cast Postgres deduces an
@@ -1866,6 +1894,13 @@ type ReportTaskResultParams struct {
 //
 // The agent token already carries the try_number it was dispatched with, so the
 // value that tells the attempts apart is present at the call site.
+//
+// try_number alone is not enough: an infra re-place, a reschedule poke and a
+// repeated dispatch reuse it. attempt_epoch (ADR 0051 amendment) is the
+// execution within the try. A token minted without the claim is read as epoch
+// 0: it matches its own pre-upgrade attempt (rows migrate at 0) and never an
+// attempt dispatched after the upgrade (the dispatch claim makes those >= 1).
+// That keeps a superseded agent's RUNNING report off its replacement (#911).
 // Returns the affected row count so the caller can tell a real write from a
 // rejected late report instead of dropping it silently.
 //
@@ -1886,6 +1921,7 @@ func (q *Queries) ReportTaskResult(ctx context.Context, arg ReportTaskResultPara
 		arg.ExitCode,
 		arg.ErrorMessage,
 		arg.TryNumber,
+		arg.AttemptEpoch,
 	)
 	if err != nil {
 		return 0, err
@@ -1899,13 +1935,16 @@ SET state = 'scheduled',
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = attempt_epoch + 1
-WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3 AND state = 'queued'
+WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3
+  AND attempt_epoch = COALESCE($4::int, 0)
+  AND state = 'queued'
 `
 
 type RequeueForRedispatchParams struct {
-	DagRunID  pgtype.UUID `json:"dag_run_id"`
-	TaskID    string      `json:"task_id"`
-	TryNumber int32       `json:"try_number"`
+	DagRunID     pgtype.UUID `json:"dag_run_id"`
+	TaskID       string      `json:"task_id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch *int32      `json:"attempt_epoch"`
 }
 
 // Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
@@ -1916,8 +1955,8 @@ type RequeueForRedispatchParams struct {
 // that is already `queued`, which is why a no-op reclaim left it stuck until the
 // 3-minute dispatch-lost reaper).
 //
-// Guarded to state='queued' — bounded by (dag_run_id, task_id, try_number) to the
-// exact attempt the assignment named — so it never disturbs a running or settled
+// Guarded to state='queued' and bounded by (dag_run_id, task_id, try_number,
+// attempt_epoch) to the exact attempt the assignment named, so it never disturbs a running or settled
 // TI: zero rows is the guard working, a benign no-op, never an error. It does NOT
 // bump try_number or infra_attempts: the attempt never ran, this is a re-offer of
 // the SAME attempt, and the existing dispatch_attempts/backoff on the re-dispatch
@@ -1932,14 +1971,19 @@ type RequeueForRedispatchParams struct {
 // last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 // ResetTaskInstanceToNone.
 func (q *Queries) RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error) {
-	result, err := q.db.Exec(ctx, requeueForRedispatch, arg.DagRunID, arg.TaskID, arg.TryNumber)
+	result, err := q.db.Exec(ctx, requeueForRedispatch,
+		arg.DagRunID,
+		arg.TaskID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const rescheduleTaskInstance = `-- name: RescheduleTaskInstance :exec
+const rescheduleTaskInstance = `-- name: RescheduleTaskInstance :execrows
 UPDATE task_instances
 SET state = 'up_for_reschedule'::task_state,
     reschedule_at = $3,
@@ -1947,6 +1991,8 @@ SET state = 'up_for_reschedule'::task_state,
     -- delivered get_first_reschedule_date lets the sensor honor cumulative timeout.
     first_reschedule_at = COALESCE(first_reschedule_at, now())
 WHERE dag_run_id = $1 AND task_id = $2
+  AND try_number = $4
+  AND attempt_epoch = COALESCE($5::int, 0)
   AND state IN ('running', 'queued', 'scheduled')
 `
 
@@ -1954,16 +2000,30 @@ type RescheduleTaskInstanceParams struct {
 	DagRunID     pgtype.UUID        `json:"dag_run_id"`
 	TaskID       string             `json:"task_id"`
 	RescheduleAt pgtype.Timestamptz `json:"reschedule_at"`
+	TryNumber    int32              `json:"try_number"`
+	AttemptEpoch *int32             `json:"attempt_epoch"`
 }
 
 // A reschedule-mode sensor (mode='reschedule') poked not-ready: park the active TI
 // in up_for_reschedule with its next-poke time ($3) so the scheduler re-dispatches
 // it once reschedule_at passes (#380), without consuming retry budget. Guarded to
-// the active states so a late report never clobbers a terminal row. ended_at is
-// left untouched (the task is not finished); started_at is preserved.
-func (q *Queries) RescheduleTaskInstance(ctx context.Context, arg RescheduleTaskInstanceParams) error {
-	_, err := q.db.Exec(ctx, rescheduleTaskInstance, arg.DagRunID, arg.TaskID, arg.RescheduleAt)
-	return err
+// the active states so a late report never clobbers a terminal row, and on the
+// attempt (try_number and attempt_epoch, the same rule as ReportTaskResult) so a
+// poke from a superseded attempt never parks its replacement. Returns the row
+// count; zero is a stale report. ended_at is left untouched (the task is not
+// finished); started_at is preserved.
+func (q *Queries) RescheduleTaskInstance(ctx context.Context, arg RescheduleTaskInstanceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rescheduleTaskInstance,
+		arg.DagRunID,
+		arg.TaskID,
+		arg.RescheduleAt,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const rescheduleTaskInstanceByIDIfActive = `-- name: RescheduleTaskInstanceByIDIfActive :exec
