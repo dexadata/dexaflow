@@ -339,7 +339,7 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 const createTaskInstance = `-- name: CreateTaskInstance :one
 INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at
 `
 
 type CreateTaskInstanceParams struct {
@@ -397,6 +397,7 @@ func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstance
 		&i.LastFailureKind,
 		&i.InfraAttempts,
 		&i.WarmWorkerID,
+		&i.ReleasedAt,
 	)
 	return i, err
 }
@@ -1144,6 +1145,7 @@ SELECT dr.id AS id,
        GREATEST(
            COALESCE(MAX(ti.ended_at), 'epoch'::timestamptz),
            COALESCE(MAX(ti.started_at), 'epoch'::timestamptz),
+           COALESCE(MAX(ti.released_at), 'epoch'::timestamptz),
            COALESCE(dr.started_at, 'epoch'::timestamptz),
            dr.queued_at
        )::timestamptz AS last_activity
@@ -1154,7 +1156,7 @@ WHERE dr.state = 'running'
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state IN ('scheduled', 'queued', 'running')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
   )
 GROUP BY dr.id, d.dag_id, dr.started_at, dr.queued_at
 ORDER BY dr.queued_at
@@ -1168,16 +1170,35 @@ type ListOrphanCandidatesRow struct {
 }
 
 // Lists dag_runs currently in 'running' whose task instances are ALL terminal
-// or never-started (no TI in scheduled/queued/running), alongside the
-// timestamp of their most recent observable activity. The "no active TI"
-// filter is the critical safety guarantee: a legitimately-active task (slow
-// image pull, long-running job) keeps its run out of the candidate set, so
-// the reaper can never kill a live execution. The shape this catches is the
-// post-crash one: TIs settled (success/failed/skipped/upstream_failed) but
-// FinalizeRun did not transition the dag_run — e.g. the server died between
+// or never-started (every TI in none/success/failed/skipped/upstream_failed),
+// alongside the timestamp of their most recent observable activity. The "no
+// live TI" filter is the critical safety guarantee: a run that is still
+// progressing stays out of the candidate set, so the reaper can never kill a
+// live execution. Live means any state outside that settled set, which covers
+// a legitimately-active task (scheduled/queued/running: slow image pull,
+// long-running job) AND a task parked for the scheduler to bring back
+// (up_for_retry during its retry_delay, up_for_reschedule between sensor pokes,
+// the reserved deferred state). Parked states stamp no fresh timestamp on entry,
+// so last_activity cannot protect them: a retry_delay or poke_interval longer
+// than the reaper threshold would otherwise fail a healthy run. Listing the
+// settled states (rather than the live ones) keeps any future non-terminal
+// state on the safe side by default. `none` stays reapable: a never-started TI
+// whose upstreams are all settled is decided on the next scheduler tick, and one
+// whose upstream is still pending already has a live sibling keeping the run
+// out. A TI released back to `none` for another attempt (the retry release,
+// the reschedule re-dispatch, the infra re-place, an operator clear) has its
+// per-attempt timestamps cleared and only becomes `scheduled` on the next
+// tick, so each release stamps released_at and last_activity counts it: the
+// release itself is activity, and a run is never reaped in the tick between a
+// release and none -> scheduled. An infra-failed TI parked in its re-place backoff is `failed` and is covered by
+// the threshold itself, which sits above that backoff. The shape this catches
+// is the post-crash one: TIs settled (success/failed/skipped/upstream_failed)
+// but FinalizeRun did not transition the dag_run, e.g. the server died between
 // the last TI report and the next scheduler tick. The LIMIT bounds a single
-// tick's reap work even after a multi-hour outage; the rest are picked up
-// on the next tick (the reaper is a backstop, not a sprint).
+// tick's reap work even after a multi-hour outage; the rest are picked up on
+// the next tick (the reaper is a backstop, not a sprint). The list is only a
+// snapshot: MarkRunOrphanedRun re-checks the same predicate atomically, so keep
+// the two in step.
 func (q *Queries) ListOrphanCandidates(ctx context.Context) ([]ListOrphanCandidatesRow, error) {
 	rows, err := q.db.Query(ctx, listOrphanCandidates)
 	if err != nil {
@@ -1546,7 +1567,7 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 }
 
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at FROM task_instances
 WHERE dag_run_id = $1
 ORDER BY task_id
 `
@@ -1591,6 +1612,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UU
 			&i.LastFailureKind,
 			&i.InfraAttempts,
 			&i.WarmWorkerID,
+			&i.ReleasedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1603,7 +1625,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UU
 }
 
 const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at FROM task_instances
 WHERE dag_run_id = ANY($1::uuid[])
 ORDER BY dag_run_id, task_id
 `
@@ -1652,6 +1674,7 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 			&i.LastFailureKind,
 			&i.InfraAttempts,
 			&i.WarmWorkerID,
+			&i.ReleasedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1720,6 +1743,26 @@ func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundR
 	return items, nil
 }
 
+const lockRunTaskInstancesForReap = `-- name: LockRunTaskInstancesForReap :exec
+SELECT id FROM task_instances
+WHERE dag_run_id = $1
+FOR SHARE NOWAIT
+`
+
+// Share-locks every task instance of a run inside the reap transaction, before
+// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
+// snapshot under READ COMMITTED) sees committed state and no TI of the run can
+// change until the reap commits or rolls back. NOWAIT: a TI another transaction
+// is writing right now is activity, so the reap gives up (lock_not_available,
+// treated as a no-op by ReapRun) instead of waiting. Waiting would let these
+// share locks, taken in scan order, form a cycle with a writer that locks
+// several TIs of the run in another order (a multi-task clear, a batched
+// scheduler transition); a reap that never waits on a TI cannot be in one.
+func (q *Queries) LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, lockRunTaskInstancesForReap, dagRunID)
+	return err
+}
+
 const markRunAlertDelivered = `-- name: MarkRunAlertDelivered :exec
 UPDATE dag_runs
 SET alerted_at = now(), next_alert_attempt_at = NULL
@@ -1748,19 +1791,41 @@ func (q *Queries) MarkRunAlertDelivered(ctx context.Context, arg MarkRunAlertDel
 }
 
 const markRunOrphanedRun = `-- name: MarkRunOrphanedRun :execrows
-UPDATE dag_runs
+UPDATE dag_runs dr
 SET state = 'failed',
     ended_at = now(),
     note = 'orphaned: no scheduler activity within the orphan window — see #120'
-WHERE id = $1 AND state = 'running'
+WHERE dr.id = $1
+  AND dr.state = 'running'
+  AND NOT EXISTS (
+      SELECT 1 FROM task_instances ti2
+      WHERE ti2.dag_run_id = dr.id
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+  )
+  AND GREATEST(
+          COALESCE((SELECT GREATEST(MAX(ti.ended_at), MAX(ti.started_at), MAX(ti.released_at))
+                    FROM task_instances ti WHERE ti.dag_run_id = dr.id), 'epoch'::timestamptz),
+          COALESCE(dr.started_at, 'epoch'::timestamptz),
+          dr.queued_at
+      ) <= $2::timestamptz
 `
 
-// Fails an orphaned dag run. The `state = 'running'` guard makes the reap a
-// safety net, never a takeover: a competing finalizer (the normal scheduler
-// path) cannot be overwritten. Idempotent: a second call on a run already
-// failed updates zero rows.
-func (q *Queries) MarkRunOrphanedRun(ctx context.Context, id pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, markRunOrphanedRun, id)
+type MarkRunOrphanedRunParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	QuietBefore pgtype.Timestamptz `json:"quiet_before"`
+}
+
+// Fails an orphaned dag run, but only if it is STILL orphaned: the same
+// predicate ListOrphanCandidates applies (running, no live TI, last activity at
+// or before the reaper's cutoff) is re-checked in this statement, because the
+// list is a snapshot and a TI may have moved (failed -> up_for_retry, none ->
+// scheduled) or fresh activity may have landed since. Keep the two in step. The
+// `state = 'running'` guard also makes the reap a safety net, never a takeover:
+// a competing finalizer (the normal scheduler path) cannot be overwritten.
+// Zero rows means the run is no longer an orphan and nothing may be touched.
+// Idempotent: a second call on a run already failed updates zero rows.
+func (q *Queries) MarkRunOrphanedRun(ctx context.Context, arg MarkRunOrphanedRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markRunOrphanedRun, arg.ID, arg.QuietBefore)
 	if err != nil {
 		return 0, err
 	}
@@ -1931,7 +1996,8 @@ func (q *Queries) RecordDispatchBackpressure(ctx context.Context, arg RecordDisp
 const recordDispatchFailure = `-- name: RecordDispatchFailure :exec
 UPDATE task_instances
 SET dispatch_attempts = dispatch_attempts + 1,
-    next_dispatch_at = $3
+    next_dispatch_at = $3,
+    last_heartbeat_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
 `
 
@@ -1947,6 +2013,7 @@ type RecordDispatchFailureParams struct {
 // tick. Guarded to 'scheduled' so a report that raced the dispatch cannot clobber
 // a row that has since progressed. try_number is untouched: this is infra, not a
 // task failure.
+// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 func (q *Queries) RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error {
 	_, err := q.db.Exec(ctx, recordDispatchFailure, arg.DagRunID, arg.TaskID, arg.NextDispatchAt)
 	return err
@@ -1989,13 +2056,15 @@ func (q *Queries) RecordTaskHeartbeat(ctx context.Context, arg RecordTaskHeartbe
 const redispatchRescheduledTaskInstance = `-- name: RedispatchRescheduledTaskInstance :exec
 UPDATE task_instances
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
     scheduled_at = NULL,
     reschedule_at = NULL,
     last_failure_kind = NULL,
-    warm_worker_id = NULL
+    warm_worker_id = NULL,
+    last_heartbeat_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule'
 `
 
@@ -2010,6 +2079,7 @@ type RedispatchRescheduledTaskInstanceParams struct {
 // and reschedule_at cleared. Unlike ResetTaskInstanceToNone (retry), try_number is
 // PRESERVED and no task_instance_history row is archived: reschedule is not a retry,
 // it consumes no attempt (#380). Guarded to the parked state so it is idempotent.
+// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 func (q *Queries) RedispatchRescheduledTaskInstance(ctx context.Context, arg RedispatchRescheduledTaskInstanceParams) error {
 	_, err := q.db.Exec(ctx, redispatchRescheduledTaskInstance, arg.DagRunID, arg.TaskID)
 	return err
@@ -2115,6 +2185,7 @@ SET state = 'scheduled',
     next_dispatch_at = $1,
     dispatch_attempts = dispatch_attempts + $2::int,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     queued_at = NULL
 WHERE dag_run_id = $3
   AND task_id = $4
@@ -2134,10 +2205,12 @@ type RequeueDispatchParams struct {
 // until next_dispatch_at, adding one dispatch attempt only when counted
 // (backpressure is not). Guarded to scheduled/queued, so a task the agent has
 // since reported on is left alone. warm_worker_id is cleared as in
-// RequeueForRedispatch: the attempt never ran. queued_at is cleared too, so the
-// next queued episode stamps a fresh one: MarkTaskInstanceQueued only stamps a
-// NULL queued_at, and a kept one would make the dispatch-lost reaper fail the
-// re-offered task as soon as it is queued again.
+// RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
+// as on every rail that starts a new execution of the row (ADR 0051
+// amendment, A0). queued_at is cleared too, so the next queued episode stamps
+// a fresh one: MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept
+// one would make the dispatch-lost reaper fail the re-offered task as soon as
+// it is queued again.
 func (q *Queries) RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueDispatch,
 		arg.NextDispatchAt,
@@ -2154,7 +2227,8 @@ func (q *Queries) RequeueDispatch(ctx context.Context, arg RequeueDispatchParams
 const requeueForRedispatch = `-- name: RequeueForRedispatch :execrows
 UPDATE task_instances
 SET state = 'scheduled',
-    warm_worker_id = NULL
+    warm_worker_id = NULL,
+    last_heartbeat_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3 AND state = 'queued'
 `
 
@@ -2185,6 +2259,7 @@ type RequeueForRedispatchParams struct {
 // (ListBusyWarmWorkerPods), a stale binding would falsely mark the OLD (gone)
 // worker busy. This is a same-row re-dispatch (the try_number is preserved), so
 // the clear must happen here; a fresh try lands on a new row that is already NULL.
+// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 func (q *Queries) RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueForRedispatch, arg.DagRunID, arg.TaskID, arg.TryNumber)
 	if err != nil {
@@ -2263,6 +2338,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -2271,6 +2347,7 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -2365,6 +2442,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -2373,6 +2451,7 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -2430,6 +2509,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -2440,6 +2520,7 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2 AND ti.state = 'up_for_retry'
 `
@@ -2483,6 +2564,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -2493,6 +2575,7 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     infra_attempts = ti.infra_attempts + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
   AND ti.state = 'failed' AND ti.last_failure_kind = 'infra'
@@ -2513,6 +2596,7 @@ type ResetTaskInstanceInfraReplaceParams struct {
 // failure may re-place off-budget (an app failure at state='failed' must fall to
 // the normal retry rail). last_failure_kind is cleared so the next attempt's
 // outcome is classified fresh.
+// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
 func (q *Queries) ResetTaskInstanceInfraReplace(ctx context.Context, arg ResetTaskInstanceInfraReplaceParams) (int64, error) {
 	result, err := q.db.Exec(ctx, resetTaskInstanceInfraReplace, arg.DagRunID, arg.TaskID)
 	if err != nil {
@@ -2539,6 +2623,7 @@ WITH archived AS (
 )
 UPDATE task_instances ti
 SET state = 'none',
+    released_at = now(),
     started_at = NULL,
     ended_at = NULL,
     queued_at = NULL,
@@ -2549,6 +2634,7 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -2584,6 +2670,11 @@ type ResetTaskInstanceToNoneParams struct {
 // it carries no source-state guard. The scheduler's retry rail uses the guarded
 // ResetTaskInstanceForRetry instead — do not add a guard here or clear-task
 // silently no-ops on non-up_for_retry tasks.
+// last_heartbeat_at is cleared on this and every other rail that starts a new
+// execution of the row (ADR 0051 amendment, A0): the next attempt reports
+// RUNNING one heartbeat interval before its first beat, and an inherited value
+// from the previous attempt would make the agent-lost reaper fail it in that
+// window.
 func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error {
 	_, err := q.db.Exec(ctx, resetTaskInstanceToNone,
 		arg.SpecRetries,
@@ -2811,7 +2902,7 @@ const updateTaskInstanceState = `-- name: UpdateTaskInstanceState :one
 UPDATE task_instances
 SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at
 `
 
 type UpdateTaskInstanceStateParams struct {
@@ -2860,6 +2951,7 @@ func (q *Queries) UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskIns
 		&i.LastFailureKind,
 		&i.InfraAttempts,
 		&i.WarmWorkerID,
+		&i.ReleasedAt,
 	)
 	return i, err
 }
