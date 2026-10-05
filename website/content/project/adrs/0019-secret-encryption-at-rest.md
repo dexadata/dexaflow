@@ -50,6 +50,13 @@ Encrypt sensitive connection fields at rest with **AES-256-GCM**, using a
   `fernet_key`. The control plane re-encrypts stored secrets onto the first key
   at startup, so a rotation finishes and the old key can be removed.
 
+  **Note (2026-10-04, ADR 0065):** this startup re-encryption no longer runs
+  for Dexaflow Lite. `dexaflow lite` starts the server with
+  `LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=false`, and a Lite install moves its
+  stored secrets between keys only through `dexaflow lite migrate-key`, which
+  records every key before it touches a row and verifies the pass before it
+  commits. Pro keeps the behavior described here.
+
   **This supersedes the original decision**, which read: "changing the key
   invalidates existing ciphertexts; connections are re-entered". That was
   acceptable while the key was set once by an operator who chose it. It stopped

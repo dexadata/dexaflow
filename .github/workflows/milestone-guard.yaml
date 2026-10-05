@@ -1,0 +1,55 @@
+# Every pull request to main names the release it is planned for, as a
+# milestone (vX.Y.Z). Under ADR 0062 main always moves ahead of the release
+# branches, and a change reaches a patch release only by cherry-pick, so the
+# decision "which release ships this" has to be made when the change lands,
+# not reconstructed before a cut. scripts/release-gap.sh reads the milestone:
+# a pull request milestoned for a later minor is held on purpose, and anything
+# else missing from release-X.Y blocks the patch cut.
+#
+# A standalone workflow, like the CHANGELOG guard, so it can trigger on
+# `milestoned` / `demilestoned` and re-run on its own when the milestone is set.
+name: Milestone guard
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, milestoned, demilestoned]
+
+# pull-requests: read lets the check ask the API for the CURRENT milestone
+# rather than trust the event payload, a snapshot that can predate it.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  milestone-guard:
+    name: Release milestone set
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Runs on every event and exits 0 when exempt, rather than skipping by a
+    # job-level `if:`: a skipped job reports nothing, so an earlier failure on
+    # the same commit would stay red after the milestone is set.
+    steps:
+      - name: Require a vX.Y.Z milestone
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          # Dependabot bumps and the pull requests cut-release.sh opens (the
+          # release prep and the docs promotion) belong to whichever release
+          # comes next by construction. A Dependabot bump still shows in
+          # release-gap.sh's list for the patch: cherry-pick it or skip it.
+          if [ "$AUTHOR" = "dependabot[bot]" ]; then
+            echo "author is dependabot: exempt"; exit 0
+          fi
+          case "$HEAD_REF" in
+            release/v*|docs/promote-v*) echo "release pull request from cut-release.sh: exempt"; exit 0 ;;
+          esac
+          m=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR" -q '.milestone.title // empty')
+          if [[ "$m" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "planned for $m"; exit 0
+          fi
+          echo "::error::Set this pull request's milestone to the release it is planned for (for example v0.5.1, or v0.5.2 to leave it on main until the next patch). Found: '${m:-none}'."
+          exit 1
