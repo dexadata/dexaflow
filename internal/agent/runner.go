@@ -109,6 +109,10 @@ type Runner struct {
 	// afterFunc returns a channel that fires after the given delay; it exists so
 	// tests can make the report-retry backoff instant. Nil uses time.After.
 	afterFunc func(time.Duration) <-chan time.Time
+	// attemptEpoch is the execution of the try this attempt is, from its task
+	// spec, stamped on the outcome record (ADR 0052 amendment). It is reset for
+	// every attempt a warm worker runs; 0 until the spec is read.
+	attemptEpoch int64
 	// Resolver resolves a declared secret name from an external backend, pod-side
 	// (ADR 0060). Nil = no external backend configured: the resolution chain is the
 	// vault only, byte-identical to the pre-0060 env-export. SecretBackend is the
@@ -144,10 +148,12 @@ func (r *Runner) Run(ctx context.Context) error {
 // per WorkAssignment, each time in a fresh forked child with a freshly-built env.
 // It does NOT register — registration is a per-worker concern the caller owns.
 func (r *Runner) runOneAttempt(ctx context.Context) error {
+	r.attemptEpoch = 0
 	spec, err := r.Client.GetTaskSpec(ctx, &agentv1.GetTaskSpecRequest{})
 	if err != nil {
 		return fmt.Errorf("fetching task spec: %w", err)
 	}
+	r.attemptEpoch = spec.GetAttemptEpoch()
 	argv, err := BuildCommand(spec.GetOperator(), spec.GetEntrypoint(), spec.GetOperatorClass())
 	if err != nil {
 		return err
@@ -936,7 +942,7 @@ func (r *Runner) writeOutcome(rec taskoutcome.Record) {
 	if r.TerminationLogPath == "" {
 		return
 	}
-	enc, err := rec.Encode()
+	enc, err := rec.WithAttemptEpoch(r.attemptEpoch).Encode()
 	if err != nil {
 		slog.Warn("encoding task outcome record", "error", err)
 		return
