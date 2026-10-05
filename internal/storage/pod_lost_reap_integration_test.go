@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/executor"
 )
@@ -198,4 +199,44 @@ func findPodLostCandidate(cands []executor.PodLostCandidate, runUUID, taskID str
 		}
 	}
 	return nil
+}
+
+// TestListRunningTasksReportsHeartbeatIntegration: a running TI reports whether
+// it has heartbeated, which is what lets Lite judge one that never did (its
+// agent died before the first heartbeat) without touching the agent-lost query.
+func TestListRunningTasksReportsHeartbeatIntegration(t *testing.T) {
+	repo, sched, exec, ctx := openExec(t)
+	dagID := fmt.Sprintf("podlost_hb_%d", time.Now().UnixNano())
+	tasks := []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython}}
+	registerSpec(t, repo, ctx, dagID, tasks)
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	runUUID := resolveRunUUID(t, sched, ctx, dagID)
+	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
+		t.Fatalf("MaterializeTasks: %v", err)
+	}
+	if err := sched.ApplyTransition(ctx, runUUID, "t", domain.TaskStateRunning); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := sched.ListRunningTasks(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListRunningTasks: %v", err)
+	}
+	c := findPodLostCandidate(cands, runUUID, "t")
+	if c == nil {
+		t.Fatalf("expected a running candidate")
+	}
+	if c.Heartbeated {
+		t.Fatalf("a TI that never heartbeated must report Heartbeated=false")
+	}
+	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "t", TryNumber: 1}); err != nil {
+		t.Fatalf("RecordHeartbeat: %v", err)
+	}
+	cands, _ = sched.ListRunningTasks(ctx, 0)
+	if c = findPodLostCandidate(cands, runUUID, "t"); c == nil || !c.Heartbeated {
+		t.Fatalf("a TI that heartbeated must report Heartbeated=true: %+v", c)
+	}
 }

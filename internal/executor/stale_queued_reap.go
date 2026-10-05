@@ -72,8 +72,8 @@ type dispatchLostReaper struct {
 	// pods makes the reaper K8s-aware (#461): before failing a past-threshold
 	// queued TI, it checks whether the TI's pod is actually live (Pending/
 	// Running) — a slow image pull on a cold node means the dispatch DID land,
-	// so the reaper must DEFER. Nil in Lite: with no pods, the reaper falls
-	// back to the pure time-threshold behavior.
+	// so the reaper must DEFER. Nil in Lite, which gates on the agent process
+	// instead (procs).
 	pods PodManager
 	// cache is an optional informer-backed presence cache (PR-10) consulted ONLY
 	// to DEFER a reap: a cached Pending/Running pod skips the live LIST. A cache
@@ -90,6 +90,12 @@ type dispatchLostReaper struct {
 	// off / not wired) yields an empty live set, so the warm check never defers
 	// and the dedicated pod-liveness path is byte-for-byte unchanged.
 	warmPods WarmPodLister
+	// procs is the Lite liveness seam (see ProcessLiveness), consulted ONLY to
+	// DEFER: a queued attempt whose agent process is alive (still retrying its
+	// RUNNING report) is not lost, and failing it would re-place the attempt on
+	// the same try number beside a live agent (#911). Nil on the pod path, which
+	// gates on pod presence instead.
+	procs ProcessLiveness
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
 }
@@ -140,14 +146,17 @@ func (r *dispatchLostReaper) run(ctx context.Context) error {
 		//   * pod Pending/Running  -> the dispatch landed; DEFER (do not reap).
 		//   * pod query failed      -> liveness unknown; DEFER ("do no harm").
 		//   * no/terminal pod       -> dispatch is genuinely lost; proceed.
-		// Nil pods (Lite) has no pod concept, so it falls through to the
-		// threshold behavior unchanged.
+		// Nil pods (Lite) has no pod concept; there the subprocess liveness seam
+		// below plays the same role, deferring on a live agent process.
 		//
 		// Cache fast-path (PR-10), safe direction only: a cached Pending/Running
 		// pod defers without an apiserver read. A cache MISS is NOT trusted — fall
 		// through to the live read below, preserving the #461 fix.
 		if r.cache != nil && r.cache.CachedPodActive(c.DagRunID, c.TaskID, c.TryNumber) {
 			r.record("dispatch_lost_cache_active")
+			continue
+		}
+		if processDefers(ctx, r.procs, r.logger, r.record, "dispatch_lost", c.TaskInstanceID, c.DagRunID, c.TaskID, c.TryNumber) {
 			continue
 		}
 		if r.pods != nil {

@@ -198,8 +198,12 @@ func run() int {
 	defer func() { _ = cleanupReturn() }() //nolint:errcheck // best-effort cleanup of the per-task temp dir on exit
 
 	runner := &agent.Runner{
-		Client:     client,
-		Cmd:        agent.NewExecRunner(),
+		Client: client,
+		// Lite (the subprocess executor) names a file for the task's process
+		// group record, so the server can see and stop a task this agent leaves
+		// behind if it is killed outright (#916). Empty in a pod: nothing to do.
+		// LEOFLOW_TASK_PGID_FILE is accepted too (envcompat mirrors it).
+		Cmd:        agent.NewExecRunnerRecordingGroup(os.Getenv("DEXAFLOW_TASK_PGID_FILE")),
 		Sink:       sink,
 		Hostname:   hostname,
 		Version:    version.Get().Version,
