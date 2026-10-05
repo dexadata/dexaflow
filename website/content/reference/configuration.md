@@ -751,8 +751,12 @@ How each limit is measured:
   between consecutive fire times inside a day and across days, including the
   days it skips (`0 9 * * 1-5` is 24 hours, `0,59 0,23 * * *` is one minute,
   across midnight). `@every <duration>` is its duration. Manual DAGs, `@once`
-  and `@continuous` are not limited. Times are UTC; with `CRON_TZ`, a daylight
-  saving change can make one gap a year an hour shorter.
+  and `@continuous` are not limited. Times are UTC; with `CRON_TZ`, the two
+  days a year the clocks change differ: a gap that spans the change is an hour
+  shorter or longer, a time inside the repeated hour fires twice, one hour
+  apart (`30 1 * * *` in `Europe/London` fires at 00:30 and 01:30 UTC on the
+  last Sunday of October), and a time inside the skipped hour does not fire
+  that day.
 - `max_dags` counts the tenant's DAGs. Two different new DAGs registered at
   the same moment while the tenant is one below the limit can both be
   accepted; it is checked, not locked, like `max_active_runs`.

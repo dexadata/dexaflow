@@ -58,8 +58,10 @@ var (
 // first time of the next, which is shortest across the closest two firing
 // days. Those days come from a scan of one 28-year calendar cycle that walks
 // firing days only, so even "* * * * *" costs a few thousand steps at most.
-// The scan is in UTC; a schedule with CRON_TZ can be one daylight saving
-// shift shorter or longer on the two days a year the clocks change.
+// The scan is in UTC, so the gaps are wall-clock gaps. With CRON_TZ the two
+// days a year the clocks change differ: a gap that spans the change is an
+// hour shorter or longer, a time inside the repeated hour fires twice, one
+// hour apart, and a time inside the skipped hour does not fire that day.
 func MinScheduleInterval(expr string) (time.Duration, bool) {
 	expr = strings.TrimSpace(expr)
 	if IsCronlessSchedule(expr) {
