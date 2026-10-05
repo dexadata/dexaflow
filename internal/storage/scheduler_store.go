@@ -488,6 +488,66 @@ func (s *SchedulerStore) RecordDispatchBackpressure(ctx context.Context, runID, 
 	})
 }
 
+// MarkQueued moves a task from the scheduled slot this tick planned to queued
+// after its dispatch was accepted. expectNextDispatchAt is the next_dispatch_at
+// the tick read (nil when unset). It reports false, with no error, when the row
+// has moved on: a buffered worker already failed or re-offered the task, or the
+// agent already reported (see MarkTaskInstanceQueued).
+func (s *SchedulerStore) MarkQueued(ctx context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return false, err
+	}
+	expect := pgtype.Timestamptz{}
+	if expectNextDispatchAt != nil {
+		expect = pgtype.Timestamptz{Time: *expectNextDispatchAt, Valid: true}
+	}
+	n, err := s.q.MarkTaskInstanceQueued(ctx, queries.MarkTaskInstanceQueuedParams{
+		DagRunID:             rid,
+		TaskID:               taskID,
+		ExpectNextDispatchAt: expect,
+	})
+	return n > 0, err
+}
+
+// RequeueDispatch re-offers a task whose buffered dispatch failed in the worker:
+// back to scheduled, held until nextAt, with one more dispatch attempt when
+// countAttempt. It reports false when the task is no longer scheduled or queued.
+func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt bool, nextAt time.Time) (bool, error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return false, err
+	}
+	inc := int32(0)
+	if countAttempt {
+		inc = 1
+	}
+	n, err := s.q.RequeueDispatch(ctx, queries.RequeueDispatchParams{
+		DagRunID:         rid,
+		TaskID:           taskID,
+		NextDispatchAt:   pgtype.Timestamptz{Time: nextAt, Valid: true},
+		AttemptIncrement: inc,
+	})
+	return n > 0, err
+}
+
+// DispatchAttempts returns the consecutive dispatch-failure count of a task
+// still scheduled or queued; active is false when it has moved on.
+func (s *SchedulerStore) DispatchAttempts(ctx context.Context, runID, taskID string) (attempts int, active bool, err error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return 0, false, err
+	}
+	n, err := s.q.DispatchAttemptsForActive(ctx, queries.DispatchAttemptsForActiveParams{DagRunID: rid, TaskID: taskID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return int(n), true, nil
+}
+
 // FailDispatchExhausted fails a scheduled task as dispatch_failed once its
 // dispatch-attempt budget is spent (ADR 0031 Amendment A).
 func (s *SchedulerStore) FailDispatchExhausted(ctx context.Context, runID, taskID, reason string) error {
