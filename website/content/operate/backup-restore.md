@@ -148,6 +148,11 @@ via standard tooling:
 - Persistent volumes: capture via Velero or your cluster's volume snapshot
   controller.
 
+After restoring a backup into a running installation, restart the control
+plane pods (`kubectl rollout restart deployment`). Each pod caches tenant ids
+for its lifetime, and a restored database whose tenants carry different ids
+would otherwise be queried with the old ones.
+
 The PR that hardens the Helm chart (#96) will add a `BACKUP.md` to the
 chart README pointing at the upstream guidance.
 

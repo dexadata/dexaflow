@@ -150,5 +150,16 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/api/v2/ide/tree")"
 [ "$code" = "401" ] || [ "$code" = "403" ] || fail "unauthenticated /api/v2/ide/tree returned $code (want 401/403)"
 pass "files API requires auth"
 
+# An optional extra-checks script runs here, against the live control plane and
+# before it is stopped: LEOFLOW_E2E_EXTRA_CHECKS names it, and it gets BASE,
+# TOKEN, METRICS and SERVER_LOG. e2e-gates.yaml uses it to prove the performance
+# gates it turns on took effect at runtime (test/e2e/perf-gates-on.sh). Unset,
+# which is the default, nothing here changes.
+if [ -n "${LEOFLOW_E2E_EXTRA_CHECKS:-}" ]; then
+  echo "==> running the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS}"
+  BASE="$BASE" TOKEN="$TOKEN" METRICS="http://127.0.0.1:19098" SERVER_LOG="$HOME_DIR/server.log" \
+    bash "$LEOFLOW_E2E_EXTRA_CHECKS" || fail "the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS} failed"
+fi
+
 echo
 echo "  ✅ Lite happy path verified: setup → control plane → login → web editor."
