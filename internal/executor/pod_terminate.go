@@ -172,21 +172,30 @@ func (e *KubernetesExecutor) deletePodsBySelector(ctx context.Context, selector 
 // webhook rejecting pod updates) falls back to the delete, metered as
 // reap_teardown_delete_fallback, so the teardown is never weaker than before.
 // NotFound and a failed UID precondition (Conflict) mean the listed pod is
-// already gone.
+// already gone. A patch carries no UID precondition: for a pod recreated under
+// the listed name the apiserver rejects the patched UID as an immutable field
+// (422 Invalid), so the fallback delete, which does pin the UID, is what tells
+// a gone pod (Conflict) from a refused stop; only the latter is reported.
 func (e *KubernetesExecutor) stopOrDelete(ctx context.Context, pod *corev1.Pod) error {
+	var perr error
 	if pod.Status.StartTime != nil {
-		perr := e.stopInPlace(ctx, pod)
+		perr = e.stopInPlace(ctx, pod)
 		if perr == nil || apierrors.IsNotFound(perr) || apierrors.IsConflict(perr) {
 			return nil
 		}
+	}
+	derr := e.clientset.CoreV1().Pods(e.namespace).Delete(ctx, pod.Name, deleteListedPod(pod))
+	if apierrors.IsNotFound(derr) || apierrors.IsConflict(derr) {
+		return nil
+	}
+	if perr != nil {
 		slog.WarnContext(ctx, "reap teardown: stopping the task pod in place was refused; deleting it, which loses its outcome record",
 			"pod", pod.Name, "error", perr)
 		if e.teardown != nil {
 			e.teardown.RecordSchedulerDecision("reap_teardown_delete_fallback")
 		}
 	}
-	derr := e.clientset.CoreV1().Pods(e.namespace).Delete(ctx, pod.Name, deleteListedPod(pod))
-	if derr != nil && !apierrors.IsNotFound(derr) && !apierrors.IsConflict(derr) {
+	if derr != nil {
 		return fmt.Errorf("deleting pod %s: %w", pod.Name, derr)
 	}
 	return nil
