@@ -353,6 +353,7 @@ type TaskInstance struct {
 	WarmWorkerID      *string            `json:"warm_worker_id"`
 	ReleasedAt        pgtype.Timestamptz `json:"released_at"`
 	AttemptEpoch      int32              `json:"attempt_epoch"`
+	InfraConfirmedAt  pgtype.Timestamptz `json:"infra_confirmed_at"`
 }
 
 type TaskInstanceHistory struct {

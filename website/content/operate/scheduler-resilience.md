@@ -201,6 +201,42 @@ start if a constant was moved out of order:
 `heartbeat (15 s) < agent-lost threshold (90 s) < settling grace (180 s) < attempt token TTL (10 min)`,
 and `2 × maintenance interval (60 s) < settling grace`, so at least two whole
 reconcile-then-reap cycles complete inside the grace.
+On Kubernetes it also checks
+`task termination grace (30 s) + 2 × maintenance interval < infra confirmation valve (2 min) < orphan threshold (5 min)`
+(see below).
+
+## Infra marks wait for confirmation (Kubernetes)
+
+The agent-lost, pod-lost and dispatch-lost reapers judge from the control
+plane's side: a silent heartbeat or a missing pod. That is a guess about what
+the task did, and the task may in fact have finished and written a durable
+SUCCESS record that the reconciler has not read yet. So on Kubernetes an infra
+mark is **provisional**: the task instance is `failed` with
+`last_failure_kind = infra`, but `infra_confirmed_at` stays empty and the
+planner treats the task as still active. It neither re-places it nor lets a
+downstream task fail on it.
+
+Each reconcile sweep then looks at the pods of the exact attempt the mark names
+(the same try and attempt epoch). It confirms the mark when no pod of that
+attempt is left, or when every task container of the attempt has terminated
+without a SUCCESS record. It reads the container's terminated state, not the
+pod phase, because a pod stopped in place can report `Failed` while its
+container still runs. A container still running, or still inside its
+termination grace, holds the mark back. Once the mark is confirmed, the planner
+re-places the task, or fails it when the infra budget is spent, exactly as
+before.
+
+A broken reconciler must not hold a task forever, so the planner also acts on a
+mark once the **infra confirmation valve** (2 minutes after the mark) has passed
+without a confirmation, and meters it as `infra_confirm_valve_open`. The ladder
+above keeps that valve longer than a container's termination grace plus two
+sweeps, and shorter than the orphan threshold, so a run waiting on a
+confirmation is never reaped as orphaned.
+
+On Lite there is no reconciler and no pod to wait for: the mark is confirmed
+when it is made, and nothing changes. Marks made before the upgrade count as
+confirmed. Every rail that starts a new execution of the task (retry, clear,
+re-place, reschedule) clears `infra_confirmed_at` again.
 
 ## Lite: which reapers run
 
@@ -504,6 +540,7 @@ your Prometheus dashboard:
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
 | `reap_teardown_delete_fallback` | A reap could not stop a started pod in place (the `patch` was refused) and deleted it instead, losing its outcome record; grant `patch` on pods to the executor Role |
+| `infra_confirm_valve_open` | The planner acted on a provisional infra mark that the reconciler did not confirm within 2 min; the reconciler is not sweeping or cannot read pods. **Alert on this** |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
 | `agent_lost_list_error`, `dispatch_lost_list_error`, `orphan_list_error`, `pod_lost_list_error`, `warm_worker_lost_list_error` | Reaper's list query failed; the next cycle will retry |
 | `dispatch_lost_pod_query_error`, `pod_lost_pod_query_error` | Pod liveness could not be read (K8s API error); the reaper deferred rather than risk a false positive |

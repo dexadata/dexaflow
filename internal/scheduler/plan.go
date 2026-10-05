@@ -205,6 +205,15 @@ func planRetryTransitions(run RunState, g *TaskGraph, stored, effective []domain
 				// reverts it) during the backoff, condemning the run even though the
 				// upstream goes on to re-run and succeed. A downstream may only see
 				// `failed` once the upstream is terminally failed (budget exhausted).
+				//
+				// A mark the reconciler has not confirmed yet is only a guess
+				// (ADR 0052 amendment): hold the task active, whatever its
+				// budget, until confirmation or the liveness valve.
+				if awaitingInfraConfirmation(run, t.TaskID) {
+					effective[s] = domain.TaskStateUpForRetry
+					decided[s] = true
+					continue
+				}
 				if infraReplaceable(run, t.TaskID) {
 					effective[s] = domain.TaskStateUpForRetry
 					if readyToInfraReplace(run, t.TaskID) {
@@ -341,6 +350,23 @@ func infraReplaceable(run RunState, taskID string) bool {
 	return run.InfraFailed[taskID] && run.InfraAttempts[taskID] < infraMaxAttempts
 }
 
+// awaitingInfraConfirmation reports whether an infra-failed task's mark is
+// still provisional (the pod reconciler has not confirmed it) and the liveness
+// valve has not opened: less than InfraConfirmMaxWait has passed since the
+// mark's ended_at (ADR 0052 amendment, part 2). Such a task is active for the
+// planner. Absent ended_at or a zero clock opens the valve, following the
+// "absent data falls back to today's behavior" convention of every gate here.
+func awaitingInfraConfirmation(run RunState, taskID string) bool {
+	if !run.InfraFailed[taskID] || !run.InfraProvisional[taskID] {
+		return false
+	}
+	ended := run.EndedAt[taskID]
+	if ended == nil || run.Now.IsZero() {
+		return false
+	}
+	return run.Now.Before(ended.Add(InfraConfirmMaxWait))
+}
+
 // infraReplaceJitterWindow spreads sibling infra re-placements across this window
 // so N tasks reaped in one tick (a control-plane restart marking the whole run
 // agent_lost) do not all re-dispatch simultaneously. 2× the heartbeat interval —
@@ -391,7 +417,7 @@ func FinalizeRun(run RunState) (domain.DagRunState, bool) {
 			// wrongly keep the run alive after the infra budget is spent — the
 			// planner never app-retries an InfraFailed task, so the run would hang.
 			if run.InfraFailed[t.TaskID] {
-				if infraReplaceable(run, t.TaskID) {
+				if awaitingInfraConfirmation(run, t.TaskID) || infraReplaceable(run, t.TaskID) {
 					return "", false
 				}
 			} else if retriable(run, t.TaskID) {
