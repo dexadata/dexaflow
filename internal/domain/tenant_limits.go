@@ -49,7 +49,8 @@ var (
 // MinScheduleInterval returns the shortest gap between two consecutive fire
 // times of a DAG schedule: a 5-field cron, a preset such as @hourly, or
 // "@every <duration>". ok is false when the schedule never fires on a cron
-// (empty, @once, @continuous) or does not parse.
+// (empty, @once, @continuous, a date that does not exist such as 31 February)
+// or does not parse.
 //
 // For a cron it is exact over the wall clock. The minutes and hours a cron
 // fires at are the same on every day it fires, so the gaps inside a day are
@@ -80,23 +81,22 @@ func MinScheduleInterval(expr string) (time.Duration, bool) {
 
 // specMinInterval is MinScheduleInterval for a parsed 5-field cron.
 func specMinInterval(s *cron.SpecSchedule) (time.Duration, bool) {
+	days, ok := closestFiringDays(s)
+	if !ok {
+		// Fewer than two firing days in 28 years: a date that does not exist,
+		// such as 31 February, so the schedule never fires.
+		return 0, false
+	}
 	times := dayMinutes(s.Hour, s.Minute)
 	if len(times) == 0 {
 		return 0, false
 	}
-	gap := -1
+	// From the last time of one firing day to the first time of the next.
+	gap := days*minutesPerDay - times[len(times)-1] + times[0]
 	for i := 1; i < len(times); i++ {
-		if d := times[i] - times[i-1]; gap < 0 || d < gap {
+		if d := times[i] - times[i-1]; d < gap {
 			gap = d
 		}
-	}
-	if days, ok := closestFiringDays(s); ok {
-		if d := days*minutesPerDay - times[len(times)-1] + times[0]; gap < 0 || d < gap {
-			gap = d
-		}
-	}
-	if gap < 0 {
-		return 0, false
 	}
 	return time.Duration(gap) * time.Minute, true
 }

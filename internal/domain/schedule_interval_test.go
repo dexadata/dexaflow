@@ -34,11 +34,14 @@ func TestMinScheduleInterval(t *testing.T) {
 		{"@every 5m", 5 * time.Minute, true},
 		{"@every 1h30m", 90 * time.Minute, true},
 		{" */20 * * * * ", 20 * time.Minute, true},
-		// Schedules that never fire on a cron have no interval.
+		// Schedules that never fire on a cron have no interval, including a
+		// date that does not exist, whatever its times of day.
 		{"", 0, false},
 		{"@once", 0, false},
 		{"@continuous", 0, false},
 		{"not a cron", 0, false},
+		{"0 1,2 31 2 *", 0, false},
+		{"*/10 * 31 4,6,9,11 *", 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.expr, func(t *testing.T) {
