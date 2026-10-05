@@ -22,6 +22,13 @@ type PodLostCandidate struct {
 	// retry's newer pod is never touched (same invariant as the #474 teardown).
 	TryNumber    int
 	RunningSince time.Time
+	// Heartbeated reports whether the attempt has heartbeated at least once.
+	// Pod-lost ignores it; Lite uses it to judge an agent that died before its
+	// first heartbeat, which agent-lost never lists (#916).
+	Heartbeated bool
+	// TenantID locates the attempt's log stream for the agent_lost marker Lite
+	// writes when it fails a never-heartbeated attempt.
+	TenantID string
 }
 
 // IsPodLostCandidate reports whether a running TI has been running long enough
