@@ -3143,6 +3143,33 @@ func (q *Queries) SetTaskInstanceNote(ctx context.Context, arg SetTaskInstanceNo
 	return err
 }
 
+const setTaskInstanceStateByUser = `-- name: SetTaskInstanceStateByUser :exec
+UPDATE task_instances
+SET state = $1::task_state,
+    scheduled_at = CASE WHEN $1::task_state = 'scheduled' AND scheduled_at IS NULL THEN now() ELSE scheduled_at END,
+    queued_at = CASE WHEN $1::task_state = 'queued' AND queued_at IS NULL THEN now() ELSE queued_at END,
+    started_at = CASE WHEN $1::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+WHERE dag_run_id = $2 AND task_id = $3
+`
+
+type SetTaskInstanceStateByUserParams struct {
+	State    TaskState   `json:"state"`
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+	TaskID   string      `json:"task_id"`
+}
+
+// The mark-state endpoint's write (mark success / mark failed). Same stamping
+// as UpdateTaskInstanceStateByRunTask, and a user's state is a verdict, not a
+// guess: it clears last_failure_kind and confirms the row, so a reaped task a
+// user marks failed is neither re-placed nor overridden by a late SUCCESS
+// record (ADR 0052 amendment).
+func (q *Queries) SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskInstanceStateByUserParams) error {
+	_, err := q.db.Exec(ctx, setTaskInstanceStateByUser, arg.State, arg.DagRunID, arg.TaskID)
+	return err
+}
+
 const stampDagRunState = `-- name: StampDagRunState :exec
 UPDATE dag_runs
 SET state = $1::dag_run_state,
@@ -3164,7 +3191,7 @@ func (q *Queries) StampDagRunState(ctx context.Context, arg StampDagRunStatePara
 	return err
 }
 
-const succeedTaskInstanceIfActive = `-- name: SucceedTaskInstanceIfActive :exec
+const succeedTaskInstanceIfActive = `-- name: SucceedTaskInstanceIfActive :execrows
 UPDATE task_instances
 SET state = 'success', ended_at = now(), error_message = NULL
 WHERE id = $1 AND try_number = $2
@@ -3183,10 +3210,76 @@ type SucceedTaskInstanceIfActiveParams struct {
 // attempt_epoch so a stale reconciler never marks a LIVE retry or re-place
 // succeeded (#1130), which would fire downstream
 // tasks on incomplete work, strictly worse than the bug being fixed. The
-// active-state guard prevents clobbering a terminal row.
-func (q *Queries) SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) error {
-	_, err := q.db.Exec(ctx, succeedTaskInstanceIfActive, arg.ID, arg.TryNumber, arg.AttemptEpoch)
-	return err
+// active-state guard prevents clobbering a terminal row. It reports the rows
+// it changed, so the reconciler can tell a settle that found nothing active
+// (a reaper may have marked the attempt meanwhile) and try
+// SucceedTaskInstanceOverInfraMark (ADR 0052 amendment).
+func (q *Queries) SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) (int64, error) {
+	result, err := q.db.Exec(ctx, succeedTaskInstanceIfActive, arg.ID, arg.TryNumber, arg.AttemptEpoch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const succeedTaskInstanceOverInfraMark = `-- name: SucceedTaskInstanceOverInfraMark :one
+UPDATE task_instances ti
+SET state = 'success', ended_at = now(), error_message = NULL,
+    exit_code = 0, last_failure_kind = NULL
+FROM dag_runs dr, dags d,
+     (SELECT p.id, p.error_message FROM task_instances p WHERE p.id = $1) prev
+WHERE ti.id = $1 AND prev.id = ti.id
+  AND ti.try_number = $2
+  AND ti.attempt_epoch = $3
+  AND ti.state = 'failed' AND ti.last_failure_kind = 'infra'
+  AND ti.infra_confirmed_at IS NULL
+  AND ti.ended_at > now() - make_interval(secs => $4::float8)
+  AND dr.id = ti.dag_run_id AND dr.state = 'running'
+  AND d.id = dr.dag_id
+RETURNING split_part(COALESCE(prev.error_message, ''), ':', 1)::text AS mark,
+          ti.tenant_id, d.dag_id AS dag_id_text, ti.dag_run_id, ti.task_id
+`
+
+type SucceedTaskInstanceOverInfraMarkParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	TryNumber             int32       `json:"try_number"`
+	AttemptEpoch          int32       `json:"attempt_epoch"`
+	ConfirmMaxWaitSeconds float64     `json:"confirm_max_wait_seconds"`
+}
+
+type SucceedTaskInstanceOverInfraMarkRow struct {
+	Mark      string      `json:"mark"`
+	TenantID  pgtype.UUID `json:"tenant_id"`
+	DagIDText string      `json:"dag_id_text"`
+	DagRunID  pgtype.UUID `json:"dag_run_id"`
+	TaskID    string      `json:"task_id"`
+}
+
+// A durable SUCCESS overrides a reaper's infra guess (ADR 0052 amendment,
+// part 1). Admits only a provisional infra mark (agent_lost, pod_lost,
+// dispatch_lost) of exactly the attempt the pod's labels name, while the
+// planner still treats it as active: not yet confirmed by the reconciler and
+// inside the confirmation valve. A run that already finalized is never
+// touched. An application failure, a user's verdict (SetTaskInstanceStateByUser
+// clears the infra kind) and every other state are left alone. Returns the
+// overridden mark (the reaper's reason prefix) and the attempt's log location;
+// no row means nothing was overridden.
+func (q *Queries) SucceedTaskInstanceOverInfraMark(ctx context.Context, arg SucceedTaskInstanceOverInfraMarkParams) (SucceedTaskInstanceOverInfraMarkRow, error) {
+	row := q.db.QueryRow(ctx, succeedTaskInstanceOverInfraMark,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+		arg.ConfirmMaxWaitSeconds,
+	)
+	var i SucceedTaskInstanceOverInfraMarkRow
+	err := row.Scan(
+		&i.Mark,
+		&i.TenantID,
+		&i.DagIDText,
+		&i.DagRunID,
+		&i.TaskID,
+	)
+	return i, err
 }
 
 const taskInstanceAttemptFields = `-- name: TaskInstanceAttemptFields :one

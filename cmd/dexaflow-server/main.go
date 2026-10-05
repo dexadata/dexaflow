@@ -2049,11 +2049,14 @@ func buildPodInformer(ctx context.Context, cfg *config.ServerConfig, cs kubernet
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
 	// The reconciler confirms the reapers' provisional infra marks (ADR 0052
 	// amendment, part 2); the caller makes the marks provisional in step.
 	rec.SetInfraConfirmer(confirmer)
+	// A durable SUCCESS settled over an infra mark is metered and noted in the
+	// attempt's log (ADR 0052 amendment, part 1).
+	overrides.wire(rec)
 	// Opt-in (executor.collect_settled_run_pods): collect a settled run's
 	// finished pods in one DeleteCollection; nil keeps the age-based GC only.
 	if settled != nil {
@@ -2068,6 +2071,24 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 	startGatedTicker(ctx, "maintenance", reconcileInterval, leading, logger, func() {
 		maintenanceCycle(ctx, maintenancePhaseTimeout, rec.Reconcile, reaper.ReapOnce, logger)
 	})
+}
+
+// overrideObservers is what makes the reconciler's infra overrides visible:
+// the metrics (nil when metrics are off) and the marker sink the system line
+// is appended to (nil when the log sink cannot append).
+type overrideObservers struct {
+	metrics *observability.Metrics
+	sink    logs.MarkerSink
+}
+
+// wire hands the observers to rec, keeping a nil *Metrics from becoming a
+// non-nil recorder.
+func (o overrideObservers) wire(rec *executor.Reconciler) {
+	var recorder executor.InfraOverrideRecorder
+	if o.metrics != nil {
+		recorder = o.metrics
+	}
+	rec.SetInfraOverrideObservers(recorder, o.sink)
 }
 
 // settledRunCollection returns the reconciler's settled-run checker when the
@@ -2667,7 +2688,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
 	// agent's streamed content on either backend); the assertion holds for every
 	// sink NewDurableSink returns.
+	var markers logs.MarkerSink
 	if ms, ok := logSink.(logs.MarkerSink); ok {
+		markers = ms
 		reaper.SetLogSink(ms)
 	}
 	// Leader-settling gate: no reaper fires until this instance has led for the
@@ -2689,7 +2712,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// (ADR 0052 amendment, part 2). Lite never reaches this and keeps
 	// confirming at mark time.
 	store.SetProvisionalInfraMarks(true)
-	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
+	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
 	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with
