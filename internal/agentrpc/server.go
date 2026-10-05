@@ -282,6 +282,7 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 		RunId:                   id.RunID,
 		TaskId:                  id.TaskID,
 		TryNumber:               clampInt32(id.TryNumber),
+		AttemptEpoch:            int64(id.AttemptEpoch),
 		Operator:                spec.Operator,
 		Entrypoint:              spec.Entrypoint,
 		Environment:             spec.Environment,
