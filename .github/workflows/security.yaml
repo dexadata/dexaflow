@@ -145,10 +145,12 @@ jobs:
   # leoflow-server image scan — the BLOCKING half of the container policy.
   #
   # This is the one image whose contents are entirely ours: distroless static
-  # plus a Go binary built from this repository's go.mod. There is no OS package
-  # set to inherit CVEs from, so every finding here is caused by a commit and
-  # closed by a `go get`. That makes it the only image where a PR-blocking gate
-  # is fair — the person who turns it red is the person who can turn it green.
+  # (Debian 13, the same base as leoflow-migrate) plus a Go binary built from
+  # this repository's go.mod. Apart from the six distroless base packages (see
+  # the migrate job below) there is no OS package set to inherit CVEs from, so a
+  # finding here is caused by a commit and closed by a `go get`. That makes it
+  # the only image where a PR-blocking gate is fair: the person who turns it
+  # red is the person who can turn it green.
   #
   # `leoflow-migrate` is gated by its own job below, on the same criterion, since
   # #1039 made it true of that image too. `leoflow-runtime` is NOT gated here: it
