@@ -156,6 +156,14 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 		}
 		return executor.Deferred, ErrAtCapacity
 	}
+	// A request accepted here is dispatched by a worker on its own context, but
+	// the scheduler records it as queued with the caller's context. When that
+	// context is already done (the tick overran its step timeout, or leadership
+	// was lost mid-tick) the queued write fails, the task stays scheduled and the
+	// next tick offers it again: two pods for one try. Defer instead.
+	if ctx.Err() != nil {
+		return executor.Deferred, ErrAtCapacity
+	}
 	select {
 	case b.queue <- dispatchRequest{runID: runID, dagID: dagID, dagVersionID: dagVersionID, task: task}:
 		if b.metrics != nil {

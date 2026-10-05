@@ -1422,13 +1422,18 @@ WHERE dag_run_id = sqlc.arg(dag_run_id)
 -- as on every rail that starts a new execution of the row (ADR 0051
 -- amendment, A0). The requeue is a rail, so attempt_epoch is bumped: a late
 -- start or report from the abandoned dispatch is fenced (ADR 0051, A1).
+-- queued_at is cleared too, so the next queued episode stamps a fresh one:
+-- MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept one would
+-- make the dispatch-lost reaper fail the re-offered task as soon as it is
+-- queued again.
 UPDATE task_instances
 SET state = 'scheduled',
     next_dispatch_at = sqlc.arg(next_dispatch_at),
     dispatch_attempts = dispatch_attempts + sqlc.arg(attempt_increment)::int,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
-    attempt_epoch = attempt_epoch + 1
+    attempt_epoch = attempt_epoch + 1,
+    queued_at = NULL
 WHERE dag_run_id = sqlc.arg(dag_run_id)
   AND task_id = sqlc.arg(task_id)
   AND state IN ('scheduled', 'queued');
