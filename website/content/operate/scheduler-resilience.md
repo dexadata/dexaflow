@@ -233,6 +233,26 @@ above keeps that valve longer than a container's termination grace plus two
 sweeps, and shorter than the orphan threshold, so a run waiting on a
 confirmation is never reaped as orphaned.
 
+### A durable SUCCESS wins over the guess
+
+If the attempt the mark names did finish, its task container leaves a durable
+SUCCESS record, and the reconciler reads it on its next sweep. While the mark
+is still provisional and inside the valve, on a run that is still running, the
+reconciler settles the task `success` instead and clears the infra kind. It
+appends `outcome recovered from the durable record over agent_lost` (or
+`pod_lost`, `dispatch_lost`) to the attempt's log and counts it in
+`dexaflow_reconcile_infra_override_total{mark}`. The task does not run again,
+and its downstream tasks run as they would have.
+
+The override only ever applies to the attempt the pod's labels name (the same
+try and attempt epoch), so a superseded pod cannot settle its replacement. A
+FAILED record never overrides a mark: the reaper's own teardown makes the agent
+write one. A task a user marked `failed` is a verdict, not a guess: the
+mark-state action clears the infra kind, so neither the re-place nor the
+override touches it. A record that arrives after the mark was confirmed, after
+the valve opened, or after the run finalized is ignored; clear the task to run
+it again.
+
 On Lite there is no reconciler and no pod to wait for: the mark is confirmed
 when it is made, and nothing changes. Marks made before the upgrade count as
 confirmed. Every rail that starts a new execution of the task (retry, clear,
@@ -527,6 +547,7 @@ your Prometheus dashboard:
 | `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved, fresh activity landed, or a TI was being written); nothing was written and no pod was torn down |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
+| `dexaflow_reconcile_infra_override_total{mark}` (its own counter) | A durable SUCCESS record was settled over a provisional infra mark: the task finished while the control plane lost track of it, and was recovered instead of re-run. Expected after a control plane outage; a steady rate means the reapers fire on healthy tasks |
 | `infra_confirm_valve_open` | The planner acted on a provisional infra mark that the reconciler did not confirm within 2 min; the reconciler is not sweeping or cannot read pods. **Alert on this** |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
 | `agent_lost_list_error`, `dispatch_lost_list_error`, `orphan_list_error`, `pod_lost_list_error`, `warm_worker_lost_list_error` | Reaper's list query failed; the next cycle will retry |

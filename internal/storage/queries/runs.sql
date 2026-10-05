@@ -389,6 +389,21 @@ SET state = sqlc.arg(state)::task_state,
     started_at = CASE WHEN sqlc.arg(state)::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END
 WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = sqlc.arg(task_id);
 
+-- name: SetTaskInstanceStateByUser :exec
+-- The mark-state endpoint's write (mark success / mark failed). Same stamping
+-- as UpdateTaskInstanceStateByRunTask, and a user's state is a verdict, not a
+-- guess: it clears last_failure_kind and confirms the row, so a reaped task a
+-- user marks failed is neither re-placed nor overridden by a late SUCCESS
+-- record (ADR 0052 amendment).
+UPDATE task_instances
+SET state = sqlc.arg(state)::task_state,
+    scheduled_at = CASE WHEN sqlc.arg(state)::task_state = 'scheduled' AND scheduled_at IS NULL THEN now() ELSE scheduled_at END,
+    queued_at = CASE WHEN sqlc.arg(state)::task_state = 'queued' AND queued_at IS NULL THEN now() ELSE queued_at END,
+    started_at = CASE WHEN sqlc.arg(state)::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = sqlc.arg(task_id);
+
 -- name: UpdateTaskInstanceStatesByRunTasks :exec
 -- Batched form of UpdateTaskInstanceStateByRunTask: applies ONE target state to
 -- every listed task of a run in a single statement. The per-row stamping is
@@ -707,18 +722,47 @@ WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
 
--- name: SucceedTaskInstanceIfActive :exec
+-- name: SucceedTaskInstanceIfActive :execrows
 -- Settle a task instance succeeded from its durable outcome record (ADR 0052),
 -- recovering a success whose report was lost. Guarded by id, try_number and
 -- attempt_epoch so a stale reconciler never marks a LIVE retry or re-place
 -- succeeded (#1130), which would fire downstream
 -- tasks on incomplete work, strictly worse than the bug being fixed. The
--- active-state guard prevents clobbering a terminal row.
+-- active-state guard prevents clobbering a terminal row. It reports the rows
+-- it changed, so the reconciler can tell a settle that found nothing active
+-- (a reaper may have marked the attempt meanwhile) and try
+-- SucceedTaskInstanceOverInfraMark (ADR 0052 amendment).
 UPDATE task_instances
 SET state = 'success', ended_at = now(), error_message = NULL
 WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
+
+-- name: SucceedTaskInstanceOverInfraMark :one
+-- A durable SUCCESS overrides a reaper's infra guess (ADR 0052 amendment,
+-- part 1). Admits only a provisional infra mark (agent_lost, pod_lost,
+-- dispatch_lost) of exactly the attempt the pod's labels name, while the
+-- planner still treats it as active: not yet confirmed by the reconciler and
+-- inside the confirmation valve. A run that already finalized is never
+-- touched. An application failure, a user's verdict (SetTaskInstanceStateByUser
+-- clears the infra kind) and every other state are left alone. Returns the
+-- overridden mark (the reaper's reason prefix) and the attempt's log location;
+-- no row means nothing was overridden.
+UPDATE task_instances ti
+SET state = 'success', ended_at = now(), error_message = NULL,
+    exit_code = 0, last_failure_kind = NULL
+FROM dag_runs dr, dags d,
+     (SELECT p.id, p.error_message FROM task_instances p WHERE p.id = sqlc.arg(id)) prev
+WHERE ti.id = sqlc.arg(id) AND prev.id = ti.id
+  AND ti.try_number = sqlc.arg(try_number)
+  AND ti.attempt_epoch = sqlc.arg(attempt_epoch)
+  AND ti.state = 'failed' AND ti.last_failure_kind = 'infra'
+  AND ti.infra_confirmed_at IS NULL
+  AND ti.ended_at > now() - make_interval(secs => sqlc.arg(confirm_max_wait_seconds)::float8)
+  AND dr.id = ti.dag_run_id AND dr.state = 'running'
+  AND d.id = dr.dag_id
+RETURNING split_part(COALESCE(prev.error_message, ''), ':', 1)::text AS mark,
+          ti.tenant_id, d.dag_id AS dag_id_text, ti.dag_run_id, ti.task_id;
 
 -- name: RescheduleTaskInstanceByIDIfActive :exec
 -- Settle a lost reschedule from the durable outcome record (ADR 0052): park the TI
