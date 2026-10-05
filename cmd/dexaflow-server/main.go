@@ -164,6 +164,9 @@ func run() error {
 	defer dsCleanup()
 
 	repo := storage.NewRepository(pg)
+	// A clear deletes the stored XCom of the attempts it clears, not just their
+	// index rows, since agents fetch values by key (#1131).
+	repo.SetXComBackend(xcomBackend)
 	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
@@ -261,10 +264,19 @@ func run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
-	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks), ReadHeaderTimeout: 10 * time.Second}
+	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), ReadHeaderTimeout: 10 * time.Second}
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
 	return serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv)
+}
+
+// observabilityOptions maps the observability.metrics config onto the metrics
+// listener.
+func observabilityOptions(cfg *config.ServerConfig) []api.ObservabilityOption {
+	if cfg.Observability.Metrics.DropLegacyNames {
+		return []api.ObservabilityOption{api.WithoutLegacyMetricNames()}
+	}
+	return nil
 }
 
 // awaitShutdown blocks until a server errors or the context is canceled, then
@@ -1118,7 +1130,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
@@ -1485,7 +1497,7 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, servesAPI bool, apiSrv,
 // channel is plaintext (dev). The per-task bearer token in metadata authenticates
 // each call regardless. inflight (required) is installed on the interceptor
 // chain so the bounded stop can report the handlers it leaves running.
-func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -1498,6 +1510,9 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	agentSrv.SetShutdown(ctx)
 	agentSrv.SetLogSink(logSink)
 	agentSrv.SetLogPublisher(logTailer)
+	// logs.tail.publish: "always" (default) publishes every line; "on_demand"
+	// publishes only while someone follows the attempt.
+	agentSrv.SetTailPublishOnDemand(tailOnDemand)
 	agentSrv.SetSecrets(secretsStore, allowInsecureSecrets)
 	// Refresh a live attempt's bearer on every heartbeat (ADR 0055 Fix #4) with the
 	// same short per-attempt TTL used at dispatch, so a long task keeps a working

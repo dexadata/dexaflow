@@ -79,6 +79,28 @@ type LogsSection struct {
 	// Sink configures the object-store backend; read only when Backend is "s3" or
 	// "gcs".
 	Sink ObjectLogSection `mapstructure:"sink"`
+	// Tail configures the live-tail fan-out of task log lines.
+	Tail LogTailSection `mapstructure:"tail"`
+}
+
+// Live-tail publish modes (logs.tail.publish).
+const (
+	// LogTailPublishAlways publishes every received log line for the live
+	// tail as it arrives (the default).
+	LogTailPublishAlways = "always"
+	// LogTailPublishOnDemand publishes only while a follower is subscribed,
+	// probing at most once a second per log stream and replaying the lines
+	// held since the last probe that found nobody.
+	LogTailPublishOnDemand = "on_demand"
+)
+
+// LogTailSection configures the live-tail fan-out.
+type LogTailSection struct {
+	// Publish is "always" (default: every line is published, as before) or
+	// "on_demand" (lines are published only while someone follows the attempt;
+	// a new follower may see its first live lines up to about a second late).
+	// Bind via DEXAFLOW_LOGS_TAIL_PUBLISH (legacy LEOFLOW_LOGS_TAIL_PUBLISH).
+	Publish string `mapstructure:"publish"`
 }
 
 // ObjectLogSection configures the object-store log backend for both the "s3" and
@@ -745,9 +767,18 @@ type DispatchSection struct {
 
 // ObservabilitySection configures logging, metrics, and tracing.
 type ObservabilitySection struct {
-	OTel      OTelSection `mapstructure:"otel"`
-	LogLevel  string      `mapstructure:"log_level"`
-	LogFormat string      `mapstructure:"log_format"`
+	OTel      OTelSection    `mapstructure:"otel"`
+	LogLevel  string         `mapstructure:"log_level"`
+	LogFormat string         `mapstructure:"log_format"`
+	Metrics   MetricsSection `mapstructure:"metrics"`
+}
+
+// MetricsSection configures the Prometheus scrape.
+type MetricsSection struct {
+	// DropLegacyNames stops publishing every dexaflow_* family a second time
+	// under its pre-rename leoflow_* name. Off by default (ADR 0062 gate), so
+	// dashboards and alerts written against the old names keep working.
+	DropLegacyNames bool `mapstructure:"drop_legacy_names"`
 }
 
 // OTelSection configures OpenTelemetry export.
@@ -903,6 +934,7 @@ var serverDefaults = map[string]any{
 	"execution.max_warm_pods_per_tenant": 100,
 	"logs.dir":                           "/var/log/leoflow",
 	"logs.backend":                       "disk",
+	"logs.tail.publish":                  LogTailPublishAlways,
 	"logs.sink.bucket":                   "",
 	"logs.sink.prefix":                   "",
 	"logs.sink.region":                   "",
@@ -952,6 +984,8 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
+	"observability.metrics.drop_legacy_names": false,
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
@@ -1126,6 +1160,11 @@ func isLoopbackListenAddr(addr string) bool {
 // boot instead of losing every task log to a nonexistent bucket. Empty and
 // "disk" are always valid — the on-disk default is unaffected.
 func (c *ServerConfig) validateLogs() error {
+	switch c.Logs.Tail.Publish {
+	case "", LogTailPublishAlways, LogTailPublishOnDemand:
+	default:
+		return fmt.Errorf(`unknown logs.tail.publish %q (want %q or %q)`, c.Logs.Tail.Publish, LogTailPublishAlways, LogTailPublishOnDemand)
+	}
 	switch c.Logs.Backend {
 	case "", "disk":
 		return nil

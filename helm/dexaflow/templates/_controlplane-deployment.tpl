@@ -260,6 +260,8 @@ spec:
             {{- end }}
             - name: LEOFLOW_LOGS_DIR
               value: {{ .ctx.Values.config.logsDir | quote }}
+            - name: LEOFLOW_LOGS_TAIL_PUBLISH
+              value: {{ (.ctx.Values.logs.tail).publish | default "always" | quote }}
             {{- if ne .ctx.Values.logs.sink.provider "disk" }}
             # Object-store log backend (opt-in, ADR 0035/0056 keyless-first). With
             # provider s3 or gcs, task logs ship to a bucket instead of the PVC; set
@@ -300,6 +302,18 @@ spec:
               value: {{ .ctx.Values.config.scheduler.enabled | quote }}
             - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
               value: {{ .ctx.Values.config.scheduler.loopIntervalMs | quote }}
+            {{- with .ctx.Values.config.scheduler.dispatch }}
+            {{- if .bufferSize }}
+            # Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
+            # the pods. Unset keeps the server default, synchronous dispatch.
+            - name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+              value: {{ .bufferSize | quote }}
+            {{- end }}
+            {{- if .workers }}
+            - name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+              value: {{ .workers | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
               value: {{ .ctx.Values.database.maxOpenConns | quote }}
             - name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
