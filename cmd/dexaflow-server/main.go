@@ -2748,6 +2748,11 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 	return bd, bd
 }
 
+// The SchedulerStore passed to wrapBuffered must keep satisfying
+// AsyncDispatchStore: the type assertion there would otherwise fall back to
+// failing every worker-side dispatch error at once, silently.
+var _ scheduler.AsyncDispatchStore = (*storage.SchedulerStore)(nil)
+
 // platformDefaults maps the executor.defaults config (L0 task defaults, ADR
 // 0023) into the dispatcher's PlatformDefaults. Resources are set only when a
 // quantity is configured, so an unset section leaves req.Resources untouched;
