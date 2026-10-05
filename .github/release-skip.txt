@@ -1,0 +1,5 @@
+# Commits on main since v0.5.0 that release-0.5 does not carry on purpose.
+# One per line: #<pull request> or a commit sha of 7 or more characters, then
+# the reason. scripts/release-gap.sh reads this file from the release branch.
+#1358 docs promotion for v0.5.0, release mechanics with nothing to ship in 0.5.x
+#1359 README install instructions for v0.5.0, docs that live on main only
