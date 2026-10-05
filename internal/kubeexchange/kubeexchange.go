@@ -203,12 +203,19 @@ func taskIdentityFromPod(ns, podName string, got *corev1.Pod) (auth.AgentIdentit
 	if id.TaskInstanceID == "" {
 		return auth.AgentIdentity{}, fmt.Errorf("pod %s/%s identity annotation carries no task instance id", ns, podName)
 	}
-	return auth.AgentIdentity{
+	out := auth.AgentIdentity{
 		TaskInstanceID: id.TaskInstanceID,
 		TenantID:       id.TenantID,
 		DagID:          id.DagID,
 		RunID:          id.RunID,
 		TaskID:         id.TaskID,
 		TryNumber:      id.TryNumber,
-	}, nil
+	}
+	// A pod annotated before the attempt epoch existed carries none, and the
+	// exchanged token stays a legacy one (ADR 0051 amendment): it is never
+	// upgraded to the row's current epoch, which may belong to a replacement.
+	if id.AttemptEpoch != nil {
+		out.AttemptEpoch, out.HasAttemptEpoch = *id.AttemptEpoch, true
+	}
+	return out, nil
 }
