@@ -266,6 +266,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		RunID:          runID,
 		TaskID:         task.TaskID,
 		TryNumber:      r.TryNumber,
+		// The epoch the resolver just claimed for this execution (ADR 0051
+		// amendment), so the token can never be mistaken for another execution
+		// of the same try.
+		AttemptEpoch:    r.AttemptEpoch,
+		HasAttemptEpoch: true,
 	}, d.tokenTTL)
 	if err != nil {
 		return executor.Rejected, fmt.Errorf("issuing agent token for %s: %w", task.TaskID, err)
@@ -299,6 +304,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 			TryNumber:    int32(r.TryNumber), //nolint:gosec // try number is a small bounded attempt counter, never near int32 max
 			DagVersionId: dagVersionID,
 			LeaseSeconds: warmLeaseSeconds,
+			AttemptEpoch: int64(r.AttemptEpoch),
 		}
 		if d.placer.Assign(dagVersionID, wa) {
 			return executor.Dispatched, nil
@@ -312,6 +318,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		RunID:                runID,
 		TaskID:               task.TaskID,
 		TryNumber:            r.TryNumber,
+		AttemptEpoch:         r.AttemptEpoch,
 		Image:                r.Image,
 		ImagePullPolicy:      r.ImagePullPolicy,
 		Source:               r.Source,
