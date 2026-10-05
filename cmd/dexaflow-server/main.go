@@ -1420,6 +1420,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		UIETagRevalidation:           cfg.UI.ETagRevalidation,
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
+		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2269,6 +2270,14 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
 	if cfg.UI.Edition == "pro" {
 		sched.EnablePools()
+		if cfg.Server.PoolsReadOnly {
+			// Tenants cannot create pools, so an undefined pool name must not be
+			// a way around default_pool (#646).
+			sched.ConfineUndefinedPools()
+			logger.Info("pools read-only: tasks naming an undefined pool draw on default_pool")
+		}
+	} else if cfg.Server.PoolsReadOnly {
+		logger.Warn("server.pools_read_only has no effect: pools are a Pro edition feature")
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
