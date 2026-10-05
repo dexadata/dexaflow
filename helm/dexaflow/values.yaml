@@ -238,7 +238,7 @@ logs:
   # any api replica reads them back. Retention is owned by the bucket's lifecycle policy,
   # not the in-cluster log janitor.
   tail:
-    # -- When received task-log lines are published for live followers: `always` (default) publishes every line as it arrives; `on_demand` publishes only while someone follows the attempt, checking at most once a second per log stream and replaying to a new follower the lines received since the last check (at most 1024 lines or 1 MiB). Enable `on_demand` once every replica runs a version that skips replayed lines.
+    # -- When received task-log lines are published for live followers: `always` (default) publishes every line as it arrives; `on_demand` publishes only while someone follows the attempt, checking at most once a second per log stream (or once per 512 lines or 512 KiB of output when the task logs faster than that) and replaying to a new follower every line received since the last check (a single line over 1 MiB is not replayed). Enable `on_demand` once every replica runs a version that skips replayed lines.
     publish: always
   sink:
     # -- Durable task-log backend: `disk` (default — the PVC above), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage). Object storage is opt-in; `disk` leaves the on-disk path unchanged.
