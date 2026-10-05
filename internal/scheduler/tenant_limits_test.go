@@ -62,9 +62,23 @@ func TestStepStopsACatchupAtTheDailyCap(t *testing.T) {
 	}
 }
 
+// clearOfMidnightUTC waits out the last seconds of a UTC day, so a test whose
+// ticks must all fall on one UTC day cannot straddle midnight, where a second
+// warning would be correct.
+func clearOfMidnightUTC(t *testing.T) {
+	t.Helper()
+	now := time.Now().UTC()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	if left := midnight.Sub(now); left < 10*time.Second {
+		t.Logf("waiting %v for the UTC day to turn", left)
+		time.Sleep(left)
+	}
+}
+
 // TestDailyCapWarningIsLoggedOncePerTenantAndDay: a capped tenant's due slot is
 // retried every tick, but the warning is written once, not on every tick.
 func TestDailyCapWarningIsLoggedOncePerTenantAndDay(t *testing.T) {
+	clearOfMidnightUTC(t)
 	store := newFakeStore()
 	store.limitedTenants = map[string]bool{tenantA: true}
 	store.scheduled = []ScheduledDAG{{TenantID: tenantA, DagID: "etl", Schedule: "@hourly"}}

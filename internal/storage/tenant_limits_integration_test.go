@@ -130,6 +130,7 @@ func TestRegisterDagVersionEnforcesMinScheduleInterval(t *testing.T) {
 // the count starts again on the next UTC day.
 func TestRunsPerDayCountsManualAndScheduledRuns(t *testing.T) {
 	repo, sched, ctx := openRepo(t)
+	clearOfMidnightUTC(t)
 	tenant := limitedTenant(ctx, t, repo, "runsperday", domain.TenantLimitsUpdate{MaxRunsPerDay: limit(2)})
 	if err := registerIn(ctx, t, repo, tenant, "etl", "v1", nil); err != nil {
 		t.Fatal(err)
@@ -171,6 +172,7 @@ func TestRunsPerDayCountsManualAndScheduledRuns(t *testing.T) {
 // slots of the day create exactly the cap, never more.
 func TestRunsPerDayIsExactUnderConcurrency(t *testing.T) {
 	repo, _, ctx := openRepo(t)
+	clearOfMidnightUTC(t)
 	tenant := limitedTenant(ctx, t, repo, "runsrace", domain.TenantLimitsUpdate{MaxRunsPerDay: limit(3)})
 	if err := registerIn(ctx, t, repo, tenant, "etl", "v1", nil); err != nil {
 		t.Fatal(err)
@@ -239,5 +241,18 @@ func pretendYesterday(ctx context.Context, t *testing.T, tenant string) {
 	if _, err := adminPool(ctx, t).Exec(ctx,
 		`UPDATE tenants SET runs_day = runs_day - 1 WHERE name = $1`, tenant); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// clearOfMidnightUTC waits out the last seconds of a UTC day, so a test whose
+// run creations must all count against one UTC day cannot straddle midnight,
+// where the counter starts again.
+func clearOfMidnightUTC(t *testing.T) {
+	t.Helper()
+	now := time.Now().UTC()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	if left := midnight.Sub(now); left < 10*time.Second {
+		t.Logf("waiting %v for the UTC day to turn", left)
+		time.Sleep(left)
 	}
 }
