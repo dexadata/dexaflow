@@ -18,9 +18,9 @@ type liteReapStore struct {
 func (s *liteReapStore) ListReapCandidates(context.Context) ([]executor.ReapCandidate, error) {
 	return []executor.ReapCandidate{{RunID: "quiet-run", DagID: "d", LastActivity: time.Now().Add(-time.Hour)}}, nil
 }
-func (s *liteReapStore) ReapRun(_ context.Context, id string) error {
+func (s *liteReapStore) ReapRun(_ context.Context, id string, _ time.Time) (bool, error) {
 	s.reapedRuns = append(s.reapedRuns, id)
-	return nil
+	return true, nil
 }
 func (s *liteReapStore) ListAgentLostCandidates(context.Context) ([]executor.AgentLostCandidate, error) {
 	return []executor.AgentLostCandidate{{TaskInstanceID: "dead-agent", DagRunID: "r1", TaskID: "t", TryNumber: 1, LastHeartbeat: time.Now().Add(-time.Hour)}}, nil
