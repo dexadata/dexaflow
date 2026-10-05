@@ -214,7 +214,9 @@ DEXAFLOW_SECRET_KEY="<new key>,<old key>"
 ```
 
 The control plane re-encrypts the stored connection secrets onto the first key
-at startup, logs how many it moved, and then the old key is no longer needed:
+at startup and logs how many it moved. Only when that pass moved every row it
+found, with none changed underneath it by a concurrent write and none that no
+key opens, does it log the rotation as complete:
 
 ```
 secret key rotation complete for the stored connections re_encrypted=7
@@ -241,15 +243,42 @@ If yours has one, re-key with `openssl rand -hex 32` and rotate using the list
 above, which is the safe way to change it.
 {{% /alert %}}
 
-{{% alert title="Dexaflow Lite: new installs only, for now" color="warning" %}}
+{{% alert title="Dexaflow Lite: moving an existing install to its own key" color="warning" %}}
 `dexaflow setup` generates a per-install key and keeps it in
 `~/.dexaflow/config.yaml`.
 
-**An install created before per-install keys existed is not migrated.** Its
-connection secrets stay encrypted with the key that used to be compiled into
+An install created before per-install keys existed has no `secret_key`. Its
+connection secrets are encrypted with the key that used to be compiled into
 this repository, which every Lite install shares, so anyone who obtains that
-datastore file can read them. Moving an existing install means re-encrypting
-every stored secret, and that migration is tracked separately.
+datastore can read them, and `dexaflow lite` warns on every start. Stop Lite
+and run:
+
+```bash
+dexaflow lite migrate-key --dry-run   # what it found and what it would do; writes nothing
+dexaflow lite migrate-key             # asks before it changes anything
+```
+
+It records a new key next to the old one in `config.yaml` before it touches a
+row, re-encrypts every stored secret in one verified transaction per
+datastore (the managed Postgres and the Docker one, when the install has
+both), re-checks them under the new key alone, and only then drops the old key
+from the file. If it is interrupted at any point, run the same command again;
+until it finishes, `dexaflow lite` starts normally with both keys and warns
+that a key migration has not finished.
+
+The Lite server never re-encrypts at startup (it runs with
+`DEXAFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=false`), and Lite takes its keys from
+`config.yaml` only: a `DEXAFLOW_SECRET_KEY` or `LEOFLOW_SECRET_KEY` exported in
+your shell is ignored, and `dexaflow lite` says so when it differs.
+
+Downgrading after a migration: v0.5.0 is the oldest release that reads
+`secret_key`, so its `dexaflow` and `dexaflow-server` still open every
+migrated secret (downgrade both binaries together: this `dexaflow lite` refuses
+a v0.5.0 `dexaflow-server`). v0.5.0 does not take the key-migration lock, takes
+an exported `DEXAFLOW_SECRET_KEY` or `LEOFLOW_SECRET_KEY` over the file, and,
+on an install whose migration has not finished, re-encrypts at startup onto
+`secret_key`, which is safe because both keys are recorded. A release older than
+v0.5.0 ignores `secret_key` and cannot read migrated secrets.
 
 **`config.yaml` holds the only copy of the key that decrypts your stored
 connections.** `dexaflow lite backup` includes it, which also means the backup
@@ -373,6 +402,8 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS` | `86400` | both | Ceiling, in seconds, on the **total** age of a transparently renewed session, measured from first login and preserved across every renewal. Past it, `POST /api/v2/auth/token/renew` refuses and the user must log in again; the short `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long a live session may keep refreshing. A non-positive value disables the ceiling. Renewal also re-checks that the account is still active, so a deactivated user stops being issued tokens as well as being refused on use. The chart has no value for this yet — set it through `extraEnv`. |
 | `DEXAFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | both | Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force). A successful login consumes no budget. `dexaflow lite` raises this well above the default (local single-user tool). |
 | `DEXAFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)). Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
+| `DEXAFLOW_SECRET_KEY_REENCRYPT_ON_BOOT` | `true` | both | Re-encrypt stored connection secrets onto the first `DEXAFLOW_SECRET_KEY` entry at startup ([Rotating the encryption key](#rotating-the-encryption-key)). `dexaflow lite` sets it to `false`: Lite moves keys only through [`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/). |
+| `DEXAFLOW_SECRET_KEY_MIGRATION_LOCK` | `false` | both | Hold the key-migration advisory lock for the server's lifetime: refuse to start while `dexaflow lite migrate-key` runs, and exit if the lock's database session is lost. `dexaflow lite` sets it to `true`; there is no reason to set it elsewhere. |
 | `DEXAFLOW_AUTH_SECRET_SCOPING` | `permissive` | both | Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `permissive` (delivers the whole tenant vault; warns when a DAG declares a narrower set), `enforce` (delivers only the declared subset — empty declaration ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable. Helm: `auth.secretScoping`. |
 | `DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |
