@@ -111,3 +111,38 @@ func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	}
 	return out.Body, nil
 }
+
+// maxListedKeys bounds one List call. A try's listing holds one entry per
+// execution (a segmented one lists as its common prefix), so a try past this
+// bound is read by probing instead.
+const maxListedKeys = 10000
+
+// errListTooLong reports a listing past maxListedKeys.
+var errListTooLong = errors.New("object listing exceeds its bound")
+
+// List returns the keys under prefix, and with a delimiter each deeper key's
+// common prefix once (see ObjectLister). It needs s3:ListBucket.
+func (s *S3Store) List(ctx context.Context, prefix, delimiter string) ([]string, error) {
+	in := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix)}
+	if delimiter != "" {
+		in.Delimiter = aws.String(delimiter)
+	}
+	var out []string
+	p := s3.NewListObjectsV2Paginator(s.client, in)
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing log objects: %w", err)
+		}
+		for _, o := range page.Contents {
+			out = append(out, aws.ToString(o.Key))
+		}
+		for _, cp := range page.CommonPrefixes {
+			out = append(out, aws.ToString(cp.Prefix))
+		}
+		if len(out) > maxListedKeys {
+			return nil, errListTooLong
+		}
+	}
+	return out, nil
+}

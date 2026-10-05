@@ -114,12 +114,27 @@ func EncodeLine(ev Event) string {
 }
 
 // Ref identifies a task instance's log stream and maps to its storage location.
+//
+// AttemptEpoch names one execution of the try (ADR 0051 amendment): an infra
+// re-place, a reschedule poke or a repeated dispatch runs the same try again,
+// and each execution keeps its own stream. Epoch 0 maps to the key every log
+// had before the epoch existed, so those logs are still found.
 type Ref struct {
-	TenantID  string
-	DagID     string
-	RunID     string
-	TaskID    string
-	TryNumber int
+	TenantID     string
+	DagID        string
+	RunID        string
+	TaskID       string
+	TryNumber    int
+	AttemptEpoch int
+}
+
+// fileName is the last segment of the ref's storage location:
+// {try}.log for epoch 0 and {try}.e{epoch}.log otherwise.
+func (r Ref) fileName() string {
+	if r.AttemptEpoch == 0 {
+		return fmt.Sprintf("%d.log", r.TryNumber)
+	}
+	return fmt.Sprintf("%d.e%d.log", r.TryNumber, r.AttemptEpoch)
 }
 
 // LogWriter appends structured log events for one task attempt and flushes on
@@ -153,7 +168,8 @@ type MarkerSink interface {
 	AppendEvent(ref Ref, ev Event) error
 }
 
-// DiskSink writes logs to ${root}/{tenant}/{dag}/{run}/{task}/{try}.log.
+// DiskSink writes logs to ${root}/{tenant}/{dag}/{run}/{task}/{try}.log, or
+// {try}.e{epoch}.log for an execution with a non-zero attempt epoch.
 type DiskSink struct {
 	root string
 }
@@ -183,7 +199,7 @@ func (d *DiskSink) withRoot(fn func(*os.Root) (*os.File, error)) (*os.File, erro
 
 // rel is the storage location relative to the sink root, for use with os.Root.
 func (d *DiskSink) rel(ref Ref) string {
-	return filepath.Join(ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, fmt.Sprintf("%d.log", ref.TryNumber))
+	return filepath.Join(ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, ref.fileName())
 }
 
 // ErrUnsafeRef reports a Ref whose fields cannot be used as path segments.
@@ -213,6 +229,9 @@ func (r Ref) validate() error {
 		if err := safeSegment(f.value); err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrUnsafeRef, f.name, err)
 		}
+	}
+	if r.AttemptEpoch < 0 {
+		return fmt.Errorf("%w: attempt_epoch: is negative", ErrUnsafeRef)
 	}
 	return nil
 }
@@ -300,6 +319,38 @@ func (d *DiskSink) Prune(now time.Time, retention time.Duration) error {
 		return nil
 	}
 	return err
+}
+
+// StoredEpochs lists the attempt epochs with a log file for ref's try, with
+// one directory read (see EpochLister). A task directory that does not exist
+// yet holds none.
+func (d *DiskSink) StoredEpochs(ref Ref) ([]int, error) {
+	if err := ref.validate(); err != nil {
+		return nil, err
+	}
+	dir, err := d.withRoot(func(root *os.Root) (*os.File, error) {
+		return root.Open(filepath.Dir(d.rel(ref)))
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("opening log directory: %w", err)
+	}
+	names, rerr := dir.Readdirnames(-1)
+	if cerr := dir.Close(); rerr == nil {
+		rerr = cerr
+	}
+	if rerr != nil {
+		return nil, fmt.Errorf("listing log directory: %w", rerr)
+	}
+	var epochs []int
+	for _, name := range names {
+		if e, ok := parseEpochName(name, ref.TryNumber); ok {
+			epochs = append(epochs, e)
+		}
+	}
+	return epochs, nil
 }
 
 // Read opens the log file for reading.
