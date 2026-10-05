@@ -32,6 +32,12 @@ const (
 	// subprocess executor can return). The scheduler keeps the historical
 	// bounded-backoff → dispatch_failed behavior (ADR 0031 Amendment A).
 	Rejected
+	// Deferred means the dispatch was never attempted: the control plane's own
+	// buffered dispatch queue was full (or shutting down). Nothing reached the
+	// runtime, so the scheduler leaves the task scheduled for a later tick and
+	// records nothing: no backoff, no dispatch-attempt increment, no
+	// dispatch_failed. It is local backpressure, not a failed dispatch.
+	Deferred
 )
 
 // String renders the disposition for logs and error notes.
@@ -43,6 +49,8 @@ func (d Disposition) String() string {
 		return "backpressure"
 	case Rejected:
 		return "rejected"
+	case Deferred:
+		return "deferred"
 	default:
 		return "unknown"
 	}
