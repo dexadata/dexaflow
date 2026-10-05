@@ -198,7 +198,7 @@ func (r *agentLostReaper) reapNeverHeartbeated(ctx context.Context, c PodLostCan
 		r.record("agent_lost_gate_skip")
 		return
 	}
-	applied, err := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID)
+	applied, err := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if err != nil {
 		r.logger.Error("marking never-heartbeated task agent-lost",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", err)
