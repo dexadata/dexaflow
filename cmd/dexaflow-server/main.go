@@ -267,10 +267,19 @@ func run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
-	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks), ReadHeaderTimeout: 10 * time.Second}
+	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), ReadHeaderTimeout: 10 * time.Second}
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
 	return keyLockExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
+}
+
+// observabilityOptions maps the observability.metrics config onto the metrics
+// listener.
+func observabilityOptions(cfg *config.ServerConfig) []api.ObservabilityOption {
+	if cfg.Observability.Metrics.DropLegacyNames {
+		return []api.ObservabilityOption{api.WithoutLegacyMetricNames()}
+	}
+	return nil
 }
 
 // awaitShutdown blocks until a server errors or the context is canceled, then
