@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
@@ -19,12 +20,16 @@ import (
 const defaultSpecCacheEntries = 512
 
 // cachedSpec is the memoized parse of one dag_versions row: the version row
-// itself (without its raw spec bytes) plus its decoded DAGSpec. Both are
-// treated as immutable once cached.
+// itself (without its raw spec bytes), its decoded DAGSpec, and the scheduler's
+// task index over the spec's tasks. All three are treated as immutable once
+// set. The index is built on first use by the scheduler tick (getWithGraph), so
+// the API and agent paths, which only read the spec, never pay for it.
 type cachedSpec struct {
-	id      pgtype.UUID
-	version queries.DagVersion
-	spec    domain.DAGSpec
+	id        pgtype.UUID
+	version   queries.DagVersion
+	spec      domain.DAGSpec
+	graphOnce sync.Once
+	graph     *scheduler.TaskGraph
 	// pins counts the DAGs whose current version this is. A pinned entry is
 	// never evicted and is kept out of the LRU list (elem is nil).
 	pins int
@@ -132,6 +137,19 @@ func (c *specCache) getForTick(ctx context.Context, q versionGetter, versionID p
 	return c.load(ctx, q, versionID, nil, true)
 }
 
+// getWithGraph is getForTick plus the task index over the version's tasks,
+// built on the first call for the version. Versions are immutable, so the index
+// is built once per version and shared read-only by every run of it; it stays
+// valid for a per-run copy of the spec's Tasks.
+func (c *specCache) getWithGraph(ctx context.Context, q versionGetter, versionID pgtype.UUID) (domain.DAGSpec, *scheduler.TaskGraph, error) {
+	e, err := c.loadEntry(ctx, q, versionID, nil, true)
+	if err != nil {
+		return domain.DAGSpec{}, nil, err
+	}
+	e.graphOnce.Do(func() { e.graph = scheduler.NewTaskGraph(e.spec.Tasks) })
+	return e.spec, e.graph, nil
+}
+
 // getCurrent is get for the version a DAG currently points at: it also pins
 // that version, and unpins the version the DAG pointed at before, if any.
 func (c *specCache) getCurrent(ctx context.Context, q versionGetter, key currentSpecKey, versionID pgtype.UUID) (queries.DagVersion, domain.DAGSpec, error) {
@@ -139,21 +157,31 @@ func (c *specCache) getCurrent(ctx context.Context, q versionGetter, key current
 }
 
 func (c *specCache) load(ctx context.Context, q versionGetter, versionID pgtype.UUID, pin *currentSpecKey, inTick bool) (queries.DagVersion, domain.DAGSpec, error) {
+	e, err := c.loadEntry(ctx, q, versionID, pin, inTick)
+	if err != nil {
+		return queries.DagVersion{}, domain.DAGSpec{}, err
+	}
+	return e.version, e.spec, nil
+}
+
+// loadEntry returns the cached entry for a dag_version_id, filling it on a cold
+// key, and applies the pin and tick bookkeeping of load.
+func (c *specCache) loadEntry(ctx context.Context, q versionGetter, versionID pgtype.UUID, pin *currentSpecKey, inTick bool) (*cachedSpec, error) {
 	c.mu.Lock()
 	if e, ok := c.entries[versionID]; ok {
 		c.touch(e, pin, inTick)
 		c.mu.Unlock()
-		return e.version, e.spec, nil
+		return e, nil
 	}
 	c.mu.Unlock()
 
 	version, err := q.GetDagVersionByID(ctx, versionID)
 	if err != nil {
-		return queries.DagVersion{}, domain.DAGSpec{}, fmt.Errorf("loading dag version: %w", err)
+		return nil, fmt.Errorf("loading dag version: %w", err)
 	}
 	var spec domain.DAGSpec
 	if uerr := json.Unmarshal(version.Spec, &spec); uerr != nil {
-		return queries.DagVersion{}, domain.DAGSpec{}, fmt.Errorf("decoding spec: %w", uerr)
+		return nil, fmt.Errorf("decoding spec: %w", uerr)
 	}
 	version.Spec = nil
 
@@ -167,7 +195,7 @@ func (c *specCache) load(ctx context.Context, q versionGetter, versionID pgtype.
 	}
 	c.touch(e, pin, inTick)
 	c.evict()
-	return e.version, e.spec, nil
+	return e, nil
 }
 
 // touch marks e as just used (and read by the current tick when inTick) and

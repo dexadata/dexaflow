@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **An opt-in to serve metrics under their `dexaflow_*` names only.** `/metrics`
+  publishes every `dexaflow_*` family twice, once under its pre-rename
+  `leoflow_*` name, so dashboards and alerts written against either name work.
+  That copy is made on every scrape and doubles the scrape size. Operators who
+  do not need the `leoflow_*` names may set
+  `observability.metrics.drop_legacy_names: true`
+  (`DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES`, or the legacy `LEOFLOW_`
+  name) to serve each family once. The default is `false` and keeps both names.
+time: 2026-10-02T17:00:00.000000000-03:00

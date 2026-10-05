@@ -3,11 +3,13 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
@@ -140,5 +142,85 @@ func TestSpecCacheNotSharedMutated(t *testing.T) {
 	if again.Tasks[0].Retries != nil {
 		t.Errorf("cache was mutated through the shared Tasks slice: Retries=%v, want nil",
 			*again.Tasks[0].Retries)
+	}
+}
+
+// TestSpecCacheBuildsTaskGraphOncePerVersion pins that the scheduler's task
+// index is built once per version, not per run or per tick: every read
+// of a version returns the same graph, and it indexes that version's tasks.
+func TestSpecCacheBuildsTaskGraphOncePerVersion(t *testing.T) {
+	getter := &countingVersionGetter{spec: domain.DAGSpec{
+		DagID: "etl",
+		Tasks: []domain.TaskSpec{
+			{TaskID: "extract"},
+			{TaskID: "load", DependsOn: []string{"extract"}},
+		},
+	}}
+	cache := newSpecCache()
+	ctx := context.Background()
+	v := versionUUID(0x55)
+
+	_, first, err := cache.getWithGraph(ctx, getter, v)
+	if err != nil {
+		t.Fatalf("getWithGraph: %v", err)
+	}
+	spec, again, err := cache.getWithGraph(ctx, getter, v)
+	if err != nil {
+		t.Fatalf("getWithGraph again: %v", err)
+	}
+	if first == nil || first != again {
+		t.Fatalf("graph must be built once and shared, got %p then %p", first, again)
+	}
+	for i, task := range spec.Tasks {
+		if got, ok := first.Lookup(task.TaskID); !ok || got != i {
+			t.Errorf("Lookup(%q) = %d, %v; want %d, true", task.TaskID, got, ok, i)
+		}
+	}
+	if getter.calls[v] != 1 {
+		t.Errorf("version fetched %d times, want 1", getter.calls[v])
+	}
+}
+
+// TestSpecCacheBuildsTaskGraphOnlyForTheScheduler pins that the task index is
+// built lazily, by the scheduler tick's getWithGraph, and never by a fill
+// from the API or agent paths, which only read the spec. Concurrent first
+// reads still share one graph.
+func TestSpecCacheBuildsTaskGraphOnlyForTheScheduler(t *testing.T) {
+	getter := &countingVersionGetter{spec: domain.DAGSpec{
+		DagID: "etl",
+		Tasks: []domain.TaskSpec{{TaskID: "extract"}, {TaskID: "load", DependsOn: []string{"extract"}}},
+	}}
+	cache := newSpecCache()
+	ctx := context.Background()
+	v := versionUUID(0x56)
+
+	if _, _, err := cache.get(ctx, getter, v); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if g := cache.entries[v].graph; g != nil {
+		t.Fatal("a fill through get built the scheduler's task graph; it must wait for getWithGraph")
+	}
+
+	graphs := make([]*scheduler.TaskGraph, 8)
+	var wg sync.WaitGroup
+	for i := range graphs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, g, err := cache.getWithGraph(ctx, getter, v)
+			if err != nil {
+				t.Errorf("getWithGraph: %v", err)
+			}
+			graphs[i] = g
+		}()
+	}
+	wg.Wait()
+	for i, g := range graphs {
+		if g == nil || g != graphs[0] {
+			t.Fatalf("getWithGraph #%d returned %p, want one shared non-nil graph %p", i, g, graphs[0])
+		}
+	}
+	if getter.calls[v] != 1 {
+		t.Errorf("version fetched %d times, want 1", getter.calls[v])
 	}
 }
