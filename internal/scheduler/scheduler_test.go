@@ -56,6 +56,11 @@ type fakeStore struct {
 	// can be asserted to never query pool budgets (ADR 0053 Stage 3).
 	poolBudgets      map[string]int
 	poolBudgetsCalls int
+	// queuedExpect records the next_dispatch_at each guarded queued write was
+	// conditioned on; queuedSuperseded makes that write find the row already
+	// moved on (a buffered worker failed or re-offered it, or the agent reported).
+	queuedExpect     map[string]*time.Time
+	queuedSuperseded map[string]bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -88,6 +93,20 @@ func (f *fakeStore) MaterializeTasks(_ context.Context, runID string, _ []domain
 func (f *fakeStore) ApplyTransition(_ context.Context, runID, taskID string, to domain.TaskState) error {
 	f.transitions = append(f.transitions, transition{runID, taskID, to})
 	return nil
+}
+
+// MarkQueued mirrors the guarded queued write: it records the transition unless
+// the test marked the row as already moved on.
+func (f *fakeStore) MarkQueued(_ context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error) {
+	if f.queuedExpect == nil {
+		f.queuedExpect = map[string]*time.Time{}
+	}
+	f.queuedExpect[taskID] = expectNextDispatchAt
+	if f.queuedSuperseded[taskID] {
+		return false, nil
+	}
+	f.transitions = append(f.transitions, transition{runID, taskID, domain.TaskStateQueued})
+	return true, nil
 }
 
 // ApplyTransitions mirrors the batched store: it records one transition per task,
