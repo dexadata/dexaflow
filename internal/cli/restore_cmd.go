@@ -20,8 +20,8 @@ import (
 // newRestoreCommand wires `dexaflow lite restore`. The mirror of backup:
 // extracts the archive, sanity-checks the manifest against the binary's
 // embedded schema (refuses if backup is newer than binary — the inverse of
-// the upgrade-drift guard), then replays the SQL dump and restores config +
-// workspace (#137).
+// the upgrade-drift guard), then replays the SQL dump and, only once that
+// succeeded, restores config + workspace (#137, ADR 0065 section 8).
 func newRestoreCommand() *cobra.Command {
 	var input string
 	var force bool
@@ -30,8 +30,14 @@ func newRestoreCommand() *cobra.Command {
 		Short: "Restore a Lite install from an archive produced by `dexaflow lite backup`.",
 		Long: "restore reads a tar.gz produced by `dexaflow lite backup`, validates the " +
 			"manifest against this binary (refuses an archive newer than what this " +
-			"binary knows about), then replays the datastore SQL and restores config " +
-			"and workspace.\n\n" +
+			"binary knows about), then replays the datastore SQL and, only once that " +
+			"succeeded, restores config and workspace. The config.yaml it replaces is kept " +
+			"as ~/.dexaflow/config.yaml.pre-restore until a scan of every datastore finds every " +
+			"stored secret under the restored keys: the next `dexaflow lite` when the install has one " +
+			"datastore, else `dexaflow lite migrate-key`. " +
+			"The archive's config is restored as it is: an archive from before this install " +
+			"had a key of its own restores onto the published key, and `dexaflow lite " +
+			"migrate-key` moves it.\n\n" +
 			"By default refuses to overwrite a non-empty ~/.dexaflow; pass --force to confirm.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -74,17 +80,26 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	if err := os.MkdirAll(leoflowHome, 0o700); err != nil {
 		return fmt.Errorf("creating %s: %w", leoflowHome, err)
 	}
-	if len(archive.Config) > 0 {
-		if err := os.WriteFile(filepath.Join(leoflowHome, "config.yaml"), archive.Config, 0o600); err != nil {
-			return fmt.Errorf("restoring config.yaml: %w", err)
-		}
-		devPrintln(out, "✓ config.yaml restored")
+	release, lerr := lockConfigDir(leoflowHome, configLockExclusive, false)
+	if lerr != nil {
+		return lerr
 	}
-	if len(archive.Setup) > 0 {
-		if err := os.WriteFile(filepath.Join(leoflowHome, "setup.json"), archive.Setup, 0o600); err != nil {
-			return fmt.Errorf("restoring setup.json: %w", err)
-		}
-		devPrintln(out, "✓ setup.json restored")
+	defer release()
+
+	// Replay the datastore FIRST and write the config only after the replay
+	// succeeded (ADR 0065 section 8). The replay is one psql transaction that
+	// can fail (disk full, a schema mismatch); when it does, the datastore is
+	// unchanged and still under the current key, so the config that records
+	// that key must still be there.
+	if len(archive.Dump) == 0 {
+		return fmt.Errorf("archive has no datastore.sql; cannot restore datastore")
+	}
+	devPrintln(out, "▸ replaying datastore via psql …")
+	if err := psqlRestore(cmd.Context(), leoflowHome, archive.Dump); err != nil {
+		return fmt.Errorf("%w; config.yaml was left as it was", err)
+	}
+	if err := restoreConfigFiles(out, leoflowHome, archive); err != nil {
+		return err
 	}
 
 	if len(archive.Workspace) > 0 {
@@ -98,14 +113,43 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 		devPrintf(out, "✓ workspace restored to %s (%d files)\n", workspaceDir, len(archive.Workspace))
 	}
 
-	if len(archive.Dump) == 0 {
-		return fmt.Errorf("archive has no datastore.sql; cannot restore datastore")
+	devPrintln(out, "✓ restore complete; run `dexaflow lite` to start.")
+	return nil
+}
+
+// psqlRestore replays a dump into the Lite database; a variable so tests can
+// make the replay fail or succeed without a managed Postgres.
+var psqlRestore = runPsqlRestore
+
+// restoreConfigFiles writes the archive's config.yaml and setup.json. The
+// config is written as it is: restore never adds or removes a key on Lite's
+// behalf, so an archive from before per-install keys restores as a Legacy
+// install, which `dexaflow lite migrate-key` then moves. It is written
+// atomically at 0600 (os.WriteFile kept a loose mode and could leave a torn
+// file, gap 4), and the config it replaces is kept as config.yaml.pre-restore
+// until a scan covering every datastore on disk finds every stored secret
+// under the restored keys (removePreRestore, migrateKeyRun.removePreRestore).
+func restoreConfigFiles(out io.Writer, leoflowHome string, archive archiveContents) error {
+	cfgPath := filepath.Join(leoflowHome, "config.yaml")
+	if len(archive.Config) > 0 {
+		if cur, err := os.ReadFile(cfgPath); err == nil { //nolint:gosec // the user's own config
+			pre := filepath.Join(leoflowHome, preRestoreName)
+			if werr := writeFileAtomicWith(pre, cur, atomicOpts{ownerFrom: cfgPath}); werr != nil {
+				return fmt.Errorf("keeping the current config.yaml before replacing it: %w", werr)
+			}
+			devPrintf(out, "✓ kept the config.yaml this restore replaces at %s (removed once every stored secret is found under the restored keys: by the next `dexaflow lite` with one datastore, else by `dexaflow lite migrate-key`)\n", pre)
+		}
+		if err := writeFileAtomic(cfgPath, archive.Config); err != nil {
+			return fmt.Errorf("restoring config.yaml: %w", err)
+		}
+		devPrintln(out, "✓ config.yaml restored")
 	}
-	devPrintln(out, "▸ replaying datastore via psql …")
-	if err := runPsqlRestore(cmd.Context(), leoflowHome, archive.Dump); err != nil {
-		return err
+	if len(archive.Setup) > 0 {
+		if err := writeFileAtomic(filepath.Join(leoflowHome, "setup.json"), archive.Setup); err != nil {
+			return fmt.Errorf("restoring setup.json: %w", err)
+		}
+		devPrintln(out, "✓ setup.json restored")
 	}
-	devPrintln(out, "✓ restore complete — run `dexaflow lite` to start.")
 	return nil
 }
 

@@ -139,6 +139,17 @@ func TestRescheduleFirstRescheduleAtDeliveredAndPreservedIntegration(t *testing.
 	if err := sched.RedispatchReschedule(ctx, runUUID, "probe"); err != nil {
 		t.Fatalf("RedispatchReschedule: %v", err)
 	}
+	// The re-dispatched poke is a new execution of the same try (ADR 0051
+	// amendment): the dispatcher claims a new epoch and the new pod's token
+	// carries it.
+	if err := sched.ApplyTransition(ctx, runUUID, "probe", domain.TaskStateScheduled); err != nil {
+		t.Fatalf("ApplyTransition scheduled: %v", err)
+	}
+	poke, err := exec.ResolveTask(ctx, runUUID, "probe")
+	if err != nil {
+		t.Fatalf("ResolveTask: %v", err)
+	}
+	id.AttemptEpoch, id.HasAttemptEpoch = poke.AttemptEpoch, true
 	bringToRunning()
 	if err := exec.Reschedule(ctx, id, time.Now().UTC().Add(2*time.Minute)); err != nil {
 		t.Fatalf("Reschedule #2: %v", err)

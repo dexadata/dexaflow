@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -81,7 +82,7 @@ func main() {
 	args := os.Args[1:]
 	switch {
 	case version.WantsVersion(args):
-		fmt.Println(version.Get().String())
+		fmt.Print(versionOutput())
 		return
 	case version.WantsHelp(args):
 		fmt.Print(usage)
@@ -148,11 +149,14 @@ func run() error {
 	slog.SetDefault(tel.Logger)
 	warnStartup(cfg, tel.Logger)
 
-	pg, err := openVerifiedPostgres(ctx, cfg.Database)
+	// Lite only: the key-migration lock is held before anything reads or writes
+	// a stored secret, and the server stops if it is lost (ADR 0065 section 3).
+	pg, ctx, releaseKeyLock, err := openPostgresHoldingKeyLock(ctx, cfg, tel.Logger)
 	if err != nil {
-		return fmt.Errorf("postgres: %w", err)
+		return err
 	}
 	defer pg.Close()
+	defer releaseKeyLock()
 
 	// Datastore for XCom + live-log tailing: Redis when configured (production,
 	// ADR 0006), or the embedded Postgres/in-process backends when no Redis is
@@ -267,7 +271,7 @@ func run() error {
 	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), ReadHeaderTimeout: 10 * time.Second}
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
-	return serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv)
+	return keyLockExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
 }
 
 // observabilityOptions maps the observability.metrics config onto the metrics
@@ -1032,6 +1036,8 @@ func resilienceLadder(cfg *config.ServerConfig) executor.ResilienceLadder {
 		OrphanThreshold:              rc.OrphanThreshold,
 		InfraReplaceMaxDelay:         scheduler.InfraReplaceMaxDelay(),
 		MaxAttemptCredentialLifetime: cfg.Auth.MaxAttemptCredentialLifetime,
+		TaskTerminationGrace:         time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second,
+		InfraConfirmMaxWait:          scheduler.InfraConfirmMaxWait,
 	}
 }
 
@@ -1049,7 +1055,7 @@ func loginRateLimit(cfg *config.ServerConfig) int {
 // attempt (ADR 0058 N1d-c, H2). *storage.ExecutionStore satisfies it; a fake
 // records the calls in tests.
 type redispatchStore interface {
-	RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber int) error
+	RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int) error
 }
 
 // reclaimShouldRequeue reports whether a reclaimed warm assignment may be
@@ -1083,7 +1089,7 @@ func handleReclaim(ctx context.Context, store redispatchStore, logger *slog.Logg
 	if !reclaimShouldRequeue(ev.Reason) {
 		return
 	}
-	if err := store.RequeueForRedispatch(ctx, ev.RunID, ev.TaskID, ev.TryNumber); err != nil {
+	if err := store.RequeueForRedispatch(ctx, ev.RunID, ev.TaskID, ev.TryNumber, ev.AttemptEpoch); err != nil {
 		logger.Error("warm reclaim re-placement failed", "run", ev.RunID, "task", ev.TaskID, "try", ev.TryNumber, "err", err)
 	}
 }
@@ -1135,6 +1141,10 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
+	}
+	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment).
+	if metrics != nil {
+		agentSrv.SetLegacyTokenRecorder(metrics)
 	}
 	// The scheduler loop, its reapers and the janitors run on their own pool
 	// when database.scheduler_max_conns is set, so API traffic cannot starve
@@ -2039,8 +2049,14 @@ func buildPodInformer(ctx context.Context, cfg *config.ServerConfig, cs kubernet
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
+	// The reconciler confirms the reapers' provisional infra marks (ADR 0052
+	// amendment, part 2); the caller makes the marks provisional in step.
+	rec.SetInfraConfirmer(confirmer)
+	// A durable SUCCESS settled over an infra mark is metered and noted in the
+	// attempt's log (ADR 0052 amendment, part 1).
+	overrides.wire(rec)
 	// Opt-in (executor.collect_settled_run_pods): collect a settled run's
 	// finished pods in one DeleteCollection; nil keeps the age-based GC only.
 	if settled != nil {
@@ -2055,6 +2071,24 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 	startGatedTicker(ctx, "maintenance", reconcileInterval, leading, logger, func() {
 		maintenanceCycle(ctx, maintenancePhaseTimeout, rec.Reconcile, reaper.ReapOnce, logger)
 	})
+}
+
+// overrideObservers is what makes the reconciler's infra overrides visible:
+// the metrics (nil when metrics are off) and the marker sink the system line
+// is appended to (nil when the log sink cannot append).
+type overrideObservers struct {
+	metrics *observability.Metrics
+	sink    logs.MarkerSink
+}
+
+// wire hands the observers to rec, keeping a nil *Metrics from becoming a
+// non-nil recorder.
+func (o overrideObservers) wire(rec *executor.Reconciler) {
+	var recorder executor.InfraOverrideRecorder
+	if o.metrics != nil {
+		recorder = o.metrics
+	}
+	rec.SetInfraOverrideObservers(recorder, o.sink)
 }
 
 // settledRunCollection returns the reconciler's settled-run checker when the
@@ -2481,7 +2515,7 @@ func serve(s *http.Server, errCh chan<- error) {
 // agent on the host (dev only); "kubernetes" (default) launches task pods.
 func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
 	if cfg.Executor.Type == "subprocess" {
-		return setupSubprocessDispatch(cfg, sched, execStore, authn, warmPools, logger, store, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		return setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	}
 	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 }
@@ -2508,17 +2542,68 @@ func resolveAgentControlAddr(cfg *config.ServerConfig) string {
 }
 
 // setupSubprocessDispatch wires the dev-only subprocess executor (ADR 0023): it
-// runs the agent on the host with no isolation, so it is gated to dev use.
-func setupSubprocessDispatch(cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logger *slog.Logger, sink dispatch.FailureSink, metrics *observability.Metrics) (bool, io.Closer) {
+// runs the agent on the host with no isolation, so it is gated to dev use. It
+// also starts Lite's maintenance loop (#916): the reapers that mean something
+// without pods, gated on the agent process's liveness (see newLiteReaper).
+func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, store *storage.SchedulerStore, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
 	subExec := executor.NewSubprocessExecutor(cfg.Executor.AgentPath, logger)
 	subExec.SetWorkDir(cfg.Executor.SubprocessWorkDir)
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
 	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
 	setWarmPlacer(dispatcher, warmPools)
-	disp, closer := wrapBuffered(dispatcher, sink, logger, metrics, cfg.Scheduler.Dispatch)
+	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
+	var markers logs.MarkerSink
+	if ms, ok := logSink.(logs.MarkerSink); ok {
+		markers = ms
+	}
+	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger)
+	startLiteMaintenance(ctx, reaper, sched.IsLeading, logger)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
 	return true, closer
+}
+
+// liteLeadership is the slice of the scheduler the Lite reaper is gated on: when
+// this instance acquired leadership (the settling grace), whether it still
+// leads, and whether it is stepping down.
+type liteLeadership interface {
+	LeaderSince() time.Time
+	IsLeading() bool
+	SteppingDown() bool
+}
+
+// newLiteReaper builds the execution reaper for Lite (#916). Lite has no pods,
+// so it passes no pod manager, presence cache or warm lister: the pod-lost and
+// warm-worker-lost reapers are no-ops, and orphan-run is purely a metadatabase
+// signal. Agent-lost and dispatch-lost are gated on the agent process instead of
+// a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
+// and the infra re-place after either reap keeps the try number, so failing an
+// attempt whose agent is still alive could run user code twice (#911). Both
+// therefore reap only an attempt whose agent process is gone.
+//
+// The reaper sits behind the same leader-settling gate as the pod path, measured
+// from leadership: a Lite restart leaves detached agents alive with a stale
+// heartbeat, and they get the grace to re-heartbeat before anything is judged.
+// There is no informer and no reconciler, so those two conditions stay
+// satisfied. markers, when non-nil, receives the agent-lost log marker (#861).
+func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger) *executor.Reaper {
+	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
+	reaper.SetProcessLiveness(procs)
+	if markers != nil {
+		reaper.SetLogSink(markers)
+	}
+	reaper.SetLeaderSince(lead.LeaderSince)
+	reaper.SetLeading(lead.IsLeading)
+	return reaper
+}
+
+// startLiteMaintenance runs Lite's maintenance loop: the reaper pass alone,
+// leader-gated, at the pod path's cadence and under the same per-phase budget.
+// There is no reconcile phase because Lite has no pods to sweep.
+func startLiteMaintenance(ctx context.Context, reaper *executor.Reaper, leading func() bool, logger *slog.Logger) {
+	startGatedTicker(ctx, "lite-maintenance", reconcileInterval, leading, logger, func() {
+		runMaintenancePhase(ctx, "execution reaper", maintenancePhaseTimeout, reaper.ReapOnce, logger)
+	})
 }
 
 // setupK8sDispatch wires the production pod-per-task executor; it is a no-op
@@ -2589,8 +2674,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	}
 	// The execution reaper (#120/#128/#202/#527) fails stuck runs and TIs; it
 	// tears down a reaped task's pod and gates the dispatch-lost decision on real
-	// pod liveness (#474, #461), so it is wired only on the pod path. Lite/
-	// subprocess starts no maintenance loop and does no reaping.
+	// pod liveness (#474, #461). Lite builds its own reaper in
+	// setupSubprocessDispatch, gated on agent process liveness instead (#916).
 	// The reaper's live pod reads and deletes go through the maintenance client,
 	// which is podExec's own client unless maintenance limits are set.
 	var reapPods executor.PodManager = podExec
@@ -2603,7 +2688,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
 	// agent's streamed content on either backend); the assertion holds for every
 	// sink NewDurableSink returns.
+	var markers logs.MarkerSink
 	if ms, ok := logSink.(logs.MarkerSink); ok {
+		markers = ms
 		reaper.SetLogSink(ms)
 	}
 	// Leader-settling gate: no reaper fires until this instance has led for the
@@ -2621,7 +2708,11 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// draining or stepping-down leader from marking TIs failed or deleting pods
 	// on its way out — the successor redoes the reap under its own settling gate.
 	reaper.SetLeading(sched.IsLeading)
-	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
+	// Infra marks are provisional here, because this reconciler confirms them
+	// (ADR 0052 amendment, part 2). Lite never reaches this and keeps
+	// confirming at mark time.
+	store.SetProvisionalInfraMarks(true)
+	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
 	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with

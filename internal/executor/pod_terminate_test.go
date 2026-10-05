@@ -67,7 +67,7 @@ func TestDeleteTaskPod_TargetsExactlyTheReapedTI(t *testing.T) {
 	)
 	e := NewKubernetesExecutor(cs, "leoflow")
 
-	if err := e.DeleteTaskPod(context.Background(), "run-a", "extract", 2); err != nil {
+	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 2}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	got := podNames(t, cs)
@@ -86,7 +86,7 @@ func TestDeleteTaskPod_TargetsExactlyTheReapedTI(t *testing.T) {
 func TestDeleteTaskPod_ToleratesNotFound(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteTaskPod(context.Background(), "run-a", "extract", 1); err != nil {
+	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Errorf("DeleteTaskPod on absent pod = %v, want nil", err)
 	}
 }
@@ -135,7 +135,7 @@ func TestTaskPodPresence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := fake.NewSimpleClientset(taskPod("p", "run-a", "extract", 1, tc.phase))
 			e := NewKubernetesExecutor(cs, "leoflow")
-			got, err := e.TaskPodPresence(context.Background(), "run-a", "extract", 1)
+			got, err := e.TaskPodPresence(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1})
 			if err != nil {
 				t.Fatalf("TaskPodPresence: %v", err)
 			}
@@ -155,7 +155,7 @@ func TestTaskPodPresence_LiveWinsOverTerminalSibling(t *testing.T) {
 		taskPod("live", "run-a", "extract", 1, corev1.PodRunning),
 	)
 	e := NewKubernetesExecutor(cs, "leoflow")
-	got, err := e.TaskPodPresence(context.Background(), "run-a", "extract", 1)
+	got, err := e.TaskPodPresence(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1})
 	if err != nil {
 		t.Fatalf("TaskPodPresence: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestTaskPodPresence_PinsTryNumber(t *testing.T) {
 	cs := fake.NewSimpleClientset(taskPod("try1", "run-a", "extract", 1, corev1.PodPending))
 	e := NewKubernetesExecutor(cs, "leoflow")
 
-	got, err := e.TaskPodPresence(context.Background(), "run-a", "extract", 2)
+	got, err := e.TaskPodPresence(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 2})
 	if err != nil {
 		t.Fatalf("TaskPodPresence: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestTaskPodPresence_PinsTryNumber(t *testing.T) {
 		t.Errorf("#723: a try-2 liveness query saw %v; try-number must be pinned so try 1's pod is invisible", got)
 	}
 	// Sanity: the same query for the attempt that DOES have a Pending pod is live.
-	got, err = e.TaskPodPresence(context.Background(), "run-a", "extract", 1)
+	got, err = e.TaskPodPresence(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1})
 	if err != nil {
 		t.Fatalf("TaskPodPresence(try1): %v", err)
 	}
@@ -196,7 +196,7 @@ func TestTaskPodPresence_PinsTryNumber(t *testing.T) {
 func TestTaskPodPresence_AbsentIsNotTerminal(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	e := NewKubernetesExecutor(cs, "leoflow")
-	got, err := e.TaskPodPresence(context.Background(), "run-a", "extract", 1)
+	got, err := e.TaskPodPresence(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1})
 	if err != nil {
 		t.Fatalf("TaskPodPresence: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestDeleteTaskPod_PreservesTerminalPodCarryingOutcomeRecord(t *testing.T) {
 	cs := fake.NewSimpleClientset(pod)
 	e := NewKubernetesExecutor(cs, "leoflow")
 
-	if err := e.DeleteTaskPod(context.Background(), "run-a", "extract", 1); err != nil {
+	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	got, err := cs.CoreV1().Pods("leoflow").Get(context.Background(), "finished", metav1.GetOptions{})
@@ -271,7 +271,7 @@ func TestDeleteTaskPod_PreservesARecordBearingPodWhateverItsPhase(t *testing.T) 
 
 	cs := fake.NewSimpleClientset(pod)
 	e := &KubernetesExecutor{clientset: cs, namespace: "leoflow"}
-	if derr := e.DeleteTaskPod(context.Background(), "sidecar-run", "work", 1); derr != nil {
+	if derr := e.DeleteTaskPod(context.Background(), Attempt{RunID: "sidecar-run", TaskID: "work", TryNumber: 1}); derr != nil {
 		t.Fatalf("DeleteTaskPod: %v", derr)
 	}
 	if _, gerr := cs.CoreV1().Pods("leoflow").Get(context.Background(), pod.Name, metav1.GetOptions{}); gerr != nil {
@@ -295,7 +295,7 @@ func TestDeleteTaskPod_PhaseDecidesTheTeardown(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := fake.NewSimpleClientset(taskPod("p", "run-a", "extract", 1, tc.phase))
 			e := NewKubernetesExecutor(cs, "leoflow")
-			if err := e.DeleteTaskPod(context.Background(), "run-a", "extract", 1); err != nil {
+			if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 				t.Fatalf("DeleteTaskPod: %v", err)
 			}
 			survived := podNames(t, cs)["p"]

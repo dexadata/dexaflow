@@ -72,6 +72,12 @@ type Resolved struct {
 	Image           string
 	ImagePullPolicy string
 	TryNumber       int
+	// AttemptEpoch identifies this execution attempt of the row (ADR 0051
+	// amendment). The resolver claims a fresh value on every dispatch, so two
+	// dispatches of one try never share it, even with no reset rail between
+	// them. The agent token (A2) and the pod's attempt-epoch label (A4) are
+	// minted from it.
+	AttemptEpoch int
 	// Staging carries the DAG's opt-in staging-volume config (ADR 0022); nil or
 	// disabled means no per-run volume.
 	Staging *domain.StagingConfig
@@ -260,6 +266,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		RunID:          runID,
 		TaskID:         task.TaskID,
 		TryNumber:      r.TryNumber,
+		// The epoch the resolver just claimed for this execution (ADR 0051
+		// amendment), so the token can never be mistaken for another execution
+		// of the same try.
+		AttemptEpoch:    r.AttemptEpoch,
+		HasAttemptEpoch: true,
 	}, d.tokenTTL)
 	if err != nil {
 		return executor.Rejected, fmt.Errorf("issuing agent token for %s: %w", task.TaskID, err)
@@ -293,6 +304,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 			TryNumber:    int32(r.TryNumber), //nolint:gosec // try number is a small bounded attempt counter, never near int32 max
 			DagVersionId: dagVersionID,
 			LeaseSeconds: warmLeaseSeconds,
+			AttemptEpoch: int64(r.AttemptEpoch),
 		}
 		if d.placer.Assign(dagVersionID, wa) {
 			return executor.Dispatched, nil
@@ -306,6 +318,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		RunID:                runID,
 		TaskID:               task.TaskID,
 		TryNumber:            r.TryNumber,
+		AttemptEpoch:         r.AttemptEpoch,
 		Image:                r.Image,
 		ImagePullPolicy:      r.ImagePullPolicy,
 		Source:               r.Source,

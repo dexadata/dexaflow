@@ -60,12 +60,16 @@ func TestWriteLinesDeliversLinesBeforeShutdown(t *testing.T) {
 	lines <- &agentv1.LogLine{Message: "one"}
 	lines <- &agentv1.LogLine{Message: "two"}
 	shutdown := make(chan struct{})
+	// release holds the receiver past the shutdown signal. Without it, the
+	// receiver's EOF races the signal inside writeLines and can win, ending
+	// the stream cleanly instead of with Unavailable.
+	release := make(chan struct{})
+	defer close(release)
 	recv := func() (*agentv1.LogLine, error) {
 		select {
 		case l := <-lines:
 			return l, nil
-		case <-shutdown:
-			<-shutdown // hold until the test releases the receiver
+		case <-release:
 			return nil, io.EOF
 		}
 	}
