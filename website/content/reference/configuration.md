@@ -564,6 +564,7 @@ before enabling it in production.
 | `DEXAFLOW_OBSERVABILITY_LOG_FORMAT` | `json` | both | Control-plane log format: `json` (default) or `text`. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENABLED` | `true` | both | Enable OpenTelemetry trace export. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENDPOINT` | `localhost:4317` | both | OTLP collector endpoint (when OTel is enabled). |
+| `DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES` | `false` | both | Stop publishing every `dexaflow_*` metric a second time under its pre-rename `leoflow_*` name. The default keeps both, so dashboards and alerts on either name work. An opt-in for operators who do not need the `leoflow_*` names; it halves the scrape. Helm: set it through `extraEnv`. |
 
 ### UI (`ui.*`)
 
