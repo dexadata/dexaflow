@@ -344,7 +344,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
 )
@@ -360,8 +360,20 @@ SET state = 'none',
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2;
+WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
 
 -- name: ResetTaskInstanceForRetry :execrows
 -- The scheduler retry rail's reset: identical to ResetTaskInstanceToNone but
@@ -462,11 +474,15 @@ SET state = 'none',
     warm_worker_id = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule';
 
--- name: TaskInstanceFirstRescheduleAt :one
--- The time a reschedule-mode sensor first entered reschedule (NULL until it does).
--- Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
--- value and the sensor honors its cumulative timeout across pokes (#380).
-SELECT first_reschedule_at FROM task_instances
+-- name: TaskInstanceAttemptFields :one
+-- The per-attempt fields the agent spec carries from the task instance row.
+-- first_reschedule_at is the time a reschedule-mode sensor first entered
+-- reschedule (NULL until it does), delivered to each re-dispatched pod so
+-- get_first_reschedule_date returns the real value and the sensor honors its
+-- cumulative timeout across pokes (#380). max_tries is the attempt budget the
+-- scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+-- so the runtime's on_failure_callback gate must read it from here (#424).
+SELECT first_reschedule_at, max_tries FROM task_instances
 WHERE dag_run_id = $1 AND task_id = $2;
 
 -- name: FailTaskInstanceIfActive :exec
@@ -630,7 +646,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1 AND src.task_id = $2
+    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
@@ -645,13 +661,26 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
 
--- name: ResetAllFailedTaskInstances :execrows
+-- name: ResetAllFailedTaskInstances :many
 -- Archives every failed attempt in the run into task_instance_history then
--- resets. See ResetTaskInstanceToNone for the per-attempt rationale.
+-- resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+-- task ids it reset, so the clear can delete exactly their XCom.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
@@ -663,7 +692,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
     FROM task_instances src
-    WHERE src.dag_run_id = $1
+    WHERE src.dag_run_id = sqlc.arg(dag_run_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
     RETURNING task_instance_id
@@ -678,9 +707,22 @@ SET state = 'none',
     next_dispatch_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
+    infra_attempts = 0,
+    -- Restore the retry budget from the task (#1131), as Airflow's
+    -- clear_task_instances does with max_tries = try_number + task.retries. Here
+    -- max_tries counts retries + 1 and try_number is bumped by this statement, so
+    -- the same rule is (new try_number) + retries. A task the executing version no
+    -- longer declares gets no retries, but never a budget below the attempt
+    -- being made.
+    -- spec_task_ids and spec_retries are parallel arrays; a task absent from
+    -- spec_task_ids indexes to NULL and falls through to the GREATEST.
+    max_tries = COALESCE(
+        ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        GREATEST(ti.max_tries, ti.try_number + 1)),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $1
-  AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
+WHERE ti.dag_run_id = sqlc.arg(dag_run_id)
+  AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
+RETURNING ti.task_id;
 
 -- name: SetTaskInstanceNote :exec
 UPDATE task_instances
