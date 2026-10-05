@@ -2114,7 +2114,8 @@ UPDATE task_instances
 SET state = 'scheduled',
     next_dispatch_at = $1,
     dispatch_attempts = dispatch_attempts + $2::int,
-    warm_worker_id = NULL
+    warm_worker_id = NULL,
+    queued_at = NULL
 WHERE dag_run_id = $3
   AND task_id = $4
   AND state IN ('scheduled', 'queued')
@@ -2133,7 +2134,10 @@ type RequeueDispatchParams struct {
 // until next_dispatch_at, adding one dispatch attempt only when counted
 // (backpressure is not). Guarded to scheduled/queued, so a task the agent has
 // since reported on is left alone. warm_worker_id is cleared as in
-// RequeueForRedispatch: the attempt never ran.
+// RequeueForRedispatch: the attempt never ran. queued_at is cleared too, so the
+// next queued episode stamps a fresh one: MarkTaskInstanceQueued only stamps a
+// NULL queued_at, and a kept one would make the dispatch-lost reaper fail the
+// re-offered task as soon as it is queued again.
 func (q *Queries) RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueDispatch,
 		arg.NextDispatchAt,

@@ -534,7 +534,10 @@ type Querier interface {
 	// until next_dispatch_at, adding one dispatch attempt only when counted
 	// (backpressure is not). Guarded to scheduled/queued, so a task the agent has
 	// since reported on is left alone. warm_worker_id is cleared as in
-	// RequeueForRedispatch: the attempt never ran.
+	// RequeueForRedispatch: the attempt never ran. queued_at is cleared too, so the
+	// next queued episode stamps a fresh one: MarkTaskInstanceQueued only stamps a
+	// NULL queued_at, and a kept one would make the dispatch-lost reaper fail the
+	// re-offered task as soon as it is queued again.
 	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding

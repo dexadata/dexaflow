@@ -1067,12 +1067,16 @@ WHERE dag_run_id = sqlc.arg(dag_run_id)
 -- until next_dispatch_at, adding one dispatch attempt only when counted
 -- (backpressure is not). Guarded to scheduled/queued, so a task the agent has
 -- since reported on is left alone. warm_worker_id is cleared as in
--- RequeueForRedispatch: the attempt never ran.
+-- RequeueForRedispatch: the attempt never ran. queued_at is cleared too, so the
+-- next queued episode stamps a fresh one: MarkTaskInstanceQueued only stamps a
+-- NULL queued_at, and a kept one would make the dispatch-lost reaper fail the
+-- re-offered task as soon as it is queued again.
 UPDATE task_instances
 SET state = 'scheduled',
     next_dispatch_at = sqlc.arg(next_dispatch_at),
     dispatch_attempts = dispatch_attempts + sqlc.arg(attempt_increment)::int,
-    warm_worker_id = NULL
+    warm_worker_id = NULL,
+    queued_at = NULL
 WHERE dag_run_id = sqlc.arg(dag_run_id)
   AND task_id = sqlc.arg(task_id)
   AND state IN ('scheduled', 'queued');
