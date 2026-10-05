@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **`dexaflow_pods_running` no longer reports a constant 0.** The gauge was
+  registered but nothing ever set it, so every scrape served
+  `dexaflow_pods_running 0` (and its `leoflow_` twin) whatever was running, a
+  value a dashboard reads as a real measurement. It is removed, together with
+  three gauges that were declared and never written, so they never produced a
+  series: `dexaflow_scheduler_leader`, `dexaflow_active_dag_runs` and
+  `dexaflow_queued_tasks`. A panel built on `dexaflow_pods_running` now shows no
+  data instead of a wrong zero; count task pods with kube-state-metrics instead.
+time: 2026-10-02T17:10:00.000000000-03:00

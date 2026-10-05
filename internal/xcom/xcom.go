@@ -72,6 +72,18 @@ type Backend interface {
 	List(ctx context.Context, pattern string) ([]string, error)
 }
 
+// BatchBackend is a Backend that reads several keys in one round trip. found[i]
+// is false when keys[i] is absent or expired.
+type BatchBackend interface {
+	FetchMany(ctx context.Context, keys []string) (entries []Entry, found []bool, err error)
+}
+
+// Result is one value of a FetchMany: the entry, and whether it exists.
+type Result struct {
+	Entry Entry
+	Found bool
+}
+
 // Index records XCom metadata for retrieval and cleanup (Postgres-backed).
 type Index interface {
 	RecordXCom(ctx context.Context, entry IndexEntry) error
@@ -127,4 +139,36 @@ func (s *Service) Push(ctx context.Context, key Key, value []byte, contentType s
 // Fetch returns the XCom value for the key, or ErrNotFound if absent/expired.
 func (s *Service) Fetch(ctx context.Context, key Key) (Entry, error) {
 	return s.backend.Fetch(ctx, key.String())
+}
+
+// FetchMany returns the values for keys in the same order, marking absent or
+// expired ones as not found. A backend implementing BatchBackend is read in one
+// round trip; any other backend is read key by key.
+func (s *Service) FetchMany(ctx context.Context, keys []Key) ([]Result, error) {
+	out := make([]Result, len(keys))
+	if bb, ok := s.backend.(BatchBackend); ok {
+		raw := make([]string, len(keys))
+		for i, k := range keys {
+			raw[i] = k.String()
+		}
+		entries, found, err := bb.FetchMany(ctx, raw)
+		if err != nil {
+			return nil, err
+		}
+		for i := range keys {
+			out[i] = Result{Entry: entries[i], Found: found[i]}
+		}
+		return out, nil
+	}
+	for i, k := range keys {
+		e, err := s.backend.Fetch(ctx, k.String())
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[i] = Result{Entry: e, Found: true}
+	}
+	return out, nil
 }
