@@ -295,7 +295,7 @@ func TestAttemptEpochMigrationUpDownUp(t *testing.T) {
 	assertInfraConfirmedSchema(ctx, t, pg, true)
 	assertPreviousReleaseArchiveRuns(ctx, t, pg)
 
-	// Later migrations (040, ADR 0052 amendment) sit above 038; step down to
+	// Later migrations (039, ADR 0052 amendment) sit above 038; step down to
 	// 038 first, then below it.
 	if err := m.Migrate(38); err != nil {
 		t.Fatalf("down from v%d to v38: %v", latest, err)
@@ -313,7 +313,7 @@ func TestAttemptEpochMigrationUpDownUp(t *testing.T) {
 	assertInfraConfirmedSchema(ctx, t, pg, true)
 }
 
-// assertInfraConfirmedSchema checks migration 040's column (ADR 0052
+// assertInfraConfirmedSchema checks migration 039's column (ADR 0052
 // amendment).
 func assertInfraConfirmedSchema(ctx context.Context, t *testing.T, pg *storage.Postgres, want bool) {
 	t.Helper()

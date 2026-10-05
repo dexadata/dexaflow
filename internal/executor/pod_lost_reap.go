@@ -27,6 +27,13 @@ type PodLostCandidate struct {
 	// list and the write is a different attempt and is left alone.
 	AttemptEpoch int
 	RunningSince time.Time
+	// Heartbeated reports whether the attempt has heartbeated at least once.
+	// Pod-lost ignores it; Lite uses it to judge an agent that died before its
+	// first heartbeat, which agent-lost never lists (#916).
+	Heartbeated bool
+	// TenantID locates the attempt's log stream for the agent_lost marker Lite
+	// writes when it fails a never-heartbeated attempt.
+	TenantID string
 }
 
 // attempt is the execution this candidate names, for the presence reads and

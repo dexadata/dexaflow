@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,8 +37,23 @@ type Repository struct {
 	pool        txBeginner
 	cipher      secrets.Cipher
 	extCoverage externalSecretCoverage
+	xcomValues  XComValueDeleter
 	specs       *specCache
+	// tenants caches tenant name -> id (see tenantID). Bounded by the number
+	// of tenants that exist, since only successful lookups are stored.
+	tenants *sync.Map
 }
+
+// XComValueDeleter deletes a stored XCom value by its backend key. xcom.Backend
+// satisfies it (Redis in production, xcom_store under Lite).
+type XComValueDeleter interface {
+	Delete(ctx context.Context, key string) error
+}
+
+// SetXComBackend attaches the XCom value store, so a clear deletes the values of
+// the attempts it clears and not only their index rows (#1131). Without it a
+// clear removes only the index rows.
+func (r *Repository) SetXComBackend(b XComValueDeleter) { r.xcomValues = b }
 
 // externalSecretCoverage reports whether a declared name is served by a
 // configured external secret backend (operator config, ADR 0060). The D6
@@ -51,7 +67,7 @@ type externalSecretCoverage interface {
 
 // NewRepository builds a Repository backed by the given Postgres connection.
 func NewRepository(pg *Postgres) *Repository {
-	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg)}
+	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
 }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
@@ -100,10 +116,27 @@ func mapConflict(err error) error {
 	return err
 }
 
+// tenantID resolves a tenant name to its id. Nearly every repository method
+// starts with it, so a resolved id is cached for the life of the process: a
+// tenant is never renamed or deleted (no query does either), so name -> id
+// cannot change. A miss is not cached, so a tenant created later is found.
+// The one way the mapping changes under a running process is outside it:
+// restoring a backup whose tenants carry different ids. Restart the control
+// plane after such a restore, or every query keeps using the old ids.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
+	if r.tenants != nil {
+		if id, ok := r.tenants.Load(name); ok {
+			if uid, ok := id.(pgtype.UUID); ok {
+				return uid, nil
+			}
+		}
+	}
 	t, err := r.q.GetTenantByName(ctx, name)
 	if err != nil {
 		return pgtype.UUID{}, mapNotFound(err)
+	}
+	if r.tenants != nil {
+		r.tenants.Store(name, t.ID)
 	}
 	return t.ID, nil
 }
@@ -149,24 +182,22 @@ func (r *Repository) FindUserByID(ctx context.Context, id string) (*auth.User, b
 	if err != nil {
 		return nil, false, auth.ErrUserNotFound
 	}
-	row, err := r.q.GetUserByID(ctx, uid)
+	// One round trip: this runs on every authenticated request, so the user,
+	// its roles and its permissions come back from a single statement.
+	row, err := r.q.GetUserPrincipalByID(ctx, uid)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, auth.ErrUserNotFound
 		}
 		return nil, false, fmt.Errorf("loading user by id: %w", err)
 	}
-	roles, err := r.q.GetUserRoles(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading roles: %w", err)
+	var perms [][2]string
+	if err := json.Unmarshal(row.Permissions, &perms); err != nil {
+		return nil, false, fmt.Errorf("decoding permissions: %w", err)
 	}
-	perms, err := r.q.GetUserPermissions(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading permissions: %w", err)
-	}
-	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: roles}
+	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: row.Roles}
 	for _, p := range perms {
-		user.Permissions = append(user.Permissions, auth.Permission{Action: p.Action, Resource: p.Resource})
+		user.Permissions = append(user.Permissions, auth.Permission{Action: p[0], Resource: p[1]})
 	}
 	return user, row.IsActive, nil
 }
@@ -625,6 +656,12 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 //
 // opts carries the two independent run-level decisions — whether to re-open the
 // run, and which version the re-run executes (see domain.ClearOptions).
+//
+// Each cleared task instance gets its retry budget back and starts without the
+// XCom of the attempt it replaces (#1131). The whole clear is one transaction,
+// and the stored XCom values are deleted before it commits: a backend failure
+// rolls the clear back rather than re-queueing a task whose previous values are
+// still readable.
 func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runID string, taskIDs []string, onlyFailed bool, opts domain.ClearOptions) (int, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -634,59 +671,120 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
-	cleared, err := r.resetTaskInstances(ctx, run.ID, taskIDs, onlyFailed)
+	budget, err := r.loadClearRetryBudget(ctx, dag, run, opts)
 	if err != nil {
-		return cleared, err
+		return 0, err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning clear tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	cleared, err := resetTaskInstances(ctx, qtx, run.ID, taskIDs, onlyFailed, budget)
+	if err != nil {
+		return 0, err
+	}
+	if err := r.deleteClearedXCom(ctx, qtx, run.ID, cleared); err != nil {
+		return 0, err
 	}
 	if opts.ResetDagRun {
-		if opts.RunOnLatestVersion {
-			// Re-bind the run to the DAG's current version so a clear after a
-			// code/yaml fix re-runs against the newest image + config (ADR 0020).
-			// In dev the current version is the last hot-reload; in prod, the last
-			// deploy. When the version is unchanged this is equivalent to a plain
-			// state reset.
-			if err := r.q.ResetDagRunToVersion(ctx, queries.ResetDagRunToVersionParams{
-				ID:           run.ID,
-				DagVersionID: dag.CurrentVersionID,
-			}); err != nil {
-				return cleared, fmt.Errorf("re-binding dag run to current version: %w", err)
-			}
-		} else if err := r.q.ReopenDagRunKeepingVersion(ctx, run.ID); err != nil {
-			// The run is re-opened but keeps its pinned version, so the re-run
-			// executes the image that produced the original attempt.
-			return cleared, fmt.Errorf("re-opening dag run: %w", err)
+		if err := reopenClearedRun(ctx, qtx, dag, run, opts); err != nil {
+			return 0, err
 		}
 	}
-	return cleared, nil
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing clear tx: %w", err)
+	}
+	return len(cleared), nil
+}
+
+// reopenClearedRun re-opens a cleared run so the scheduler looks at it again,
+// re-binding it to the DAG's current version when opts asks for that.
+func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, opts domain.ClearOptions) error {
+	if opts.RunOnLatestVersion {
+		// Re-bind the run to the DAG's current version so a clear after a
+		// code/yaml fix re-runs against the newest image + config (ADR 0020).
+		// In dev the current version is the last hot-reload; in prod, the last
+		// deploy. When the version is unchanged this is equivalent to a plain
+		// state reset.
+		if err := q.ResetDagRunToVersion(ctx, queries.ResetDagRunToVersionParams{
+			ID:           run.ID,
+			DagVersionID: dag.CurrentVersionID,
+		}); err != nil {
+			return fmt.Errorf("re-binding dag run to current version: %w", err)
+		}
+		return nil
+	}
+	// The run is re-opened but keeps its pinned version, so the re-run
+	// executes the image that produced the original attempt.
+	if err := q.ReopenDagRunKeepingVersion(ctx, run.ID); err != nil {
+		return fmt.Errorf("re-opening dag run: %w", err)
+	}
+	return nil
+}
+
+// deleteClearedXCom removes the XCom of the cleared task instances: their index
+// rows inside the clear transaction, then their stored values. XCom carries no
+// try number, so without this the new attempt's downstream reads the previous
+// attempt's values for every key the new attempt does not overwrite (#1131).
+// Airflow likewise never lets an attempt see another attempt's XCom.
+func (r *Repository) deleteClearedXCom(ctx context.Context, q *queries.Queries, runID pgtype.UUID, taskIDs []string) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	keys, err := q.DeleteXComIndexForTasks(ctx, queries.DeleteXComIndexForTasksParams{DagRunID: runID, TaskIds: taskIDs})
+	if err != nil {
+		return fmt.Errorf("deleting the cleared tasks' xcom index: %w", err)
+	}
+	if r.xcomValues == nil {
+		return nil
+	}
+	for _, key := range keys {
+		if err := r.xcomValues.Delete(ctx, key); err != nil {
+			return fmt.Errorf("deleting the cleared tasks' xcom value %q: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // resetTaskInstances applies the clear semantics: a specific task list, or (with
-// an empty list and onlyFailed) every failed task in the run.
-func (r *Repository) resetTaskInstances(ctx context.Context, runID pgtype.UUID, taskIDs []string, onlyFailed bool) (int, error) {
+// an empty list and onlyFailed) every failed task in the run. Each reset restores
+// the task's retry budget from budget. It returns the ids of the task instances
+// it reset.
+func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UUID, taskIDs []string, onlyFailed bool, budget clearRetryBudget) ([]string, error) {
 	if len(taskIDs) == 0 {
 		if !onlyFailed {
-			return 0, nil
+			return nil, nil
 		}
-		n, err := r.q.ResetAllFailedTaskInstances(ctx, runID)
+		ids, err := q.ResetAllFailedTaskInstances(ctx, queries.ResetAllFailedTaskInstancesParams{
+			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("clearing failed tasks: %w", err)
+			return nil, fmt.Errorf("clearing failed tasks: %w", err)
 		}
-		return int(n), nil
+		return ids, nil
 	}
-	cleared := 0
+	cleared := make([]string, 0, len(taskIDs))
 	for _, taskID := range taskIDs {
 		if onlyFailed {
-			n, err := r.q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{DagRunID: runID, TaskID: taskID})
+			n, err := q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{
+				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+			})
 			if err != nil {
-				return cleared, fmt.Errorf("clearing failed task %q: %w", taskID, err)
+				return nil, fmt.Errorf("clearing failed task %q: %w", taskID, err)
 			}
-			cleared += int(n)
+			if n > 0 {
+				cleared = append(cleared, taskID)
+			}
 			continue
 		}
-		if err := r.q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{DagRunID: runID, TaskID: taskID}); err != nil {
-			return cleared, fmt.Errorf("clearing task %q: %w", taskID, err)
+		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
+			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+		}); err != nil {
+			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
-		cleared++
+		cleared = append(cleared, taskID)
 	}
 	return cleared, nil
 }

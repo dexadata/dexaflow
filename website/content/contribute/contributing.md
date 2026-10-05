@@ -173,6 +173,15 @@ Changes to `internal/auth/`, `internal/executor/`, `internal/storage/`,
 accepted from first-time contributors** — open a discussion issue first.
 {{% /alert %}}
 
+- **Migrations.** `migrations/NNN_name.up.sql` and `.down.sql`, numbered one
+  past the highest file on `main`. A change that cannot be undone gets a down
+  file that is a comment saying why it is a no-op. A migration that changes a
+  built-in role or its grants applies to every tenant's built-in roles (join on
+  `roles.is_system`), never to `default` alone, and leaves custom roles and
+  `user_roles` alone: tenants created through the service API copy their
+  built-in roles from `default` only once (#1305).
+  `migrations/tenant_roles_test.go` enforces it.
+
 ## 6. The CI gates
 
 Every PR runs, and must pass: the **build + unit/integration tests** with the
