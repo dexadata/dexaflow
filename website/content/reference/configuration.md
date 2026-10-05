@@ -532,6 +532,7 @@ dedicated pod per task attempt.
 |---|---|---|---|
 | `DEXAFLOW_LOGS_DIR` | `/var/log/leoflow` | both | Task-log sink directory (used by the default `disk` backend). |
 | `DEXAFLOW_LOGS_BACKEND` | `disk` | Pro | Durable task-log store: `disk` (default — the on-disk sink, unchanged; the only backend Lite uses), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage, native SDK). See [ADR 0056](/project/adrs/0056-task-log-object-sink/). |
+| `DEXAFLOW_LOGS_TAIL_PUBLISH` | `always` | both | When the control plane publishes received task-log lines for live followers. `always` publishes every line as it arrives. `on_demand` publishes only while someone follows the attempt: each log stream checks for followers at most once a second (Redis `PUBSUB NUMSUB`/`NUMPAT`) and replays to a new follower the lines received since the last check that found none (at most 1024 lines or 1 MiB). A new follower can see its first live lines up to about a second late. Enable `on_demand` once every API replica runs a version that skips replayed lines, or followers on older replicas may see a few lines twice. |
 | `DEXAFLOW_LOGS_SINK_BUCKET` | _(empty)_ | Pro | Target bucket. Required when the backend is `s3` or `gcs` (boot fails otherwise). |
 | `DEXAFLOW_LOGS_SINK_PREFIX` | _(empty)_ | Pro | Optional key prefix; objects are laid out at `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`. |
 | `DEXAFLOW_LOGS_SINK_REGION` | _(empty)_ | Pro | **s3-only.** Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores. |
