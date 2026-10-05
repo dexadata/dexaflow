@@ -116,6 +116,11 @@ type Querier interface {
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	DeleteVariable(ctx context.Context, arg DeleteVariableParams) (int64, error)
+	// Removes the XCom index rows of task instances a clear is resetting (#1131) and
+	// returns their backend keys, so the stored values can be deleted too. XCom
+	// carries no try number, so rows left behind would serve the cleared attempt's
+	// values to the next attempt's downstream.
+	DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error)
 	// The consecutive dispatch-failure count of a task still waiting to run
 	// (scheduled or queued); no row means it has moved on.
 	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
@@ -180,6 +185,10 @@ type Querier interface {
 	// the active flag the login gates on. Never selects password_hash.
 	GetUserByOIDCSubject(ctx context.Context, arg GetUserByOIDCSubjectParams) (GetUserByOIDCSubjectRow, error)
 	GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([]GetUserPermissionsRow, error)
+	// The per-request authz reload in ONE round trip: what GetUserByID,
+	// GetUserRoles and GetUserPermissions return, folded into a single statement.
+	// Permissions are a JSON array of distinct [action, resource] pairs.
+	GetUserPrincipalByID(ctx context.Context, id pgtype.UUID) (GetUserPrincipalByIDRow, error)
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
@@ -299,16 +308,35 @@ type Querier interface {
 	ListFavoriteDagIDs(ctx context.Context, arg ListFavoriteDagIDsParams) ([]string, error)
 	ListImportErrors(ctx context.Context, tenant string) ([]ListImportErrorsRow, error)
 	// Lists dag_runs currently in 'running' whose task instances are ALL terminal
-	// or never-started (no TI in scheduled/queued/running), alongside the
-	// timestamp of their most recent observable activity. The "no active TI"
-	// filter is the critical safety guarantee: a legitimately-active task (slow
-	// image pull, long-running job) keeps its run out of the candidate set, so
-	// the reaper can never kill a live execution. The shape this catches is the
-	// post-crash one: TIs settled (success/failed/skipped/upstream_failed) but
-	// FinalizeRun did not transition the dag_run — e.g. the server died between
+	// or never-started (every TI in none/success/failed/skipped/upstream_failed),
+	// alongside the timestamp of their most recent observable activity. The "no
+	// live TI" filter is the critical safety guarantee: a run that is still
+	// progressing stays out of the candidate set, so the reaper can never kill a
+	// live execution. Live means any state outside that settled set, which covers
+	// a legitimately-active task (scheduled/queued/running: slow image pull,
+	// long-running job) AND a task parked for the scheduler to bring back
+	// (up_for_retry during its retry_delay, up_for_reschedule between sensor pokes,
+	// the reserved deferred state). Parked states stamp no fresh timestamp on entry,
+	// so last_activity cannot protect them: a retry_delay or poke_interval longer
+	// than the reaper threshold would otherwise fail a healthy run. Listing the
+	// settled states (rather than the live ones) keeps any future non-terminal
+	// state on the safe side by default. `none` stays reapable: a never-started TI
+	// whose upstreams are all settled is decided on the next scheduler tick, and one
+	// whose upstream is still pending already has a live sibling keeping the run
+	// out. A TI released back to `none` for another attempt (the retry release,
+	// the reschedule re-dispatch, the infra re-place, an operator clear) has its
+	// per-attempt timestamps cleared and only becomes `scheduled` on the next
+	// tick, so each release stamps released_at and last_activity counts it: the
+	// release itself is activity, and a run is never reaped in the tick between a
+	// release and none -> scheduled. An infra-failed TI parked in its re-place backoff is `failed` and is covered by
+	// the threshold itself, which sits above that backoff. The shape this catches
+	// is the post-crash one: TIs settled (success/failed/skipped/upstream_failed)
+	// but FinalizeRun did not transition the dag_run, e.g. the server died between
 	// the last TI report and the next scheduler tick. The LIMIT bounds a single
-	// tick's reap work even after a multi-hour outage; the rest are picked up
-	// on the next tick (the reaper is a backstop, not a sprint).
+	// tick's reap work even after a multi-hour outage; the rest are picked up on
+	// the next tick (the reaper is a backstop, not a sprint). The list is only a
+	// snapshot: MarkRunOrphanedRun re-checks the same predicate atomically, so keep
+	// the two in step.
 	ListOrphanCandidates(ctx context.Context) ([]ListOrphanCandidatesRow, error)
 	ListPools(ctx context.Context, arg ListPoolsParams) ([]ListPoolsRow, error)
 	// Lists every TI currently in `running` alongside the timestamp it entered
@@ -321,7 +349,9 @@ type Querier interface {
 	// read them as lost; the warm-worker-lost reaper owns them. The grace period is
 	// applied here, before the LIMIT, so attempts still inside it never take the
 	// slots of those past it; a NULL started_at is never listed (too poorly observed
-	// to reap). The reaper re-checks grace and pod liveness per candidate in Go. The
+	// to reap). The reaper re-checks grace and pod liveness per candidate in Go.
+	// heartbeated lets Lite (no pods) judge a TI whose agent died before its first
+	// heartbeat, which the agent-lost query never lists (#916). The
 	// LIMIT bounds a single tick's reap work even after a large outage; the rest
 	// are picked up next tick.
 	ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error)
@@ -391,6 +421,16 @@ type Querier interface {
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
+	// Share-locks every task instance of a run inside the reap transaction, before
+	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
+	// snapshot under READ COMMITTED) sees committed state and no TI of the run can
+	// change until the reap commits or rolls back. NOWAIT: a TI another transaction
+	// is writing right now is activity, so the reap gives up (lock_not_available,
+	// treated as a no-op by ReapRun) instead of waiting. Waiting would let these
+	// share locks, taken in scan order, form a cycle with a writer that locks
+	// several TIs of the run in another order (a multi-task clear, a batched
+	// scheduler transition); a reap that never waits on a TI cannot be in one.
+	LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error
 	// Stamp a run's on-failure alert as DELIVERED. Called only after a successful
 	// send, which is the whole point of the split: alerted_at now answers "did the
 	// page get through", not "did we try".
@@ -403,11 +443,16 @@ type Querier interface {
 	// stamp from a superseded episode simply matches no row. Same shape as the guard
 	// on ReportTaskResult: a late writer must never clobber newer state.
 	MarkRunAlertDelivered(ctx context.Context, arg MarkRunAlertDeliveredParams) error
-	// Fails an orphaned dag run. The `state = 'running'` guard makes the reap a
-	// safety net, never a takeover: a competing finalizer (the normal scheduler
-	// path) cannot be overwritten. Idempotent: a second call on a run already
-	// failed updates zero rows.
-	MarkRunOrphanedRun(ctx context.Context, id pgtype.UUID) (int64, error)
+	// Fails an orphaned dag run, but only if it is STILL orphaned: the same
+	// predicate ListOrphanCandidates applies (running, no live TI, last activity at
+	// or before the reaper's cutoff) is re-checked in this statement, because the
+	// list is a snapshot and a TI may have moved (failed -> up_for_retry, none ->
+	// scheduled) or fresh activity may have landed since. Keep the two in step. The
+	// `state = 'running'` guard also makes the reap a safety net, never a takeover:
+	// a competing finalizer (the normal scheduler path) cannot be overwritten.
+	// Zero rows means the run is no longer an orphan and nothing may be touched.
+	// Idempotent: a second call on a run already failed updates zero rows.
+	MarkRunOrphanedRun(ctx context.Context, arg MarkRunOrphanedRunParams) (int64, error)
 	// Fails any still-active task instance under an orphaned run. Called together
 	// with MarkRunOrphanedRun inside a single transaction (the repository owns the
 	// atomicity); split because sqlc cannot generate a CTE+UPDATE that reuses one
@@ -603,8 +648,9 @@ type Querier interface {
 	// retry budget. Mirrors RescheduleTaskInstance but keyed by id, for the reconciler.
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
 	// Archives every failed attempt in the run into task_instance_history then
-	// resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-	ResetAllFailedTaskInstances(ctx context.Context, dagRunID pgtype.UUID) (int64, error)
+	// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+	// task ids it reset, so the clear can delete exactly their XCom.
+	ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error)
 	// Clear with run_on_latest_version re-binds the run to the DAG's current
 	// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
 	// re-run after a code/yaml fix picks up the newest image and config — in dev that
@@ -678,10 +724,14 @@ type Querier interface {
 	// tasks on incomplete work, strictly worse than the bug being fixed. The
 	// active-state guard prevents clobbering a terminal row.
 	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) error
-	// The time a reschedule-mode sensor first entered reschedule (NULL until it does).
-	// Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
-	// value and the sensor honors its cumulative timeout across pokes (#380).
-	TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error)
+	// The per-attempt fields the agent spec carries from the task instance row.
+	// first_reschedule_at is the time a reschedule-mode sensor first entered
+	// reschedule (NULL until it does), delivered to each re-dispatched pod so
+	// get_first_reschedule_date returns the real value and the sensor honors its
+	// cumulative timeout across pokes (#380). max_tries is the attempt budget the
+	// scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+	// so the runtime's on_failure_callback gate must read it from here (#424).
+	TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
 	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
 	// Rewrite one row's ciphertext in place during a key rotation. It touches only
