@@ -758,7 +758,7 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[dagRef]in
 
 // dueSlots returns the logical dates of a cron DAG's runs that are due now, in
 // order. First-run with no start_date keeps the legacy single-slot semantics
-// (most recent slot at or before now) — backfilling unbounded history for a
+// (most recent slot at or before now): backfilling unbounded history for a
 // fresh DAG would be unsafe by default. The catchup helper opts in only when
 // there is either a last_logical or a start_date floor.
 func dueSlots(d ScheduledDAG, now time.Time) []time.Time {
