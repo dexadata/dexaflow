@@ -20,8 +20,8 @@ import (
 // against every tenant's is_system roles instead.
 var defaultOnlyRoleMigrations = map[string]string{
 	"001_init_tenants_and_rbac.up.sql":         "it creates the only tenant there is at that point, so default is every tenant",
-	"025_role_ladder.up.sql":                   "027_reconcile_tenant_system_roles brings every other tenant's built-in roles in line with default afterwards",
-	"027_reconcile_tenant_system_roles.up.sql": "it reads default as the reference ladder and writes only to the other tenants",
+	"025_role_ladder.up.sql":                   "037_reconcile_tenant_system_roles brings every other tenant's built-in roles in line with default afterwards",
+	"037_reconcile_tenant_system_roles.up.sql": "it reads default as the reference ladder and writes only to the other tenants",
 }
 
 // writesRoles matches a statement that changes roles or role_permissions,

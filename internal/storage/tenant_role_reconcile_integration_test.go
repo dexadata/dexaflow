@@ -14,7 +14,7 @@ import (
 	"github.com/dexadata/dexaflow/migrations"
 )
 
-const reconcileMigration = "027_reconcile_tenant_system_roles.up.sql"
+const reconcileMigration = "037_reconcile_tenant_system_roles.up.sql"
 
 // TestReconcileMigrationAlignsEveryTenantsBuiltInRoles covers #1305: after a
 // migration changed the built-in roles of "default" only, the reconcile

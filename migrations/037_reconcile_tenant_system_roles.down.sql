@@ -1,4 +1,4 @@
--- 027_reconcile_tenant_system_roles.down.sql
+-- 037_reconcile_tenant_system_roles.down.sql
 -- Rolling back this migration is intentionally a no-op. The up migration only
 -- brought every tenant's built-in roles in line with the default tenant's; the
 -- drift it removed was never recorded, so there is nothing to restore, and
