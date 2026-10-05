@@ -128,9 +128,9 @@ func TestBuffered_Async_AcceptsAndDrains(t *testing.T) {
 
 // TestBuffered_Async_BackpressureWhenChannelFull is the load-bearing
 // backpressure contract: when the channel cannot accept a new request,
-// Dispatch returns ErrAtCapacity. The scheduler treats this exactly like a
-// transient inner-dispatcher error: log + metric + leave TI as scheduled so
-// the next tick re-tries. This is what bounds tick latency under load.
+// Dispatch returns (Deferred, ErrAtCapacity). The scheduler leaves the TI
+// scheduled so a later tick re-tries, without charging a dispatch attempt
+// (review item S2). This is what bounds tick latency under load.
 func TestBuffered_Async_BackpressureWhenChannelFull(t *testing.T) {
 	// One slow worker, channel-of-one — the second Dispatch must fail fast
 	// because the first is blocking the only worker and the channel is full.
@@ -145,9 +145,12 @@ func TestBuffered_Async_BackpressureWhenChannelFull(t *testing.T) {
 	// first call, the channel has only one slot, and the test floods the queue.
 	hitCapacity := false
 	for i := 0; i < 10 && !hitCapacity; i++ {
-		_, err := d.Dispatch(context.Background(), "r1", "etl", "", domain.TaskSpec{TaskID: "flood"})
+		disp, err := d.Dispatch(context.Background(), "r1", "etl", "", domain.TaskSpec{TaskID: "flood"})
 		if errors.Is(err, dispatch.ErrAtCapacity) {
 			hitCapacity = true
+			if disp != executor.Deferred {
+				t.Errorf("a full buffer must classify as Deferred, got %v", disp)
+			}
 		}
 	}
 	if !hitCapacity {
@@ -301,9 +304,12 @@ func TestBuffered_DispatchAfterClose_ReturnsAtCapacity(t *testing.T) {
 	if err := d.Close(); err != nil {
 		t.Fatalf("Close err = %v", err)
 	}
-	_, err := d.Dispatch(context.Background(), "r", "d", "", domain.TaskSpec{TaskID: "t"})
+	disp, err := d.Dispatch(context.Background(), "r", "d", "", domain.TaskSpec{TaskID: "t"})
 	if !errors.Is(err, dispatch.ErrAtCapacity) {
 		t.Fatalf("Dispatch after Close = %v, want ErrAtCapacity (must not panic)", err)
+	}
+	if disp != executor.Deferred {
+		t.Errorf("Dispatch after Close must classify as Deferred, got %v", disp)
 	}
 }
 
