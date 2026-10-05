@@ -511,8 +511,13 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 		return status.Error(codes.Unavailable, "control plane shutting down; log stream not accepted")
 	default:
 	}
+	// The stream is stored under this execution's attempt epoch, so a second
+	// execution of the same try no longer overwrites it (ADR 0051 amendment,
+	// #863). A token without the claim writes the epoch-0 key, where every
+	// pre-upgrade log already lives.
 	w, oerr := s.logs.Open(logs.Ref{
 		TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber,
+		AttemptEpoch: id.AttemptEpoch,
 	})
 	if oerr != nil {
 		// The agent is told WHICH step failed — without that it sees only a bare

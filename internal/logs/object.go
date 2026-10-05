@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path"
+	"strings"
 	"sync"
 	"time"
 )
@@ -40,7 +41,7 @@ type Pruner interface {
 
 // ObjectSink stores each task attempt as a single object in an ObjectStore,
 // keyed the same way the disk sink lays out files
-// ({prefix}/{tenant}/{dag}/{run}/{task}/{try}.log). Object stores have no
+// ({prefix}/{tenant}/{dag}/{run}/{task}/{try}.log, or {try}.e{epoch}.log). Object stores have no
 // append, so a writer accumulates the attempt's events and rewrites the object
 // incrementally (by size and on a time cadence) with a final rewrite on Close,
 // so a control plane killed mid-attempt leaves a partial object rather than
@@ -83,7 +84,46 @@ func NewObjectSink(ctx context.Context, store ObjectStore, prefix string, logger
 // operator can reason about both the same way. path.Join (not filepath.Join)
 // keeps forward slashes on every OS, since object keys are not filesystem paths.
 func (o *ObjectSink) key(ref Ref) string {
-	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, fmt.Sprintf("%d.log", ref.TryNumber))
+	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, ref.fileName())
+}
+
+// ObjectLister is implemented by object stores that can list keys under a
+// prefix. With a delimiter, a key that continues past the delimiter is
+// returned once as its common prefix, ending in the delimiter, so a segmented
+// attempt lists as one entry. S3Store and GCSStore implement it.
+type ObjectLister interface {
+	List(ctx context.Context, prefix, delimiter string) ([]string, error)
+}
+
+// errNoObjectList reports a store that cannot list.
+var errNoObjectList = errors.New("object store cannot list")
+
+// StoredEpochs lists the attempt epochs with a stored log for ref's try, with
+// one listing of the {try}. prefix (see EpochLister). A
+// store without ObjectLister, or a failed listing (S3 without s3:ListBucket),
+// returns an error and the caller probes instead.
+func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
+	if err := ref.validate(); err != nil {
+		return nil, err
+	}
+	lister, ok := o.store.(ObjectLister)
+	if !ok {
+		return nil, errNoObjectList
+	}
+	dir := path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID) + "/"
+	keys, err := lister.List(o.ctx, dir+fmt.Sprintf("%d.", ref.TryNumber), "/")
+	if err != nil {
+		o.logger.Debug("listing a try's log objects failed; probing each execution",
+			"prefix", dir, "error", err)
+		return nil, err
+	}
+	var epochs []int
+	for _, key := range keys {
+		if e, ok := parseEpochName(strings.TrimPrefix(key, dir), ref.TryNumber); ok {
+			epochs = append(epochs, e)
+		}
+	}
+	return epochs, nil
 }
 
 // Open validates the ref and returns a writer that keeps the attempt's object

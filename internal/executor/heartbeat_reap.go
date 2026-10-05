@@ -214,7 +214,7 @@ func (r *agentLostReaper) reapNeverHeartbeated(ctx context.Context, c PodLostCan
 	r.record("agent_lost_never_heartbeated")
 	r.writeAgentLostMarker(AgentLostCandidate{
 		TaskInstanceID: c.TaskInstanceID, TenantID: c.TenantID, DagRunID: c.DagRunID, DagID: c.DagID,
-		TaskID: c.TaskID, TryNumber: c.TryNumber,
+		TaskID: c.TaskID, TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
 	}, now)
 }
 
@@ -283,7 +283,10 @@ func (r *agentLostReaper) writeAgentLostMarker(c AgentLostCandidate, now time.Ti
 	if c.LastHeartbeat.IsZero() {
 		msg = fmt.Sprintf("killed: agent_lost (no heartbeat ever, agent and task processes gone, running past %s threshold)", r.threshold)
 	}
-	ref := logs.Ref{TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber}
+	ref := logs.Ref{
+		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,
+		TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
+	}
 	ev := logs.Event{
 		Time:    now,
 		Level:   "error",

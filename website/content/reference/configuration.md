@@ -559,7 +559,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_LOGS_DIR` | `/var/log/leoflow` | both | Task-log sink directory (used by the default `disk` backend). |
 | `DEXAFLOW_LOGS_BACKEND` | `disk` | Pro | Durable task-log store: `disk` (default — the on-disk sink, unchanged; the only backend Lite uses), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage, native SDK). See [ADR 0056](/project/adrs/0056-task-log-object-sink/). |
 | `DEXAFLOW_LOGS_SINK_BUCKET` | _(empty)_ | Pro | Target bucket. Required when the backend is `s3` or `gcs` (boot fails otherwise). |
-| `DEXAFLOW_LOGS_SINK_PREFIX` | _(empty)_ | Pro | Optional key prefix; objects are laid out at `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`. |
+| `DEXAFLOW_LOGS_SINK_PREFIX` | _(empty)_ | Pro | Optional key prefix; objects are laid out at `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.e{epoch}.log`, one object per execution of the try (an infra re-place or a reschedule poke runs the try again under a new epoch). Logs written before 0.5.1 keep `{try}.log`. The log endpoint serves all of a try's executions in order. |
 | `DEXAFLOW_LOGS_SINK_REGION` | _(empty)_ | Pro | **s3-only.** Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores. |
 | `DEXAFLOW_LOGS_SINK_ENDPOINT` | _(empty)_ | Pro | **s3-only.** Endpoint override for S3-compatible stores (MinIO, Ceph RGW). Empty uses the AWS default. Not a path to GCS — use `gcs`. |
 | `DEXAFLOW_LOGS_SINK_FORCE_PATH_STYLE` | `false` | Pro | **s3-only.** Use path-style addressing (bucket in the path, not the host). Required by MinIO and some S3-compatible stores. |
