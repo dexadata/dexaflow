@@ -35,12 +35,12 @@ func TestReencryptMovesRowsOntoThePrimaryKey(t *testing.T) {
 	rotating := secrets.WithFallback(newCipher, oldCipher)
 	repo.SetCipher(rotating)
 
-	n, err := repo.ReencryptSecrets(ctx)
+	res, err := repo.ReencryptSecrets(ctx)
 	if err != nil {
 		t.Fatalf("ReencryptSecrets: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("re-encrypted %d rows, want 1", n)
+	if res.Migrated != 1 || !res.Clean() {
+		t.Errorf("result %+v, want 1 row re-encrypted and a clean pass", res)
 	}
 
 	// The decisive assertion: the row now opens under the NEW key ALONE. If it
@@ -61,8 +61,8 @@ func TestReencryptMovesRowsOntoThePrimaryKey(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("second pass: %v", aerr)
 	}
-	if again != 0 {
-		t.Errorf("second pass re-encrypted %d rows, want 0", again)
+	if again.Migrated != 0 {
+		t.Errorf("second pass re-encrypted %d rows, want 0", again.Migrated)
 	}
 }
 
@@ -85,12 +85,12 @@ func TestReencryptLeavesUnreadableRowsUntouched(t *testing.T) {
 		mustCipher(t, "a-fresh-per-install-key-32byte!!"),
 		mustCipher(t, "the-old-published-key-32bytes!!!"),
 	))
-	n, err := repo.ReencryptSecrets(ctx)
+	res, err := repo.ReencryptSecrets(ctx)
 	if err == nil {
 		t.Error("a row no configured key can open must be reported, not passed over in silence")
 	}
-	if n != 0 {
-		t.Errorf("re-encrypted %d rows, want 0", n)
+	if res.Migrated != 0 || res.Unreadable != 1 || res.Clean() {
+		t.Errorf("result %+v, want nothing re-encrypted and 1 unreadable column", res)
 	}
 
 	// Still readable with its own key: nothing was destroyed.
@@ -125,4 +125,53 @@ func mustCipher(t *testing.T, key string) secrets.Cipher {
 		t.Fatalf("building cipher: %v", cerr)
 	}
 	return c
+}
+
+// racingReader rewrites the row under the primary key the first time it is
+// asked to open it, the way a user saving the connection between the sweep's
+// read and its write would.
+type racingReader struct {
+	secrets.StaleReader
+	race func()
+	done bool
+}
+
+func (r *racingReader) DecryptStale(ct string) (string, bool, error) {
+	if !r.done {
+		r.done = true
+		r.race()
+	}
+	return r.StaleReader.DecryptStale(ct)
+}
+
+// A row the optimistic guard skipped was not moved by this pass, so the pass
+// is not complete and its result must say so (ADR 0065 gap 1). It used to be
+// logged and dropped, and the caller printed "rotation complete".
+func TestReencryptReportsSkippedRows(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	clearConnections(t, repo, ctx)
+	writer, _, _ := openRepo(t)
+
+	oldCipher := mustCipher(t, "the-old-published-key-32bytes!!!")
+	newCipher := mustCipher(t, "a-fresh-per-install-key-32byte!!")
+	repo.SetCipher(oldCipher)
+	if err := repo.SetConnection(ctx, "default", domain.Connection{ConnID: "prod_db", ConnType: "postgres", Password: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	writer.SetCipher(newCipher)
+	repo.SetCipher(&racingReader{
+		StaleReader: secrets.WithFallback(newCipher, oldCipher),
+		race: func() {
+			if err := writer.SetConnection(ctx, "default", domain.Connection{ConnID: "prod_db", ConnType: "postgres", Password: "b"}); err != nil {
+				t.Errorf("racing write: %v", err)
+			}
+		},
+	})
+	res, err := repo.ReencryptSecrets(ctx)
+	if err != nil {
+		t.Fatalf("ReencryptSecrets: %v", err)
+	}
+	if res.Skipped != 1 || res.Clean() {
+		t.Errorf("result %+v, want 1 skipped row and a pass that is not clean", res)
+	}
 }

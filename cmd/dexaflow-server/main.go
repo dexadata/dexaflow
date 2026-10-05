@@ -81,7 +81,7 @@ func main() {
 	args := os.Args[1:]
 	switch {
 	case version.WantsVersion(args):
-		fmt.Println(version.Get().String())
+		fmt.Print(versionOutput())
 		return
 	case version.WantsHelp(args):
 		fmt.Print(usage)
@@ -148,11 +148,14 @@ func run() error {
 	slog.SetDefault(tel.Logger)
 	warnStartup(cfg, tel.Logger)
 
-	pg, err := openVerifiedPostgres(ctx, cfg.Database)
+	// Lite only: the key-migration lock is held before anything reads or writes
+	// a stored secret, and the server stops if it is lost (ADR 0065 section 3).
+	pg, ctx, releaseKeyLock, err := openPostgresHoldingKeyLock(ctx, cfg, tel.Logger)
 	if err != nil {
-		return fmt.Errorf("postgres: %w", err)
+		return err
 	}
 	defer pg.Close()
+	defer releaseKeyLock()
 
 	// Datastore for XCom + live-log tailing: Redis when configured (production,
 	// ADR 0006), or the embedded Postgres/in-process backends when no Redis is
@@ -267,7 +270,7 @@ func run() error {
 	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), ReadHeaderTimeout: 10 * time.Second}
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
-	return serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv)
+	return keyLockExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
 }
 
 // observabilityOptions maps the observability.metrics config onto the metrics

@@ -46,6 +46,18 @@ type ServerConfig struct {
 	// Trying keys in order is safe only because AES-GCM is authenticated: a
 	// wrong key fails to open rather than returning plausible garbage.
 	SecretKey string `mapstructure:"secret_key"`
+	// SecretKeyReencryptOnBoot (LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT, default
+	// true) runs the ADR 0019 boot sweep that moves stored secrets onto the
+	// first key of SecretKey. `dexaflow lite` sets it to false: a Lite install
+	// migrates only through the explicit `dexaflow lite migrate-key`, which
+	// records every key before touching a row and verifies before it commits
+	// (ADR 0065). Pro keeps the default.
+	SecretKeyReencryptOnBoot bool `mapstructure:"secret_key_reencrypt_on_boot"`
+	// SecretKeyMigrationLock (LEOFLOW_SECRET_KEY_MIGRATION_LOCK, default false)
+	// makes the server hold the key-migration advisory lock shared for its whole
+	// life, refuse to start while a migration holds it, and exit if it loses it.
+	// `dexaflow lite` sets it to true (ADR 0065 section 3).
+	SecretKeyMigrationLock bool `mapstructure:"secret_key_migration_lock"`
 }
 
 // SecretsSection configures the external secrets backend (ADR 0060). When Backend
@@ -1011,6 +1023,8 @@ var serverDefaults = map[string]any{
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
 	"secret_key":                   "",
+	"secret_key_reencrypt_on_boot": true,
+	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
 	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.

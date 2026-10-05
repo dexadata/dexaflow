@@ -331,9 +331,14 @@ anything:
 
 - **TI heartbeat reaper** — only fires on TIs that *did* heartbeat at least
   once and then went silent. A TI that never heartbeated (e.g. a pod that never
-  started, so no agent ever reported) is left alone. In Lite, a TI that never heartbeated is
-  judged only on the positive signal that its agent and its task process group
-  are both gone (see "Lite: which reapers run").
+  started, so no agent ever reported) is left alone. "At least once" means
+  in the current attempt: every rail that starts a new execution of a task
+  (retry, clear, infra re-place, reschedule re-dispatch, warm requeue,
+  dispatch-failure backoff) clears the previous attempt's heartbeat, so a new
+  attempt is not reaped in the interval between reporting `running` and its
+  first heartbeat. In Lite, a TI that never heartbeated is judged only on the
+  positive signal that its agent and its task process group are both gone (see
+  "Lite: which reapers run").
 - **Dispatch-lost reaper** — requires a non-zero `queued_at` older than the
   threshold AND, on Kubernetes, confirmation that no live pod for the TI
   exists. If a pod for the TI is `Pending`/`Running`, the dispatch actually
