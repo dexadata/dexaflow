@@ -1065,11 +1065,13 @@ func (q *Queries) ListOrphanCandidates(ctx context.Context) ([]ListOrphanCandida
 
 const listRunningTasks = `-- name: ListRunningTasks :many
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
        d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
-       ti.started_at AS started_at
+       ti.started_at AS started_at,
+       (ti.last_heartbeat_at IS NOT NULL)::boolean AS heartbeated
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
@@ -1082,11 +1084,13 @@ LIMIT 100
 
 type ListRunningTasksRow struct {
 	TaskInstanceID pgtype.UUID        `json:"task_instance_id"`
+	TenantID       pgtype.UUID        `json:"tenant_id"`
 	DagRunID       pgtype.UUID        `json:"dag_run_id"`
 	DagIDText      string             `json:"dag_id_text"`
 	TaskID         string             `json:"task_id"`
 	TryNumber      int32              `json:"try_number"`
 	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	Heartbeated    bool               `json:"heartbeated"`
 }
 
 // Lists every TI currently in `running` alongside the timestamp it entered
@@ -1099,7 +1103,9 @@ type ListRunningTasksRow struct {
 // read them as lost; the warm-worker-lost reaper owns them. The grace period is
 // applied here, before the LIMIT, so attempts still inside it never take the
 // slots of those past it; a NULL started_at is never listed (too poorly observed
-// to reap). The reaper re-checks grace and pod liveness per candidate in Go. The
+// to reap). The reaper re-checks grace and pod liveness per candidate in Go.
+// heartbeated lets Lite (no pods) judge a TI whose agent died before its first
+// heartbeat, which the agent-lost query never lists (#916). The
 // LIMIT bounds a single tick's reap work even after a large outage; the rest
 // are picked up next tick.
 func (q *Queries) ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error) {
@@ -1113,11 +1119,13 @@ func (q *Queries) ListRunningTasks(ctx context.Context, graceSeconds float64) ([
 		var i ListRunningTasksRow
 		if err := rows.Scan(
 			&i.TaskInstanceID,
+			&i.TenantID,
 			&i.DagRunID,
 			&i.DagIDText,
 			&i.TaskID,
 			&i.TryNumber,
 			&i.StartedAt,
+			&i.Heartbeated,
 		); err != nil {
 			return nil, err
 		}

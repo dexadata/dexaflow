@@ -131,8 +131,8 @@ type Reaper struct {
 	settlingGrace time.Duration
 	// leaderSince, informerSynced and lastSweepCompleted are the three inputs of
 	// the leader-settling gate (see settling). Each is nil when its subsystem is
-	// not wired — Lite has no leadership, informer or reconciler — and a nil
-	// input is "satisfied", so an unwired reaper is never held.
+	// not wired (Lite has leadership but no informer or reconciler), and a nil
+	// input is "satisfied", so an unwired condition never holds the reaper.
 	leaderSince        func() time.Time
 	informerSynced     func() bool
 	lastSweepCompleted func() time.Time
@@ -143,7 +143,8 @@ type Reaper struct {
 // wiring mirrors exactly what the scheduler used to do inline: every reaper gets
 // pods; only the dispatch-lost and pod-lost reapers get the cache. Nil pods
 // (Lite/subprocess) keeps every reaper DB-only and makes the pod-lost reaper a
-// no-op, byte-for-byte as before.
+// no-op; Lite gates agent-lost and dispatch-lost on the agent process instead
+// (SetProcessLiveness).
 //
 // warmPods is the live warm-pod seam (ADR 0058 N1d-a2), threaded to the two warm
 // consumers exactly the way pods/cache are threaded: the warm-worker-lost reaper
@@ -229,8 +230,10 @@ func (r *Reaper) SetLogSink(s logSink) {
 // SetLeaderSince wires the accessor the settling gate measures its grace from:
 // when this instance last acquired scheduler leadership (zero while not
 // leading). Measured from leadership acquisition, not process start, so a
-// re-election also resets the gate. Nil (Lite / no leadership) disables the
-// gate entirely — the other two inputs are only meaningful under a leader.
+// re-election also resets the gate. Nil (no leadership, as in tests) disables
+// the gate entirely, since the other two inputs are only meaningful under a
+// leader. Lite wires it too: its detached agents survive a restart with a stale
+// heartbeat, exactly the signal the grace exists for (#916).
 func (r *Reaper) SetLeaderSince(fn func() time.Time) {
 	r.leaderSince = fn
 }
@@ -328,8 +331,8 @@ type settlingVerdict struct {
 // are recovered a little later, and warm-pool REFILL is a separate loop that
 // is not gated — and one uniform gate is the point.
 //
-// Nil inputs are satisfied conditions: Lite wires none of them and must behave
-// exactly as before. A zero leadership stamp (not leading) also opens the gate
+// Nil inputs are satisfied conditions: Lite wires only the leadership stamp, so
+// it is held by the grace alone. A zero leadership stamp (not leading) also opens the gate
 // here — the destructive gate mayReap owns the not-leading case.
 func (r *Reaper) settling(now time.Time) settlingVerdict {
 	if r.leaderSince == nil || r.settlingGrace <= 0 {
