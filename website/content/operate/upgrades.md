@@ -168,6 +168,50 @@ Two consequences for your own tooling:
   policy the chart creates normally does not exist yet when the *pre-install*
   hook runs.
 
+### Upgrading to 0.5.1: finish the rollout promptly
+
+0.5.1 fences each task execution by an attempt epoch carried in the agent's
+token ([ADR 0051](/project/adrs/0051-separate-orchestration-and-execution-state-machines/),
+amendment). Tasks that are already running when you upgrade keep their old
+tokens and are not affected. While old and new control-plane replicas serve
+side by side during a rolling upgrade, three cases cost one redundant
+re-placement of a task, never a wrong result:
+
+- an old replica renews a new task's token and drops the epoch it does not
+  know. The task keeps heartbeating and resolving its secrets, but when it
+  finishes its final state report is rejected, and it is re-placed and runs
+  again;
+- an old replica performs a new task pod's projected ServiceAccount token
+  exchange, which also drops the epoch. The pod exchanges before it reports
+  `running`, so it is told to stop on that first report, before your code
+  starts, and is re-placed once the dispatch-lost reaper sees it;
+- leadership moves back to an old replica, which dispatches a task a new
+  replica already advanced. That task is told to stop on its first report and
+  is re-placed.
+
+All three last only as long as old replicas serve agent traffic. On an HA install,
+let the rollout finish without pausing it, or scale the control plane to one
+replica for the upgrade. `dexaflow_agent_legacy_attempt_token_total` counts agent
+calls that still use a token without the epoch; it falls to zero once every
+task started before the upgrade has finished. A later minor release will refuse
+such tokens.
+
+If you roll back to 0.5.0 and later upgrade again, a task that 0.5.0 started
+on a task instance that 0.5.1 had already dispatched before the rollback is
+not covered by "keep their old tokens": the rollback keeps the attempt epoch
+column, so its token without the epoch no longer matches, its final state
+report is rejected, and it is re-placed and runs again. Let such tasks finish
+before upgrading again, or accept the one re-run.
+
+0.5.1 also stores each execution's log under its own name,
+`{try}.e{epoch}.log` instead of `{try}.log`, so a re-placed execution no longer
+overwrites the one before it. 0.5.0 reads only `{try}.log`. While old replicas
+serve the API during the rollout, and after a rollback to 0.5.0, the log view
+shows "No logs available" for tasks that 0.5.1 ran. Those logs are not deleted:
+they show again once 0.5.1 serves the API. Logs written before the upgrade keep
+`{try}.log` and stay readable by both versions. If you read log objects or files
+directly, expect both names.
+
 ## Related issues
 
 - #136 — this contract.

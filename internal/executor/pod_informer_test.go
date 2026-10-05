@@ -62,13 +62,13 @@ func TestPodInformer_SeesAddAndDelete(t *testing.T) {
 		t.Fatal("cache did not sync")
 	}
 
-	if !pi.CachedPodActive("Run_A", "extract", 1) {
+	if !pi.CachedPodActive(Attempt{RunID: "Run_A", TaskID: "extract", TryNumber: 1}) {
 		t.Error("a Running pod must read as active (with sanitized labels)")
 	}
-	if pi.CachedPodActive("Run_A", "done-task", 1) {
+	if pi.CachedPodActive(Attempt{RunID: "Run_A", TaskID: "done-task", TryNumber: 1}) {
 		t.Error("a Succeeded pod must not read as active")
 	}
-	if pi.CachedPodActive("Run_A", "never-existed", 1) {
+	if pi.CachedPodActive(Attempt{RunID: "Run_A", TaskID: "never-existed", TryNumber: 1}) {
 		t.Error("an unknown task must read as not active")
 	}
 
@@ -76,7 +76,7 @@ func TestPodInformer_SeesAddAndDelete(t *testing.T) {
 	if err := cs.CoreV1().Pods("leoflow").Delete(ctx, "p-run", metav1.DeleteOptions{}); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if !waitFor(t, func() bool { return !pi.CachedPodActive("Run_A", "extract", 1) }) {
+	if !waitFor(t, func() bool { return !pi.CachedPodActive(Attempt{RunID: "Run_A", TaskID: "extract", TryNumber: 1}) }) {
 		t.Error("cache did not observe the pod deletion")
 	}
 
@@ -84,7 +84,7 @@ func TestPodInformer_SeesAddAndDelete(t *testing.T) {
 	if _, err := cs.CoreV1().Pods("leoflow").Create(ctx, informerPod("p-new", "Run_A", "load", corev1.PodPending), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if !waitFor(t, func() bool { return pi.CachedPodActive("Run_A", "load", 1) }) {
+	if !waitFor(t, func() bool { return pi.CachedPodActive(Attempt{RunID: "Run_A", TaskID: "load", TryNumber: 1}) }) {
 		t.Error("cache did not observe the added Pending pod")
 	}
 }
@@ -97,7 +97,7 @@ func TestPodInformer_BeforeSync_ReturnsFalse(t *testing.T) {
 	cs := fake.NewClientset(informerPod("p-run", "r1", "t1", corev1.PodRunning))
 	pi := NewPodInformer(cs, "leoflow")
 	// Deliberately NOT started / not synced.
-	if pi.CachedPodActive("r1", "t1", 1) {
+	if pi.CachedPodActive(Attempt{RunID: "r1", TaskID: "t1", TryNumber: 1}) {
 		t.Error("an unsynced cache must return false (fall through to the live read)")
 	}
 	if _, err := pi.SnapshotTaskPods(); err == nil {

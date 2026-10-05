@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/config"
@@ -72,7 +74,75 @@ func poolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	if cfg.MaxIdleConns > 0 && cfg.MaxIdleConns <= math.MaxInt32 {
 		pc.MinConns = int32(cfg.MaxIdleConns)
 	}
+	if cfg.ConnMaxLifetimeJitterMS > 0 {
+		pc.MaxConnLifetimeJitter = time.Duration(cfg.ConnMaxLifetimeJitterMS) * time.Millisecond
+	}
 	return pc, nil
+}
+
+// mainPoolConfig builds the config of the main pool, the one the API serves
+// from. It is poolConfig plus database.statement_timeout_ms, which belongs on
+// this pool alone: the leader pool's session holds the scheduler advisory lock,
+// the health pool must answer probes, and the scheduler pool runs maintenance
+// that is allowed to take its time.
+//
+// The timeout is set with SET as each connection opens, before the pool hands
+// it out, rather than sent as a startup parameter: PgBouncer rejects startup
+// parameters it does not track ("unsupported startup parameter") unless they
+// are listed in ignore_startup_parameters, which then drops them silently.
+// A session SET holds for a direct connection and for PgBouncer in session
+// mode; in transaction mode use a per role setting (ALTER ROLE ... SET
+// statement_timeout) instead and leave the key at 0.
+func mainPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
+	pc, err := poolConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.StatementTimeoutMS > 0 {
+		set := "SET statement_timeout = " + strconv.Itoa(cfg.StatementTimeoutMS)
+		pc.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+			if _, err := conn.Exec(ctx, set); err != nil {
+				return fmt.Errorf("setting statement_timeout: %w", err)
+			}
+			return nil
+		}
+	}
+	return pc, nil
+}
+
+// withoutStatementTimeout runs fn in a transaction with statement_timeout
+// lifted, for the few writes whose cost grows with the data they cascade
+// over (deleting a DAG, clearing its history, purging expired XCom rows) and
+// that must not be cut by database.statement_timeout_ms on the main pool.
+// SET LOCAL ends with the transaction, so the connection goes back to the
+// pool with the pool's timeout.
+func withoutStatementTimeout(ctx context.Context, pool txBeginner, q *queries.Queries, fn func(*queries.Queries) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return fmt.Errorf("lifting statement_timeout: %w", err)
+	}
+	if err := fn(q.WithTx(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	return nil
+}
+
+// schedulerPoolConfig builds the config of the scheduler's dedicated pool,
+// sized by database.scheduler_max_conns. Like the other small pools it keeps
+// no idle floor, and it never carries the API statement timeout.
+func schedulerPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
+	n := cfg.SchedulerMaxConns
+	if n <= 0 || n > math.MaxInt32 {
+		return nil, fmt.Errorf("database.scheduler_max_conns must be between 1 and %d, got %d", math.MaxInt32, n)
+	}
+	return smallPoolConfig(cfg, int32(n))
 }
 
 // NewPostgres opens a connection pool and verifies connectivity, retrying
@@ -83,7 +153,7 @@ func poolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 // dynamics. A truly broken setup (wrong DSN, bad auth) still surfaces
 // quickly because the underlying error is wrapped into the final error.
 func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, error) {
-	pc, err := poolConfig(cfg)
+	pc, err := mainPoolConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +163,7 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 	}
 	if err := connectWithRetry(ctx, pool.Ping, pgStartupBudget, pgStartupBackoff); err != nil {
 		pool.Close()
-		return nil, err
+		return nil, explainConnBudget(err, pc.MaxConns)
 	}
 	// Opened here rather than wired by the caller: a probe that shares the
 	// request pool is the failure mode this exists to prevent (#1042), and a
@@ -113,7 +183,7 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 	if err := connectWithRetry(ctx, health.Ping, pgStartupBudget, pgStartupBackoff); err != nil {
 		health.Close()
 		pool.Close()
-		return nil, err
+		return nil, explainConnBudget(err, pc.MaxConns)
 	}
 	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health}, nil
 }
@@ -262,17 +332,58 @@ const leaderConnLifetime = 100 * 365 * 24 * time.Hour
 // a connection that really dies is caught within a tick and the step-down that
 // follows is a true one.
 func NewLeaderPool(ctx context.Context, cfg config.DatabaseSection) (*pgxpool.Pool, error) {
+	pc, err := leaderPoolConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, pc)
+	if err != nil {
+		return nil, fmt.Errorf("creating leader pool: %w", err)
+	}
+	return pool, nil
+}
+
+// leaderPoolConfig builds the leader pool's config: one connection that is
+// never recycled (see NewLeaderPool), with no lifetime jitter, and none of the
+// main pool's statement timeout, which would cut the lock holder's queries.
+func leaderPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	pc, err := smallPoolConfig(cfg, 1)
 	if err != nil {
 		return nil, err
 	}
 	pc.MaxConnLifetime = leaderConnLifetime
 	pc.MaxConnIdleTime = leaderConnLifetime
+	pc.MaxConnLifetimeJitter = 0
+	return pc, nil
+}
+
+// ForScheduler returns the handle the scheduler side should use, and a func
+// that releases it.
+//
+// With database.scheduler_max_conns unset it is p itself and the release func
+// does nothing: the scheduler shares the main pool, as it always has. With it
+// set, it is a dedicated pool of that size, without the API statement timeout,
+// so a burst of API traffic holding every main pool connection cannot stall a
+// scheduler tick or a reaper behind it. The dedicated handle shares p's spec
+// cache, so the scheduler and the agent path still decode each version once.
+func (p *Postgres) ForScheduler(ctx context.Context, cfg config.DatabaseSection) (*Postgres, func(), error) {
+	if cfg.SchedulerMaxConns <= 0 {
+		return p, func() {}, nil
+	}
+	pc, err := schedulerPoolConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
-		return nil, fmt.Errorf("creating leader pool: %w", err)
+		return nil, nil, fmt.Errorf("creating scheduler pool: %w", err)
 	}
-	return pool, nil
+	if err := connectWithRetry(ctx, pool.Ping, pgStartupBudget, pgStartupBackoff); err != nil {
+		pool.Close()
+		return nil, nil, err
+	}
+	sched := &Postgres{Pool: pool, Queries: queries.New(pool), specs: sharedSpecCache(p)}
+	return sched, pool.Close, nil
 }
 
 // Ping checks database connectivity (used by /readyz). It goes through

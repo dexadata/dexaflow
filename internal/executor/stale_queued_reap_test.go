@@ -53,12 +53,12 @@ func (f *fakeStaleQueuedStore) ListStaleQueuedCandidates(context.Context) ([]Sta
 	return f.candidates, f.listErr
 }
 
-func (f *fakeStaleQueuedStore) MarkTaskDispatchLost(_ context.Context, tiID string) error {
+func (f *fakeStaleQueuedStore) MarkTaskDispatchLost(_ context.Context, tiID string, _, _ int) (bool, error) {
 	if f.failErr != nil {
-		return f.failErr
+		return false, f.failErr
 	}
 	f.failed = append(f.failed, tiID)
-	return nil
+	return true, nil
 }
 
 // TestReapDispatchLost_MarksStaleTIs covers the success path: only TIs queued
