@@ -352,6 +352,7 @@ type TaskInstance struct {
 	InfraAttempts     int32              `json:"infra_attempts"`
 	WarmWorkerID      *string            `json:"warm_worker_id"`
 	ReleasedAt        pgtype.Timestamptz `json:"released_at"`
+	AttemptEpoch      int32              `json:"attempt_epoch"`
 }
 
 type TaskInstanceHistory struct {
@@ -371,6 +372,7 @@ type TaskInstanceHistory struct {
 	NodeName        *string            `json:"node_name"`
 	Note            *string            `json:"note"`
 	ArchivedAt      pgtype.Timestamptz `json:"archived_at"`
+	AttemptEpoch    int32              `json:"attempt_epoch"`
 }
 
 type TaskStateHistory struct {
