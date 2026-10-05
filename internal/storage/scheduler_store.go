@@ -767,6 +767,7 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 			DagID:          r.DagIDText,
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
 			LastHeartbeat:  last,
 		})
 	}
@@ -794,13 +795,17 @@ func (s *SchedulerStore) MarkTaskDispatchFailed(ctx context.Context, runID, task
 // MarkTaskAgentLost transitions one TI to `failed` with the agent_lost
 // reason. The WHERE state='running' guard makes this idempotent and prevents
 // a late terminal report being overwritten — if the row already moved, we
-// touch zero rows and return nil.
-func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID string) (bool, error) {
+// touch zero rows and return nil. It is pinned to the listed attempt,
+// (tryNumber, attemptEpoch) (ADR 0051 amendment): a mark computed for a
+// superseded execution is a no-op on its replacement.
+func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return false, err
 	}
-	n, err := s.q.MarkTaskAgentLost(ctx, tid)
+	n, err := s.q.MarkTaskAgentLost(ctx, queries.MarkTaskAgentLostParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
 	if err != nil {
 		return false, fmt.Errorf("marking task agent-lost: %w", err)
 	}
@@ -827,6 +832,7 @@ func (s *SchedulerStore) ListStaleQueuedCandidates(ctx context.Context) ([]execu
 			DagID:          r.DagIDText,
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
 			QueuedAt:       qed,
 			WarmWorkerID:   strOrEmpty(r.WarmWorkerID),
 		})
@@ -850,6 +856,7 @@ func (s *SchedulerStore) ListWarmBoundRunningTIs(ctx context.Context) ([]executo
 			DagRunID:       uuidToString(r.DagRunID),
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
 			WarmWorkerID:   strOrEmpty(r.WarmWorkerID),
 		})
 	}
@@ -881,16 +888,21 @@ func (s *SchedulerStore) ListBusyWarmWorkerPods(ctx context.Context) (map[string
 
 // MarkTaskDispatchLost transitions one TI to `failed` with the dispatch_lost
 // reason. The WHERE state='queued' guard makes this idempotent: a TI that
-// has since been dispatched (real progress landed) is left alone.
-func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceID string) error {
+// has since been dispatched (real progress landed) is left alone, and so is a
+// row on a different (tryNumber, attemptEpoch) than the one listed (ADR 0051
+// amendment). It returns whether a row was actually updated.
+func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := s.q.MarkTaskDispatchLost(ctx, tid); err != nil {
-		return fmt.Errorf("marking task dispatch-lost: %w", err)
+	n, err := s.q.MarkTaskDispatchLost(ctx, queries.MarkTaskDispatchLostParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("marking task dispatch-lost: %w", err)
 	}
-	return nil
+	return n > 0, nil
 }
 
 // ListRunningTasks returns the `running`, non-warm TIs that have been running
@@ -913,6 +925,7 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Durati
 			DagID:          r.DagIDText,
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
 			RunningSince:   since,
 			Heartbeated:    r.Heartbeated,
 			TenantID:       uuidToString(r.TenantID),
@@ -923,13 +936,16 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Durati
 
 // MarkTaskPodLost transitions one TI to `failed` with the pod_lost reason. The
 // WHERE state='running' guard makes it idempotent: a TI that has since moved on
-// (a late terminal report landed) is left alone.
-func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID string) (bool, error) {
+// (a late terminal report landed) is left alone, and so is a row on a different
+// (tryNumber, attemptEpoch) than the one listed (ADR 0051 amendment).
+func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return false, err
 	}
-	n, err := s.q.MarkTaskPodLost(ctx, tid)
+	n, err := s.q.MarkTaskPodLost(ctx, queries.MarkTaskPodLostParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
 	if err != nil {
 		return false, fmt.Errorf("marking task pod-lost: %w", err)
 	}
