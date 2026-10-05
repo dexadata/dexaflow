@@ -53,3 +53,27 @@ func TestInfraConfirmationIgnoresAMismatchingRecord(t *testing.T) {
 		t.Fatalf("a mismatching record is no evidence, got %v", got)
 	}
 }
+
+// TestRecordWithEpochOnUnparseableLabelIsNotTrusted: a pod whose epoch label
+// cannot be parsed matches no epoch, so a record that names one is not its own.
+func TestRecordWithEpochOnUnparseableLabelIsNotTrusted(t *testing.T) {
+	pod := withRecord(epochPod("p", "r1", "extract", 1, 3, corev1.PodFailed), taskoutcome.Succeeded().WithAttemptEpoch(3))
+	pod.Labels[podLabelAttemptEpoch] = "not-a-number"
+	if v := classifyPod(pod); v.fromRecord {
+		t.Fatalf("a record with an epoch on an unparseable label must not be trusted, got %+v", v)
+	}
+}
+
+// TestTeardownDoesNotTreatAMismatchingRecordAsTerminal: the teardown's terminal
+// test reads the same rule, so another execution's record does not by itself
+// mark a pod as finished.
+func TestTeardownDoesNotTreatAMismatchingRecordAsTerminal(t *testing.T) {
+	pod := withRecord(epochPod("p", "r1", "extract", 1, 3, corev1.PodRunning), taskoutcome.Succeeded().WithAttemptEpoch(2))
+	if terminalForTeardown(pod) {
+		t.Fatal("a record of another epoch must not make a running pod terminal for teardown")
+	}
+	same := withRecord(epochPod("q", "r1", "extract", 1, 3, corev1.PodRunning), taskoutcome.Succeeded().WithAttemptEpoch(3))
+	if !terminalForTeardown(same) {
+		t.Fatal("a record of the pod's own epoch makes it terminal for teardown")
+	}
+}
