@@ -224,6 +224,11 @@ self_test() {
   _eq "$(run_verdict '[{"status":"completed","conclusion":"startup_failure"}]')" "BLOCKED startup_failure" "a startup failure is never GREEN"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"cancelled"}]')" "BLOCKED cancelled" "one cancelled among successes"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"failure"},{"status":"completed","conclusion":"cancelled"}]')" "BLOCKED cancelled" "BLOCKED outranks FAILED, so FLAKE_RE never sees it"
+  # latest_runs: a guard re-run on the same commit (a label added) replaces the
+  # cancelled run it superseded; an older run of ANOTHER workflow still counts.
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"CHANGELOG guard","createdAt":"2026-10-04T10:00:00Z","status":"completed","conclusion":"cancelled"},{"workflowName":"CHANGELOG guard","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"},{"workflowName":"CI","createdAt":"2026-10-04T09:59:59Z","status":"completed","conclusion":"success"}]')")" "GREEN" "a guard run cancelled by its own re-run on the same commit is not judged"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"CI","createdAt":"2026-10-04T10:00:00Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Security","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"}]')")" "BLOCKED cancelled" "the newest run of each workflow is still judged"
+  _eq "$(run_verdict "$(latest_runs '[{"status":"completed","conclusion":"cancelled"},{"workflowName":"CI","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"}]')")" "BLOCKED cancelled" "a run without a workflow name keeps the whole list judged"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"cancelled"},{"status":"in_progress","conclusion":""}]')" "PENDING" "PENDING outranks BLOCKED"
   # And the REST shape must not regress if anything ever feeds it in.
   _eq "$(run_verdict '[{"status":"completed","conclusion":null}]')" "PENDING" "a null conclusion is treated like an empty one"
@@ -604,6 +609,17 @@ run_verdict() { # <runs-json>
   echo GREEN
 }
 
+# latest_runs <runs-json>: keeps the newest run of each workflow. A pull
+# request's guards run again on the same commit when a label changes, and the
+# concurrency group of a pull request cancels the older run, so the commit
+# carries a cancelled run next to the one that replaced it. Judging both would
+# read that commit as BLOCKED forever. A run without a workflow name leaves the
+# list as it is, so a payload of an unexpected shape is still judged in full.
+latest_runs() { # <runs-json>
+  printf '%s' "$1" | jq 'if all(.[]; (.workflowName // "") != "" and (.createdAt // "") != "")
+    then [group_by(.workflowName)[] | max_by(.createdAt)] else . end' 2>/dev/null || printf '%s' "$1"
+}
+
 # wait_sha_green <sha>: block until every run for <sha> is completed; rerun only
 # transient flakes (bounded); echo GREEN or RED. Robust to the post-rerun window
 # where gh briefly reports the prior conclusion (it waits for pending==0).
@@ -622,8 +638,9 @@ wait_sha_green() {
     # release sha's 4 runs were outside the window and the query returned 0,
     # which run_verdict reports as NONE, spinning to the deadline before dying
     # RED on a green sha.
-    j=$(gh run list --commit "$sha" --limit 100 --json databaseId,status,conclusion 2>/dev/null \
+    j=$(gh run list --commit "$sha" --limit 100 --json databaseId,status,conclusion,workflowName,createdAt 2>/dev/null \
           | jq '[.[]]' 2>/dev/null)
+    j="$(latest_runs "$j")"
     # run_verdict coerces jq's output itself, so a partial or `null` read keeps
     # the loop waiting rather than declaring a verdict.
     verdict="$(run_verdict "$j")"

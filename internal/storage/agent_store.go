@@ -59,11 +59,23 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 	// entered reschedule so its get_first_reschedule_date returns the real value and
 	// cumulative timeout works (#380). Best-effort: empty falls back to per-poke
 	// timing, never blocks the spec. Empty on the first attempt (column is NULL).
+	//
+	// The attempt budget comes from the same row: a clear restores it to the new
+	// try number + retries (#1131), past the spec's retries + 1, and the runtime
+	// fires on_failure_callback only when try_number >= max_tries (#424). Reading
+	// the spec value there would fire the callback on every retry of a cleared
+	// task. The spec value is the fallback when the row cannot be read.
 	var firstRescheduleAt string
+	attemptBudget := maxTries(task)
 	if rid, perr := parseUUID(id.RunID); perr == nil {
-		if fr, ferr := s.q.TaskInstanceFirstRescheduleAt(ctx,
-			queries.TaskInstanceFirstRescheduleAtParams{DagRunID: rid, TaskID: id.TaskID}); ferr == nil && fr.Valid {
-			firstRescheduleAt = fr.Time.UTC().Format(time.RFC3339)
+		if row, ferr := s.q.TaskInstanceAttemptFields(ctx,
+			queries.TaskInstanceAttemptFieldsParams{DagRunID: rid, TaskID: id.TaskID}); ferr == nil {
+			if row.FirstRescheduleAt.Valid {
+				firstRescheduleAt = row.FirstRescheduleAt.Time.UTC().Format(time.RFC3339)
+			}
+			if row.MaxTries > 0 {
+				attemptBudget = int(row.MaxTries)
+			}
 		}
 	}
 	var timeout int
@@ -110,7 +122,7 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 		DataIntervalEnd:   dataIntervalEnd,
 		ParamsJSON:        paramsJSON,
 		FirstRescheduleAt: firstRescheduleAt,
-		MaxTries:          maxTries(task),
+		MaxTries:          attemptBudget,
 		OnFailureCallback: task.OnFailureCallback,
 		// Carry the declared secret set (ADR 0045, ADR 0055) so a later increment
 		// can scope delivery. Data only here — no secret is filtered by it yet.
