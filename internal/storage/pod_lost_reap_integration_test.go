@@ -84,7 +84,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 		t.Fatalf("expected a running candidate")
 	}
 
-	applied, err := sched.MarkTaskPodLost(ctx, c.TaskInstanceID)
+	applied, err := sched.MarkTaskPodLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if err != nil {
 		t.Fatalf("MarkTaskPodLost: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 	}
 	// Idempotent: the WHERE state='running' guard now matches 0 rows on the
 	// second call — observable via applied=false.
-	applied, err = sched.MarkTaskPodLost(ctx, c.TaskInstanceID)
+	applied, err = sched.MarkTaskPodLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if err != nil {
 		t.Errorf("second MarkTaskPodLost errored: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestListRunningTasksExcludesWarmAttemptsIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := exec.BindWarmAttempt(ctx, runUUID, "warm", 1, "warm-worker-0"); err != nil {
+	if err := exec.BindWarmAttempt(ctx, runUUID, "warm", 1, 0, "warm-worker-0"); err != nil {
 		t.Fatalf("BindWarmAttempt: %v", err)
 	}
 

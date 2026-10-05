@@ -83,7 +83,12 @@ func BuildPod(req Request) *corev1.Pod {
 				"leoflow.io/task-id":    labelValue(req.TaskID),
 				"leoflow.io/run-id":     labelValue(req.RunID),
 				"leoflow.io/try-number": strconv.Itoa(req.TryNumber),
-				"leoflow.io/tenant-id":  labelValue(req.TenantID),
+				// The attempt epoch tells two pods of one try apart (ADR 0051
+				// amendment): teardown, presence and the reconciler's settle
+				// all pin it, so a superseded pod is never mistaken for its
+				// replacement (#1130, #901).
+				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
+				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
 			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
 		},
@@ -333,6 +338,10 @@ type PodIdentity struct {
 	RunID          string `json:"run"`
 	TaskID         string `json:"task"`
 	TryNumber      int    `json:"try"`
+	// AttemptEpoch is the execution of TryNumber this pod runs (ADR 0051
+	// amendment). nil on a pod created before the epoch existed, which the
+	// exchange then mints a legacy token for.
+	AttemptEpoch *int `json:"epoch,omitempty"`
 }
 
 // ParseAgentIdentity decodes the AgentIdentityAnnotation payload. It is the read
@@ -366,6 +375,7 @@ type agentToken struct {
 // agentTokenOf projects a Request's token fields into the shared carrier, stamping
 // the task-instance identity so the exchange path is byte-identical to before.
 func agentTokenOf(req Request) agentToken {
+	epoch := req.AttemptEpoch
 	return agentToken{
 		transport:         req.AgentTokenTransport,
 		token:             req.AgentToken,
@@ -376,6 +386,7 @@ func agentTokenOf(req Request) agentToken {
 		identity: &PodIdentity{
 			TaskInstanceID: req.TaskInstanceID, TenantID: req.TenantID, DagID: req.DagID,
 			RunID: req.RunID, TaskID: req.TaskID, TryNumber: req.TryNumber,
+			AttemptEpoch: &epoch,
 		},
 	}
 }

@@ -298,10 +298,12 @@ func (f fieldSet) Get(k string) string { return f[k] }
 // failingReporter fails every settle, as on a database outage.
 type failingReporter struct{}
 
-func (failingReporter) FailTask(context.Context, string, int, string) error {
+func (failingReporter) FailTask(context.Context, string, int, int, string) error {
 	return errors.New("db down")
 }
-func (failingReporter) SucceedTask(context.Context, string, int) error { return errors.New("db down") }
-func (failingReporter) RescheduleTask(context.Context, string, int, time.Time) error {
+func (failingReporter) SucceedTask(context.Context, string, int, int) error {
+	return errors.New("db down")
+}
+func (failingReporter) RescheduleTask(context.Context, string, int, int, time.Time) error {
 	return errors.New("db down")
 }

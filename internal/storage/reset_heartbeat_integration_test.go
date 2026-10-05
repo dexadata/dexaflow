@@ -134,7 +134,7 @@ func TestResetRailsClearLastHeartbeat(t *testing.T) {
 		rail func(t *testing.T, f *staleHeartbeatFixture)
 	}{
 		{"infra re-place after agent_lost", func(t *testing.T, f *staleHeartbeatFixture) {
-			ok, err := f.sched.MarkTaskAgentLost(f.ctx, f.tiID)
+			ok, err := f.sched.MarkTaskAgentLost(f.ctx, f.tiID, f.tryNumber(t), f.attemptEpoch(t))
 			if err != nil || !ok {
 				t.Fatalf("MarkTaskAgentLost ok=%v err=%v", ok, err)
 			}
@@ -178,7 +178,7 @@ func TestResetRailsClearLastHeartbeat(t *testing.T) {
 		}},
 		{"warm requeue", func(t *testing.T, f *staleHeartbeatFixture) {
 			f.setState(t, "queued")
-			if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t)); err != nil {
+			if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t), f.attemptEpoch(t)); err != nil {
 				t.Fatalf("RequeueForRedispatch: %v", err)
 			}
 		}},

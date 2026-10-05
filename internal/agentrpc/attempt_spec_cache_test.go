@@ -145,6 +145,9 @@ func TestAttemptSpecScopedToTheAttempt(t *testing.T) {
 		"next try":     func(id *auth.AgentIdentity) { id.TryNumber = 2; id.TaskInstanceID = "ti-2" },
 		"other tenant": func(id *auth.AgentIdentity) { id.TenantID = "globex" },
 		"other run":    func(id *auth.AgentIdentity) { id.RunID = "run-2" },
+		// A rail re-dispatches the same try under a new attempt_epoch (ADR
+		// 0051): the new execution must not inherit the fenced one's entry.
+		"next execution": func(id *auth.AgentIdentity) { id.AttemptEpoch++; id.HasAttemptEpoch = true },
 	} {
 		id := base
 		mutate(&id)

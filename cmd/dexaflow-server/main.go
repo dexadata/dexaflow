@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -1035,6 +1036,8 @@ func resilienceLadder(cfg *config.ServerConfig) executor.ResilienceLadder {
 		OrphanThreshold:              rc.OrphanThreshold,
 		InfraReplaceMaxDelay:         scheduler.InfraReplaceMaxDelay(),
 		MaxAttemptCredentialLifetime: cfg.Auth.MaxAttemptCredentialLifetime,
+		TaskTerminationGrace:         time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second,
+		InfraConfirmMaxWait:          scheduler.InfraConfirmMaxWait,
 	}
 }
 
@@ -1052,7 +1055,7 @@ func loginRateLimit(cfg *config.ServerConfig) int {
 // attempt (ADR 0058 N1d-c, H2). *storage.ExecutionStore satisfies it; a fake
 // records the calls in tests.
 type redispatchStore interface {
-	RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber int) error
+	RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int) error
 }
 
 // reclaimShouldRequeue reports whether a reclaimed warm assignment may be
@@ -1086,7 +1089,7 @@ func handleReclaim(ctx context.Context, store redispatchStore, logger *slog.Logg
 	if !reclaimShouldRequeue(ev.Reason) {
 		return
 	}
-	if err := store.RequeueForRedispatch(ctx, ev.RunID, ev.TaskID, ev.TryNumber); err != nil {
+	if err := store.RequeueForRedispatch(ctx, ev.RunID, ev.TaskID, ev.TryNumber, ev.AttemptEpoch); err != nil {
 		logger.Error("warm reclaim re-placement failed", "run", ev.RunID, "task", ev.TaskID, "try", ev.TryNumber, "err", err)
 	}
 }
@@ -1138,6 +1141,10 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
+	}
+	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment).
+	if metrics != nil {
+		agentSrv.SetLegacyTokenRecorder(metrics)
 	}
 	// The scheduler loop, its reapers and the janitors run on their own pool
 	// when database.scheduler_max_conns is set, so API traffic cannot starve
@@ -2042,8 +2049,11 @@ func buildPodInformer(ctx context.Context, cfg *config.ServerConfig, cs kubernet
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
+	// The reconciler confirms the reapers' provisional infra marks (ADR 0052
+	// amendment, part 2); the caller makes the marks provisional in step.
+	rec.SetInfraConfirmer(confirmer)
 	// Opt-in (executor.collect_settled_run_pods): collect a settled run's
 	// finished pods in one DeleteCollection; nil keeps the age-based GC only.
 	if settled != nil {
@@ -2675,7 +2685,11 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// draining or stepping-down leader from marking TIs failed or deleting pods
 	// on its way out — the successor redoes the reap under its own settling gate.
 	reaper.SetLeading(sched.IsLeading)
-	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
+	// Infra marks are provisional here, because this reconciler confirms them
+	// (ADR 0052 amendment, part 2). Lite never reaches this and keeps
+	// confirming at mark time.
+	store.SetProvisionalInfraMarks(true)
+	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
 	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with
