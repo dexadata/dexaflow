@@ -138,9 +138,10 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		// runs sharing a version decode it once, not N times. The cached spec is
 		// shared read-only: copy Tasks before applyDefaultRetries so filling a
 		// run's retry defaults never writes through the shared backing array.
-		// getForTick keeps every version this tick reads cached through the
-		// next tick, so more active versions than the cache bound never thrash.
-		_, cached, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
+		// getWithGraph, like getForTick, keeps every version this tick reads
+		// cached through the next tick, so more active versions than the cache
+		// bound never thrash.
+		cached, graph, err := s.specs.getWithGraph(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -167,6 +168,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			TenantID:          uuidToString(run.TenantID),
 			State:             domain.DagRunState(run.State),
 			Tasks:             spec.Tasks,
+			Graph:             graph,
 			States:            ts.states,
 			Tries:             ts.tries,
 			MaxTries:          ts.maxTries,

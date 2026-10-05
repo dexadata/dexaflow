@@ -25,21 +25,25 @@ type PlannedTransition struct {
 // upstream_failed only once its upstream is terminally failed. The result is
 // deterministic: identical inputs yield identical output.
 func PlanRun(run RunState) []PlannedTransition {
-	upstreams := make(map[string][]string, len(run.Tasks))
-	for _, t := range run.Tasks {
-		upstreams[t.TaskID] = t.DependsOn
+	g := run.taskGraph()
+	n := len(run.Tasks)
+	// Per-task rows are addressed by the graph's slot, not by task_id, so the
+	// planner pays one States lookup per task instead of rebuilding three maps
+	// per run. stored is the persisted state; effective folds pending retries in
+	// so downstream planning sees a retriable failure as active rather than
+	// terminal.
+	rows := make([]domain.TaskState, 2*n)
+	stored, effective := rows[:n:n], rows[n:]
+	for i, t := range run.Tasks {
+		if g.slot[i] == i {
+			stored[i] = run.States[t.TaskID]
+		}
 	}
+	copy(effective, stored)
+	decided := make([]bool, n)
+	out := make([]PlannedTransition, 0, n)
 
-	// Effective states fold pending retries in so downstream planning sees a
-	// retriable failure as active rather than terminal.
-	effective := make(map[string]domain.TaskState, len(run.States))
-	for k, v := range run.States {
-		effective[k] = v
-	}
-	decided := make(map[string]bool, len(run.Tasks))
-	out := make([]PlannedTransition, 0, len(run.Tasks))
-
-	out = append(out, planRetryTransitions(run, effective, decided)...)
+	out = planRetryTransitions(run, g, stored, effective, decided, out)
 
 	// Admission gates (ADR 0053): a scheduled task promotes to queued only if it
 	// clears BOTH the per-DAG max_active_tasks gate (Stage 1) and, on the Pro
@@ -53,13 +57,16 @@ func PlanRun(run RunState) []PlannedTransition {
 	headroom := admissionHeadroom(run)
 	promoted := 0
 	var poolPromoted map[string]int
-	for _, t := range run.Tasks {
-		if decided[t.TaskID] {
+	var upstreamStates []domain.TaskState
+	for i, t := range run.Tasks {
+		s := g.slot[i]
+		if decided[s] {
 			continue
 		}
-		switch effective[t.TaskID] {
+		switch effective[s] {
 		case domain.TaskStateNone:
-			if to, ok := decideStart(t, upstreams[t.TaskID], effective); ok {
+			upstreamStates = g.upstreamStates(run, s, effective, upstreamStates[:0])
+			if to, ok := decideStart(t, upstreamStates); ok {
 				out = append(out, PlannedTransition{TaskID: t.TaskID, To: to})
 			}
 		case domain.TaskStateScheduled:
@@ -88,6 +95,20 @@ func PlanRun(run RunState) []PlannedTransition {
 		}
 	}
 	return out
+}
+
+// upstreamStates appends the effective state of each upstream of slot s to buf.
+// An upstream outside the task list has no row, so its state comes from the
+// run's stored states, which is what the map-keyed planner read for it.
+func (g *TaskGraph) upstreamStates(run RunState, s int, effective, buf []domain.TaskState) []domain.TaskState {
+	for j, p := range g.upstream[s] {
+		if p >= 0 {
+			buf = append(buf, effective[p])
+		} else {
+			buf = append(buf, run.States[g.upstreamIDs[s][j]])
+		}
+	}
+	return buf
 }
 
 // defaultPoolName is the implicit pool a task with no declared pool draws from,
@@ -160,12 +181,12 @@ func admissionHeadroom(run RunState) int {
 // planRetryTransitions handles the retry/reschedule rail: a failed task with
 // budget moves to up_for_retry; an up_for_retry or up_for_reschedule task resets
 // to none once its cooldown/poke time elapses. It records the effective state and
-// marks each handled task decided so the main loop leaves it alone, and returns
-// the transitions to emit.
-func planRetryTransitions(run RunState, effective map[string]domain.TaskState, decided map[string]bool) []PlannedTransition {
-	out := make([]PlannedTransition, 0, len(run.Tasks))
-	for _, t := range run.Tasks {
-		switch run.States[t.TaskID] {
+// marks each handled task decided so the main loop leaves it alone, and appends
+// the transitions to emit to out. Rows are addressed by the graph's slot.
+func planRetryTransitions(run RunState, g *TaskGraph, stored, effective []domain.TaskState, decided []bool, out []PlannedTransition) []PlannedTransition {
+	for i, t := range run.Tasks {
+		s := g.slot[i]
+		switch stored[s] {
 		case domain.TaskStateFailed:
 			switch {
 			case run.InfraFailed[t.TaskID]:
@@ -189,42 +210,42 @@ func planRetryTransitions(run RunState, effective map[string]domain.TaskState, d
 				// (ADR 0052 amendment): hold the task active, whatever its
 				// budget, until confirmation or the liveness valve.
 				if awaitingInfraConfirmation(run, t.TaskID) {
-					effective[t.TaskID] = domain.TaskStateUpForRetry
-					decided[t.TaskID] = true
+					effective[s] = domain.TaskStateUpForRetry
+					decided[s] = true
 					continue
 				}
 				if infraReplaceable(run, t.TaskID) {
-					effective[t.TaskID] = domain.TaskStateUpForRetry
+					effective[s] = domain.TaskStateUpForRetry
 					if readyToInfraReplace(run, t.TaskID) {
 						out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateNone})
-						effective[t.TaskID] = domain.TaskStateNone
+						effective[s] = domain.TaskStateNone
 					}
 				}
-				decided[t.TaskID] = true
+				decided[s] = true
 			case retriable(run, t.TaskID):
 				out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateUpForRetry})
-				effective[t.TaskID] = domain.TaskStateUpForRetry
-				decided[t.TaskID] = true
+				effective[s] = domain.TaskStateUpForRetry
+				decided[s] = true
 			}
 		case domain.TaskStateUpForRetry:
 			if !readyToRetry(run, t.TaskID) {
-				decided[t.TaskID] = true
+				decided[s] = true
 				continue
 			}
 			out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateNone})
-			effective[t.TaskID] = domain.TaskStateNone
-			decided[t.TaskID] = true
+			effective[s] = domain.TaskStateNone
+			decided[s] = true
 		case domain.TaskStateUpForReschedule:
 			// Re-dispatch once reschedule_at passes, WITHOUT consuming retry budget
 			// (reschedule is not a failure); until then keep it parked so downstream
 			// waits. Mirrors the up_for_retry rail, gated on reschedule_at (#380).
 			if !readyToReschedule(run, t.TaskID) {
-				decided[t.TaskID] = true
+				decided[s] = true
 				continue
 			}
 			out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateNone})
-			effective[t.TaskID] = domain.TaskStateNone
-			decided[t.TaskID] = true
+			effective[s] = domain.TaskStateNone
+			decided[s] = true
 		default:
 			// none/scheduled/queued/running/terminal: no retry decision here.
 		}
@@ -300,11 +321,7 @@ func readyToReschedule(run RunState, taskID string) bool {
 	return !run.Now.Before(*at)
 }
 
-func decideStart(t domain.TaskSpec, deps []string, states map[string]domain.TaskState) (domain.TaskState, bool) {
-	upstreamStates := make([]domain.TaskState, 0, len(deps))
-	for _, dep := range deps {
-		upstreamStates = append(upstreamStates, states[dep])
-	}
+func decideStart(t domain.TaskSpec, upstreamStates []domain.TaskState) (domain.TaskState, bool) {
 	switch EvaluateTriggerRule(triggerRuleOf(t), upstreamStates) {
 	case DecisionSchedule:
 		return domain.TaskStateScheduled, true
