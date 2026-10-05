@@ -98,7 +98,8 @@ type Querier interface {
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateDagRun(ctx context.Context, arg CreateDagRunParams) (DagRun, error)
 	// Zero rows means the slot's run already exists (or the DAG has no current
-	// version): the caller then takes nothing from the tenant's daily run cap.
+	// version): the caller then rolls back the charge it took from the tenant's
+	// daily run cap.
 	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error)
 	// try_number starts at 1 to match Airflow (1-based attempts): the first run's
 	// logs live at .../1.log, which is where the UI's log view looks. Retries bump
@@ -112,6 +113,11 @@ type Querier interface {
 	// byte-identical to the loop — only the statement count changes (T INSERTs → 1 COPY).
 	CreateTaskInstances(ctx context.Context, arg []CreateTaskInstancesParams) (int64, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
+	// Whether run_id of the DAG dag_id in tenant tenant_id exists: the read behind
+	// a refused daily run cap charge, so a run that already exists keeps its usual
+	// answer (a no-op for a scheduled slot, a conflict for a manual run id) instead
+	// of a refusal, and nothing is written (createRunWithinDailyLimit).
+	DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDagIDParams) (bool, error)
 	DeleteConnection(ctx context.Context, arg DeleteConnectionParams) (int64, error)
 	DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, error)
 	// Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
@@ -683,8 +689,9 @@ type Querier interface {
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
 	// Takes one of the tenant's runs for the current UTC day, resetting the count
 	// when the day has turned. Zero rows means the tenant has no daily cap or has
-	// reached it; the caller tells the two apart from the limit it read. The UPDATE
-	// locks the tenant row until the caller's transaction ends, and Postgres
+	// reached it; the caller tells the two apart from the limit it read. It runs
+	// before the run's INSERT in the same transaction, so a refusal writes nothing.
+	// The UPDATE locks the tenant row until the transaction ends, and Postgres
 	// re-checks the WHERE against the row a concurrent winner committed, so the
 	// count can never pass the cap.
 	ReserveTenantDailyRun(ctx context.Context, id pgtype.UUID) (int64, error)

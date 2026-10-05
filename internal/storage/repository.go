@@ -563,23 +563,30 @@ func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run
 		conf = []byte("{}")
 	}
 	var created queries.DagRun
-	err = createRunWithinDailyLimit(ctx, r.q, r.pool, dag.TenantID, func(q *queries.Queries) (bool, error) {
-		var ierr error
-		created, ierr = q.CreateDagRun(ctx, queries.CreateDagRunParams{
-			TenantID:     dag.TenantID,
-			DagID:        dag.ID,
-			DagVersionID: dag.CurrentVersionID,
-			RunID:        run.RunID,
-			LogicalDate:  pgtype.Timestamptz{Time: run.LogicalDate, Valid: true},
-			State:        queries.DagRunState(run.State),
-			Trigger:      queries.DagRunTrigger(run.RunType),
-			Note:         strPtr(run.Note),
-			Conf:         conf,
-		})
-		if ierr != nil {
-			return false, fmt.Errorf("creating dag run: %w", mapConflict(ierr))
-		}
-		return true, nil
+	err = createRunWithinDailyLimit(ctx, r.q, r.pool, dag.TenantID, runCreation{
+		insert: func(q *queries.Queries) (bool, error) {
+			var ierr error
+			created, ierr = q.CreateDagRun(ctx, queries.CreateDagRunParams{
+				TenantID:     dag.TenantID,
+				DagID:        dag.ID,
+				DagVersionID: dag.CurrentVersionID,
+				RunID:        run.RunID,
+				LogicalDate:  pgtype.Timestamptz{Time: run.LogicalDate, Valid: true},
+				State:        queries.DagRunState(run.State),
+				Trigger:      queries.DagRunTrigger(run.RunType),
+				Note:         strPtr(run.Note),
+				Conf:         conf,
+			})
+			if ierr != nil {
+				return false, fmt.Errorf("creating dag run: %w", mapConflict(ierr))
+			}
+			return true, nil
+		},
+		exists: func(q *queries.Queries) (bool, error) {
+			return q.DagRunExistsByDagID(ctx, queries.DagRunExistsByDagIDParams{TenantID: dag.TenantID, DagID: dag.DagID, RunID: run.RunID})
+		},
+		// The answer a duplicate run id gets from the insert (dag_runs_unique).
+		existsErr: fmt.Errorf("creating dag run: %w", domain.ErrConflict),
 	})
 	if err != nil {
 		return domain.DagRun{}, err

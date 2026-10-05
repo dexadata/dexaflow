@@ -726,14 +726,21 @@ func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID
 		return fmt.Errorf("scheduled run tenant id %q: %w", tenantID, err)
 	}
 	runID := "scheduled__" + logical.UTC().Format(time.RFC3339)
-	return createRunWithinDailyLimit(ctx, s.q, s.pool, tid, func(q *queries.Queries) (bool, error) {
-		n, err := q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
-			RunID:       runID,
-			LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
-			TenantID:    tid,
-			DagID:       dagID,
-		})
-		return n > 0, err
+	return createRunWithinDailyLimit(ctx, s.q, s.pool, tid, runCreation{
+		insert: func(q *queries.Queries) (bool, error) {
+			n, err := q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
+				RunID:       runID,
+				LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
+				TenantID:    tid,
+				DagID:       dagID,
+			})
+			return n > 0, err
+		},
+		// A slot that already exists is a no-op (ON CONFLICT DO NOTHING), at
+		// the cap too.
+		exists: func(q *queries.Queries) (bool, error) {
+			return q.DagRunExistsByDagID(ctx, queries.DagRunExistsByDagIDParams{TenantID: tid, DagID: dagID, RunID: runID})
+		},
 	})
 }
 

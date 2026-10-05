@@ -112,22 +112,36 @@ func checkScheduleInterval(spec domain.DAGSpec, minSeconds int) error {
 	return nil
 }
 
-// createRunWithinDailyLimit runs insert, which creates one DAG run and reports
-// whether it did, and charges that run to the tenant's max_runs_per_day. A
-// tenant without the limit runs insert on q as before. A tenant with it runs
-// insert and the charge in one transaction: the charge locks the tenant row,
-// so concurrent triggers cannot both take the last run of the day, and a
-// refused charge rolls the run back. A run insert declined (a slot that
-// already exists) charges nothing.
-func createRunWithinDailyLimit(ctx context.Context, q *queries.Queries, pool txBeginner, tid pgtype.UUID,
-	insert func(*queries.Queries) (bool, error),
-) error {
+// runCreation is one DAG run to create under the tenant's daily run cap
+// (createRunWithinDailyLimit).
+type runCreation struct {
+	// insert creates the run on q and reports whether it did; false means the
+	// run already existed and nothing was written (ON CONFLICT DO NOTHING).
+	insert func(q *queries.Queries) (bool, error)
+	// exists reports whether the run already exists. It is read only when the
+	// cap refuses the charge, so that a run which exists gets its usual
+	// answer, existsErr (nil for a scheduled slot, a conflict for a manual
+	// run id), with or without headroom left, and nothing is written.
+	exists    func(q *queries.Queries) (bool, error)
+	existsErr error
+}
+
+// createRunWithinDailyLimit charges one run to the tenant's max_runs_per_day
+// and then creates it. A tenant without the limit runs the insert on q as
+// before. A tenant with it runs the charge and the insert in one transaction,
+// charge first: the charge locks the tenant row, so concurrent triggers cannot
+// both take the last run of the day, and a refusal (zero rows from the
+// conditional UPDATE) ends the transaction before anything is written, so the
+// retries of a capped tenant leave no dead rows in dag_runs or its indexes.
+// An insert that creates nothing (a scheduled slot that already exists) or
+// fails rolls the whole transaction back, charge included.
+func createRunWithinDailyLimit(ctx context.Context, q *queries.Queries, pool txBeginner, tid pgtype.UUID, run runCreation) error {
 	limits, err := loadTenantLimits(ctx, q, tid)
 	if err != nil {
 		return err
 	}
 	if limits.MaxRunsPerDay <= 0 {
-		_, ierr := insert(q)
+		_, ierr := run.insert(q)
 		return ierr
 	}
 	tx, err := pool.Begin(ctx)
@@ -136,17 +150,25 @@ func createRunWithinDailyLimit(ctx context.Context, q *queries.Queries, pool txB
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
 	qtx := q.WithTx(tx)
-	created, err := insert(qtx)
-	if err != nil || !created {
-		return err
-	}
 	n, err := qtx.ReserveTenantDailyRun(ctx, tid)
 	if err != nil {
 		return fmt.Errorf("charging the daily run limit: %w", err)
 	}
 	if n == 0 {
+		// Nothing has been written. A run that already exists is not a
+		// refusal: it gets the answer the insert would have given it.
+		exists, eerr := run.exists(qtx)
+		if eerr != nil {
+			return fmt.Errorf("looking up the run: %w", eerr)
+		}
+		if exists {
+			return run.existsErr
+		}
 		return domain.Safef(domain.ErrLimitExceeded,
 			"the tenant reached its limit max_runs_per_day of %d for today (UTC)", limits.MaxRunsPerDay)
+	}
+	if created, ierr := run.insert(qtx); ierr != nil || !created {
+		return ierr // the deferred rollback gives the charge back
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("committing run tx: %w", err)

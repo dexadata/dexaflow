@@ -83,8 +83,9 @@ SELECT count(*) FROM dags WHERE tenant_id = $1;
 -- name: ReserveTenantDailyRun :execrows
 -- Takes one of the tenant's runs for the current UTC day, resetting the count
 -- when the day has turned. Zero rows means the tenant has no daily cap or has
--- reached it; the caller tells the two apart from the limit it read. The UPDATE
--- locks the tenant row until the caller's transaction ends, and Postgres
+-- reached it; the caller tells the two apart from the limit it read. It runs
+-- before the run's INSERT in the same transaction, so a refusal writes nothing.
+-- The UPDATE locks the tenant row until the transaction ends, and Postgres
 -- re-checks the WHERE against the row a concurrent winner committed, so the
 -- count can never pass the cap.
 UPDATE tenants
