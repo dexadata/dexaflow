@@ -366,16 +366,22 @@ WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = ANY(sqlc.arg(task_ids)::te
 -- RUNNING one heartbeat interval before its first beat, and an inherited value
 -- from the previous attempt would make the agent-lost reaper fail it in that
 -- window.
+-- The same rails bump attempt_epoch (ADR 0051 amendment, A1), so a reset alone
+-- already fences the attempt it superseded before the next dispatch claims its
+-- own epoch (ClaimAttemptEpoch). The archive row records the superseded
+-- attempt's epoch. The archive key stays (task_instance_id, try_number) for
+-- compatibility with the previous release, so a second execution of one try is
+-- still dropped by ON CONFLICT until the key is widened (ADR 0051 amendment, A5).
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
@@ -395,6 +401,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -422,12 +429,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2 AND src.state = 'up_for_retry'
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
@@ -447,6 +454,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2 AND ti.state = 'up_for_retry';
 
@@ -461,17 +469,18 @@ WHERE ti.dag_run_id = $1 AND ti.task_id = $2 AND ti.state = 'up_for_retry';
 -- failure may re-place off-budget (an app failure at state='failed' must fall to
 -- the normal retry rail). last_failure_kind is cleared so the next attempt's
 -- outcome is classified fresh.
--- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+-- last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+-- ResetTaskInstanceToNone.
 WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
       AND src.state = 'failed' AND src.last_failure_kind = 'infra'
@@ -492,6 +501,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = ti.infra_attempts + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
   AND ti.state = 'failed' AND ti.last_failure_kind = 'infra';
@@ -503,7 +513,8 @@ WHERE ti.dag_run_id = $1 AND ti.task_id = $2
 -- and reschedule_at cleared. Unlike ResetTaskInstanceToNone (retry), try_number is
 -- PRESERVED and no task_instance_history row is archived: reschedule is not a retry,
 -- it consumes no attempt (#380). Guarded to the parked state so it is idempotent.
--- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+-- last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+-- ResetTaskInstanceToNone.
 UPDATE task_instances
 SET state = 'none',
     released_at = now(),
@@ -514,7 +525,8 @@ SET state = 'none',
     reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule';
 
 -- name: TaskInstanceAttemptFields :one
@@ -686,12 +698,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -710,6 +722,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -734,12 +747,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = sqlc.arg(dag_run_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -758,6 +771,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -885,6 +899,31 @@ SELECT EXISTS (
       AND try_number = $3
       AND state IN ('queued', 'running')
 );
+
+-- name: ClaimAttemptEpoch :one
+-- The dispatcher's claim of a new execution attempt (ADR 0051 amendment, A1).
+-- launchQueued creates the pod BEFORE it records `queued`, so a dispatch whose
+-- queued write failed is dispatched again on a later tick with no reset rail in
+-- between; without a claim here both pods would share (try_number,
+-- attempt_epoch). Bumping at dispatch gives every execution its own epoch
+-- whatever path led to it. The token (A2) and the pod label and annotation (A4)
+-- will be minted from the value returned; nothing reads it yet.
+--
+-- Guarded to the pre-dispatch states. 'queued' is included because the
+-- buffered dispatcher records queued before its worker resolves the row. A row
+-- that is running or settled is never claimed (zero rows), so a late or
+-- duplicate dispatch cannot move the epoch of the live attempt. The row is the
+-- task's latest try, matching how the dispatcher has always resolved it.
+UPDATE task_instances
+SET attempt_epoch = attempt_epoch + 1
+WHERE id = (
+    SELECT latest.id FROM task_instances latest
+    WHERE latest.dag_run_id = $1 AND latest.task_id = $2
+    ORDER BY latest.try_number DESC
+    LIMIT 1
+)
+  AND state IN ('none', 'scheduled', 'queued')
+RETURNING id, tenant_id, try_number, attempt_epoch;
 
 -- name: BindWarmAttempt :execrows
 -- Records the durable warm-attempt binding (ADR 0058 N1d-a1): the warm worker
@@ -1016,15 +1055,19 @@ WHERE id = $1 AND state = 'running';
 -- read them as lost; the warm-worker-lost reaper owns them. The grace period is
 -- applied here, before the LIMIT, so attempts still inside it never take the
 -- slots of those past it; a NULL started_at is never listed (too poorly observed
--- to reap). The reaper re-checks grace and pod liveness per candidate in Go. The
+-- to reap). The reaper re-checks grace and pod liveness per candidate in Go.
+-- heartbeated lets Lite (no pods) judge a TI whose agent died before its first
+-- heartbeat, which the agent-lost query never lists (#916). The
 -- LIMIT bounds a single tick's reap work even after a large outage; the rest
 -- are picked up next tick.
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
        d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
-       ti.started_at AS started_at
+       ti.started_at AS started_at,
+       (ti.last_heartbeat_at IS NOT NULL)::boolean AS heartbeated
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
@@ -1095,11 +1138,13 @@ WHERE dr.id = sqlc.arg(id)
 -- tick. Guarded to 'scheduled' so a report that raced the dispatch cannot clobber
 -- a row that has since progressed. try_number is untouched: this is infra, not a
 -- task failure.
--- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+-- last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+-- ResetTaskInstanceToNone.
 UPDATE task_instances
 SET dispatch_attempts = dispatch_attempts + 1,
     next_dispatch_at = $3,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 
 -- name: RecordDispatchBackpressure :exec
@@ -1141,16 +1186,19 @@ WHERE dag_run_id = sqlc.arg(dag_run_id)
 -- since reported on is left alone. warm_worker_id is cleared as in
 -- RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
 -- as on every rail that starts a new execution of the row (ADR 0051
--- amendment, A0). queued_at is cleared too, so the next queued episode stamps
--- a fresh one: MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept
--- one would make the dispatch-lost reaper fail the re-offered task as soon as
--- it is queued again.
+-- amendment, A0). The requeue is a rail, so attempt_epoch is bumped: a late
+-- start or report from the abandoned dispatch is fenced (ADR 0051, A1).
+-- queued_at is cleared too, so the next queued episode stamps a fresh one:
+-- MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept one would
+-- make the dispatch-lost reaper fail the re-offered task as soon as it is
+-- queued again.
 UPDATE task_instances
 SET state = 'scheduled',
     next_dispatch_at = sqlc.arg(next_dispatch_at),
     dispatch_attempts = dispatch_attempts + sqlc.arg(attempt_increment)::int,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1,
     queued_at = NULL
 WHERE dag_run_id = sqlc.arg(dag_run_id)
   AND task_id = sqlc.arg(task_id)
@@ -1186,11 +1234,13 @@ WHERE dag_run_id = sqlc.arg(dag_run_id)
 -- (ListBusyWarmWorkerPods), a stale binding would falsely mark the OLD (gone)
 -- worker busy. This is a same-row re-dispatch (the try_number is preserved), so
 -- the clear must happen here; a fresh try lands on a new row that is already NULL.
--- last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+-- last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+-- ResetTaskInstanceToNone.
 UPDATE task_instances
 SET state = 'scheduled',
     warm_worker_id = NULL,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3 AND state = 'queued';
 
 -- name: FailDispatchExhausted :exec

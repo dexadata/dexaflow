@@ -976,6 +976,8 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Durati
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
 			RunningSince:   since,
+			Heartbeated:    r.Heartbeated,
+			TenantID:       uuidToString(r.TenantID),
 		})
 	}
 	return out, nil
