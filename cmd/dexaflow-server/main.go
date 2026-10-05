@@ -2357,7 +2357,7 @@ func serve(s *http.Server, errCh chan<- error) {
 // agent on the host (dev only); "kubernetes" (default) launches task pods.
 func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
 	if cfg.Executor.Type == "subprocess" {
-		return setupSubprocessDispatch(cfg, sched, execStore, authn, warmPools, logger, store, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		return setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	}
 	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 }
@@ -2384,17 +2384,68 @@ func resolveAgentControlAddr(cfg *config.ServerConfig) string {
 }
 
 // setupSubprocessDispatch wires the dev-only subprocess executor (ADR 0023): it
-// runs the agent on the host with no isolation, so it is gated to dev use.
-func setupSubprocessDispatch(cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logger *slog.Logger, sink dispatch.FailureSink, metrics *observability.Metrics) (bool, io.Closer) {
+// runs the agent on the host with no isolation, so it is gated to dev use. It
+// also starts Lite's maintenance loop (#916): the reapers that mean something
+// without pods, gated on the agent process's liveness (see newLiteReaper).
+func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, store *storage.SchedulerStore, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
 	subExec := executor.NewSubprocessExecutor(cfg.Executor.AgentPath, logger)
 	subExec.SetWorkDir(cfg.Executor.SubprocessWorkDir)
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
 	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
 	setWarmPlacer(dispatcher, warmPools)
-	disp, closer := wrapBuffered(dispatcher, sink, logger, metrics, cfg.Scheduler.Dispatch)
+	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
+	var markers logs.MarkerSink
+	if ms, ok := logSink.(logs.MarkerSink); ok {
+		markers = ms
+	}
+	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger)
+	startLiteMaintenance(ctx, reaper, sched.IsLeading, logger)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
 	return true, closer
+}
+
+// liteLeadership is the slice of the scheduler the Lite reaper is gated on: when
+// this instance acquired leadership (the settling grace), whether it still
+// leads, and whether it is stepping down.
+type liteLeadership interface {
+	LeaderSince() time.Time
+	IsLeading() bool
+	SteppingDown() bool
+}
+
+// newLiteReaper builds the execution reaper for Lite (#916). Lite has no pods,
+// so it passes no pod manager, presence cache or warm lister: the pod-lost and
+// warm-worker-lost reapers are no-ops, and orphan-run is purely a metadatabase
+// signal. Agent-lost and dispatch-lost are gated on the agent process instead of
+// a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
+// and the infra re-place after either reap keeps the try number, so failing an
+// attempt whose agent is still alive could run user code twice (#911). Both
+// therefore reap only an attempt whose agent process is gone.
+//
+// The reaper sits behind the same leader-settling gate as the pod path, measured
+// from leadership: a Lite restart leaves detached agents alive with a stale
+// heartbeat, and they get the grace to re-heartbeat before anything is judged.
+// There is no informer and no reconciler, so those two conditions stay
+// satisfied. markers, when non-nil, receives the agent-lost log marker (#861).
+func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger) *executor.Reaper {
+	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
+	reaper.SetProcessLiveness(procs)
+	if markers != nil {
+		reaper.SetLogSink(markers)
+	}
+	reaper.SetLeaderSince(lead.LeaderSince)
+	reaper.SetLeading(lead.IsLeading)
+	return reaper
+}
+
+// startLiteMaintenance runs Lite's maintenance loop: the reaper pass alone,
+// leader-gated, at the pod path's cadence and under the same per-phase budget.
+// There is no reconcile phase because Lite has no pods to sweep.
+func startLiteMaintenance(ctx context.Context, reaper *executor.Reaper, leading func() bool, logger *slog.Logger) {
+	startGatedTicker(ctx, "lite-maintenance", reconcileInterval, leading, logger, func() {
+		runMaintenancePhase(ctx, "execution reaper", maintenancePhaseTimeout, reaper.ReapOnce, logger)
+	})
 }
 
 // setupK8sDispatch wires the production pod-per-task executor; it is a no-op
@@ -2464,8 +2515,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	}
 	// The execution reaper (#120/#128/#202/#527) fails stuck runs and TIs; it
 	// tears down a reaped task's pod and gates the dispatch-lost decision on real
-	// pod liveness (#474, #461), so it is wired only on the pod path. Lite/
-	// subprocess starts no maintenance loop and does no reaping.
+	// pod liveness (#474, #461). Lite builds its own reaper in
+	// setupSubprocessDispatch, gated on agent process liveness instead (#916).
 	reaper := executor.NewReaper(store, podExec, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), sched.SteppingDown)
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
 	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
