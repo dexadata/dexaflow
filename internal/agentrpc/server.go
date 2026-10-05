@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/auth"
@@ -193,10 +194,20 @@ type Server struct {
 	// indefinitely on a peer must select on this. nil (the default) keeps streams
 	// open until the peer ends them.
 	shutdown <-chan struct{}
+	// settled, when set, is called after a terminal state report is recorded, so
+	// the scheduler can tick early instead of waiting out its interval
+	// (scheduler.eager_promotion). It must not block. Unset (the default) changes
+	// nothing. Atomic because it is wired after the gRPC server starts serving.
+	settled atomic.Pointer[func()]
 	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
 	// PushXCom and FetchXCom do not reload the full task spec on every call.
 	attemptSpecs *attemptSpecCache
 }
+
+// SetSettledHook registers fn to run after an agent's terminal state report is
+// recorded. The scheduler wires its coalescing Wake here when
+// scheduler.eager_promotion is on; fn must return without blocking.
+func (s *Server) SetSettledHook(fn func()) { s.settled.Store(&fn) }
 
 // NewServer builds an AgentService server backed by the given authenticator,
 // store, and XCom service.
@@ -349,6 +360,9 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 			return &agentv1.ReportStateResponse{Acknowledged: true, ShouldTerminate: true}, nil
 		}
 		return nil, internalStatus("recording state", rerr, attemptAttrs(id)...)
+	}
+	if fn := s.settled.Load(); fn != nil && state.IsTerminal() {
+		(*fn)()
 	}
 	return &agentv1.ReportStateResponse{Acknowledged: true}, nil
 }

@@ -1173,6 +1173,12 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		if cfg.Execution.WarmPoolsEnabled {
 			agentSrv.SetLeaderCheck(sched.IsLeading)
 		}
+		// scheduler.eager_promotion: a terminal report wakes this replica's
+		// scheduler for an early tick. Only a leader acts on it; a woken follower
+		// runs its usual empty tick.
+		if cfg.Scheduler.EagerPromotion {
+			agentSrv.SetSettledHook(sched.Wake)
+		}
 		// On shutdown, drain the buffered dispatch pool (if any) so in-flight
 		// dispatches settle (success or failed via the sink) instead of leaking
 		// workers and leaving TIs stuck `queued` (#133). nil in Lite/passthrough.
@@ -2189,6 +2195,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
 	if cfg.UI.Edition == "pro" {
 		sched.EnablePools()
+	}
+	// Off by default (ADR 0062): see config.SchedulerSection.EagerPromotion.
+	if cfg.Scheduler.EagerPromotion {
+		sched.EnableEagerPromotion()
+		logger.Info("scheduler eager promotion enabled: same-tick promotion and early ticks on task completion")
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
