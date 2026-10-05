@@ -40,6 +40,20 @@ type Querier interface {
 	// attempt rather than looping. A clear resets all three (ResetDagRunToVersion),
 	// making the next genuine failure a fresh episode with a fresh budget.
 	ClaimAlertAttempt(ctx context.Context, arg ClaimAlertAttemptParams) (ClaimAlertAttemptRow, error)
+	// The dispatcher's claim of a new execution attempt (ADR 0051 amendment, A1).
+	// launchQueued creates the pod BEFORE it records `queued`, so a dispatch whose
+	// queued write failed is dispatched again on a later tick with no reset rail in
+	// between; without a claim here both pods would share (try_number,
+	// attempt_epoch). Bumping at dispatch gives every execution its own epoch
+	// whatever path led to it. The token (A2) and the pod label and annotation (A4)
+	// will be minted from the value returned; nothing reads it yet.
+	//
+	// Guarded to the pre-dispatch states. 'queued' is included because the
+	// buffered dispatcher records queued before its worker resolves the row. A row
+	// that is running or settled is never claimed (zero rows), so a late or
+	// duplicate dispatch cannot move the epoch of the live attempt. The row is the
+	// task's latest try, matching how the dispatcher has always resolved it.
+	ClaimAttemptEpoch(ctx context.Context, arg ClaimAttemptEpochParams) (ClaimAttemptEpochRow, error)
 	ClearDagRuns(ctx context.Context, dagID pgtype.UUID) (int64, error)
 	// Grant each copied built-in role the same permissions as its "default" twin.
 	CopyDefaultRolePermissions(ctx context.Context, tenantID pgtype.UUID) error
@@ -485,7 +499,8 @@ type Querier interface {
 	// tick. Guarded to 'scheduled' so a report that raced the dispatch cannot clobber
 	// a row that has since progressed. try_number is untouched: this is infra, not a
 	// task failure.
-	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
 	RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error
 	// Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
@@ -507,7 +522,8 @@ type Querier interface {
 	// and reschedule_at cleared. Unlike ResetTaskInstanceToNone (retry), try_number is
 	// PRESERVED and no task_instance_history row is archived: reschedule is not a retry,
 	// it consumes no attempt (#380). Guarded to the parked state so it is idempotent.
-	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
 	RedispatchRescheduledTaskInstance(ctx context.Context, arg RedispatchRescheduledTaskInstanceParams) error
 	RemoveFavorite(ctx context.Context, arg RemoveFavoriteParams) error
 	// The same re-open as ResetDagRunToVersion, WITHOUT touching dag_version_id: the
@@ -576,7 +592,8 @@ type Querier interface {
 	// (ListBusyWarmWorkerPods), a stale binding would falsely mark the OLD (gone)
 	// worker busy. This is a same-row re-dispatch (the try_number is preserved), so
 	// the clear must happen here; a fresh try lands on a new row that is already NULL.
-	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
 	RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error)
 	// A reschedule-mode sensor (mode='reschedule') poked not-ready: park the active TI
 	// in up_for_reschedule with its next-poke time ($3) so the scheduler re-dispatches
@@ -625,7 +642,8 @@ type Querier interface {
 	// failure may re-place off-budget (an app failure at state='failed' must fall to
 	// the normal retry rail). last_failure_kind is cleared so the next attempt's
 	// outcome is classified fresh.
-	// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
 	ResetTaskInstanceInfraReplace(ctx context.Context, arg ResetTaskInstanceInfraReplaceParams) (int64, error)
 	// Resets a TI for retry: snapshot the current per-attempt state into
 	// task_instance_history (so the UI's /tries endpoint can render one tab per
@@ -644,6 +662,12 @@ type Querier interface {
 	// RUNNING one heartbeat interval before its first beat, and an inherited value
 	// from the previous attempt would make the agent-lost reaper fail it in that
 	// window.
+	// The same rails bump attempt_epoch (ADR 0051 amendment, A1), so a reset alone
+	// already fences the attempt it superseded before the next dispatch claims its
+	// own epoch (ClaimAttemptEpoch). The archive row records the superseded
+	// attempt's epoch. The archive key stays (task_instance_id, try_number) for
+	// compatibility with the previous release, so a second execution of one try is
+	// still dropped by ON CONFLICT until the key is widened (ADR 0051 amendment, A5).
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error

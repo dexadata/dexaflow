@@ -94,6 +94,56 @@ func (q *Queries) ClaimAlertAttempt(ctx context.Context, arg ClaimAlertAttemptPa
 	return i, err
 }
 
+const claimAttemptEpoch = `-- name: ClaimAttemptEpoch :one
+UPDATE task_instances
+SET attempt_epoch = attempt_epoch + 1
+WHERE id = (
+    SELECT latest.id FROM task_instances latest
+    WHERE latest.dag_run_id = $1 AND latest.task_id = $2
+    ORDER BY latest.try_number DESC
+    LIMIT 1
+)
+  AND state IN ('none', 'scheduled', 'queued')
+RETURNING id, tenant_id, try_number, attempt_epoch
+`
+
+type ClaimAttemptEpochParams struct {
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+	TaskID   string      `json:"task_id"`
+}
+
+type ClaimAttemptEpochRow struct {
+	ID           pgtype.UUID `json:"id"`
+	TenantID     pgtype.UUID `json:"tenant_id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+}
+
+// The dispatcher's claim of a new execution attempt (ADR 0051 amendment, A1).
+// launchQueued creates the pod BEFORE it records `queued`, so a dispatch whose
+// queued write failed is dispatched again on a later tick with no reset rail in
+// between; without a claim here both pods would share (try_number,
+// attempt_epoch). Bumping at dispatch gives every execution its own epoch
+// whatever path led to it. The token (A2) and the pod label and annotation (A4)
+// will be minted from the value returned; nothing reads it yet.
+//
+// Guarded to the pre-dispatch states. 'queued' is included because the
+// buffered dispatcher records queued before its worker resolves the row. A row
+// that is running or settled is never claimed (zero rows), so a late or
+// duplicate dispatch cannot move the epoch of the live attempt. The row is the
+// task's latest try, matching how the dispatcher has always resolved it.
+func (q *Queries) ClaimAttemptEpoch(ctx context.Context, arg ClaimAttemptEpochParams) (ClaimAttemptEpochRow, error) {
+	row := q.db.QueryRow(ctx, claimAttemptEpoch, arg.DagRunID, arg.TaskID)
+	var i ClaimAttemptEpochRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.TryNumber,
+		&i.AttemptEpoch,
+	)
+	return i, err
+}
+
 const countActiveDagRunsByDagID = `-- name: CountActiveDagRunsByDagID :one
 SELECT count(*) FROM dag_runs
 WHERE dag_id = $1 AND state IN ('queued', 'running')
@@ -339,7 +389,7 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 const createTaskInstance = `-- name: CreateTaskInstance :one
 INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch
 `
 
 type CreateTaskInstanceParams struct {
@@ -398,6 +448,7 @@ func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstance
 		&i.InfraAttempts,
 		&i.WarmWorkerID,
 		&i.ReleasedAt,
+		&i.AttemptEpoch,
 	)
 	return i, err
 }
@@ -1554,7 +1605,7 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 }
 
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch FROM task_instances
 WHERE dag_run_id = $1
 ORDER BY task_id
 `
@@ -1600,6 +1651,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UU
 			&i.InfraAttempts,
 			&i.WarmWorkerID,
 			&i.ReleasedAt,
+			&i.AttemptEpoch,
 		); err != nil {
 			return nil, err
 		}
@@ -1612,7 +1664,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UU
 }
 
 const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch FROM task_instances
 WHERE dag_run_id = ANY($1::uuid[])
 ORDER BY dag_run_id, task_id
 `
@@ -1662,6 +1714,7 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 			&i.InfraAttempts,
 			&i.WarmWorkerID,
 			&i.ReleasedAt,
+			&i.AttemptEpoch,
 		); err != nil {
 			return nil, err
 		}
@@ -1953,7 +2006,8 @@ const recordDispatchFailure = `-- name: RecordDispatchFailure :exec
 UPDATE task_instances
 SET dispatch_attempts = dispatch_attempts + 1,
     next_dispatch_at = $3,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
 `
 
@@ -1969,7 +2023,8 @@ type RecordDispatchFailureParams struct {
 // tick. Guarded to 'scheduled' so a report that raced the dispatch cannot clobber
 // a row that has since progressed. try_number is untouched: this is infra, not a
 // task failure.
-// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+// ResetTaskInstanceToNone.
 func (q *Queries) RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error {
 	_, err := q.db.Exec(ctx, recordDispatchFailure, arg.DagRunID, arg.TaskID, arg.NextDispatchAt)
 	return err
@@ -2020,7 +2075,8 @@ SET state = 'none',
     reschedule_at = NULL,
     last_failure_kind = NULL,
     warm_worker_id = NULL,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule'
 `
 
@@ -2035,7 +2091,8 @@ type RedispatchRescheduledTaskInstanceParams struct {
 // and reschedule_at cleared. Unlike ResetTaskInstanceToNone (retry), try_number is
 // PRESERVED and no task_instance_history row is archived: reschedule is not a retry,
 // it consumes no attempt (#380). Guarded to the parked state so it is idempotent.
-// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+// ResetTaskInstanceToNone.
 func (q *Queries) RedispatchRescheduledTaskInstance(ctx context.Context, arg RedispatchRescheduledTaskInstanceParams) error {
 	_, err := q.db.Exec(ctx, redispatchRescheduledTaskInstance, arg.DagRunID, arg.TaskID)
 	return err
@@ -2139,7 +2196,8 @@ const requeueForRedispatch = `-- name: RequeueForRedispatch :execrows
 UPDATE task_instances
 SET state = 'scheduled',
     warm_worker_id = NULL,
-    last_heartbeat_at = NULL
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3 AND state = 'queued'
 `
 
@@ -2170,7 +2228,8 @@ type RequeueForRedispatchParams struct {
 // (ListBusyWarmWorkerPods), a stale binding would falsely mark the OLD (gone)
 // worker busy. This is a same-row re-dispatch (the try_number is preserved), so
 // the clear must happen here; a fresh try lands on a new row that is already NULL.
-// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+// ResetTaskInstanceToNone.
 func (q *Queries) RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueForRedispatch, arg.DagRunID, arg.TaskID, arg.TryNumber)
 	if err != nil {
@@ -2235,12 +2294,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $3
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -2259,6 +2318,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -2339,12 +2399,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $3 AND src.task_id = $4
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -2363,6 +2423,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -2407,12 +2468,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2 AND src.state = 'up_for_retry'
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
@@ -2432,6 +2493,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2 AND ti.state = 'up_for_retry'
 `
@@ -2461,12 +2523,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
       AND src.state = 'failed' AND src.last_failure_kind = 'infra'
@@ -2487,6 +2549,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = ti.infra_attempts + 1
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
   AND ti.state = 'failed' AND ti.last_failure_kind = 'infra'
@@ -2507,7 +2570,8 @@ type ResetTaskInstanceInfraReplaceParams struct {
 // failure may re-place off-budget (an app failure at state='failed' must fall to
 // the normal retry rail). last_failure_kind is cleared so the next attempt's
 // outcome is classified fresh.
-// last_heartbeat_at is cleared for the reason given on ResetTaskInstanceToNone.
+// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+// ResetTaskInstanceToNone.
 func (q *Queries) ResetTaskInstanceInfraReplace(ctx context.Context, arg ResetTaskInstanceInfraReplaceParams) (int64, error) {
 	result, err := q.db.Exec(ctx, resetTaskInstanceInfraReplace, arg.DagRunID, arg.TaskID)
 	if err != nil {
@@ -2521,12 +2585,12 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
     WHERE src.dag_run_id = $3 AND src.task_id = $4
     ON CONFLICT (task_instance_id, try_number) DO NOTHING
@@ -2546,6 +2610,7 @@ SET state = 'none',
     last_failure_kind = NULL,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
+    attempt_epoch = ti.attempt_epoch + 1,
     infra_attempts = 0,
     -- Restore the retry budget from the task (#1131), as Airflow's
     -- clear_task_instances does with max_tries = try_number + task.retries. Here
@@ -2586,6 +2651,12 @@ type ResetTaskInstanceToNoneParams struct {
 // RUNNING one heartbeat interval before its first beat, and an inherited value
 // from the previous attempt would make the agent-lost reaper fail it in that
 // window.
+// The same rails bump attempt_epoch (ADR 0051 amendment, A1), so a reset alone
+// already fences the attempt it superseded before the next dispatch claims its
+// own epoch (ClaimAttemptEpoch). The archive row records the superseded
+// attempt's epoch. The archive key stays (task_instance_id, try_number) for
+// compatibility with the previous release, so a second execution of one try is
+// still dropped by ON CONFLICT until the key is widened (ADR 0051 amendment, A5).
 func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error {
 	_, err := q.db.Exec(ctx, resetTaskInstanceToNone,
 		arg.SpecRetries,
@@ -2813,7 +2884,7 @@ const updateTaskInstanceState = `-- name: UpdateTaskInstanceState :one
 UPDATE task_instances
 SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch
 `
 
 type UpdateTaskInstanceStateParams struct {
@@ -2863,6 +2934,7 @@ func (q *Queries) UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskIns
 		&i.InfraAttempts,
 		&i.WarmWorkerID,
 		&i.ReleasedAt,
+		&i.AttemptEpoch,
 	)
 	return i, err
 }
