@@ -178,7 +178,7 @@ func TestResetRailsClearLastHeartbeat(t *testing.T) {
 		}},
 		{"warm requeue", func(t *testing.T, f *staleHeartbeatFixture) {
 			f.setState(t, "queued")
-			if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t)); err != nil {
+			if err := f.exec.RequeueForRedispatch(f.ctx, f.runUUID, "t", f.tryNumber(t), f.attemptEpoch(t)); err != nil {
 				t.Fatalf("RequeueForRedispatch: %v", err)
 			}
 		}},
