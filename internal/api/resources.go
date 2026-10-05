@@ -495,7 +495,7 @@ func validateParamValue(schema, value json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("parsing schema: %w", err)
 	}
-	comp := jsonschema.NewCompiler()
+	comp := domain.NewTenantSchemaCompiler()
 	if aerr := comp.AddResource("param_schema.json", doc); aerr != nil {
 		return fmt.Errorf("loading schema: %w", aerr)
 	}
