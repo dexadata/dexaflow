@@ -14,9 +14,9 @@ import (
 )
 
 // ErrAtCapacity is returned by BufferedDispatcher.Dispatch when the buffered
-// queue cannot accept another request. The scheduler treats it exactly like a
-// transient inner-dispatcher error: log + metric + leave the TI scheduled so
-// the next tick re-tries. It is the backpressure signal that bounds tick
+// queue cannot accept another request. It travels with executor.Deferred: the
+// scheduler leaves the TI scheduled so a later tick re-tries, without counting
+// it as a failed dispatch. It is the backpressure signal that bounds tick
 // latency under load (ADR 0031: tick rate decoupled from executor latency).
 var ErrAtCapacity = errors.New("dispatch buffer at capacity; will retry next tick")
 
@@ -38,6 +38,17 @@ type Inner interface {
 // `running`).
 type FailureSink interface {
 	MarkTaskDispatchFailed(ctx context.Context, runID, taskID, reason string) error
+}
+
+// RetrySink is a FailureSink that can also re-offer a task whose dispatch failed
+// in a worker, given the disposition the inner dispatcher classified the error
+// as. When the sink implements it, a worker failure is handled the way the
+// scheduler handles a synchronous one (scheduler.AsyncDispatchFailures):
+// backpressure and transient errors put the task back to scheduled with a
+// backoff instead of failing it. A plain FailureSink keeps failing the task.
+type RetrySink interface {
+	FailureSink
+	HandleDispatchFailure(ctx context.Context, runID, taskID string, disp executor.Disposition, cause error) error
 }
 
 // MetricsRecorder records dispatch-pool observability signals.
@@ -126,10 +137,10 @@ func NewBuffered(inner Inner, sink FailureSink, logger *slog.Logger, metrics Met
 // Dispatch hands a task off to the inner dispatcher. In passthrough mode the
 // inner call happens inline. In buffered mode the request is enqueued non-
 // blockingly: success returns (Dispatched, nil) immediately (the scheduler then
-// records the TI as `queued`); a full or closed channel returns (Rejected,
-// ErrAtCapacity). Rejected preserves today's behavior exactly: ErrAtCapacity is
-// a plain error, which the old scheduler classified as permanent — the bounded
-// path that leaves the TI scheduled for the next tick.
+// records the TI as `queued`); a full or closed channel returns (Deferred,
+// ErrAtCapacity). Deferred tells the scheduler nothing was attempted, so the TI
+// stays scheduled for a later tick without touching its dispatch-attempt budget
+// (review item S2: a full buffer is backpressure, not a dispatch failure).
 func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID string, task domain.TaskSpec) (executor.Disposition, error) {
 	if b.queue == nil {
 		return b.inner.Dispatch(ctx, runID, dagID, dagVersionID, task)
@@ -143,7 +154,7 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 		if b.metrics != nil {
 			b.metrics.RecordDispatchAtCapacity()
 		}
-		return executor.Rejected, ErrAtCapacity
+		return executor.Deferred, ErrAtCapacity
 	}
 	select {
 	case b.queue <- dispatchRequest{runID: runID, dagID: dagID, dagVersionID: dagVersionID, task: task}:
@@ -155,7 +166,7 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 		if b.metrics != nil {
 			b.metrics.RecordDispatchAtCapacity()
 		}
-		return executor.Rejected, ErrAtCapacity
+		return executor.Deferred, ErrAtCapacity
 	}
 }
 
@@ -228,18 +239,25 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 	// would leave a `queued` TI without a runner. Hanging is bounded from two
 	// sides instead: the Kubernetes client carries a per-call timeout, and
 	// Close stops waiting after cfg.DrainTimeout (#463).
-	// The async buffer path reports any dispatch failure via the sink verbatim
-	// and does not act on classification (it never did — a queued TI whose async
-	// dispatch failed is failed, not re-offered), so the disposition is ignored
-	// here.
-	if _, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task); err != nil { //nolint:contextcheck // worker intentionally detaches from the caller's ctx
-		b.logger.Error("dispatch failed in worker",
-			"run", req.runID, "dag", req.dagID, "task", req.task.TaskID, "error", err)
-		if b.metrics != nil {
-			b.metrics.RecordDispatchInnerError()
-		}
-		b.reportFailure(req, "dispatch_failed: "+err.Error())
+	// The disposition goes to a RetrySink, which re-offers backpressure and
+	// transient errors like the synchronous path does; a plain sink fails the TI.
+	disp, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task) //nolint:contextcheck // worker intentionally detaches from the caller's ctx
+	if err == nil {
+		return
 	}
+	b.logger.Error("dispatch failed in worker",
+		"run", req.runID, "dag", req.dagID, "task", req.task.TaskID, "disposition", disp.String(), "error", err)
+	if b.metrics != nil {
+		b.metrics.RecordDispatchInnerError()
+	}
+	if rs, ok := b.sink.(RetrySink); ok {
+		if herr := rs.HandleDispatchFailure(context.Background(), req.runID, req.task.TaskID, disp, err); herr != nil { //nolint:contextcheck // worker intentionally uses a fresh context for the failure report
+			b.logger.Error("re-offering a failed dispatch",
+				"run", req.runID, "task", req.task.TaskID, "error", herr)
+		}
+		return
+	}
+	b.reportFailure(req, "dispatch_failed: "+err.Error())
 }
 
 // reportFailure marks the TI failed via the sink if one is configured. A sink
