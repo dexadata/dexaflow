@@ -3,6 +3,7 @@ package logs
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -171,8 +172,21 @@ func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
 // the attempt, so a second stream opened once the previous one has closed
 // appends instead of overwriting. Two writers live at the same time (a
 // reconnect before the old stream ended) can still overwrite each other's
-// segments, as they overwrite each other's object in the single layout. A failed
-// probe is logged and the writer starts at segment zero.
+// segments, as they overwrite each other's object in the single layout.
+//
+// When the probe for the stored segments fails, even after its retries, Open
+// refuses the stream instead of guessing where the attempt ends. Starting at
+// segment zero, as it once did, overwrote the first stream of an attempt on
+// every reconnect whenever the store answered the probe with something other
+// than not-found (S3 answers AccessDenied, not NoSuchKey, to a caller without
+// s3:ListBucket; a 503 does the same for a moment), and writing the lines to
+// the single object instead is no safer: the single layout overwrites too, and
+// the Get that would seed an append fails exactly like the probe did, so the
+// writer cannot tell an absent object from a denied one. The lines of a refused
+// stream are not shipped, the agent is told which step failed (StreamLogs) and
+// keeps running, and every line already stored for the attempt stays where it
+// is. The store is checked for this answer at boot (checkSegmentedLayout), so
+// in practice only a failure that outlasts the retries gets here.
 func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
@@ -183,9 +197,9 @@ func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 	}
 	first, err := o.countSegments(ref)
 	if err != nil {
-		o.logger.Warn("probing stored log segments failed; starting at segment zero",
-			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
-		first = 0
+		o.logger.Warn("probing stored log segments failed; refusing the log stream rather than overwriting a stored segment",
+			"key", logSafe(o.segmentKey(ref, first)), "error", logSafe(err.Error()))
+		return nil, fmt.Errorf("probing stored log segments: %w", err)
 	}
 	keyFn := func(n int) string { return o.segmentKey(ref, n) }
 	return newObjectWriter(o.ctx, o.store, keyFn, true, first, o.logger), nil
@@ -193,19 +207,44 @@ func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 
 // countSegments returns how many contiguous segments are stored for ref. A
 // writer only starts segment n+1 after segment n was stored, so the first
-// missing number ends the attempt.
+// missing number ends the attempt. Each probe is retried on a failure other
+// than not-found (see getRetrying); with an error, the count is the number of
+// the segment whose probe failed.
 func (o *ObjectSink) countSegments(ref Ref) (int, error) {
 	for n := 0; ; n++ {
-		rc, err := o.store.Get(o.ctx, o.segmentKey(ref, n))
+		rc, err := o.getRetrying(o.ctx, o.segmentKey(ref, n), objectProbeAttempts)
 		if errors.Is(err, ErrObjectNotFound) {
 			return n, nil
 		}
 		if err != nil {
-			return 0, err
+			return n, err
 		}
 		if cerr := rc.Close(); cerr != nil {
-			return 0, cerr
+			return n, cerr
 		}
+	}
+}
+
+// getRetrying issues a Get for key and, on a failure other than not-found,
+// tries again up to attempts times in all, waiting objectProbeBackoff before
+// the second try and twice as long before each later one, or until ctx ends.
+// It serves the probes of the segmented layout, which look for the first
+// MISSING segment: not-found is the answer they are after and comes back at
+// once, while a transient failure (a 503 SlowDown) must not pass for one,
+// because the caller decides from it where an attempt ends.
+func (o *ObjectSink) getRetrying(ctx context.Context, key string, attempts int) (io.ReadCloser, error) {
+	backoff := objectProbeBackoff
+	for n := 1; ; n++ {
+		rc, err := o.store.Get(ctx, key)
+		if err == nil || errors.Is(err, ErrObjectNotFound) || n >= attempts {
+			return rc, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(backoff):
+		}
+		backoff *= 2
 	}
 }
 
@@ -221,8 +260,11 @@ func (o *ObjectSink) countSegments(ref Ref) (int, error) {
 // returns 403 AccessDenied to a caller without s3:ListBucket) cannot fail its
 // reads. The price: a segmented attempt that also holds a reaper marker reads
 // back as the marker alone once the layout is switched back to single. The
-// segmented layout probes segment zero first and falls back to {try}.log when
-// that probe fails for any reason.
+// segmented layout probes segment zero first, retrying a failure other than
+// not-found once, and falls back to {try}.log when the probe still fails; when
+// that object is missing as well, the probe's failure is what the caller gets,
+// not an absent log, so a store outage does not read as a task that logged
+// nothing.
 func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
@@ -245,17 +287,24 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 		}
 		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
 	}
-	first, err := o.store.Get(o.ctx, o.segmentKey(ref, 0))
-	switch {
-	case err == nil:
+	first, err := o.getRetrying(o.ctx, o.segmentKey(ref, 0), objectReadProbeAttempts)
+	if err == nil {
 		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
-	case !errors.Is(err, ErrObjectNotFound):
+	}
+	probeFailed := !errors.Is(err, ErrObjectNotFound)
+	if probeFailed {
 		o.logger.Warn("probing log segment failed; reading the single object",
 			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
 	}
-	rc, err := o.store.Get(o.ctx, o.key(ref))
-	if err != nil {
-		return nil, fmt.Errorf("reading log object: %w", err)
+	rc, gerr := o.store.Get(o.ctx, o.key(ref))
+	if gerr != nil {
+		if probeFailed && errors.Is(gerr, ErrObjectNotFound) {
+			// Nothing says the attempt has no log: the probe failed for a reason
+			// other than not-found, so its segments may well be there. Report
+			// that failure, not an absence the UI would show as "no logs".
+			return nil, fmt.Errorf("probing log segment: %w", err)
+		}
+		return nil, fmt.Errorf("reading log object: %w", gerr)
 	}
 	return rc, nil
 }
@@ -295,25 +344,43 @@ func (r *segmentReader) Read(p []byte) (int, error) {
 
 // advance opens the next segment, or the single object once the segments run
 // out, leaving cur nil when nothing is left.
+//
+// Not-found is the only normal end: the first missing segment ends the
+// segments, and a missing single object ends the log. Any other failure, after
+// the retry, is returned, so the client's read ends with an error after the
+// bytes already served (see Read) instead of a complete-looking log that is
+// missing its tail. By the time a probe fails here at least one segment has
+// been served, so the warning on the control-plane log names how many. A store
+// that answers a missing key with AccessDenied (S3 without s3:ListBucket) would
+// turn every complete log into such an error, which is why the segmented
+// layout checks the store's answer at boot (checkSegmentedLayout) and refuses
+// to start on one; after that check the failures seen here are the store's
+// own (a 503, expired credentials, a canceled context), and hiding them would
+// hide a truncated log.
 func (r *segmentReader) advance() error {
 	if r.tailed {
 		return nil
 	}
-	rc, err := r.sink.store.Get(r.sink.ctx, r.sink.segmentKey(r.ref, r.next))
+	key := r.sink.segmentKey(r.ref, r.next)
+	rc, err := r.sink.getRetrying(r.sink.ctx, key, objectReadProbeAttempts)
 	if err == nil {
 		r.cur, r.next = rc, r.next+1
 		return nil
 	}
 	if !errors.Is(err, ErrObjectNotFound) {
-		return fmt.Errorf("reading log segment: %w", err)
+		r.sink.logger.Warn("probing the next log segment failed; the read ends with an error after the segments served",
+			"key", logSafe(key), "segments", r.next, "error", logSafe(err.Error()))
+		return fmt.Errorf("probing log segment %d after %d served: %w", r.next, r.next, err)
 	}
 	r.tailed = true
-	rc, err = r.sink.store.Get(r.sink.ctx, r.sink.key(r.ref))
+	rc, err = r.sink.getRetrying(r.sink.ctx, r.sink.key(r.ref), objectReadProbeAttempts)
 	switch {
 	case err == nil:
 		r.cur = rc
 	case !errors.Is(err, ErrObjectNotFound):
-		return fmt.Errorf("reading log object: %w", err)
+		r.sink.logger.Warn("reading the log object after its segments failed; the read ends with an error after the segments served",
+			"key", logSafe(r.sink.key(r.ref)), "segments", r.next, "error", logSafe(err.Error()))
+		return fmt.Errorf("reading the log object after %d segments: %w", r.next, err)
 	}
 	return nil
 }
@@ -429,6 +496,15 @@ var (
 	// segment and starts the next one. It bounds both the bytes a flush uploads
 	// and the writer's memory, at the cost of one Get per segment on read.
 	objectSegmentBytes = 4 << 20 // 4 MiB
+	// objectProbeAttempts is how many times in all a probe of the segmented
+	// layout (a Get expected to answer not-found: where does the attempt end?)
+	// is tried when it fails otherwise, with objectProbeBackoff before the
+	// second try and twice as long before each later one. Open and the boot
+	// self-check use it; a read retries once (objectReadProbeAttempts), since a
+	// reader is waiting for the answer and serves what it has either way.
+	objectProbeAttempts     = 3
+	objectReadProbeAttempts = 2
+	objectProbeBackoff      = 200 * time.Millisecond
 )
 
 // shouldFlush reports whether an unflushed tail of the given size, over an
@@ -642,6 +718,32 @@ func (w *objectWriter) Close() error {
 	return w.flush(w.ctx)
 }
 
+// checkSegmentedLayout verifies that the store answers a key that cannot exist
+// with ErrObjectNotFound, which the segmented layout depends on: its writer
+// finds where an attempt ends by probing for the first missing segment, and its
+// reader finds the last one the same way. A store that answers such a probe
+// with anything else (S3 answers AccessDenied, not NoSuchKey, to a caller
+// without s3:ListBucket) would have every stream refused (Open) and every read
+// of a complete log end in an error after its last segment
+// (segmentReader.advance); checked once at boot, it is a configuration error
+// with a message naming the permission. The probe is retried like the layout's
+// own probes, so one transient failure does not refuse a boot. The key lives
+// under the sink's prefix with a name no Ref maps to and a random suffix, and
+// nothing is ever written to it.
+func (o *ObjectSink) checkSegmentedLayout(ctx context.Context) error {
+	key := path.Join(o.prefix, ".probe-"+rand.Text())
+	rc, err := o.getRetrying(ctx, key, objectProbeAttempts)
+	switch {
+	case errors.Is(err, ErrObjectNotFound):
+		return nil
+	case err == nil:
+		_ = rc.Close() //nolint:errcheck // the body is discarded; the error that matters is the key that should not exist
+		return fmt.Errorf("object log layout %q: the store returned an object for %s, a key that cannot exist", o.layout, key)
+	}
+	return fmt.Errorf("object log layout %q needs the object store to answer a missing key with not-found, but a GET of %s (a key that cannot exist) kept failing: %w; on S3 grant s3:ListBucket on the bucket (without it a missing key answers AccessDenied instead of NoSuchKey), or use layout %q",
+		o.layout, key, err, ObjectLayoutSingle)
+}
+
 // NewDurableSink selects the durable log sink from configuration. The default —
 // an empty or "disk" backend — returns a DiskSink rooted at dir, so Lite and
 // every deployment that does not opt in keep the exact on-disk behavior. The
@@ -651,7 +753,10 @@ func (w *objectWriter) Close() error {
 // silently falling back. logger is the process's configured logger, carried to
 // the object sink so its retry warnings honor that contract (see
 // NewObjectSink); the disk sink ignores it, and so it does opts. An unknown
-// object layout is rejected like an unknown backend.
+// object layout is rejected like an unknown backend, and so is the segmented
+// layout on a store that does not answer a missing key with not-found
+// (checkSegmentedLayout), so that misconfiguration fails the boot with the
+// permission to grant instead of failing every attempt's stream.
 func NewDurableSink(ctx context.Context, backend, dir string, store ObjectStore, prefix string, logger *slog.Logger, opts ...ObjectOption) (Sink, error) {
 	switch backend {
 	case "", "disk":
@@ -662,7 +767,12 @@ func NewDurableSink(ctx context.Context, backend, dir string, store ObjectStore,
 		}
 		sink := NewObjectSink(ctx, store, prefix, logger, opts...)
 		switch sink.layout {
-		case "", ObjectLayoutSingle, ObjectLayoutSegmented:
+		case "", ObjectLayoutSingle:
+			return sink, nil
+		case ObjectLayoutSegmented:
+			if err := sink.checkSegmentedLayout(ctx); err != nil {
+				return nil, err
+			}
 			return sink, nil
 		default:
 			return nil, fmt.Errorf("unknown object log layout %q (want %q or %q)", sink.layout, ObjectLayoutSingle, ObjectLayoutSegmented)
