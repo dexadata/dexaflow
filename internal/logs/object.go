@@ -526,18 +526,25 @@ func (w *objectWriter) runFlusher(ctx context.Context) {
 // When the flusher already has a Put in flight the write does not wait for it:
 // the next trigger picks the tail up.
 func (w *objectWriter) WriteEvent(ev Event) error {
-	line := EncodeLine(ev) + "\n"
+	return w.WriteLine(EncodeLine(ev))
+}
+
+// WriteLine buffers a line already encoded by EncodeLine, so a caller that also
+// publishes the line encodes it once. Same cap and flush rules as WriteEvent.
+func (w *objectWriter) WriteLine(line string) error {
 	w.mu.Lock()
-	if w.sealed+len(w.buf)+len(line) > maxBufferedAttemptBytes {
+	n := len(line) + 1 // the line plus its newline
+	if w.sealed+len(w.buf)+n > maxBufferedAttemptBytes {
 		w.mu.Unlock()
 		return fmt.Errorf("task attempt log exceeds the %d-byte object-sink buffer cap; not buffering further lines", maxBufferedAttemptBytes)
 	}
-	if cap(w.buf)-len(w.buf) < len(line) {
+	if cap(w.buf)-len(w.buf) < n {
 		// Double rather than append's gentler growth for large slices: an attempt's
 		// buffer grows to megabytes and every regrowth copies it.
-		w.buf = slices.Grow(w.buf, max(len(line), len(w.buf)))
+		w.buf = slices.Grow(w.buf, max(n, len(w.buf)))
 	}
 	w.buf = append(w.buf, line...)
+	w.buf = append(w.buf, '\n')
 	due := w.dueLocked()
 	w.mu.Unlock()
 	if due && w.flushMu.TryLock() {

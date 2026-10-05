@@ -52,6 +52,7 @@ dexaflow lite [path] [flags]
 * [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow lite backup](/reference/cli/dexaflow_lite_backup/)	 - Snapshot the Lite install (workspace + datastore + config) into a portable archive.
 * [dexaflow lite forget](/reference/cli/dexaflow_lite_forget/)	 - Remove a DAG (and all its history) from the Lite registry without touching the source files.
+* [dexaflow lite migrate-key](/reference/cli/dexaflow_lite_migrate-key/)	 - Move stored connection secrets off the key published in this repository, onto a key only this install has.
 * [dexaflow lite provision](/reference/cli/dexaflow_lite_provision/)	 - Check and provision the local deps the from-source `dexaflow lite` loop needs.
 * [dexaflow lite reset-password](/reference/cli/dexaflow_lite_reset-password/)	 - Reset the Dexaflow Lite admin password.
 * [dexaflow lite restore](/reference/cli/dexaflow_lite_restore/)	 - Restore a Lite install from an archive produced by `dexaflow lite backup`.

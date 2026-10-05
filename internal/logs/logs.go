@@ -144,6 +144,14 @@ type LogWriter interface {
 	Close() error
 }
 
+// LineWriter is implemented by LogWriters that also accept a line already
+// encoded by EncodeLine (without the trailing newline), so a caller that both
+// stores and publishes a line encodes it once. DiskSink and ObjectSink writers
+// implement it; a caller type-asserts and falls back to WriteEvent.
+type LineWriter interface {
+	WriteLine(line string) error
+}
+
 // Sink stores and retrieves task logs.
 type Sink interface {
 	Open(ref Ref) (LogWriter, error)
@@ -380,6 +388,17 @@ func (w *diskWriter) WriteEvent(ev Event) error {
 		return fmt.Errorf("encoding log event: %w", err)
 	}
 	if _, err := w.buf.Write(append(encoded, '\n')); err != nil {
+		return fmt.Errorf("writing log line: %w", err)
+	}
+	return nil
+}
+
+// WriteLine appends a line already encoded by EncodeLine.
+func (w *diskWriter) WriteLine(line string) error {
+	if _, err := w.buf.WriteString(line); err != nil {
+		return fmt.Errorf("writing log line: %w", err)
+	}
+	if err := w.buf.WriteByte('\n'); err != nil {
 		return fmt.Errorf("writing log line: %w", err)
 	}
 	return nil

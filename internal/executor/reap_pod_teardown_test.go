@@ -221,3 +221,55 @@ func TestOrphanReaper_DeletesRunPods(t *testing.T) {
 		t.Errorf("expected run-a pods deleted, got %v", pods.deletedRuns)
 	}
 }
+
+// TestOrphanReaper_NoopReapSkipsTeardown: when the store's atomic re-check finds
+// the run is no longer orphaned (a task instance moved, or activity landed,
+// between the list and the reap), ReapRun reports a no-op and the reaper must
+// NOT tear down the run's pods: the run is still live and those pods are doing
+// its work. The no-op is metered separately from a real reap.
+func TestOrphanReaper_NoopReapSkipsTeardown(t *testing.T) {
+	now := time.Now().UTC()
+	store := &fakeReapStore{
+		candidates: []ReapCandidate{{RunID: "run-a", DagID: "etl", LastActivity: now.Add(-10 * time.Minute)}},
+		noop:       map[string]bool{"run-a": true},
+	}
+	pods := &fakePodManager{}
+	rec := &capturingRecorder{}
+	r := newOrphanReaper(store, reapTestLogger(), 5*time.Minute, rec)
+	r.pods = pods
+
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run err = %v", err)
+	}
+	if len(pods.deletedRuns) != 0 {
+		t.Errorf("a no-op reap must not tear down pods, deleted %v", pods.deletedRuns)
+	}
+	if got := rec.count("orphan_reap_noop"); got != 1 {
+		t.Errorf("orphan_reap_noop = %d, want 1", got)
+	}
+	if got := rec.count("orphan_reaped"); got != 0 {
+		t.Errorf("orphan_reaped = %d, want 0 for a no-op", got)
+	}
+}
+
+// TestOrphanReaper_PassesQuietCutoff: the reaper hands the store the cutoff it
+// decided with (now minus the threshold), so the store re-checks the same rule
+// atomically instead of trusting the list snapshot.
+func TestOrphanReaper_PassesQuietCutoff(t *testing.T) {
+	before := time.Now().UTC()
+	store := &fakeReapStore{candidates: []ReapCandidate{
+		{RunID: "run-a", DagID: "etl", LastActivity: before.Add(-10 * time.Minute)},
+	}}
+	r := newOrphanReaper(store, reapTestLogger(), 5*time.Minute, nil)
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run err = %v", err)
+	}
+	after := time.Now().UTC()
+	if len(store.quietBefore) != 1 {
+		t.Fatalf("ReapRun calls = %d, want 1", len(store.quietBefore))
+	}
+	got := store.quietBefore[0]
+	if got.Before(before.Add(-5*time.Minute)) || got.After(after.Add(-5*time.Minute)) {
+		t.Errorf("quietBefore = %v, want now - 5m (between %v and %v)", got, before.Add(-5*time.Minute), after.Add(-5*time.Minute))
+	}
+}

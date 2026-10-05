@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/dexadata/dexaflow/internal/config"
@@ -125,9 +126,10 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		// runs sharing a version decode it once, not N times. The cached spec is
 		// shared read-only: copy Tasks before applyDefaultRetries so filling a
 		// run's retry defaults never writes through the shared backing array.
-		// getForTick keeps every version this tick reads cached through the
-		// next tick, so more active versions than the cache bound never thrash.
-		_, cached, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
+		// getWithGraph, like getForTick, keeps every version this tick reads
+		// cached through the next tick, so more active versions than the cache
+		// bound never thrash.
+		cached, graph, err := s.specs.getWithGraph(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -154,6 +156,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			TenantID:          uuidToString(run.TenantID),
 			State:             domain.DagRunState(run.State),
 			Tasks:             spec.Tasks,
+			Graph:             graph,
 			States:            ts.states,
 			Tries:             ts.tries,
 			MaxTries:          ts.maxTries,
@@ -741,47 +744,68 @@ func (s *SchedulerStore) ListReapCandidates(ctx context.Context) ([]executor.Rea
 	return out, nil
 }
 
+// pgLockNotAvailable is the SQLSTATE a NOWAIT row lock raises when another
+// transaction holds a conflicting lock.
+const pgLockNotAvailable = "55P03"
+
 // ReapRun fails an orphaned dag run, then any of its still-active task
-// instances, inside a single transaction. The run UPDATE comes first and is
-// guarded by `state = 'running'`: if zero rows are touched, the run was no
-// longer running (a competing finalizer beat us) and we abort with a clean
-// rollback — the TI table is never touched. This guarantees we cannot leave a
-// run as `success`/`failed` while flipping its TIs to `failed (orphaned)`.
-// Idempotent: a second call on an already-failed run no-ops.
-func (s *SchedulerStore) ReapRun(ctx context.Context, runID string) error {
+// instances, inside a single transaction, and reports whether it did. The list
+// the reaper decided from is only a snapshot, so the orphan predicate is
+// re-checked atomically here: the run's task instances are share-locked first,
+// without waiting (a task instance being written counts as activity and makes
+// the reap a no-op), then the run UPDATE applies the same predicate
+// ListReapCandidates does (still running, no live task instance, last activity
+// at or before quietBefore). If
+// zero rows are touched the run is no longer an orphan (a task instance moved,
+// fresh activity landed, or a competing finalizer settled it), the transaction
+// rolls back without touching any task instance, and ReapRun returns false so
+// the caller leaves the run's pods alone. This guarantees we cannot leave a run
+// as `success`/`failed` while flipping its TIs to `failed (orphaned)`, nor fail
+// a run that resumed between the list and the reap. Idempotent: a second call
+// on an already-failed run returns false.
+func (s *SchedulerStore) ReapRun(ctx context.Context, runID string, quietBefore time.Time) (bool, error) {
 	rid, err := parseUUID(runID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("beginning reap tx: %w", err)
+		return false, fmt.Errorf("beginning reap tx: %w", err)
 	}
 	defer func() {
 		// Rollback after a successful commit is a no-op (tx is closed) and after
-		// a returned error there is no recovery to do — pgx logs it via the pool
+		// a returned error there is no recovery to do; pgx logs it via the pool
 		// already. Silencing it keeps the lint happy without hiding a real bug.
 		_ = tx.Rollback(ctx) //nolint:errcheck // best-effort cleanup; commit path returns the meaningful error
 	}()
 	q := s.q.WithTx(tx)
-	rows, err := q.MarkRunOrphanedRun(ctx, rid)
+	if lerr := q.LockRunTaskInstancesForReap(ctx, rid); lerr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(lerr, &pgErr) && pgErr.Code == pgLockNotAvailable {
+			// A task instance of the run is being written right now: that is
+			// activity, so the run is not an orphan this cycle.
+			return false, nil
+		}
+		return false, fmt.Errorf("locking orphan candidate task instances: %w", lerr)
+	}
+	rows, err := q.MarkRunOrphanedRun(ctx, queries.MarkRunOrphanedRunParams{
+		ID:          rid,
+		QuietBefore: pgtype.Timestamptz{Time: quietBefore, Valid: true},
+	})
 	if err != nil {
-		return fmt.Errorf("failing orphaned run: %w", err)
+		return false, fmt.Errorf("failing orphaned run: %w", err)
 	}
 	if rows == 0 {
-		// Not running any longer — the normal scheduler path finalized it between
-		// our list and our reap. Abort without touching task instances; the
-		// caller treats a no-op reap as success (the run is no longer an orphan
-		// either way).
-		return nil
+		// No longer an orphan: abort without touching task instances.
+		return false, nil
 	}
 	if err := q.MarkRunOrphanedTaskInstances(ctx, rid); err != nil {
-		return fmt.Errorf("failing orphaned task instances: %w", err)
+		return false, fmt.Errorf("failing orphaned task instances: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("committing reap tx: %w", err)
+		return false, fmt.Errorf("committing reap tx: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // ListAgentLostCandidates returns every `running` TI with a non-null
@@ -965,6 +989,8 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Durati
 			TryNumber:      int(r.TryNumber),
 			AttemptEpoch:   int(r.AttemptEpoch),
 			RunningSince:   since,
+			Heartbeated:    r.Heartbeated,
+			TenantID:       uuidToString(r.TenantID),
 		})
 	}
 	return out, nil

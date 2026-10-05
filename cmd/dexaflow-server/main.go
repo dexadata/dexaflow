@@ -81,7 +81,7 @@ func main() {
 	args := os.Args[1:]
 	switch {
 	case version.WantsVersion(args):
-		fmt.Println(version.Get().String())
+		fmt.Print(versionOutput())
 		return
 	case version.WantsHelp(args):
 		fmt.Print(usage)
@@ -148,11 +148,14 @@ func run() error {
 	slog.SetDefault(tel.Logger)
 	warnStartup(cfg, tel.Logger)
 
-	pg, err := openVerifiedPostgres(ctx, cfg.Database)
+	// Lite only: the key-migration lock is held before anything reads or writes
+	// a stored secret, and the server stops if it is lost (ADR 0065 section 3).
+	pg, ctx, releaseKeyLock, err := openPostgresHoldingKeyLock(ctx, cfg, tel.Logger)
 	if err != nil {
-		return fmt.Errorf("postgres: %w", err)
+		return err
 	}
 	defer pg.Close()
+	defer releaseKeyLock()
 
 	// Datastore for XCom + live-log tailing: Redis when configured (production,
 	// ADR 0006), or the embedded Postgres/in-process backends when no Redis is
@@ -164,6 +167,9 @@ func run() error {
 	defer dsCleanup()
 
 	repo := storage.NewRepository(pg)
+	// A clear deletes the stored XCom of the attempts it clears, not just their
+	// index rows, since agents fetch values by key (#1131).
+	repo.SetXComBackend(xcomBackend)
 	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
@@ -261,10 +267,19 @@ func run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
-	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks), ReadHeaderTimeout: 10 * time.Second}
+	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), ReadHeaderTimeout: 10 * time.Second}
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
-	return serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv)
+	return keyLockExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
+}
+
+// observabilityOptions maps the observability.metrics config onto the metrics
+// listener.
+func observabilityOptions(cfg *config.ServerConfig) []api.ObservabilityOption {
+	if cfg.Observability.Metrics.DropLegacyNames {
+		return []api.ObservabilityOption{api.WithoutLegacyMetricNames()}
+	}
+	return nil
 }
 
 // awaitShutdown blocks until a server errors or the context is canceled, then
@@ -1109,7 +1124,9 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// error here rather than leaving the exchange unwired, so the server refuses
 	// to boot instead of advertising itself healthy while every task pod's
 	// ExchangeToken bootstrap fails Unimplemented.
-	xchg, xerr := buildTokenExchange(cfg, buildK8sClient)
+	xchg, xerr := buildTokenExchange(cfg, func() (kubernetes.Interface, error) {
+		return buildK8sClient(cfg.Executor.KubeClient)
+	})
 	if xerr != nil {
 		return nil, false, nil, xerr
 	}
@@ -1118,7 +1135,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
@@ -1489,7 +1506,7 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, servesAPI bool, apiSrv,
 // channel is plaintext (dev). The per-task bearer token in metadata authenticates
 // each call regardless. inflight (required) is installed on the interceptor
 // chain so the bounded stop can report the handlers it leaves running.
-func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -1502,6 +1519,9 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	agentSrv.SetShutdown(ctx)
 	agentSrv.SetLogSink(logSink)
 	agentSrv.SetLogPublisher(logTailer)
+	// logs.tail.publish: "always" (default) publishes every line; "on_demand"
+	// publishes only while someone follows the attempt.
+	agentSrv.SetTailPublishOnDemand(tailOnDemand)
 	agentSrv.SetSecrets(secretsStore, allowInsecureSecrets)
 	// Refresh a live attempt's bearer on every heartbeat (ADR 0055 Fix #4) with the
 	// same short per-attempt TTL used at dispatch, so a long task keeps a working
@@ -1622,10 +1642,10 @@ func buildTokenExchange(cfg *config.ServerConfig, newK8sClient func() (kubernete
 	}, nil
 }
 
-// buildPodExecutor constructs a Kubernetes executor from the in-cluster config
-// or the local kubeconfig. It returns an error when neither is available, in
-// which case pod dispatch is disabled and tasks have no executor to run them.
-func buildK8sClient() (kubernetes.Interface, error) {
+// loadK8sRESTConfig loads the in-cluster config or, failing that, the local
+// kubeconfig. It returns an error when neither is available, in which case pod
+// dispatch is disabled and tasks have no executor to run them.
+func loadK8sRESTConfig() (*rest.Config, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		cfg, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
@@ -1637,13 +1657,78 @@ func buildK8sClient() (kubernetes.Interface, error) {
 	// Bound every API call. Workers dispatch with a detached context (they
 	// already accepted responsibility for the task), so without a client-side
 	// deadline an apiserver that accepts the connection and never answers hangs
-	// a worker for good — and with it the shutdown drain (#463).
+	// a worker for good, and with it the shutdown drain (#463).
 	cfg.Timeout = k8sClientTimeout
-	cs, err := kubernetes.NewForConfig(cfg)
+	return cfg, nil
+}
+
+// buildK8sClient builds one Kubernetes client with the dispatch limits. The agent
+// token exchange uses it, so its TokenReviews and pod reads keep their own token
+// bucket, as before.
+func buildK8sClient(limits config.KubeClientSection) (kubernetes.Interface, error) {
+	base, err := loadK8sRESTConfig()
+	if err != nil {
+		return nil, err
+	}
+	cs, err := kubernetes.NewForConfig(k8sClientConfig(base, limits.QPS, limits.Burst))
 	if err != nil {
 		return nil, fmt.Errorf("building kubernetes client: %w", err)
 	}
 	return cs, nil
+}
+
+// k8sClients holds the pod-path Kubernetes clients. dispatch creates task pods;
+// maintenance serves the pod informer, reconciler, reapers, staging GC and warm
+// pool reconciler. They are the same client unless maintenance limits are set.
+type k8sClients struct {
+	dispatch    kubernetes.Interface
+	maintenance kubernetes.Interface
+}
+
+// buildK8sClients builds the pod-path clients from the in-cluster config or the
+// local kubeconfig.
+func buildK8sClients(limits config.KubeClientSection) (k8sClients, error) {
+	base, err := loadK8sRESTConfig()
+	if err != nil {
+		return k8sClients{}, err
+	}
+	return newK8sClients(base, limits)
+}
+
+// newK8sClients builds the dispatch client and, when MaintenanceQPS is set, a
+// separate maintenance client. client-go gives every clientset its own token
+// bucket, so the split keeps a maintenance burst (a reconciler sweep, a GC pass)
+// from spending the budget pod creation depends on. Unset, both roles share one
+// client and one budget, exactly as before the split.
+func newK8sClients(base *rest.Config, limits config.KubeClientSection) (k8sClients, error) {
+	dispatchCS, err := kubernetes.NewForConfig(k8sClientConfig(base, limits.QPS, limits.Burst))
+	if err != nil {
+		return k8sClients{}, fmt.Errorf("building kubernetes dispatch client: %w", err)
+	}
+	if limits.MaintenanceQPS <= 0 {
+		return k8sClients{dispatch: dispatchCS, maintenance: dispatchCS}, nil
+	}
+	maintCS, err := kubernetes.NewForConfig(k8sClientConfig(base, limits.MaintenanceQPS, limits.MaintenanceBurst))
+	if err != nil {
+		return k8sClients{}, fmt.Errorf("building kubernetes maintenance client: %w", err)
+	}
+	return k8sClients{dispatch: dispatchCS, maintenance: maintCS}, nil
+}
+
+// k8sClientConfig copies base with the given client-side limits. A non-positive
+// QPS or burst falls back to client-go's default, never to an unthrottled client
+// or one that can never send.
+func k8sClientConfig(base *rest.Config, qps float64, burst int) *rest.Config {
+	cfg := rest.CopyConfig(base)
+	cfg.QPS = rest.DefaultQPS
+	if qps > 0 {
+		cfg.QPS = float32(qps)
+	}
+	cfg.Burst = rest.DefaultBurst
+	if burst > 0 {
+		cfg.Burst = burst
+	}
+	return cfg
 }
 
 // k8sClientTimeout caps a single Kubernetes API call. Generous enough for a pod
@@ -2403,7 +2488,7 @@ func serve(s *http.Server, errCh chan<- error) {
 // agent on the host (dev only); "kubernetes" (default) launches task pods.
 func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
 	if cfg.Executor.Type == "subprocess" {
-		return setupSubprocessDispatch(cfg, sched, execStore, authn, warmPools, logger, store, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		return setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	}
 	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 }
@@ -2430,28 +2515,80 @@ func resolveAgentControlAddr(cfg *config.ServerConfig) string {
 }
 
 // setupSubprocessDispatch wires the dev-only subprocess executor (ADR 0023): it
-// runs the agent on the host with no isolation, so it is gated to dev use.
-func setupSubprocessDispatch(cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logger *slog.Logger, sink dispatch.FailureSink, metrics *observability.Metrics) (bool, io.Closer) {
+// runs the agent on the host with no isolation, so it is gated to dev use. It
+// also starts Lite's maintenance loop (#916): the reapers that mean something
+// without pods, gated on the agent process's liveness (see newLiteReaper).
+func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, store *storage.SchedulerStore, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
 	subExec := executor.NewSubprocessExecutor(cfg.Executor.AgentPath, logger)
 	subExec.SetWorkDir(cfg.Executor.SubprocessWorkDir)
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
 	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
 	setWarmPlacer(dispatcher, warmPools)
-	disp, closer := wrapBuffered(dispatcher, sink, logger, metrics, cfg.Scheduler.Dispatch)
+	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
+	var markers logs.MarkerSink
+	if ms, ok := logSink.(logs.MarkerSink); ok {
+		markers = ms
+	}
+	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger)
+	startLiteMaintenance(ctx, reaper, sched.IsLeading, logger)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
 	return true, closer
+}
+
+// liteLeadership is the slice of the scheduler the Lite reaper is gated on: when
+// this instance acquired leadership (the settling grace), whether it still
+// leads, and whether it is stepping down.
+type liteLeadership interface {
+	LeaderSince() time.Time
+	IsLeading() bool
+	SteppingDown() bool
+}
+
+// newLiteReaper builds the execution reaper for Lite (#916). Lite has no pods,
+// so it passes no pod manager, presence cache or warm lister: the pod-lost and
+// warm-worker-lost reapers are no-ops, and orphan-run is purely a metadatabase
+// signal. Agent-lost and dispatch-lost are gated on the agent process instead of
+// a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
+// and the infra re-place after either reap keeps the try number, so failing an
+// attempt whose agent is still alive could run user code twice (#911). Both
+// therefore reap only an attempt whose agent process is gone.
+//
+// The reaper sits behind the same leader-settling gate as the pod path, measured
+// from leadership: a Lite restart leaves detached agents alive with a stale
+// heartbeat, and they get the grace to re-heartbeat before anything is judged.
+// There is no informer and no reconciler, so those two conditions stay
+// satisfied. markers, when non-nil, receives the agent-lost log marker (#861).
+func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger) *executor.Reaper {
+	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
+	reaper.SetProcessLiveness(procs)
+	if markers != nil {
+		reaper.SetLogSink(markers)
+	}
+	reaper.SetLeaderSince(lead.LeaderSince)
+	reaper.SetLeading(lead.IsLeading)
+	return reaper
+}
+
+// startLiteMaintenance runs Lite's maintenance loop: the reaper pass alone,
+// leader-gated, at the pod path's cadence and under the same per-phase budget.
+// There is no reconcile phase because Lite has no pods to sweep.
+func startLiteMaintenance(ctx context.Context, reaper *executor.Reaper, leading func() bool, logger *slog.Logger) {
+	startGatedTicker(ctx, "lite-maintenance", reconcileInterval, leading, logger, func() {
+		runMaintenancePhase(ctx, "execution reaper", maintenancePhaseTimeout, reaper.ReapOnce, logger)
+	})
 }
 
 // setupK8sDispatch wires the production pod-per-task executor; it is a no-op
 // (tasks have no executor and are failed as undispatchable) when no Kubernetes
 // client is available.
 func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
-	cs, perr := buildK8sClient()
+	clients, perr := buildK8sClients(cfg.Executor.KubeClient)
 	if perr != nil {
 		logger.Warn("pod dispatch disabled; tasks have no executor and will fail as undispatchable", "error", perr)
 		return false, nil
 	}
+	cs, mcs := clients.dispatch, clients.maintenance
 	controlAddr := resolveAgentControlAddr(cfg)
 	podExec := executor.NewKubernetesExecutor(cs, cfg.Executor.TaskNamespace)
 	podExec.SetStagingStore(store) // record per-run staging volumes in the metadatabase (ADR 0022)
@@ -2492,7 +2629,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// only to DEFER a reap; the live TaskPodPresence kill path is unchanged (#461).
 	// A typed-nil pointer would defeat the reconciler's / reaper's nil check, so
 	// the interfaces are only populated when the informer actually built.
-	podInformer := buildPodInformer(ctx, cfg, cs, logger)
+	podInformer := buildPodInformer(ctx, cfg, mcs, logger)
 	var (
 		snapshotter executor.PodSnapshotter
 		cache       executor.PodPresenceCache
@@ -2510,14 +2647,20 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	var warmLister executor.WarmPodLister
 	var warmPods *executor.KubernetesWarmPods
 	if cfg.Execution.WarmPoolsEnabled {
-		warmPods = executor.NewKubernetesWarmPods(cs, cfg.Executor.TaskNamespace, warmPodSpecFunc(cfg, authn, controlAddr))
+		warmPods = executor.NewKubernetesWarmPods(mcs, cfg.Executor.TaskNamespace, warmPodSpecFunc(cfg, authn, controlAddr))
 		warmLister = warmPods
 	}
 	// The execution reaper (#120/#128/#202/#527) fails stuck runs and TIs; it
 	// tears down a reaped task's pod and gates the dispatch-lost decision on real
-	// pod liveness (#474, #461), so it is wired only on the pod path. Lite/
-	// subprocess starts no maintenance loop and does no reaping.
-	reaper := executor.NewReaper(store, podExec, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), sched.SteppingDown)
+	// pod liveness (#474, #461). Lite builds its own reaper in
+	// setupSubprocessDispatch, gated on agent process liveness instead (#916).
+	// The reaper's live pod reads and deletes go through the maintenance client,
+	// which is podExec's own client unless maintenance limits are set.
+	var reapPods executor.PodManager = podExec
+	if mcs != cs {
+		reapPods = executor.NewKubernetesExecutor(mcs, cfg.Executor.TaskNamespace)
+	}
+	reaper := executor.NewReaper(store, reapPods, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), sched.SteppingDown)
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
 	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
@@ -2541,8 +2684,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// draining or stepping-down leader from marking TIs failed or deleting pods
 	// on its way out — the successor redoes the reap under its own settling gate.
 	reaper.SetLeading(sched.IsLeading)
-	startMaintenance(ctx, cs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
-	startStagingGC(ctx, cs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
+	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
+	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with
 	// them off it is never constructed, so no warm pod is ever created and dispatch
@@ -2555,7 +2698,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		startWarmPoolReconciler(ctx, store, warmPods, store, cfg.Execution.MaxWarmPodsPerTenant, sched.IsLeading, metrics, logger)
 		logger.Warn("warm pool reconciler enabled (ADR 0058 N1b2b); maintaining min_idle warm workers per active dag_version", "namespace", cfg.Executor.TaskNamespace)
 	}
-	logger.Info("pod dispatch enabled", "namespace", cfg.Executor.TaskNamespace, "agent_control_plane_addr", controlAddr)
+	logger.Info("pod dispatch enabled", "namespace", cfg.Executor.TaskNamespace, "agent_control_plane_addr", controlAddr,
+		"kube_qps", cfg.Executor.KubeClient.QPS, "kube_burst", cfg.Executor.KubeClient.Burst,
+		"separate_maintenance_client", mcs != cs)
 	return true, closer
 }
 

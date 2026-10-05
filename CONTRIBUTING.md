@@ -110,6 +110,25 @@ Changes to the following areas require extra review and are not accepted from fi
 
 If you have a contribution in these areas, please open a discussion issue first.
 
+### Writing a Migration
+
+Migrations live in `migrations/` as `NNN_name.up.sql` and `NNN_name.down.sql`,
+numbered one past the highest file on `main`. They are embedded in the binary
+and applied by golang-migrate on start and by the chart's pre-upgrade Job.
+
+- **Every up has a down.** When a change cannot be undone (a data fix, an enum
+  value), the down file is a comment that says why it is a no-op, and the up
+  must be safe to apply again.
+- **Built-in roles change in every tenant.** A tenant created through the
+  service API copies the built-in roles and their grants from `default` once,
+  when it is created. A migration that adds, changes or revokes a built-in role
+  or one of its grants must therefore apply to every tenant's built-in roles
+  (join on `roles.is_system` across all tenants), never filter on
+  `t.name = 'default'`, and must not touch custom roles (`is_system = false`)
+  or `user_roles`. `migrations/tenant_roles_test.go` fails an up migration that
+  writes `roles` or `role_permissions` and names the default tenant
+  (#1305).
+
 ## Development Environment
 
 ```bash

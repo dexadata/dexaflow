@@ -351,6 +351,7 @@ type TaskInstance struct {
 	LastFailureKind   *string            `json:"last_failure_kind"`
 	InfraAttempts     int32              `json:"infra_attempts"`
 	WarmWorkerID      *string            `json:"warm_worker_id"`
+	ReleasedAt        pgtype.Timestamptz `json:"released_at"`
 	AttemptEpoch      int32              `json:"attempt_epoch"`
 }
 
