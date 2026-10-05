@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/migrations"
 )
@@ -32,7 +33,7 @@ func TestReconcileMigrationAlignsEveryTenantsBuiltInRoles(t *testing.T) {
 	}
 	t.Cleanup(pg.Close)
 	name := uniqueTenant("drift")
-	if _, err = repo.EnsureTenant(ctx, name, "Drift", 0); err != nil {
+	if _, err = repo.EnsureTenant(ctx, name, "Drift", 0, domain.TenantLimitsUpdate{}); err != nil {
 		t.Fatal(err)
 	}
 	exec := func(sql string, args ...any) {

@@ -9,5 +9,5 @@ body: |-
   scheduled runs together, per UTC day) answer `403` naming the limit. A
   scheduled run past the daily cap is skipped with one warning per tenant and
   day and created once the day turns. Existing tenants are unlimited.
-  Migration 036 adds the columns to `tenants`. (#1420)
+  Migration 040 adds the columns to `tenants`. (#1420)
 time: 2026-10-05T12:00:00.000000000-03:00

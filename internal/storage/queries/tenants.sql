@@ -64,7 +64,7 @@ SELECT EXISTS (
 
 -- name: UpdateTenantLimits :exec
 -- Sets the limits given and keeps the others: a NULL argument leaves that
--- column as it is, 0 makes the limit unlimited (migration 036).
+-- column as it is, 0 makes the limit unlimited (migration 040).
 UPDATE tenants
 SET max_dags = COALESCE(sqlc.narg(max_dags)::int, max_dags),
     max_runs_per_day = COALESCE(sqlc.narg(max_runs_per_day)::int, max_runs_per_day),

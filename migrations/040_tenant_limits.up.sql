@@ -1,4 +1,4 @@
--- 036_tenant_limits.up.sql
+-- 040_tenant_limits.up.sql
 -- Optional per-tenant limits, set by the operator through the service API
 -- (PUT /api/v2/service/tenants/{tenant}). 0 means unlimited, so every existing
 -- tenant keeps today's behavior:

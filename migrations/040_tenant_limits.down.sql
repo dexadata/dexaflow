@@ -1,4 +1,4 @@
--- 036_tenant_limits.down.sql
+-- 040_tenant_limits.down.sql
 -- Drop the per-tenant limits and the daily run counter (unreferenced by other
 -- objects). The limits an operator set are lost; tenants become unlimited.
 
