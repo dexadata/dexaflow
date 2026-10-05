@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -153,5 +154,32 @@ func TestDailyRunCapChargeFollowsTheRun(t *testing.T) {
 				t.Error("the transaction was not rolled back, so the charge stayed")
 			}
 		})
+	}
+}
+
+// TestApplyTenantLimitsRefusesAValueOutsideTheColumn: a limit below 0 or above
+// 2147483647 is ErrValidation and reaches no query, instead of being clamped
+// to the column; a limit inside the column is written.
+func TestApplyTenantLimitsRefusesAValueOutsideTheColumn(t *testing.T) {
+	tooBig := math.MaxInt32
+	tooBig++
+	for _, n := range []int{-1, tooBig} {
+		conn := &cappedConn{}
+
+		err := applyTenantLimits(context.Background(), queries.New(conn), validUUID(), domain.TenantLimitsUpdate{MaxRunsPerDay: &n})
+
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Errorf("limit %d: err = %v, want ErrValidation", n, err)
+		}
+		if len(conn.execs) != 0 {
+			t.Errorf("limit %d: statements run = %q, want none", n, conn.execs)
+		}
+	}
+	zero, conn := 0, &cappedConn{}
+
+	err := applyTenantLimits(context.Background(), queries.New(conn), validUUID(), domain.TenantLimitsUpdate{MaxDags: &zero})
+
+	if err != nil || len(conn.execs) != 1 || !strings.Contains(conn.execs[0], "max_dags = COALESCE") {
+		t.Errorf("clearing max_dags: err = %v, statements = %q; want one UPDATE of the limits", err, conn.execs)
 	}
 }

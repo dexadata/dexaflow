@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,10 +36,25 @@ func loadTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID) 
 	}, nil
 }
 
-// applyTenantLimits stores the limits the update sets and leaves the others.
+// applyTenantLimits stores the limits the update sets and leaves the others. A
+// limit below 0 or above 2147483647 (the INTEGER columns) is ErrValidation and
+// reaches no query; the service API refuses the same values with a 400 first.
 func applyTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID, u domain.TenantLimitsUpdate) error {
 	if u.IsZero() {
 		return nil
+	}
+	for _, l := range []struct {
+		name  string
+		value *int
+	}{
+		{"max_dags", u.MaxDags},
+		{"max_runs_per_day", u.MaxRunsPerDay},
+		{"min_schedule_interval_seconds", u.MinScheduleIntervalSeconds},
+	} {
+		if l.value != nil && (*l.value < 0 || *l.value > math.MaxInt32) {
+			return domain.Safef(domain.ErrValidation,
+				"tenant limit %s must be from 0 (unlimited) to %d, got %d", l.name, math.MaxInt32, *l.value)
+		}
 	}
 	if err := q.UpdateTenantLimits(ctx, queries.UpdateTenantLimitsParams{
 		TenantID:                   tid,
