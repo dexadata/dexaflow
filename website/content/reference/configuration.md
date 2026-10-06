@@ -727,6 +727,7 @@ The same body may also carry tenant limits, each a whole number from 0 to
 | `max_dags` | DAGs the tenant may register | a DAG version is registered (`POST /api/v2/dags/{dag_id}/versions`) for a DAG the tenant does not have yet; new versions of its existing DAGs are always accepted |
 | `max_runs_per_day` | DAG runs, manual and scheduled together, the tenant may create in one UTC calendar day (00:00 to 24:00 UTC) | a run is triggered (`POST /api/v2/dags/{dag_id}/dagRuns`) or the scheduler creates a scheduled run |
 | `min_schedule_interval_seconds` | shortest gap a DAG's schedule may leave between two consecutive runs | a DAG version is registered |
+| `max_task_pool_slots` | largest `pool_slots` (the task's `size` in `dexaflow.yaml`, [ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)) any task of a DAG may have | a DAG version is registered; the detail names the task, its size and the limit |
 
 A tenant created without limits has none, and a later call changes only the
 limits it carries: one left out keeps its value, so existing automation that
@@ -758,13 +759,18 @@ How each limit is measured:
   apart (`30 1 * * *` in `Europe/London` fires at 00:30 and 01:30 UTC on the
   last Sunday of October), and a time inside the skipped hour does not fire
   that day.
+- `max_task_pool_slots` compares each task's `pool_slots` (1 when unset). A
+  platform that sizes each tenant's `default_pool_slots` sets it to the same
+  number, so a task that could never fit the pool is refused when it is pushed
+  instead of waiting forever.
 - `max_dags` counts the tenant's DAGs. Two different new DAGs registered at
   the same moment while the tenant is one below the limit can both be
   accepted; it is checked, not locked, like `max_active_runs`.
 
 Lowering a limit never removes anything: a tenant above a new `max_dags`
 keeps its DAGs (and can update them) but cannot add more, and a DAG whose
-schedule is now too frequent keeps running until its next registration.
+schedule is now too frequent, or whose task is now larger than
+`max_task_pool_slots`, keeps running until its next registration.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no
