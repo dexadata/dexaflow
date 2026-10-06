@@ -647,6 +647,20 @@ func writeLines(shutdown <-chan struct{}, w logs.LogWriter, recv func() (*agentv
 // writeLine stores one received line and publishes it for live tailing. attrs
 // carries the attempt identity onto the cause log line of a redacted failure.
 func writeLine(w logs.LogWriter, line *agentv1.LogLine, publish func(string), attrs []any) error {
+	// The agent stamps every line with the time it read it. A stamp the
+	// Timestamp type itself calls invalid (outside years 1 to 9999, a range
+	// inside what time.MarshalJSON accepts, so a valid stamp always encodes) is
+	// refused as the peer's error, as the sink refused it before it took
+	// pre-encoded lines: EncodeLine would store the line under the current time
+	// rather than raw, but nothing of ours sends such a stamp, and the attempt
+	// token the sender holds is no reason to store what it composed. A line
+	// with no stamp at all keeps the Unix epoch it always had.
+	if ts := line.GetTime(); ts != nil {
+		if cause := ts.CheckValid(); cause != nil {
+			slog.Warn("refusing a log line whose timestamp is invalid", causeArgs(cause, attrs)...)
+			return status.Error(codes.InvalidArgument, "log line time is outside the range a timestamp can hold")
+		}
+	}
 	msg := line.GetMessage()
 	// The agent derives the wire level from the source stream (stdout=info,
 	// stderr=error), which mis-colors an error printed to stdout or an info

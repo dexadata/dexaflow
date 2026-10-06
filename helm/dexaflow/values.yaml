@@ -213,6 +213,8 @@ config:
     blockPrivateDestinations: false
     # -- CIDRs or single addresses exempted from `blockPrivateDestinations` (`scheduler.alerts.allowed_cidrs`), e.g. an on-premises chat server. Rendered as a comma-joined `LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS`. An invalid entry fails server startup.
     allowedCIDRs: []
+  # -- Make the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer 403 for every role, tenant `admin` included; list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools, so no tenant can raise its own slot budget. It also makes a task naming a pool its tenant has not defined draw on `default_pool` instead of running unlimited. False (the default) renders nothing and keeps pools writable under `write:pool`.
+  poolsReadOnly: false
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
 
@@ -261,7 +263,7 @@ logs:
     bucket: ""
     # -- Optional key prefix under which attempt objects are laid out (`{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`).
     prefix: ""
-    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found.
+    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found; the server checks this at startup and refuses to start when a missing key is not answered with not-found.
     layout: single
     # -- [s3] Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores.
     region: ""

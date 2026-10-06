@@ -132,6 +132,12 @@ type RunState struct {
 	// non-Pro deployment leave it false, so the pool gate is a no-op and planning
 	// is byte-identical to the max_active_tasks-only path.
 	PoolsEnabled bool
+	// ConfineUndefinedPools makes a task that names a pool its tenant has not
+	// defined draw on default_pool instead of running unlimited. The Step loop
+	// sets it when tenant pool writes are locked (server.pools_read_only): a
+	// tenant cannot create pools then, so an undefined name would otherwise be a
+	// way around the default_pool budget (#646).
+	ConfineUndefinedPools bool
 	// PoolBudgets is the per-pool slot cap keyed by PoolKey(TenantID, pool). A pool
 	// with a non-positive or absent budget is unlimited (fail open, never
 	// deadlock). The Step loop sets it from the once-per-tick PoolBudgets snapshot;
@@ -316,6 +322,10 @@ type Scheduler struct {
 	// every tick. Accessed only from the single-threaded tick (createDueRuns),
 	// so it needs no lock.
 	warnedSchedules map[dagRef]string
+	// warnedRunCaps dedupes the "daily run limit reached" warning: tenant UUID
+	// to the UTC date it was last logged for, so a capped tenant logs once a
+	// day, not on every tick that retries its due slot. Tick-only, no lock.
+	warnedRunCaps map[string]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
 	// Stage 3). Pro-only: main calls EnablePools() only when the edition is "pro".
 	// While false (Lite / non-Pro), Step never loads pool budgets and never
@@ -323,6 +333,9 @@ type Scheduler struct {
 	// byte-identically. Set once at construction (before ticking), read on the
 	// single-threaded tick, so it needs no lock.
 	poolsEnabled bool
+	// confineUndefinedPools threads RunState.ConfineUndefinedPools; set once by
+	// ConfineUndefinedPools before the scheduler starts ticking.
+	confineUndefinedPools bool
 }
 
 // NewScheduler builds a Scheduler over the given store, ticking every interval.
@@ -333,6 +346,7 @@ func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Sch
 		interval:        interval,
 		stepTimeout:     defaultStepTimeout(interval),
 		warnedSchedules: map[dagRef]string{},
+		warnedRunCaps:   map[string]string{},
 		alertSem:        make(chan struct{}, defaultAlertConcurrency),
 	}
 }
@@ -436,6 +450,11 @@ func (s *Scheduler) SetDispatcher(d Dispatcher) { s.dispatcher = d }
 // queries pool budgets, so Lite plans byte-identically. Call once before the
 // scheduler starts ticking.
 func (s *Scheduler) EnablePools() { s.poolsEnabled = true }
+
+// ConfineUndefinedPools makes tasks that name an undefined pool draw on their
+// tenant's default_pool (see RunState.ConfineUndefinedPools). Main calls it
+// when server.pools_read_only is on. Call once before the scheduler ticks.
+func (s *Scheduler) ConfineUndefinedPools() { s.confineUndefinedPools = true }
 
 // SetAlerter attaches the on-failure alerter (optional; #424). Without it, or
 // for a DAG with no alert rules, the scheduler finalizes failures silently.
@@ -572,6 +591,7 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		activeByDAG[key]++
 		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
 		run.PoolsEnabled = s.poolsEnabled
+		run.ConfineUndefinedPools = s.confineUndefinedPools
 		run.PoolBudgets = poolBudgets
 		run.PoolActive = poolOccupied
 		admitted, admittedByPool := s.advanceSafely(ctx, run)
@@ -640,20 +660,22 @@ func (s *Scheduler) loadPoolBudget(ctx context.Context, runs []RunState) (budget
 	if err != nil {
 		return nil, nil, fmt.Errorf("loading pool budgets: %w", err)
 	}
-	return budgets, activePoolCounts(runs), nil
+	return budgets, activePoolCounts(runs, budgets, s.confineUndefinedPools), nil
 }
 
 // activePoolCounts tallies, per pool (keyed by PoolKey), the task instances that
 // already occupy a slot — those queued or running across every active run,
 // cross-DAG (ADR 0053 Stage 3). A task instance's pool is its spec pool, or the
 // implicit default pool. Reuses the runs Step already loaded, so it adds no
-// per-tick query. Only built on the Pro path (see loadPoolBudget).
-func activePoolCounts(runs []RunState) map[string]int {
+// per-tick query. Only built on the Pro path (see loadPoolBudget). With confine
+// set, an undefined pool is charged to default_pool, the same pool admission
+// charges it to.
+func activePoolCounts(runs []RunState, budgets map[string]int, confine bool) map[string]int {
 	counts := make(map[string]int, len(runs))
 	for i := range runs {
 		for _, t := range runs[i].Tasks {
 			if st := runs[i].States[t.TaskID]; st == domain.TaskStateQueued || st == domain.TaskStateRunning {
-				counts[PoolKey(runs[i].TenantID, resolvePool(t.Pool))]++
+				counts[effectivePoolKey(runs[i].TenantID, t.Pool, budgets, confine)]++
 			}
 		}
 	}
@@ -701,15 +723,20 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[dagRef]in
 	}
 	now := time.Now().UTC()
 	createdThisTick := make(map[dagRef]int, len(dags))
+	// capped holds the tenants whose daily run limit refused a run this tick;
+	// their other due slots wait for a later tick instead of each asking again.
+	capped := map[string]bool{}
 	for _, d := range dags {
 		key := dagRef{d.TenantID, d.DagID}
+		if capped[d.TenantID] {
+			continue
+		}
 		if domain.IsOnceSchedule(d.Schedule) {
 			// @once: fire exactly one run on first sight, then never again. Once
 			// the run exists, the DAG's LastLogical is non-nil and this is
 			// skipped — that single-shot semantic already prevents any cap
 			// breach, so no headroom check is needed here.
-			if d.LastLogical == nil {
-				s.createScheduledRun(ctx, d, now)
+			if d.LastLogical == nil && !s.createScheduledRun(ctx, d, now, capped) {
 				createdThisTick[key]++
 			}
 			continue
@@ -732,34 +759,33 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[dagRef]in
 			}
 			continue
 		}
-		// First-run with no start_date keeps the legacy single-slot semantics
-		// (most recent slot at or before now) — backfilling unbounded history
-		// for a fresh DAG would be unsafe by default. The catchup helper opts
-		// in only when there is either a last_logical or a start_date floor.
-		if d.LastLogical == nil && d.StartDate == nil {
-			logical, due := nextScheduledRun(d.Schedule, d.LastLogical, now)
-			if !due {
-				continue
-			}
-			if !s.hasHeadroom(d, key, activeByDAG, createdThisTick) {
-				s.recordCapSkip(d)
-				continue
-			}
-			s.createScheduledRun(ctx, d, logical)
-			createdThisTick[key]++
-			continue
-		}
-		slots := dueScheduledSlots(d.Schedule, d.LastLogical, d.StartDate, now, d.Catchup, maxCatchupSlotsPerTick)
-		for _, logical := range slots {
+		for _, logical := range dueSlots(d, now) {
 			if !s.hasHeadroom(d, key, activeByDAG, createdThisTick) {
 				s.recordCapSkip(d)
 				break
 			}
-			s.createScheduledRun(ctx, d, logical)
+			if s.createScheduledRun(ctx, d, logical, capped) {
+				break
+			}
 			createdThisTick[key]++
 		}
 	}
 	return nil
+}
+
+// dueSlots returns the logical dates of a cron DAG's runs that are due now, in
+// order. First-run with no start_date keeps the legacy single-slot semantics
+// (most recent slot at or before now): backfilling unbounded history for a
+// fresh DAG would be unsafe by default. The catchup helper opts in only when
+// there is either a last_logical or a start_date floor.
+func dueSlots(d ScheduledDAG, now time.Time) []time.Time {
+	if d.LastLogical == nil && d.StartDate == nil {
+		if logical, due := nextScheduledRun(d.Schedule, d.LastLogical, now); due {
+			return []time.Time{logical}
+		}
+		return nil
+	}
+	return dueScheduledSlots(d.Schedule, d.LastLogical, d.StartDate, now, d.Catchup, maxCatchupSlotsPerTick)
 }
 
 // hasHeadroom reports whether the DAG may take another active run without
@@ -790,13 +816,32 @@ func (s *Scheduler) recordCapSkip(d ScheduledDAG) {
 // createScheduledRun creates one scheduled run for a DAG, isolating per-DAG
 // failures: a single DAG's creation error is logged and metered but never blocks
 // run creation for the other scheduled DAGs in this tick.
-func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logical time.Time) {
-	if err := s.store.CreateScheduledRun(ctx, d.TenantID, d.DagID, logical); err != nil {
+//
+// It reports whether the tenant's daily run limit (max_runs_per_day) refused
+// the run. That is not an error: the slot is skipped, the tenant is added to
+// capped so the rest of the tick leaves it alone, and the skip is metered and
+// logged once per tenant and UTC day. The slot stays due, so it is created on
+// a later tick once the UTC day turns (catchup decides whether the slots
+// missed in between are created too).
+func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logical time.Time, capped map[string]bool) bool {
+	err := s.store.CreateScheduledRun(ctx, d.TenantID, d.DagID, logical)
+	switch {
+	case err == nil:
+		s.record("create_run")
+	case errors.Is(err, domain.ErrLimitExceeded):
+		capped[d.TenantID] = true
+		s.record("tenant_daily_run_cap")
+		if day := time.Now().UTC().Format(time.DateOnly); s.warnedRunCaps[d.TenantID] != day {
+			s.logger.Warn("skipping scheduled runs: the tenant reached its daily run limit",
+				"tenant", d.TenantID, "dag", d.DagID, "logical_date", logical, "reason", err)
+			s.warnedRunCaps[d.TenantID] = day
+		}
+		return true
+	default:
 		s.logger.Error("creating scheduled run", "tenant", d.TenantID, "dag", d.DagID, "error", err)
 		s.record("create_run_error")
-		return
 	}
-	s.record("create_run")
+	return false
 }
 
 // advance plans and applies one run's transitions, returning how many tasks it
@@ -862,7 +907,7 @@ func taskPools(run RunState) map[string]string {
 	}
 	m := make(map[string]string, len(run.Tasks))
 	for _, t := range run.Tasks {
-		m[t.TaskID] = PoolKey(run.TenantID, resolvePool(t.Pool))
+		m[t.TaskID] = effectivePoolKey(run.TenantID, t.Pool, run.PoolBudgets, run.ConfineUndefinedPools)
 	}
 	return m
 }

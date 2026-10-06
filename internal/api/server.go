@@ -78,6 +78,10 @@ type Dependencies struct {
 	// Edition == "pro" (ADR 0053), otherwise the Pools screen gets the graceful
 	// empty-collection stub, matching how the scheduler's pool gate is Pro-gated.
 	Edition string
+	// PoolsReadOnly is server.pools_read_only: the pool API serves reads only and
+	// every create, resize and delete answers 403 with PoolsReadOnlyDetail, for
+	// every role including tenant admin. False keeps the write:pool-gated CRUD.
+	PoolsReadOnly bool
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository
@@ -286,7 +290,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIVariables(r, deps.Variables)
 	registerUsers(r, deps.Users, deps.UserAudit)
 	registerUIConnections(r, deps.Connections, deps.ConnectionTest)
-	registerUIPools(r, deps.Pools, deps.Edition == "pro")
+	registerUIPools(r, deps.Pools, deps.Edition == "pro", deps.PoolsReadOnly)
 	registerUIFavorites(r, deps.Favorites)
 	registerImportErrors(r, deps.ImportErrors)
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)

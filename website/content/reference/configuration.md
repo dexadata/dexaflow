@@ -376,6 +376,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_SERVER_GRPC_TLS_KEY` | _(empty)_ | Pro | PEM private key paired with `DEXAFLOW_SERVER_GRPC_TLS_CERT`. Both must be set together to encrypt the agent channel. |
 | `DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS` | `http://localhost:8080` | both | Browser origins allowed to call the API cross-origin (`server.cors.allowed_origins`, a list). The UI is served same-origin with the API, so most deployments need no entry and should leave the server default alone. Comma-separated via the env var; in the chart set `config.cors.allowedOrigins` (a YAML list) and it is rendered comma-joined for you. The chart rejects `"*"` at render time (#1144). |
 | `DEXAFLOW_SERVER_TRUSTED_PROXIES` | *(empty — trust none)* | both | Proxy IPs/CIDRs whose `X-Forwarded-For` is honored for the client IP (`server.trusted_proxies`, a list). See note below. |
+| `DEXAFLOW_SERVER_POOLS_READ_ONLY` | `false` | Pro | Makes the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer `403` with the detail `pools are read-only on this server: their slots are managed by the platform operator` for every role, tenant `admin` included, while list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools: a tenant `operator` holds `write:pool`, and a tenant `admin` can grant itself anything, so a lock that spared admins would not hold a slot budget. The platform then changes pools out of band, not through this API. With the option on, a task that names a pool its tenant has not defined is also admitted against that tenant's `default_pool` instead of running unlimited, and the Pools screen counts it there; existing DAGs using such pool names start sharing `default_pool`. A tenant with no `default_pool` row stays unlimited (the gate never deadlocks). Set it on every role: with split API and scheduler roles, the API enforces the lock and the scheduler the `default_pool` fallback (the chart sets both). The platform sizes `default_pool` through the service API (`default_pool_slots`); other named pools have no platform API yet. Default `false` keeps pools writable under `write:pool`. In the chart set `config.poolsReadOnly`. |
 
 ### Database (`database.*`)
 
@@ -575,7 +576,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_LOGS_SINK_FORCE_PATH_STYLE` | `false` | Pro | **s3-only.** Use path-style addressing (bucket in the path, not the host). Required by MinIO and some S3-compatible stores. |
 | `DEXAFLOW_LOGS_SINK_ACCESS_KEY_ID` / `DEXAFLOW_LOGS_SINK_SECRET_ACCESS_KEY` | _(empty)_ | Pro | **s3-only.** Static credentials — **discouraged**. Leave empty (recommended) to use the keyless chain (IRSA / instance profile), per [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/). |
 | `DEXAFLOW_LOGS_SINK_CREDENTIALS_FILE` | _(empty)_ | Pro | **gcs-only.** Path to a service-account JSON key — **discouraged**. Leave empty (recommended) to use Application Default Credentials (GKE Workload Identity). |
-| `DEXAFLOW_LOGS_SINK_LAYOUT` | `single` | Pro | How new attempts are written. `single` keeps one object per attempt at `{try}.log`, rewritten on every flush. `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment (up to 4 MiB) and the control plane holds one segment per attempt instead of the whole log. Both layouts are always readable, but a server older than this setting reads only `{try}.log`: enable `segmented` once every replica is upgraded. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found. |
+| `DEXAFLOW_LOGS_SINK_LAYOUT` | `single` | Pro | How new attempts are written. `single` keeps one object per attempt at `{try}.log`, rewritten on every flush. `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment (up to 4 MiB) and the control plane holds one segment per attempt instead of the whole log. Both layouts are always readable, but a server older than this setting reads only `{try}.log`: enable `segmented` once every replica is upgraded. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found; the server checks this at startup and refuses to start when a missing key is not answered with not-found. |
 
 ### External secrets (`secrets.*`)
 
@@ -717,6 +718,53 @@ keep; left out, the pool is not touched. It must be a whole number from 1 to
 not a ceiling on the tenant: a tenant role that may write pools (`operator`,
 `admin`) can still resize it or create other pools. Pools apply to the Pro
 edition only; Lite ignores the value.
+
+The same body may also carry tenant limits, each a whole number from 0 to
+2147483647 (`400` otherwise), where `0` means unlimited:
+
+| Field | Limit | Enforced when |
+|---|---|---|
+| `max_dags` | DAGs the tenant may register | a DAG version is registered (`POST /api/v2/dags/{dag_id}/versions`) for a DAG the tenant does not have yet; new versions of its existing DAGs are always accepted |
+| `max_runs_per_day` | DAG runs, manual and scheduled together, the tenant may create in one UTC calendar day (00:00 to 24:00 UTC) | a run is triggered (`POST /api/v2/dags/{dag_id}/dagRuns`) or the scheduler creates a scheduled run |
+| `min_schedule_interval_seconds` | shortest gap a DAG's schedule may leave between two consecutive runs | a DAG version is registered |
+
+A tenant created without limits has none, and a later call changes only the
+limits it carries: one left out keeps its value, so existing automation that
+sends only `display_name` or `default_pool_slots` is unaffected. The audit
+entry records each limit given.
+
+A request a limit refuses answers `403` with a detail that names the limit,
+for example `the tenant reached its limit max_runs_per_day of 50 for today
+(UTC)`. A scheduled run the daily limit refuses is skipped, not failed: the
+scheduler logs one warning per tenant and day and counts it in
+`dexaflow_scheduler_decisions_total{decision_type="tenant_daily_run_cap"}`, and the slot
+is created on a later tick once the UTC day turns (with `catchup`, the slots
+missed in between are created too, and count against the new day).
+
+How each limit is measured:
+
+- The daily run count is kept on the tenant and charged in the same
+  transaction that creates the run, so concurrent triggers can never take the
+  tenant past the limit, and deleting a DAG or a run does not give runs back.
+  Counting starts when the limit is set; runs created earlier that day do not
+  count.
+- The schedule gap is computed from the cron expression: the shortest gap
+  between consecutive fire times inside a day and across days, including the
+  days it skips (`0 9 * * 1-5` is 24 hours, `0,59 0,23 * * *` is one minute,
+  across midnight). `@every <duration>` is its duration. Manual DAGs, `@once`
+  and `@continuous` are not limited. Times are UTC; with `CRON_TZ`, the two
+  days a year the clocks change differ: a gap that spans the change is an hour
+  shorter or longer, a time inside the repeated hour fires twice, one hour
+  apart (`30 1 * * *` in `Europe/London` fires at 00:30 and 01:30 UTC on the
+  last Sunday of October), and a time inside the skipped hour does not fire
+  that day.
+- `max_dags` counts the tenant's DAGs. Two different new DAGs registered at
+  the same moment while the tenant is one below the limit can both be
+  accepted; it is checked, not locked, like `max_active_runs`.
+
+Lowering a limit never removes anything: a tenant above a new `max_dags`
+keeps its DAGs (and can update them) but cannot add more, and a DAG whose
+schedule is now too frequent keeps running until its next registration.
 
 `PUT /api/v2/service/tenants/{tenant}/users/{subject}` with
 `{"email": "ana@acme.com", "roles": ["operator"]}` makes sure a user with no

@@ -31,9 +31,13 @@ type fakeStore struct {
 	createdRuns  []string
 	// createdTenants records the tenant of each created scheduled run, in the
 	// same order as createdRuns.
-	createdTenants       []string
-	notes                map[string]string
-	createErr            bool
+	createdTenants []string
+	notes          map[string]string
+	createErr      bool
+	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
+	// these tenants, as the store does once a tenant's daily run cap is reached.
+	limitedTenants       map[string]bool
+	limitedCalls         int
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
@@ -81,6 +85,10 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, _ time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
+	}
+	if f.limitedTenants[tenantID] {
+		f.limitedCalls++
+		return domain.Safef(domain.ErrLimitExceeded, "tenant limit max_runs_per_day of 1 reached")
 	}
 	f.createdRuns = append(f.createdRuns, dagID)
 	f.createdTenants = append(f.createdTenants, tenantID)
@@ -766,12 +774,15 @@ func TestHeartbeatIsLeadershipAware(t *testing.T) {
 }
 
 type fakeRecorder struct {
+	decisions        []string
 	undispatchable   []string
 	stepDowns        map[string]int
 	reacquireSamples []time.Duration
 }
 
-func (r *fakeRecorder) RecordSchedulerDecision(string)      {}
+func (r *fakeRecorder) RecordSchedulerDecision(d string) {
+	r.decisions = append(r.decisions, d)
+}
 func (r *fakeRecorder) RecordTaskTransition(_, _, _ string) {}
 func (r *fakeRecorder) RecordUndispatchable(reason string) {
 	r.undispatchable = append(r.undispatchable, reason)

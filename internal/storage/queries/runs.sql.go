@@ -393,7 +393,7 @@ func (q *Queries) CreateDagRun(ctx context.Context, arg CreateDagRunParams) (Dag
 	return i, err
 }
 
-const createScheduledRunByDagID = `-- name: CreateScheduledRunByDagID :exec
+const createScheduledRunByDagID = `-- name: CreateScheduledRunByDagID :execrows
 INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
 SELECT d.tenant_id, d.id, d.current_version_id, $1, $2, 'queued', 'scheduled'
 FROM dags d
@@ -408,14 +408,20 @@ type CreateScheduledRunByDagIDParams struct {
 	DagID       string             `json:"dag_id"`
 }
 
-func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) error {
-	_, err := q.db.Exec(ctx, createScheduledRunByDagID,
+// Zero rows means the slot's run already exists (or the DAG has no current
+// version): the caller then rolls back the charge it took from the tenant's
+// daily run cap.
+func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createScheduledRunByDagID,
 		arg.RunID,
 		arg.LogicalDate,
 		arg.TenantID,
 		arg.DagID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createTaskInstance = `-- name: CreateTaskInstance :one
@@ -495,6 +501,30 @@ type CreateTaskInstancesParams struct {
 	State     TaskState   `json:"state"`
 	Pool      *string     `json:"pool"`
 	TryNumber int32       `json:"try_number"`
+}
+
+const dagRunExistsByDagID = `-- name: DagRunExistsByDagID :one
+SELECT EXISTS (
+    SELECT 1 FROM dag_runs r JOIN dags d ON d.id = r.dag_id
+    WHERE d.tenant_id = $1 AND d.dag_id = $2 AND r.run_id = $3
+)::bool AS run_exists
+`
+
+type DagRunExistsByDagIDParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    string      `json:"dag_id"`
+	RunID    string      `json:"run_id"`
+}
+
+// Whether run_id of the DAG dag_id in tenant tenant_id exists: the read behind
+// a refused daily run cap charge, so a run that already exists keeps its usual
+// answer (a no-op for a scheduled slot, a conflict for a manual run id) instead
+// of a refusal, and nothing is written (createRunWithinDailyLimit).
+func (q *Queries) DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDagIDParams) (bool, error) {
+	row := q.db.QueryRow(ctx, dagRunExistsByDagID, arg.TenantID, arg.DagID, arg.RunID)
+	var run_exists bool
+	err := row.Scan(&run_exists)
+	return run_exists, err
 }
 
 const deleteDagRun = `-- name: DeleteDagRun :execrows

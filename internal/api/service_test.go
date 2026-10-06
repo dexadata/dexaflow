@@ -29,12 +29,13 @@ type fakeServiceStore struct {
 
 	gotTenant, gotDisplay                     string
 	gotPoolSlots                              int
+	gotLimits                                 domain.TenantLimitsUpdate
 	gotUserTenant, gotEmail, gotProv, gotSubj string
 	gotRoles                                  []string
 }
 
-func (f *fakeServiceStore) EnsureTenant(_ context.Context, name, displayName string, defaultPoolSlots int) (bool, error) {
-	f.gotTenant, f.gotDisplay, f.gotPoolSlots = name, displayName, defaultPoolSlots
+func (f *fakeServiceStore) EnsureTenant(_ context.Context, name, displayName string, defaultPoolSlots int, limits domain.TenantLimitsUpdate) (bool, error) {
+	f.gotTenant, f.gotDisplay, f.gotPoolSlots, f.gotLimits = name, displayName, defaultPoolSlots, limits
 	return f.tenantCreated, f.tenantErr
 }
 
