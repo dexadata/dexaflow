@@ -86,6 +86,20 @@ If the PR has no user-facing change at all (release prep, a chore, a
 dependency bump, a docs-only edit), apply the **`skip-changelog`** label to the
 PR instead. Dependabot is exempt automatically.
 
+The **docs guard** works the same way for the docs site. A PR that changes a
+chart value, the authoring schema, a CLI command, a server setting, a
+migration, the OpenAPI document, or adds a changelog fragment of kind Added,
+Changed, Deprecated or Removed updates `website/content/` in the same PR. When
+nothing in it is user-discoverable, apply the **`skip-docs`** label and add a
+line with the reason to the PR description:
+
+```
+Skip-docs: internal refactor, no setting or behaviour an operator can see
+```
+
+The label alone fails the guard. The release cut reads the reason back
+(`scripts/docs-gap.sh`), so write it for the person cutting the release.
+
 #### 5. Pull Request Process
 
 1. Fork the repository and create your branch.

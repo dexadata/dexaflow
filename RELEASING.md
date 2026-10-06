@@ -43,6 +43,21 @@ the model Kubernetes uses:
   commits the cut itself lands on `main` (release prep, docs promotion) never
   count; a Dependabot bump has no milestone, so it shows in the list until it
   is cherry-picked or skipped.
+- **Nothing user-facing ships undocumented.** `scripts/docs-gap.sh X.Y.Z`
+  lists every commit the release ships since the previous GA (on
+  `release-X.Y` for a patch, on `main` for a minor) that changes user-facing
+  surface without editing `website/content/`: a chart value, the authoring
+  schema, a CLI command, a server setting (`internal/config`), a migration,
+  the OpenAPI document, or a changelog fragment of kind Added, Changed,
+  Deprecated or Removed. Such a commit passes when its PR (or, for a
+  cherry-pick, the original PR on `main`) carries the `skip-docs` label and a
+  `Skip-docs: <reason>` line in its description, or when
+  `.github/docs-skip.txt` on the branch being cut lists it (`#N reason` or
+  `<sha> reason`, for example `#1352 documented in #1470`). The cut runs it
+  for every rc and GA and refuses while the list is not empty. The docs guard
+  applies the same rule to each PR when it is opened, so the list is normally
+  empty; it catches what the per-PR check could not, such as a skip with no
+  reason or a docs PR that was promised and never merged.
 - **Only the newest release branch takes patches.** An older one gets a
   security fix only when the owner decides so for that fix.
 
@@ -177,6 +192,9 @@ scripts/cut-release.sh v0.4.4
 
 # What main carries that the patch would miss (the cut refuses while non-empty)
 scripts/release-gap.sh 0.5.1 --fetch
+
+# User-facing changes the release would ship without docs (the cut refuses while non-empty)
+scripts/docs-gap.sh 0.5.2 --fetch
 
 # A patch of a minor that already shipped is cut from release-0.5
 scripts/cut-release.sh v0.5.1-rc.1
