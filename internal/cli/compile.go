@@ -851,6 +851,12 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 		// lands them in dag.json and flows them through dispatch→BuildPod exactly
 		// like the per-task values already do.
 		applyDAGDefaults(&spec.Tasks[i], cfg.Defaults)
+		// Size 1 is the default weight; leaving it out keeps dag.json and its
+		// hash identical to a DAG that never set size (ADR 0066). This runs after
+		// both layers so a task's explicit 1 still beats a larger defaults.size.
+		if spec.Tasks[i].PoolSlots == 1 {
+			spec.Tasks[i].PoolSlots = 0
+		}
 	}
 	out, err := json.MarshalIndent(&spec, "", "  ")
 	if err != nil {
