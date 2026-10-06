@@ -35,6 +35,13 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    included), every new external input validated, new or bumped dependencies
    clean under `make vuln`, and the image scan (`image-scan.yaml`, Trivy) clean
    or every finding justified in `.trivyignore.yaml`.
+   **Every open security advisory** has its fix in the release, and its
+   publication is planned for after that release ships (the only exception is
+   active exploitation, see [`SECURITY.md`](SECURITY.md)). Track it without exposing details: a neutral
+   item in the release milestone (no vulnerability description), the fix
+   developed in the advisory's private fork and merged to `main`, and
+   `scripts/release-gap.sh` confirming the fix is on `release-X.Y`. The line
+   for this review lists the open advisories by identifier only.
 7. **Upgrade and rollback.** The new migrations were applied over a database of
    realistic size, upgrading from the previous release, and rolled back with
    `make migrate-down`, with the time each took and the server healthy after both.
