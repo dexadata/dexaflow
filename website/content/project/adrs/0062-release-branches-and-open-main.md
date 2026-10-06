@@ -130,6 +130,19 @@ additive and opt-in: the field is optional, a request without it behaves as in
 service token. It still lands on `main` first and passes the review in
 section 5.
 
+#### 6.2 Recorded exception: weighted pool slots in `v0.5.2`
+
+ADR 0066 (weighted pool slots, the operator resource unit, the starvation
+reservation and `max_task_pool_slots`) is cherry-picked into `release-0.5` and
+ships in `v0.5.2`, by the owner's decision of 2026-10-06, because the
+product needs a compute budget per tenant before a `v0.6.0` that has no
+date. Unlike 6.1 it carries a migration (one `tenants` column with a constant
+default) and changes what the pool gate counts, so it qualifies only because
+every part is inert until used: a DAG without `pool_slots` weighs 1 as today,
+the unit and the tenant ceiling are off by default, and the unit has a `warn`
+mode for rollout. The migration is additive and its down drops the column.
+Each PR still lands on `main` first and passes the review in section 5.
+
 ### 7. Versions do not change
 
 SemVer and the RC discipline of ADR 0033 and ADR 0037 stay as they are: a
