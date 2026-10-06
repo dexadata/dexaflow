@@ -199,6 +199,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(RequestID())
 	r.Use(Observe(deps.Metrics, deps.Tracer))
 	r.Use(StructuredLogger(deps.Logger))
+	r.Use(RejectEncodedPathSeparators())
 	r.Use(CORS(deps.CORSOrigins))
 	r.Use(NoStoreOnVolatileRoutes())
 	if deps.DevNoAuth {
