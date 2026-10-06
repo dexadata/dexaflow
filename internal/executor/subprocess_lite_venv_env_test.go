@@ -15,12 +15,11 @@ import (
 func TestPerDagVenvEnvWinsOverMirroredBootVenv(t *testing.T) {
 	const boot = "/venvs/first/bin/python"
 	const perDag = "/venvs/mine/bin/python"
-	env := []string{
+	env := append([]string{
 		"LEOFLOW_PYTHON=" + boot,
 		"DEXAFLOW_PYTHON=" + boot,
 		"PATH=/usr/bin",
-	}
-	env = append(env, perDagVenvEnv(perDag, "/usr/bin")...)
+	}, perDagVenvEnv(perDag, "/usr/bin")...)
 
 	// os/exec keeps the last value of a duplicated key.
 	final := map[string]string{}
@@ -28,7 +27,7 @@ func TestPerDagVenvEnvWinsOverMirroredBootVenv(t *testing.T) {
 		k, v, _ := strings.Cut(kv, "=")
 		final[k] = v
 	}
-	var flat []string
+	flat := make([]string, 0, len(final))
 	for k, v := range final {
 		flat = append(flat, k+"="+v)
 	}
