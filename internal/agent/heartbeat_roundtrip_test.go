@@ -27,7 +27,7 @@ func (stubStore) ReportState(context.Context, auth.AgentIdentity, domain.TaskSta
 }
 func (stubStore) Reschedule(context.Context, auth.AgentIdentity, time.Time) error { return nil }
 func (stubStore) RecordHeartbeat(context.Context, auth.AgentIdentity) error       { return nil }
-func (stubStore) BindWarmAttempt(context.Context, string, string, int, string) error {
+func (stubStore) BindWarmAttempt(context.Context, string, string, int, int, string) error {
 	return nil
 }
 

@@ -127,7 +127,7 @@ func TestMarkTaskAgentLostIntegration(t *testing.T) {
 	}
 
 	// Reap — the first mark applies (a running row transitions).
-	applied, err := sched.MarkTaskAgentLost(ctx, c.TaskInstanceID)
+	applied, err := sched.MarkTaskAgentLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if err != nil {
 		t.Fatalf("MarkTaskAgentLost: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestMarkTaskAgentLostIntegration(t *testing.T) {
 
 	// Second call is a no-op (WHERE state='running' now matches 0 rows) — and
 	// that is observable: applied must be false.
-	applied, err = sched.MarkTaskAgentLost(ctx, c.TaskInstanceID)
+	applied, err = sched.MarkTaskAgentLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if err != nil {
 		t.Errorf("second MarkTaskAgentLost errored: %v", err)
 	}

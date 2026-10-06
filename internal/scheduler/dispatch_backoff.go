@@ -40,6 +40,17 @@ func dispatchBackoff(attempts int) time.Duration {
 	return d
 }
 
+// InfraConfirmMaxWait is the liveness valve of the infra confirmation gate
+// (ADR 0052 amendment, part 2): how long after a provisional infra mark's
+// ended_at the planner keeps the task active waiting for the pod reconciler to
+// confirm the mark or settle a durable SUCCESS over it. Past it the planner
+// acts on the guess as before. It must exceed a stopped task pod's termination
+// grace plus two maintenance intervals (the reconciler needs the container to
+// exit and then one sweep), and stay below the orphan-run threshold; both
+// orderings are rungs of the boot-time resilience ladder. The store reads it
+// too, to guard the re-place rail.
+const InfraConfirmMaxWait = 2 * time.Minute
+
 // InfraReplaceMaxDelay is the longest the planner may park an infra-failed task
 // before re-placing it: the backoff before the last permitted re-place (attempt
 // infraMaxAttempts) plus the full de-synchronizing jitter window. It is the

@@ -139,7 +139,7 @@ spec:
             # the served SPA shell, mirroring Lite's silver LITE pill.
             - name: LEOFLOW_UI_EDITION
               value: "pro"
-            {{- if .ctx.Values.goMemLimit.enabled }}
+            {{- if (.ctx.Values.goMemLimit | default dict).enabled }}
             # Soft memory limit for the Go GC, a fraction of the container's
             # hard limit (leoflow.goMemLimit). Omitted when off.
             - name: GOMEMLIMIT
@@ -228,6 +228,13 @@ spec:
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
             {{- end }}
+            {{- if .ctx.Values.config.poolsReadOnly }}
+            # Tenant-facing pool API serves reads only (server.pools_read_only):
+            # no tenant role, admin included, can create, resize or delete a pool.
+            # Omitted when false, which keeps the server default (writable).
+            - name: LEOFLOW_SERVER_POOLS_READ_ONLY
+              value: "true"
+            {{- end }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set
@@ -252,6 +259,27 @@ spec:
             - name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
               value: {{ .ctx.Values.executor.defaults.staging.storageClass | quote }}
             {{- end }}
+            {{- with .ctx.Values.executor.kubeClient }}
+            {{- if .qps }}
+            # Kubernetes client rate limits (executor.kube_client). Unset keeps
+            # client-go's QPS 5 / burst 10 on one shared client.
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS
+              value: {{ .qps | quote }}
+            {{- end }}
+            {{- if .burst }}
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST
+              value: {{ .burst | quote }}
+            {{- end }}
+            {{- if .maintenanceQps }}
+            # A separate client and token bucket for maintenance work.
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
+              value: {{ .maintenanceQps | quote }}
+            {{- end }}
+            {{- if .maintenanceBurst }}
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
+              value: {{ .maintenanceBurst | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .ctx.Values.executor.collectSettledRunPods }}
             # Opt-in: collect a settled run's finished task pods in one
             # DeleteCollection instead of one delete per pod after the grace period.
@@ -260,6 +288,8 @@ spec:
             {{- end }}
             - name: LEOFLOW_LOGS_DIR
               value: {{ .ctx.Values.config.logsDir | quote }}
+            - name: LEOFLOW_LOGS_TAIL_PUBLISH
+              value: {{ (.ctx.Values.logs.tail).publish | default "always" | quote }}
             {{- if ne .ctx.Values.logs.sink.provider "disk" }}
             # Object-store log backend (opt-in, ADR 0035/0056 keyless-first). With
             # provider s3 or gcs, task logs ship to a bucket instead of the PVC; set
@@ -300,6 +330,18 @@ spec:
               value: {{ .ctx.Values.config.scheduler.enabled | quote }}
             - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
               value: {{ .ctx.Values.config.scheduler.loopIntervalMs | quote }}
+            {{- with .ctx.Values.config.scheduler.dispatch }}
+            {{- if .bufferSize }}
+            # Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
+            # the pods. Unset keeps the server default, synchronous dispatch.
+            - name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+              value: {{ .bufferSize | quote }}
+            {{- end }}
+            {{- if .workers }}
+            - name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+              value: {{ .workers | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
               value: {{ .ctx.Values.database.maxOpenConns | quote }}
             - name: LEOFLOW_DATABASE_MAX_IDLE_CONNS

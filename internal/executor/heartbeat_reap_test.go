@@ -78,7 +78,7 @@ func (f *fakeHeartbeatStore) ListAgentLostCandidates(context.Context) ([]AgentLo
 	return f.candidates, f.listErr
 }
 
-func (f *fakeHeartbeatStore) MarkTaskAgentLost(_ context.Context, tiID string) (bool, error) {
+func (f *fakeHeartbeatStore) MarkTaskAgentLost(_ context.Context, tiID string, _, _ int) (bool, error) {
 	if f.failErr != nil {
 		return false, f.failErr
 	}
@@ -261,7 +261,7 @@ func (p *panicHeartbeatStore) ListAgentLostCandidates(context.Context) ([]AgentL
 	}
 	return []AgentLostCandidate{{TaskInstanceID: "doomed", LastHeartbeat: time.Now().Add(-1 * time.Hour)}}, nil
 }
-func (p *panicHeartbeatStore) MarkTaskAgentLost(context.Context, string) (bool, error) {
+func (p *panicHeartbeatStore) MarkTaskAgentLost(context.Context, string, int, int) (bool, error) {
 	if p.panicOnFail {
 		panic("boom: MarkTaskAgentLost")
 	}

@@ -351,6 +351,9 @@ type TaskInstance struct {
 	LastFailureKind   *string            `json:"last_failure_kind"`
 	InfraAttempts     int32              `json:"infra_attempts"`
 	WarmWorkerID      *string            `json:"warm_worker_id"`
+	ReleasedAt        pgtype.Timestamptz `json:"released_at"`
+	AttemptEpoch      int32              `json:"attempt_epoch"`
+	InfraConfirmedAt  pgtype.Timestamptz `json:"infra_confirmed_at"`
 }
 
 type TaskInstanceHistory struct {
@@ -370,6 +373,7 @@ type TaskInstanceHistory struct {
 	NodeName        *string            `json:"node_name"`
 	Note            *string            `json:"note"`
 	ArchivedAt      pgtype.Timestamptz `json:"archived_at"`
+	AttemptEpoch    int32              `json:"attempt_epoch"`
 }
 
 type TaskStateHistory struct {
@@ -383,11 +387,16 @@ type TaskStateHistory struct {
 }
 
 type Tenant struct {
-	ID          pgtype.UUID        `json:"id"`
-	Name        string             `json:"name"`
-	DisplayName *string            `json:"display_name"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	Name                       string             `json:"name"`
+	DisplayName                *string            `json:"display_name"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	MaxDags                    int32              `json:"max_dags"`
+	MaxRunsPerDay              int32              `json:"max_runs_per_day"`
+	MinScheduleIntervalSeconds int32              `json:"min_schedule_interval_seconds"`
+	RunsDay                    pgtype.Date        `json:"runs_day"`
+	RunsDayCount               int32              `json:"runs_day_count"`
 }
 
 type User struct {

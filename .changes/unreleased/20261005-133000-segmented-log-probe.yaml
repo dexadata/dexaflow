@@ -1,0 +1,23 @@
+kind: Fixed
+body: |-
+  **Segmented object logs no longer lose or cut short a stored log when the
+  bucket refuses a probe.** With `logs.sink.layout: segmented`, the sink finds
+  where an attempt's log ends by asking the bucket for a segment that should
+  not exist. On a bucket that answers that request with an error instead of
+  not-found (S3 without `s3:ListBucket` answers `AccessDenied`; a transient
+  `503` does the same for a moment), a reconnecting agent's second log stream
+  started over at segment zero and erased the first stream's lines, and every
+  read of a segmented attempt ended in `reading log segment: api error
+  AccessDenied` right after its last line. The probe is now retried with a
+  short backoff; when it still fails, the new stream is refused (the task keeps
+  running, and the lines already stored stay intact) and a warning says why, a
+  read serves every segment it got and ends at the first one it cannot reach,
+  and a read that reaches nothing reports the bucket's error instead of
+  showing "no logs". The server now also checks at startup that the bucket
+  answers a missing key with not-found and refuses to start otherwise, naming
+  the permission to grant. Separately, a log line carrying a timestamp outside
+  years 1 to 9999 is rejected instead of being stored unencoded, where a
+  newline in its message became a second log line of the sender's own making;
+  the encoder now always produces one JSON object per line and stamps such a
+  line with the current time.
+time: 2026-10-05T13:30:00.000000000+00:00
