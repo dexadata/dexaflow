@@ -1,6 +1,9 @@
 package domain
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("resource not found")
@@ -28,3 +31,9 @@ var ErrSchemaNotCurrent = errors.New("database schema is not current")
 // request is well formed, and repeating it will not succeed until the limit or
 // the tenant's usage changes.
 var ErrLimitExceeded = errors.New("tenant limit exceeded")
+
+// ErrMonthlyTaskRunLimit is the ErrLimitExceeded a run creation gets when the
+// run's tasks do not fit what is left of the tenant's max_task_runs_per_month.
+// errors.Is matches it as ErrLimitExceeded too; the scheduler tells it apart to
+// meter it on its own.
+var ErrMonthlyTaskRunLimit = fmt.Errorf("monthly task run limit: %w", ErrLimitExceeded)

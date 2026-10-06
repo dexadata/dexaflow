@@ -93,6 +93,9 @@ type Querier interface {
 	CountPools(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountTaskInstanceStatesInWindow(ctx context.Context, arg CountTaskInstanceStatesInWindowParams) ([]CountTaskInstanceStatesInWindowRow, error)
 	CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
+	// Tasks in the current version of each of the tenant's active DAGs other than
+	// dag_id: what max_tasks (migration 042) compares a registration against.
+	CountTenantTasksExcept(ctx context.Context, arg CountTenantTasksExceptParams) (int64, error)
 	CountUsers(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountVariables(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
@@ -113,6 +116,9 @@ type Querier interface {
 	// byte-identical to the loop — only the statement count changes (T INSERTs → 1 COPY).
 	CreateTaskInstances(ctx context.Context, arg []CreateTaskInstancesParams) (int64, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
+	// The task count of a DAG's current version: what a new run of it charges to
+	// max_task_runs_per_month.
+	CurrentVersionTaskCount(ctx context.Context, arg CurrentVersionTaskCountParams) (int32, error)
 	// Whether run_id of the DAG dag_id in tenant tenant_id exists: the read behind
 	// a refused daily run cap charge, so a run that already exists keeps its usual
 	// answer (a no-op for a scheduled slot, a conflict for a manual run id) instead
@@ -699,6 +705,13 @@ type Querier interface {
 	// re-checks the WHERE against the row a concurrent winner committed, so the
 	// count can never pass the cap.
 	ReserveTenantDailyRun(ctx context.Context, id pgtype.UUID) (int64, error)
+	// Charges a run's tasks to the tenant's current UTC month, starting the count
+	// again when the month has turned. Zero rows means the tenant has no monthly
+	// cap or the tasks do not fit what is left; the caller tells the two apart
+	// from the limit it read. It runs in the run's transaction, before the INSERT,
+	// like ReserveTenantDailyRun, so a refusal writes nothing and the row lock
+	// keeps concurrent runs from passing the cap.
+	ReserveTenantMonthlyTaskRuns(ctx context.Context, arg ReserveTenantMonthlyTaskRunsParams) (int64, error)
 	// Archives every failed attempt in the run into task_instance_history then
 	// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
 	// task ids it reset, so the clear can delete exactly their XCom.
@@ -852,7 +865,7 @@ type Querier interface {
 	// self-referential, so an already-stamped row is never re-stamped.
 	UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) error
 	// Sets the limits given and keeps the others: a NULL argument leaves that
-	// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
+	// column as it is, 0 makes the limit unlimited (migrations 040 to 042).
 	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error)
 	// Tri-state write (#887): COALESCE(EXCLUDED.col, connections.col) preserves the

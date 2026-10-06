@@ -36,10 +36,10 @@ type fakeStore struct {
 	createErr      bool
 	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
 	// these tenants, as the store does once a tenant's daily run cap is reached.
-	limitedTenants       map[string]bool
+	limitedTenants map[string]bool
 	// limitedErr, when set, is the refusal limitedTenants get instead of the
 	// daily cap's.
-	limitedErr error
+	limitedErr           error
 	limitedCalls         int
 	dispatchFailures     []transition
 	dispatchBackpressure []transition

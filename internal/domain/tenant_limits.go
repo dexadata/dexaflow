@@ -23,6 +23,12 @@ type TenantLimits struct {
 	// MaxTaskPoolSlots caps a task's pool_slots (its size, ADR 0066): a DAG
 	// with a larger task is refused at registration.
 	MaxTaskPoolSlots int
+	// MaxTasks caps the tasks across the current version of every DAG the
+	// tenant has, checked when a DAG version is registered.
+	MaxTasks int
+	// MaxTaskRunsPerMonth caps the task runs the tenant may start in one UTC
+	// calendar month: a run charges its DAG's task count when it is created.
+	MaxTaskRunsPerMonth int
 }
 
 // TenantLimitsUpdate changes some of a tenant's limits: a nil field leaves the
@@ -32,11 +38,14 @@ type TenantLimitsUpdate struct {
 	MaxRunsPerDay              *int
 	MinScheduleIntervalSeconds *int
 	MaxTaskPoolSlots           *int
+	MaxTasks                   *int
+	MaxTaskRunsPerMonth        *int
 }
 
 // IsZero reports whether the update changes nothing.
 func (u TenantLimitsUpdate) IsZero() bool {
-	return u.MaxDags == nil && u.MaxRunsPerDay == nil && u.MinScheduleIntervalSeconds == nil && u.MaxTaskPoolSlots == nil
+	return u.MaxDags == nil && u.MaxRunsPerDay == nil && u.MinScheduleIntervalSeconds == nil &&
+		u.MaxTaskPoolSlots == nil && u.MaxTasks == nil && u.MaxTaskRunsPerMonth == nil
 }
 
 const minutesPerDay = 24 * 60

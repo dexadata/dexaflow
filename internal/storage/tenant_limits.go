@@ -34,6 +34,8 @@ func loadTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID) 
 		MaxRunsPerDay:              int(row.MaxRunsPerDay),
 		MinScheduleIntervalSeconds: int(row.MinScheduleIntervalSeconds),
 		MaxTaskPoolSlots:           int(row.MaxTaskPoolSlots),
+		MaxTasks:                   int(row.MaxTasks),
+		MaxTaskRunsPerMonth:        int(row.MaxTaskRunsPerMonth),
 	}, nil
 }
 
@@ -52,6 +54,8 @@ func applyTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID,
 		{"max_runs_per_day", u.MaxRunsPerDay},
 		{"min_schedule_interval_seconds", u.MinScheduleIntervalSeconds},
 		{"max_task_pool_slots", u.MaxTaskPoolSlots},
+		{"max_tasks", u.MaxTasks},
+		{"max_task_runs_per_month", u.MaxTaskRunsPerMonth},
 	} {
 		if l.value != nil && (*l.value < 0 || *l.value > math.MaxInt32) {
 			return domain.Safef(domain.ErrValidation,
@@ -64,6 +68,8 @@ func applyTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID,
 		MaxRunsPerDay:              int32Ptr(u.MaxRunsPerDay),
 		MinScheduleIntervalSeconds: int32Ptr(u.MinScheduleIntervalSeconds),
 		MaxTaskPoolSlots:           int32Ptr(u.MaxTaskPoolSlots),
+		MaxTasks:                   int32Ptr(u.MaxTasks),
+		MaxTaskRunsPerMonth:        int32Ptr(u.MaxTaskRunsPerMonth),
 	}); err != nil {
 		return fmt.Errorf("setting tenant limits: %w", err)
 	}
@@ -80,8 +86,9 @@ func int32Ptr(n *int) *int32 {
 
 // checkRegistrationLimits refuses a DAG version the tenant's limits do not
 // allow: a schedule that fires more often than min_schedule_interval_seconds,
-// a task whose pool_slots is above max_task_pool_slots, or a DAG the tenant
-// does not have yet once it holds max_dags of them. A new
+// a task whose pool_slots is above max_task_pool_slots, more tasks across the
+// tenant's DAGs than max_tasks, or a DAG the tenant does not have yet once it
+// holds max_dags of them. A new
 // version of a DAG the tenant already has never counts against max_dags.
 //
 // The DAG count is read, not locked, like the max_active_runs check in
@@ -96,6 +103,9 @@ func checkRegistrationLimits(ctx context.Context, q *queries.Queries, tid pgtype
 		return serr
 	}
 	if terr := checkTaskPoolSlots(spec, limits.MaxTaskPoolSlots); terr != nil {
+		return terr
+	}
+	if terr := checkMaxTasks(ctx, q, tid, spec, limits.MaxTasks); terr != nil {
 		return terr
 	}
 	if limits.MaxDags <= 0 {
@@ -133,6 +143,27 @@ func checkTaskPoolSlots(spec domain.DAGSpec, maxSlots int) error {
 	return nil
 }
 
+// checkMaxTasks refuses a DAG version whose tasks, added to those of the
+// current version of every other active DAG of the tenant, pass maxTasks. The
+// version replaces its DAG's current one, so that DAG's old tasks do not count.
+// Like max_dags it is read, not locked: concurrent registrations of different
+// DAGs at the limit can overshoot it by what they add. 0 is unlimited.
+func checkMaxTasks(ctx context.Context, q *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, maxTasks int) error {
+	if maxTasks <= 0 {
+		return nil
+	}
+	others, err := q.CountTenantTasksExcept(ctx, queries.CountTenantTasksExceptParams{TenantID: tid, DagID: spec.DagID})
+	if err != nil {
+		return fmt.Errorf("counting tasks: %w", err)
+	}
+	if total := others + int64(len(spec.Tasks)); total > int64(maxTasks) {
+		return domain.Safef(domain.ErrLimitExceeded,
+			"dag %q cannot be registered: its %d tasks and the %d of the tenant's other DAGs make %d, above the tenant limit max_tasks of %d",
+			spec.DagID, len(spec.Tasks), others, total, maxTasks)
+	}
+	return nil
+}
+
 // checkScheduleInterval refuses a schedule whose shortest gap between two runs
 // is below minSeconds. A schedule that never fires on a cron passes.
 func checkScheduleInterval(spec domain.DAGSpec, minSeconds int) error {
@@ -151,9 +182,12 @@ func checkScheduleInterval(spec domain.DAGSpec, minSeconds int) error {
 	return nil
 }
 
-// runCreation is one DAG run to create under the tenant's daily run cap
-// (createRunWithinDailyLimit).
+// runCreation is one DAG run to create under the tenant's run limits
+// (createRunWithinLimits).
 type runCreation struct {
+	// dagID is the run's DAG; its current version's task count is what the
+	// run charges to max_task_runs_per_month.
+	dagID string
 	// insert creates the run on q and reports whether it did; false means the
 	// run already existed and nothing was written (ON CONFLICT DO NOTHING).
 	insert func(q *queries.Queries) (bool, error)
@@ -165,21 +199,22 @@ type runCreation struct {
 	existsErr error
 }
 
-// createRunWithinDailyLimit charges one run to the tenant's max_runs_per_day
-// and then creates it. A tenant without the limit runs the insert on q as
-// before. A tenant with it runs the charge and the insert in one transaction,
-// charge first: the charge locks the tenant row, so concurrent triggers cannot
-// both take the last run of the day, and a refusal (zero rows from the
+// createRunWithinLimits charges one run to the tenant's max_runs_per_day and
+// its tasks to max_task_runs_per_month, then creates it. A tenant with neither
+// limit runs the insert on q as before. Otherwise the charges and the insert
+// share one transaction, charges first: each locks the tenant row, so
+// concurrent triggers cannot pass a limit, and a refusal (zero rows from a
 // conditional UPDATE) ends the transaction before anything is written, so the
-// retries of a capped tenant leave no dead rows in dag_runs or its indexes.
-// An insert that creates nothing (a scheduled slot that already exists) or
-// fails rolls the whole transaction back, charge included.
-func createRunWithinDailyLimit(ctx context.Context, q *queries.Queries, pool txBeginner, tid pgtype.UUID, run runCreation) error {
+// retries of a capped tenant leave no dead rows in dag_runs or its indexes and
+// the other limit's charge is given back. An insert that creates nothing (a
+// scheduled slot that already exists) or fails rolls the whole transaction
+// back, charges included.
+func createRunWithinLimits(ctx context.Context, q *queries.Queries, pool txBeginner, tid pgtype.UUID, run runCreation) error {
 	limits, err := loadTenantLimits(ctx, q, tid)
 	if err != nil {
 		return err
 	}
-	if limits.MaxRunsPerDay <= 0 {
+	if limits.MaxRunsPerDay <= 0 && limits.MaxTaskRunsPerMonth <= 0 {
 		_, ierr := run.insert(q)
 		return ierr
 	}
@@ -189,11 +224,9 @@ func createRunWithinDailyLimit(ctx context.Context, q *queries.Queries, pool txB
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
 	qtx := q.WithTx(tx)
-	n, err := qtx.ReserveTenantDailyRun(ctx, tid)
-	if err != nil {
-		return fmt.Errorf("charging the daily run limit: %w", err)
-	}
-	if n == 0 {
+	if refusal, cerr := chargeRunLimits(ctx, qtx, tid, run.dagID, limits); cerr != nil {
+		return cerr
+	} else if refusal != nil {
 		// Nothing has been written. A run that already exists is not a
 		// refusal: it gets the answer the insert would have given it.
 		exists, eerr := run.exists(qtx)
@@ -203,14 +236,46 @@ func createRunWithinDailyLimit(ctx context.Context, q *queries.Queries, pool txB
 		if exists {
 			return run.existsErr
 		}
-		return domain.Safef(domain.ErrLimitExceeded,
-			"the tenant reached its limit max_runs_per_day of %d for today (UTC)", limits.MaxRunsPerDay)
+		return refusal
 	}
 	if created, ierr := run.insert(qtx); ierr != nil || !created {
-		return ierr // the deferred rollback gives the charge back
+		return ierr // the deferred rollback gives the charges back
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("committing run tx: %w", err)
 	}
 	return nil
+}
+
+// chargeRunLimits charges one run to each run limit the tenant has, inside the
+// run's transaction. refusal is the limit that refused it (nothing to commit
+// then); err is a failure to charge.
+func chargeRunLimits(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, limits domain.TenantLimits) (refusal, err error) {
+	if limits.MaxRunsPerDay > 0 {
+		n, rerr := qtx.ReserveTenantDailyRun(ctx, tid)
+		if rerr != nil {
+			return nil, fmt.Errorf("charging the daily run limit: %w", rerr)
+		}
+		if n == 0 {
+			return domain.Safef(domain.ErrLimitExceeded,
+				"the tenant reached its limit max_runs_per_day of %d for today (UTC)", limits.MaxRunsPerDay), nil
+		}
+	}
+	if limits.MaxTaskRunsPerMonth <= 0 {
+		return nil, nil
+	}
+	tasks, terr := qtx.CurrentVersionTaskCount(ctx, queries.CurrentVersionTaskCountParams{TenantID: tid, DagID: dagID})
+	if terr != nil {
+		return nil, fmt.Errorf("counting the run's tasks: %w", mapNotFound(terr))
+	}
+	n, merr := qtx.ReserveTenantMonthlyTaskRuns(ctx, queries.ReserveTenantMonthlyTaskRunsParams{TenantID: tid, Tasks: tasks})
+	if merr != nil {
+		return nil, fmt.Errorf("charging the monthly task run limit: %w", merr)
+	}
+	if n == 0 {
+		return domain.Safef(domain.ErrMonthlyTaskRunLimit,
+			"the run's %d tasks do not fit what is left of the tenant limit max_task_runs_per_month of %d for this month (UTC)",
+			tasks, limits.MaxTaskRunsPerMonth), nil
+	}
+	return nil, nil
 }

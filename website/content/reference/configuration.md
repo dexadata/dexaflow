@@ -727,6 +727,8 @@ The same body may also carry tenant limits, each a whole number from 0 to
 | `max_dags` | DAGs the tenant may register | a DAG version is registered (`POST /api/v2/dags/{dag_id}/versions`) for a DAG the tenant does not have yet; new versions of its existing DAGs are always accepted |
 | `max_runs_per_day` | DAG runs, manual and scheduled together, the tenant may create in one UTC calendar day (00:00 to 24:00 UTC) | a run is triggered (`POST /api/v2/dags/{dag_id}/dagRuns`) or the scheduler creates a scheduled run |
 | `min_schedule_interval_seconds` | shortest gap a DAG's schedule may leave between two consecutive runs | a DAG version is registered |
+| `max_tasks` | tasks across the current version of every DAG the tenant has | a DAG version is registered; the version replaces its DAG's current one, so a DAG that shrinks always registers |
+| `max_task_runs_per_month` | task runs the tenant may start in one UTC calendar month, each run charging its DAG's task count when it is created | a run is triggered or the scheduler creates a scheduled run; a run whose tasks do not fit what is left is refused whole |
 | `max_task_pool_slots` | largest `pool_slots` (the task's `size` in `dexaflow.yaml`, [ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)) any task of a DAG may have | a DAG version is registered; the detail names the task, its size and the limit |
 
 A tenant created without limits has none, and a later call changes only the
@@ -759,6 +761,15 @@ How each limit is measured:
   apart (`30 1 * * *` in `Europe/London` fires at 00:30 and 01:30 UTC on the
   last Sunday of October), and a time inside the skipped hour does not fire
   that day.
+- The monthly task run count is kept on the tenant like the daily run count
+  and charged in the same transaction, so concurrent triggers can never take
+  the tenant past it. A run charges every task of its DAG's current version
+  when it is created, skipped or not; retries are not charged again. Counting
+  starts when the limit is set and again on the first of each UTC month. A
+  scheduled run it refuses is skipped like one the daily limit refuses, and
+  counted in `dexaflow_scheduler_decisions_total{decision_type="tenant_monthly_task_run_cap"}`.
+- `max_tasks` counts the tasks of each active DAG's current version. Like
+  `max_dags` it is checked, not locked.
 - `max_task_pool_slots` compares each task's `pool_slots` (1 when unset). A
   platform that sizes each tenant's `default_pool_slots` sets it to the same
   number, so a task that could never fit the pool is refused when it is pushed

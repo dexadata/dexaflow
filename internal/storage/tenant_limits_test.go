@@ -57,7 +57,7 @@ func (c *cappedConn) Exec(_ context.Context, sql string, _ ...any) (pgconn.Comma
 func (c *cappedConn) Commit(context.Context) error   { c.committed = true; return nil }
 func (c *cappedConn) Rollback(context.Context) error { c.rolledBack = true; return nil }
 
-// createCappedRun runs createRunWithinDailyLimit for a tenant whose daily cap
+// createCappedRun runs createRunWithinLimits for a tenant whose daily cap
 // answers conn.reserveRows.
 func createCappedRun(conn *cappedConn, run runCreation) error {
 	if run.exists == nil {
@@ -65,7 +65,7 @@ func createCappedRun(conn *cappedConn, run runCreation) error {
 			return q.DagRunExistsByDagID(context.Background(), queries.DagRunExistsByDagIDParams{})
 		}
 	}
-	return createRunWithinDailyLimit(context.Background(), queries.New(conn), fakeBeginner{tx: conn}, validUUID(), run)
+	return createRunWithinLimits(context.Background(), queries.New(conn), fakeBeginner{tx: conn}, validUUID(), run)
 }
 
 // TestDailyRunCapRefusalWritesNothing: when the conditional UPDATE takes no

@@ -726,7 +726,8 @@ func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID
 		return fmt.Errorf("scheduled run tenant id %q: %w", tenantID, err)
 	}
 	runID := "scheduled__" + logical.UTC().Format(time.RFC3339)
-	return createRunWithinDailyLimit(ctx, s.q, s.pool, tid, runCreation{
+	return createRunWithinLimits(ctx, s.q, s.pool, tid, runCreation{
+		dagID: dagID,
 		insert: func(q *queries.Queries) (bool, error) {
 			n, err := q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
 				RunID:       runID,

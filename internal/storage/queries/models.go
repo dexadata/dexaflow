@@ -398,6 +398,10 @@ type Tenant struct {
 	RunsDay                    pgtype.Date        `json:"runs_day"`
 	RunsDayCount               int32              `json:"runs_day_count"`
 	MaxTaskPoolSlots           int32              `json:"max_task_pool_slots"`
+	MaxTasks                   int32              `json:"max_tasks"`
+	MaxTaskRunsPerMonth        int32              `json:"max_task_runs_per_month"`
+	TaskRunsMonth              pgtype.Date        `json:"task_runs_month"`
+	TaskRunsMonthCount         int32              `json:"task_runs_month_count"`
 }
 
 type User struct {

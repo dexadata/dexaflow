@@ -540,7 +540,7 @@ func (r *Repository) DeleteDagRun(ctx context.Context, tenant, dagID, runID stri
 // races with concurrent inserts, but the small overshoot window is
 // bounded by the number of concurrent writers and lets us avoid an
 // advisory lock on the hot path. The tenant's max_runs_per_day, when set, is
-// charged exactly (createRunWithinDailyLimit).
+// charged exactly (createRunWithinLimits), with max_task_runs_per_month.
 func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run domain.DagRun) (domain.DagRun, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -563,7 +563,8 @@ func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run
 		conf = []byte("{}")
 	}
 	var created queries.DagRun
-	err = createRunWithinDailyLimit(ctx, r.q, r.pool, dag.TenantID, runCreation{
+	err = createRunWithinLimits(ctx, r.q, r.pool, dag.TenantID, runCreation{
+		dagID: dag.DagID,
 		insert: func(q *queries.Queries) (bool, error) {
 			var ierr error
 			created, ierr = q.CreateDagRun(ctx, queries.CreateDagRunParams{

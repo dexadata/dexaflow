@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **Per-tenant limits on tasks and monthly task runs.** The service API
+  (`PUT /api/v2/service/tenants/{tenant}`) accepts `max_tasks` (tasks across
+  the current version of the tenant's DAGs, checked at registration) and
+  `max_task_runs_per_month` (each run charges its DAG's task count when it is
+  created, against a UTC-month counter charged in the run's own transaction,
+  like `max_runs_per_day`). A refusal answers `403` naming the limit; a
+  scheduled run the monthly limit refuses is skipped and metered as
+  `tenant_monthly_task_run_cap`. Migration 042 adds the columns with constant
+  defaults; `0`, the default, is unlimited (#1484).
+time: 2026-10-06T23:00:00.000000000-03:00

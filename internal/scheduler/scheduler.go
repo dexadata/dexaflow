@@ -831,9 +831,13 @@ func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logi
 		s.record("create_run")
 	case errors.Is(err, domain.ErrLimitExceeded):
 		capped[d.TenantID] = true
-		s.record("tenant_daily_run_cap")
+		decision, msg := "tenant_daily_run_cap", "skipping scheduled runs: the tenant reached its daily run limit"
+		if errors.Is(err, domain.ErrMonthlyTaskRunLimit) {
+			decision, msg = "tenant_monthly_task_run_cap", "skipping scheduled runs: the tenant reached its monthly task run limit"
+		}
+		s.record(decision)
 		if day := time.Now().UTC().Format(time.DateOnly); s.warnedRunCaps[d.TenantID] != day {
-			s.logger.Warn("skipping scheduled runs: the tenant reached its daily run limit",
+			s.logger.Warn(msg,
 				"tenant", d.TenantID, "dag", d.DagID, "logical_date", logical, "reason", err)
 			s.warnedRunCaps[d.TenantID] = day
 		}

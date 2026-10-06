@@ -55,8 +55,54 @@ func (q *Queries) CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (in
 	return count, err
 }
 
+const countTenantTasksExcept = `-- name: CountTenantTasksExcept :one
+SELECT COALESCE(sum(jsonb_array_length(dv.spec->'tasks')), 0)::bigint
+FROM dags d
+JOIN dag_versions dv ON dv.id = d.current_version_id
+WHERE d.tenant_id = $1::uuid
+  AND d.is_active
+  AND d.dag_id <> $2::text
+`
+
+type CountTenantTasksExceptParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    string      `json:"dag_id"`
+}
+
+// Tasks in the current version of each of the tenant's active DAGs other than
+// dag_id: what max_tasks (migration 042) compares a registration against.
+func (q *Queries) CountTenantTasksExcept(ctx context.Context, arg CountTenantTasksExceptParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTenantTasksExcept, arg.TenantID, arg.DagID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const currentVersionTaskCount = `-- name: CurrentVersionTaskCount :one
+SELECT COALESCE(jsonb_array_length(dv.spec->'tasks'), 0)::int
+FROM dags d
+JOIN dag_versions dv ON dv.id = d.current_version_id
+WHERE d.tenant_id = $1::uuid
+  AND d.dag_id = $2::text
+`
+
+type CurrentVersionTaskCountParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    string      `json:"dag_id"`
+}
+
+// The task count of a DAG's current version: what a new run of it charges to
+// max_task_runs_per_month.
+func (q *Queries) CurrentVersionTaskCount(ctx context.Context, arg CurrentVersionTaskCountParams) (int32, error) {
+	row := q.db.QueryRow(ctx, currentVersionTaskCount, arg.TenantID, arg.DagID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const getTenantLimits = `-- name: GetTenantLimits :one
-SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots
+SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots,
+       max_tasks, max_task_runs_per_month
 FROM tenants
 WHERE id = $1
 `
@@ -66,6 +112,8 @@ type GetTenantLimitsRow struct {
 	MaxRunsPerDay              int32 `json:"max_runs_per_day"`
 	MinScheduleIntervalSeconds int32 `json:"min_schedule_interval_seconds"`
 	MaxTaskPoolSlots           int32 `json:"max_task_pool_slots"`
+	MaxTasks                   int32 `json:"max_tasks"`
+	MaxTaskRunsPerMonth        int32 `json:"max_task_runs_per_month"`
 }
 
 func (q *Queries) GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error) {
@@ -76,6 +124,8 @@ func (q *Queries) GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenan
 		&i.MaxRunsPerDay,
 		&i.MinScheduleIntervalSeconds,
 		&i.MaxTaskPoolSlots,
+		&i.MaxTasks,
+		&i.MaxTaskRunsPerMonth,
 	)
 	return i, err
 }
@@ -172,6 +222,42 @@ func (q *Queries) ReserveTenantDailyRun(ctx context.Context, id pgtype.UUID) (in
 	return result.RowsAffected(), nil
 }
 
+const reserveTenantMonthlyTaskRuns = `-- name: ReserveTenantMonthlyTaskRuns :execrows
+UPDATE tenants
+SET task_runs_month_count = CASE
+        WHEN task_runs_month = date_trunc('month', now() AT TIME ZONE 'UTC')::date
+        THEN task_runs_month_count + $1::int
+        ELSE $1::int
+    END,
+    task_runs_month = date_trunc('month', now() AT TIME ZONE 'UTC')::date
+WHERE id = $2::uuid
+  AND max_task_runs_per_month > 0
+  AND (CASE
+        WHEN task_runs_month = date_trunc('month', now() AT TIME ZONE 'UTC')::date
+        THEN task_runs_month_count::bigint
+        ELSE 0
+    END) + $1::int <= max_task_runs_per_month
+`
+
+type ReserveTenantMonthlyTaskRunsParams struct {
+	Tasks    int32       `json:"tasks"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Charges a run's tasks to the tenant's current UTC month, starting the count
+// again when the month has turned. Zero rows means the tenant has no monthly
+// cap or the tasks do not fit what is left; the caller tells the two apart
+// from the limit it read. It runs in the run's transaction, before the INSERT,
+// like ReserveTenantDailyRun, so a refusal writes nothing and the row lock
+// keeps concurrent runs from passing the cap.
+func (q *Queries) ReserveTenantMonthlyTaskRuns(ctx context.Context, arg ReserveTenantMonthlyTaskRunsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reserveTenantMonthlyTaskRuns, arg.Tasks, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const tenantHasDefaultPool = `-- name: TenantHasDefaultPool :one
 SELECT EXISTS (
     SELECT 1 FROM pools p JOIN tenants t ON t.id = p.tenant_id
@@ -192,8 +278,10 @@ SET max_dags = COALESCE($1::int, max_dags),
     max_runs_per_day = COALESCE($2::int, max_runs_per_day),
     min_schedule_interval_seconds = COALESCE($3::int, min_schedule_interval_seconds),
     max_task_pool_slots = COALESCE($4::int, max_task_pool_slots),
+    max_tasks = COALESCE($5::int, max_tasks),
+    max_task_runs_per_month = COALESCE($6::int, max_task_runs_per_month),
     updated_at = now()
-WHERE id = $5::uuid
+WHERE id = $7::uuid
 `
 
 type UpdateTenantLimitsParams struct {
@@ -201,17 +289,21 @@ type UpdateTenantLimitsParams struct {
 	MaxRunsPerDay              *int32      `json:"max_runs_per_day"`
 	MinScheduleIntervalSeconds *int32      `json:"min_schedule_interval_seconds"`
 	MaxTaskPoolSlots           *int32      `json:"max_task_pool_slots"`
+	MaxTasks                   *int32      `json:"max_tasks"`
+	MaxTaskRunsPerMonth        *int32      `json:"max_task_runs_per_month"`
 	TenantID                   pgtype.UUID `json:"tenant_id"`
 }
 
 // Sets the limits given and keeps the others: a NULL argument leaves that
-// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
+// column as it is, 0 makes the limit unlimited (migrations 040 to 042).
 func (q *Queries) UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error {
 	_, err := q.db.Exec(ctx, updateTenantLimits,
 		arg.MaxDags,
 		arg.MaxRunsPerDay,
 		arg.MinScheduleIntervalSeconds,
 		arg.MaxTaskPoolSlots,
+		arg.MaxTasks,
+		arg.MaxTaskRunsPerMonth,
 		arg.TenantID,
 	)
 	return err
