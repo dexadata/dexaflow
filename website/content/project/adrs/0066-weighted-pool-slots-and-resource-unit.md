@@ -60,8 +60,8 @@ is queued or running.
 - `dexaflow.yaml`: `tasks.<task_id>.size: N` and `defaults.size: N`. The YAML
   name is `size` because, once a unit is configured (section 3), the number is
   the size of the task, and that is how an author thinks about it. It compiles to
-  `pool_slots`. Precedence is ADR 0023's: task override > DAG default > the
-  value from `dag.py` > 1.
+  `pool_slots`. Precedence follows ADR 0023, most specific wins: the YAML task
+  override > the task's own `pool_slots` in `dag.py` > the YAML `defaults.size` > 1.
 - Registration refuses `pool_slots < 1` or above a ceiling of 1024.
 
 ### 3. Optional operator resource unit
