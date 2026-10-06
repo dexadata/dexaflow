@@ -85,3 +85,40 @@ func TestOverlayProjectNoSizeLeavesPoolSlotsUnset(t *testing.T) {
 		}
 	}
 }
+
+// TestOverlayProjectSizeOneIsOmitted: size 1 is the default weight, so it
+// compiles to no pool_slots and dag.json (and its hash) match a DAG without
+// size. A task override of 1 still beats a larger DAG-wide default.
+func TestOverlayProjectSizeOneIsOmitted(t *testing.T) {
+	path := writeDagJSON(t)
+	cfg := &domain.LeoflowConfig{
+		DagID:    "proj",
+		Defaults: &domain.ConfigDefaults{Size: intPtr(1)},
+		Tasks:    map[string]*domain.TaskConfig{"transform": {Size: intPtr(1)}},
+	}
+	if err := overlayProject(path, cfg); err != nil {
+		t.Fatalf("overlayProject: %v", err)
+	}
+	for _, ts := range readSpec(t, path).Tasks {
+		if ts.PoolSlots != 0 {
+			t.Errorf("%s pool_slots = %d, want omitted for size 1", ts.TaskID, ts.PoolSlots)
+		}
+	}
+
+	path = writeDagJSON(t)
+	cfg = &domain.LeoflowConfig{
+		DagID:    "proj",
+		Defaults: &domain.ConfigDefaults{Size: intPtr(4)},
+		Tasks:    map[string]*domain.TaskConfig{"transform": {Size: intPtr(1)}},
+	}
+	if err := overlayProject(path, cfg); err != nil {
+		t.Fatalf("overlayProject: %v", err)
+	}
+	got := readSpec(t, path)
+	if ts, _ := taskByID(got, "transform"); ts.EffectivePoolSlots() != 1 {
+		t.Errorf("transform weight = %d, want 1 (task override beats defaults.size 4)", ts.EffectivePoolSlots())
+	}
+	if ts, _ := taskByID(got, "extract"); ts.PoolSlots != 4 {
+		t.Errorf("extract pool_slots = %d, want 4 (defaults.size)", ts.PoolSlots)
+	}
+}
