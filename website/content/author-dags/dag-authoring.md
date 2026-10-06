@@ -305,6 +305,25 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 - **`staging` is DAG-level only** — one RWX volume is shared atomically by the
   whole run, so it cannot be per-task.
 
+### Task size (`size`, ADR 0066)
+
+`size` is how many slots of its pool a task takes while it is queued or
+running: Airflow's `pool_slots`. It defaults to 1, so a pool of 8 slots runs
+eight tasks of size 1, or two of size 4. A task that does not fit waits until
+enough slots free up; it never fails for it.
+
+```yaml
+defaults:
+  size: 1          # every task that sets none
+tasks:
+  train:
+    size: 4        # this task takes 4 slots
+```
+
+`@task(pool_slots=4)` or an operator's `pool_slots=4` in `dag.py` sets the same
+thing. Most specific wins: `tasks.<id>.size` > `pool_slots` in `dag.py` >
+`defaults.size` > 1. Pools are enforced on Pro only; Lite ignores the size.
+
 ### Guardrails (fail loudly, never silently)
 
 - A `tasks:` entry naming a `task_id` absent from the DAG → **compile error**.

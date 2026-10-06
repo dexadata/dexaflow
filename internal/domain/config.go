@@ -128,6 +128,9 @@ type TaskConfig struct {
 	Variables   []string   `json:"variables,omitempty" yaml:"variables,omitempty"`
 	Resources   *Resources `json:"resources,omitempty" yaml:"resources,omitempty"`
 	Execution   *Execution `json:"execution,omitempty" yaml:"execution,omitempty"`
+	// Size is the task's pool_slots (ADR 0066): how many slots of its pool it
+	// takes while queued or running. It overrides pool_slots from dag.py.
+	Size *int `json:"size,omitempty" yaml:"size,omitempty"`
 }
 
 // BuildConfig controls how the container image is built from the project.
@@ -149,10 +152,13 @@ type RegistryConfig struct {
 // ConfigDefaults holds task defaults applied to every task generated from the
 // project at compile time.
 type ConfigDefaults struct {
-	Retries                 int               `json:"retries,omitempty" yaml:"retries,omitempty"`
-	RetryDelaySeconds       int               `json:"retry_delay_seconds,omitempty" yaml:"retry_delay_seconds,omitempty"`
-	ExecutionTimeoutSeconds int               `json:"execution_timeout_seconds,omitempty" yaml:"execution_timeout_seconds,omitempty"`
-	Resources               *DefaultResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Retries                 int `json:"retries,omitempty" yaml:"retries,omitempty"`
+	RetryDelaySeconds       int `json:"retry_delay_seconds,omitempty" yaml:"retry_delay_seconds,omitempty"`
+	ExecutionTimeoutSeconds int `json:"execution_timeout_seconds,omitempty" yaml:"execution_timeout_seconds,omitempty"`
+	// Size is the default pool_slots of every task that sets none, in dag.py or
+	// in tasks.<id>.size (ADR 0066).
+	Size      *int              `json:"size,omitempty" yaml:"size,omitempty"`
+	Resources *DefaultResources `json:"resources,omitempty" yaml:"resources,omitempty"`
 	// NodeSelector is the DAG-wide pod placement fallback applied to every task
 	// that declares no execution.node_selector of its own. Like Resources it is a
 	// default, so the most-specific per-task value always wins. Consumed at
