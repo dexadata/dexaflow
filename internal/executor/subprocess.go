@@ -122,6 +122,20 @@ func prependVenvBin(perDagPy, basePATH string) string {
 	return bin + string(os.PathListSeparator) + basePATH
 }
 
+// perDagVenvEnv is the environment that points the agent at a per-DAG venv:
+// the interpreter under both of its names, and the venv's bin ahead of PATH.
+// Both names matter: the server mirrors its own LEOFLOW_PYTHON (the boot venv)
+// onto DEXAFLOW_PYTHON at startup, the agent inherits both, and when the two
+// differ the agent keeps DEXAFLOW_PYTHON. Overriding LEOFLOW_PYTHON alone would
+// leave every DAG running in the boot venv.
+func perDagVenvEnv(perDagPy, basePATH string) []string {
+	return []string{
+		"LEOFLOW_PYTHON=" + perDagPy,
+		"DEXAFLOW_PYTHON=" + perDagPy,
+		"PATH=" + prependVenvBin(perDagPy, basePATH),
+	}
+}
+
 // agentEnv builds the environment injected into the agent process.
 func agentEnv(req Request) []string {
 	env := make([]string, 0, 3+len(req.Env))
@@ -211,10 +225,7 @@ func (e *SubprocessExecutor) Execute(ctx context.Context, req Request) (Disposit
 		// Wire the per-DAG venv: LEOFLOW_PYTHON for `python -m ...` tasks, and the
 		// venv's bin ahead of PATH so venv console scripts (dbt, etc.) resolve for
 		// bash tasks. Last write wins in os/exec, so these beat the inherited env.
-		cmd.Env = append(cmd.Env,
-			"LEOFLOW_PYTHON="+perDagPy,
-			"PATH="+prependVenvBin(perDagPy, os.Getenv("PATH")),
-		)
+		cmd.Env = append(cmd.Env, perDagVenvEnv(perDagPy, os.Getenv("PATH"))...)
 	}
 	// The agent records its task's process group next to this server's record
 	// of the agent itself (#916): the task leads its own group and outlives an
