@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // This file gives the Kubernetes executor the ability to tear down a reaped
@@ -22,15 +24,17 @@ import (
 // (leoflow.io/run-id, /task-id, /try-number). The attempt epoch
 // (leoflow.io/attempt-epoch, ADR 0051 amendment) is filtered in Go after the
 // list, because a pod stamped before the epoch existed has no such label and is
-// epoch 0, which a label selector cannot express. Deletion is by List-then-Delete,
-// not DeleteCollection: a reap must judge each pod (see terminalForTeardown
-// below), and a cluster whose Role predates the `deletecollection` grant would
-// 403 it. The settled-run collection (run_settle_collect.go) is the one caller
-// of DeleteCollection, and it falls back to per-pod deletes on a 403. Each
-// per-pod delete names the pod it listed and pins that pod's UID as a
-// precondition (#901), so the delete can never act on a pod the list did not
+// epoch 0, which a label selector cannot express. Teardown is per pod after a
+// list, not DeleteCollection: a reap must judge each pod (see
+// terminalForTeardown and stopOrDelete below), and a cluster whose Role
+// predates the `deletecollection` grant would 403 it. The settled-run
+// collection (run_settle_collect.go) is the one caller of DeleteCollection,
+// and it falls back to per-pod deletes on a 403. A started pod is stopped in
+// place rather than deleted, so its outcome record survives (ADR 0052
+// amendment). Each per-pod write names the pod it listed and pins that pod's
+// UID as a precondition (#901), so it can never act on a pod the list did not
 // return. NotFound is always tolerated (a pod may have been garbage-collected
-// between the list and the delete), and so is a failed UID precondition, which
+// between the list and the write), and so is a failed UID precondition, which
 // means the pod listed is already gone.
 //
 // Both methods skip a pod that has already reached a terminal phase (#928) —
@@ -109,12 +113,14 @@ func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) er
 	return e.deletePodsBySelector(ctx, selector, nil)
 }
 
-// deletePodsBySelector lists the pods matching selector and deletes each one
-// that match accepts (every pod when match is nil) and that still has a
-// container to stop, skipping those already in a terminal phase (#928). Each
-// delete is by name with the listed pod's UID as a precondition (#901). It uses only the `list` and `delete` verbs the executor Role
-// grants; a NotFound on either the list target or an individual delete is
-// treated as success (the pod is already gone). Per-pod delete errors are
+// deletePodsBySelector lists the pods matching selector and tears down each
+// one that match accepts (every pod when match is nil) and that still has a
+// container to stop, skipping those already in a terminal phase (#928). A
+// started pod is stopped in place and a never-started one deleted (see
+// stopOrDelete); each write is by name with the listed pod's UID as a
+// precondition (#901). It uses the `list`, `patch` and `delete` verbs the
+// executor Role grants; a NotFound on either the list target or an individual
+// write is treated as success (the pod is already gone). Per-pod errors are
 // collected so one failure does not skip the rest.
 //
 // The skip is logged per pod at INFO, by name and phase, so an operator can tell
@@ -143,12 +149,72 @@ func (e *KubernetesExecutor) deletePodsBySelector(ctx context.Context, selector 
 				"pod", pod.Name, "phase", pod.Status.Phase, "selector", selector)
 			continue
 		}
-		derr := e.clientset.CoreV1().Pods(e.namespace).Delete(ctx, pod.Name, deleteListedPod(pod))
-		if derr != nil && !apierrors.IsNotFound(derr) && !apierrors.IsConflict(derr) {
-			errs = append(errs, fmt.Errorf("deleting pod %s: %w", pod.Name, derr))
+		if err := e.stopOrDelete(ctx, pod); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// stopOrDelete tears down one live task pod (ADR 0052 amendment, part 3). A
+// pod whose containers started (status.startTime set) is stopped in place:
+// its activeDeadlineSeconds is lowered to 1, which the apiserver accepts on a
+// live pod (setting an unset deadline, or lowering one) and which has always
+// elapsed, since the deadline counts from startTime. The kubelet kills the
+// containers with the pod's normal termination grace, the pod goes Failed with
+// reason DeadlineExceeded, and the object stays, carrying the task
+// container's termination message for the reconciler, which settles and
+// collects it like any finished pod. #474 holds: the reaped attempt stops
+// running user code. A pod that never started has no container and no record,
+// and a Pending pod can still start the task, so it is deleted.
+//
+// A refused patch (Forbidden from a Role without `patch`, or an admission
+// webhook rejecting pod updates) falls back to the delete, metered as
+// reap_teardown_delete_fallback, so the teardown is never weaker than before.
+// NotFound and a failed UID precondition (Conflict) mean the listed pod is
+// already gone. A patch carries no UID precondition: for a pod recreated under
+// the listed name the apiserver rejects the patched UID as an immutable field
+// (422 Invalid), so the fallback delete, which does pin the UID, is what tells
+// a gone pod (Conflict) from a refused stop; only the latter is reported.
+func (e *KubernetesExecutor) stopOrDelete(ctx context.Context, pod *corev1.Pod) error {
+	var perr error
+	if pod.Status.StartTime != nil {
+		perr = e.stopInPlace(ctx, pod)
+		if perr == nil || apierrors.IsNotFound(perr) || apierrors.IsConflict(perr) {
+			return nil
+		}
+	}
+	derr := e.clientset.CoreV1().Pods(e.namespace).Delete(ctx, pod.Name, deleteListedPod(pod))
+	if apierrors.IsNotFound(derr) || apierrors.IsConflict(derr) {
+		return nil
+	}
+	if perr != nil {
+		slog.WarnContext(ctx, "reap teardown: stopping the task pod in place was refused; deleting it, which loses its outcome record",
+			"pod", pod.Name, "error", perr)
+		if e.teardown != nil {
+			e.teardown.RecordSchedulerDecision("reap_teardown_delete_fallback")
+		}
+	}
+	if derr != nil {
+		return fmt.Errorf("deleting pod %s: %w", pod.Name, derr)
+	}
+	return nil
+}
+
+// stopInPlace lowers the pod's active deadline to 1 second with a merge patch
+// that also carries the listed pod's UID, which the apiserver checks as a
+// precondition (#901): a pod recreated under the same name is never touched.
+func (e *KubernetesExecutor) stopInPlace(ctx context.Context, pod *corev1.Pod) error {
+	patch := map[string]any{"spec": map[string]any{"activeDeadlineSeconds": 1}}
+	if pod.UID != "" {
+		patch["metadata"] = map[string]any{"uid": string(pod.UID)}
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	_, err = e.clientset.CoreV1().Pods(e.namespace).Patch(ctx, pod.Name, types.MergePatchType, body, metav1.PatchOptions{})
+	return err
 }
 
 // deleteListedPod is the delete options for a pod a teardown listed: its UID is

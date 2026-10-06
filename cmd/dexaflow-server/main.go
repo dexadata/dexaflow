@@ -2628,6 +2628,11 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	controlAddr := resolveAgentControlAddr(cfg)
 	podExec := executor.NewKubernetesExecutor(cs, cfg.Executor.TaskNamespace)
 	podExec.SetStagingStore(store) // record per-run staging volumes in the metadatabase (ADR 0022)
+	// Meter a reap teardown that could not stop a started pod in place and
+	// deleted it instead (ADR 0052 amendment).
+	if metrics != nil {
+		podExec.SetTeardownRecorder(metrics)
+	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
 	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
 	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)

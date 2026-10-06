@@ -25,7 +25,15 @@ type KubernetesExecutor struct {
 	clientset kubernetes.Interface
 	namespace string
 	staging   StagingStore
+	// teardown meters a reap teardown that fell back from stop-in-place to
+	// delete (ADR 0052 amendment); nil leaves it unmetered.
+	teardown DecisionRecorder
 }
+
+// SetTeardownRecorder wires the recorder that meters
+// reap_teardown_delete_fallback: a started pod a reap could not stop in place
+// (the patch was refused) and deleted instead.
+func (e *KubernetesExecutor) SetTeardownRecorder(r DecisionRecorder) { e.teardown = r }
 
 // SetStagingStore wires the metadatabase-backed staging-volume lifecycle store
 // (ADR 0022). With no store set, provisioning is not recorded and GC is a no-op.
