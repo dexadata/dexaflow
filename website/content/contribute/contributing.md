@@ -49,7 +49,8 @@ described in [Operating modes](/concepts/editions/).
 ## 2. Set up for development
 
 ```bash
-cp .github/CLAUDE.md.template ./CLAUDE.md  # optional (Claude Code; gitignored)
+# Read AGENTS.md at the repository root first: the standing rules for PRs,
+# releases and CI.
 
 make setup        # Go tools, Python parser/runtime, and the pre-commit hook
 make build        # bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
