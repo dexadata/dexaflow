@@ -51,7 +51,10 @@ is queued or running.
 - **No behavior change for existing DAGs**: none sets `pool_slots` today, so every
   task weighs 1, as now. Lite has no pools and ignores the field.
 - The API and the UI report the real `pool_slots`, and pool occupancy
-  (`PoolSlotUsage`) sums it.
+  (`PoolSlotUsage`) sums it. To sum it in SQL, `task_instances` gains a
+  `pool_slots` column (constant default 1, so Postgres adds it without
+  rewriting the table and every existing row weighs 1), written when the task
+  instances are materialized.
 
 ### 2. Authoring
 
@@ -161,7 +164,8 @@ fit is refused when it is pushed instead of waiting forever.
   `pool_slots`.
 - The pool gate's cost does not change: weights come from the specs the tick
   already loads, the reservation map is O(pools), and no query is added to the
-  tick. Section 5 adds one column to `tenants`, read at registration only.
+  tick. Section 1 adds one column to `task_instances` and section 5 one to
+  `tenants`; neither is read by the tick.
 - Ships in v0.5.2 by the owner's decision, recorded as an exception in ADR
   0062 section 6.2. Each PR lands on `main` with the `v0.5.2` milestone and is
   cherry-picked into `release-0.5`.

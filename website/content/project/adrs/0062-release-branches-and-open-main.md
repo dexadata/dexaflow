@@ -136,11 +136,11 @@ ADR 0066 (weighted pool slots, the operator resource unit, the starvation
 reservation and `max_task_pool_slots`) is cherry-picked into `release-0.5` and
 ships in `v0.5.2`, by the owner's decision of 2026-10-06, because the
 product needs a compute budget per tenant before a `v0.6.0` that has no
-date. Unlike 6.1 it carries a migration (one `tenants` column with a constant
-default) and changes what the pool gate counts, so it qualifies only because
+date. Unlike 6.1 it carries migrations (one column on `task_instances` and one on
+`tenants`, both with a constant default) and changes what the pool gate counts, so it qualifies only because
 every part is inert until used: a DAG without `pool_slots` weighs 1 as today,
 the unit and the tenant ceiling are off by default, and the unit has a `warn`
-mode for rollout. The migration is additive and its down drops the column.
+mode for rollout. The migrations are additive and their downs drop the columns.
 Each PR still lands on `main` first and passes the review in section 5.
 
 ### 7. Versions do not change
