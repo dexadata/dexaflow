@@ -5,8 +5,8 @@ weight: 660
 description: "ADR 0066: a task takes pool_slots slots of its pool (Airflow semantics), dexaflow.yaml sets it as size, and an optional operator unit turns slots into pod resources, so a pool can be sized in compute instead of in task count."
 ---
 
-**Status:** Proposed
-**Date:** 2026-10-06
+**Status:** Accepted
+**Date:** 2026-10-06 (proposed and accepted the same day by the project owner)
 **Relates:** ADR 0053 (admission and placement; this ADR changes what the Stage 3 pool gate counts), ADR 0023 (dexaflow.yaml config binding; adds one per-task and one DAG-default knob), ADR 0063 (operator executor policy, proposed; its resource ceiling composes with the unit below), ADR 0011 (strict TDD).
 
 > **Numbering.** 0063 (#1365) and 0064 (#1368) are open PRs. If another ADR
