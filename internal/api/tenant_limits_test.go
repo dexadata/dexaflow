@@ -36,6 +36,7 @@ func TestServiceEnsureTenantPassesLimits(t *testing.T) {
 			domain.TenantLimitsUpdate{MaxDags: intPtr(10), MaxRunsPerDay: intPtr(50), MinScheduleIntervalSeconds: intPtr(900), MaxTaskPoolSlots: intPtr(2)},
 		},
 		"task size": {`{"max_task_pool_slots": 8}`, domain.TenantLimitsUpdate{MaxTaskPoolSlots: intPtr(8)}},
+		"tasks":     {`{"max_tasks": 20, "max_task_runs_per_month": 1000}`, domain.TenantLimitsUpdate{MaxTasks: intPtr(20), MaxTaskRunsPerMonth: intPtr(1000)}},
 		"one set":   {`{"max_runs_per_day": 5}`, domain.TenantLimitsUpdate{MaxRunsPerDay: intPtr(5)}},
 		"cleared":   {`{"max_dags": 0}`, domain.TenantLimitsUpdate{MaxDags: intPtr(0)}},
 		"omitted":   {`{"display_name":"Acme Corp"}`, domain.TenantLimitsUpdate{}},
@@ -54,6 +55,10 @@ func TestServiceEnsureTenantPassesLimits(t *testing.T) {
 				t.Fatalf("status = %d %s, want 201", rec.Code, rec.Body.String())
 			}
 			got := store.gotLimits
+			if fmtLimit(got.MaxTasks) != fmtLimit(tc.want.MaxTasks) || fmtLimit(got.MaxTaskRunsPerMonth) != fmtLimit(tc.want.MaxTaskRunsPerMonth) {
+				t.Errorf("store got max_tasks %s / max_task_runs_per_month %s, want %s / %s",
+					fmtLimit(got.MaxTasks), fmtLimit(got.MaxTaskRunsPerMonth), fmtLimit(tc.want.MaxTasks), fmtLimit(tc.want.MaxTaskRunsPerMonth))
+			}
 			if fmtLimit(got.MaxTaskPoolSlots) != fmtLimit(tc.want.MaxTaskPoolSlots) {
 				t.Errorf("store got max_task_pool_slots %s, want %s", fmtLimit(got.MaxTaskPoolSlots), fmtLimit(tc.want.MaxTaskPoolSlots))
 			}
@@ -71,7 +76,7 @@ func TestServiceEnsureTenantPassesLimits(t *testing.T) {
 // TestServiceEnsureTenantRejectsBadLimits: a limit must be a whole number from 0
 // to 2147483647; anything else is a 400 and never reaches the store.
 func TestServiceEnsureTenantRejectsBadLimits(t *testing.T) {
-	for _, field := range []string{"max_dags", "max_runs_per_day", "min_schedule_interval_seconds", "max_task_pool_slots"} {
+	for _, field := range []string{"max_dags", "max_runs_per_day", "min_schedule_interval_seconds", "max_task_pool_slots", "max_tasks", "max_task_runs_per_month"} {
 		for _, value := range []string{"-1", "2147483648", `"10"`, "1.5"} {
 			body := `{"` + field + `": ` + value + `}`
 			store := &fakeServiceStore{tenantCreated: true}

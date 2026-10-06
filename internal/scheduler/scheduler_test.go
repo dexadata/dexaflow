@@ -37,6 +37,9 @@ type fakeStore struct {
 	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
 	// these tenants, as the store does once a tenant's daily run cap is reached.
 	limitedTenants       map[string]bool
+	// limitedErr, when set, is the refusal limitedTenants get instead of the
+	// daily cap's.
+	limitedErr error
 	limitedCalls         int
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
@@ -88,6 +91,9 @@ func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string
 	}
 	if f.limitedTenants[tenantID] {
 		f.limitedCalls++
+		if f.limitedErr != nil {
+			return f.limitedErr
+		}
 		return domain.Safef(domain.ErrLimitExceeded, "tenant limit max_runs_per_day of 1 reached")
 	}
 	f.createdRuns = append(f.createdRuns, dagID)

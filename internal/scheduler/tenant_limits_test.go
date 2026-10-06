@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // A tenant may carry a daily run cap (max_runs_per_day). The store refuses a
@@ -97,5 +99,26 @@ func TestDailyCapWarningIsLoggedOncePerTenantAndDay(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "max_runs_per_day of 1") {
 		t.Errorf("warning does not name the limit:\n%s", buf.String())
+	}
+}
+
+// TestStepMetersTheMonthlyTaskRunCapApart: a slot refused by the monthly task
+// run limit is skipped like one the daily cap refuses, but metered under its
+// own decision type (#1484).
+func TestStepMetersTheMonthlyTaskRunCapApart(t *testing.T) {
+	store := newFakeStore()
+	store.limitedTenants = map[string]bool{tenantA: true}
+	store.limitedErr = domain.Safef(domain.ErrMonthlyTaskRunLimit, "max_task_runs_per_month of 1000 reached")
+	store.scheduled = []ScheduledDAG{{TenantID: tenantA, DagID: "etl", Schedule: "@hourly"}}
+	rec := &fakeRecorder{}
+	s := newScheduler(store)
+	s.SetRecorder(rec)
+
+	if err := s.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Join(rec.decisions, ",") != "tenant_monthly_task_run_cap" {
+		t.Errorf("decisions = %v, want [tenant_monthly_task_run_cap]", rec.decisions)
 	}
 }
