@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-06
+
 ### Added
 
 - **Opt-in revalidation for the grid's task summaries.** The grid computes an
