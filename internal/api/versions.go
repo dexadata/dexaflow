@@ -49,7 +49,7 @@ func (g unitGate) check(spec *domain.DAGSpec) error {
 	for _, w := range warned {
 		if g.logger != nil {
 			g.logger.Warn("registering a task that does not fit its size under executor.unit.enforce=warn",
-				"dag", spec.DagID, "version", spec.DagVersion, "error", w)
+				"dag", logSafe(spec.DagID), "version", logSafe(spec.DagVersion), "error", logSafe(w.Error()))
 		}
 		if g.misfits != nil {
 			g.misfits.RecordUnitMisfit("register")
