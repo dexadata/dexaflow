@@ -43,8 +43,10 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    `scripts/release-gap.sh` confirming the fix is on `release-X.Y`. The line
    for this review lists the open advisories by identifier only.
 7. **Upgrade and rollback.** The new migrations were applied over a database of
-   realistic size, upgrading from the previous release, and rolled back with
-   `make migrate-down`, with the time each took and the server healthy after both.
+   realistic size, upgrading from the previous release, and rolled back to the
+   previous release's schema (`make migrate-down` undoes one migration, so run it
+   once per new migration, or follow the rollback steps in the upgrade guide),
+   with the time each took and the server healthy after both.
 8. **Performance and soak.** When the candidate touches the scheduler, dispatch
    or storage: the benchmarks of the area compared with the previous release, and
    a soak run (`make soak`) with no recorded violations.
@@ -99,7 +101,7 @@ The Actions queue has few runners, so every wasted run delays everyone.
   footers. Commit messages describe the change and nothing else.
 - **Everything in the repository is in English**: code, comments, commit
   messages, PR descriptions, docs and changelog entries.
-- **No em dashes** in anything written to the repository or to its PRs and
+- **No em dashes** in new text written to the repository or to its PRs and
   issues. Use a comma, a colon, parentheses or two sentences instead.
 - Follow the PR template (`.github/PULL_REQUEST_TEMPLATE.md`): one logical change
   per PR, a changelog fragment (`make changelog`) or the `skip-changelog` label,
