@@ -35,6 +35,9 @@ func TestValidateRefusesParamSchemaFileRef(t *testing.T) {
 			if strings.Contains(err.Error(), marker) {
 				t.Fatalf("registration error echoes the local file: %v", err)
 			}
+			if name == "relative" && strings.Contains(err.Error(), dir) {
+				t.Fatalf("registration error reveals the server working directory: %v", err)
+			}
 		})
 	}
 }
