@@ -203,6 +203,8 @@ config:
       bufferSize: 0
       # -- Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Ignored while `bufferSize` is 0; 0 with a buffer means 1.
       workers: 0
+    # -- How long a task held only by its pool waits before the pool is reserved for it (`scheduler.pool_starvation_threshold`, ADR 0066), so smaller tasks cannot keep a larger one out forever. A duration such as `2m`; `0s` disables it. Empty renders nothing and keeps the server default of 60s.
+    poolStarvationThreshold: ""
   cors:
     # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
     allowedOrigins: []
