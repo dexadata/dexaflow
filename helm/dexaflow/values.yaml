@@ -144,6 +144,15 @@ executor:
     maintenanceQps: 0
     # -- Token-bucket burst of the maintenance client. 0 = server default (10). Ignored while maintenanceQps is 0.
     maintenanceBurst: 0
+  # Resource unit of one pool slot (ADR 0066). Empty (default) changes nothing.
+  # Set both and every task pod is sized pool_slots x unit wherever the task
+  # leaves cpu or memory out, and a task that declares more than that is refused
+  # at registration and at dispatch. Cannot be combined with warm pools.
+  unit:
+    # -- CPU of one pool slot (e.g. `250m`). Empty = no unit. Set together with `memory`.
+    cpu: ""
+    # -- Memory of one pool slot (e.g. `512Mi`). Empty = no unit. Set together with `cpu`.
+    memory: ""
   # -- Collect a settled run's finished task pods as soon as every outcome is
   # recorded, in one DeleteCollection by the run's label, instead of one delete
   # per pod after the 10 minute grace period. Off by default, so finished pods

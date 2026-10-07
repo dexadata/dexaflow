@@ -14,6 +14,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
@@ -82,6 +83,10 @@ type Dependencies struct {
 	// every create, resize and delete answers 403 with PoolsReadOnlyDetail, for
 	// every role including tenant admin. False keeps the write:pool-gated CRUD.
 	PoolsReadOnly bool
+	// ResourceUnit is executor.unit (ADR 0066 §3). When set, registering a DAG
+	// whose task declares more than pool_slots x unit answers 400 naming the
+	// size it needs. Nil: no unit, no check.
+	ResourceUnit *domain.ResourceUnit
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository

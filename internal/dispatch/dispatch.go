@@ -113,6 +113,10 @@ type PlatformDefaults struct {
 	// Resources defaults a task's requests/limits when neither the task override
 	// nor the DAG set any.
 	Resources *domain.Resources
+	// Unit is the operator resource unit (executor.unit, ADR 0066). When set it
+	// replaces Resources: every task is sized from its pool_slots, and a task
+	// that declares more than pool_slots x unit is rejected. Nil: no unit.
+	Unit *domain.ResourceUnit
 	// PodSecurity carries the task-pod hardening choices. It lives here, not in
 	// the DAG spec, on purpose: whether untrusted task code may run as root is a
 	// cluster-operator decision. Exposing it per-DAG would let an author elevate
@@ -259,6 +263,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if err != nil {
 		return executor.Rejected, fmt.Errorf("resolving task %s: %w", task.TaskID, err)
 	}
+	// Registration refuses a task larger than its size once a unit is
+	// configured; this catches a DAG registered before that (ADR 0066 §3), so no
+	// task runs larger than the slots it is charged.
+	if ferr := d.defaults.Unit.CheckFits(task); ferr != nil {
+		return executor.Rejected, ferr
+	}
 	token, err := d.issuer.IssueAgentToken(auth.AgentIdentity{
 		TaskInstanceID: r.TaskInstanceID,
 		TenantID:       r.TenantID,
@@ -336,13 +346,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if task.ExecutionTimeoutSeconds != nil {
 		req.TimeoutSeconds = *task.ExecutionTimeoutSeconds
 	}
-	switch {
-	case task.Resources != nil:
-		req.Resources = *task.Resources
-	case d.defaults.Resources != nil:
-		// L0: no task/DAG resources; fall back to the platform default (ADR 0023).
-		req.Resources = *d.defaults.Resources
-	}
+	req.Resources = d.taskResources(task)
 	if task.Execution != nil {
 		req.Execution = *task.Execution
 	}
@@ -374,6 +378,22 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	req.AgentTokenAudience = d.tokenAudience
 	req.AgentTokenExpirationSeconds = d.tokenExpirationSeconds
 	return d.exec.Execute(ctx, req)
+}
+
+// taskResources picks the task pod's resources. With a resource unit the unit
+// sizes every task: its own values where it set them (Dispatch checked they
+// fit), pool_slots x unit for the rest (ADR 0066 §3). Without one, the task's
+// own resources win, then the L0 platform default (ADR 0023), else none.
+func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
+	switch {
+	case d.defaults.Unit != nil:
+		return *d.defaults.Unit.Apply(task)
+	case task.Resources != nil:
+		return *task.Resources
+	case d.defaults.Resources != nil:
+		return *d.defaults.Resources
+	}
+	return domain.Resources{}
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.

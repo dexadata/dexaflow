@@ -1,0 +1,13 @@
+kind: Added
+body: |-
+  **`executor.unit` sizes task pods by their pool slots.** An operator can set
+  the CPU and memory one pool slot stands for (`executor.unit.cpu` and
+  `executor.unit.memory`, Helm `executor.unit`). With a unit, every task pod
+  gets `pool_slots x unit` for each cpu or memory request or limit the task
+  leaves out, and a task that declares more than that is refused at
+  registration, with a 400 naming the `size` it needs, and at dispatch for a
+  DAG registered before the unit was set. Together with weighted pool slots a
+  pool then budgets CPU and memory instead of task count (ADR 0066, #1466).
+  Unset by default, which changes nothing; it cannot be combined with warm
+  pools.
+time: 2026-10-06T20:00:00.000000000-03:00

@@ -368,6 +368,12 @@ tasks:
 thing. Most specific wins: `tasks.<id>.size` > `pool_slots` in `dag.py` >
 `defaults.size` > 1. Pools are enforced on Pro only; Lite ignores the size.
 
+When the operator sets a resource unit (`executor.unit`, for example 250m CPU
+and 512Mi memory per slot), the size also sizes the pod: a task of size 4 gets
+1 CPU and 2Gi wherever it does not set cpu or memory itself, and a task whose
+own `resources` ask for more than size x unit is refused when the DAG is
+registered, with the size it would need.
+
 ### Guardrails (fail loudly, never silently)
 
 - A `tasks:` entry naming a `task_id` absent from the DAG → **compile error**.

@@ -20,8 +20,8 @@ func TestExecutorUnitDefaultsToUnset(t *testing.T) {
 }
 
 func TestExecutorUnitEnvBinds(t *testing.T) {
-	t.Setenv("LEOFLOW_EXECUTOR_UNIT_CPU", "250m")
-	t.Setenv("LEOFLOW_EXECUTOR_UNIT_MEMORY", "512Mi")
+	t.Setenv("DEXAFLOW_EXECUTOR_UNIT_CPU", "250m")
+	t.Setenv("DEXAFLOW_EXECUTOR_UNIT_MEMORY", "512Mi")
 	c, err := LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)

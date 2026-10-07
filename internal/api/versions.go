@@ -24,7 +24,7 @@ type versionResponse struct {
 	Created  bool   `json:"created"`
 }
 
-func registerVersionHandler(repo DagVersionRepository) gin.HandlerFunc {
+func registerVersionHandler(repo DagVersionRepository, unit *domain.ResourceUnit) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var spec domain.DAGSpec
 		if err := c.ShouldBindJSON(&spec); err != nil {
@@ -36,6 +36,10 @@ func registerVersionHandler(repo DagVersionRepository) gin.HandlerFunc {
 			return
 		}
 		if err := spec.Validate(); err != nil {
+			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
+			return
+		}
+		if err := unit.CheckSpec(&spec); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
 			return
 		}

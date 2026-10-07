@@ -1421,6 +1421,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
 		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
+		ResourceUnit:                 resourceUnit(cfg),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2646,7 +2647,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// const the control-plane TokenReviewer validates against; expiration floors in
 	// BuildPod.
 	dispatcher.SetAgentTokenTransport(cfg.Auth.AgentTokenTransport, executor.DefaultAgentTokenAudience, 0)
-	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
+	k8sDefaults := platformDefaults(cfg.Executor.Defaults)
+	k8sDefaults.Unit = resourceUnit(cfg)
+	dispatcher.SetPlatformDefaults(k8sDefaults)
 	// Deadline floor for task pods that declare no execution timeout: the agent's
 	// reports retry for as long as the control plane is unreachable, so a pod
 	// with no deadline of its own would outlive a total outage indefinitely. The
@@ -2787,6 +2790,18 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 // AsyncDispatchStore: the type assertion there would otherwise fall back to
 // failing every worker-side dispatch error at once, silently.
 var _ scheduler.AsyncDispatchStore = (*storage.SchedulerStore)(nil)
+
+// resourceUnit is the parsed executor.unit (ADR 0066), nil when unset. The
+// config was validated at boot (ServerConfig.Validate parses the same values
+// and fails startup on an error), so a parse error cannot reach here; nil is
+// the safe reading of one anyway.
+func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
+	unit, err := domain.ParseResourceUnit(cfg.Executor.Unit.CPU, cfg.Executor.Unit.Memory)
+	if err != nil {
+		return nil
+	}
+	return unit
+}
 
 // platformDefaults maps the executor.defaults config (L0 task defaults, ADR
 // 0023) into the dispatcher's PlatformDefaults. Resources are set only when a

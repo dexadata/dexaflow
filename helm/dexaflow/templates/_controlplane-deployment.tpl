@@ -248,6 +248,17 @@ spec:
             - name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
               value: {{ .ctx.Values.executor.defaults.resources.memory | quote }}
             {{- end }}
+            {{- with .ctx.Values.executor.unit }}
+            {{- if or .cpu .memory }}
+            # Resource unit of one pool slot (ADR 0066): tasks are sized
+            # pool_slots x unit. The server refuses to boot with only one of the
+            # two set.
+            - name: LEOFLOW_EXECUTOR_UNIT_CPU
+              value: {{ .cpu | quote }}
+            - name: LEOFLOW_EXECUTOR_UNIT_MEMORY
+              value: {{ .memory | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .ctx.Values.executor.defaults.staging.size }}
             # L0 per-cluster staging-volume size default (ADR 0023). Env is the only
             # override path since the chart ships no server config file (#743).
