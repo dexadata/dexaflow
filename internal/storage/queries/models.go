@@ -397,6 +397,7 @@ type Tenant struct {
 	MinScheduleIntervalSeconds int32              `json:"min_schedule_interval_seconds"`
 	RunsDay                    pgtype.Date        `json:"runs_day"`
 	RunsDayCount               int32              `json:"runs_day_count"`
+	MaxTaskPoolSlots           int32              `json:"max_task_pool_slots"`
 }
 
 type User struct {
