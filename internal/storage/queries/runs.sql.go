@@ -943,7 +943,10 @@ SELECT ti.id AS task_instance_id,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
-       ti.last_heartbeat_at AS last_heartbeat_at
+       ti.last_heartbeat_at AS last_heartbeat_at,
+       -- started_at lets the reaper tell an attempt that outlived
+       -- auth.max_attempt_credential_lifetime from a lost agent (#1461).
+       ti.started_at AS started_at
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
@@ -962,6 +965,7 @@ type ListAgentLostCandidatesRow struct {
 	TryNumber       int32              `json:"try_number"`
 	AttemptEpoch    int32              `json:"attempt_epoch"`
 	LastHeartbeatAt pgtype.Timestamptz `json:"last_heartbeat_at"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
 }
 
 // Lists running TIs that have heartbeated at least once and whose latest
@@ -988,6 +992,7 @@ func (q *Queries) ListAgentLostCandidates(ctx context.Context) ([]ListAgentLostC
 			&i.TryNumber,
 			&i.AttemptEpoch,
 			&i.LastHeartbeatAt,
+			&i.StartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2105,6 +2110,40 @@ func (q *Queries) MarkTaskAgentLost(ctx context.Context, arg MarkTaskAgentLostPa
 		arg.TryNumber,
 		arg.AttemptEpoch,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markTaskCredentialCeiling = `-- name: MarkTaskCredentialCeiling :execrows
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
+    error_message = 'credential_ceiling: attempt outlived auth.max_attempt_credential_lifetime'
+WHERE id = $1
+  AND try_number = $2
+  AND attempt_epoch = $3
+  AND state = 'running'
+`
+
+type MarkTaskCredentialCeilingParams struct {
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+}
+
+// Fails a TI whose agent went silent after the attempt outlived
+// auth.max_attempt_credential_lifetime (#1461). Renewal stops at the ceiling,
+// so the silence is the credential lapsing, not a lost agent: this is a TASK
+// failure (last_failure_kind NULL, the retry policy applies), never an infra
+// mark the planner would re-place with a fresh credential. Same guards as
+// MarkTaskAgentLost: state='running' (a late report wins) and the listed
+// attempt, (try_number, attempt_epoch) (ADR 0051 amendment).
+func (q *Queries) MarkTaskCredentialCeiling(ctx context.Context, arg MarkTaskCredentialCeilingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskCredentialCeiling, arg.ID, arg.TryNumber, arg.AttemptEpoch)
 	if err != nil {
 		return 0, err
 	}

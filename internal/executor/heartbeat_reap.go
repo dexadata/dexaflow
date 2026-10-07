@@ -43,7 +43,12 @@ type AgentLostCandidate struct {
 	// with (ADR 0051 amendment). The mark and the pod teardown are pinned to it
 	// as well as to TryNumber, so a row re-placed or re-dispatched between the
 	// list and the write is a different attempt and is left alone.
-	AttemptEpoch  int
+	AttemptEpoch int
+	// StartedAt is when the attempt entered running (zero when unknown). The
+	// reaper compares it to auth.max_attempt_credential_lifetime: an attempt
+	// older than the ceiling stopped getting its credential renewed, so its
+	// silence is the credential lapsing, not a lost agent (#1461).
+	StartedAt     time.Time
 	LastHeartbeat time.Time
 }
 
@@ -65,6 +70,21 @@ func IsAgentLost(c AgentLostCandidate, threshold time.Duration, now time.Time) b
 	return now.Sub(c.LastHeartbeat) >= threshold
 }
 
+// OutlivedCredentialCeiling reports whether the candidate attempt has been
+// running for longer than the credential ceiling
+// (auth.max_attempt_credential_lifetime). Past it the control plane refuses to
+// renew the attempt's credential, so a silent agent there is the credential
+// lapsing as designed and the attempt fails as a task failure instead of being
+// re-placed as an infra loss with a fresh credential (#1461). A non-positive
+// ceiling is the operator's "no ceiling" and never matches; neither does an
+// attempt with no recorded start.
+func OutlivedCredentialCeiling(c AgentLostCandidate, ceiling time.Duration, now time.Time) bool {
+	if ceiling <= 0 || c.StartedAt.IsZero() {
+		return false
+	}
+	return now.Sub(c.StartedAt) > ceiling
+}
+
 // HeartbeatReapStore is the slice of scheduler.Store the TI heartbeat reaper
 // needs. The full scheduler.Store embeds this interface so production wires
 // through one type; unit tests fake just this surface.
@@ -80,6 +100,11 @@ type HeartbeatReapStore interface {
 	// late terminal report transitioned the TI between the list and this write,
 	// so the caller must NOT treat it as reaped (no false log, no pod delete).
 	MarkTaskAgentLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
+	// MarkTaskCredentialCeiling transitions one TI to `failed` with the
+	// credential_ceiling reason as a TASK failure (no infra kind), for an
+	// attempt that outlived auth.max_attempt_credential_lifetime (#1461). Same
+	// guards and return contract as MarkTaskAgentLost.
+	MarkTaskCredentialCeiling(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
 
 // agentLostReaper is the scheduler-internal worker that fails TIs whose agent
@@ -111,6 +136,10 @@ type agentLostReaper struct {
 	running runningLister
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
+	// ceiling is auth.max_attempt_credential_lifetime. A silent attempt older
+	// than it is failed for the credential ceiling, not as agent_lost (see
+	// OutlivedCredentialCeiling). Zero or negative disables the distinction.
+	ceiling time.Duration
 }
 
 // runningLister is the ListRunningTasks slice of PodLostReapStore.
@@ -219,13 +248,21 @@ func (r *agentLostReaper) reapNeverHeartbeated(ctx context.Context, c PodLostCan
 }
 
 // reapOne fails one silent TI, writes its log marker and tears down its pod,
-// re-checking the destructive gate immediately before each write.
+// re-checking the destructive gate immediately before each write. An attempt
+// that outlived the credential ceiling is failed for that reason, as a task
+// failure, instead of as agent_lost (#1461); everything else about the reap,
+// the gate, the attempt pin, the marker and the teardown, is the same.
 func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now time.Time) {
 	if !gateOpen(r.gate, ctx) {
 		r.record("agent_lost_gate_skip")
 		return
 	}
-	applied, ferr := r.store.MarkTaskAgentLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
+	pastCeiling := OutlivedCredentialCeiling(c, r.ceiling, now)
+	mark := r.store.MarkTaskAgentLost
+	if pastCeiling {
+		mark = r.store.MarkTaskCredentialCeiling
+	}
+	applied, ferr := mark(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if ferr != nil {
 		r.logger.Error("marking task agent-lost",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", ferr)
@@ -239,14 +276,24 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 		r.record("agent_lost_noop")
 		return
 	}
-	r.logger.Warn("task agent silent past threshold; failing as agent_lost",
-		"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID,
-		"last_heartbeat", c.LastHeartbeat)
-	r.record("agent_lost")
-	// Append a final marker to the attempt's log BEFORE deleting the pod, so a
-	// killed task's log ends with the reason instead of a silent truncation
-	// (#861) — the log stream stops the moment the pod is gone.
-	r.writeAgentLostMarker(c, now)
+	if pastCeiling {
+		r.logger.Warn("task agent silent after the attempt outlived auth.max_attempt_credential_lifetime; failing as credential_ceiling",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID,
+			"started", c.StartedAt, "last_heartbeat", c.LastHeartbeat, "ceiling", r.ceiling)
+		r.record("agent_lost_credential_ceiling")
+		r.writeMarker(c, now, fmt.Sprintf(
+			"killed: credential_ceiling (attempt running since %s outlived auth.max_attempt_credential_lifetime %s; last heartbeat %s)",
+			c.StartedAt.UTC().Format(time.RFC3339), r.ceiling, c.LastHeartbeat.UTC().Format(time.RFC3339)))
+	} else {
+		r.logger.Warn("task agent silent past threshold; failing as agent_lost",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID,
+			"last_heartbeat", c.LastHeartbeat)
+		r.record("agent_lost")
+		// Append a final marker to the attempt's log BEFORE deleting the pod, so a
+		// killed task's log ends with the reason instead of a silent truncation
+		// (#861); the log stream stops the moment the pod is gone.
+		r.writeAgentLostMarker(c, now)
+	}
 	// The TI is now durably failed; delete its pod so a partitioned-but-alive
 	// container stops (#474). Pinned to (run, task, try, epoch) so a newer
 	// pod is never touched. Only reached after the DB mark, so we never delete
@@ -276,12 +323,19 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 // (#861). Best-effort: a nil sink or an open/write error never blocks the reap —
 // the DB state and server slog remain the source of truth.
 func (r *agentLostReaper) writeAgentLostMarker(c AgentLostCandidate, now time.Time) {
-	if r.sink == nil {
-		return
-	}
 	msg := fmt.Sprintf("killed: agent_lost (last heartbeat %s, silent past %s threshold)", c.LastHeartbeat.UTC().Format(time.RFC3339), r.threshold)
 	if c.LastHeartbeat.IsZero() {
 		msg = fmt.Sprintf("killed: agent_lost (no heartbeat ever, agent and task processes gone, running past %s threshold)", r.threshold)
+	}
+	r.writeMarker(c, now, msg)
+}
+
+// writeMarker appends msg as the reaped attempt's final system log line.
+// Best-effort, like writeAgentLostMarker: a nil sink or a write error never
+// blocks the reap.
+func (r *agentLostReaper) writeMarker(c AgentLostCandidate, now time.Time, msg string) {
+	if r.sink == nil {
+		return
 	}
 	ref := logs.Ref{
 		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,

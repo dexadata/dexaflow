@@ -227,6 +227,16 @@ func (r *Reaper) SetLogSink(s logSink) {
 	r.agentLost.sink = s
 }
 
+// SetAttemptLifetimeCeiling wires auth.max_attempt_credential_lifetime into
+// the agent-lost reaper: a silent attempt that has been running longer than it
+// is failed for the credential ceiling, as a task failure under its retry
+// policy, instead of as agent_lost, which would re-place it with a fresh
+// credential and run it again from the start (#1461). Zero or negative (the
+// default when unset) keeps every silent attempt agent_lost, as before.
+func (r *Reaper) SetAttemptLifetimeCeiling(d time.Duration) {
+	r.agentLost.ceiling = d
+}
+
 // SetLeaderSince wires the accessor the settling gate measures its grace from:
 // when this instance last acquired scheduler leadership (zero while not
 // leading). Measured from leadership acquisition, not process start, so a

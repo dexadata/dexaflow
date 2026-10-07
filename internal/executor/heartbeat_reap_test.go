@@ -72,6 +72,8 @@ type fakeHeartbeatStore struct {
 	failed     []string
 	failErr    error
 	markNoop   bool // when true, MarkTaskAgentLost reports 0 rows updated (a late terminal report won the race)
+	// ceilingPins records each credential-ceiling mark as "ti/try/epoch" (#1461).
+	ceilingPins []string
 }
 
 func (f *fakeHeartbeatStore) ListAgentLostCandidates(context.Context) ([]AgentLostCandidate, error) {
@@ -86,6 +88,17 @@ func (f *fakeHeartbeatStore) MarkTaskAgentLost(_ context.Context, tiID string, _
 		return false, nil
 	}
 	f.failed = append(f.failed, tiID)
+	return true, nil
+}
+
+func (f *fakeHeartbeatStore) MarkTaskCredentialCeiling(_ context.Context, tiID string, try, epoch int) (bool, error) {
+	if f.failErr != nil {
+		return false, f.failErr
+	}
+	if f.markNoop {
+		return false, nil
+	}
+	f.ceilingPins = append(f.ceilingPins, tiID+"/"+strconv.Itoa(try)+"/"+strconv.Itoa(epoch))
 	return true, nil
 }
 
@@ -264,6 +277,12 @@ func (p *panicHeartbeatStore) ListAgentLostCandidates(context.Context) ([]AgentL
 func (p *panicHeartbeatStore) MarkTaskAgentLost(context.Context, string, int, int) (bool, error) {
 	if p.panicOnFail {
 		panic("boom: MarkTaskAgentLost")
+	}
+	return true, nil
+}
+func (p *panicHeartbeatStore) MarkTaskCredentialCeiling(context.Context, string, int, int) (bool, error) {
+	if p.panicOnFail {
+		panic("boom: MarkTaskCredentialCeiling")
 	}
 	return true, nil
 }
