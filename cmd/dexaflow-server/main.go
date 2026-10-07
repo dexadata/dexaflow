@@ -1422,6 +1422,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Edition:                      cfg.UI.Edition,
 		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
 		ResourceUnit:                 resourceUnit(cfg),
+		UnitMisfits:                  unitMisfits(tel.Metrics),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2185,6 +2186,7 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 // AwaitAssignment and is exchange/liveness-gated upstream (N1b1/N1b2a).
 func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, controlAddr string) executor.WarmPodSpecFunc {
 	defaults := platformDefaults(cfg.Executor.Defaults)
+	warmResources := resourceUnit(cfg).WarmResources()
 	useExchange := cfg.Auth.AgentTokenTransport == config.AgentTokenTransportExchange
 	return func(t executor.WarmTarget) (executor.WarmPodSpec, error) {
 		spec := executor.WarmPodSpec{
@@ -2195,6 +2197,9 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			AgentTLSCAConfigMap: cfg.Executor.AgentTLSCAConfigMap,
 			ServiceAccount:      cfg.Executor.TaskServiceAccount,
 			PodSecurity:         defaults.PodSecurity,
+			// With executor.unit a warm pod is one unit, and the dispatcher only
+			// places size-1 tasks without resources on it (ADR 0066 §3).
+			Resources: warmResources,
 			// Self-lifecycle caps (ADR 0058 D9/D10/D6/H3). The attempt watchdog is
 			// anchored to the credential ceiling: an attempt can never validly outlive
 			// its per-attempt credential, so max_attempt_credential_lifetime is the
@@ -2650,6 +2655,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	k8sDefaults := platformDefaults(cfg.Executor.Defaults)
 	k8sDefaults.Unit = resourceUnit(cfg)
 	dispatcher.SetPlatformDefaults(k8sDefaults)
+	if metrics != nil {
+		dispatcher.SetUnitMisfitRecorder(metrics)
+	}
 	// Deadline floor for task pods that declare no execution timeout: the agent's
 	// reports retry for as long as the control plane is unreachable, so a pod
 	// with no deadline of its own would outlive a total outage indefinitely. The
@@ -2796,11 +2804,20 @@ var _ scheduler.AsyncDispatchStore = (*storage.SchedulerStore)(nil)
 // and fails startup on an error), so a parse error cannot reach here; nil is
 // the safe reading of one anyway.
 func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
-	unit, err := domain.ParseResourceUnit(cfg.Executor.Unit.CPU, cfg.Executor.Unit.Memory)
+	unit, err := domain.ParseResourceUnit(cfg.Executor.Unit.ResourceUnitConfig())
 	if err != nil {
 		return nil
 	}
 	return unit
+}
+
+// unitMisfits is the API's misfit counter, nil (not a typed nil) without
+// metrics so the handler's nil check holds.
+func unitMisfits(m *observability.Metrics) api.UnitMisfitRecorder {
+	if m == nil {
+		return nil
+	}
+	return m
 }
 
 // platformDefaults maps the executor.defaults config (L0 task defaults, ADR

@@ -257,6 +257,10 @@ spec:
               value: {{ .cpu | quote }}
             - name: LEOFLOW_EXECUTOR_UNIT_MEMORY
               value: {{ .memory | quote }}
+            - name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+              value: {{ .enforce | default "refuse" | quote }}
+            - name: LEOFLOW_EXECUTOR_UNIT_MAX_SIZE
+              value: {{ .maxSize | default 64 | quote }}
             {{- end }}
             {{- end }}
             {{- if .ctx.Values.executor.defaults.staging.size }}

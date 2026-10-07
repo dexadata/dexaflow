@@ -221,10 +221,19 @@ type ExecutorSection struct {
 }
 
 // ExecutorUnitSection is executor.unit: the CPU and memory of one pool slot,
-// as Kubernetes quantities. Both or neither.
+// as Kubernetes quantities (both or neither), how a task that does not fit its
+// size is treated (refuse or warn), and the largest pool_slots a task may have
+// while the unit is set.
 type ExecutorUnitSection struct {
-	CPU    string `mapstructure:"cpu"`
-	Memory string `mapstructure:"memory"`
+	CPU     string `mapstructure:"cpu"`
+	Memory  string `mapstructure:"memory"`
+	Enforce string `mapstructure:"enforce"`
+	MaxSize int    `mapstructure:"max_size"`
+}
+
+// ResourceUnitConfig is the section as the domain parser takes it.
+func (u ExecutorUnitSection) ResourceUnitConfig() domain.ResourceUnitConfig {
+	return domain.ResourceUnitConfig{CPU: u.CPU, Memory: u.Memory, Enforce: u.Enforce, MaxSize: u.MaxSize}
 }
 
 // KubeClientSection sets the client-side rate limits (client-go token buckets)
@@ -993,6 +1002,8 @@ var serverDefaults = map[string]any{
 	// (both) means no resource unit (ADR 0066).
 	"executor.unit.cpu":                                "",
 	"executor.unit.memory":                             "",
+	"executor.unit.enforce":                            domain.UnitEnforceRefuse,
+	"executor.unit.max_size":                           domain.DefaultUnitMaxSize,
 	"executor.defaults.run_tasks_as_non_root":          true,
 	"executor.defaults.read_only_task_root_filesystem": false,
 	// Warm worker pools (ADR 0058). Ships a byte-for-byte no-op: warm pools OFF =
@@ -1340,18 +1351,12 @@ func (c *ServerConfig) validateExecution() error {
 }
 
 // validateExecutorUnit checks executor.unit (ADR 0066): unset, or both
-// quantities valid and positive. A unit cannot be combined with warm pools: a
-// warm pod is sized once and serves every task of its DAG version, so it
-// cannot honor each task's own size.
+// quantities valid and positive, enforce refuse or warn, max_size positive.
+// It combines with warm pools: a warm pod is then one unit and serves only
+// size-1 tasks that declare no resources.
 func (c *ServerConfig) validateExecutorUnit() error {
-	unit, err := domain.ParseResourceUnit(c.Executor.Unit.CPU, c.Executor.Unit.Memory)
-	if err != nil {
-		return err
-	}
-	if unit != nil && c.Execution.WarmPoolsEnabled {
-		return errors.New("executor.unit cannot be combined with execution.warm_pools_enabled: a warm pod is sized once for every task it serves, so it cannot honor each task's size (ADR 0066)")
-	}
-	return nil
+	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	return err
 }
 
 // validateProvider rejects an unknown auth.provider, failing closed at boot

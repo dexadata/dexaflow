@@ -1228,6 +1228,16 @@ func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, tas
 	if disp == executor.Backpressure {
 		return s.backoffBackpressure(ctx, run, taskID, cause)
 	}
+	if disp == executor.Refused {
+		// A permanent verdict (ADR 0066 §3): retrying cannot change it, so the
+		// task fails now and no dispatch retry is spent.
+		s.logger.Error("dispatch refused; failing task",
+			"run", run.RunID, "task", taskID, "error", cause)
+		if err := s.store.FailDispatchExhausted(ctx, run.RunID, taskID, refusedReason(cause)); err != nil {
+			s.logger.Error("failing refused task", "run", run.RunID, "task", taskID, "error", err)
+		}
+		return nil
+	}
 	attempts := run.DispatchAttempts[taskID] + 1
 	if attempts >= dispatchMaxAttempts {
 		reason := fmt.Sprintf("dispatch_failed after %d attempts: %v", attempts, cause)

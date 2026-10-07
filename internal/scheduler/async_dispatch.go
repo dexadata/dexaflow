@@ -58,6 +58,10 @@ func (a *AsyncDispatchFailures) HandleDispatchFailure(ctx context.Context, runID
 	if !active {
 		return nil
 	}
+	if disp == executor.Refused {
+		a.logger.Error("buffered dispatch refused; failing task", "run", runID, "task", taskID, "error", cause)
+		return a.store.MarkTaskDispatchFailed(ctx, runID, taskID, refusedReason(cause))
+	}
 	counted := disp != executor.Backpressure
 	if counted && attempts+1 >= dispatchMaxAttempts {
 		reason := fmt.Sprintf("dispatch_failed after %d attempts: %v", attempts+1, cause)
@@ -73,4 +77,10 @@ func (a *AsyncDispatchFailures) HandleDispatchFailure(ctx context.Context, runID
 		return fmt.Errorf("re-offering %s: %w", taskID, err)
 	}
 	return nil
+}
+
+// refusedReason is the failure reason of a Refused dispatch: the refusal's own
+// message, which already says what to change.
+func refusedReason(cause error) string {
+	return "dispatch refused: " + cause.Error()
 }

@@ -147,12 +147,17 @@ executor:
   # Resource unit of one pool slot (ADR 0066). Empty (default) changes nothing.
   # Set both and every task pod is sized pool_slots x unit wherever the task
   # leaves cpu or memory out, and a task that declares more than that is refused
-  # at registration and at dispatch. Cannot be combined with warm pools.
+  # at registration and at dispatch. With warm pools on, a warm pod is one unit
+  # and only takes size-1 tasks that declare no resources.
   unit:
     # -- CPU of one pool slot (e.g. `250m`). Empty = no unit. Set together with `memory`.
     cpu: ""
     # -- Memory of one pool slot (e.g. `512Mi`). Empty = no unit. Set together with `cpu`.
     memory: ""
+    # -- `refuse` fails a task larger than its size; `warn` runs it with its own resources, logs it and counts it in `dexaflow_unit_misfit_total`. Roll a unit out with `warn` first.
+    enforce: refuse
+    # -- Largest pool_slots a task may have while a unit is set, whatever its pool.
+    maxSize: 64
   # -- Collect a settled run's finished task pods as soon as every outcome is
   # recorded, in one DeleteCollection by the run's label, instead of one delete
   # per pod after the 10 minute grace period. Off by default, so finished pods

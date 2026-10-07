@@ -85,8 +85,12 @@ type Dependencies struct {
 	PoolsReadOnly bool
 	// ResourceUnit is executor.unit (ADR 0066 §3). When set, registering a DAG
 	// whose task declares more than pool_slots x unit answers 400 naming the
-	// size it needs. Nil: no unit, no check.
+	// size it needs (under enforce: warn it is accepted, logged and counted).
+	// Nil: no unit, no check.
 	ResourceUnit *domain.ResourceUnit
+	// UnitMisfits counts a task registered under executor.unit.enforce=warn
+	// although it does not fit its size. Nil: not counted.
+	UnitMisfits UnitMisfitRecorder
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository
