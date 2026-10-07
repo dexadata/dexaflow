@@ -66,7 +66,7 @@ func TestBindWarmAttemptStampsRunningTI(t *testing.T) {
 	// Seed our own worker-pod name so the assertion is on a value this test owns,
 	// never on whatever another test may have left in a shared table.
 	wantPod := fmt.Sprintf("leoflow-warm-%d", time.Now().UnixNano())
-	if err := exec.BindWarmAttempt(ctx, runUUID, "load", 1, wantPod); err != nil {
+	if err := exec.BindWarmAttempt(ctx, runUUID, "load", 1, 0, wantPod); err != nil {
 		t.Fatalf("BindWarmAttempt on a running TI = %v, want nil", err)
 	}
 
@@ -90,7 +90,7 @@ func TestBindWarmAttemptNoOpOnTerminalTI(t *testing.T) {
 	}
 
 	wantPod := fmt.Sprintf("leoflow-warm-%d", time.Now().UnixNano())
-	if err := exec.BindWarmAttempt(ctx, runUUID, "load", 1, wantPod); err != nil {
+	if err := exec.BindWarmAttempt(ctx, runUUID, "load", 1, 0, wantPod); err != nil {
 		t.Fatalf("BindWarmAttempt on a terminal TI = %v, want nil (a guarded no-op is not an error)", err)
 	}
 

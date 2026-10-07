@@ -51,6 +51,14 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 		return nil
 	}
 
+	// uninstall deletes config.yaml, so it takes the config lock like every
+	// other writer (ADR 0065 section 3) and refuses during a key migration.
+	release, lerr := lockConfigDir(root, configLockExclusive, false)
+	if lerr != nil {
+		return lerr
+	}
+	defer release()
+
 	// Read the workspace path before deleting, so --purge can remove it too.
 	workspace := ""
 	if c, lerr := config.Load(filepath.Join(root, "config.yaml"), nil); lerr == nil {
@@ -71,19 +79,7 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 		devPrintln(out, "  (keeping your datastore — the managed pgdata and the Docker volume — and your DAG workspace; pass --purge to remove them)")
 	}
 
-	// The datastore survives a plain uninstall; the key that decrypts its
-	// connection secrets does not, because it lives in the config.yaml this
-	// command deletes (#486). Say so before the confirmation, not after: the
-	// user is about to make their preserved data unreadable while this command's
-	// own help says a reinstall keeps it.
-	if strandsDatastoreKey(configFileSecrets(filepath.Join(root, "config.yaml")).secretKey != "", !purge) {
-		devPrintln(out, "")
-		devPrintln(out, "  WARNING: your datastore is kept, but the key that decrypts its connection")
-		devPrintln(out, "           secrets is in the config being removed. A reinstall generates a NEW")
-		devPrintln(out, "           key, and the stored passwords will not be readable.")
-		devPrintf(out, "           Copy `secret_key` out of %s first if you want them back.\n",
-			filepath.Join(root, "config.yaml"))
-	}
+	warnIfStrandingKey(out, root, purge)
 
 	if !yes && !confirmDestructive(cmd) {
 		devPrintln(out, "aborted.")
@@ -110,6 +106,22 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	}
 	devPrintln(out, "Done. If install.sh added a dexaflow (or, before the rename, leoflow) PATH line to your shell profile, remove it.")
 	return nil
+}
+
+// warnIfStrandingKey warns, before the confirmation, when the datastore is kept
+// but the key that decrypts its connection secrets lives in the config.yaml
+// this command deletes (#486): the user is about to make their preserved data
+// unreadable while this command's own help says a reinstall keeps it.
+func warnIfStrandingKey(out io.Writer, root string, purge bool) {
+	if !strandsDatastoreKey(configFileSecrets(filepath.Join(root, "config.yaml")).secretKey != "", !purge) {
+		return
+	}
+	devPrintln(out, "")
+	devPrintln(out, "  WARNING: your datastore is kept, but the key that decrypts its connection")
+	devPrintln(out, "           secrets is in the config being removed. A reinstall generates a NEW")
+	devPrintln(out, "           key, and the stored passwords will not be readable.")
+	devPrintf(out, "           Copy `secret_key` out of %s first if you want them back.\n",
+		filepath.Join(root, "config.yaml"))
 }
 
 // installBinDir is the directory the running leoflow binary lives in — where

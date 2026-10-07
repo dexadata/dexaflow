@@ -42,6 +42,9 @@ var denialResponseHeaders = map[string]bool{
 	"Access-Control-Allow-Origin":  true,
 	"Access-Control-Allow-Methods": true,
 	"Access-Control-Allow-Headers": true,
+	// Which response headers a cross-origin page may read; a fixed list,
+	// independent of the request.
+	"Access-Control-Expose-Headers": true,
 }
 
 // loginDenialProblems reports everything wrong with a response that is supposed

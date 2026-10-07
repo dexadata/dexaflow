@@ -104,11 +104,19 @@ func setPaginationLinks(c *gin.Context, total, limit, offset int) {
 	}
 }
 
+// tenantOf returns the tenant the request's principal belongs to. It fails
+// closed: a request with no principal, or a principal that names no tenant, gets
+// the empty name, so every tenant-scoped lookup misses instead of serving the
+// default tenant's data. No tenant is named "" today: the migrations seed
+// "default" and the service API only creates names matching serviceTenantName.
+// The authenticator and JWTAuth already refuse a tenantless principal, and
+// DevBypassAuth names the default tenant explicitly, so this only matters for a
+// handler reached without either.
 func tenantOf(c *gin.Context) string {
 	if u, ok := UserFromContext(c); ok && u.TenantID != "" {
 		return u.TenantID
 	}
-	return "default"
+	return ""
 }
 
 // statusClientClosedRequest (499, nginx convention) marks a request the client
@@ -127,11 +135,12 @@ const statusClientClosedRequest = 499
 // places, and collapsing them into a single opaque message would cost real
 // diagnosability to buy no extra privacy.
 const (
-	detailNotFound     = "the requested resource does not exist"
-	detailConflict     = "the request conflicts with the current state of the resource"
-	detailClientClosed = "the client closed the request before it completed"
-	detailInvalidInput = "the request was rejected by a validation rule"
-	detailInternal     = "the request could not be completed; see the server logs"
+	detailNotFound      = "the requested resource does not exist"
+	detailConflict      = "the request conflicts with the current state of the resource"
+	detailClientClosed  = "the client closed the request before it completed"
+	detailInvalidInput  = "the request was rejected by a validation rule"
+	detailLimitExceeded = "the request would exceed a limit set for this tenant"
+	detailInternal      = "the request could not be completed; see the server logs"
 )
 
 // safeDetail returns the phrase Dexaflow composed for this failure, or fallback
@@ -185,6 +194,11 @@ func handleRepoError(c *gin.Context, err error) {
 	// layer composed the phrase itself with domain.Safef.
 	case errors.Is(err, domain.ErrValidation):
 		AbortProblemCause(c, http.StatusBadRequest, "invalid request", safeDetail(err, detailInvalidInput), err)
+	// A tenant limit the operator set (max_dags, max_runs_per_day,
+	// min_schedule_interval_seconds): the request is valid but not allowed for
+	// this tenant, and the storage layer names the limit with domain.Safef.
+	case errors.Is(err, domain.ErrLimitExceeded):
+		AbortProblemCause(c, http.StatusForbidden, "limit exceeded", safeDetail(err, detailLimitExceeded), err)
 	default:
 		AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
 	}
@@ -366,6 +380,10 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 		}
 		limit, offset := pagination(c)
 		states := c.QueryArray("state")
+		if raw := c.Query("cursor"); raw != "" {
+			listDagRunsByCursor(c, repo, raw, states, limit)
+			return
+		}
 		runs, total, err := listRunsFiltered(c, repo, states, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
@@ -376,6 +394,9 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 			out.DagRuns = append(out.DagRuns, toDagRunDTO(r))
 		}
 		setPaginationLinks(c, total, limit, offset)
+		if _, ok := repo.(DagRunPageReader); ok && len(runs) > 0 && offset+len(runs) < total {
+			setNextCursor(c, runCursor(runs[len(runs)-1]), false)
+		}
 		c.JSON(http.StatusOK, out)
 	}
 }
@@ -487,7 +508,7 @@ func validateParamValue(schema, value json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("parsing schema: %w", err)
 	}
-	comp := jsonschema.NewCompiler()
+	comp := domain.NewTenantSchemaCompiler()
 	if aerr := comp.AddResource("param_schema.json", doc); aerr != nil {
 		return fmt.Errorf("loading schema: %w", aerr)
 	}

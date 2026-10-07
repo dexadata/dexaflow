@@ -44,13 +44,44 @@ func (q *Queries) CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UU
 	return err
 }
 
+const countTenantDags = `-- name: CountTenantDags :one
+SELECT count(*) FROM dags WHERE tenant_id = $1
+`
+
+func (q *Queries) CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTenantDags, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getTenantLimits = `-- name: GetTenantLimits :one
+SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds
+FROM tenants
+WHERE id = $1
+`
+
+type GetTenantLimitsRow struct {
+	MaxDags                    int32 `json:"max_dags"`
+	MaxRunsPerDay              int32 `json:"max_runs_per_day"`
+	MinScheduleIntervalSeconds int32 `json:"min_schedule_interval_seconds"`
+}
+
+func (q *Queries) GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error) {
+	row := q.db.QueryRow(ctx, getTenantLimits, id)
+	var i GetTenantLimitsRow
+	err := row.Scan(&i.MaxDags, &i.MaxRunsPerDay, &i.MinScheduleIntervalSeconds)
+	return i, err
+}
+
 const insertDefaultPool = `-- name: InsertDefaultPool :exec
 INSERT INTO pools (tenant_id, name, slots, description, is_default)
 SELECT $1::uuid, p.name, p.slots, p.description, true
 FROM pools p
 JOIN tenants d ON d.id = p.tenant_id AND d.name = 'default'
 WHERE p.is_default
-ON CONFLICT (tenant_id, name) DO NOTHING
+ON CONFLICT (tenant_id, name) DO UPDATE SET is_default = true, updated_at = now()
+  WHERE NOT pools.is_default
 `
 
 // The implicit default pool every tenant needs (migration 023 seeds it for
@@ -111,6 +142,30 @@ func (q *Queries) ListTenantRolePermissions(ctx context.Context, name string) ([
 	return items, nil
 }
 
+const reserveTenantDailyRun = `-- name: ReserveTenantDailyRun :execrows
+UPDATE tenants
+SET runs_day_count = CASE WHEN runs_day = (now() AT TIME ZONE 'UTC')::date THEN runs_day_count + 1 ELSE 1 END,
+    runs_day = (now() AT TIME ZONE 'UTC')::date
+WHERE id = $1
+  AND max_runs_per_day > 0
+  AND (runs_day IS DISTINCT FROM (now() AT TIME ZONE 'UTC')::date OR runs_day_count < max_runs_per_day)
+`
+
+// Takes one of the tenant's runs for the current UTC day, resetting the count
+// when the day has turned. Zero rows means the tenant has no daily cap or has
+// reached it; the caller tells the two apart from the limit it read. It runs
+// before the run's INSERT in the same transaction, so a refusal writes nothing.
+// The UPDATE locks the tenant row until the transaction ends, and Postgres
+// re-checks the WHERE against the row a concurrent winner committed, so the
+// count can never pass the cap.
+func (q *Queries) ReserveTenantDailyRun(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, reserveTenantDailyRun, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const tenantHasDefaultPool = `-- name: TenantHasDefaultPool :one
 SELECT EXISTS (
     SELECT 1 FROM pools p JOIN tenants t ON t.id = p.tenant_id
@@ -123,4 +178,54 @@ func (q *Queries) TenantHasDefaultPool(ctx context.Context, name string) (bool, 
 	var has_default bool
 	err := row.Scan(&has_default)
 	return has_default, err
+}
+
+const updateTenantLimits = `-- name: UpdateTenantLimits :exec
+UPDATE tenants
+SET max_dags = COALESCE($1::int, max_dags),
+    max_runs_per_day = COALESCE($2::int, max_runs_per_day),
+    min_schedule_interval_seconds = COALESCE($3::int, min_schedule_interval_seconds),
+    updated_at = now()
+WHERE id = $4::uuid
+`
+
+type UpdateTenantLimitsParams struct {
+	MaxDags                    *int32      `json:"max_dags"`
+	MaxRunsPerDay              *int32      `json:"max_runs_per_day"`
+	MinScheduleIntervalSeconds *int32      `json:"min_schedule_interval_seconds"`
+	TenantID                   pgtype.UUID `json:"tenant_id"`
+}
+
+// Sets the limits given and keeps the others: a NULL argument leaves that
+// column as it is, 0 makes the limit unlimited (migration 040).
+func (q *Queries) UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error {
+	_, err := q.db.Exec(ctx, updateTenantLimits,
+		arg.MaxDags,
+		arg.MaxRunsPerDay,
+		arg.MinScheduleIntervalSeconds,
+		arg.TenantID,
+	)
+	return err
+}
+
+const upsertDefaultPoolSlots = `-- name: UpsertDefaultPoolSlots :exec
+INSERT INTO pools (tenant_id, name, slots, description, is_default)
+VALUES ($1::uuid, $2, $3, 'Default pool', true)
+ON CONFLICT (tenant_id, name) DO UPDATE SET slots = EXCLUDED.slots, is_default = true, updated_at = now()
+`
+
+type UpsertDefaultPoolSlotsParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	Name     string      `json:"name"`
+	Slots    int32       `json:"slots"`
+}
+
+// Sizes a tenant's default pool to an explicit slot count: inserts it under the
+// given name with the seed description, or re-sizes the row already there. A
+// row with that name left without is_default (a tenant created before the
+// default pool was seeded per tenant) is marked default, so the delete guard
+// and the pools view treat it as the pool the scheduler falls back to.
+func (q *Queries) UpsertDefaultPoolSlots(ctx context.Context, arg UpsertDefaultPoolSlotsParams) error {
+	_, err := q.db.Exec(ctx, upsertDefaultPoolSlots, arg.TenantID, arg.Name, arg.Slots)
+	return err
 }

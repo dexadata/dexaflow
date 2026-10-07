@@ -1,0 +1,35 @@
+suite: settled-run pod collection (executor.collectSettledRunPods)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: renders no collection env by default, so finished pods keep the grace period
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
+          any: true
+
+  - it: executor.collectSettledRunPods turns the collection on
+    template: deployment.yaml
+    set:
+      executor.collectSettledRunPods: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
+            value: "true"

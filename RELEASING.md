@@ -4,6 +4,57 @@ Cutting a release is one command: `scripts/cut-release.sh <version>`. The script
 owns the mechanical flow so it is not re-derived (and re-broken) by hand each time
 (#879). You own the *decisions*: whether to cut, the version, and rc-vs-GA.
 
+## Branches: main is always open, one release-X.Y per minor
+
+Releases follow [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-branches-and-open-main/),
+the model Kubernetes uses:
+
+- **`main` never freezes.** Every change merges to `main` first, including a
+  fix meant for a patch release.
+- **`X.Y.0` and its candidates are cut from `main`.** `scripts/cut-release.sh
+  0.6.0-rc.1` and `scripts/cut-release.sh 0.6.0` work as they always have.
+- **Right after `vX.Y.0` ships, create `release-X.Y` from that tag.** The GA cut
+  prints the command:
+
+      git push origin vX.Y.0^{commit}:refs/heads/release-X.Y
+
+- **Every later patch of the minor is cut from `release-X.Y`.** For
+  `X.Y.Z-rc.N` and `X.Y.Z` with `Z > 0` the script prepares, merges and tags on
+  `release-X.Y`, never on `main`, and stops with the command above when the
+  branch does not exist yet. The base branch comes from the version, not from
+  your checkout, so a patch cannot be cut from `main` by accident.
+- **Fixes reach a release branch only as cherry-picks.** Once the change is
+  merged to `main`, open a PR against `release-X.Y` with
+  `git cherry-pick -x <sha>` (the `-x` records the original commit), the title
+  prefixed `[release-X.Y]`, and a link to the original PR. Carry its changelog
+  fragment with it: patch notes are folded from the fragments on the release
+  branch. Only bug, regression and security fixes and release docs are
+  cherry-picked, plus what the ADR records as an exception.
+- **Every PR to `main` names its release as a milestone** (`v0.5.1`,
+  `v0.5.2`, ...). The milestone guard check fails a PR without one. A PR
+  milestoned for the patch being cut needs its cherry-pick; one milestoned for
+  a later release stays on `main` until then.
+- **Nothing on `main` is left behind by accident.** `scripts/release-gap.sh
+  X.Y.Z` lists every commit on `main` since `vX.Y.0` that `release-X.Y` does
+  not carry, ignoring PRs milestoned for a later release and the lines of
+  `.github/release-skip.txt` on the release branch (`#N reason` or
+  `<sha> reason`, for what will never ship in this minor, such as an ADR).
+  The cut runs it and refuses a patch while the list is not empty. The
+  commits the cut itself lands on `main` (release prep, docs promotion) never
+  count; a Dependabot bump has no milestone, so it shows in the list until it
+  is cherry-picked or skipped.
+- **Only the newest release branch takes patches.** An older one gets a
+  security fix only when the owner decides so for that fix.
+
+`release-X.Y` is a different name from the short-lived `release/<tag>` prepare
+branches the script opens, so the two never collide. Nothing ever merges a
+release branch back into `main`.
+
+CI, the changelog and docs guards and the security scans run on pull requests
+to `release-*` as they do on `main`, and CI and the security scans also run on
+pushes to `release-*`, so the merge commit a patch is tagged from has a run to
+gate on.
+
 ## The changelog fills itself, per PR
 
 Every PR records its own user-facing change under `## [Unreleased]` in
@@ -16,32 +67,39 @@ no user-facing change (release-prep, chore, dependabot, docs-only) carries the
 
 ## The flow the script runs
 
-1. **Preflight** — required tools, clean tree, on `main`, version validated,
-   rc-vs-GA detected from the `-rc.N` suffix.
-2. **Prepare** — a `release/<tag>` branch: bump `helm/dexaflow/Chart.yaml`
-   `version`+`appVersion` in lockstep (ADR 0028), regenerate the chart README with
+1. **Preflight**: required tools, clean tree, version validated, rc-vs-GA
+   detected from the `-rc.N` suffix, and the base branch picked from the
+   version: `main` for `X.Y.0` and its candidates, `release-X.Y` for later
+   patches (it must exist on `origin`). Being checked out on another branch
+   only warns; the cut builds on `origin/<base>` either way.
+2. **Prepare**: a `release/<tag>` branch off the base. Bump
+   `helm/dexaflow/Chart.yaml` `version`+`appVersion` in lockstep (ADR 0028), regenerate the chart README with
    `helm-docs`, and for a **GA** move `CHANGELOG [Unreleased]` to `[X.Y.Z] - <date>`
    with a fresh empty `[Unreleased]` (an **rc** keeps `[Unreleased]`). Run every
    `scripts/check-*.sh` gate against the tag. One of them,
    `check-changelog-entry.sh`, is a pull-request gate with no question to ask
    when there is no pull request, so it reports `gate SKIP`; the cut log
    distinguishes SKIP from PASS to keep the count honest.
-3. **PR → wait green → merge** — opens the prepare PR and waits for CI, re-running
-   **only known-transient flakes** (registry rate-limits, Go module-proxy resets,
-   the shallow-fetch merge-base gate, the cold-start `/readyz` timeout) and never
-   hard-failing on them; then squash-merges.
-4. **Guard → tag** — verifies the Chart at the merge commit matches the version,
-   then — behind an explicit **confirmation gate** — tags and pushes.
-5. **Watch** — writes `.release-<tag>.log` the moment the tag is pushed, then
+3. **PR → wait green → merge**: opens the prepare PR against the base and waits
+   for CI, re-running **only known-transient flakes** (registry rate-limits, Go
+   module-proxy resets, the shallow-fetch merge-base gate, the cold-start
+   `/readyz` timeout) and never hard-failing on them; then squash-merges.
+4. **Guard → tag**: verifies the Chart at the merge commit matches the version,
+   waits for the base branch's CI on that commit, then, behind an explicit
+   **confirmation gate**, tags and pushes.
+5. **Watch**: writes `.release-<tag>.log` the moment the tag is pushed, then
    follows the tag's release workflows to **PUBLISHED**, un-drafting +
    re-running if the gate retracts on a flake (#862).
 6. **Publish the docs root** (**GA** only, and only if step 5 reached
-   PUBLISHED) — opens a `docs/promote-<tag>` PR repointing
+   PUBLISHED): opens a `docs/promote-<tag>` PR repointing
    `website/scripts/ci/versions.json`, waits for it green and merges it. It runs
    last on purpose: the Pages deploy checks the tag out, so it cannot ride in
    the prepare commit; and the site root must never advertise a release whose
    artifacts are red or still draft. A failure here costs the docs root and
-   nothing else — the release is already out and logged. See below.
+   nothing else, since the release is already out and logged. The promotion always
+   targets `main`, also for a patch tagged on `release-X.Y`, and it leaves the
+   root alone when the GA being cut is older than the one the root serves. See
+   below.
 
 ## If the cut dies after the prepare PR merged
 
@@ -54,7 +112,8 @@ interrupted cut from an accidental re-cut of a released one.
 
     scripts/cut-release.sh <version> --resume
 
-picks up at the merge-commit gate. It refuses unless `main`'s `Chart.yaml`
+picks up at the merge-commit gate, on the same base branch the cut used. It
+refuses unless the base's `Chart.yaml`
 carries exactly the version being cut, which is what proves the prepare half
 completed, and it tags the commit that **introduced** that version rather than
 `main`'s tip — a chart version is a plateau, so anything merged since the
@@ -115,6 +174,12 @@ scripts/cut-release.sh v0.4.4-rc.1
 
 # Promote it to GA once the RC is validated in staging
 scripts/cut-release.sh v0.4.4
+
+# What main carries that the patch would miss (the cut refuses while non-empty)
+scripts/release-gap.sh 0.5.1 --fetch
+
+# A patch of a minor that already shipped is cut from release-0.5
+scripts/cut-release.sh v0.5.1-rc.1
 
 # Preview the plan — no branch, commit, PR, or tag
 scripts/cut-release.sh v0.4.4 --dry-run

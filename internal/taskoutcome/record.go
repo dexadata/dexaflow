@@ -68,6 +68,24 @@ type Record struct {
 	// still bounds it: the record can also arrive from a task that wrote its own
 	// termination message.
 	Reason string `json:"reason,omitempty"`
+	// AttemptEpoch names the execution of the try that wrote the record (ADR
+	// 0052 amendment), as the task spec gave it to the agent. It is optional
+	// and additive like Reason: v stays 1, an old reader ignores it, and a
+	// record without it (an older agent, or epoch 0) is read against the pod's
+	// label alone. A reader that finds an epoch different from the pod's label
+	// treats the record as absent.
+	AttemptEpoch *int64 `json:"attempt_epoch,omitempty"`
+}
+
+// WithAttemptEpoch returns the record stamped with the execution that wrote
+// it. Epoch 0 is left out, so the record keeps today's bytes: an agent served
+// by a replica that predates the field sees 0 for every execution, and the
+// pod's label is the safer answer then.
+func (r Record) WithAttemptEpoch(epoch int64) Record {
+	if epoch > 0 {
+		r.AttemptEpoch = &epoch
+	}
+	return r
 }
 
 // Succeeded returns a success record.

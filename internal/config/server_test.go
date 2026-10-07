@@ -509,6 +509,41 @@ func TestValidateLogsBackend(t *testing.T) {
 	}
 }
 
+// TestLoadServerLogsSinkLayout pins the object-log layout gate: it defaults to
+// the single-object layout every reader understands, binds from both the
+// DEXAFLOW_* and the legacy LEOFLOW_* variable, and rejects an unknown value.
+func TestLoadServerLogsSinkLayout(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Logs.Sink.Layout != "single" {
+		t.Errorf("Logs.Sink.Layout = %q, want \"single\" by default", c.Logs.Sink.Layout)
+	}
+	for _, env := range []string{"DEXAFLOW_LOGS_SINK_LAYOUT", "LEOFLOW_LOGS_SINK_LAYOUT"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "segmented")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			if c.Logs.Sink.Layout != "segmented" {
+				t.Errorf("Logs.Sink.Layout = %q, want \"segmented\" from %s", c.Logs.Sink.Layout, env)
+			}
+		})
+	}
+	bad := &ServerConfig{}
+	bad.Auth.Provider = AuthProviderJWT
+	bad.Auth.JWT.Secret = "set"
+	bad.Server.HTTPAddr = "0.0.0.0:8080"
+	bad.Logs.Backend = "s3"
+	bad.Logs.Sink.Bucket = "b"
+	bad.Logs.Sink.Layout = "striped"
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate() accepted an unknown logs.sink.layout")
+	}
+}
+
 // TestLoadServerDottedOIDCMapKeys locks the fix for #826: a MAP KEY containing
 // dots (Google Workspace `hd` = a domain; a dotted IdP group name) must survive
 // config decoding. viper's key delimiter is ".", so without the empty-map
@@ -869,5 +904,50 @@ func TestValidateServiceToken(t *testing.T) {
 				t.Errorf("Validate() = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestLoadServerLogsTailPublish pins the live-tail publish gate: it defaults to
+// "always" (every line published, as before), binds from the DEXAFLOW_* and the
+// legacy LEOFLOW_* variable and from a legacy leoflow.yaml, and rejects an
+// unknown value.
+func TestLoadServerLogsTailPublish(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Logs.Tail.Publish != "always" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"always\" by default", c.Logs.Tail.Publish)
+	}
+	for _, env := range []string{"DEXAFLOW_LOGS_TAIL_PUBLISH", "LEOFLOW_LOGS_TAIL_PUBLISH"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "on_demand")
+			fromEnv, lerr := LoadServer("", nil)
+			if lerr != nil {
+				t.Fatalf("LoadServer: %v", lerr)
+			}
+			if fromEnv.Logs.Tail.Publish != "on_demand" {
+				t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from %s", fromEnv.Logs.Tail.Publish, env)
+			}
+		})
+	}
+	file := filepath.Join(t.TempDir(), "leoflow.yaml")
+	if werr := os.WriteFile(file, []byte("logs:\n  tail:\n    publish: on_demand\n"), 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+	c, err = LoadServer(file, nil)
+	if err != nil {
+		t.Fatalf("LoadServer(leoflow.yaml): %v", err)
+	}
+	if c.Logs.Tail.Publish != "on_demand" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from leoflow.yaml", c.Logs.Tail.Publish)
+	}
+	bad := &ServerConfig{}
+	bad.Auth.Provider = AuthProviderJWT
+	bad.Auth.JWT.Secret = "set"
+	bad.Server.HTTPAddr = "0.0.0.0:8080"
+	bad.Logs.Tail.Publish = "sometimes"
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate() accepted an unknown logs.tail.publish")
 	}
 }

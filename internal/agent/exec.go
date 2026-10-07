@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/dexadata/dexaflow/internal/procgroup"
 )
 
 // execWaitDelay bounds how long Wait may spend on the two delays os/exec cannot
@@ -42,10 +44,28 @@ const execWaitDelay = 10 * time.Second
 // waitDelay is a field rather than the constant so a test can bound a wait
 // without spending the production delay; every caller outside tests goes through
 // NewExecRunner.
-type execRunner struct{ waitDelay time.Duration }
+//
+// groupRecord, when set, is where the runner records the task's process group
+// right after starting it (see NewExecRunnerRecordingGroup).
+type execRunner struct {
+	waitDelay   time.Duration
+	groupRecord string
+}
 
 // NewExecRunner returns a CommandRunner that executes tasks as child processes.
 func NewExecRunner() CommandRunner { return execRunner{waitDelay: execWaitDelay} }
+
+// NewExecRunnerRecordingGroup is NewExecRunner that also records each task's
+// process group at path (a procgroup.Record: this agent's pid, the group id and
+// the group leader's start time) as soon as the task starts. Lite hands the
+// path to its agent: the task leads its own group, so an agent killed outright
+// leaves the task running, and only this record lets the server see that
+// orphan and stop it before the attempt is placed again (#916). A task whose
+// group cannot be recorded is stopped and the run fails, so no task runs that
+// the server could not find. An empty path records nothing.
+func NewExecRunnerRecordingGroup(path string) CommandRunner {
+	return execRunner{waitDelay: execWaitDelay, groupRecord: path}
+}
 
 // Run executes argv with env, streaming output to stdout and stderr. A non-zero
 // process exit is returned as the exit code with a nil error; only failure to
@@ -88,7 +108,16 @@ func (r execRunner) Run(ctx context.Context, argv, env []string, stdout, stderr 
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	cmd.WaitDelay = r.waitDelay
 
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return -1, fmt.Errorf("running command: %w", err)
+	}
+	if rerr := r.recordGroup(cmd.Process.Pid); rerr != nil {
+		_ = killProcessGroup(cmd.Process) //nolint:errcheck // best-effort: Wait below collects the exit either way
+		_ = cmd.Wait()                    //nolint:errcheck // the task was stopped on purpose; its exit status is noise
+		reapProcessGroup(cmd.Process)
+		return -1, fmt.Errorf("recording the task process group: %w", rerr)
+	}
+	err := cmd.Wait()
 
 	// Reap whatever the task left behind, on EVERY path out of Run and not only
 	// on cancellation.
@@ -141,6 +170,24 @@ func (r execRunner) Run(ctx context.Context, argv, env []string, stdout, stderr 
 		return -1, fmt.Errorf("running command: %w", err)
 	}
 	return 0, nil
+}
+
+// recordGroup writes the task's process group record when the runner has a
+// record path. The task leads its own group, so the group id is its pid. A
+// leader start time that cannot be read is recorded as 0: the group still
+// counts as alive for the server, it just can never be verified and so is
+// never signaled by it.
+func (r execRunner) recordGroup(pid int) error {
+	if r.groupRecord == "" {
+		return nil
+	}
+	start, err := procgroup.StartTime(pid)
+	if err != nil {
+		slog.Warn("could not read the task leader's start time; the server will wait for an orphaned task instead of stopping it",
+			"pid", pid, "error", err)
+		start = 0
+	}
+	return procgroup.Write(r.groupRecord, procgroup.Record{AgentPID: os.Getpid(), PGID: pid, LeaderStart: start})
 }
 
 // killProcessGroup SIGKILLs every process in the group led by p, falling back to

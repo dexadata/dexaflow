@@ -20,17 +20,24 @@ type transition struct {
 }
 
 type fakeStore struct {
-	runs                 []RunState
-	materialize          []string
-	transitions          []transition
-	retried              []transition
-	resetInfra           []transition
-	redispatched         []transition
-	runStates            map[string]domain.DagRunState
-	scheduled            []ScheduledDAG
-	createdRuns          []string
-	notes                map[string]string
-	createErr            bool
+	runs         []RunState
+	materialize  []string
+	transitions  []transition
+	retried      []transition
+	resetInfra   []transition
+	redispatched []transition
+	runStates    map[string]domain.DagRunState
+	scheduled    []ScheduledDAG
+	createdRuns  []string
+	// createdTenants records the tenant of each created scheduled run, in the
+	// same order as createdRuns.
+	createdTenants []string
+	notes          map[string]string
+	createErr      bool
+	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
+	// these tenants, as the store does once a tenant's daily run cap is reached.
+	limitedTenants       map[string]bool
+	limitedCalls         int
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
@@ -53,6 +60,11 @@ type fakeStore struct {
 	// can be asserted to never query pool budgets (ADR 0053 Stage 3).
 	poolBudgets      map[string]int
 	poolBudgetsCalls int
+	// queuedExpect records the next_dispatch_at each guarded queued write was
+	// conditioned on; queuedSuperseded makes that write find the row already
+	// moved on (a buffered worker failed or re-offered it, or the agent reported).
+	queuedExpect     map[string]*time.Time
+	queuedSuperseded map[string]bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -70,11 +82,16 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 	f.poolBudgetsCalls++
 	return f.poolBudgets, nil
 }
-func (f *fakeStore) CreateScheduledRun(_ context.Context, dagID string, _ time.Time) error {
+func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, _ time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
 	}
+	if f.limitedTenants[tenantID] {
+		f.limitedCalls++
+		return domain.Safef(domain.ErrLimitExceeded, "tenant limit max_runs_per_day of 1 reached")
+	}
 	f.createdRuns = append(f.createdRuns, dagID)
+	f.createdTenants = append(f.createdTenants, tenantID)
 	return nil
 }
 func (f *fakeStore) MaterializeTasks(_ context.Context, runID string, _ []domain.TaskSpec) error {
@@ -84,6 +101,20 @@ func (f *fakeStore) MaterializeTasks(_ context.Context, runID string, _ []domain
 func (f *fakeStore) ApplyTransition(_ context.Context, runID, taskID string, to domain.TaskState) error {
 	f.transitions = append(f.transitions, transition{runID, taskID, to})
 	return nil
+}
+
+// MarkQueued mirrors the guarded queued write: it records the transition unless
+// the test marked the row as already moved on.
+func (f *fakeStore) MarkQueued(_ context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error) {
+	if f.queuedExpect == nil {
+		f.queuedExpect = map[string]*time.Time{}
+	}
+	f.queuedExpect[taskID] = expectNextDispatchAt
+	if f.queuedSuperseded[taskID] {
+		return false, nil
+	}
+	f.transitions = append(f.transitions, transition{runID, taskID, domain.TaskStateQueued})
+	return true, nil
 }
 
 // ApplyTransitions mirrors the batched store: it records one transition per task,
@@ -743,12 +774,15 @@ func TestHeartbeatIsLeadershipAware(t *testing.T) {
 }
 
 type fakeRecorder struct {
+	decisions        []string
 	undispatchable   []string
 	stepDowns        map[string]int
 	reacquireSamples []time.Duration
 }
 
-func (r *fakeRecorder) RecordSchedulerDecision(string)      {}
+func (r *fakeRecorder) RecordSchedulerDecision(d string) {
+	r.decisions = append(r.decisions, d)
+}
 func (r *fakeRecorder) RecordTaskTransition(_, _, _ string) {}
 func (r *fakeRecorder) RecordUndispatchable(reason string) {
 	r.undispatchable = append(r.undispatchable, reason)
