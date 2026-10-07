@@ -89,39 +89,65 @@ func (u *ResourceUnit) times(n int) (cpu, memory string) {
 	return c.String(), m.String()
 }
 
-// Apply returns the resources a task's pod gets: its declared values, with
-// every CPU and memory request or limit it left out set to pool_slots x unit,
-// so every task ends up bounded by its size. The task is not modified. With no
-// unit it returns the task's resources unchanged (nil when it declares none).
+// Apply returns the resources a task's pod gets. With no unit it returns the
+// task's resources unchanged (nil when it declares none). With a unit:
+//
+//   - A task that declares no cpu or memory gets requests = limits =
+//     pool_slots x unit (Guaranteed QoS), as ADR 0066 §3 says.
+//   - A value the task declares is never changed: the engine does not clamp or
+//     rewrite an author's resources.
+//   - A missing request follows the declared limit of the same dimension, the
+//     value Kubernetes itself would give it, else pool_slots x unit.
+//   - A missing limit is pool_slots x unit, or the declared request when that
+//     is larger, which only a misfit tolerated under enforce: warn can be. That
+//     task then runs with its own resources, as warn promises.
+//
+// So every task ends up with a cpu and memory limit, and requests are never
+// above limits, which the API server would reject. The task is not modified.
 func (u *ResourceUnit) Apply(t TaskSpec) *Resources {
 	if u == nil {
 		return t.Resources
 	}
 	cpu, memory := u.times(t.EffectivePoolSlots())
-	out := Resources{}
+	out := Resources{Requests: &ResourceQuantity{}, Limits: &ResourceQuantity{}}
 	if t.Resources != nil {
 		out.Claims = t.Resources.Claims
 		if t.Resources.Requests != nil {
-			r := *t.Resources.Requests
-			out.Requests = &r
+			*out.Requests = *t.Resources.Requests
 		}
 		if t.Resources.Limits != nil {
-			l := *t.Resources.Limits
-			out.Limits = &l
+			*out.Limits = *t.Resources.Limits
 		}
 	}
-	for _, q := range []**ResourceQuantity{&out.Requests, &out.Limits} {
-		if *q == nil {
-			*q = &ResourceQuantity{}
-		}
-		if (*q).CPU == "" {
-			(*q).CPU = cpu
-		}
-		if (*q).Memory == "" {
-			(*q).Memory = memory
-		}
-	}
+	out.Requests.CPU, out.Limits.CPU = fillDimension(out.Requests.CPU, out.Limits.CPU, cpu)
+	out.Requests.Memory, out.Limits.Memory = fillDimension(out.Requests.Memory, out.Limits.Memory, memory)
 	return &out
+}
+
+// fillDimension completes one dimension's request and limit from the task's
+// declared values and its size (n x unit); see Apply. Declared values are
+// returned as they are.
+func fillDimension(request, limit, size string) (outRequest, outLimit string) {
+	switch {
+	case request == "" && limit == "":
+		return size, size
+	case request == "":
+		return limit, limit
+	case limit == "":
+		return request, larger(request, size)
+	}
+	return request, limit
+}
+
+// larger returns the larger of two quantities, a when b is not larger or
+// either does not parse (DAGSpec.Validate reports unparsable values).
+func larger(a, b string) string {
+	qa, errA := resource.ParseQuantity(a)
+	qb, errB := resource.ParseQuantity(b)
+	if errA != nil || errB != nil || qb.Cmp(qa) <= 0 {
+		return a
+	}
+	return b
 }
 
 // UnitMisfitError is a task that does not fit the unit: it declares more than

@@ -422,8 +422,8 @@ func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
 }
 
 // taskResources picks the task pod's resources. With a resource unit the unit
-// sizes every task: its own values where it set them (Dispatch checked they
-// fit), pool_slots x unit for the rest (ADR 0066 §3). Without one, the task's
+// sizes every task: its own values where it set them, the rest filled so
+// requests never exceed limits (see ResourceUnit.Apply, ADR 0066 §3). Without one, the task's
 // own resources win, then the L0 platform default (ADR 0023), else none.
 func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
 	switch {
