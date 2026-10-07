@@ -7,6 +7,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // Warm-worker pod labels (ADR 0058 N1b2b). The warm-pool reconciler lists and
@@ -116,6 +118,11 @@ type WarmPodSpec struct {
 	// PodSecurity carries the same container/pod hardening choices as a task pod.
 	PodSecurity PodSecurity
 
+	// Resources sizes the warm container. With an operator resource unit it is
+	// one unit (ADR 0066 §3), and only tasks of that size are placed on the
+	// worker. Nil leaves the container unsized, as before.
+	Resources *domain.Resources
+
 	// ReadOnlyRootFilesystem is the warm isolation mode (X3.2,
 	// execution.warm_read_only_root_filesystem). It forces a read-only root on the
 	// warm container whatever PodSecurity says, mounts the writable /tmp emptyDir,
@@ -193,6 +200,9 @@ func BuildWarmPod(spec WarmPodSpec) *corev1.Pod {
 				SecurityContext: buildSecurityContext(spec.PodSecurity),
 			}},
 		},
+	}
+	if spec.Resources != nil {
+		pod.Spec.Containers[0].Resources = buildResources(*spec.Resources)
 	}
 	dropped := mergeMetadata(pod.Labels, spec.Labels)
 	dropped = append(dropped, mergeMetadata(pod.Annotations, spec.Annotations)...)

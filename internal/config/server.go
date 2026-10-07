@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -212,6 +213,27 @@ type ExecutorSection struct {
 	// KubeClient sets the client-side rate limits of the control plane's
 	// Kubernetes clients.
 	KubeClient KubeClientSection `mapstructure:"kube_client"`
+	// Unit is the resource unit one pool slot stands for (ADR 0066). Unset (the
+	// default) changes nothing. Set, every task pod is sized pool_slots x unit
+	// where the task leaves cpu or memory out, and a task that declares more
+	// than that is refused at registration and at dispatch.
+	Unit ExecutorUnitSection `mapstructure:"unit"`
+}
+
+// ExecutorUnitSection is executor.unit: the CPU and memory of one pool slot,
+// as Kubernetes quantities (both or neither), how a task that does not fit its
+// size is treated (refuse or warn), and the largest pool_slots a task may have
+// while the unit is set.
+type ExecutorUnitSection struct {
+	CPU     string `mapstructure:"cpu"`
+	Memory  string `mapstructure:"memory"`
+	Enforce string `mapstructure:"enforce"`
+	MaxSize int    `mapstructure:"max_size"`
+}
+
+// ResourceUnitConfig is the section as the domain parser takes it.
+func (u ExecutorUnitSection) ResourceUnitConfig() domain.ResourceUnitConfig {
+	return domain.ResourceUnitConfig{CPU: u.CPU, Memory: u.Memory, Enforce: u.Enforce, MaxSize: u.MaxSize}
 }
 
 // KubeClientSection sets the client-side rate limits (client-go token buckets)
@@ -980,8 +1002,14 @@ var serverDefaults = map[string]any{
 	// _MEMORY (the env-only Helm override path, #725). Empty leaves the L0 default
 	// unset, so a task inherits no platform resource default unless the operator
 	// configures one. Scalars (Kubernetes quantities, e.g. "250m"/"256Mi").
-	"executor.defaults.resources_cpu":                  "",
-	"executor.defaults.resources_memory":               "",
+	"executor.defaults.resources_cpu":    "",
+	"executor.defaults.resources_memory": "",
+	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_UNIT_CPU / _MEMORY. Empty
+	// (both) means no resource unit (ADR 0066).
+	"executor.unit.cpu":                                "",
+	"executor.unit.memory":                             "",
+	"executor.unit.enforce":                            domain.UnitEnforceRefuse,
+	"executor.unit.max_size":                           domain.DefaultUnitMaxSize,
 	"executor.defaults.run_tasks_as_non_root":          true,
 	"executor.defaults.read_only_task_root_filesystem": false,
 	// Warm worker pools (ADR 0058). Ships a byte-for-byte no-op: warm pools OFF =
@@ -1190,6 +1218,9 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateExecution(); err != nil {
 		return err
 	}
+	if err := c.validateExecutorUnit(); err != nil {
+		return err
+	}
 	if err := c.validatePlatformIntegration(); err != nil {
 		return err
 	}
@@ -1326,6 +1357,15 @@ func (c *ServerConfig) validateExecution() error {
 		return fmt.Errorf("execution.max_warm_pods_per_tenant must be >= 1 when execution.warm_pools_enabled (got %d): a zero aggregate tenant cap would forbid every warm worker (M4)", c.Execution.MaxWarmPodsPerTenant)
 	}
 	return nil
+}
+
+// validateExecutorUnit checks executor.unit (ADR 0066): unset, or both
+// quantities valid and positive, enforce refuse or warn, max_size positive.
+// It combines with warm pools: a warm pod is then one unit and serves only
+// size-1 tasks that declare no resources.
+func (c *ServerConfig) validateExecutorUnit() error {
+	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	return err
 }
 
 // validateProvider rejects an unknown auth.provider, failing closed at boot
