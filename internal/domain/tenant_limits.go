@@ -20,6 +20,9 @@ type TenantLimits struct {
 	// MinScheduleIntervalSeconds is the shortest gap, in seconds, a DAG's
 	// schedule may leave between two consecutive runs (MinScheduleInterval).
 	MinScheduleIntervalSeconds int
+	// MaxTaskPoolSlots caps a task's pool_slots (its size, ADR 0066): a DAG
+	// with a larger task is refused at registration.
+	MaxTaskPoolSlots int
 }
 
 // TenantLimitsUpdate changes some of a tenant's limits: a nil field leaves the
@@ -28,11 +31,12 @@ type TenantLimitsUpdate struct {
 	MaxDags                    *int
 	MaxRunsPerDay              *int
 	MinScheduleIntervalSeconds *int
+	MaxTaskPoolSlots           *int
 }
 
 // IsZero reports whether the update changes nothing.
 func (u TenantLimitsUpdate) IsZero() bool {
-	return u.MaxDags == nil && u.MaxRunsPerDay == nil && u.MinScheduleIntervalSeconds == nil
+	return u.MaxDags == nil && u.MaxRunsPerDay == nil && u.MinScheduleIntervalSeconds == nil && u.MaxTaskPoolSlots == nil
 }
 
 const minutesPerDay = 24 * 60
