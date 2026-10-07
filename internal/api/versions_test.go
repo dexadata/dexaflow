@@ -109,3 +109,32 @@ func TestRegisterVersionRejectsInvalidSpec(t *testing.T) {
 		t.Errorf("invalid spec = %d, want 400", rec.Code)
 	}
 }
+
+// With an operator resource unit (ADR 0066 §3), a task whose declared
+// resources exceed pool_slots x unit is refused at registration, naming the
+// size it would need, and a task that fits is accepted.
+func TestRegisterVersionRejectsATaskLargerThanItsSize(t *testing.T) {
+	unit, err := domain.ParseResourceUnit("250m", "512Mi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Versions:      &fakeVersionRepo{created: true},
+		ResourceUnit:  unit,
+	})
+	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
+	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", big)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "size: 8") {
+		t.Errorf("oversized task = %d %s, want 400 naming size: 8", rec.Code, rec.Body.String())
+	}
+	fits := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","pool_slots":8,"resources":{"limits":{"cpu":"2"}}}]}`
+	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", fits); rec.Code != http.StatusCreated {
+		t.Errorf("fitting task = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
