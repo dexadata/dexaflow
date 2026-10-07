@@ -98,17 +98,37 @@ func classifyPod(pod *corev1.Pod) verdict {
 
 // outcomeRecord decodes the durable outcome record from the terminated task
 // container's termination message, if present and valid. A missing, running, or
-// undecodable message returns false so the caller falls back to pod phase.
+// undecodable message returns false so the caller falls back to pod phase, and
+// so does a record of another attempt epoch than the pod's label
+// (recordMatchesPod). Every reader (the settle, the infra confirmation, the
+// teardown's terminal test) goes through here, so the epoch rule holds for all.
 func outcomeRecord(pod *corev1.Pod) (taskoutcome.Record, bool) {
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.Name != taskContainerName {
 			continue
 		}
 		if t := cs.State.Terminated; t != nil && t.Message != "" {
-			return taskoutcome.Decode(t.Message)
+			rec, ok := taskoutcome.Decode(t.Message)
+			if !ok || !recordMatchesPod(rec, pod) {
+				return taskoutcome.Record{}, false
+			}
+			return rec, true
 		}
 	}
 	return taskoutcome.Record{}, false
+}
+
+// recordMatchesPod applies the epoch rule (ADR 0052 amendment): the pod's
+// labels, which the control plane wrote, name the attempt. A record that names
+// another epoch was not written by this execution, so it counts as no record.
+// A record without an epoch (an older agent, or epoch 0) is read against the
+// label alone, as before.
+func recordMatchesPod(rec taskoutcome.Record, pod *corev1.Pod) bool {
+	if rec.AttemptEpoch == nil {
+		return true
+	}
+	epoch, ok := podEpoch(pod)
+	return ok && int64(epoch) == *rec.AttemptEpoch
 }
 
 // failedReason picks the better of the two descriptions of one failure.
@@ -286,30 +306,42 @@ func boundReason(reason string) string {
 	return taskoutcome.TruncateReason(reason, taskoutcome.MaxReasonLen)
 }
 
-// tryNumberOf reads the attempt the pod ran, from the leoflow.io/try-number label
-// BuildPod sets. It guards the settle against clobbering a different attempt, so a
-// pod whose label is missing or unparseable is not settled (ok is false).
-func tryNumberOf(pod *corev1.Pod) (int, bool) {
-	s := pod.Labels["leoflow.io/try-number"]
+// attemptOf reads the attempt the pod ran from the labels BuildPod sets: the
+// try from leoflow.io/try-number and the epoch from leoflow.io/attempt-epoch
+// (ADR 0051 amendment). They guard the settle against clobbering a different
+// attempt, so a pod whose try label is missing or unparseable, or whose epoch
+// label is present but unparseable, is not settled (ok is false). A missing
+// epoch label is epoch 0: the pod was created before the epoch existed, and it
+// can only settle a row that no post-upgrade dispatch has claimed (#1130).
+//
+// The reconciler fences on the label, never on the outcome record's own epoch:
+// the control plane wrote the label, and the task cannot change it.
+func attemptOf(pod *corev1.Pod) (try, epoch int, ok bool) {
+	s := pod.Labels[podLabelTryNumber]
 	if s == "" {
-		return 0, false
+		return 0, 0, false
 	}
-	n, err := strconv.Atoi(s)
+	try, err := strconv.Atoi(s)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	return n, true
+	epoch, ok = podEpoch(pod)
+	if !ok {
+		return 0, 0, false
+	}
+	return try, epoch, true
 }
 
 // OutcomeReporter records a terminal task-instance outcome the reconciler
 // recovered from a pod (its durable outcome record, or its phase). Every method is
-// guarded by the attempt (try_number) so a stale reconciler acting on a previous
-// attempt's pod never clobbers a live retry, and is idempotent: a settle on an
-// already-terminal instance is a no-op, not an error.
+// guarded by the attempt (try_number and attempt_epoch, from the pod's labels) so
+// a stale reconciler acting on a previous attempt's pod never clobbers a live
+// retry or re-place (#1130), and is idempotent: a settle on an already-terminal
+// or superseded instance is a no-op, not an error.
 type OutcomeReporter interface {
-	FailTask(ctx context.Context, taskInstanceID string, tryNumber int, reason string) error
-	SucceedTask(ctx context.Context, taskInstanceID string, tryNumber int) error
-	RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber int, at time.Time) error
+	FailTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error
+	SucceedTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error
+	RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, at time.Time) error
 }
 
 // PodSnapshotter supplies the reconciler's task-pod set from a local cache instead
@@ -336,11 +368,16 @@ const podGCGracePeriod = 10 * time.Minute
 // finished pods once they age out.
 //
 // Outcome recovery is best-effort (ADR 0052 is a School-A optimization on the
-// School-B re-drive floor): the settle guards on the active states, so if a reaper
-// settles the still-running TI failed first (heartbeat timeout, ~90s) before this
-// loop recovers the success record (~30s), the recovered success is dropped and the
-// task degrades to the safe retry path. The 30s vs 90s cadence makes the reconciler
-// win the common case; the loss is a correctness-safe re-run, not a wrong result.
+// School-B re-drive floor): the settle guards on the active states. If a reaper
+// marked the attempt as an infra failure first (agent_lost, pod_lost,
+// dispatch_lost), a durable SUCCESS record still wins while the mark is
+// provisional (ADR 0052 amendment): the reconciler falls back to
+// SucceedTaskOverInfraMark, which settles success only for that exact attempt,
+// before the mark is confirmed or the planner's confirmation valve opens, on a
+// running run. Past that window the success is dropped and the task degrades
+// to the safe retry path, a correctness-safe re-run, not a wrong result. A
+// FAILED record never overrides a mark: the reap's own teardown makes the
+// agent write one.
 type Reconciler struct {
 	clientset kubernetes.Interface
 	namespace string
@@ -351,11 +388,24 @@ type Reconciler struct {
 	// (PR-10). Nil keeps the live LIST (Lite/subprocess, or before the informer
 	// is wired). GC deletes still go straight to the apiserver.
 	snapshot PodSnapshotter
+	// settledRuns, when set, turns on the settled-run collection (see
+	// run_settle_collect.go). Nil keeps the age-based GC only.
+	settledRuns SettledRunChecker
+	// deleteCollectionForbidden latches once the apiserver refused
+	// deletecollection on pods, so later sweeps go straight to per-pod deletes.
+	deleteCollectionForbidden atomic.Bool
 	// lastSweepCompleted is the unix-nano stamp of the last sweep that listed
 	// the task-pod set and visited every pod; 0 = none yet. Read by the reaper's
 	// leader-settling gate (see LastSweepCompletedAt) from another goroutine
 	// than the one that writes it at the end of Reconcile, hence atomic.
 	lastSweepCompleted atomic.Int64
+	// confirmer, when set, runs the infra confirmation pass after the settle
+	// loop of every sweep (ADR 0052 amendment, part 2). Nil: no pass.
+	confirmer InfraConfirmer
+	// overrideRecorder and overrideSink make a durable SUCCESS settled over an
+	// infra mark visible (ADR 0052 amendment, part 1); nil leaves them off.
+	overrideRecorder InfraOverrideRecorder
+	overrideSink     logSink
 }
 
 // NewReconciler builds a Reconciler over the given cluster and outcome reporter.
@@ -396,9 +446,11 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	runs := newRunTracker(r.settledRuns != nil)
 	for _, pod := range pods {
 		v := classifyPod(pod)
 		if !v.terminal {
+			runs.block(pod)
 			continue
 		}
 		// A terminal pod must have its outcome durably recorded before it is
@@ -408,15 +460,18 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		// try again next tick.
 		if v.settle != settleNothing {
 			if err := r.settlePod(ctx, pod, v); err != nil {
+				runs.block(pod)
 				continue
 			}
 			// A reschedule pod's record must NOT linger to be re-applied. Reschedule
-			// redispatch reuses the same try_number (it consumes no attempt, #380), so
-			// the attempt guard cannot tell a stale poke pod from the re-dispatched
-			// live one — a lingering poke pod would re-park the live attempt with an
-			// already-elapsed reschedule_at and flap the sensor. It exited cleanly
-			// (nothing to inspect), so collect it now instead of after the grace
-			// period, well before the next redispatch. (ADR 0052)
+			// redispatch reuses the same try_number (it consumes no attempt, #380). The
+			// attempt epoch now tells a stale poke pod from the re-dispatched live one
+			// (ADR 0051 amendment), but a poke pod stamped before the epoch existed
+			// is epoch 0, as is a legacy row's next poke during a rolling upgrade, and
+			// a lingering one would re-park the live attempt with an already-elapsed
+			// reschedule_at and flap the sensor. It exited cleanly (nothing to
+			// inspect), so collect it now instead of after the grace period, well
+			// before the next redispatch. (ADR 0052)
 			if v.settle == settleReschedule {
 				r.collect(ctx, pod)
 				continue
@@ -424,9 +479,17 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 		if r.now().Sub(pod.CreationTimestamp.Time) > r.ttl {
 			r.collect(ctx, pod)
+			continue
 		}
+		runs.add(pod)
 	}
+	// Every pod was visited: stamp the sweep before the collection, so its
+	// apiserver calls never delay the reaper's settling gate.
 	r.lastSweepCompleted.Store(r.now().UnixNano())
+	// Confirm the provisional infra marks against this sweep's pods (ADR 0052
+	// amendment, part 2).
+	r.confirmInfraMarks(ctx, pods)
+	r.collectSettledRuns(ctx, runs)
 	return nil
 }
 
@@ -472,19 +535,19 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 	if tiID == "" {
 		return nil
 	}
-	tryNumber, ok := tryNumberOf(pod)
+	tryNumber, epoch, ok := attemptOf(pod)
 	if !ok {
-		// Anomalous pod — BuildPod always sets the label, so this is a hand-created
-		// or old-version pod. Without the attempt we cannot guard the settle, and
+		// Anomalous pod: BuildPod always sets the try label and never an
+		// unparseable epoch, so this is a hand-created or old-version pod. Without the attempt we cannot guard the settle, and
 		// settling unguarded could clobber a different attempt. Skip the settle and
 		// let the pod age out normally (the heartbeat reaper is the task instance's
 		// backstop); returning an error here would leak the pod forever, since the
 		// label will never appear on a later tick.
-		slog.Error("cannot settle task pod without a try-number; leaving the TI to the reaper",
+		slog.Error("cannot settle task pod without a valid try-number and attempt epoch; leaving the TI to the reaper",
 			"pod", pod.Name, "task_instance", tiID)
 		return nil
 	}
-	if err := r.recordOutcome(ctx, tiID, tryNumber, v); err != nil {
+	if err := r.recordOutcome(ctx, tiID, tryNumber, epoch, v); err != nil {
 		slog.Error("recording task pod outcome", "pod", pod.Name, "task_instance", tiID,
 			"settle", v.settle, "from_record", v.fromRecord, "error", err)
 		return err
@@ -492,14 +555,14 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 	return nil
 }
 
-func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber int, v verdict) error {
+func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber, epoch int, v verdict) error {
 	switch v.settle {
 	case settleSucceeded:
-		return r.reporter.SucceedTask(ctx, tiID, tryNumber)
+		return r.succeedFromRecord(ctx, tiID, tryNumber, epoch, v.fromRecord)
 	case settleReschedule:
-		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, v.at)
+		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, epoch, v.at)
 	case settleFailed:
-		return r.reporter.FailTask(ctx, tiID, tryNumber, v.reason)
+		return r.reporter.FailTask(ctx, tiID, tryNumber, epoch, v.reason)
 	case settleNothing:
 		return nil
 	default:

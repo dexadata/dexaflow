@@ -521,6 +521,33 @@ tests:
             name: LEOFLOW_LOGS_DIR
             value: /var/log/leoflow
 
+  - it: publishes every live-tail line by default (logs.tail.publish always)
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_TAIL_PUBLISH
+            value: always
+
+  - it: wires logs.tail.publish on_demand
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      logs.tail.publish: on_demand
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_TAIL_PUBLISH
+            value: on_demand
+
   - it: wires the s3 log backend + keyless config when logs.sink.provider is s3
     template: deployment.yaml
     set:
@@ -532,12 +559,18 @@ tests:
       logs.sink.region: us-east-1
       logs.sink.endpoint: http://minio.internal:9000
       logs.sink.forcePathStyle: true
+      logs.sink.layout: segmented
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: LEOFLOW_LOGS_BACKEND
             value: s3
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_SINK_LAYOUT
+            value: segmented
       - contains:
           path: spec.template.spec.containers[0].env
           content:

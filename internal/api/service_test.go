@@ -28,12 +28,14 @@ type fakeServiceStore struct {
 	userErr       error
 
 	gotTenant, gotDisplay                     string
+	gotPoolSlots                              int
+	gotLimits                                 domain.TenantLimitsUpdate
 	gotUserTenant, gotEmail, gotProv, gotSubj string
 	gotRoles                                  []string
 }
 
-func (f *fakeServiceStore) EnsureTenant(_ context.Context, name, displayName string) (bool, error) {
-	f.gotTenant, f.gotDisplay = name, displayName
+func (f *fakeServiceStore) EnsureTenant(_ context.Context, name, displayName string, defaultPoolSlots int, limits domain.TenantLimitsUpdate) (bool, error) {
+	f.gotTenant, f.gotDisplay, f.gotPoolSlots, f.gotLimits = name, displayName, defaultPoolSlots, limits
 	return f.tenantCreated, f.tenantErr
 }
 
@@ -147,6 +149,80 @@ func TestServiceEnsureTenantPassesTheDisplayName(t *testing.T) {
 
 	if store.gotTenant != "acme" || store.gotDisplay != "Acme Corp" {
 		t.Errorf("store got (%q, %q), want (acme, Acme Corp)", store.gotTenant, store.gotDisplay)
+	}
+}
+
+// TestServiceEnsureTenantPassesDefaultPoolSlots: default_pool_slots sizes the
+// tenant's default pool; leaving it out passes 0, which keeps the copy from the
+// default tenant.
+func TestServiceEnsureTenantPassesDefaultPoolSlots(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want int
+	}{
+		"set":     {`{"default_pool_slots": 8}`, 8},
+		"omitted": {`{"display_name":"Acme Corp"}`, 0},
+		"no body": {``, 0},
+		"null":    {`{"default_pool_slots": null}`, 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeServiceStore{tenantCreated: true}
+			h := serviceServer(t, store, true)
+
+			rec := callService(h, http.MethodPut, "/api/v2/service/tenants/acme", testServiceToken, tc.body)
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d %s, want 201", rec.Code, rec.Body.String())
+			}
+			if store.gotPoolSlots != tc.want {
+				t.Errorf("store got default pool slots %d, want %d", store.gotPoolSlots, tc.want)
+			}
+		})
+	}
+}
+
+// TestServiceEnsureTenantAuditsDefaultPoolSlots: the size is recorded when it
+// is given and absent when it is not.
+func TestServiceEnsureTenantAuditsDefaultPoolSlots(t *testing.T) {
+	for body, want := range map[string]string{`{"default_pool_slots": 8}`: "8", `{}`: ""} {
+		audit := &fakeAuthAudit{}
+		h := serviceServerWith(t, &fakeServiceStore{tenantCreated: true}, true, []string{"acme"}, audit)
+
+		callService(h, http.MethodPut, "/api/v2/service/tenants/acme", testServiceToken, body)
+
+		if len(audit.events) != 1 {
+			t.Fatalf("%s: audit events = %+v, want 1", body, audit.events)
+		}
+		got, ok := audit.events[0].extra["default_pool_slots"]
+		if got != want || ok != (want != "") {
+			t.Errorf("%s: audit default_pool_slots = %q (present=%v), want %q", body, got, ok, want)
+		}
+	}
+}
+
+// TestServiceEnsureTenantRejectsBadDefaultPoolSlots: a pool size must be a
+// positive count that fits the slots column; anything else is a 400 and never
+// reaches the store.
+func TestServiceEnsureTenantRejectsBadDefaultPoolSlots(t *testing.T) {
+	for _, body := range []string{
+		`{"default_pool_slots": 0}`,
+		`{"default_pool_slots": -1}`,
+		`{"default_pool_slots": 2147483648}`,
+		`{"default_pool_slots": "8"}`,
+		`{"default_pool_slots": 1.5}`,
+	} {
+		store := &fakeServiceStore{tenantCreated: true}
+		h := serviceServer(t, store, true)
+
+		rec := callService(h, http.MethodPut, "/api/v2/service/tenants/acme", testServiceToken, body)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", body, rec.Code)
+		}
+		if store.gotTenant != "" {
+			t.Errorf("%s: reached the store", body)
+		}
 	}
 }
 

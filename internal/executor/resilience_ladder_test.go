@@ -21,6 +21,8 @@ func defaultLadder() ResilienceLadder {
 		OrphanThreshold:              cfg.OrphanThreshold,
 		InfraReplaceMaxDelay:         190 * time.Second,
 		MaxAttemptCredentialLifetime: 24 * time.Hour,
+		TaskTerminationGrace:         30 * time.Second,
+		InfraConfirmMaxWait:          2 * time.Minute,
 	}
 }
 
@@ -185,5 +187,30 @@ func TestResilienceLadderWarningsDisabledCredentialCeiling(t *testing.T) {
 	}
 	if got := ResilienceLadderWarnings(defaultLadder()); len(got) != 0 {
 		t.Errorf("a set ceiling must produce no warning, got %+v", got)
+	}
+}
+
+// TestValidateResilienceLadderInfraConfirmValve: the confirmation valve (ADR
+// 0052 amendment) must outlast a stopped pod's termination grace plus two
+// reconcile cycles, or the planner re-places before the reconciler could read
+// the record; and it must stay below the orphan threshold, or a run whose only
+// live task is a provisional mark is reaped as orphaned.
+func TestValidateResilienceLadderInfraConfirmValve(t *testing.T) {
+	short := defaultLadder()
+	short.InfraConfirmMaxWait = short.TaskTerminationGrace + 2*short.ReconcileInterval
+	err := ValidateResilienceLadder(short)
+	if err == nil || !strings.Contains(err.Error(), "infra confirmation valve") {
+		t.Fatalf("a valve at termination grace + 2 intervals must be rejected, got %v", err)
+	}
+	long := defaultLadder()
+	long.InfraConfirmMaxWait = long.OrphanThreshold
+	err = ValidateResilienceLadder(long)
+	if err == nil || !strings.Contains(err.Error(), "orphan threshold") {
+		t.Fatalf("a valve at the orphan threshold must be rejected, got %v", err)
+	}
+	zero := defaultLadder()
+	zero.TaskTerminationGrace = 0
+	if err := ValidateResilienceLadder(zero); err == nil {
+		t.Fatal("a zero task termination grace must be rejected")
 	}
 }

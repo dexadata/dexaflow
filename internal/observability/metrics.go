@@ -14,9 +14,6 @@ type Metrics struct {
 	// Scheduler
 	SchedulerLoopDuration prometheus.Histogram
 	SchedulerDecisions    *prometheus.CounterVec
-	SchedulerLeader       *prometheus.GaugeVec
-	ActiveDAGRuns         *prometheus.GaugeVec
-	QueuedTasks           *prometheus.GaugeVec
 	TasksUndispatchable   *prometheus.CounterVec
 	SchedulerStepDowns    *prometheus.CounterVec // #311 leader churn observability
 	SchedulerReacquire    prometheus.Histogram   // #311 step-down → re-acquire latency
@@ -40,9 +37,15 @@ type Metrics struct {
 	HTTPRequestDuration *prometheus.HistogramVec
 	AuthFailures        *prometheus.CounterVec
 
+	// Agent credentials: task tokens authenticated without an attempt_epoch
+	// claim, accepted under the epoch-0 rule (ADR 0051 amendment).
+	AgentLegacyAttemptTokens prometheus.Counter
+	// Reconciler: durable SUCCESS records settled over a reaper's provisional
+	// infra mark, by the mark overridden (ADR 0052 amendment).
+	ReconcileInfraOverrides *prometheus.CounterVec
+
 	// Executor (Kubernetes)
 	PodsCreated        *prometheus.CounterVec
-	PodsRunning        prometheus.Gauge
 	PodPendingDuration prometheus.Histogram
 	KubernetesAPICalls *prometheus.CounterVec
 
@@ -83,9 +86,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		TasksUndispatchable: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_tasks_undispatchable_total", Help: "Tasks queued with no executor to launch them, by reason.",
 		}, []string{"reason"}),
-		SchedulerLeader: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "dexaflow_scheduler_leader", Help: "1 when this replica is the scheduler leader.",
-		}, []string{"replica_id"}),
 		SchedulerStepDowns: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_scheduler_step_downs_total",
 			Help: "Scheduler leadership step-downs by reason (lock_released, check_timeout, shutdown). " +
@@ -100,12 +100,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			// reportable distribution.
 			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300},
 		}),
-		ActiveDAGRuns: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "dexaflow_active_dag_runs", Help: "Active dag runs by dag and state.",
-		}, []string{"dag_id", "state"}),
-		QueuedTasks: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "dexaflow_queued_tasks", Help: "Queued task instances by dag.",
-		}, []string{"dag_id"}),
 		AlertsDispatched: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_alerts_dispatched_total",
 			Help: "Native on-failure alerts dispatched, by channel type and outcome (sent, failed). " +
@@ -151,12 +145,22 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_auth_failures_total", Help: "Authentication failures by reason.",
 		}, []string{"reason"}),
 
+		AgentLegacyAttemptTokens: f.NewCounter(prometheus.CounterOpts{
+			Name: "dexaflow_agent_legacy_attempt_token_total",
+			Help: "Agent RPCs authenticated by a task token without the attempt_epoch claim: one minted before the upgrade, " +
+				"or one an old replica renewed or exchanged during a rolling upgrade. Reports from such a token are read as epoch 0. " +
+				"It falls to zero once the rollout has finished and every pre-upgrade attempt has finished; a later release rejects such tokens.",
+		}),
+
+		ReconcileInfraOverrides: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_reconcile_infra_override_total",
+			Help: "Durable SUCCESS records the reconciler settled over a reaper's provisional infra mark (agent_lost, pod_lost, dispatch_lost), " +
+				"by the mark overridden: a task that finished while the control plane lost track of it, recovered instead of re-run.",
+		}, []string{"mark"}),
+
 		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_pods_created_total", Help: "Pods created by dag and result.",
 		}, []string{"dag_id", "result"}),
-		PodsRunning: f.NewGauge(prometheus.GaugeOpts{
-			Name: "dexaflow_pods_running", Help: "Currently running pods.",
-		}),
 		PodPendingDuration: f.NewHistogram(prometheus.HistogramOpts{
 			Name: "dexaflow_pod_pending_duration_seconds", Help: "Pod pending duration.",
 		}),
@@ -307,6 +311,17 @@ func (m *Metrics) RecordDispatchAtCapacity() { m.DispatchAtCapacity.Inc() }
 // the BufferedDispatcher.
 func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 	m.DispatchLatency.Observe(seconds)
+}
+
+// RecordLegacyAttemptToken counts one agent RPC authenticated by a task token
+// without an attempt_epoch claim (ADR 0051 amendment). It satisfies
+// agentrpc.LegacyTokenRecorder.
+func (m *Metrics) RecordLegacyAttemptToken() { m.AgentLegacyAttemptTokens.Inc() }
+
+// RecordInfraOverride counts one durable SUCCESS settled over an infra mark.
+// It satisfies executor.InfraOverrideRecorder.
+func (m *Metrics) RecordInfraOverride(mark string) {
+	m.ReconcileInfraOverrides.WithLabelValues(mark).Inc()
 }
 
 // RecordDispatchInnerError counts one error returned by the inner dispatcher

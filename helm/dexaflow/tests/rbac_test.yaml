@@ -26,8 +26,10 @@ tests:
     asserts:
       - isKind:
           of: Role
-      # `pods` — create, get, list, watch, delete. NOT `update` or `patch`
-      # (the executor never mutates a running pod — it creates and deletes).
+      # `pods`: create, get, list, watch, delete, and patch, which a reap's
+      # teardown uses to stop a started pod in place (activeDeadlineSeconds=1)
+      # so its outcome record survives (ADR 0052 amendment). NOT `update`, and
+      # NOT `deletecollection` unless executor.collectSettledRunPods is on.
       - contains:
           path: rules[0].verbs
           content: create
@@ -45,8 +47,11 @@ tests:
           content: delete
       - notContains:
           path: rules[0].verbs
-          content: update
+          content: deletecollection
       - notContains:
+          path: rules[0].verbs
+          content: update
+      - contains:
           path: rules[0].verbs
           content: patch
       - equal:
@@ -107,3 +112,18 @@ tests:
             apiGroups: [""]
             resources: ["persistentvolumeclaims"]
             verbs: ["create", "delete"]
+
+  - it: Role grants deletecollection on pods only with executor.collectSettledRunPods
+    documentIndex: 0
+    set:
+      executor.collectSettledRunPods: true
+    asserts:
+      - equal:
+          path: rules[0].resources[0]
+          value: pods
+      - contains:
+          path: rules[0].verbs
+          content: deletecollection
+      - contains:
+          path: rules[0].verbs
+          content: delete

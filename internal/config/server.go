@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -45,6 +46,18 @@ type ServerConfig struct {
 	// Trying keys in order is safe only because AES-GCM is authenticated: a
 	// wrong key fails to open rather than returning plausible garbage.
 	SecretKey string `mapstructure:"secret_key"`
+	// SecretKeyReencryptOnBoot (LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT, default
+	// true) runs the ADR 0019 boot sweep that moves stored secrets onto the
+	// first key of SecretKey. `dexaflow lite` sets it to false: a Lite install
+	// migrates only through the explicit `dexaflow lite migrate-key`, which
+	// records every key before touching a row and verifies before it commits
+	// (ADR 0065). Pro keeps the default.
+	SecretKeyReencryptOnBoot bool `mapstructure:"secret_key_reencrypt_on_boot"`
+	// SecretKeyMigrationLock (LEOFLOW_SECRET_KEY_MIGRATION_LOCK, default false)
+	// makes the server hold the key-migration advisory lock shared for its whole
+	// life, refuse to start while a migration holds it, and exit if it loses it.
+	// `dexaflow lite` sets it to true (ADR 0065 section 3).
+	SecretKeyMigrationLock bool `mapstructure:"secret_key_migration_lock"`
 }
 
 // SecretsSection configures the external secrets backend (ADR 0060). When Backend
@@ -78,6 +91,28 @@ type LogsSection struct {
 	// Sink configures the object-store backend; read only when Backend is "s3" or
 	// "gcs".
 	Sink ObjectLogSection `mapstructure:"sink"`
+	// Tail configures the live-tail fan-out of task log lines.
+	Tail LogTailSection `mapstructure:"tail"`
+}
+
+// Live-tail publish modes (logs.tail.publish).
+const (
+	// LogTailPublishAlways publishes every received log line for the live
+	// tail as it arrives (the default).
+	LogTailPublishAlways = "always"
+	// LogTailPublishOnDemand publishes only while a follower is subscribed,
+	// probing at most once a second per log stream and replaying the lines
+	// held since the last probe that found nobody.
+	LogTailPublishOnDemand = "on_demand"
+)
+
+// LogTailSection configures the live-tail fan-out.
+type LogTailSection struct {
+	// Publish is "always" (default: every line is published, as before) or
+	// "on_demand" (lines are published only while someone follows the attempt;
+	// a new follower may see its first live lines up to about a second late).
+	// Bind via DEXAFLOW_LOGS_TAIL_PUBLISH (legacy LEOFLOW_LOGS_TAIL_PUBLISH).
+	Publish string `mapstructure:"publish"`
 }
 
 // ObjectLogSection configures the object-store log backend for both the "s3" and
@@ -113,6 +148,13 @@ type ObjectLogSection struct {
 	// (recommended) uses Application Default Credentials — GKE Workload Identity
 	// keyless. GCS-only.
 	CredentialsFile string `mapstructure:"credentials_file"`
+	// Layout selects how new attempts are written to the bucket: "single"
+	// (default) keeps one object per attempt at {try}.log, rewritten on every
+	// flush; "segmented" writes numbered segments under {try}.log.d/
+	// ({try}.e{epoch}.log.d/ for a later execution of the try) so a flush
+	// uploads only the open segment. Both layouts are always readable. Turn
+	// segmented on only once every replica runs a version that reads it.
+	Layout string `mapstructure:"layout"`
 }
 
 // ExecutorSection configures how tasks are executed.
@@ -159,6 +201,37 @@ type ExecutorSection struct {
 	// DAG artifact left empty (ADR 0023, layer L0). They never override a value
 	// baked into dag.json, keeping the artifact portable across clusters.
 	Defaults PlatformDefaultsSection `mapstructure:"defaults"`
+	// CollectSettledRunPods deletes a settled run's finished task pods as soon
+	// as the reconciler has recorded every outcome, in one DeleteCollection by
+	// the run's label instead of one delete per pod after the grace period. It
+	// needs the deletecollection verb on pods (the chart grants it only when this
+	// is on) and falls back to per-pod deletes without it. Off by default:
+	// finished pods stay for the grace period, so they can be inspected with
+	// kubectl.
+	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
+	// KubeClient sets the client-side rate limits of the control plane's
+	// Kubernetes clients.
+	KubeClient KubeClientSection `mapstructure:"kube_client"`
+}
+
+// KubeClientSection sets the client-side rate limits (client-go token buckets)
+// of the control plane's Kubernetes clients. The dispatch client creates task
+// pods; the agent token exchange builds its own client with the same limits.
+// Maintenance work (pod informer, reconciler, reapers, staging GC, warm pool
+// reconciler) shares the dispatch client unless MaintenanceQPS is set, in which
+// case it gets a separate client and token bucket so a maintenance burst cannot
+// starve pod creation.
+type KubeClientSection struct {
+	// QPS and Burst limit the dispatch client. Defaults are client-go's own
+	// (5 and 10); a non-positive value falls back to them.
+	QPS   float64 `mapstructure:"qps"`
+	Burst int     `mapstructure:"burst"`
+	// MaintenanceQPS and MaintenanceBurst limit a separate maintenance client.
+	// 0 (default) keeps maintenance on the dispatch client, one shared budget as
+	// before. A non-positive burst with a positive QPS falls back to client-go's
+	// default burst.
+	MaintenanceQPS   float64 `mapstructure:"maintenance_qps"`
+	MaintenanceBurst int     `mapstructure:"maintenance_burst"`
 }
 
 // PlatformDefaultsSection configures the lowest-precedence (L0) task defaults,
@@ -242,6 +315,18 @@ type ExecutionSection struct {
 	// misconfiguration), and the cap is enforced only by refusing to CREATE new
 	// warm pods — never by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
+	// WarmReadOnlyRootFilesystem mounts every warm worker's root filesystem read
+	// only and gives each attempt its own HOME and XDG dirs inside the scratch the
+	// worker wipes between attempts, plus a sweep of the shared /tmp emptyDir and
+	// /dev/shm before each attempt and after it ends. It closes X3.2: on a
+	// writable root a file one attempt plants on the image (a module on the
+	// working directory's sys.path, a ~/.local site-packages entry) is executed
+	// by the next attempt on the same worker. Default false keeps
+	// today's writable root, since a task that writes outside $HOME, $TMPDIR, /tmp
+	// and /dev/shm would fail with it on. It applies to warm pods created after it
+	// is turned on. Dedicated task pods are not affected; they follow
+	// executor.defaults.read_only_task_root_filesystem.
+	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -310,6 +395,13 @@ type UISection struct {
 	// the web fonts a theme's fonts tokens name. Each must be http(s) or
 	// root-relative.
 	StylesheetURLs []string `mapstructure:"stylesheet_urls"`
+	// ETagRevalidation lets the browser revalidate the UI routes that compute
+	// an ETag (the grid's task summaries) with "private, no-cache" instead of
+	// no-store, so an unchanged grid poll is answered 304. The browser then
+	// keeps the last grid body in its private cache after logout, revalidated
+	// before any use. Off by default (ADR 0062 gate): every UI route keeps
+	// no-store.
+	ETagRevalidation bool `mapstructure:"etag_revalidation"`
 }
 
 // HomeLinkSection is the operator's way back from the UI: a label and the
@@ -349,6 +441,15 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
+	// only: create, resize and delete answer 403 for every role, tenant admin
+	// included. It is for an engine shared by many tenants, where the platform
+	// operator sizes each tenant's pools out of band and a tenant must not be
+	// able to raise its own slot budget. It also makes the scheduler admit a task
+	// naming a pool its tenant has not defined against default_pool, since a
+	// tenant cannot create pools then. Default false keeps pools writable under
+	// write:pool and undefined pools unlimited, today's behavior.
+	PoolsReadOnly bool `mapstructure:"pools_read_only"`
 }
 
 // Server roles (ADR 0049).
@@ -393,6 +494,25 @@ type DatabaseSection struct {
 	URL          string `mapstructure:"url"`
 	MaxOpenConns int    `mapstructure:"max_open_conns"`
 	MaxIdleConns int    `mapstructure:"max_idle_conns"`
+	// SchedulerMaxConns, when positive, gives the scheduler loop, its reapers
+	// and its janitors a pool of their own with this many connections, so API
+	// traffic that saturates the main pool cannot stall a scheduler tick. Only
+	// a process with scheduler.enabled opens it. 0 (the default) keeps them on
+	// the main pool.
+	SchedulerMaxConns int `mapstructure:"scheduler_max_conns"`
+	// StatementTimeoutMS, when positive, sets statement_timeout on every
+	// connection of the main pool, which serves the API. It is never applied to
+	// the leader election pool (its session holds the scheduler's advisory
+	// lock), the health pool or the scheduler pool, and the few writes that
+	// cascade over a DAG's history lift it for their own transaction. Without a
+	// scheduler pool the scheduler shares the main pool and so the timeout too.
+	// 0 (the default) sets nothing.
+	StatementTimeoutMS int `mapstructure:"statement_timeout_ms"`
+	// ConnMaxLifetimeJitterMS, when positive, adds up to this much random time
+	// to each connection's lifetime in the main, scheduler and health pools, so
+	// replicas started together do not all reconnect at the same moment. 0 (the
+	// default) leaves the pgx default, or what the DSN sets.
+	ConnMaxLifetimeJitterMS int `mapstructure:"conn_max_lifetime_jitter_ms"`
 }
 
 // RedisSection configures the Redis connection.
@@ -652,6 +772,26 @@ type SchedulerSection struct {
 	LoopIntervalMS int             `mapstructure:"loop_interval_ms"`
 	Enabled        bool            `mapstructure:"enabled"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
+	Alerts         AlertsSection   `mapstructure:"alerts"`
+}
+
+// AlertsSection guards the destinations of native on-failure alerts (#424).
+// An alert's URL and headers come from a tenant's connection, so on a shared
+// engine a tenant could otherwise point one at the control plane's own network:
+// loopback, a private service, or the cloud metadata endpoint.
+type AlertsSection struct {
+	// BlockPrivateDestinations refuses alert requests to loopback, private,
+	// link-local (including 169.254.169.254), shared, unspecified, multicast and
+	// broadcast addresses. The check runs on the address actually dialed, after
+	// DNS resolution and on every redirect, and the guarded client does not use
+	// the proxy environment. Off by default, so an existing install that alerts
+	// an in-cluster endpoint keeps working.
+	BlockPrivateDestinations bool `mapstructure:"block_private_destinations"`
+	// AllowedCIDRs exempts these ranges (CIDRs or single addresses) from the
+	// block, e.g. an on-premises chat server. Validated at startup even while the
+	// block is off, so a typo surfaces before anyone turns it on; applied only
+	// while it is on.
+	AllowedCIDRs []string `mapstructure:"allowed_cidrs"`
 }
 
 // DispatchSection sizes the BufferedDispatcher (#127). BufferSize=0 keeps the
@@ -672,9 +812,18 @@ type DispatchSection struct {
 
 // ObservabilitySection configures logging, metrics, and tracing.
 type ObservabilitySection struct {
-	OTel      OTelSection `mapstructure:"otel"`
-	LogLevel  string      `mapstructure:"log_level"`
-	LogFormat string      `mapstructure:"log_format"`
+	OTel      OTelSection    `mapstructure:"otel"`
+	LogLevel  string         `mapstructure:"log_level"`
+	LogFormat string         `mapstructure:"log_format"`
+	Metrics   MetricsSection `mapstructure:"metrics"`
+}
+
+// MetricsSection configures the Prometheus scrape.
+type MetricsSection struct {
+	// DropLegacyNames stops publishing every dexaflow_* family a second time
+	// under its pre-rename leoflow_* name. Off by default (ADR 0062 gate), so
+	// dashboards and alerts written against the old names keep working.
+	DropLegacyNames bool `mapstructure:"drop_legacy_names"`
 }
 
 // OTelSection configures OpenTelemetry export.
@@ -700,10 +849,19 @@ var serverDefaults = map[string]any{
 	// comma-separated env var into a list, so the env-only Helm override path
 	// works without a config file — this is what the chart renders (#725). Empty
 	// (the default) trusts no proxy.
-	"server.trusted_proxies":  []string{},
+	"server.trusted_proxies": []string{},
+	// Off by default: pools stay writable through the tenant-facing API under
+	// write:pool. Registered so AutomaticEnv binds the Helm-rendered env var.
+	"server.pools_read_only":  false,
 	"database.url":            "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable",
 	"database.max_open_conns": 25,
 	"database.max_idle_conns": 5,
+	// Pool tuning, all off by default (0) so an install that sets none of them
+	// keeps one shared pool, no statement timeout and no lifetime jitter.
+	// Registered so the DEXAFLOW_/LEOFLOW_DATABASE_* variables bind.
+	"database.scheduler_max_conns":         0,
+	"database.statement_timeout_ms":        0,
+	"database.conn_max_lifetime_jitter_ms": 0,
 	// Empty by default: no Redis configured selects the embedded edition (Lite —
 	// XCom on Postgres, in-process log tailer, ADR 0026). Production sets this
 	// explicitly via the Helm chart (external Redis).
@@ -788,7 +946,20 @@ var serverDefaults = map[string]any{
 	"executor.task_service_account":         "",
 	"executor.task_secret_name":             "",
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
+	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// client-go's own defaults on one shared client, so an unconfigured install
+	// keeps its effective apiserver budget.
+	"executor.kube_client.qps":               5.0,
+	"executor.kube_client.burst":             10,
+	"executor.kube_client.maintenance_qps":   0.0,
+	"executor.kube_client.maintenance_burst": 0,
+
+	// Alert egress guard: an alert's URL is tenant data (#424). The []string
+	// binds from one comma-separated env var, like server.trusted_proxies.
+	"scheduler.alerts.block_private_destinations": false,
+	"scheduler.alerts.allowed_cidrs":              []string{},
+
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE /
 	// _STORAGE_CLASS (the env-only Helm override path, #743, same class as #725).
 	// Empty leaves the L0 default unset, so a staging PVC inherits the cluster's
@@ -817,6 +988,7 @@ var serverDefaults = map[string]any{
 	"execution.max_warm_pods_per_tenant": 100,
 	"logs.dir":                           "/var/log/leoflow",
 	"logs.backend":                       "disk",
+	"logs.tail.publish":                  LogTailPublishAlways,
 	"logs.sink.bucket":                   "",
 	"logs.sink.prefix":                   "",
 	"logs.sink.region":                   "",
@@ -825,6 +997,7 @@ var serverDefaults = map[string]any{
 	"logs.sink.access_key_id":            "",
 	"logs.sink.secret_access_key":        "",
 	"logs.sink.credentials_file":         "",
+	"logs.sink.layout":                   "single",
 	"observability.otel.enabled":         false,
 	"observability.otel.endpoint":        "localhost:4317",
 	"observability.log_level":            "info",
@@ -838,6 +1011,7 @@ var serverDefaults = map[string]any{
 	"ui.theme":                           "",
 	"ui.favicon_url":                     "",
 	"ui.stylesheet_urls":                 []string{},
+	"ui.etag_revalidation":               false,
 	// Must appear here even though the zero value is meaningful (the handler
 	// falls back to api.DefaultUIAutoRefreshIntervalSeconds when ≤ 0): viper's
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
@@ -862,8 +1036,16 @@ var serverDefaults = map[string]any{
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
 	"secret_key":                   "",
+	"secret_key_reencrypt_on_boot": true,
+	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
+	"observability.metrics.drop_legacy_names": false,
+	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
+	// today's writable warm root.
+	"execution.warm_read_only_root_filesystem": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -998,6 +1180,9 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validatePlatformIntegration(); err != nil {
 		return err
 	}
+	if _, err := egress.NewPolicy(c.Scheduler.Alerts.AllowedCIDRs); err != nil {
+		return fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
+	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
 	// verify), so the JWT secret is required for either.
 	if (c.Auth.Provider == AuthProviderJWT || c.Auth.Provider == AuthProviderOIDC) && c.Auth.JWT.Secret == "" {
@@ -1031,6 +1216,11 @@ func isLoopbackListenAddr(addr string) bool {
 // boot instead of losing every task log to a nonexistent bucket. Empty and
 // "disk" are always valid — the on-disk default is unaffected.
 func (c *ServerConfig) validateLogs() error {
+	switch c.Logs.Tail.Publish {
+	case "", LogTailPublishAlways, LogTailPublishOnDemand:
+	default:
+		return fmt.Errorf(`unknown logs.tail.publish %q (want %q or %q)`, c.Logs.Tail.Publish, LogTailPublishAlways, LogTailPublishOnDemand)
+	}
 	switch c.Logs.Backend {
 	case "", "disk":
 		return nil
@@ -1038,7 +1228,12 @@ func (c *ServerConfig) validateLogs() error {
 		if c.Logs.Sink.Bucket == "" {
 			return fmt.Errorf(`logs.sink.bucket is required when logs.backend is %q (set LEOFLOW_LOGS_SINK_BUCKET)`, c.Logs.Backend)
 		}
-		return nil
+		switch c.Logs.Sink.Layout {
+		case "", "single", "segmented":
+			return nil
+		default:
+			return fmt.Errorf(`unknown logs.sink.layout %q (want "single" or "segmented")`, c.Logs.Sink.Layout)
+		}
 	default:
 		return fmt.Errorf(`unknown logs.backend %q (want "disk", "s3" or "gcs")`, c.Logs.Backend)
 	}

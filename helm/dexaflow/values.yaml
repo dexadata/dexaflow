@@ -128,6 +128,29 @@ executor:
       size: ""
       # -- Default staging PVC StorageClass (e.g. the cluster's RWX class). Empty = cluster default.
       storageClass: ""
+  # Client-side rate limits of the control plane's Kubernetes clients. 0 (the
+  # default) renders nothing and keeps client-go's QPS 5 / burst 10 on one client
+  # shared by dispatch and maintenance. A large fan out is paced by `qps`: at 5,
+  # creating 1,000 task pods takes over three minutes. Raise `qps` and set
+  # `maintenanceQps` together, so the pod informer, reconciler, reapers and GC get
+  # their own token bucket and cannot starve pod creation. A starting point for a
+  # busy cluster: qps 50, burst 100, maintenanceQps 20, maintenanceBurst 40.
+  kubeClient:
+    # -- Requests per second of the dispatch client (task pod creation; the agent token exchange uses its own client with the same limits). 0 = server default (5).
+    qps: 0
+    # -- Token-bucket burst of the dispatch client. 0 = server default (10).
+    burst: 0
+    # -- Requests per second of a SEPARATE maintenance client (informer, reconciler, reapers, staging GC, warm pool reconciler). 0 = share the dispatch client.
+    maintenanceQps: 0
+    # -- Token-bucket burst of the maintenance client. 0 = server default (10). Ignored while maintenanceQps is 0.
+    maintenanceBurst: 0
+  # -- Collect a settled run's finished task pods as soon as every outcome is
+  # recorded, in one DeleteCollection by the run's label, instead of one delete
+  # per pod after the 10 minute grace period. Off by default, so finished pods
+  # stay inspectable with kubectl for the grace period. Turning it on also
+  # grants the executor Role `deletecollection` on pods; without that verb the
+  # server deletes the pods one by one.
+  collectSettledRunPods: false
 
 # -- Ports the leoflow-server listens on. http: API + UI, metrics: Prometheus
 # /metrics, grpc: agent ↔ control plane channel (task pods dial back here).
@@ -166,11 +189,32 @@ config:
     enabled: true
     # -- Scheduler loop interval in milliseconds. Lower = faster reactivity, higher CPU. 1000ms is the production-tested default.
     loopIntervalMs: 1000
+    # Buffered dispatch (ADR 0031, #127). With `bufferSize` 0 (the default) the
+    # scheduler creates task pods inline, inside its tick, so a large fan out
+    # stretches the tick by every Kubernetes API call it makes. Above 0, the tick
+    # only enqueues and `workers` goroutines create the pods; a full buffer leaves
+    # the task scheduled for the next tick. A starting point for a busy cluster:
+    # bufferSize 512, workers 16. Unset values render nothing. A pod create
+    # that fails inside a worker is handled like a synchronous one: a quota
+    # rejection (403) or apiserver throttling (429) puts the task back to
+    # scheduled, and other errors are retried until the dispatch budget is spent.
+    dispatch:
+      # -- Depth of the queued-dispatches channel (`scheduler.dispatch.buffer_size`). 0 = synchronous dispatch inside the tick (server default).
+      bufferSize: 0
+      # -- Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Ignored while `bufferSize` is 0; 0 with a buffer means 1.
+      workers: 0
   cors:
     # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
     allowedOrigins: []
   # -- Proxy IPs/CIDRs whose `X-Forwarded-For` the server honors when resolving the client IP (`server.trusted_proxies`). Empty (default) trusts NO proxy, so a spoofed XFF cannot forge the client IP. Behind an ingress this MUST be set to the ingress/pod CIDR, otherwise every request is attributed to the ingress IP and the per-IP login rate-limit locks out the whole deployment on a few bad logins (#725). Rendered as a comma-joined `LEOFLOW_SERVER_TRUSTED_PROXIES` env var, which viper splits into a list.
   trustedProxies: []
+  alerts:
+    # -- Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses (`scheduler.alerts.block_private_destinations`). An alert's URL and headers come from a tenant's connection, so turn this on when tenants that do not trust each other share the engine. The check runs on the address actually dialed, after DNS resolution and on every redirect; with it on, alert requests ignore `HTTP_PROXY`/`HTTPS_PROXY`. Off by default, so an existing in-cluster alert endpoint keeps working.
+    blockPrivateDestinations: false
+    # -- CIDRs or single addresses exempted from `blockPrivateDestinations` (`scheduler.alerts.allowed_cidrs`), e.g. an on-premises chat server. Rendered as a comma-joined `LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS`. An invalid entry fails server startup.
+    allowedCIDRs: []
+  # -- Make the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer 403 for every role, tenant `admin` included; list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools, so no tenant can raise its own slot budget. It also makes a task naming a pool its tenant has not defined draw on `default_pool` instead of running unlimited. False (the default) renders nothing and keeps pools writable under `write:pool`.
+  poolsReadOnly: false
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
 
@@ -209,6 +253,9 @@ logs:
   # ServiceAccounts and both need the identity: the scheduler writes task logs and
   # any api replica reads them back. Retention is owned by the bucket's lifecycle policy,
   # not the in-cluster log janitor.
+  tail:
+    # -- When received task-log lines are published for live followers: `always` (default) publishes every line as it arrives; `on_demand` publishes only while someone follows the attempt, checking at most once a second per log stream (or once per 512 lines or 512 KiB of output when the task logs faster than that) and replaying to a new follower every line received since the last check (a single line over 1 MiB is not replayed). Enable `on_demand` once every replica runs a version that skips replayed lines.
+    publish: always
   sink:
     # -- Durable task-log backend: `disk` (default — the PVC above), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage). Object storage is opt-in; `disk` leaves the on-disk path unchanged.
     provider: disk
@@ -216,6 +263,8 @@ logs:
     bucket: ""
     # -- Optional key prefix under which attempt objects are laid out (`{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`).
     prefix: ""
+    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found; the server checks this at startup and refuses to start when a missing key is not answered with not-found.
+    layout: single
     # -- [s3] Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores.
     region: ""
     # -- [s3] Endpoint override for S3-compatible stores (MinIO, Ceph RGW). Empty uses the AWS default. NOT the way to reach GCS — use `provider: gcs`.
@@ -233,10 +282,16 @@ database:
   existingSecret: ""
   # -- Name of a ConfigMap with key `ca.crt` holding the managed-Postgres CA bundle (#315). When set, the chart mounts it at `/etc/leoflow/db-ca/ca.crt` — in the control plane **and in the pre-install migration Job** (#1052), which reads the same DSN — so the operator can pin `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` in the DSN. Empty (default) means TLS still works via `sslmode=require`, but the server cert is NOT verified — the connection is encrypted but MITM-vulnerable, the standard managed-DB posture before this knob.
   caConfigMap: ""
-  # -- Max concurrent open DB connections (Postgres-side load gate). Increase for high-throughput Pro deployments.
+  # -- Max concurrent open DB connections per control-plane pod (Postgres-side load gate): the ceiling the pool grows to under load. Increase for high-throughput Pro deployments. Each pod also opens up to 3 more (2 for health checks, 1 for the scheduler's leader lock), so the cluster-wide ceiling is `(maxOpenConns + 3)` times the most pods that can run at once (`autoscaling.maxReplicas` with the HPA on, plus the surge pods of a rolling update, 25% of the replicas rounded up), plus 1 for the migration Job. With the HPA on at `maxReplicas` 6 that is 6 + 2 surge = 8 pods, and the defaults reach `8 * 23 = 184`, above stock Postgres' `max_connections` of 100: lower this, raise `max_connections`, or cap `maxReplicas`. With more than one pod the install notes print the peak total when it exceeds 20. A server that runs out answers SQLSTATE 53300, which the boot error names (#1088). See the "Postgres connection budget" section of the control-plane HA guide.
   maxOpenConns: 20
-  # -- Max idle DB connections kept in the pool. Should be ≤ `maxOpenConns`.
-  maxIdleConns: 5
+  # -- Idle DB connections each pod keeps open even when quiet (the pool's floor). This is what each pod opens at boot, so a server must hold `pods x (maxIdleConns + 3)` plus 1 for the migration Job just to start; the install notes warn when that exceeds 20, the budget of the smallest managed tiers (Cloud SQL `db-f1-micro`, the smallest RDS and Azure Flexible sizes cap `max_connections` near 25). Should be ≤ `maxOpenConns`. Was 5 before #1088.
+  maxIdleConns: 2
+  # -- Size of a dedicated pool for the scheduler loop, its reapers and janitors, so API traffic that holds every `maxOpenConns` connection cannot stall a scheduler tick. Counts on top of `maxOpenConns`, and is opened only by a replica that runs the scheduler (`config.scheduler.enabled`). 0 (default) keeps them on the main pool.
+  schedulerMaxConns: 0
+  # -- `statement_timeout` in milliseconds for the main pool, which serves the API (30000 is a reasonable bound). Never applied to the leader election connection, the health checks, the scheduler pool or migrations; deleting a DAG, clearing its history and the XCom janitor lift it for their own transaction. Without `schedulerMaxConns` the scheduler shares the main pool and so this timeout, so set both together. Applied with `SET` after each connection opens, so it works through PgBouncer in session mode; in transaction mode set `statement_timeout` on the database role instead and leave this at 0. 0 (default) sets none.
+  statementTimeoutMs: 0
+  # -- Random extra lifetime, in milliseconds, added to each pooled connection so replicas started together do not all reconnect at once. 0 (default) adds none.
+  connMaxLifetimeJitterMs: 0
 
 # Redis (XCom + locks).
 redis:
@@ -396,6 +451,8 @@ execution:
   workerIdleTtl: 5m
   # -- Cap on the TOTAL warm pods one tenant may hold across ALL its dag_versions (ADR 0058 M4). Where `maxPoolSize` bounds one version, this bounds a tenant's aggregate footprint so one team cannot pin idle pods and starve neighbours on a shared cluster. Enforced by refusing to create new warm pods, never by deleting a busy worker. Ignored while `warmPoolsEnabled` is false.
   maxWarmPodsPerTenant: 100
+  # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
+  warmReadOnlyRootFilesystem: false
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see
@@ -549,6 +606,13 @@ resources:
   limits:
     cpu: "1"
     memory: 512Mi
+
+# Soft memory limit for the Go runtime in the control-plane container.
+goMemLimit:
+  # -- Render `GOMEMLIMIT` as `percent` of `resources.limits.memory`, in whole MiB (80% of the shipped 512Mi is `409MiB`). The Go runtime does not read the container limit on its own, so without it the GC paces on heap growth alone and a burst can be OOM-killed before a collection runs; with it the GC works harder near the ceiling instead. Off by default, so the rendered env is unchanged. Requires `resources.limits.memory`: any Kubernetes byte quantity is read, whole or decimal (`512Mi`, `1.5Gi`, `.5Gi`), with a `Ki` to `Ei` or `k` to `E` suffix or a decimal exponent (`1e9`). The render fails on anything else (a sign, or the `m`/`u`/`n` sub-byte suffixes); for those leave this off and set `GOMEMLIMIT` through `extraEnv`. Applies to both Deployments in split mode.
+  enabled: false
+  # -- Share of `resources.limits.memory` given to `GOMEMLIMIT`, from 1 to 100. The rest is headroom for memory the Go runtime does not track but the container is charged for, such as cgo allocations and kernel page cache.
+  percent: 80
 
 # -- Liveness/readiness probes for the leoflow-server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: /readyz bounds its own work at 2s so it answers before the kubelet gives up, and a shorter kubelet timeout inverts that and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
 probes:
