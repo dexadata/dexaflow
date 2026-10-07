@@ -379,6 +379,35 @@ accepted but disables the renewal ceiling, the task-pod `activeDeadlineSeconds`
 floor and the warm-pool attempt watchdog together, so boot logs a `WARN` naming
 the key.
 
+### An attempt that outlives the credential ceiling fails
+
+Past `auth.max_attempt_credential_lifetime` the control plane stops renewing an
+attempt's credential, the last renewed token runs out one attempt token TTL
+(10 min) later, and the agent's heartbeats stop. On Kubernetes the pod
+`activeDeadlineSeconds` floor or the warm-pool attempt watchdog usually ends
+the attempt at the ceiling itself, and its heartbeats stop the same way. The
+heartbeat reaper then sees a silent attempt. If that attempt has been
+`running` for longer than the ceiling, the reaper fails it with
+`credential_ceiling: attempt outlived auth.max_attempt_credential_lifetime`
+instead of `agent_lost`. It is a **task failure**: the task's retry policy
+decides what happens next, exactly as for a task that exited non-zero. It is
+not an infra mark, so the planner does not re-place it with a new epoch and a
+fresh credential, it is never provisional, and a durable SUCCESS record does
+not override it.
+
+Before this, the silence read as a lost agent, and since `agent_lost` re-places
+off the retry budget, a task longer than the ceiling plus the token TTL was
+re-run from the start each time instead of failing
+([#1461](https://github.com/dexadata/dexaflow/issues/1461)). An attempt that
+finishes before the ceiling plus the token TTL is unaffected, and an attempt
+that goes silent before it reaches the ceiling is still `agent_lost`. The
+reaper reads the attempt's age from its `running` transition and applies the
+check only at reap time, so the settling gate, the destructive gate, the
+attempt pin and the pod teardown are the same as for `agent_lost`. A
+non-positive ceiling disables the check along with the rest of the ceiling.
+In Lite the reaper still waits for the attempt's agent and task processes to
+exit before it fails the attempt, as it does for `agent_lost`.
+
 The defaults are conservative on purpose: too-tight thresholds risk reaping a
 legitimately slow dispatch (Kubernetes pod-pull latency under contention) or a
 busy agent.
@@ -553,6 +582,7 @@ your Prometheus dashboard:
 | Metric label | Meaning |
 |---|---|
 | `agent_lost` | TI failed by the heartbeat reaper |
+| `agent_lost_credential_ceiling` | TI failed by the heartbeat reaper as `credential_ceiling`: its agent went silent after the attempt ran past `auth.max_attempt_credential_lifetime`. A task failure under the retry policy, not re-placed ([#1461](https://github.com/dexadata/dexaflow/issues/1461)) |
 | `dispatch_lost` | TI failed by the dispatch-lost reaper |
 | `dispatch_lost_deferred` | Dispatch-lost skipped because the TI's pod is live (slow start, [#461](https://github.com/dexadata/dexaflow/issues/461)) — a healthy signal, not a fault |
 | `pod_lost` | TI failed by the pod-lost reaper (no pod at all for the attempt) |

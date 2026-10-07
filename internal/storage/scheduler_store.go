@@ -892,6 +892,10 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 		if r.LastHeartbeatAt.Valid {
 			last = r.LastHeartbeatAt.Time.UTC()
 		}
+		var started time.Time
+		if r.StartedAt.Valid {
+			started = r.StartedAt.Time.UTC()
+		}
 		out = append(out, executor.AgentLostCandidate{
 			TaskInstanceID: uuidToString(r.TaskInstanceID),
 			TenantID:       uuidToString(r.TenantID),
@@ -900,6 +904,7 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
 			AttemptEpoch:   int(r.AttemptEpoch),
+			StartedAt:      started,
 			LastHeartbeat:  last,
 		})
 	}
@@ -941,6 +946,26 @@ func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID s
 	})
 	if err != nil {
 		return false, fmt.Errorf("marking task agent-lost: %w", err)
+	}
+	return n == 1, nil
+}
+
+// MarkTaskCredentialCeiling fails one running TI whose attempt outlived
+// auth.max_attempt_credential_lifetime (#1461) as a task failure with the
+// credential_ceiling reason: no infra kind, so the planner applies the task's
+// retry policy instead of re-placing it, and no provisional mark, since there is
+// no infra guess for the reconciler to confirm. Guarded and pinned to the listed
+// attempt exactly like MarkTaskAgentLost.
+func (s *SchedulerStore) MarkTaskCredentialCeiling(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := s.q.MarkTaskCredentialCeiling(ctx, queries.MarkTaskCredentialCeilingParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("marking task credential-ceiling: %w", err)
 	}
 	return n == 1, nil
 }

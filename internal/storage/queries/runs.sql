@@ -1270,7 +1270,10 @@ SELECT ti.id AS task_instance_id,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
-       ti.last_heartbeat_at AS last_heartbeat_at
+       ti.last_heartbeat_at AS last_heartbeat_at,
+       -- started_at lets the reaper tell an attempt that outlived
+       -- auth.max_attempt_credential_lifetime from a lost agent (#1461).
+       ti.started_at AS started_at
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
@@ -1308,6 +1311,25 @@ SET state = 'failed',
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
     error_message = 'agent_lost: no heartbeat within the threshold — see #128'
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'running';
+
+-- name: MarkTaskCredentialCeiling :execrows
+-- Fails a TI whose agent went silent after the attempt outlived
+-- auth.max_attempt_credential_lifetime (#1461). Renewal stops at the ceiling,
+-- so the silence is the credential lapsing, not a lost agent: this is a TASK
+-- failure (last_failure_kind NULL, the retry policy applies), never an infra
+-- mark the planner would re-place with a fresh credential. Same guards as
+-- MarkTaskAgentLost: state='running' (a late report wins) and the listed
+-- attempt, (try_number, attempt_epoch) (ADR 0051 amendment).
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
+    error_message = 'credential_ceiling: attempt outlived auth.max_attempt_credential_lifetime'
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)

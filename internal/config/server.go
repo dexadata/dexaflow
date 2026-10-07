@@ -626,9 +626,13 @@ type AuthSection struct {
 	// "90m"). With warm pools enabled it is also the per-attempt watchdog that
 	// keeps a wedged attempt from pinning a warm slot (a warm pod has no pod-level
 	// deadline; the worker lifetime cap drains between attempts, never
-	// mid-attempt). A non-positive value disables the renewal ceiling, the pod
-	// deadline floor and that watchdog together — a wedged task then has no
-	// wall-clock bound of its own — so boot logs a WARN naming the key.
+	// mid-attempt). An attempt whose agent goes silent after running past the
+	// ceiling is failed by the heartbeat reaper as a task failure with the
+	// credential_ceiling reason (its retry policy applies), never re-placed as an
+	// agent_lost infra loss with a fresh credential (#1461). A non-positive value
+	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
+	// credential_ceiling failure together (a wedged task then has no
+	// wall-clock bound of its own), so boot logs a WARN naming the key.
 	MaxAttemptCredentialLifetime time.Duration `mapstructure:"max_attempt_credential_lifetime"`
 	// AgentTokenTransport selects how the in-pod agent obtains its control-plane
 	// bearer credential (ADR 0055 Fix #3): "envvar" (the default) sets the token as
