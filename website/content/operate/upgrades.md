@@ -612,6 +612,68 @@ or 1 MiB bound, so a follower of a chatty task receives every line that
 arrived after it subscribed (#1442). Both settings are new in 0.5.1 and off
 by default; an install that does not set them sees no change.
 
+### Upgrading to 0.5.2
+
+0.5.2 applies one migration, `041_tenant_max_task_pool_slots`. It adds
+`tenants.max_task_pool_slots` (`INTEGER NOT NULL DEFAULT 0`, with a `>= 0`
+check). The default is a constant, so Postgres records it without rewriting the
+table, and existing tenants get `0`, which is unlimited. On a database with
+about one million task instances the migration took under 100 ms in the
+release review, and its down about 20 ms.
+
+**Rolling back 0.5.2 to 0.5.1.** On Pro, `helm rollback <release> <revision>`
+is supported and leaves the schema at 041: the 0.5.1 control plane boots
+against it with the warning `database schema is ahead of this binary;
+proceeding` and never reads the new column. As with 0.5.1, prefer it to a
+`helm upgrade` that points at chart 0.5.1, whose migration Job fails with
+`no migration found for version 41`; if you must use that upgrade, pass
+`--set migrations.enabled=false` or run the down migration first. On Lite,
+`dexaflow lite` 0.5.1 refuses a database above 040, so the way back is the
+snapshot from [How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+or the down migration with the 0.5.2 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 40
+```
+
+The down drops the column, so any `max_task_pool_slots` an operator set is lost
+and every tenant is unlimited again. Rows in every table are preserved.
+
+### What changes in 0.5.2 without a flag
+
+- **A DAG can no longer set `leoflow.io/` labels or annotations on its pods**
+  (#1376). `dexaflow.yaml` validation, `dexaflow compile` and registration
+  reject such a key, and the executor drops and logs any that reach it from a
+  DAG registered earlier. Move a custom key to a prefix of your own before you
+  upgrade.
+- **An attempt that outlives `auth.max_attempt_credential_lifetime` fails
+  instead of re-running** (#1461). Before, it was failed as `agent_lost` and
+  re-placed with a fresh credential without using a retry; now it fails with
+  `credential_ceiling: ...` as a task failure and its retry policy applies.
+  Only tasks that run past the ceiling plus the 10 minute token TTL see this.
+- **Migrated Airflow DAGs with `pool_slots` above 1 become weighted** (#1467).
+  The next push of such a DAG makes each of those tasks take that many slots
+  of its pool, so a pool sized for task count admits fewer of them at once.
+  DAGs that do not set `pool_slots` plan exactly as before. Pro only.
+- **Error messages no longer leak local detail.** A failed alert names its
+  endpoint by scheme and host only, without the webhook URL (#1370), and a
+  tenant schema error no longer names the server's working directory (#1402).
+
+### New opt-in settings in 0.5.2
+
+Every setting below is off or neutral by default; the
+[configuration reference](/reference/configuration/) has the full entry for
+each. Together they implement
+[ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/), weighted
+pool slots and a resource unit (#1466).
+
+| Setting | Default | What it does when set | PR |
+|---|---|---|---|
+| `size` in `dexaflow.yaml` (`tasks.<id>.size`, `defaults.size`), or `pool_slots` in `dag.py` | `1` | How many slots of its pool a task takes while queued or running. A task that does not fit waits for enough free slots and never fails for it. | #1467 |
+| `executor.unit.cpu` and `executor.unit.memory` (Helm `executor.unit`), with `executor.unit.enforce` and `executor.unit.max_size` | unset, `refuse`, `64` | Sizes a task pod as `pool_slots x unit` and refuses a task that declares more. Roll it out with `enforce: warn` first and watch `dexaflow_unit_misfit_total`. | #1481 |
+| `scheduler.pool_starvation_threshold` (Helm `config.scheduler.poolStarvationThreshold`) | `60s` | Reserves a pool for a task of more than one slot that has waited longer than this, so smaller tasks cannot keep it out. Pools without sized tasks are never reserved. `0s` disables it. | #1482 |
+| `max_task_pool_slots` on `PUT /api/v2/service/tenants/{tenant}` | `0` (unlimited) | Refuses at registration, with a 403, a task whose size is above the tenant's limit. Uses migration 041. | #1483 |
+
 ## Related issues
 
 - #136 — this contract.
