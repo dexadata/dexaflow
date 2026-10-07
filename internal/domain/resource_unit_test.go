@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // The operator resource unit (ADR 0066 §3): pool_slots x unit is the most a
@@ -77,7 +79,10 @@ func TestResourceUnitApplyDefaultsToOneSlot(t *testing.T) {
 }
 
 // A task's own values are kept; only the dimensions it left out are filled,
-// so every task ends up with a cpu and memory limit within its size.
+// so every task ends up with a cpu and memory limit within its size. A
+// missing request follows the declared limit of the same dimension (what
+// Kubernetes itself would default it to), so the result is never requests
+// above limits.
 func TestResourceUnitApplyKeepsDeclaredValuesAndFillsGaps(t *testing.T) {
 	task := TaskSpec{TaskID: "a", PoolSlots: 2, Resources: &Resources{
 		Requests: &ResourceQuantity{CPU: "100m", EphemeralStorage: "1Gi"},
@@ -85,12 +90,13 @@ func TestResourceUnitApplyKeepsDeclaredValuesAndFillsGaps(t *testing.T) {
 		Claims:   []map[string]any{{"name": "gpu"}},
 	}}
 	got := mustUnit(t).Apply(task)
-	if got.Requests.CPU != "100m" || got.Requests.Memory != "1Gi" || got.Requests.EphemeralStorage != "1Gi" {
-		t.Errorf("requests = %+v, want declared cpu and storage kept, memory filled", got.Requests)
+	if got.Requests.CPU != "100m" || got.Requests.Memory != "768Mi" || got.Requests.EphemeralStorage != "1Gi" {
+		t.Errorf("requests = %+v, want declared cpu and storage kept, memory from the declared limit", got.Requests)
 	}
 	if got.Limits.CPU != "500m" || got.Limits.Memory != "768Mi" {
 		t.Errorf("limits = %+v, want cpu filled, declared memory kept", got.Limits)
 	}
+	assertRequestsWithinLimits(t, got)
 	if len(got.Claims) != 1 {
 		t.Errorf("claims dropped: %+v", got.Claims)
 	}
@@ -221,5 +227,87 @@ func TestResourceUnitWarmPlacement(t *testing.T) {
 	var none *ResourceUnit
 	if none.WarmResources() != nil || !none.WarmEligible(TaskSpec{PoolSlots: 9}) {
 		t.Error("with no unit warm pods stay unsized and every task stays eligible")
+	}
+}
+
+// assertRequestsWithinLimits fails when a cpu or memory request is above its
+// limit, a pod spec the Kubernetes API server rejects.
+func assertRequestsWithinLimits(t *testing.T, r *Resources) {
+	t.Helper()
+	if r == nil || r.Requests == nil || r.Limits == nil {
+		t.Fatalf("resources = %+v, want requests and limits", r)
+	}
+	for _, d := range []struct{ name, req, lim string }{
+		{"cpu", r.Requests.CPU, r.Limits.CPU},
+		{"memory", r.Requests.Memory, r.Limits.Memory},
+	} {
+		req, lim := resource.MustParse(d.req), resource.MustParse(d.lim)
+		if req.Cmp(lim) > 0 {
+			t.Errorf("%s request %s is above its limit %s", d.name, d.req, d.lim)
+		}
+	}
+}
+
+// A task that declares only limits, within its size, keeps them, and its
+// requests follow them instead of pool_slots x unit, which would be above
+// the limits (review of #1481, enforce: refuse).
+func TestResourceUnitApplyLimitsOnlyRequestsFollowLimits(t *testing.T) {
+	task := TaskSpec{TaskID: "a", Resources: &Resources{
+		Limits: &ResourceQuantity{CPU: "100m", Memory: "256Mi"},
+	}}
+	u := mustUnit(t)
+	if refused := refusedBy(u, task); refused != nil {
+		t.Fatalf("task within its size refused: %v", refused)
+	}
+	got := u.Apply(task)
+	if got.Requests.CPU != "100m" || got.Requests.Memory != "256Mi" {
+		t.Errorf("requests = %+v, want 100m / 256Mi (the declared limits)", got.Requests)
+	}
+	if got.Limits.CPU != "100m" || got.Limits.Memory != "256Mi" {
+		t.Errorf("limits = %+v, want the declared 100m / 256Mi kept", got.Limits)
+	}
+	assertRequestsWithinLimits(t, got)
+}
+
+// Under enforce: warn a task larger than its size runs with its own
+// resources: a missing limit is never set below the declared request, so the
+// pod stays valid instead of failing at the API server (review of #1481).
+func TestResourceUnitApplyWarnMisfitLimitsNotBelowRequests(t *testing.T) {
+	u := unitWith(t, ResourceUnitConfig{Enforce: UnitEnforceWarn})
+	task := TaskSpec{TaskID: "y", Resources: &Resources{
+		Requests: &ResourceQuantity{CPU: "2", Memory: "4Gi"},
+	}}
+	warned, refused := u.Check(task)
+	if warned == nil || refused != nil {
+		t.Fatalf("Check = %v, %v; want a tolerated misfit", warned, refused)
+	}
+	got := u.Apply(task)
+	if got.Requests.CPU != "2" || got.Requests.Memory != "4Gi" {
+		t.Errorf("requests = %+v, want the declared 2 / 4Gi", got.Requests)
+	}
+	if got.Limits.CPU != "2" || got.Limits.Memory != "4Gi" {
+		t.Errorf("limits = %+v, want 2 / 4Gi (not below the requests)", got.Limits)
+	}
+	assertRequestsWithinLimits(t, got)
+}
+
+// Every partial declaration ends with requests within limits, under both
+// enforcement modes.
+func TestResourceUnitApplyNeverPutsRequestsAboveLimits(t *testing.T) {
+	cases := map[string]*Resources{
+		"requests cpu only":       {Requests: &ResourceQuantity{CPU: "100m"}},
+		"limits memory only":      {Limits: &ResourceQuantity{Memory: "128Mi"}},
+		"request above unit":      {Requests: &ResourceQuantity{CPU: "750m", Memory: "2Gi"}},
+		"limit below unit":        {Limits: &ResourceQuantity{CPU: "50m", Memory: "64Mi"}},
+		"mixed dimensions":        {Requests: &ResourceQuantity{Memory: "2Gi"}, Limits: &ResourceQuantity{CPU: "50m"}},
+		"both sides, cpu missing": {Requests: &ResourceQuantity{Memory: "100Mi"}, Limits: &ResourceQuantity{Memory: "200Mi"}},
+	}
+	for _, mode := range []string{UnitEnforceRefuse, UnitEnforceWarn} {
+		u := unitWith(t, ResourceUnitConfig{Enforce: mode})
+		for name, r := range cases {
+			t.Run(mode+"/"+name, func(t *testing.T) {
+				assertRequestsWithinLimits(t, u.Apply(TaskSpec{TaskID: "a", Resources: r}))
+			})
+		}
 	}
 }
