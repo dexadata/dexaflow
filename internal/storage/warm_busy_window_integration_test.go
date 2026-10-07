@@ -82,6 +82,12 @@ func (f *fakeWarmPodsPG) DeleteWarmAnchor(_ context.Context, _ string) error {
 	return nil
 }
 
+// ListWarmAnchors satisfies the #1500 addition; no anchors, so the orphan sweep
+// is a no-op in this seam test.
+func (f *fakeWarmPodsPG) ListWarmAnchors(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+
 // TestWarmPoolReconcileKeepsQueuedBoundWorkerIntegration is the load-bearing
 // busy-window regression (Hole A). It drives the REAL warm-pool reconciler with
 // the REAL busy source (SchedulerStore.ListBusyWarmWorkerPods) over a TI that a
