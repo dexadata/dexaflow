@@ -22,6 +22,8 @@ type liteReapStore struct {
 	// agentStartedAt is the silent agent's running-since stamp; zero leaves it
 	// unknown, as an older row would.
 	agentStartedAt time.Time
+	// agentLastHeartbeat is the silent agent's last beat; zero means an hour ago.
+	agentLastHeartbeat time.Time
 }
 
 func (s *liteReapStore) ListReapCandidates(context.Context) ([]executor.ReapCandidate, error) {
@@ -32,7 +34,11 @@ func (s *liteReapStore) ReapRun(_ context.Context, id string, _ time.Time) (bool
 	return true, nil
 }
 func (s *liteReapStore) ListAgentLostCandidates(context.Context) ([]executor.AgentLostCandidate, error) {
-	return []executor.AgentLostCandidate{{TaskInstanceID: "dead-agent", DagRunID: "r1", TaskID: "t", TryNumber: 1, AttemptEpoch: 2, StartedAt: s.agentStartedAt, LastHeartbeat: time.Now().Add(-time.Hour)}}, nil
+	beat := s.agentLastHeartbeat
+	if beat.IsZero() {
+		beat = time.Now().Add(-time.Hour)
+	}
+	return []executor.AgentLostCandidate{{TaskInstanceID: "dead-agent", DagRunID: "r1", TaskID: "t", TryNumber: 1, AttemptEpoch: 2, StartedAt: s.agentStartedAt, LastHeartbeat: beat}}, nil
 }
 func (s *liteReapStore) MarkTaskAgentLost(_ context.Context, id string, try, epoch int) (bool, error) {
 	s.agentMarked = append(s.agentMarked, id)
@@ -133,7 +139,8 @@ func TestLiteReaperWiring(t *testing.T) {
 // so a silent attempt that ran past it is failed for the credential ceiling (a
 // task failure) instead of being marked agent_lost and re-placed.
 func TestLiteReaperFailsPastCeilingAttempt(t *testing.T) {
-	store := &liteReapStore{agentStartedAt: time.Now().Add(-25 * time.Minute)}
+	// The agent beat for 20 minutes, past the 11 minute ceiling, then went silent.
+	store := &liteReapStore{agentStartedAt: time.Now().Add(-25 * time.Minute), agentLastHeartbeat: time.Now().Add(-5 * time.Minute)}
 	lead := &fakeLeadership{since: time.Now().Add(-time.Hour), leading: true}
 	reaper := newLiteReaper(store, liteProcs{}, lead, nil, nil, discardLog(), 11*time.Minute)
 	if err := reaper.ReapOnce(context.Background()); err != nil {
