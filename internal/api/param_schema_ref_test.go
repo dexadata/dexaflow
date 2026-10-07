@@ -30,6 +30,25 @@ func TestValidateParamValueRefusesFileRef(t *testing.T) {
 			if strings.Contains(err.Error(), marker) {
 				t.Fatalf("validation error echoes the local file: %v", err)
 			}
+			if name == "relative" && strings.Contains(err.Error(), dir) {
+				t.Fatalf("validation error reveals the server working directory: %v", err)
+			}
 		})
+	}
+}
+
+// TestValidateParamValueHidesWorkingDirectory pins #1402: a plain schema
+// violation names the schema by its location, which used to be resolved
+// against the control plane's working directory and so revealed it to the
+// caller in the 400.
+func TestValidateParamValueHidesWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	err := validateParamValue(json.RawMessage(`{"type":"integer"}`), json.RawMessage(`"x"`))
+	if err == nil {
+		t.Fatal("a string validated against an integer schema")
+	}
+	if strings.Contains(err.Error(), dir) {
+		t.Fatalf("validation error reveals the server working directory: %v", err)
 	}
 }
