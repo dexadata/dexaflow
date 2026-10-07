@@ -267,3 +267,100 @@ func TestStepLosingLeadershipForgetsWaits(t *testing.T) {
 		t.Errorf("dispatched %v, want small (wait restarted after the step-down)", got)
 	}
 }
+
+// TestPlanRunTaskHeldOnlyByAReservationIsNotAWait: a task that fits the
+// pool's free slots but is held because the pool is reserved for another
+// task is not waiting on capacity, so it is not reported and cannot age
+// into a reservation of its own.
+func TestPlanRunTaskHeldOnlyByAReservationIsNotAWait(t *testing.T) {
+	// Arrange
+	tasks := []domain.TaskSpec{
+		{TaskID: "fits", Type: domain.TaskTypePython, Pool: "p", PoolSlots: 2},
+		{TaskID: "toobig", Type: domain.TaskTypePython, Pool: "p", PoolSlots: 5},
+	}
+	run := poolRun(tasks, map[string]int{PoolKey(testTenant, "p"): 6}, map[string]int{PoolKey(testTenant, "p"): 3})
+	run.RunID = "r2"
+	run.PoolReservations = map[string]PoolReservation{PoolKey(testTenant, "p"): {RunID: "r1", TaskID: "big"}}
+
+	// Act
+	out, waits := planRun(run)
+
+	// Assert
+	if len(out) != 0 {
+		t.Errorf("planned %+v, want nothing (pool p is reserved)", out)
+	}
+	if len(waits) != 1 || waits[0].TaskID != "toobig" {
+		t.Errorf("waits = %+v, want only toobig (fits is held by the reservation, not by capacity)", waits)
+	}
+}
+
+// TestStepUnweightedBacklogKeepsThroughput: with no size set anywhere, a
+// backlog older than the threshold must not reserve the pool. Every freed
+// slot is filled in the same tick, exactly as with reservations off (review
+// of #1482: the pool admitted one task per tick).
+func TestStepUnweightedBacklogKeepsThroughput(t *testing.T) {
+	// Arrange
+	busyTasks := pooledTasks(4, "p")
+	running := make(map[string]domain.TaskState, len(busyTasks))
+	for _, bt := range busyTasks {
+		running[bt.TaskID] = domain.TaskStateRunning
+	}
+	var waiting []domain.TaskSpec
+	for _, id := range []string{"w0", "w1", "w2", "w3", "w4", "w5"} {
+		waiting = append(waiting, domain.TaskSpec{TaskID: id, Type: domain.TaskTypePython, Pool: "p"})
+	}
+	mk := func(id string, tasks []domain.TaskSpec, states map[string]domain.TaskState) RunState {
+		return RunState{
+			RunID: id, DagID: "etl-" + id, TenantID: testTenant, State: domain.DagRunStateRunning,
+			Tasks: tasks, States: states, Tries: map[string]int{}, MaxTries: map[string]int{},
+		}
+	}
+	store := newFakeStore(mk("busy", busyTasks, running), mk("r1", waiting, scheduledStates(waiting)))
+	store.poolBudgets = map[string]int{PoolKey(testTenant, "p"): 4}
+	f := &starvationFixture{store: store, d: &fakeDispatcher{}, now: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)}
+	f.s = newScheduler(store)
+	f.s.SetDispatcher(f.d)
+	f.s.EnablePools()
+	f.s.SetPoolStarvationThreshold(time.Minute)
+	f.s.clock = func() time.Time { return f.now }
+
+	// Act
+	f.tick(t)
+	f.now = f.now.Add(2 * time.Minute)
+	f.tick(t)
+	f.store.runs[0] = RunState{RunID: "busy", DagID: "etl-busy", TenantID: testTenant, State: domain.DagRunStateRunning}
+	freed := f.tick(t)
+
+	// Assert
+	if len(freed) != 4 {
+		t.Errorf("4 slots free and 6 size-1 tasks waiting past the threshold dispatched %v, want 4", freed)
+	}
+	if len(f.s.poolReservations) != 0 {
+		t.Errorf("reservations = %v, want none (no task larger than 1 slot)", f.s.poolReservations)
+	}
+}
+
+// TestStepWaitAgeSurvivesATickHeldByAnotherGate: a starved task held for one
+// tick by its dispatch backoff keeps the time it has waited, so it reserves
+// the pool on the next tick it is held by the pool instead of starting over.
+func TestStepWaitAgeSurvivesATickHeldByAnotherGate(t *testing.T) {
+	// Arrange
+	f := newStarvationFixture(3)
+	f.tick(t) // big starts waiting
+	f.now = f.now.Add(30 * time.Second)
+	backoff := f.now.Add(10 * time.Second)
+	f.store.runs[1].Now = f.now
+	f.store.runs[1].NextDispatchAt = map[string]*time.Time{"big": &backoff}
+	f.tick(t) // big held by its backoff, not by the pool
+
+	// Act
+	f.store.runs[1].NextDispatchAt = nil
+	f.now = f.now.Add(31 * time.Second) // 61s since big was first held by the pool
+	f.tick(t)                           // reservation is made at the end of this tick
+	held := f.tick(t)
+
+	// Assert
+	if len(held) != 0 {
+		t.Errorf("dispatched %v, want nothing (pool reserved for big after 61s of waiting)", held)
+	}
+}
