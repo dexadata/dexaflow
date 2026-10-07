@@ -2291,6 +2291,9 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
 	if cfg.UI.Edition == "pro" {
 		sched.EnablePools()
+		// A task held by its pool past the threshold reserves the pool, so
+		// smaller tasks cannot starve it (ADR 0066 §4).
+		sched.SetPoolStarvationThreshold(cfg.Scheduler.PoolStarvationThreshold)
 		if cfg.Server.PoolsReadOnly {
 			// Tenants cannot create pools, so an undefined pool name must not be
 			// a way around default_pool (#646).

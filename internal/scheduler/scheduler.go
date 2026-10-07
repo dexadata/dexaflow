@@ -150,6 +150,11 @@ type RunState struct {
 	// promotions on top. The Step loop sets it and folds each run's admissions back
 	// in so a single tick cannot breach a pool across runs; nil in Lite.
 	PoolActive map[string]int
+	// PoolReservations holds, per pool key, the starved task the pool is
+	// reserved for (ADR 0066 §4): while set, the pool admits only that task.
+	// The Step loop sets it from the leader's in-memory reservations; nil
+	// means no pool is reserved. Shared read-only across sibling runs.
+	PoolReservations map[string]PoolReservation
 }
 
 // ScheduledDAG is a cron-scheduled DAG and the logical date of its latest run.
@@ -337,6 +342,17 @@ type Scheduler struct {
 	// confineUndefinedPools threads RunState.ConfineUndefinedPools; set once by
 	// ConfineUndefinedPools before the scheduler starts ticking.
 	confineUndefinedPools bool
+	// Starvation reservation (ADR 0066 §4), leader-only, touched only by the
+	// single-threaded tick. starvationThreshold 0 disables it. poolWaitSince is
+	// when each task held only by its pool was first seen held; poolReservations
+	// the task each reserved pool waits for; oversizeWarned dedupes the warning
+	// for a task larger than its whole pool.
+	starvationThreshold time.Duration
+	poolWaitSince       map[taskRef]time.Time
+	poolReservations    map[string]PoolReservation
+	oversizeWarned      map[taskRef]bool
+	// clock is the tick's wall clock, replaceable in tests.
+	clock func() time.Time
 }
 
 // NewScheduler builds a Scheduler over the given store, ticking every interval.
@@ -349,6 +365,7 @@ func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Sch
 		warnedSchedules: map[dagRef]string{},
 		warnedRunCaps:   map[string]string{},
 		alertSem:        make(chan struct{}, defaultAlertConcurrency),
+		clock:           time.Now,
 	}
 }
 
@@ -561,6 +578,7 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	// CONFLICT used to swallow, and the "what does a follower's count drift
 	// mean?" puzzle.
 	if !s.leading.Load() {
+		s.forgetPoolWaits()
 		return nil
 	}
 	runs, err := s.store.ActiveRuns(ctx)
@@ -584,6 +602,13 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	tracking := s.reservationsOn()
+	var reservations map[string]PoolReservation
+	var waits map[string][]PoolWait
+	if tracking {
+		reservations = s.pruneReservations(runs, poolBudgets)
+		waits = make(map[string][]PoolWait)
+	}
 	start := rotateAfter(runs, s.deferredRun)
 	s.deferredRun = ""
 	for k := range runs {
@@ -595,11 +620,18 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		run.ConfineUndefinedPools = s.confineUndefinedPools
 		run.PoolBudgets = poolBudgets
 		run.PoolActive = poolOccupied
-		admitted, admittedByPool := s.advanceSafely(ctx, run)
-		admittedTasksByDAG[key] += admitted
-		for k, n := range admittedByPool {
+		run.PoolReservations = reservations
+		res := s.advanceSafely(ctx, run)
+		admittedTasksByDAG[key] += res.admitted
+		for k, n := range res.byPool {
 			poolOccupied[k] += n
 		}
+		if tracking && len(res.waits) > 0 {
+			waits[run.RunID] = res.waits
+		}
+	}
+	if tracking {
+		s.recordPoolWaits(s.clock(), runs, waits, poolBudgets)
 	}
 	return s.createDueRuns(ctx, activeByDAG)
 }
@@ -688,26 +720,26 @@ func activePoolCounts(runs []RunState, budgets map[string]int, confine bool) map
 // poison run (a malformed spec, a panicking dispatcher, a transient per-run DB
 // error) from stalling every other run or crashing the process — the scheduler
 // may fall behind on that run, but it stays alive and keeps the rest moving. It
-// returns how many tasks it admitted to queued (zero on a panic or error), and
-// the per-pool breakdown of those admissions (nil unless the pool gate is on),
+// returns how many tasks it admitted to queued (zero on a panic or error), the
+// per-pool breakdown of those admissions (nil unless the pool gate is on),
 // which the caller folds into the per-DAG max_active_tasks and per-pool budgets
-// for sibling runs.
-func (s *Scheduler) advanceSafely(ctx context.Context, run RunState) (admitted int, admittedByPool map[string]int) {
+// for sibling runs, and the tasks held only by their pool (ADR 0066 §4).
+func (s *Scheduler) advanceSafely(ctx context.Context, run RunState) (res advanced) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("scheduler run panic recovered",
 				"run", run.RunID, "dag", run.DagID, "panic", r, "stack", string(debug.Stack()))
 			s.record("panic")
-			admitted, admittedByPool = 0, nil
+			res = advanced{}
 		}
 	}()
-	admitted, admittedByPool, err := s.advance(ctx, run)
+	res, err := s.advance(ctx, run)
 	if err != nil {
 		s.logger.Error("advancing run", "run", run.RunID, "dag", run.DagID, "error", err)
 		s.record("run_error")
-		return 0, nil
+		return advanced{}
 	}
-	return admitted, admittedByPool
+	return res
 }
 
 // createDueRuns creates a new run for each scheduled DAG whose next cron slot
@@ -850,16 +882,24 @@ func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logi
 // Stage 1) and the per-pool slots those promotions take (the cross-DAG pool
 // charge, Stage 3, weighted by ADR 0066; nil when the pool gate is off). The caller folds both into
 // the sibling runs' budgets so a single tick cannot breach either cap.
-func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, admittedByPool map[string]int, err error) {
+// advanced is what advancing one run produced: the tasks it admitted to
+// queued, the slots they take per pool, and the tasks held only by their pool.
+type advanced struct {
+	admitted int
+	byPool   map[string]int
+	waits    []PoolWait
+}
+
+func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, err error) {
 	// Materialize task instances on first sight of a queued run, then start it.
 	if run.State == domain.DagRunStateQueued && len(run.States) == 0 {
 		if err = s.store.MaterializeTasks(ctx, run.RunID, run.Tasks); err != nil {
-			return 0, nil, fmt.Errorf("materializing tasks: %w", err)
+			return res, fmt.Errorf("materializing tasks: %w", err)
 		}
 		if err = s.store.SetRunState(ctx, run.RunID, domain.DagRunStateRunning); err != nil {
-			return 0, nil, fmt.Errorf("starting run: %w", err)
+			return res, fmt.Errorf("starting run: %w", err)
 		}
-		return 0, nil, nil
+		return res, nil
 	}
 	// Resolve the task index once so planning and every dispatch below share it;
 	// a run without the store's prebuilt graph gets one built here.
@@ -873,31 +913,33 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, ad
 	// run (not the DB), and dispatch depends on task specs, not sibling TI state —
 	// so the per-tick effect is byte-identical, only the statement count drops.
 	batch := newTransitionBatch()
-	for _, t := range PlanRun(run) {
+	planned, waits := planRun(run)
+	res.waits = waits
+	for _, t := range planned {
 		if t.To == domain.TaskStateQueued {
-			admitted++
+			res.admitted++
 			if poolOf != nil {
-				if admittedByPool == nil {
-					admittedByPool = map[string]int{}
+				if res.byPool == nil {
+					res.byPool = map[string]int{}
 				}
 				c := poolOf[t.TaskID]
-				admittedByPool[c.key] += c.slots
+				res.byPool[c.key] += c.slots
 			}
 		}
 		if aerr := s.applyPlanned(ctx, run, t, batch); aerr != nil {
-			return admitted, admittedByPool, aerr
+			return res, aerr
 		}
 	}
 	if ferr := s.flushTransitions(ctx, run, batch); ferr != nil {
-		return admitted, admittedByPool, ferr
+		return res, ferr
 	}
 	if state, done := FinalizeRun(run); done {
 		if err = s.store.SetRunState(ctx, run.RunID, state); err != nil {
-			return admitted, admittedByPool, fmt.Errorf("finalizing run: %w", err)
+			return res, fmt.Errorf("finalizing run: %w", err)
 		}
 		s.maybeAlertFailure(ctx, state, run)
 	}
-	return admitted, admittedByPool, nil
+	return res, nil
 }
 
 // poolCharge is what admitting one task costs its pool: the pool's budget key
