@@ -2566,7 +2566,7 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 	if ms, ok := logSink.(logs.MarkerSink); ok {
 		markers = ms
 	}
-	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger)
+	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger, cfg.Auth.MaxAttemptCredentialLifetime)
 	startLiteMaintenance(ctx, reaper, sched.IsLeading, logger)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
 	return true, closer
@@ -2595,9 +2595,12 @@ type liteLeadership interface {
 // heartbeat, and they get the grace to re-heartbeat before anything is judged.
 // There is no informer and no reconciler, so those two conditions stay
 // satisfied. markers, when non-nil, receives the agent-lost log marker (#861).
-func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger) *executor.Reaper {
+func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger, credentialCeiling time.Duration) *executor.Reaper {
 	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
 	reaper.SetProcessLiveness(procs)
+	// An attempt that outlived auth.max_attempt_credential_lifetime fails for
+	// that reason instead of being re-placed as agent_lost (#1461).
+	reaper.SetAttemptLifetimeCeiling(credentialCeiling)
 	if markers != nil {
 		reaper.SetLogSink(markers)
 	}
@@ -2697,6 +2700,10 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		reapPods = executor.NewKubernetesExecutor(mcs, cfg.Executor.TaskNamespace)
 	}
 	reaper := executor.NewReaper(store, reapPods, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), sched.SteppingDown)
+	// The same ceiling that floors the task pod's deadline and sets the warm
+	// attempt watchdog: a silent attempt older than it fails for the credential
+	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
+	reaper.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
 	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
