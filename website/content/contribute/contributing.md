@@ -166,6 +166,13 @@ git push -u origin fix/clear-error-message
   A PR with no user-facing change (release prep, chore, dependency bump,
   docs-only) takes the **`skip-changelog`** label instead. Dependabot PRs are
   exempt without one.
+- **User-facing changes update the docs in the same PR.** A chart value, the
+  authoring schema, a CLI command, a server setting, a migration, the OpenAPI
+  document, or a changelog fragment of kind Added, Changed, Deprecated or
+  Removed needs an edit under `website/content/`. When nothing in the PR is
+  user-discoverable, apply the **`skip-docs`** label and put a
+  `Skip-docs: <reason>` line in the PR description; the label without a
+  reason fails the docs guard, and the release cut reads the reason back.
 
 {{% alert title="Security-sensitive areas need extra review" color="danger" %}}
 Changes to `internal/auth/`, `internal/executor/`, `internal/storage/`,
@@ -188,7 +195,8 @@ Every PR runs, and must pass: the **build + unit/integration tests** with the
 per-package coverage floor, **golangci-lint** (the A+ stack), and the
 **security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), and the
 **CHANGELOG guard** (a fragment, a hand-written entry, or the `skip-changelog`
-label). The same
+label), and the **docs guard** (an edit under `website/content/`, or the
+`skip-docs` label with a `Skip-docs: <reason>` line). The same
 `make lint test` you run locally is the fast feedback loop; CI is the source of
 truth. Push fixes until everything is green, then a maintainer reviews — we aim
 for three business days.
