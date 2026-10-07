@@ -136,6 +136,7 @@
         "retries": { "type": "integer", "minimum": 0 },
         "retry_delay_seconds": { "type": "integer", "minimum": 0 },
         "execution_timeout_seconds": { "type": "integer", "minimum": 1 },
+        "size": { "type": "integer", "minimum": 1, "maximum": 1024, "description": "Default size of every task that sets none: the number of pool slots it takes (Airflow's pool_slots, ADR 0066). A task's own pool_slots in dag.py and tasks.<id>.size both win." },
         "resources": {
           "type": "object",
           "description": "Default CPU AND memory for tasks that declare none; expanded to requests == limits so the task reaches Guaranteed QoS (#725). BOTH fields are required: that expansion is the block's only purpose, so a partial pair reaches only Burstable, and it still suppresses the per-cluster platform default the missing dimension would otherwise have come from (#802). Set both, or omit the block.",
@@ -226,6 +227,7 @@
           "retries": { "type": "integer", "minimum": 0 },
           "retry_delay_seconds": { "type": "integer", "minimum": 0 },
           "execution_timeout_seconds": { "type": "integer", "minimum": 1 },
+          "size": { "type": "integer", "minimum": 1, "maximum": 1024, "description": "The task's size: the number of pool slots it takes while queued or running (Airflow's pool_slots, ADR 0066). Overrides pool_slots from dag.py." },
           "env": {
             "type": "object",
             "additionalProperties": { "type": "string" },

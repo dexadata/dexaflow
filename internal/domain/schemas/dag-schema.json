@@ -230,6 +230,12 @@
           "type": "string",
           "description": "The named task pool this task draws a concurrency slot from (Airflow's pool). Empty means the implicit default_pool. Enforced Pro-only (ADR 0053); ignored on Lite."
         },
+        "pool_slots": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024,
+          "description": "How many slots of its pool the task takes while queued or running (Airflow's pool_slots, ADR 0066). Absent means 1. dexaflow.yaml sets it as size."
+        },
         "retries": {
           "type": "integer",
           "minimum": 0,

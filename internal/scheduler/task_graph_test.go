@@ -213,7 +213,7 @@ func referencePlanRun(run RunState) []PlannedTransition {
 				continue
 			}
 			pk := poolKeyFor(run, t)
-			if !poolHasSlot(run, pk, poolPromoted) {
+			if !poolHasSlot(run, pk, t.EffectivePoolSlots(), poolPromoted) {
 				continue
 			}
 			out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateQueued})
@@ -222,7 +222,7 @@ func referencePlanRun(run RunState) []PlannedTransition {
 				if poolPromoted == nil {
 					poolPromoted = map[string]int{}
 				}
-				poolPromoted[pk]++
+				poolPromoted[pk] += t.EffectivePoolSlots()
 			}
 		default:
 		}
