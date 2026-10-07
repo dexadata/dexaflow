@@ -5,36 +5,84 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dexadata/dexaflow/internal/agent"
 )
 
-// TestOutlivedCredentialCeiling pins the pure decision behind #1461: a silent
-// attempt that has been running for longer than auth.max_attempt_credential_lifetime
-// outlived the ceiling. A non-positive ceiling is "disabled" and never matches,
-// and an attempt with no recorded start is never judged against it.
+// TestOutlivedCredentialCeiling pins the pure decision behind #1461. It judges
+// when the attempt went silent, its last heartbeat measured from its running
+// transition, never the reap time: past the ceiling the agent keeps
+// heartbeating on its last renewed token until that token runs out, so a lapse
+// at the ceiling always has a last heartbeat past it, less a slack of two
+// heartbeat intervals: the last renewal lands up to one interval before the
+// ceiling, the token it mints outlives it by the attempt token TTL, and the
+// token's origin is at most one TTL before the running transition, so the last
+// heartbeat is at least the ceiling less two intervals after the running
+// transition. An attempt that
+// went silent before that is a lost agent, however late it is reaped. A
+// non-positive ceiling is "disabled" and never matches, and an attempt with no
+// recorded start or heartbeat is never judged against it.
 func TestOutlivedCredentialCeiling(t *testing.T) {
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	const ceiling = time.Hour
+	started := now.Add(-2 * time.Hour)
+	slack := credentialCeilingSlack
 	tests := []struct {
 		name    string
 		started time.Time
+		lastHB  time.Time
 		ceiling time.Duration
 		want    bool
 	}{
-		{"well past the ceiling", now.Add(-2 * time.Hour), ceiling, true},
-		{"just past the ceiling", now.Add(-ceiling - time.Second), ceiling, true},
-		{"exactly at the ceiling is not past it", now.Add(-ceiling), ceiling, false},
-		{"inside the ceiling", now.Add(-30 * time.Minute), ceiling, false},
-		{"zero ceiling is disabled", now.Add(-48 * time.Hour), 0, false},
-		{"negative ceiling is disabled", now.Add(-48 * time.Hour), -time.Hour, false},
-		{"unknown start is never judged", time.Time{}, ceiling, false},
+		{"last token ran out well past the ceiling", started, started.Add(ceiling + 9*time.Minute), ceiling, true},
+		{"silent just past the ceiling", started, started.Add(ceiling + time.Second), ceiling, true},
+		{"silent inside the slack before the ceiling", started, started.Add(ceiling - slack + time.Second), ceiling, true},
+		{"silent exactly one slack before the ceiling", started, started.Add(ceiling - slack), ceiling, false},
+		{"silent a minute before the ceiling, reaped after it", started, started.Add(ceiling - time.Minute), ceiling, false},
+		{"silent well inside the ceiling", started, started.Add(30 * time.Minute), ceiling, false},
+		{"zero ceiling is disabled", now.Add(-48 * time.Hour), now.Add(-time.Minute), 0, false},
+		{"negative ceiling is disabled", now.Add(-48 * time.Hour), now.Add(-time.Minute), -time.Hour, false},
+		{"unknown start is never judged", time.Time{}, now.Add(-time.Minute), ceiling, false},
+		{"no heartbeat is never judged", started, time.Time{}, ceiling, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			c := AgentLostCandidate{StartedAt: tc.started}
-			if got := OutlivedCredentialCeiling(c, tc.ceiling, now); got != tc.want {
-				t.Errorf("OutlivedCredentialCeiling(started=%v, ceiling=%v) = %v, want %v", tc.started, tc.ceiling, got, tc.want)
+			c := AgentLostCandidate{StartedAt: tc.started, LastHeartbeat: tc.lastHB}
+			if got := OutlivedCredentialCeiling(c, tc.ceiling); got != tc.want {
+				t.Errorf("OutlivedCredentialCeiling(started=%v, last heartbeat=%v, ceiling=%v) = %v, want %v",
+					tc.started, tc.lastHB, tc.ceiling, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestCredentialCeilingSlackIsTwoHeartbeats: the slack follows the agent's
+// heartbeat interval, so a change there moves it too.
+func TestCredentialCeilingSlackIsTwoHeartbeats(t *testing.T) {
+	if want := 2 * agent.DefaultHeartbeatInterval; credentialCeilingSlack != want {
+		t.Errorf("credentialCeilingSlack = %v, want two heartbeat intervals (%v)", credentialCeilingSlack, want)
+	}
+}
+
+// TestReapAgentLost_SilentBeforeCeilingStaysAgentLost: an agent lost a minute
+// before the ceiling (the node died at minute 59 of a 60m ceiling) and reaped
+// after it (minute 61) is still agent_lost: its credential never lapsed, so it
+// is re-placed off the retry budget like any other lost agent.
+func TestReapAgentLost_SilentBeforeCeilingStaysAgentLost(t *testing.T) {
+	now := time.Now().UTC()
+	store := &fakeHeartbeatStore{candidates: []AgentLostCandidate{{
+		TaskInstanceID: "node-died", DagRunID: "run-a", TaskID: "t", TryNumber: 1, AttemptEpoch: 1,
+		StartedAt:     now.Add(-61 * time.Minute),
+		LastHeartbeat: now.Add(-2 * time.Minute), // silent at minute 59 of a 60m ceiling
+	}}}
+	r := newAgentLostReaper(store, reapTestLogger(), 90*time.Second, nil)
+	r.ceiling = time.Hour
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run err = %v", err)
+	}
+	if len(store.failed) != 1 || len(store.ceilingPins) != 0 {
+		t.Errorf("silent before the ceiling: want agent_lost, got agent_lost=%v credential_ceiling=%v",
+			store.failed, store.ceilingPins)
 	}
 }
 

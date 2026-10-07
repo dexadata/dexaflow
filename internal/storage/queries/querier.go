@@ -153,6 +153,16 @@ type Querier interface {
 	// reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 	// reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
 	FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error
+	// A dispatch the executor refused (ADR 0066 section 3: the task is larger than
+	// its size, or above executor.unit.max_size) fails the task for good. The
+	// verdict is permanent, so no retry can change it: the retry budget is spent by
+	// lowering max_tries to the current try, which makes the planner's
+	// try_number < max_tries check false without counting a try that never ran. A
+	// clear restores the budget from the task as usual (#1131), so an operator who
+	// fixes the DAG or the unit can run it again. Guarded to the dispatch states:
+	// the sync path refuses a scheduled task, the buffered path a scheduled or
+	// queued one, and a row that moved on is left alone.
+	FailDispatchRefused(ctx context.Context, arg FailDispatchRefusedParams) error
 	// Settle a task instance failed from the pod reconciler, guarded by id,
 	// try_number and attempt_epoch (ADR 0052, ADR 0051 amendment): try_number bumps
 	// IN PLACE on retry (same row id), and an infra re-place or reschedule keeps the

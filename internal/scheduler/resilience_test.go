@@ -117,6 +117,7 @@ func (f *flakyStore) RecordDispatchBackpressure(context.Context, string, string,
 	return nil
 }
 func (f *flakyStore) FailDispatchExhausted(context.Context, string, string, string) error { return nil }
+func (f *flakyStore) FailDispatchRefused(context.Context, string, string, string) error   { return nil }
 
 func (f *flakyStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
 	f.mu.Lock()

@@ -1556,6 +1556,22 @@ SET state = 'failed', ended_at = now(), error_message = $3,
     next_dispatch_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 
+-- name: FailDispatchRefused :exec
+-- A dispatch the executor refused (ADR 0066 section 3: the task is larger than
+-- its size, or above executor.unit.max_size) fails the task for good. The
+-- verdict is permanent, so no retry can change it: the retry budget is spent by
+-- lowering max_tries to the current try, which makes the planner's
+-- try_number < max_tries check false without counting a try that never ran. A
+-- clear restores the budget from the task as usual (#1131), so an operator who
+-- fixes the DAG or the unit can run it again. Guarded to the dispatch states:
+-- the sync path refuses a scheduled task, the buffered path a scheduled or
+-- queued one, and a row that moved on is left alone.
+UPDATE task_instances
+SET state = 'failed', ended_at = now(), error_message = $3,
+    next_dispatch_at = NULL,
+    max_tries = LEAST(max_tries, try_number)
+WHERE dag_run_id = $1 AND task_id = $2 AND state IN ('scheduled', 'queued');
+
 -- name: ListSettledRunIDs :many
 -- Of the given (tenant, run) pairs, the settled runs: run in success or failed
 -- and no task instance outside success, failed, skipped and upstream_failed.

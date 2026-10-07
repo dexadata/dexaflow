@@ -589,6 +589,34 @@ func (q *Queries) FailDispatchExhausted(ctx context.Context, arg FailDispatchExh
 	return err
 }
 
+const failDispatchRefused = `-- name: FailDispatchRefused :exec
+UPDATE task_instances
+SET state = 'failed', ended_at = now(), error_message = $3,
+    next_dispatch_at = NULL,
+    max_tries = LEAST(max_tries, try_number)
+WHERE dag_run_id = $1 AND task_id = $2 AND state IN ('scheduled', 'queued')
+`
+
+type FailDispatchRefusedParams struct {
+	DagRunID     pgtype.UUID `json:"dag_run_id"`
+	TaskID       string      `json:"task_id"`
+	ErrorMessage *string     `json:"error_message"`
+}
+
+// A dispatch the executor refused (ADR 0066 section 3: the task is larger than
+// its size, or above executor.unit.max_size) fails the task for good. The
+// verdict is permanent, so no retry can change it: the retry budget is spent by
+// lowering max_tries to the current try, which makes the planner's
+// try_number < max_tries check false without counting a try that never ran. A
+// clear restores the budget from the task as usual (#1131), so an operator who
+// fixes the DAG or the unit can run it again. Guarded to the dispatch states:
+// the sync path refuses a scheduled task, the buffered path a scheduled or
+// queued one, and a row that moved on is left alone.
+func (q *Queries) FailDispatchRefused(ctx context.Context, arg FailDispatchRefusedParams) error {
+	_, err := q.db.Exec(ctx, failDispatchRefused, arg.DagRunID, arg.TaskID, arg.ErrorMessage)
+	return err
+}
+
 const failTaskInstanceIfActive = `-- name: FailTaskInstanceIfActive :exec
 UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $1
