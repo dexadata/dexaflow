@@ -135,7 +135,8 @@ type WarmPodSpec struct {
 	AnchorUID  types.UID
 
 	// Labels / Annotations are operator-declared metadata overlaid onto the pod;
-	// Dexaflow's own warm-worker labels always win a collision (see mergeMetadata).
+	// keys under domain.ReservedMetadataPrefix are dropped and Dexaflow's own
+	// warm-worker labels always win a collision (see mergeMetadata).
 	Labels      map[string]string
 	Annotations map[string]string
 }
@@ -193,8 +194,9 @@ func BuildWarmPod(spec WarmPodSpec) *corev1.Pod {
 			}},
 		},
 	}
-	mergeMetadata(pod.Labels, spec.Labels)
-	mergeMetadata(pod.Annotations, spec.Annotations)
+	dropped := mergeMetadata(pod.Labels, spec.Labels)
+	dropped = append(dropped, mergeMetadata(pod.Annotations, spec.Annotations)...)
+	logDroppedMetadata(dropped, "tenant", spec.TenantID, "dag_version", spec.DagVersionID, "pod", pod.Name)
 	if spec.ServiceAccount != "" {
 		// Run the warm worker as the operator's default task ServiceAccount so a task
 		// placed on it resolves keyless secrets exactly as a dedicated pod does (#2).
