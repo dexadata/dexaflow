@@ -777,6 +777,11 @@ type SchedulerSection struct {
 	Enabled        bool            `mapstructure:"enabled"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
 	Alerts         AlertsSection   `mapstructure:"alerts"`
+	// PoolStarvationThreshold is how long a task held only by its pool waits
+	// before the pool is reserved for it, so tasks of fewer slots cannot keep
+	// a larger one out forever (ADR 0066 §4). 0 disables reservations. Pro only:
+	// Lite has no pools.
+	PoolStarvationThreshold time.Duration `mapstructure:"pool_starvation_threshold"`
 }
 
 // AlertsSection guards the destinations of native on-failure alerts (#424).
@@ -931,10 +936,11 @@ var serverDefaults = map[string]any{
 	// here the chart renders the variable and the server ignores it: a setting
 	// that looks configured and is not. TestDocumentedEnvVarsBind caught this
 	// once before, and the rebase onto the session-cookie fix dropped it again.
-	"auth.oidc.auto_redirect":      false,
-	"auth.oidc.clock_skew_seconds": 60,
-	"scheduler.loop_interval_ms":   1000,
-	"scheduler.enabled":            true,
+	"auth.oidc.auto_redirect":             false,
+	"auth.oidc.clock_skew_seconds":        60,
+	"scheduler.loop_interval_ms":          1000,
+	"scheduler.enabled":                   true,
+	"scheduler.pool_starvation_threshold": "60s",
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
@@ -1174,6 +1180,9 @@ func (c *ServerConfig) Validate() error {
 	}
 	if err := c.validateLogs(); err != nil {
 		return err
+	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
 	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err

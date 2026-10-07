@@ -354,7 +354,10 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 `size` is how many slots of its pool a task takes while it is queued or
 running: Airflow's `pool_slots`. It defaults to 1, so a pool of 8 slots runs
 eight tasks of size 1, or two of size 4. A task that does not fit waits until
-enough slots free up; it never fails for it.
+enough slots free up; it never fails for it. Smaller tasks cannot keep a task of
+more than one slot out forever: once it has waited past
+`scheduler.pool_starvation_threshold` (60s by default), the pool holds new
+admissions until it fits. Tasks of size 1 never reserve a pool.
 
 ```yaml
 defaults:
