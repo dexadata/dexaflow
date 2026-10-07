@@ -31,9 +31,9 @@ chart's own values (image, replicas, ingress, Postgres/Redis wiring), see the
 | `system_packages` | list | apt packages, installed into the DAG image at compile. Resolved against the task base image's Debian suite, now **Debian 13 (trixie)** — it was Debian 12 (bookworm) through v0.4.5, so a package name or version pin that only existed in bookworm has to be re-pinned. |
 | `dag_source` | string | DAG file (default `dag.py`). |
 | `build`, `registry` | object | Image build + push settings. |
-| `defaults` | object | DAG-level `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `resources`. |
+| `defaults` | object | DAG-level `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `size`, `resources`. |
 | `staging` | object | Opt-in per-run RWX volume: `enabled`, `size`, `storage_class` (ADR 0022). |
-| `tasks.<task_id>` | object | Per-task overrides (ADR 0023): `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `env`, `resources`, `execution`. |
+| `tasks.<task_id>` | object | Per-task overrides (ADR 0023): `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `size`, `env`, `resources`, `execution`. `size` is the task's pool slots, 1 to 1024 (ADR 0066, see [Task size](/author-dags/dag-authoring/#task-size-size-adr-0066)). |
 
 See [DAG authoring](/author-dags/dag-authoring/) for the override layers.
 
