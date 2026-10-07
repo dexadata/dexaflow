@@ -354,6 +354,12 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 - A `tasks:` entry naming a `task_id` absent from the DAG → **compile error**.
 - A duplicate `task_id` key in the YAML → **parse error**.
 - Across a monorepo, a duplicate `dag_id` is a CI-gate concern (one image per DAG).
+- A task's `execution.labels` or `execution.annotations` key under the
+  `leoflow.io/` prefix → **validation error**. That prefix belongs to Dexaflow's
+  own pod metadata, which other components identify task and warm-worker pods
+  by; use a prefix of your own (for example `team.example.com/owner`). A DAG
+  version registered before this rule still runs, with those keys dropped from
+  its pods.
 
 ## The development → deploy lifecycle
 
