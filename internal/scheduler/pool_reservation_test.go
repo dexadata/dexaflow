@@ -305,7 +305,7 @@ func TestStepUnweightedBacklogKeepsThroughput(t *testing.T) {
 	for _, bt := range busyTasks {
 		running[bt.TaskID] = domain.TaskStateRunning
 	}
-	var waiting []domain.TaskSpec
+	waiting := make([]domain.TaskSpec, 0, 6)
 	for _, id := range []string{"w0", "w1", "w2", "w3", "w4", "w5"} {
 		waiting = append(waiting, domain.TaskSpec{TaskID: id, Type: domain.TaskTypePython, Pool: "p"})
 	}
@@ -362,5 +362,34 @@ func TestStepWaitAgeSurvivesATickHeldByAnotherGate(t *testing.T) {
 	// Assert
 	if len(held) != 0 {
 		t.Errorf("dispatched %v, want nothing (pool reserved for big after 61s of waiting)", held)
+	}
+}
+
+// TestKeepStillScheduledKeepsAnUnheldWaitWhileANewOneStarts: an earlier wait
+// not held this tick is kept while its task is still scheduled, even when a
+// different task starts waiting the same tick, and is forgotten once the task
+// leaves scheduled.
+func TestKeepStillScheduledKeepsAnUnheldWaitWhileANewOneStarts(t *testing.T) {
+	// Arrange
+	t0 := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	a, b, c := taskRef{"r1", "a"}, taskRef{"r1", "b"}, taskRef{"r1", "c"}
+	prev := map[taskRef]time.Time{a: t0, c: t0}
+	since := map[taskRef]time.Time{b: t0.Add(time.Minute)}
+	runs := []RunState{{RunID: "r1", States: map[string]domain.TaskState{
+		"a": domain.TaskStateScheduled, "b": domain.TaskStateScheduled, "c": domain.TaskStateQueued,
+	}}}
+
+	// Act
+	keepStillScheduled(since, prev, runs)
+
+	// Assert
+	if got, ok := since[a]; !ok || !got.Equal(t0) {
+		t.Errorf("a = %v, %v; want its first wait %v kept (still scheduled)", got, ok, t0)
+	}
+	if _, ok := since[c]; ok {
+		t.Error("c kept, want it forgotten (no longer scheduled)")
+	}
+	if len(since) != 2 {
+		t.Errorf("since = %v, want a and b", since)
 	}
 }

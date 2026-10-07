@@ -73,14 +73,17 @@ func reservedTaskSlots(runs []RunState, r PoolReservation) (slots int, scheduled
 
 // recordPoolWaits updates the waits after a tick and makes the reservations
 // that start on the next one. waits are this tick's tasks held only by their
-// pool, keyed by run. A task not held this tick forgets its wait (it was
-// admitted, or something other than the pool now holds it). A reservation
-// whose task was not held this tick is dropped too: it was admitted, which
+// pool, keyed by run. A task keeps the time it was first held for as long as
+// it stays scheduled, so a tick in which something else holds it (its
+// dispatch backoff, its DAG's max_active_tasks, a deferred dispatch) does not
+// start its wait over; it forgets it once it leaves scheduled. A reservation
+// whose task was not held this tick is dropped: it was admitted, which
 // releases the pool, or it stopped passing the other gates, and a task held by
 // anything but the pool never freezes it. Then each unreserved pool goes to
-// its oldest waiter past the threshold that can fit the whole pool; a waiter
-// larger than the pool is logged once and never reserved for.
-func (s *Scheduler) recordPoolWaits(now time.Time, waits map[string][]PoolWait, budgets map[string]int) {
+// its oldest waiter held this tick and past the threshold that can fit the
+// whole pool; a waiter larger than the pool is logged once and never reserved
+// for.
+func (s *Scheduler) recordPoolWaits(now time.Time, runs []RunState, waits map[string][]PoolWait, budgets map[string]int) {
 	held := make(map[taskRef]PoolWait)
 	for runID, ws := range waits {
 		for _, w := range ws {
@@ -95,6 +98,7 @@ func (s *Scheduler) recordPoolWaits(now time.Time, waits map[string][]PoolWait, 
 		}
 		since[ref] = first
 	}
+	keepStillScheduled(since, s.poolWaitSince, runs)
 	s.poolWaitSince = since
 	for pool, r := range s.poolReservations {
 		if _, ok := held[taskRef{r.RunID, r.TaskID}]; !ok {
@@ -102,7 +106,10 @@ func (s *Scheduler) recordPoolWaits(now time.Time, waits map[string][]PoolWait, 
 		}
 	}
 	for _, ref := range starvedOldestFirst(since, now, s.starvationThreshold) {
-		w := held[ref]
+		w, ok := held[ref]
+		if !ok {
+			continue // kept its age, but something other than the pool holds it this tick
+		}
 		if _, taken := s.poolReservations[w.Pool]; taken {
 			continue
 		}
@@ -121,6 +128,29 @@ func (s *Scheduler) recordPoolWaits(now time.Time, waits map[string][]PoolWait, 
 	for ref := range s.oversizeWarned {
 		if _, ok := held[ref]; !ok {
 			delete(s.oversizeWarned, ref)
+		}
+	}
+}
+
+// keepStillScheduled copies into since the wait of every task in prev that
+// was not held by its pool this tick but is still scheduled in an active run.
+// Only tasks that already had a wait are looked up, and the run index is
+// built only when one of them was not held again, so a tick with no waits
+// does no work.
+func keepStillScheduled(since, prev map[taskRef]time.Time, runs []RunState) {
+	var byRun map[string]*RunState
+	for ref, first := range prev {
+		if _, ok := since[ref]; ok {
+			continue
+		}
+		if byRun == nil {
+			byRun = make(map[string]*RunState, len(runs))
+			for i := range runs {
+				byRun[runs[i].RunID] = &runs[i]
+			}
+		}
+		if r := byRun[ref.runID]; r != nil && r.States[ref.taskID] == domain.TaskStateScheduled {
+			since[ref] = first
 		}
 	}
 }

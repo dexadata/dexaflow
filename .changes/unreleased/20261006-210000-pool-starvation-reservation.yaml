@@ -2,10 +2,12 @@ kind: Added
 body: |-
   **A large task no longer starves in a weighted pool.** With weighted pool
   slots, tasks of 1 slot could keep taking a pool's space as it freed while a
-  larger task waited forever. Now, once a scheduled task held only by its pool
-  has waited longer than `scheduler.pool_starvation_threshold` (default 60s,
-  `0s` disables), the pool is reserved for it and admits nothing else until it
-  fits. One reservation per pool, the oldest waiter first; a task larger than
-  its whole pool is never reserved for and is logged once instead. The state
-  lives in the scheduler leader's memory (ADR 0066, #1466).
+  larger task waited forever. Now, once a scheduled task of more than one slot
+  that does not fit its pool has waited longer than
+  `scheduler.pool_starvation_threshold` (default 60s, `0s` disables), the pool
+  is reserved for it and admits nothing else until it fits. Tasks of size 1
+  never reserve, so pools without sized tasks admit exactly as before. One
+  reservation per pool, the oldest waiter first; a task larger than its whole
+  pool is never reserved for and is logged once instead. The state lives in the
+  scheduler leader's memory (ADR 0066, #1466).
 time: 2026-10-06T21:00:00.000000000-03:00

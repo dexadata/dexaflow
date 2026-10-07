@@ -631,7 +631,7 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		}
 	}
 	if tracking {
-		s.recordPoolWaits(s.clock(), waits, poolBudgets)
+		s.recordPoolWaits(s.clock(), runs, waits, poolBudgets)
 	}
 	return s.createDueRuns(ctx, activeByDAG)
 }

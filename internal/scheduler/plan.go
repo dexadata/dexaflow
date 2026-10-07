@@ -29,9 +29,9 @@ func PlanRun(run RunState) []PlannedTransition {
 	return out
 }
 
-// PoolWait is a scheduled task held only by its pool this tick: it passed its
-// dispatch backoff and its DAG's max_active_tasks, and did not fit the pool or
-// found it reserved for another task (ADR 0066 §4). The scheduler tracks how
+// PoolWait is a scheduled task of more than one slot held only by its pool
+// this tick: it passed its dispatch backoff and its DAG's max_active_tasks,
+// and did not fit the pool's free slots (ADR 0066 §4). The scheduler tracks how
 // long each has waited to decide when a pool is reserved.
 type PoolWait struct {
 	TaskID string
@@ -97,11 +97,12 @@ func planRun(run RunState) ([]PlannedTransition, []PoolWait) {
 				continue // DAG at max_active_tasks — park until a sibling frees a slot.
 			}
 			pk := poolKeyFor(run, t)
-			if !poolHasSlot(run, pk, t.EffectivePoolSlots(), poolPromoted) || reservedForOther(run, pk, t.TaskID) {
-				// Does not fit the pool's free slots, or the pool is held for a
-				// starved task (ADR 0066 §4): park until it can go.
-				waits = append(waits, PoolWait{TaskID: t.TaskID, Pool: pk, Slots: t.EffectivePoolSlots()})
-				continue
+			slots := t.EffectivePoolSlots()
+			if admit, wait := poolGate(run, pk, t.TaskID, slots, poolPromoted); !admit {
+				if wait {
+					waits = append(waits, PoolWait{TaskID: t.TaskID, Pool: pk, Slots: slots})
+				}
+				continue // park until the pool can take it.
 			}
 			out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateQueued})
 			promoted++
@@ -109,13 +110,29 @@ func planRun(run RunState) ([]PlannedTransition, []PoolWait) {
 				if poolPromoted == nil {
 					poolPromoted = map[string]int{}
 				}
-				poolPromoted[pk] += t.EffectivePoolSlots()
+				poolPromoted[pk] += slots
 			}
 		default:
 			// queued/running/terminal/up_for_retry: nothing to plan here.
 		}
 	}
 	return out, waits
+}
+
+// poolGate decides the pool gate for a task of slots slots (ADR 0053 Stage 3,
+// ADR 0066): admit when it fits the pool's free slots and the pool is not
+// reserved for another task. When it is held, wait reports whether it is
+// waiting on capacity, which only a task of more than one slot that does not
+// fit is. A size-1 task cannot be starved by smaller ones, and a task held
+// only by a reservation would fit, so neither may age into a reservation:
+// with no size set anywhere no pool is ever reserved and admission is exactly
+// the unweighted one.
+func poolGate(run RunState, poolKey, taskID string, slots int, promotedByPool map[string]int) (admit, wait bool) {
+	fits := poolHasSlot(run, poolKey, slots, promotedByPool)
+	if fits && !reservedForOther(run, poolKey, taskID) {
+		return true, false
+	}
+	return false, !fits && slots > 1
 }
 
 // PoolReservation names the task a pool is reserved for (ADR 0066 §4).
@@ -200,7 +217,7 @@ func effectivePoolKey(tenantID, pool string, budgets map[string]int, confine boo
 // promoted into the pool this call (promotedByPool) plus the task's own slots
 // must not exceed the pool's cap (ADR 0066). Occupancy and promotions are
 // counted in slots, not tasks. A disabled gate (key ""), or a pool with a
-// non-positive or absent budget (unset/undefined), is unlimited — fail open,
+// non-positive or absent budget (unset/undefined), is unlimited: fail open,
 // never deadlock a DAG on a misconfigured pool.
 func poolHasSlot(run RunState, poolKey string, slots int, promotedByPool map[string]int) bool {
 	if poolKey == "" {
