@@ -1020,6 +1020,26 @@ main() {
     fi
   fi
 
+  # A release ships docs for every user-facing change it carries, or a
+  # recorded reason why not (scripts/docs-gap.sh). The per pull request guard
+  # judges each change once, when it is opened; this looks again over the whole
+  # release, so a skip nobody justified, or a docs PR that never came, stops
+  # the cut instead of reaching users. --resume skips it: the prepare half
+  # already passed it.
+  if [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
+    local docs_out docs_rc=0
+    docs_out="$("$ROOT/scripts/docs-gap.sh" "$version" --fetch 2>&1)" || docs_rc=$?
+    if [ "$docs_rc" != 0 ]; then
+      printf '%s\n' "$docs_out" >&2
+      [ "$docs_rc" = 1 ] || die "docs-gap.sh could not run (exit $docs_rc, above), so nothing was checked for docs"
+      if [ "$dry" = 1 ]; then
+        warn "user-facing changes on $base ship without docs (above); the real cut will refuse until each is documented, labelled skip-docs with a 'Skip-docs: <reason>' line, or listed in .github/docs-skip.txt on $base"
+      else
+        die "user-facing changes on $base ship without docs (above): document each one, label its pull request skip-docs with a 'Skip-docs: <reason>' line, or list it with a reason in .github/docs-skip.txt on $base"
+      fi
+    fi
+  fi
+
   if [ "$dry" = 1 ] && [ "$resume" = 1 ]; then
     log "DRY RUN (--resume) — no tag, no push:"
     [ "$base_ok" = 1 ] || die "$base does not exist on origin, so there is nothing to resume"
