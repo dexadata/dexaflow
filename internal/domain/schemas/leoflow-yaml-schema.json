@@ -290,8 +290,8 @@
               "topology_spread_constraints": { "type": "array", "description": "Spread task pods across failure domains; Kubernetes TopologySpreadConstraint entries." },
               "affinity": { "type": "object", "description": "Node/pod affinity and anti-affinity; a Kubernetes Affinity object." },
               "resource_claims": { "type": "array", "description": "Pod-level ResourceClaims for Dynamic Resource Allocation (DRA, GA in Kubernetes 1.34)." },
-              "labels": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Pod labels merged onto the task pod; Dexaflow's leoflow.io/* labels win collisions." },
-              "annotations": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Pod annotations merged onto the task pod; Dexaflow's task-instance-id annotation wins collisions." }
+              "labels": { "type": "object", "additionalProperties": { "type": "string" }, "propertyNames": { "not": { "pattern": "^leoflow\\.io/" } }, "description": "Pod labels merged onto the task pod. Keys under the leoflow.io/ prefix are reserved for Dexaflow and rejected." },
+              "annotations": { "type": "object", "additionalProperties": { "type": "string" }, "propertyNames": { "not": { "pattern": "^leoflow\\.io/" } }, "description": "Pod annotations merged onto the task pod. Keys under the leoflow.io/ prefix are reserved for Dexaflow and rejected." }
             },
             "additionalProperties": false
           }
