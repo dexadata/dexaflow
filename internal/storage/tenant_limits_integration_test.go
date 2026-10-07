@@ -107,6 +107,50 @@ func TestRegisterDagVersionEnforcesMaxDags(t *testing.T) {
 	}
 }
 
+// TestRegisterDagVersionEnforcesMaxTaskPoolSlots: a DAG with a task whose
+// pool_slots is above the tenant's max_task_pool_slots is refused, naming the
+// task and both numbers; a task at the limit, a DAG without pool_slots and an
+// unlimited tenant are accepted (ADR 0066 §5).
+func TestRegisterDagVersionEnforcesMaxTaskPoolSlots(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	tenant := limitedTenant(ctx, t, repo, "tasksize", domain.TenantLimitsUpdate{MaxTaskPoolSlots: limit(2)})
+	register := func(tenant, dagID string, slots int) error {
+		spec := domain.DAGSpec{
+			SchemaVersion: "1.0", DagID: dagID, DagVersion: "v1", Image: "img:v1",
+			Tasks: []domain.TaskSpec{
+				{TaskID: "small", Type: domain.TaskTypeBash, Entrypoint: "true"},
+				{TaskID: "train", Type: domain.TaskTypeBash, Entrypoint: "true", PoolSlots: slots},
+			},
+		}
+		hash, err := spec.CanonicalHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = repo.RegisterDagVersion(ctx, tenant, spec, hash)
+		return err
+	}
+
+	err := register(tenant, "big", 3)
+
+	wantLimitError(t, "a size-3 task", err, "max_task_pool_slots of 2")
+	if err != nil && !strings.Contains(err.Error(), `"train"`) {
+		t.Errorf("error %q does not name the task", err)
+	}
+	for id, slots := range map[string]int{"fits": 2, "unset": 0} {
+		if err := register(tenant, id, slots); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
+	got, err := repo.TenantLimits(ctx, tenant)
+	if err != nil || got.MaxTaskPoolSlots != 2 {
+		t.Errorf("TenantLimits = %+v, %v; want max_task_pool_slots 2", got, err)
+	}
+	other := limitedTenant(ctx, t, repo, "tasksize-other", domain.TenantLimitsUpdate{})
+	if err := register(other, "big", 3); err != nil {
+		t.Errorf("unlimited tenant: %v", err)
+	}
+}
+
 // TestRegisterDagVersionEnforcesMinScheduleInterval: a schedule that fires more
 // often than the tenant allows is refused; one at the minimum, a manual DAG and
 // @once are accepted.
