@@ -261,6 +261,50 @@ The unsupported set, with the things Airflow users most often expect to
   level — use `dexaflow.yaml`'s `tasks.<id>:` override block instead,
   which is checked at compile time.
 
+### Run parameters and their schemas
+
+`params=` on the DAG declares the parameters a run accepts, as in Airflow. A
+bare value is a default; a `Param` adds a JSON Schema built from its keyword
+arguments, and a `Param` without a default is required:
+
+```python
+from airflow.sdk import DAG, Param
+
+with DAG(
+    "my_pipeline",
+    params={
+        "limit": Param(100, type="integer", minimum=1),
+        "region": Param(type="string", enum=["us", "eu"]),
+    },
+):
+    ...
+```
+
+The control plane checks the schemas when the DAG is registered and validates
+a run's `conf` against them when the run is triggered. A task's `xcom_schema`
+in `dag.json` works the same way for the value the task pushes. These schemas
+may `$ref` only into themselves (`#/$defs/...`) and the standard JSON Schema
+meta-schemas. Since 0.5.1 any other reference, such as a `file://` URL or a
+relative path, is refused with a schema error at registration, at trigger or
+at the push, so inline what a schema needs instead of pointing at a file.
+
+### Clearing a task
+
+Clearing a task (the UI's Clear, or
+`POST /api/v2/dags/{dag_id}/clearTaskInstances`) runs it again as a new try
+with a full retry budget, as Apache Airflow does:
+
+- the budget is the `retries` of the DAG version the re-run executes, so a task
+  with `retries: 3` gets three retries after a clear, whatever it spent before;
+- its infra re-placements are reset, so it can survive a lost agent again;
+- the XCom values of the attempts it clears are deleted, so a downstream task
+  cannot read a value the new attempt did not write;
+- `on_failure_callback` fires only on the final attempt.
+
+The clear is one transaction: if the XCom values cannot be deleted, nothing is
+cleared and the request fails. Before 0.5.1 a clear kept the spent retries,
+and the UI could show "try 4 of 3".
+
 ## dexaflow.yaml — deploy config
 
 These are Dexaflow concerns, **not** Airflow operator attributes (you cannot invent
