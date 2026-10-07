@@ -114,7 +114,7 @@ func TestRegisterVersionRejectsInvalidSpec(t *testing.T) {
 // resources exceed pool_slots x unit is refused at registration, naming the
 // size it would need, and a task that fits is accepted.
 func TestRegisterVersionRejectsATaskLargerThanItsSize(t *testing.T) {
-	unit, err := domain.ParseResourceUnit("250m", "512Mi")
+	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{CPU: "250m", Memory: "512Mi"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,5 +136,45 @@ func TestRegisterVersionRejectsATaskLargerThanItsSize(t *testing.T) {
 		`{"task_id":"train","type":"python","entrypoint":"dag:a","pool_slots":8,"resources":{"limits":{"cpu":"2"}}}]}`
 	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", fits); rec.Code != http.StatusCreated {
 		t.Errorf("fitting task = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+// fakeUnitMisfits records the stages a tolerated misfit was counted at.
+type fakeUnitMisfits struct{ stages []string }
+
+func (f *fakeUnitMisfits) RecordUnitMisfit(stage string) { f.stages = append(f.stages, stage) }
+
+// Under executor.unit.enforce=warn a task larger than its size registers, and
+// the misfit is counted; a size above max_size is still refused (ADR 0066 §3).
+func TestRegisterVersionWarnAcceptsAMisfitAndCountsIt(t *testing.T) {
+	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{
+		CPU: "250m", Memory: "512Mi", Enforce: domain.UnitEnforceWarn, MaxSize: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	misfits := &fakeUnitMisfits{}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Versions:      &fakeVersionRepo{created: true},
+		ResourceUnit:  unit,
+		UnitMisfits:   misfits,
+	})
+	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
+	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", big); rec.Code != http.StatusCreated {
+		t.Errorf("misfit under warn = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	if len(misfits.stages) != 1 || misfits.stages[0] != "register" {
+		t.Errorf("misfits recorded = %v, want one at register", misfits.stages)
+	}
+	huge := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","pool_slots":9}]}`
+	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", huge)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "max_size") {
+		t.Errorf("size above max_size = %d %s, want 400 naming max_size", rec.Code, rec.Body.String())
 	}
 }
