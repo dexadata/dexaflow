@@ -8,4 +8,8 @@ body: |-
   `size` in `dexaflow.yaml` (`tasks.<id>.size` and `defaults.size`, 1 to 1024).
   A task that does not fit waits for enough free slots and never fails for it.
   DAGs that do not set it plan exactly as before. Pro only; Lite has no pools.
+  A migrated Airflow DAG that already sets `pool_slots` above 1 starts being
+  weighted the next time it is pushed. An explicit `pool_slots=1` in `dag.py`
+  does not override `defaults.size`, and the pools API still reports occupied
+  slots as a task count (#1466).
 time: 2026-10-06T19:30:00.000000000-03:00

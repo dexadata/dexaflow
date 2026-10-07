@@ -81,7 +81,7 @@ func PlanRun(run RunState) []PlannedTransition {
 			}
 			pk := poolKeyFor(run, t)
 			if !poolHasSlot(run, pk, t.EffectivePoolSlots(), poolPromoted) {
-				continue // task does not fit the pool's free slots — park until enough free up.
+				continue // task does not fit the pool's free slots; park until enough free up.
 			}
 			out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateQueued})
 			promoted++
@@ -164,7 +164,7 @@ func effectivePoolKey(tenantID, pool string, budgets map[string]int, confine boo
 // promoted into the pool this call (promotedByPool) plus the task's own slots
 // must not exceed the pool's cap (ADR 0066). Occupancy and promotions are
 // counted in slots, not tasks. A disabled gate (key ""), or a pool with a
-// non-positive or absent budget (unset/undefined), is unlimited — fail open,
+// non-positive or absent budget (unset/undefined), is unlimited: fail open,
 // never deadlock a DAG on a misconfigured pool.
 func poolHasSlot(run RunState, poolKey string, slots int, promotedByPool map[string]int) bool {
 	if poolKey == "" {

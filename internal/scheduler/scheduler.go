@@ -665,7 +665,7 @@ func (s *Scheduler) loadPoolBudget(ctx context.Context, runs []RunState) (budget
 }
 
 // activePoolCounts tallies, per pool (keyed by PoolKey), the slots already
-// occupied — the pool_slots of every task instance queued or running across
+// occupied: the pool_slots of every task instance queued or running across
 // every active run, cross-DAG (ADR 0053 Stage 3, weighted by ADR 0066). A task instance's pool is its spec pool, or the
 // implicit default pool. Reuses the runs Step already loaded, so it adds no
 // per-tick query. Only built on the Pro path (see loadPoolBudget). With confine
