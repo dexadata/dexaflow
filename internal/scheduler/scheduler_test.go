@@ -41,6 +41,7 @@ type fakeStore struct {
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
+	dispatchRefused      []string
 	// alertAttempts mirrors the real per-episode attempt claim: each call
 	// consumes one, and the claim is refused once the budget is spent or the
 	// episode is already delivered. Backoff is not simulated — the fake is for
@@ -146,6 +147,25 @@ func (f *fakeStore) RecordDispatchBackpressure(_ context.Context, runID, taskID 
 
 func (f *fakeStore) FailDispatchExhausted(_ context.Context, runID, taskID, _ string) error {
 	f.dispatchExhausted = append(f.dispatchExhausted, taskID)
+	return nil
+}
+
+// FailDispatchRefused mirrors the SQL: the task fails and its retry budget is
+// spent (max_tries drops to the current try), so the planner never retries it.
+func (f *fakeStore) FailDispatchRefused(_ context.Context, runID, taskID, _ string) error {
+	f.dispatchRefused = append(f.dispatchRefused, taskID)
+	for i := range f.runs {
+		r := &f.runs[i]
+		if r.RunID != runID {
+			continue
+		}
+		if r.States != nil {
+			r.States[taskID] = domain.TaskStateFailed
+		}
+		if r.MaxTries != nil && r.Tries != nil && r.MaxTries[taskID] > r.Tries[taskID] {
+			r.MaxTries[taskID] = r.Tries[taskID]
+		}
+	}
 	return nil
 }
 
