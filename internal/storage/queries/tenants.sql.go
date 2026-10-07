@@ -56,7 +56,7 @@ func (q *Queries) CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (in
 }
 
 const getTenantLimits = `-- name: GetTenantLimits :one
-SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds
+SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots
 FROM tenants
 WHERE id = $1
 `
@@ -65,12 +65,18 @@ type GetTenantLimitsRow struct {
 	MaxDags                    int32 `json:"max_dags"`
 	MaxRunsPerDay              int32 `json:"max_runs_per_day"`
 	MinScheduleIntervalSeconds int32 `json:"min_schedule_interval_seconds"`
+	MaxTaskPoolSlots           int32 `json:"max_task_pool_slots"`
 }
 
 func (q *Queries) GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error) {
 	row := q.db.QueryRow(ctx, getTenantLimits, id)
 	var i GetTenantLimitsRow
-	err := row.Scan(&i.MaxDags, &i.MaxRunsPerDay, &i.MinScheduleIntervalSeconds)
+	err := row.Scan(
+		&i.MaxDags,
+		&i.MaxRunsPerDay,
+		&i.MinScheduleIntervalSeconds,
+		&i.MaxTaskPoolSlots,
+	)
 	return i, err
 }
 
@@ -185,24 +191,27 @@ UPDATE tenants
 SET max_dags = COALESCE($1::int, max_dags),
     max_runs_per_day = COALESCE($2::int, max_runs_per_day),
     min_schedule_interval_seconds = COALESCE($3::int, min_schedule_interval_seconds),
+    max_task_pool_slots = COALESCE($4::int, max_task_pool_slots),
     updated_at = now()
-WHERE id = $4::uuid
+WHERE id = $5::uuid
 `
 
 type UpdateTenantLimitsParams struct {
 	MaxDags                    *int32      `json:"max_dags"`
 	MaxRunsPerDay              *int32      `json:"max_runs_per_day"`
 	MinScheduleIntervalSeconds *int32      `json:"min_schedule_interval_seconds"`
+	MaxTaskPoolSlots           *int32      `json:"max_task_pool_slots"`
 	TenantID                   pgtype.UUID `json:"tenant_id"`
 }
 
 // Sets the limits given and keeps the others: a NULL argument leaves that
-// column as it is, 0 makes the limit unlimited (migration 040).
+// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
 func (q *Queries) UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error {
 	_, err := q.db.Exec(ctx, updateTenantLimits,
 		arg.MaxDags,
 		arg.MaxRunsPerDay,
 		arg.MinScheduleIntervalSeconds,
+		arg.MaxTaskPoolSlots,
 		arg.TenantID,
 	)
 	return err

@@ -33,6 +33,7 @@ func loadTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID) 
 		MaxDags:                    int(row.MaxDags),
 		MaxRunsPerDay:              int(row.MaxRunsPerDay),
 		MinScheduleIntervalSeconds: int(row.MinScheduleIntervalSeconds),
+		MaxTaskPoolSlots:           int(row.MaxTaskPoolSlots),
 	}, nil
 }
 
@@ -50,6 +51,7 @@ func applyTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID,
 		{"max_dags", u.MaxDags},
 		{"max_runs_per_day", u.MaxRunsPerDay},
 		{"min_schedule_interval_seconds", u.MinScheduleIntervalSeconds},
+		{"max_task_pool_slots", u.MaxTaskPoolSlots},
 	} {
 		if l.value != nil && (*l.value < 0 || *l.value > math.MaxInt32) {
 			return domain.Safef(domain.ErrValidation,
@@ -61,6 +63,7 @@ func applyTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID,
 		MaxDags:                    int32Ptr(u.MaxDags),
 		MaxRunsPerDay:              int32Ptr(u.MaxRunsPerDay),
 		MinScheduleIntervalSeconds: int32Ptr(u.MinScheduleIntervalSeconds),
+		MaxTaskPoolSlots:           int32Ptr(u.MaxTaskPoolSlots),
 	}); err != nil {
 		return fmt.Errorf("setting tenant limits: %w", err)
 	}
@@ -77,7 +80,8 @@ func int32Ptr(n *int) *int32 {
 
 // checkRegistrationLimits refuses a DAG version the tenant's limits do not
 // allow: a schedule that fires more often than min_schedule_interval_seconds,
-// or a DAG the tenant does not have yet once it holds max_dags of them. A new
+// a task whose pool_slots is above max_task_pool_slots, or a DAG the tenant
+// does not have yet once it holds max_dags of them. A new
 // version of a DAG the tenant already has never counts against max_dags.
 //
 // The DAG count is read, not locked, like the max_active_runs check in
@@ -90,6 +94,9 @@ func checkRegistrationLimits(ctx context.Context, q *queries.Queries, tid pgtype
 	}
 	if serr := checkScheduleInterval(spec, limits.MinScheduleIntervalSeconds); serr != nil {
 		return serr
+	}
+	if terr := checkTaskPoolSlots(spec, limits.MaxTaskPoolSlots); terr != nil {
+		return terr
 	}
 	if limits.MaxDags <= 0 {
 		return nil
@@ -106,6 +113,22 @@ func checkRegistrationLimits(ctx context.Context, q *queries.Queries, tid pgtype
 	if n >= int64(limits.MaxDags) {
 		return domain.Safef(domain.ErrLimitExceeded,
 			"dag %q cannot be registered: the tenant has %d DAGs and its limit max_dags of %d is reached", spec.DagID, n, limits.MaxDags)
+	}
+	return nil
+}
+
+// checkTaskPoolSlots refuses a DAG with a task larger than maxSlots, naming
+// the task and both numbers (ADR 0066 §5). 0 is unlimited.
+func checkTaskPoolSlots(spec domain.DAGSpec, maxSlots int) error {
+	if maxSlots <= 0 {
+		return nil
+	}
+	for _, t := range spec.Tasks {
+		if slots := t.EffectivePoolSlots(); slots > maxSlots {
+			return domain.Safef(domain.ErrLimitExceeded,
+				"dag %q cannot be registered: task %q is size %d (pool_slots), above the tenant limit max_task_pool_slots of %d",
+				spec.DagID, t.TaskID, slots, maxSlots)
+		}
 	}
 	return nil
 }
