@@ -330,6 +330,11 @@ spec:
               value: {{ .ctx.Values.config.scheduler.enabled | quote }}
             - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
               value: {{ .ctx.Values.config.scheduler.loopIntervalMs | quote }}
+            {{- with .ctx.Values.config.scheduler.poolStarvationThreshold }}
+            # Pool reservation for a starved large task (ADR 0066).
+            - name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .ctx.Values.config.scheduler.dispatch }}
             {{- if .bufferSize }}
             # Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create

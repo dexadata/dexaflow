@@ -190,7 +190,7 @@ func TestStepNeverReservesForATaskLargerThanItsPool(t *testing.T) {
 	}
 }
 
-// TestStepDropsAReservationWhoseTaskLeftScheduled: a cancelled or skipped
+// TestStepDropsAReservationWhoseTaskLeftScheduled: a canceled or skipped
 // reserving task releases the pool on the next tick.
 func TestStepDropsAReservationWhoseTaskLeftScheduled(t *testing.T) {
 	// Arrange
