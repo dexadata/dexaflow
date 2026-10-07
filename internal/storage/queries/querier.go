@@ -498,6 +498,14 @@ type Querier interface {
 	// listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
 	// computed for a superseded attempt never fails its replacement.
 	MarkTaskAgentLost(ctx context.Context, arg MarkTaskAgentLostParams) (int64, error)
+	// Fails a TI whose agent went silent after the attempt outlived
+	// auth.max_attempt_credential_lifetime (#1461). Renewal stops at the ceiling,
+	// so the silence is the credential lapsing, not a lost agent: this is a TASK
+	// failure (last_failure_kind NULL, the retry policy applies), never an infra
+	// mark the planner would re-place with a fresh credential. Same guards as
+	// MarkTaskAgentLost: state='running' (a late report wins) and the listed
+	// attempt, (try_number, attempt_epoch) (ADR 0051 amendment).
+	MarkTaskCredentialCeiling(ctx context.Context, arg MarkTaskCredentialCeilingParams) (int64, error)
 	// Fails a TI whose asynchronous dispatch (BufferedDispatcher worker) errored
 	// inside the inner dispatcher. Targets the active row by (dag_run_id,
 	// task_id) and the active states (scheduled/queued) — a TI that already

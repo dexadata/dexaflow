@@ -144,6 +144,11 @@ func (f *epochRecordingHeartbeatStore) MarkTaskAgentLost(_ context.Context, _ st
 	return true, nil
 }
 
+func (f *epochRecordingHeartbeatStore) MarkTaskCredentialCeiling(_ context.Context, _ string, try, epoch int) (bool, error) {
+	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
+	return true, nil
+}
+
 // TestAgentLostReaperMarksAndTearsDownTheCandidateEpoch: the reaper marks
 // exactly the attempt it listed (so a candidate that went stale between list
 // and mark cannot fail its replacement) and deletes only that attempt's pod.
