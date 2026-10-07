@@ -50,10 +50,11 @@ func validateParamSpec(name string, schema, def []byte) error {
 		return fmt.Errorf("param %q: parsing schema: %w", name, err)
 	}
 	c := NewTenantSchemaCompiler()
-	if aerr := c.AddResource("param.json", doc); aerr != nil {
+	loc := TenantSchemaURL("param.json")
+	if aerr := c.AddResource(loc, doc); aerr != nil {
 		return fmt.Errorf("param %q: loading schema: %w", name, aerr)
 	}
-	compiled, cerr := c.Compile("param.json")
+	compiled, cerr := c.Compile(loc)
 	if cerr != nil {
 		return fmt.Errorf("param %q: invalid schema: %w", name, cerr)
 	}
