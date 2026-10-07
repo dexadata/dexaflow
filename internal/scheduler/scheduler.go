@@ -143,9 +143,10 @@ type RunState struct {
 	// deadlock). The Step loop sets it from the once-per-tick PoolBudgets snapshot;
 	// nil in Lite. Shared read-only across sibling runs.
 	PoolBudgets map[string]int
-	// PoolActive is the cross-DAG count of currently non-terminal (queued+running)
-	// task instances per pool, keyed like PoolBudgets, plus any this tick already
-	// admitted into the same pool by earlier runs. PlanRun adds its own within-call
+	// PoolActive is the cross-DAG number of slots held by currently non-terminal
+	// (queued+running) task instances per pool (each takes its pool_slots, ADR
+	// 0066), keyed like PoolBudgets, plus any this tick already admitted into the
+	// same pool by earlier runs. PlanRun adds its own within-call
 	// promotions on top. The Step loop sets it and folds each run's admissions back
 	// in so a single tick cannot breach a pool across runs; nil in Lite.
 	PoolActive map[string]int
@@ -663,9 +664,9 @@ func (s *Scheduler) loadPoolBudget(ctx context.Context, runs []RunState) (budget
 	return budgets, activePoolCounts(runs, budgets, s.confineUndefinedPools), nil
 }
 
-// activePoolCounts tallies, per pool (keyed by PoolKey), the task instances that
-// already occupy a slot — those queued or running across every active run,
-// cross-DAG (ADR 0053 Stage 3). A task instance's pool is its spec pool, or the
+// activePoolCounts tallies, per pool (keyed by PoolKey), the slots already
+// occupied: the pool_slots of every task instance queued or running across
+// every active run, cross-DAG (ADR 0053 Stage 3, weighted by ADR 0066). A task instance's pool is its spec pool, or the
 // implicit default pool. Reuses the runs Step already loaded, so it adds no
 // per-tick query. Only built on the Pro path (see loadPoolBudget). With confine
 // set, an undefined pool is charged to default_pool, the same pool admission
@@ -675,7 +676,7 @@ func activePoolCounts(runs []RunState, budgets map[string]int, confine bool) map
 	for i := range runs {
 		for _, t := range runs[i].Tasks {
 			if st := runs[i].States[t.TaskID]; st == domain.TaskStateQueued || st == domain.TaskStateRunning {
-				counts[effectivePoolKey(runs[i].TenantID, t.Pool, budgets, confine)]++
+				counts[effectivePoolKey(runs[i].TenantID, t.Pool, budgets, confine)] += t.EffectivePoolSlots()
 			}
 		}
 	}
@@ -846,8 +847,8 @@ func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logi
 
 // advance plans and applies one run's transitions, returning how many tasks it
 // promoted to queued this tick (the per-DAG max_active_tasks charge, ADR 0053
-// Stage 1) and the per-pool breakdown of those promotions (the cross-DAG pool
-// charge, Stage 3; nil when the pool gate is off). The caller folds both into
+// Stage 1) and the per-pool slots those promotions take (the cross-DAG pool
+// charge, Stage 3, weighted by ADR 0066; nil when the pool gate is off). The caller folds both into
 // the sibling runs' budgets so a single tick cannot breach either cap.
 func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, admittedByPool map[string]int, err error) {
 	// Materialize task instances on first sight of a queued run, then start it.
@@ -863,7 +864,7 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, ad
 	// Resolve the task index once so planning and every dispatch below share it;
 	// a run without the store's prebuilt graph gets one built here.
 	run.Graph = run.taskGraph()
-	poolOf := taskPools(run) // taskID → pool key; nil when the pool gate is off.
+	poolOf := taskPools(run) // taskID → pool charge; nil when the pool gate is off.
 	// Plain state-set transitions (no side effect beyond the write + metric) are
 	// collected and flushed grouped by target state in one UPDATE each, instead of
 	// one per task. The queued (dispatch) and none (guarded reset) rails keep their
@@ -879,7 +880,8 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, ad
 				if admittedByPool == nil {
 					admittedByPool = map[string]int{}
 				}
-				admittedByPool[poolOf[t.TaskID]]++
+				c := poolOf[t.TaskID]
+				admittedByPool[c.key] += c.slots
 			}
 		}
 		if aerr := s.applyPlanned(ctx, run, t, batch); aerr != nil {
@@ -898,16 +900,27 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (admitted int, ad
 	return admitted, admittedByPool, nil
 }
 
-// taskPools maps each of a run's task IDs to its pool budget key (ADR 0053 Stage
-// 3), applying the implicit-default-pool fallback. It returns nil when the pool
-// gate is off (Lite / non-Pro), so advance does no per-pool bookkeeping there.
-func taskPools(run RunState) map[string]string {
+// poolCharge is what admitting one task costs its pool: the pool's budget key
+// and the task's slots (ADR 0066).
+type poolCharge struct {
+	key   string
+	slots int
+}
+
+// taskPools maps each of a run's task IDs to its pool charge (ADR 0053 Stage
+// 3, weighted by ADR 0066), applying the implicit-default-pool fallback. It
+// returns nil when the pool gate is off (Lite / non-Pro), so advance does no
+// per-pool bookkeeping there.
+func taskPools(run RunState) map[string]poolCharge {
 	if !run.PoolsEnabled {
 		return nil
 	}
-	m := make(map[string]string, len(run.Tasks))
+	m := make(map[string]poolCharge, len(run.Tasks))
 	for _, t := range run.Tasks {
-		m[t.TaskID] = effectivePoolKey(run.TenantID, t.Pool, run.PoolBudgets, run.ConfineUndefinedPools)
+		m[t.TaskID] = poolCharge{
+			key:   effectivePoolKey(run.TenantID, t.Pool, run.PoolBudgets, run.ConfineUndefinedPools),
+			slots: t.EffectivePoolSlots(),
+		}
 	}
 	return m
 }

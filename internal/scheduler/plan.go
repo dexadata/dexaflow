@@ -50,8 +50,9 @@ func PlanRun(run RunState) []PlannedTransition {
 	// path, the cross-DAG named-pool slot gate (Stage 3). headroom is the
 	// remaining max_active_tasks budget this tick (math.MaxInt when unset, so that
 	// gate is a no-op); promoted tracks what we spend against it. poolPromoted
-	// tracks per-pool promotions this call so several ready tasks in one pool
-	// cannot together overshoot the pool's free slots. Both gates only ever leave
+	// tracks the slots promoted per pool this call (ADR 0066: a task takes its
+	// pool_slots) so several ready tasks in one pool cannot together overshoot
+	// the pool's free slots. Both gates only ever leave
 	// a task parked (scheduled), the same "downstream waits" discipline the retry
 	// and reschedule rails use.
 	headroom := admissionHeadroom(run)
@@ -79,8 +80,8 @@ func PlanRun(run RunState) []PlannedTransition {
 				continue // DAG at max_active_tasks — park until a sibling frees a slot.
 			}
 			pk := poolKeyFor(run, t)
-			if !poolHasSlot(run, pk, poolPromoted) {
-				continue // pool at capacity — park until a slot frees anywhere in the pool.
+			if !poolHasSlot(run, pk, t.EffectivePoolSlots(), poolPromoted) {
+				continue // task does not fit the pool's free slots; park until enough free up.
 			}
 			out = append(out, PlannedTransition{TaskID: t.TaskID, To: domain.TaskStateQueued})
 			promoted++
@@ -88,7 +89,7 @@ func PlanRun(run RunState) []PlannedTransition {
 				if poolPromoted == nil {
 					poolPromoted = map[string]int{}
 				}
-				poolPromoted[pk]++
+				poolPromoted[pk] += t.EffectivePoolSlots()
 			}
 		default:
 			// queued/running/terminal/up_for_retry: nothing to plan here.
@@ -158,12 +159,14 @@ func effectivePoolKey(tenantID, pool string, budgets map[string]int, confine boo
 	return key
 }
 
-// poolHasSlot reports whether the task's pool has a free slot this tick: the
-// pool's cap minus its cross-DAG active occupancy (PoolActive) minus what this
-// run already promoted into the pool this call (promotedByPool). A disabled gate
-// (key ""), or a pool with a non-positive or absent budget (unset/undefined),
-// is unlimited — fail open, never deadlock a DAG on a misconfigured pool.
-func poolHasSlot(run RunState, poolKey string, promotedByPool map[string]int) bool {
+// poolHasSlot reports whether a task taking slots slots fits its pool this
+// tick: its cross-DAG active occupancy (PoolActive) plus what this run already
+// promoted into the pool this call (promotedByPool) plus the task's own slots
+// must not exceed the pool's cap (ADR 0066). Occupancy and promotions are
+// counted in slots, not tasks. A disabled gate (key ""), or a pool with a
+// non-positive or absent budget (unset/undefined), is unlimited: fail open,
+// never deadlock a DAG on a misconfigured pool.
+func poolHasSlot(run RunState, poolKey string, slots int, promotedByPool map[string]int) bool {
 	if poolKey == "" {
 		return true
 	}
@@ -171,7 +174,7 @@ func poolHasSlot(run RunState, poolKey string, promotedByPool map[string]int) bo
 	if budget <= 0 {
 		return true
 	}
-	return run.PoolActive[poolKey]+promotedByPool[poolKey] < budget
+	return run.PoolActive[poolKey]+promotedByPool[poolKey]+slots <= budget
 }
 
 // admissionHeadroom returns how many more of this DAG's scheduled tasks PlanRun

@@ -167,7 +167,12 @@ type TaskSpec struct {
 	// (the default) means the implicit default_pool, so every task is always in a
 	// well-defined pool. The pool gate is Pro-only; Lite ignores this field, so a
 	// DAG that sets it plans identically on Lite.
-	Pool                    string            `json:"pool,omitempty"`
+	Pool string `json:"pool,omitempty"`
+	// PoolSlots is how many slots of its pool the task takes while it is queued
+	// or running (Airflow's pool_slots, ADR 0066). Zero means 1, so a DAG that
+	// never sets it weighs exactly what it did before. dexaflow.yaml sets it as
+	// `size`. Ignored where Pool is (Lite).
+	PoolSlots               int               `json:"pool_slots,omitempty"`
 	Retries                 *int              `json:"retries,omitempty"`
 	RetryDelaySeconds       *int              `json:"retry_delay_seconds,omitempty"`
 	ExecutionTimeoutSeconds *int              `json:"execution_timeout_seconds,omitempty"`
@@ -280,6 +285,15 @@ func (t TaskSpec) EffectiveExecutionMode() ExecutionMode {
 		return t.ExecutionMode
 	}
 	return ExecutionModePod
+}
+
+// EffectivePoolSlots is the number of pool slots the task takes: its
+// PoolSlots, or 1 when unset (ADR 0066).
+func (t TaskSpec) EffectivePoolSlots() int {
+	if t.PoolSlots < 1 {
+		return 1
+	}
+	return t.PoolSlots
 }
 
 // Validate checks the DAGSpec against the canonical dag.json schema and
