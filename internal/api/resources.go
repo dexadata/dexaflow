@@ -509,10 +509,11 @@ func validateParamValue(schema, value json.RawMessage) error {
 		return fmt.Errorf("parsing schema: %w", err)
 	}
 	comp := domain.NewTenantSchemaCompiler()
-	if aerr := comp.AddResource("param_schema.json", doc); aerr != nil {
+	loc := domain.TenantSchemaURL("param_schema.json")
+	if aerr := comp.AddResource(loc, doc); aerr != nil {
 		return fmt.Errorf("loading schema: %w", aerr)
 	}
-	compiled, err := comp.Compile("param_schema.json")
+	compiled, err := comp.Compile(loc)
 	if err != nil {
 		return fmt.Errorf("compiling schema: %w", err)
 	}
