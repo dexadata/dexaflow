@@ -45,9 +45,10 @@ type AgentLostCandidate struct {
 	// list and the write is a different attempt and is left alone.
 	AttemptEpoch int
 	// StartedAt is when the attempt entered running (zero when unknown). The
-	// reaper compares it to auth.max_attempt_credential_lifetime: an attempt
-	// older than the ceiling stopped getting its credential renewed, so its
-	// silence is the credential lapsing, not a lost agent (#1461).
+	// reaper measures LastHeartbeat from it against
+	// auth.max_attempt_credential_lifetime: an attempt that went silent past the
+	// ceiling stopped getting its credential renewed, so its silence is the
+	// credential lapsing, not a lost agent (#1461).
 	StartedAt     time.Time
 	LastHeartbeat time.Time
 }
@@ -70,19 +71,39 @@ func IsAgentLost(c AgentLostCandidate, threshold time.Duration, now time.Time) b
 	return now.Sub(c.LastHeartbeat) >= threshold
 }
 
-// OutlivedCredentialCeiling reports whether the candidate attempt has been
-// running for longer than the credential ceiling
+// credentialCeilingSlack is how far before the credential ceiling an attempt's
+// last heartbeat may fall and still be the credential lapsing: two agent
+// heartbeat intervals (agent.DefaultHeartbeatInterval, a build-time constant).
+// The control plane renews on every heartbeat while the attempt is younger than
+// the ceiling, measured from the token's dispatch origin, so the last renewal
+// lands at most one interval before the ceiling. The token it mints lives one
+// attempt token TTL more, and the agent keeps heartbeating on it until the
+// last beat before it runs out, which is at most one interval before its
+// expiry. The origin is at most one TTL before the running transition, since
+// the agent reports running with its first token. So when the credential
+// lapses, the last heartbeat is never earlier than the ceiling less two
+// intervals after the running transition.
+const credentialCeilingSlack = 30 * time.Second
+
+// OutlivedCredentialCeiling reports whether the candidate attempt went silent
+// because its credential lapsed at the ceiling
 // (auth.max_attempt_credential_lifetime). Past it the control plane refuses to
 // renew the attempt's credential, so a silent agent there is the credential
 // lapsing as designed and the attempt fails as a task failure instead of being
-// re-placed as an infra loss with a fresh credential (#1461). A non-positive
-// ceiling is the operator's "no ceiling" and never matches; neither does an
-// attempt with no recorded start.
-func OutlivedCredentialCeiling(c AgentLostCandidate, ceiling time.Duration, now time.Time) bool {
-	if ceiling <= 0 || c.StartedAt.IsZero() {
+// re-placed as an infra loss with a fresh credential (#1461).
+//
+// It judges when the attempt went silent, its last heartbeat measured from its
+// running transition, never the reap time: an agent lost shortly before the
+// ceiling is reaped after it, and its credential never lapsed, so it stays
+// agent_lost. A lapse has a last heartbeat later than the ceiling less
+// credentialCeilingSlack. A non-positive ceiling is the operator's "no ceiling"
+// and never matches; neither does an attempt with no recorded start or
+// heartbeat.
+func OutlivedCredentialCeiling(c AgentLostCandidate, ceiling time.Duration) bool {
+	if ceiling <= 0 || c.StartedAt.IsZero() || c.LastHeartbeat.IsZero() {
 		return false
 	}
-	return now.Sub(c.StartedAt) > ceiling
+	return c.LastHeartbeat.Sub(c.StartedAt) > ceiling-credentialCeilingSlack
 }
 
 // HeartbeatReapStore is the slice of scheduler.Store the TI heartbeat reaper
@@ -136,9 +157,9 @@ type agentLostReaper struct {
 	running runningLister
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
-	// ceiling is auth.max_attempt_credential_lifetime. A silent attempt older
-	// than it is failed for the credential ceiling, not as agent_lost (see
-	// OutlivedCredentialCeiling). Zero or negative disables the distinction.
+	// ceiling is auth.max_attempt_credential_lifetime. An attempt that went
+	// silent past it is failed for the credential ceiling, not as agent_lost
+	// (see OutlivedCredentialCeiling). Zero or negative disables the distinction.
 	ceiling time.Duration
 }
 
@@ -249,7 +270,7 @@ func (r *agentLostReaper) reapNeverHeartbeated(ctx context.Context, c PodLostCan
 
 // reapOne fails one silent TI, writes its log marker and tears down its pod,
 // re-checking the destructive gate immediately before each write. An attempt
-// that outlived the credential ceiling is failed for that reason, as a task
+// that went silent past the credential ceiling is failed for that reason, as a task
 // failure, instead of as agent_lost (#1461); everything else about the reap,
 // the gate, the attempt pin, the marker and the teardown, is the same.
 func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now time.Time) {
@@ -257,7 +278,7 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 		r.record("agent_lost_gate_skip")
 		return
 	}
-	pastCeiling := OutlivedCredentialCeiling(c, r.ceiling, now)
+	pastCeiling := OutlivedCredentialCeiling(c, r.ceiling)
 	mark := r.store.MarkTaskAgentLost
 	if pastCeiling {
 		mark = r.store.MarkTaskCredentialCeiling

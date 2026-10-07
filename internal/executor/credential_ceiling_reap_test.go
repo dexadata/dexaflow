@@ -26,7 +26,7 @@ func TestOutlivedCredentialCeiling(t *testing.T) {
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	const ceiling = time.Hour
 	started := now.Add(-2 * time.Hour)
-	slack := 2 * agent.DefaultHeartbeatInterval
+	slack := credentialCeilingSlack
 	tests := []struct {
 		name    string
 		started time.Time
@@ -48,11 +48,19 @@ func TestOutlivedCredentialCeiling(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			c := AgentLostCandidate{StartedAt: tc.started, LastHeartbeat: tc.lastHB}
-			if got := OutlivedCredentialCeiling(c, tc.ceiling, now); got != tc.want {
+			if got := OutlivedCredentialCeiling(c, tc.ceiling); got != tc.want {
 				t.Errorf("OutlivedCredentialCeiling(started=%v, last heartbeat=%v, ceiling=%v) = %v, want %v",
 					tc.started, tc.lastHB, tc.ceiling, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestCredentialCeilingSlackIsTwoHeartbeats: the slack follows the agent's
+// heartbeat interval, so a change there moves it too.
+func TestCredentialCeilingSlackIsTwoHeartbeats(t *testing.T) {
+	if want := 2 * agent.DefaultHeartbeatInterval; credentialCeilingSlack != want {
+		t.Errorf("credentialCeilingSlack = %v, want two heartbeat intervals (%v)", credentialCeilingSlack, want)
 	}
 }
 

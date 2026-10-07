@@ -386,11 +386,16 @@ attempt's credential, the last renewed token runs out one attempt token TTL
 (10 min) later, and the agent's heartbeats stop. On Kubernetes the pod
 `activeDeadlineSeconds` floor or the warm-pool attempt watchdog usually ends
 the attempt at the ceiling itself, and its heartbeats stop the same way. The
-heartbeat reaper then sees a silent attempt. If that attempt has been
-`running` for longer than the ceiling, the reaper fails it with
+heartbeat reaper then sees a silent attempt. If the attempt went silent past
+the ceiling, that is, its last heartbeat came after it had been `running` for
+the ceiling less two heartbeat intervals (30 s), the reaper fails it with
 `credential_ceiling: attempt outlived auth.max_attempt_credential_lifetime`
-instead of `agent_lost`. It is a **task failure**: the task's retry policy
-decides what happens next, exactly as for a task that exited non-zero. It is
+instead of `agent_lost`. The two intervals cover the last renewal, which can
+land up to one interval before the ceiling. The pod deadline counts from pod
+start, before `running`, so an attempt it ends is normally settled as a task
+failure by the pod reconciler, which reads the failed pod, before the reaper
+looks at it. A `credential_ceiling` failure is a **task failure**: the task's
+retry policy decides what happens next, exactly as for a task that exited non-zero. It is
 not an infra mark, so the planner does not re-place it with a new epoch and a
 fresh credential, it is never provisional, and a durable SUCCESS record does
 not override it.
@@ -400,11 +405,12 @@ off the retry budget, a task longer than the ceiling plus the token TTL was
 re-run from the start each time instead of failing
 ([#1461](https://github.com/dexadata/dexaflow/issues/1461)). An attempt that
 finishes before the ceiling plus the token TTL is unaffected, and an attempt
-that goes silent before it reaches the ceiling is still `agent_lost`. The
-reaper reads the attempt's age from its `running` transition and applies the
-check only at reap time, so the settling gate, the destructive gate, the
-attempt pin and the pod teardown are the same as for `agent_lost`. A
-non-positive ceiling disables the check along with the rest of the ceiling.
+that goes silent before it reaches the ceiling is still `agent_lost`, even
+when the reaper only gets to it after the ceiling: a node that dies at minute
+59 of a 60 minute ceiling is re-placed as a lost agent. The reaper judges by
+the attempt's last heartbeat measured from its `running` transition, not by
+the time of the reap. The settling gate, the destructive gate, the attempt pin
+and the pod teardown are the same as for `agent_lost`. A non-positive ceiling disables the check along with the rest of the ceiling.
 In Lite the reaper still waits for the attempt's agent and task processes to
 exit before it fails the attempt, as it does for `agent_lost`.
 
