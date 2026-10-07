@@ -162,8 +162,7 @@ docker compose --profile demo up --build
 ### Set up for development
 
 ```bash
-# Optional, for Claude Code users (the file is gitignored):
-cp .github/CLAUDE.md.template ./CLAUDE.md
+# Read AGENTS.md first: the standing rules for PRs, releases and CI.
 
 make setup        # Go tools, Python parser/runtime, pre-commit hook
 make build        # build bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent (plus leoflow* links)
