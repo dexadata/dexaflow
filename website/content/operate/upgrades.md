@@ -214,11 +214,11 @@ directly, expect both names.
 
 ### What the 0.5.1 migrations do
 
-0.5.0 left the schema at migration 026. 0.5.1 applies 027 to 040. Nine of them change indexes or the page
-layout of `task_instances`, which is what makes this upgrade different from
-the column additions earlier releases shipped: eight are `CREATE INDEX
-CONCURRENTLY` or `DROP INDEX CONCURRENTLY` statements and one changes the
-table's `fillfactor`.
+0.5.0 left the schema at migration 026. 0.5.1 applies 027 to 040. Nine of
+them change indexes or the page layout of `task_instances`, which is what makes
+this upgrade different from the column additions earlier releases shipped:
+eight are `CREATE INDEX CONCURRENTLY` or `DROP INDEX CONCURRENTLY` statements
+and one changes the table's `fillfactor`.
 
 | Migration | What it does | Shape |
 |---|---|---|
@@ -553,8 +553,9 @@ section). These changes are not, and an operator sees them on upgrade:
 - **The chart opens fewer idle Postgres connections** (#1426): the chart's
   `database.maxIdleConns` default drops from 5 to 2, which is what each pod
   opens at boot, so two replicas fit a small managed Postgres; the
-  `database.maxOpenConns` ceiling stays at 20. `helm install` and `helm
-  upgrade` print the estimated boot and peak connection demand in their notes.
+  `database.maxOpenConns` ceiling stays at 20. When the estimated boot or peak
+  connection demand passes 20, `helm install` and `helm upgrade` print it in
+  their notes; a default single replica install prints nothing.
   If you pinned `database.maxIdleConns` yourself, your value is kept. See
   [Troubleshooting](/operate/troubleshooting/) for SQLSTATE 53300.
 - **Python 3.10 and 3.11 task images ship a newer setuptools** (#1410): 80.10.2
