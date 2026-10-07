@@ -27,7 +27,7 @@
 # listed with its reason in .github/docs-skip.txt ON THE BASE BRANCH, so the
 # decision is reviewed in a pull request to that branch:
 #
-#   #1352 documented in #1470 (API reference, pagination)
+#   #1352 documented in #1477 (API reference, pagination)
 #   0123abcd internal only, the fragment kind is wrong
 #
 # The first field is a pull request number (#N) or a commit sha prefix of at

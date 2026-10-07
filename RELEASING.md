@@ -53,7 +53,7 @@ the model Kubernetes uses:
   cherry-pick, the original PR on `main`) carries the `skip-docs` label and a
   `Skip-docs: <reason>` line in its description, or when
   `.github/docs-skip.txt` on the branch being cut lists it (`#N reason` or
-  `<sha> reason`, for example `#1352 documented in #1470`). The cut runs it
+  `<sha> reason`, for example `#1352 documented in #1477`). The cut runs it
   for every rc and GA and refuses while the list is not empty. The docs guard
   applies the same rule to each PR when it is opened, so the list is normally
   empty; it catches what the per-PR check could not, such as a skip with no
