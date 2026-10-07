@@ -55,6 +55,10 @@ type Metrics struct {
 	DispatchAtCapacity  prometheus.Counter
 	DispatchLatency     prometheus.Histogram
 	DispatchInnerErrors prometheus.Counter
+	// UnitMisfits counts tasks let through under executor.unit.enforce=warn
+	// although they do not fit their size, by stage (register, dispatch;
+	// ADR 0066 §3).
+	UnitMisfits *prometheus.CounterVec
 
 	// Redis observability — port of the #311 step-down pattern for Redis (Pro
 	// only; Lite uses Postgres + in-process tailer per ADR 0026, so these
@@ -180,6 +184,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		DispatchInnerErrors: f.NewCounter(prometheus.CounterOpts{
 			Name: "dexaflow_dispatch_inner_errors_total", Help: "Errors returned by the inner dispatcher inside a worker.",
 		}),
+		UnitMisfits: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_unit_misfit_total",
+			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, dispatch).",
+		}, []string{"stage"}),
 
 		RedisCommandFailures: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_redis_command_failures_total",
@@ -327,3 +335,8 @@ func (m *Metrics) RecordInfraOverride(mark string) {
 // RecordDispatchInnerError counts one error returned by the inner dispatcher
 // inside a worker — typically a Kubernetes API failure or pod-create rejection.
 func (m *Metrics) RecordDispatchInnerError() { m.DispatchInnerErrors.Inc() }
+
+// RecordUnitMisfit counts one task let through under executor.unit.enforce=warn
+// although it does not fit its size. It satisfies dispatch.UnitMisfitRecorder
+// and api.UnitMisfitRecorder.
+func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues(stage).Inc() }

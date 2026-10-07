@@ -38,6 +38,13 @@ const (
 	// records nothing: no backoff, no dispatch-attempt increment, no
 	// dispatch_failed. It is local backpressure, not a failed dispatch.
 	Deferred
+	// Refused is a permanent "this task may not run here" decided before the
+	// runtime is called, such as a task larger than its size under an operator
+	// resource unit (ADR 0066 §3). A retry cannot change the verdict, so the
+	// scheduler fails the task on the first attempt, with the message as its
+	// reason, and spends no dispatch retries on it. Unlike Rejected, which also
+	// covers errors that clear on retry, Refused is never retried.
+	Refused
 )
 
 // String renders the disposition for logs and error notes.
@@ -51,6 +58,8 @@ func (d Disposition) String() string {
 		return "rejected"
 	case Deferred:
 		return "deferred"
+	case Refused:
+		return "refused"
 	default:
 		return "unknown"
 	}

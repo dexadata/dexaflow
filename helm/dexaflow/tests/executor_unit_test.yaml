@@ -1,0 +1,80 @@
+suite: executor resource unit (executor.unit, ADR 0066)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: renders no unit env by default
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_CPU
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_MEMORY
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+          any: true
+
+  - it: executor.unit renders both quantities
+    template: deployment.yaml
+    set:
+      executor.unit.cpu: 250m
+      executor.unit.memory: 512Mi
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_CPU
+            value: 250m
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_MEMORY
+            value: 512Mi
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+            value: refuse
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_MAX_SIZE
+            value: "64"
+
+  - it: executor.unit renders enforce and maxSize overrides
+    template: deployment.yaml
+    set:
+      executor.unit.cpu: 250m
+      executor.unit.memory: 512Mi
+      executor.unit.enforce: warn
+      executor.unit.maxSize: 16
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+            value: warn
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_UNIT_MAX_SIZE
+            value: "16"

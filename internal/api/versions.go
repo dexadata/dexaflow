@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -24,7 +25,40 @@ type versionResponse struct {
 	Created  bool   `json:"created"`
 }
 
-func registerVersionHandler(repo DagVersionRepository) gin.HandlerFunc {
+// UnitMisfitRecorder counts a task that does not fit the resource unit but is
+// let through under executor.unit.enforce=warn, by stage. observability.Metrics
+// satisfies it.
+type UnitMisfitRecorder interface {
+	RecordUnitMisfit(stage string)
+}
+
+// unitGate is what registration needs to apply executor.unit (ADR 0066 §3).
+type unitGate struct {
+	unit    *domain.ResourceUnit
+	misfits UnitMisfitRecorder
+	logger  *slog.Logger
+}
+
+// check returns the refusal for spec, after logging and counting every misfit
+// tolerated under enforce: warn.
+func (g unitGate) check(spec *domain.DAGSpec) error {
+	warned, refused := g.unit.CheckSpec(spec)
+	if refused != nil {
+		return refused
+	}
+	for _, w := range warned {
+		if g.logger != nil {
+			g.logger.Warn("registering a task that does not fit its size under executor.unit.enforce=warn",
+				"dag", logSafe(spec.DagID), "version", logSafe(spec.DagVersion), "error", logSafe(w.Error()))
+		}
+		if g.misfits != nil {
+			g.misfits.RecordUnitMisfit("register")
+		}
+	}
+	return nil
+}
+
+func registerVersionHandler(repo DagVersionRepository, unit unitGate) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var spec domain.DAGSpec
 		if err := c.ShouldBindJSON(&spec); err != nil {
@@ -36,6 +70,10 @@ func registerVersionHandler(repo DagVersionRepository) gin.HandlerFunc {
 			return
 		}
 		if err := spec.Validate(); err != nil {
+			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
+			return
+		}
+		if err := unit.check(&spec); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
 			return
 		}
