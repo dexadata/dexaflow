@@ -18,6 +18,9 @@ type AsyncDispatchStore interface {
 	// until nextAt, adding one dispatch attempt when countAttempt.
 	RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt bool, nextAt time.Time) (bool, error)
 	MarkTaskDispatchFailed(ctx context.Context, runID, taskID, reason string) error
+	// FailDispatchRefused fails a refused task and spends its retry budget, as
+	// on the sync path.
+	FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error
 }
 
 // AsyncDispatchFailures handles a dispatch that failed inside a buffered
@@ -60,7 +63,7 @@ func (a *AsyncDispatchFailures) HandleDispatchFailure(ctx context.Context, runID
 	}
 	if disp == executor.Refused {
 		a.logger.Error("buffered dispatch refused; failing task", "run", runID, "task", taskID, "error", cause)
-		return a.store.MarkTaskDispatchFailed(ctx, runID, taskID, refusedReason(cause))
+		return a.store.FailDispatchRefused(ctx, runID, taskID, refusedReason(cause))
 	}
 	counted := disp != executor.Backpressure
 	if counted && attempts+1 >= dispatchMaxAttempts {

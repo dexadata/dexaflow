@@ -232,6 +232,10 @@ type Store interface {
 	// FailDispatchExhausted fails a scheduled task as dispatch_failed once its
 	// dispatch-attempt budget is spent, so the run finalizes instead of looping.
 	FailDispatchExhausted(ctx context.Context, runID, taskID, reason string) error
+	// FailDispatchRefused fails a task whose dispatch the executor refused (ADR
+	// 0066 section 3) and spends its retry budget: the refusal is permanent, so
+	// the planner must not retry it.
+	FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error
 	SetRunState(ctx context.Context, runID string, state domain.DagRunState) error
 	// ClaimAlertAttempt atomically claims ONE on-failure send attempt, reporting
 	// true iff this call won it. It refuses when the episode was already
@@ -1272,10 +1276,10 @@ func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, tas
 	}
 	if disp == executor.Refused {
 		// A permanent verdict (ADR 0066 §3): retrying cannot change it, so the
-		// task fails now and no dispatch retry is spent.
+		// task fails now and spends neither a dispatch retry nor its own retries.
 		s.logger.Error("dispatch refused; failing task",
 			"run", run.RunID, "task", taskID, "error", cause)
-		if err := s.store.FailDispatchExhausted(ctx, run.RunID, taskID, refusedReason(cause)); err != nil {
+		if err := s.store.FailDispatchRefused(ctx, run.RunID, taskID, refusedReason(cause)); err != nil {
 			s.logger.Error("failing refused task", "run", run.RunID, "task", taskID, "error", err)
 		}
 		return nil

@@ -624,6 +624,22 @@ func (s *SchedulerStore) FailDispatchExhausted(ctx context.Context, runID, taskI
 	})
 }
 
+// FailDispatchRefused fails a task whose dispatch the executor refused (ADR
+// 0066 section 3) and spends its retry budget, so a permanent refusal is not
+// dispatched and refused again once per retry. It serves both the sync path
+// (a scheduled task) and the buffered path (a scheduled or queued one).
+func (s *SchedulerStore) FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return err
+	}
+	return s.q.FailDispatchRefused(ctx, queries.FailDispatchRefusedParams{
+		DagRunID:     rid,
+		TaskID:       taskID,
+		ErrorMessage: &reason,
+	})
+}
+
 // RedispatchReschedule returns a task parked in up_for_reschedule to 'none' for
 // re-dispatch, preserving try_number (reschedule is not a retry; #380).
 func (s *SchedulerStore) RedispatchReschedule(ctx context.Context, runID, taskID string) error {
