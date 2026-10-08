@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-08
+
 ### Added
 
 - **A task can take more than one slot of its pool.** `pool_slots` (Airflow's
