@@ -77,3 +77,4 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0064: Branching and skip: in-pod decision, scheduler-side skip cascade](/project/adrs/0064-branching-and-skip/)
 - [ADR 0065: Lite key migration off the published key](/project/adrs/0065-lite-key-migration/)
 - [ADR 0066: Weighted pool slots and an operator resource unit](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)
+- [ADR 0067: Run control on the MCP, scoped issuer tokens, and Pro source mode](/project/adrs/0067-mcp-run-control-scopes-source-mode/) (proposed)
