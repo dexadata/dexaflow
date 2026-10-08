@@ -418,6 +418,47 @@ Each of these is unprovable in fakes; validate every one before you enable:
 Enable is gated on all of the above passing **and** the two security flips
 (`agent_token_transport=exchange`, `secret_liveness_mode=enforce`) being in place.
 
+## Running on GKE Sandbox (gVisor)
+
+Running warm pools under GKE Sandbox (`runtimeClassName: gvisor`) works, with one thing to know if you also run your own admission policy on the task namespace.
+
+**GKE Sandbox edits gVisor pods at admission, before any ValidatingAdmissionPolicy of yours sees them:**
+
+- `dev.gvisor.internal.seccomp.<container>: RuntimeDefault` on each container that asks for the `RuntimeDefault` seccomp profile. A user-set value, such as `Unconfined`, is rewritten to `RuntimeDefault`.
+- For every `emptyDir` volume, three gVisor mount hints:
+  - `dev.gvisor.spec.mount.<volume>.type: bind`
+  - `dev.gvisor.spec.mount.<volume>.share: container` when one container mounts the volume (a warm worker's `leoflow-tmp`), or `pod` when several do
+  - `dev.gvisor.spec.mount.<volume>.options: rw,rprivate`
+
+**It also refuses some requests itself,** with fixed messages:
+
+- user-set annotations starting with `dev.gvisor.internal.` or `dev.gvisor.spec.mount.` ("user annotations starting with … are not allowed");
+- `hostNetwork`, `hostPID`, `hostIPC`, `hostPath`, `privileged: true` and `allowPrivilegeEscalation: true`.
+
+**If your policy refuses `dev.gvisor.*` annotations** (a sound rule, since runsc reads them as flags), allow exactly the keys and values above, and only for the pod's own `emptyDir` volumes. Otherwise every warm worker is refused. The symptom is ERROR lines `creating warm worker` in the server log carrying your policy's denial, `warm_pool_create_error` rising, and no worker ever registering. Dedicated task pods can keep working meanwhile, because a pod with no `emptyDir` gets no mount hints. Check what your cluster stamps with a server-side dry run of a warm pod in a namespace your policy does not bind, for example `kubectl create --dry-run=server -o json -f warm-pod.json`, and read `.metadata.annotations`.
+
+### Sizing against a pod deadline
+
+If the task namespace caps `activeDeadlineSeconds` on every pod (a mutating policy that enforces a task time limit, for example), the cap applies to warm workers too, so a worker's whole life must fit inside it. The server checks the lifetime only after an attempt ends, so the worst case is:
+
+```text
+maxWorkerLifetime + workerIdleTtl + longest attempt + pod start  <=  activeDeadlineSeconds
+```
+
+The longest attempt is bounded by `auth.max_attempt_credential_lifetime`. With a 2040 s deadline and 30 minute attempts, for instance, `maxWorkerLifetime: 90s` and `workerIdleTtl: 90s` leave 60 s for the pod to start. If the sum exceeds the deadline, the kubelet can kill a warm pod in the middle of an attempt, and the attempt is then recovered as a lost worker.
+
+Short values have a cost: an idle worker exits after `workerIdleTtl` and is replaced on the next reconcile, so attempts of a DAG version that arrive further apart than that land on dedicated pods. Size `workerIdleTtl` against how often each DAG version runs before you expect a high warm-hit rate.
+
+### Checking a real cluster by hand
+
+Fakes cannot show admission, the token exchange or placement on a real cluster, so run this check once on each cluster where you enable warm pools, and again after a cluster, GKE or policy upgrade. [`test/gcp/`](https://github.com/dexadata/dexaflow/tree/main/test/gcp) provisions a throwaway GKE cluster for this (`provision.sh`, then `teardown.sh`), and `warm-pool-ab.sh` measures warm against dedicated latency on it.
+
+1. **Workers are admitted and start.** Give a DAG `min_idle_workers: 1` (or set `minIdleWorkers`) and wait one reconcile. `kubectl -n <task namespace> get pods -l leoflow.io/warm-worker=true -o wide` lists a Running `leoflow-warm-<dag_version>-…` pod on the node pool you expect. If none appears, look for `creating warm worker` ERROR lines in the server log: the apiserver's refusal is in them.
+2. **Workers register with a worker-scoped credential.** The server logs `exchanged projected token for a WORKER-scoped agent JWT` and then `warm worker registered` for the pod.
+3. **Attempts run on the warm worker.** Trigger a run whose task prints its container's UTS hostname, which Kubernetes sets to the pod name: `cat /proc/sys/kernel/hostname`. The task log must show a `leoflow-warm-<that dag_version>-…` name, not a dedicated task pod's. A worker may recycle between your first look and the attempt, so match the DAG version, not one pod name.
+4. **Each worker serves its own tenant.** Its `leoflow.io/dag-version-id` label is a version the tenant's own session lists, and its `leoflow.io/tenant-id` label is that tenant's.
+5. **Nothing is left after the idle TTL.** Once `workerIdleTtl` plus a reconcile has passed with no runs: no warm pod stays in `Succeeded` or `Failed`, and every `leoflow-pool-<dag_version>` anchor ConfigMap (`-l leoflow.io/warm-anchor=true`) belongs to a version that still has a live warm pod or is still active.
+
 ## Configuration reference
 
 Pool knobs live under `execution` in the Helm chart values and map to the
