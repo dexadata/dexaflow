@@ -47,6 +47,7 @@ func TestCheckSourceMode(t *testing.T) {
 		wantErr             string
 	}{
 		"off ignores an empty source":       {"", rt, "", ""},
+		"off ignores an empty image":        {"", "", "", ""},
 		"off ignores an oversize source":    {"", rt, atCap + "x", ""},
 		"own image with no source":          {rt, "etl:v1", "", ""},
 		"own image with an oversize source": {rt, "etl:v1", atCap + "x", ""},

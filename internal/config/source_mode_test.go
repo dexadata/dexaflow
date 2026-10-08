@@ -51,7 +51,7 @@ func TestValidateSourceMode(t *testing.T) {
 		"off":                {SourceModeSection{}, ""},
 		"off with any image": {SourceModeSection{Image: "rt:latest"}, ""},
 		"on with a digest":   {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime:0.5.3@sha256:abc"}, ""},
-		"on without image":   {SourceModeSection{Enabled: true}, "execution.source_mode.image"},
+		"on without image":   {SourceModeSection{Enabled: true}, "execution.source_mode.image is required"},
 		"on with a tag only": {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime:0.5.3"}, "pinned by digest"},
 	}
 	for name, tc := range cases {
