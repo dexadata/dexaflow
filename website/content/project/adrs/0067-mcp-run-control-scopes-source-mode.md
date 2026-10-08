@@ -5,8 +5,8 @@ weight: 670
 description: "ADR 0067: the MCP gains trigger, clear, pause and unpause behind an operator flag, with plan + apply for risky calls; trusted-issuer bearer tokens carry a scope claim that narrows what they may do; and Pro can run a version's dag.py on an operator-pinned runtime image, as Lite does. Amends ADR 0050 D7 phase 4 and open question 1."
 ---
 
-**Status:** Proposed
-**Date:** 2026-10-08
+**Status:** Accepted
+**Date:** 2026-10-08 (proposed and accepted the same day by the project owner)
 **Amends:** ADR 0050 D7 (the side-effect tier and phase 4) and its open question 1 (scope enforcement). ADR 0050 D5 and D6 stay as written: the engine MCP does not author or deploy.
 **Relates:** ADR 0002 (pod-per-task), ADR 0003 and ADR 0041 (DAG-as-image, build/push/register), ADR 0024 (the shim compiles `dag.py` to `dag.json`), ADR 0048 (no user code in the control plane), ADR 0058 (warm worker pools), ADR 0011 (strict TDD).
 **Issues:** #1472 (this ADR), #1473 (scope claim), #1474 (run control tools), #1475 (Pro source mode), #1468 (trusted-issuer bearer tokens, merged first).
