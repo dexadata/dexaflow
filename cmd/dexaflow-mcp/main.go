@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,13 +48,19 @@ func run() int {
 	// carry nothing else.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 
-	var server, transport, listen string
+	var server, transport, listen, resource, authServers, scopes string
 	flag.StringVar(&server, "server", envOr("LEOFLOW_SERVER_URL", "http://localhost:8080"),
 		"control plane base URL")
 	flag.StringVar(&transport, "transport", envOr("LEOFLOW_MCP_TRANSPORT", "stdio"),
 		"transport: stdio | http")
 	flag.StringVar(&listen, "listen", envOr("LEOFLOW_MCP_LISTEN", ":9099"),
 		"listen address for the http transport")
+	flag.StringVar(&resource, "resource", os.Getenv("LEOFLOW_MCP_RESOURCE"),
+		"http transport: this endpoint's URL as clients reach it; with --authorization-servers, serves OAuth protected resource metadata (RFC 9728)")
+	flag.StringVar(&authServers, "authorization-servers", os.Getenv("LEOFLOW_MCP_AUTHORIZATION_SERVERS"),
+		"http transport: comma-separated issuer URLs of the OAuth authorization servers for --resource")
+	flag.StringVar(&scopes, "scopes", os.Getenv("LEOFLOW_MCP_SCOPES"),
+		"http transport: comma-separated scopes advertised in the protected resource metadata")
 	flag.Parse()
 
 	if transport != "stdio" && transport != "http" {
@@ -77,7 +84,12 @@ func run() int {
 	srv := mcp.NewServer(apiClient, server, version, httpMode)
 
 	if httpMode {
-		return runHTTP(srv, listen, server)
+		pr, err := protectedResource(resource, authServers, scopes)
+		if err != nil {
+			slog.Error("invalid protected resource metadata", "error", err)
+			return 2
+		}
+		return runHTTP(mcp.HTTPHandler(srv, pr), listen, server)
 	}
 	slog.Info("leoflow-mcp starting", "server", server, "transport", "stdio", "version", version)
 	if err := srv.Run(context.Background(), &mcpsdk.StdioTransport{}); err != nil {
@@ -87,22 +99,15 @@ func run() int {
 	return 0
 }
 
-// runHTTP serves the MCP over Streamable HTTP at POST /mcp. Stateless: no session
-// state is kept, so a request is authorized purely by its own bearer and the
-// service scales active-active. A stray GET/DELETE returns 405 (spec-compliant in
-// stateless mode). Shuts down gracefully on SIGINT/SIGTERM.
-func runHTTP(srv *mcpsdk.Server, listen, server string) int {
-	handler := mcpsdk.NewStreamableHTTPHandler(
-		func(*http.Request) *mcpsdk.Server { return srv },
-		&mcpsdk.StreamableHTTPOptions{Stateless: true},
-	)
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", handler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
+// runHTTP serves handler (mcp.HTTPHandler: the MCP over Streamable HTTP at
+// POST /mcp). Stateless: no session state is kept, so a request is authorized
+// purely by its own bearer and the service scales active-active. A stray
+// GET/DELETE returns 405 (spec-compliant in stateless mode). Shuts down
+// gracefully on SIGINT/SIGTERM.
+func runHTTP(handler http.Handler, listen, server string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	httpSrv := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	httpSrv := &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		// Fresh deadline for the drain — ctx is already canceled (that's what woke
@@ -120,6 +125,24 @@ func runHTTP(srv *mcpsdk.Server, listen, server string) int {
 		return 1
 	}
 	return 0
+}
+
+// protectedResource builds the transport's OAuth protected resource metadata
+// (#1470) from the flags, comma-separated lists split and trimmed. All empty
+// leaves it off.
+func protectedResource(resource, authServers, scopes string) (mcp.ProtectedResource, error) {
+	pr := mcp.ProtectedResource{Resource: resource, AuthorizationServers: splitList(authServers), Scopes: splitList(scopes)}
+	return pr, pr.Validate()
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func envOr(key, def string) string {
