@@ -6,6 +6,164 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A task can take more than one slot of its pool.** `pool_slots` (Airflow's
+  name, default 1) is now how many slots of its pool a task takes while it is
+  queued or running, and the pool gate counts slots instead of tasks, so a pool
+  can budget compute rather than task count (ADR 0066, #1466). Set it with
+  `@task(pool_slots=N)` or an operator's `pool_slots=N` in `dag.py`, or as
+  `size` in `dexaflow.yaml` (`tasks.<id>.size` and `defaults.size`, 1 to 1024).
+  A task that does not fit waits for enough free slots and never fails for it.
+  DAGs that do not set it plan exactly as before. Pro only; Lite has no pools.
+  A migrated Airflow DAG that already sets `pool_slots` above 1 starts being
+  weighted the next time it is pushed. An explicit `pool_slots=1` in `dag.py`
+  does not override `defaults.size`, and the pools API still reports occupied
+  slots as a task count (#1466).
+- **`executor.unit` sizes task pods by their pool slots.** An operator can set
+  the CPU and memory one pool slot stands for (`executor.unit.cpu` and
+  `executor.unit.memory`, Helm `executor.unit`). With a unit, a task that
+  declares no cpu or memory gets `pool_slots x unit` as requests and limits;
+  one that declares some keeps its values, with a missing request following
+  the declared limit and a missing limit set to `pool_slots x unit`, so
+  requests never end up above limits. A task that declares more than that is refused at
+  registration, with a 400 naming the `size` it needs, and at dispatch for a
+  DAG registered before the unit was set. Together with weighted pool slots a
+  pool then budgets CPU and memory instead of task count (ADR 0066, #1466).
+  A refused task fails once, without dispatch retries or its own `retries`.
+  `executor.unit.enforce: warn` accepts such tasks and counts them in
+  `dexaflow_unit_misfit_total` so a
+  unit can be rolled out before it refuses anything, and
+  `executor.unit.max_size` (default 64) bounds a task's pool slots. With warm
+  pools on, a warm pod is one unit and only takes tasks of size 1 without
+  resources. Unset by default, which changes nothing.
+- **A large task no longer starves in a weighted pool.** With weighted pool
+  slots, tasks of 1 slot could keep taking a pool's space as it freed while a
+  larger task waited forever. Now, once a scheduled task of more than one slot
+  that does not fit its pool has waited longer than
+  `scheduler.pool_starvation_threshold` (default 60s, `0s` disables), the pool
+  is reserved for it and admits nothing else until it fits. Tasks of size 1
+  never reserve, so pools without sized tasks admit exactly as before. One
+  reservation per pool, the oldest waiter first; a task larger than its whole
+  pool is never reserved for and is logged once instead. The state lives in the
+  scheduler leader's memory (ADR 0066, #1466).
+- **Per-tenant ceiling on a task's size.** The service API
+  (`PUT /api/v2/service/tenants/{tenant}`) accepts `max_task_pool_slots`, stored
+  in a new `tenants` column (migration 041, constant default 0, no table
+  rewrite). When set, registering a DAG with a task whose `pool_slots` (its
+  `size`) is above it answers `403` naming the task, its size and the limit.
+  `0`, the default, is unlimited. A platform that sizes each tenant's default
+  pool sets it to the same number, so a task that could never fit is refused
+  when it is pushed instead of waiting forever (ADR 0066, #1466).
+
+### Changed
+
+- **The control plane image now runs on Debian 13.** `leoflow-server` moves from
+  `gcr.io/distroless/static-debian12:nonroot` to
+  `gcr.io/distroless/static-debian13:nonroot`, the base the migration image and
+  the task runtime already use, so every shipped image is on one Debian release
+  for CVE triage (#1400). The server binary is static, so behavior is unchanged:
+  the image still carries only the CA bundle, tzdata and the `nonroot` user
+  (uid 65532), and the chart needs no change. Debian 13's tzdata drops the
+  `posix/` zoneinfo tree, so a control plane started with `TZ=posix/<Zone>`
+  falls back to UTC; use the plain zone name instead.
+- **A release refuses to cut while a user-facing change ships without docs.**
+  `scripts/docs-gap.sh X.Y.Z` lists every commit the release carries since the
+  previous GA that changes a chart value, the authoring schema, a CLI command,
+  a server setting, a migration, the OpenAPI document, or adds a changelog
+  fragment of kind Added, Changed, Deprecated or Removed, and edits nothing
+  under `website/content/`. `scripts/cut-release.sh` runs it before every rc
+  and GA. A change passes with docs, with the `skip-docs` label and a
+  `Skip-docs: <reason>` line in its pull request description, or with a line
+  in `.github/docs-skip.txt` on the branch being cut. The docs guard on pull
+  requests applies the same rule, now covers server settings, migrations, the
+  OpenAPI document and changelog fragments as well, and accepts the
+  `skip-docs` label only with that reason line.
+- **An attempt that outlives `auth.max_attempt_credential_lifetime` now fails
+  instead of re-running.** Past the ceiling the control plane stops renewing the
+  attempt's credential, and once the last token ran out the silent agent was
+  failed as `agent_lost`, an infra loss that re-places the task with a new epoch
+  and a fresh credential without using a retry. A task longer than the ceiling
+  plus the 10 minute attempt token TTL was therefore re-run from the start
+  instead of failing. The heartbeat reaper now fails such an attempt with
+  `credential_ceiling: attempt outlived auth.max_attempt_credential_lifetime` as
+  a task failure, so the task's retry policy applies; it is not re-placed and a
+  durable SUCCESS record does not override it. This also covers attempts ended
+  at the ceiling by the warm pool attempt watchdog when their silence reaches
+  the reaper; a task pod stopped by its `activeDeadlineSeconds` floor is settled
+  as a task failure by the pod reconciler. A task that
+  finishes before the ceiling plus the token TTL, an attempt that goes silent
+  before the ceiling (judged by its last heartbeat, not by when it is reaped),
+  and a non-positive ceiling (disabled) behave as before.
+  `make soak-credential-ceiling` now uses an 11m ceiling, a 25 minute
+  `soak_token` body and a 40 minute run, so it can boot and settle. (#1461)
+
+### Fixed
+
+- **A task that finished during a control plane outage is no longer run
+  again.** When the agent-lost, pod-lost or dispatch-lost reaper marked a task
+  as an infrastructure failure while it was in fact finishing, its durable
+  SUCCESS record could not settle it any more, so the task was re-placed and
+  ran a second time. On Kubernetes the reconciler now settles that record as
+  `success` while the mark is still provisional (unconfirmed, within 2 minutes,
+  run still running), for exactly the attempt the pod names, and says so in the
+  attempt's log and in `dexaflow_reconcile_infra_override_total{mark}`. A
+  FAILED record never overrides a mark. Marking a task `failed` from the UI or
+  API now clears its infrastructure failure kind, so a user's verdict is never
+  re-placed or overridden. Such a task is not terminal, though: if it has tries
+  left, it goes through the normal retry, so its try number goes up and its
+  `retry_delay` applies (before, it was re-placed on the same try without using
+  a retry). (#1124, #900)
+- **A reaped task pod that was still running is now stopped in place instead
+  of deleted, so its outcome record survives.** The reapers' teardown lowers
+  the pod's `activeDeadlineSeconds` to 1 second: the containers stop with the
+  normal termination grace, and the pod object stays with the task container's
+  termination message, which the reconciler reads and then collects. A pod that
+  never started is still deleted. The chart's executor Role gains `patch` on
+  pods; with a Role that does not grant it, the teardown deletes the pod as
+  before and meters `reap_teardown_delete_fallback`. (#900)
+- **A task's durable outcome record now names the execution that wrote it.**
+  The record on a task pod's termination message gains an optional
+  `attempt_epoch`, and the reconciler treats a record whose epoch differs from
+  the pod's `leoflow.io/attempt-epoch` label as no record at all, settling the
+  pod by its phase. Records written by older agents, and records of epoch 0,
+  carry no epoch and are read as before; the record version stays 1, so an
+  older reader still decodes a new record.
+- **Lite ran every DAG in the same Python venv.** In the subprocess executor
+  each DAG has its own venv under `~/.dexaflow/dev/venvs/<dag_id>/`, but every
+  task ran with the interpreter of the venv the session started with, so a DAG
+  whose `dependencies` were not also installed there failed with
+  `ModuleNotFoundError`. The server copies its own `LEOFLOW_PYTHON` onto
+  `DEXAFLOW_PYTHON` at startup and the agent prefers `DEXAFLOW_PYTHON` when the
+  two differ, while the per-DAG override only set `LEOFLOW_PYTHON`. It now sets
+  both, and each task runs in its own DAG's venv again.
+- **A tenant schema error revealed the server's working directory.** DAG param
+  schemas and `xcom_schema` were compiled under a bare file name, so a relative
+  `$ref` (refused, nothing was read) and even a plain validation failure named
+  the schema as `file:///<server working directory>/...` in the error returned
+  to the caller. Tenant schemas are now compiled under a `dexaflow://tenant/`
+  base, and their errors never name a local path.
+
+### Security
+
+- **A failed alert no longer writes its webhook URL to the server log.** When
+  posting an on-failure alert failed (a refused connection, a timeout, a
+  malformed URL), the logged error carried the full URL of the alert
+  connection, and for a Slack incoming webhook that URL is the credential. The
+  error now names the endpoint by scheme and host only.
+- **A DAG can no longer put `leoflow.io/` labels or annotations on its pods.**
+  `execution.labels` and `execution.annotations` only protected the keys the
+  executor had already set on that pod, so a DAG could add others, for example
+  `leoflow.io/warm-worker: "true"` with a `leoflow.io/dag-version-id` on its own
+  task pod. Under the `exchange` agent token transport with warm pools enabled,
+  the token exchange then resolved that task pod as a warm worker of the named
+  DAG version, and the warm-pool reconciler listed it as one. The executor now
+  drops every DAG-declared key under `leoflow.io/` and logs it with the pod it
+  came from, and `dexaflow.yaml` validation, `dexaflow compile` and DAG
+  registration reject a task that declares one. Move
+  any such custom key to a prefix of your own before upgrading.
+- **Request paths with an encoded slash or backslash are refused.** The server routes on the decoded path, so `/auth%2Ftoken` was served as `/auth/token`, while a reverse proxy or load balancer in front of it matches its rules on the raw path. A rule written at the edge for `/auth/token`, `/api/v2/service/` or `/api/v2/auth/session` could be skipped by encoding a slash. Every endpoint reached that way still required its own credentials. The server now answers 400 to any path that contains `%2F` or `%5C`, in any case, so the edge and the server read the same path. The XCom key in the task instance route keeps accepting an encoded slash, since the UI percent-encodes the key and a key may hold one. (GHSA-qc9m-2jm5-rccc)
+
 ## [0.5.1] - 2026-10-06
 
 ### Added
