@@ -169,6 +169,10 @@ type Dispatcher struct {
 	// misfits counts tasks run under executor.unit.enforce=warn although they
 	// do not fit their size (ADR 0066 §3). Nil: not counted.
 	misfits UnitMisfitRecorder
+	// sourceModeImage is the operator's runtime image when source mode is on
+	// (ADR 0067 §3), "" when it is off. A version on that image that carries a
+	// source dispatches in source mode, always on a cold pod.
+	sourceModeImage string
 }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -239,6 +243,11 @@ func NewDispatcher(exec executor.Executor, resolver Resolver, issuer TokenIssuer
 // of its dag_version and only falls back to a dedicated pod on a warm miss. Leave
 // it unset (nil) — the default — to keep dedicated pod-per-task, today's behavior.
 func (d *Dispatcher) SetWarmPlacer(p WarmPlacer) { d.placer = p }
+
+// SetSourceModeImage turns Pro source mode on for versions on image (ADR 0067
+// §3); "" leaves it off, today's behavior. Lite does not set it: the subprocess
+// executor always runs from the source.
+func (d *Dispatcher) SetSourceModeImage(image string) { d.sourceModeImage = image }
 
 // SetAgentTLSCAConfigMap configures the CA ConfigMap mounted into task pods so
 // agents verify the control plane's gRPC TLS cert (issue #58). Empty = the agent
@@ -322,7 +331,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// the same degrade-not-strand exclusion as staging (ADR 0058 D5).
 	// With a resource unit a warm pod is one unit, so only a task of size 1
 	// that declares no resources fits on it (ADR 0066 §3).
-	if d.placer != nil && d.warmEligible(r, task) {
+	// A source-mode attempt never goes warm either (ADR 0067 §3): a warm pod is
+	// built before its task is known, so it cannot carry the task's dag.py.
+	sourceMode := domain.SourceModeApplies(d.sourceModeImage, r.Image, r.Source != "")
+	if d.placer != nil && !sourceMode && d.warmEligible(r, task) {
 		wa := &agentv1.WorkAssignment{
 			AssignmentId: uuid.NewString(),
 			AttemptToken: token,
@@ -349,6 +361,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		Image:                r.Image,
 		ImagePullPolicy:      r.ImagePullPolicy,
 		Source:               r.Source,
+		SourceMode:           sourceMode,
 		Operator:             string(task.Type),
 		Entrypoint:           task.Entrypoint,
 		Env:                  stripReservedEnv(task.Env),

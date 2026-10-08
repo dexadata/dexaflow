@@ -91,6 +91,10 @@ type Dependencies struct {
 	// UnitMisfits counts a task registered under executor.unit.enforce=warn
 	// although it does not fit its size. Nil: not counted.
 	UnitMisfits UnitMisfitRecorder
+	// SourceModeImage is the runtime image when execution.source_mode is on
+	// (ADR 0067 §3), "" when it is off. Registering a version on that image
+	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
+	SourceModeImage string
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository

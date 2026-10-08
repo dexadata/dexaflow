@@ -303,6 +303,9 @@ type ExecutionSection struct {
 	// is gated at boot on the security prerequisites (token-exchange transport +
 	// liveness enforcement) because a warm pod reuses one credential across attempts.
 	WarmPoolsEnabled bool `mapstructure:"warm_pools_enabled"`
+	// SourceMode runs a version on the operator's runtime image from the dag.py
+	// it was registered with, with no image build (ADR 0067 §3). Off by default.
+	SourceMode SourceModeSection `mapstructure:"source_mode"`
 	// MaxAttemptsPerWorker caps how many attempts a warm worker serves before it is
 	// drained and recycled (ADR 0058 D9). Bounds credential-leak and stale-image
 	// exposure by forcing a fresh pod periodically. Default 50.
@@ -1084,6 +1087,8 @@ var serverDefaults = map[string]any{
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
 	"execution.warm_read_only_root_filesystem": false,
+	"execution.source_mode.enabled":            false,
+	"execution.source_mode.image":              "",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -1309,7 +1314,42 @@ func (c *ServerConfig) validateSecretPolicies() error {
 	return nil
 }
 
+// SourceModeSection is execution.source_mode (ADR 0067 §3).
+type SourceModeSection struct {
+	// Enabled turns source mode on. Default false: Pro ignores a version's source.
+	Enabled bool `mapstructure:"enabled"`
+	// Image is the runtime image, pinned by digest, that source-mode versions
+	// name as their image.
+	Image string `mapstructure:"image"`
+}
+
+// RuntimeImage returns the runtime image when source mode is on, and "" when
+// it is off, the form the dispatcher and the register check take.
+func (s SourceModeSection) RuntimeImage() string {
+	if !s.Enabled {
+		return ""
+	}
+	return s.Image
+}
+
+// validateSourceMode requires a digest-pinned runtime image when source mode is
+// on, so every source-mode task runs the exact image the operator vetted.
+func (c *ServerConfig) validateSourceMode() error {
+	m := c.Execution.SourceMode
+	if !m.Enabled {
+		return nil
+	}
+	if m.Image == "" {
+		return errors.New("execution.source_mode.image is required when execution.source_mode.enabled (ADR 0067)")
+	}
+	if !strings.Contains(m.Image, "@sha256:") {
+		return fmt.Errorf("execution.source_mode.image must be pinned by digest (image@sha256:...), got %q (ADR 0067)", m.Image)
+	}
+	return nil
+}
+
 // validateExecution enforces the warm-pool boot gate (ADR 0058 N1a), fail-closed.
+// It first checks execution.source_mode, which does not depend on warm pools.
 // The whole block is gated on WarmPoolsEnabled: with warm pools OFF (the default)
 // none of these fields is validated, so an operator who never turns warm pools on
 // is unaffected. With warm pools ON it rejects, rather than silently correcting:
@@ -1334,6 +1374,9 @@ func (c *ServerConfig) validateSecretPolicies() error {
 // (execution_timeout / the warm-worker watchdog <= the ceiling), enforced on the
 // execution path, not here.
 func (c *ServerConfig) validateExecution() error {
+	if err := c.validateSourceMode(); err != nil {
+		return err
+	}
 	if !c.Execution.WarmPoolsEnabled {
 		return nil
 	}

@@ -156,6 +156,7 @@ func BuildPod(req Request) *corev1.Pod {
 		"task", req.TaskID, "try", req.TryNumber, "pod", pod.Name)
 	mountWritableTmp(pod, req.PodSecurity)
 	mountStagingVolume(pod, req)
+	mountSource(pod, req)
 	mountAgentTLSCA(pod, req)
 	mountTaskSecret(pod, req)
 	mountAgentToken(pod, agentTokenOf(req))
@@ -576,6 +577,43 @@ func mountWritableTmp(pod *corev1.Pod, ps PodSecurity) {
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
 		Name: writableTmpVolumeName, MountPath: writableTmpMountPath,
 	})
+}
+
+// SourceAnnotation carries a source-mode task's dag.py on its pod (ADR 0067 §3).
+const SourceAnnotation = "leoflow.io/dag-source"
+
+// SourceMountPath is where a source-mode task's dag.py is projected, and the
+// task container's working directory, so `python -m leoflow_runtime` imports
+// dag from it as Lite does from its materialized work dir.
+const SourceMountPath = "/opt/leoflow/source"
+
+// sourceVolumeName is the downward API volume that projects SourceAnnotation.
+const sourceVolumeName = "leoflow-dag-source"
+
+// mountSource ships a source-mode task's dag.py (ADR 0067 §3): the source goes
+// in a pod annotation, a downward API volume projects it read-only as dag.py,
+// and the container runs from that directory. No new object, RBAC or cleanup:
+// the file lives and dies with the pod. Outside source mode the source is
+// ignored and the pod is unchanged.
+func mountSource(pod *corev1.Pod, req Request) {
+	if !req.SourceMode {
+		return
+	}
+	pod.Annotations[SourceAnnotation] = req.Source
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: sourceVolumeName,
+		VolumeSource: corev1.VolumeSource{DownwardAPI: &corev1.DownwardAPIVolumeSource{
+			Items: []corev1.DownwardAPIVolumeFile{{
+				Path:     "dag.py",
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + SourceAnnotation + "']"},
+			}},
+		}},
+	})
+	c := &pod.Spec.Containers[0]
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+		Name: sourceVolumeName, MountPath: SourceMountPath, ReadOnly: true,
+	})
+	c.WorkingDir = SourceMountPath
 }
 
 // stagingVolumeName is the pod volume name for the per-run staging PVC.
