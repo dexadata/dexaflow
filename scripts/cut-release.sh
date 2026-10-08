@@ -905,8 +905,8 @@ create_prepare_pr() { # <branch> <title> <body> [base]
   gh pr create --repo "$REPO" --base "${4:-main}" --head "$1" --title "$2" --body "$3" --label skip-changelog
 }
 
-run_gates() { # <tag>
-  local tag="$1" s ok=0 out rc
+run_gates() { # <tag> <base>
+  local tag="$1" base="$2" s ok=0 out rc
   # nullglob: without it an empty glob leaves the literal pattern, bash exits
   # 127 on it, and the cut dies reporting "gate FAIL check-*.sh".
   shopt -s nullglob
@@ -921,7 +921,14 @@ run_gates() { # <tag>
   for s in "${gates[@]}"; do
     # Capture rather than discard: a bare "gate FAIL <name>" during a cut is
     # unrecoverable, since $logf does not exist until after the tag.
-    if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"; else out="$(bash "$s" 2>&1)"; fi
+    # check-changelog-entry.sh compares [Unreleased] with its base, origin/main
+    # by default. A patch cut builds on release-X.Y, whose [Unreleased] holds the
+    # entries an earlier rc folded, while main's stays empty since fragments
+    # replaced hand edits. Against main, a GA that dates [Unreleased] reads as
+    # "no entry" (empty before, empty after), so the gate gets the cut's base.
+    if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"
+    elif [[ "$s" == *check-changelog-entry* ]]; then out="$(bash "$s" "origin/$base" 2>&1)"
+    else out="$(bash "$s" 2>&1)"; fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
       printf 'gate FAIL %s\n%s\n' "$(basename "$s")" "$out" >&2; ok=1
@@ -1128,7 +1135,7 @@ main() {
   bash "$ROOT/scripts/changelog-fold.sh" "$cv" || die "folding changelog fragments failed"
   is_rc "$version" || date_the_changelog "$cv"
   helm-docs --chart-search-root="$ROOT/helm" >/dev/null 2>&1 || die "helm-docs failed"
-  run_gates "$tag" || die "mechanical gates failed — fix before cutting"
+  run_gates "$tag" "$base" || die "mechanical gates failed — fix before cutting"
 
   # -A on .changes because the fold deletes the fragments it consumed, and a
   # plain `git add <dir>` stages additions but not removals: the prepare PR
