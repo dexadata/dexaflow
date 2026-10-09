@@ -428,6 +428,11 @@ spec:
             {{- end }}
             - name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS
               value: {{ .bearerMaxLifetimeSeconds | quote }}
+            {{- with .hostPattern }}
+            # Host binding (#1463), off unless a pattern is set.
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT

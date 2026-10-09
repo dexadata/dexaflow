@@ -345,6 +345,8 @@ auth:
     bearerAudiences: []
     # -- Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600.
     bearerMaxLifetimeSeconds: 0
+    # -- Binds every browser session to its tenant's host when each tenant is served on its own host, for example `{tenant}.example.com` (#1463). A handoff is then accepted only on the host of the token's tenant, and a session cookie only on the host of the session's tenant; the `Authorization` header is not bound. Behind an ingress that rewrites `Host`, list it in `config.trustedProxies` so its `X-Forwarded-Host` is used. Empty (the default) binds nothing.
+    hostPattern: ""
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
