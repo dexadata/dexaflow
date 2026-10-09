@@ -486,7 +486,8 @@ func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) 
 		TryNumber:       int(ti.TryNumber),
 		AttemptEpoch:    int(ti.AttemptEpoch),
 		Staging:         spec.Staging,
-		// Materialize source on the executor side (Lite only); Pro ignores it.
+		// Lite materializes the source as dag.py; Pro ships it to the pod only in
+		// source mode (ADR 0067 §3) and otherwise ignores it.
 		Source: spec.Source,
 	}, nil
 }

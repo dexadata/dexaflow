@@ -584,6 +584,20 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
 | `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
 
+### Source mode (`execution.source_mode.*`)
+
+Pro runs a DAG version straight from the `dag.py` it was registered with, with
+no image build ([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/)).
+A version runs in source mode when the mode is on, its `image` is exactly the
+runtime image below, and it carries a source. Every other version runs as
+before. See [Source mode](/operate/source-mode/) for what a source-mode DAG can
+and cannot do.
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: no dedicated value yet, use `extraEnv`. |
+
 ### Logs (`logs.*`)
 
 | Variable | Default | Edition | Purpose |
