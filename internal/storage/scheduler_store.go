@@ -382,6 +382,14 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 	if err != nil {
 		return fmt.Errorf("loading run: %w", err)
 	}
+	if _, err := s.q.CreateTaskInstances(ctx, taskInstanceRows(run.TenantID, rid, tasks)); err != nil {
+		return fmt.Errorf("creating task instances for run %q: %w", runID, err)
+	}
+	return nil
+}
+
+// taskInstanceRows builds the COPY rows MaterializeTasks writes, one per task.
+func taskInstanceRows(tenantID, runID pgtype.UUID, tasks []domain.TaskSpec) []queries.CreateTaskInstancesParams {
 	rows := make([]queries.CreateTaskInstancesParams, len(tasks))
 	for i, t := range tasks {
 		maxTries := int32(1)
@@ -389,8 +397,8 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 			maxTries = toInt32(*t.Retries + 1)
 		}
 		rows[i] = queries.CreateTaskInstancesParams{
-			TenantID: run.TenantID,
-			DagRunID: rid,
+			TenantID: tenantID,
+			DagRunID: runID,
 			TaskID:   t.TaskID,
 			Operator: string(t.Type),
 			MaxTries: maxTries,
@@ -401,12 +409,12 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 			// pool occupancy is attributed correctly (Wave-2 review HIGH-1).
 			Pool:      poolOrNil(t.Pool),
 			TryNumber: 1,
+			// The size the admission gate charges the task (ADR 0066), so
+			// PoolSlotUsage sums slots rather than counting instances (#1499).
+			PoolSlots: toInt32(t.EffectivePoolSlots()),
 		}
 	}
-	if _, err := s.q.CreateTaskInstances(ctx, rows); err != nil {
-		return fmt.Errorf("creating task instances for run %q: %w", runID, err)
-	}
-	return nil
+	return rows
 }
 
 // poolOrNil maps an unset task pool to a NULL column so a task with no declared
