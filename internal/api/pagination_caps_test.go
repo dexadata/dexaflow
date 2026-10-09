@@ -93,3 +93,34 @@ func TestDagRunsLimitIsCappedWhenConfigured(t *testing.T) {
 		}
 	}
 }
+
+// limitAuditReader records the limit the event log handler asked for.
+type limitAuditReader struct {
+	gotLimit int
+}
+
+func (f *limitAuditReader) ListAuditLogs(_ context.Context, _, _ string, limit, _ int) ([]domain.AuditLogEntry, int, error) {
+	f.gotLimit = limit
+	return nil, 0, nil
+}
+
+// TestEventLogsHonorTheConfiguredPageCap pins that /api/v2/eventLogs, like
+// every other list endpoint, serves at most server.max_page_limit entries.
+func TestEventLogsHonorTheConfiguredPageCap(t *testing.T) {
+	reader := &limitAuditReader{}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		AuditLog:      reader,
+		MaxPageLimit:  100,
+	})
+	rec := authGet(srv, http.MethodGet, "/api/v2/eventLogs?limit=500", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("eventLogs = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if reader.gotLimit != 100 {
+		t.Errorf("limit reached the repository as %d, want 100", reader.gotLimit)
+	}
+}

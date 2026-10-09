@@ -1216,6 +1216,18 @@ const (
 	AgentTokenTransportExchange = "exchange"
 )
 
+// validateNonNegative refuses settings where a negative value would silently
+// read as "off" instead of failing boot.
+func (c *ServerConfig) validateNonNegative() error {
+	if c.Server.MaxPageLimit < 0 {
+		return fmt.Errorf("server.max_page_limit must not be negative (got %d); 0 leaves list pages uncapped", c.Server.MaxPageLimit)
+	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
+	return nil
+}
+
 // Validate reports configuration errors that must abort startup.
 func (c *ServerConfig) Validate() error {
 	if err := c.validateRole(); err != nil {
@@ -1227,8 +1239,8 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateLogs(); err != nil {
 		return err
 	}
-	if c.Scheduler.PoolStarvationThreshold < 0 {
-		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	if err := c.validateNonNegative(); err != nil {
+		return err
 	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err

@@ -5,7 +5,7 @@ body: |-
   database for an unbounded page. `server.max_page_limit`
   (`DEXAFLOW_SERVER_MAX_PAGE_LIMIT`, or the legacy `LEOFLOW_` name) serves a
   larger request as that many rows, like Airflow's `[api] maximum_page_limit`.
-  The default `0` keeps today's behavior: no cap.
+  The default `0` keeps today's behavior: no cap. A negative value fails boot.
 
   Unrelated to the setting, the grid's run columns and the DAG header's latest
   run no longer count every run of the DAG on each request: they never used the
