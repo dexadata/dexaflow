@@ -155,6 +155,12 @@ Dockerfile format and Docker's own operand lexer give some characters a meaning
 no quoting can take away. The refusal always names the field and the value, since
 a stray control character in YAML is invisible in the source.
 
+The check is part of validating `dexaflow.yaml`, so every command that reads the
+file runs it: `dexaflow validate`, `dexaflow compile` with or without `--build`,
+`dexaflow deploy` and `dexaflow lite`. It used to run only while `--build` was
+rendering the Dockerfile, so `validate` called such a project valid and the
+refusal first appeared on the machine about to build the image.
+
 **Refused everywhere: a line break, a vertical tab or a form feed.** These end a
 Dockerfile instruction or split it into new words, so a value carrying one closes
 the instruction it sits in and whatever follows becomes an instruction of its own.
@@ -179,11 +185,19 @@ of the generated Dockerfile and then fails on the missing terminator.
 apostrophe in a directory name is not exotic. Such a project used to build, but
 it was copying the wrong path into the image the whole time: `raw/$schema`
 expanded to whatever the base image set, and `sql\queries` copied `sqlqueries`.
-The build fails now and names the field, which is the point.
+`dexaflow validate` and `dexaflow compile` now fail and name the field, which is
+the point.
 
-**Refused in `base_image`: any whitespace.** An image reference cannot contain
-one, `FROM` has no quoting, and the rest of the line would be read as the
-`FROM <image> AS <stage>` form.
+**Refused in `base_image`: any whitespace, and `'`, `"`, `\` and `$`.** An image
+reference cannot contain any of them. `FROM` has no quoting, so whitespace makes
+the rest of the line read as the `FROM <image> AS <stage>` form. And `FROM`'s
+operand goes through the same lexer as a `COPY` path, so the other four rewrite
+the reference: `runtime:v1$SUFFIX` pulls `runtime:v1` (with only a warning
+about an undeclared build argument), `runtime:v'1'` and `runtime:v\1` pull
+`runtime:v1` with no warning at all, and a stray `"` fails the build. The build
+would run your tasks on a different image than the one `base_image` names.
+Everything a reference can legally hold (a registry host and port, a path, a
+tag, a `@sha256:` digest) is accepted unchanged.
 
 **Refused in a `COPY` path: a leading `--`,** which Docker reads as one of
 `COPY`'s own flags rather than as a path.
@@ -307,6 +321,7 @@ roadmap item.
 | `include_paths` | `["."]` | Extra paths copied into the image **alongside** `dag_source` — a helper module, a config file, a fixtures directory. Entries are relative to the project directory; an absolute one, or one escaping the context (`../x`), is refused at compile with the entry named, because Docker cannot `COPY` it and failing at build time would name a Docker error instead. The default `["."]` means *no extra paths*, not "everything": it is what every existing project carries, so it must not change what their images contain. Entries already copied (the DAG source, a dbt group directory) are skipped rather than duplicated. Only the **generated** Dockerfile honours it — a project-supplied Dockerfile copies whatever its own `COPY` lines say. Included paths are scanned by the credential warning like everything else that ships. |
 | `exclude_paths` | `[".git", "__pycache__", "*.pyc", ".venv", "venv"]` | Kept out of the image. On `--build` these become a `.dockerignore` in the build context for the duration of the build — merged with yours if you have one, and removed afterwards. Each entry is expanded to the forms Docker actually honours, because a bare name in a `.dockerignore` matches only at the context root: a plain directory name becomes four patterns (`p`, `**/p`, `p/**`, `**/p/**`) so that both the directory and its contents are pruned at any depth; an entry whose last segment contains a glob becomes `p` and `**/p` only, since a glob names files rather than a directory to descend into; and an entry containing a `/` is already anchored, so it becomes `p` and `p/**`. An entry starting with `!` or `#` contributes nothing: it is dropped rather than expanded, so a negation belongs in your own `.dockerignore` (which is merged, never rewritten) and not here. A dropped `!` is **reported by name** at build time — leoflow's block is appended after your own lines, so a negation emitted there could resurrect a path one of your earlier lines excluded. Add anything holding credentials: the image is pushed to a registry and pulled by every pod that runs the DAG. **Not** used by workspace discovery, which has its own hardcoded skip list. |
 | `build.context` | `"."` | **Not implemented.** Declared and defaulted, but the build always uses the DAG directory. Tracked in [#1062](https://github.com/dexadata/dexaflow/issues/1062). |
+| `build.dockerfile` | *unset* | A Dockerfile the project ships, used as-is instead of the generated one when the file exists (a missing file falls back to the generated Dockerfile). It is relative to the directory holding `dexaflow.yaml` and must stay inside it: an absolute path, or one escaping the project (`../x`), is refused by `dexaflow validate` and `compile`, and `compile --build` refuses one that a symlink leads out of the project. A Dockerfile outside the project is not reviewed with it, and it skips every check described in [Values that reach the generated Dockerfile](#values-that-reach-the-generated-dockerfile). The `--dockerfile` flag is not confined: it is the operator's own choice on the command line, and it wins over this field. |
 | `build.platforms` | `["linux/amd64"]` | Multi-arch via `["linux/amd64","linux/arm64"]`. |
 | `registry.auth_method` | `"docker_config"` | Credential source for `compile --push`. |
 | `registry.tag_strategy` | `"version"` | How `dag_version` is mapped to image tag. |
