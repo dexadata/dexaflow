@@ -77,11 +77,25 @@ No scope implies another. An issuer that grants `dexaflow:run` normally grants
 
 ### 2. Run control tools on the MCP
 
-The MCP gains four tools behind one operator flag, `--run-control`
-(`DEXAFLOW_MCP_RUN_CONTROL`), default **off**. `dexaflow-mcp` has no config
-file, so this is a flag rather than `mcp.run_control.enabled`. When the flag is
-off the tools are **not registered** (D7: never a tool that exists and refuses).
-The flag works on both transports.
+The MCP gains four tools behind one operator flag, `--run-control`, default
+**off**. `dexaflow-mcp` has no config file, so this is a flag rather than
+`mcp.run_control.enabled`. When the flag is off the tools are **not
+registered** (D7: never a tool that exists and refuses). The flag works on both
+transports.
+
+**Environment variables.** Every `dexaflow-mcp` flag can also be set from the
+environment, under the current prefix first and the legacy one second, the
+same rule the server applies to its own settings:
+
+| Flag | Environment, current | Environment, legacy |
+|---|---|---|
+| `--run-control` | `DEXAFLOW_MCP_RUN_CONTROL` | `LEOFLOW_MCP_RUN_CONTROL` |
+| `--plan-key-file` | `DEXAFLOW_MCP_PLAN_KEY_FILE` | `LEOFLOW_MCP_PLAN_KEY_FILE` |
+
+When both are set, the `DEXAFLOW_` value wins. The flags that exist today
+(`--transport`, `--listen`, and the server URL and token) read only the
+`LEOFLOW_` names; the change that adds run control moves them to the same
+two-name lookup, so no existing deployment changes behaviour.
 
 | Tool | Endpoint | Needs | Annotations | Plan first when |
 |---|---|---|---|---|
@@ -118,6 +132,14 @@ returns a plan instead of acting: what will happen, in words and as data, plus a
   with HMAC-SHA256. The key comes from `--plan-key-file`, at least 32 bytes and
   shared by every replica. Run control on the HTTP transport refuses to start
   without it. On stdio, a random key per process is enough.
+- **The plan is a guard in the MCP, not in the engine.** It protects callers
+  that go through the MCP tools. The server boundary is the role and the
+  `dexaflow:run` scope: a client holding that scope can call the REST routes
+  directly, with no plan. One such route needs care: `PATCH
+  /api/v2/dags/{id}` decodes a missing `is_paused` as `false`, so a body of
+  `{}` unpauses the DAG (and can start a catch-up). Before scoped tokens rely
+  on this route, a follow-up makes `is_paused` required, so a body without it
+  answers `400` instead of unpausing.
 
 ### 3. Pro source mode
 
@@ -128,6 +150,17 @@ Operator config `execution.source_mode.enabled` (default false) and
   `image` equals the configured runtime image, and it carries a `Source`. Any
   other version runs exactly as today. With the flag off, `Source` is ignored
   in Pro, as today.
+- **Settings.** Both keys follow the server's usual binding: the config file,
+  then `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` /
+  `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE`, with the legacy
+  `LEOFLOW_EXECUTION_SOURCE_MODE_*` names still read. The image must carry a
+  full digest, `@sha256:` followed by 64 lowercase hex characters; the server
+  refuses to start otherwise.
+- **Versions registered before the flag was turned on.** The rule is evaluated
+  at dispatch, so turning the flag on also applies to versions already
+  registered on the runtime image, which register never checked. Dispatch
+  therefore checks the cap again and refuses (does not retry) an attempt whose
+  source is over it, with the same message register gives.
 - **How the file reaches the pod.** The Kubernetes executor puts the source in
   a pod annotation and projects that annotation into the task container as a
   read-only `dag.py` through a downward API volume. The container's working
@@ -139,12 +172,31 @@ Operator config `execution.source_mode.enabled` (default false) and
   The source cap is therefore **128 KiB**, which leaves room for the
   annotations the executor and operators already set. When source mode is on,
   version register refuses a source-mode version whose `Source` is empty or
-  over the cap (`400`). The cap is a constant, not a knob.
+  over the cap (`400`), and dispatch refuses one that got past register (see
+  above). The cap is a constant, not a knob.
 - **Unchanged.** Pod-per-task (ADR 0002), the task NetworkPolicy, secret
   delivery and ADR 0048 stay as they are. The control plane still never
   imports or runs `dag.py`. It carries the text, and only the task pod
-  executes it. The DAG source is no more exposed than before, since `GET
-  /api/v2/dagSources/{dag_id}` already returns it to readers.
+  executes it.
+- **Who can read the source.** `GET /api/v2/dagSources/{dag_id}` already
+  returns it to the DAG's readers. The annotation adds readers outside the
+  engine's own access control: any Kubernetes principal that can get or watch
+  pods in the task namespace (which all tenants share), the apiserver audit
+  log at the `Request` level and above, and log pipelines that copy pod
+  annotations onto every record (the Fluent Bit `kubernetes` filter and Vector's
+  `kubernetes_logs` source both do by default, which also multiplies log
+  volume by up to the source size per line). The control plane's own pod
+  informer drops the annotation from its cache. The operate docs tell
+  operators to exclude `leoflow.io/dag-source` in their log shipper.
+- **Integrity of the source.** The runtime image is pinned by digest; the
+  source is not. An annotation can be changed after the pod is created by any
+  principal with `patch pods` in the task namespace, and the kubelet refreshes
+  the projected file, so code read after the change (a late import, a
+  `multiprocessing` spawn child, the `on_failure_callback` re-import) runs the
+  changed text. Integrity of the source therefore rests on who holds `patch
+  pods` in the task namespace, which should be no one but the control plane.
+  Pinning a hash of the source in an immutable env var for the runtime to
+  check is a possible later hardening.
 - **Warm workers.** A warm worker (ADR 0058) is started before its task is
   known, so its pod cannot carry the annotation. Source-mode tasks always get a
   cold pod.
@@ -197,6 +249,16 @@ version whose image is the runtime image and whose `Source` is the `dag.py`.
   reference, and cleanup on every failure path.
 - **Fetching the code at task start from a URL.** This adds a network
   dependency and a new trust path into the pod.
+- **Delivering the source over the agent's gRPC channel.** The agent already
+  authenticates to the control plane with its per-attempt token and fetches its
+  task spec (`GetTaskSpec`); the source could ride in that response and be
+  written to the pod's `/tmp` emptyDir. That keeps the source out of pod
+  metadata (no exposure to pod readers, audit or log enrichment), has no 256 KiB
+  limit and is tenant-scoped by the token. It was not chosen for the first
+  increment because it changes the agent protocol and the agent, and needs a
+  writable volume on pods whose root filesystem is read only, while the
+  annotation path needs only an executor change. It stays the preferred
+  follow-up if the exposure or the cap proves to be a problem.
 - **A build service in the engine.** This is out of scope for the engine, and
   ADR 0048 keeps user code out of the control plane.
 
