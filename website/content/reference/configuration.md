@@ -743,6 +743,31 @@ Keep bearer tokens short-lived. Dexaflow cannot revoke one before it expires,
 only the user behind it; an MCP gateway that mints one per client for a few
 minutes and caches it is the intended shape.
 
+#### Scopes
+
+A bearer token's `scope` claim, a space-separated string as in RFC 9068,
+narrows what it may do ([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/)),
+so a user can grant a client less than their own rights:
+
+| Scope | Grants |
+|---|---|
+| `dexaflow:read` | Every route that needs a `read` permission. |
+| `dexaflow:run` | Triggering a run, setting a run's state, clearing or marking task instances, and pausing or unpausing a DAG. |
+| `dexaflow:deploy` | Registering a DAG version (`POST /api/v2/dags/{id}/versions`). |
+
+- The scope check runs after the role check, and both must pass. A viewer's
+  token with `dexaflow:run` still cannot trigger.
+- No scope implies another. A client that runs and reads needs both.
+- A token **without** a `scope` claim may only read. A claim that is not a
+  string is refused with `401`.
+- Every other write (connections, variables, pools, users, deleting a DAG or
+  a run, the IDE) is refused to a bearer token whatever its scopes. Use the UI
+  or a Dexaflow token for those.
+- A refusal is `403` with a detail that names the missing scope.
+
+Dexaflow tokens and the sessions the browser handoff opens carry no scopes;
+only their roles decide.
+
 ### Operator service API
 
 An operator that serves several organizations from one Dexaflow (a hosting

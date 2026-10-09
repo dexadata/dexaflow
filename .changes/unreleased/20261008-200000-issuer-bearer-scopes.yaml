@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **Trusted-issuer bearer tokens can be limited by scope.** A bearer token's
+  `scope` claim narrows what it may do: `dexaflow:read` for reads,
+  `dexaflow:run` to trigger, clear, mark and pause, and `dexaflow:deploy` to
+  register a DAG version. The role check still applies. A token without a
+  `scope` claim may only read, and every other write is refused to bearer
+  tokens. Dexaflow tokens and browser sessions are unchanged. (#1473,
+  ADR 0067)
+time: 2026-10-08T20:00:00.000000000+00:00

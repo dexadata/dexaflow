@@ -275,8 +275,29 @@ func UserFromContext(c *gin.Context) (*auth.User, bool) {
 	return u, ok
 }
 
-// RequirePermission enforces an RBAC permission on a route.
+// RequirePermission enforces an RBAC permission on a route. For a principal
+// whose token carries scopes (ADR 0067), a read route also needs
+// dexaflow:read, and any other route is refused: a write a scoped token may
+// call names its scope with RequireScopedPermission, so a write nobody mapped
+// fails closed.
 func RequirePermission(action, resource string) gin.HandlerFunc {
+	scope := ""
+	if action == "read" {
+		scope = auth.ScopeRead
+	}
+	return requirePermission(action, resource, scope)
+}
+
+// RequireScopedPermission is RequirePermission for a write route that a
+// scoped token may call when it carries scope (ADR 0067). The role check
+// still runs first: a scope narrows what roles allow and never widens it.
+func RequireScopedPermission(action, resource, scope string) gin.HandlerFunc {
+	return requirePermission(action, resource, scope)
+}
+
+// requirePermission checks the role permission, then, for a scoped
+// principal, the route's scope; "" means no scope grants the route.
+func requirePermission(action, resource, scope string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		user, ok := UserFromContext(c)
 		if !ok {
@@ -285,6 +306,14 @@ func RequirePermission(action, resource string) gin.HandlerFunc {
 		}
 		if !user.HasPermission(action, resource) {
 			AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+action+":"+resource)
+			return
+		}
+		if user.Scoped && scope == "" {
+			AbortProblem(c, http.StatusForbidden, "forbidden", "a scoped token cannot call this route")
+			return
+		}
+		if user.Scoped && !user.HasScope(scope) {
+			AbortProblem(c, http.StatusForbidden, "forbidden", "missing scope "+scope)
 			return
 		}
 		c.Next()
