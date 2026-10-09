@@ -7,6 +7,9 @@ type Variable struct {
 	Key         string
 	Value       string
 	Description string
+	// Encrypted reports that the value is stored sealed with the secret key
+	// (#507). It is read-only: writes follow the server's variable_encryption.
+	Encrypted bool
 }
 
 // VariablePatch is a tri-state write to a Variable (#887). Description mirrors

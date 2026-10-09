@@ -71,8 +71,8 @@ func buildVariablePatch(key string, value, desc *string, stored domain.Variable,
 	return p
 }
 
-// variableDTO is the Airflow 3.2.1 VariableResponse. Dexaflow stores variables in
-// plaintext for now (is_encrypted is false) and has no teams (team_name null).
+// variableDTO is the Airflow 3.2.1 VariableResponse. is_encrypted reports whether
+// the value is sealed at rest (variable_encryption, #507); there are no teams.
 type variableDTO struct {
 	Key         string  `json:"key"`
 	Value       string  `json:"value"`
@@ -91,7 +91,7 @@ func toVariableDTO(v domain.Variable) variableDTO {
 		Key:         v.Key,
 		Value:       maskedValue(v.Key, v.Value),
 		Description: strPtrOrNil(v.Description),
-		IsEncrypted: false,
+		IsEncrypted: v.Encrypted,
 		TeamName:    nil,
 	}
 }

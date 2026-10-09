@@ -301,6 +301,43 @@ of the datastore, back up `config.yaml` with it, and `dexaflow uninstall` warns
 before it removes the only copy.
 {{% /alert %}}
 
+### Encrypting Variables
+
+Connection secrets are always encrypted at rest. Variables are stored in
+plaintext by default, and masked in API responses only when the key name looks
+secret (`password`, `token`, `api_key`, ...). A Variable that holds a DSN, a
+webhook URL or an API key under another name is therefore readable in the
+database and in every backup of it.
+
+Set `DEXAFLOW_VARIABLE_ENCRYPTION=on` (or `LEOFLOW_VARIABLE_ENCRYPTION`, or
+`variable_encryption: on` in `dexaflow.yaml`/`leoflow.yaml`) to encrypt them
+with the same key and cipher as connections:
+
+- every write stores the value encrypted;
+- at startup the server encrypts the Variables already stored in plaintext and
+  logs how many it changed;
+- reads, the API and delivery to task pods return the plaintext, so DAGs see no
+  difference. The API reports `is_encrypted: true` for an encrypted Variable;
+  masking still follows the key name;
+- a key rotation and `dexaflow lite migrate-key` move encrypted Variables onto
+  the new key together with the connection secrets.
+
+`on` needs a usable `DEXAFLOW_SECRET_KEY`: without one the server refuses to
+start rather than keep storing plaintext. With the default `off`, an install
+without a key works as before. A Variable that no configured key opens is left
+as it is: the API returns an error for it, and delivery to a task pod skips it
+with a warning, as it does for a connection.
+
+A value cannot start with `dexaflow:enc:v1:`, the tag that marks an encrypted
+value, in any mode.
+
+{{% alert title="Turn it on after every replica runs 0.5.4" color="warning" %}}
+A release older than 0.5.4 reads an encrypted Variable as its ciphertext and
+hands that to the task. Turn encryption on only once no older replica is
+running, and see [Upgrading to 0.5.4](/operate/upgrades/#upgrading-to-054)
+before rolling back.
+{{% /alert %}}
+
 ### Defaults
 
 Every field in `dexaflow.yaml` is optional. Zero-valued fields are filled by
@@ -424,9 +461,10 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_JWT_TOKEN_TTL_SECONDS` | `3600` | both | Lifetime, in seconds, of an issued API token. |
 | `DEXAFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS` | `86400` | both | Ceiling, in seconds, on the **total** age of a transparently renewed session, measured from first login and preserved across every renewal. Past it, `POST /api/v2/auth/token/renew` refuses and the user must log in again; the short `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long a live session may keep refreshing. A non-positive value disables the ceiling. Renewal also re-checks that the account is still active, so a deactivated user stops being issued tokens as well as being refused on use. The renew endpoint is rate-limited to 60 requests a minute per client IP, on a budget separate from login's. Helm: `auth.sessionMaxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | both | Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force). A successful login consumes no budget. `dexaflow lite` raises this well above the default (local single-user tool). |
-| `DEXAFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)). Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
+| `DEXAFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)), and Variable values when `DEXAFLOW_VARIABLE_ENCRYPTION=on`. Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
 | `DEXAFLOW_SECRET_KEY_REENCRYPT_ON_BOOT` | `true` | both | Re-encrypt stored connection secrets onto the first `DEXAFLOW_SECRET_KEY` entry at startup ([Rotating the encryption key](#rotating-the-encryption-key)). `dexaflow lite` sets it to `false`: Lite moves keys only through [`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/). |
 | `DEXAFLOW_SECRET_KEY_MIGRATION_LOCK` | `false` | both | Hold the key-migration advisory lock for the server's lifetime: refuse to start while `dexaflow lite migrate-key` runs, and exit if the lock's database session is lost. `dexaflow lite` sets it to `true`; there is no reason to set it elsewhere. |
+| `DEXAFLOW_VARIABLE_ENCRYPTION` | `off` | both | How Variable values are stored. `off` writes plaintext, as every earlier release did. `on` encrypts every Variable value with `DEXAFLOW_SECRET_KEY` (AES-256-GCM, the cipher connections use) and encrypts the stored plaintext rows at startup. `decrypt` writes plaintext and turns every encrypted row back into plaintext at startup, the step before rolling back to a release older than 0.5.4. `on` and `decrypt` refuse to start without a usable key. Every mode reads both forms. Config key `variable_encryption`. See [Encrypting Variables](#encrypting-variables). |
 | `DEXAFLOW_AUTH_SECRET_SCOPING` | `permissive` | both | Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `permissive` (delivers the whole tenant vault; warns when a DAG declares a narrower set), `enforce` (delivers only the declared subset — empty declaration ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable. Helm: `auth.secretScoping`. |
 | `DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |

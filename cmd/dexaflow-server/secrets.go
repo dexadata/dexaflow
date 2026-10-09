@@ -25,7 +25,64 @@ func configureSecrets(ctx context.Context, repo *storage.Repository, cfg *config
 	if cfg.SecretKeyReencryptOnBoot {
 		finishKeyRotation(ctx, repo, logger)
 	}
+	if err := configureVariableEncryption(ctx, repo, cfg.VariableEncryption, logger); err != nil {
+		return err
+	}
 	return configureSecretsCoverage(cfg.Secrets, repo)
+}
+
+// configureVariableEncryption sets how Variable values are stored (#507) and
+// converges the stored rows to it. "on" and "decrypt" both need the key, and
+// asking for either without one fails the boot: encrypting nothing, or leaving
+// sealed rows sealed, while the operator believes otherwise is the silent
+// downgrade ADR 0019 rules out. "off", the default, needs no key and changes
+// nothing, as before.
+//
+// The sweep itself is never fatal, like the key rotation: every row stays
+// readable either way, and a write after boot already takes the configured
+// form. It runs in Lite too: it only seals plaintext under the current key, or
+// opens sealed values, and never moves a value between keys.
+func configureVariableEncryption(ctx context.Context, repo *storage.Repository, setting string, logger *slog.Logger) error {
+	mode, err := storage.ParseVariableEncryption(setting)
+	if err != nil {
+		return err
+	}
+	if mode != storage.VariableEncryptionOff && !repo.HasCipher() {
+		return fmt.Errorf("variable_encryption=%s requires a usable DEXAFLOW_SECRET_KEY (or LEOFLOW_SECRET_KEY); "+
+			"set the key, or set variable_encryption=off", mode)
+	}
+	repo.SetVariableEncryption(mode)
+	if mode == storage.VariableEncryptionOff {
+		return nil
+	}
+	res, serr := repo.ConvergeVariableEncryption(ctx)
+	msg, level := variableSweepOutcome(mode, res, serr)
+	if msg == "" {
+		return nil
+	}
+	attrs := []any{"variable_encryption", string(mode), "rewritten", res.Migrated, "skipped", res.Skipped, "unreadable", res.Unreadable}
+	if serr != nil {
+		attrs = append(attrs, "error", serr)
+	}
+	logger.Log(ctx, level, msg, attrs...)
+	return nil
+}
+
+// variableSweepOutcome is the one line the variable_encryption boot sweep logs,
+// or "" when it found nothing to rewrite.
+func variableSweepOutcome(mode storage.VariableEncryption, res storage.VariableSweepResult, err error) (string, slog.Level) {
+	switch {
+	case err != nil || res.Unreadable > 0:
+		return "could not convert every stored variable; the ones no configured key opens were left as they are", slog.LevelError
+	case res.Skipped > 0:
+		return "some variables changed during the variable_encryption sweep and were left to that write; the next restart looks at them again", slog.LevelWarn
+	case res.Migrated > 0 && mode == storage.VariableEncryptionDecrypt:
+		return "stored variables restored to plaintext (variable_encryption=decrypt)", slog.LevelInfo
+	case res.Migrated > 0:
+		return "stored variables encrypted with the secret key (variable_encryption=on)", slog.LevelInfo
+	default:
+		return "", slog.LevelInfo
+	}
 }
 
 // finishKeyRotation moves stored secrets onto the current key when

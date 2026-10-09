@@ -249,3 +249,17 @@ func TestVariablesEmptyStubWithoutStore(t *testing.T) {
 		t.Errorf("nil store should yield empty collection, got %v", col)
 	}
 }
+
+// #507: is_encrypted reports how the value is stored, as Airflow's field does;
+// masking still follows the key name, so turning encryption on changes no
+// value the UI shows.
+func TestVariableDTOReportsEncryption(t *testing.T) {
+	sealed := toVariableDTO(domain.Variable{Key: "region", Value: "eu", Encrypted: true})
+	if !sealed.IsEncrypted || sealed.Value != "eu" {
+		t.Errorf("sealed variable DTO = %+v", sealed)
+	}
+	plain := toVariableDTO(domain.Variable{Key: "api_token", Value: "t"})
+	if plain.IsEncrypted || plain.Value != secretMask {
+		t.Errorf("plaintext variable DTO = %+v", plain)
+	}
+}
