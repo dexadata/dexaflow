@@ -11,11 +11,11 @@
 -- statement, which Postgres runs outside any transaction block.
 --
 -- No IF NOT EXISTS, on purpose: if the build is interrupted, Postgres leaves
--- an INVALID index behind and golang-migrate marks version 36 dirty, and a
+-- an INVALID index behind and golang-migrate marks version 43 dirty, and a
 -- retry must fail loudly instead of keeping the invalid index. Drop it first:
 --
 --   DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;
---   migrate -path migrations -database "$DATABASE_URL" force 35
+--   migrate -path migrations -database "$DATABASE_URL" force 42
 --   migrate -path migrations -database "$DATABASE_URL" up
 CREATE INDEX CONCURRENTLY idx_dag_runs_tenant_settled_ended ON dag_runs (tenant_id, ended_at)
     WHERE state IN ('success', 'failed');
