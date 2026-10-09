@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -72,6 +73,12 @@ type Resolved struct {
 	Image           string
 	ImagePullPolicy string
 	TryNumber       int
+	// AttemptEpoch identifies this execution attempt of the row (ADR 0051
+	// amendment). The resolver claims a fresh value on every dispatch, so two
+	// dispatches of one try never share it, even with no reset rail between
+	// them. The agent token (A2) and the pod's attempt-epoch label (A4) are
+	// minted from it.
+	AttemptEpoch int
 	// Staging carries the DAG's opt-in staging-volume config (ADR 0022); nil or
 	// disabled means no per-run volume.
 	Staging *domain.StagingConfig
@@ -107,6 +114,11 @@ type PlatformDefaults struct {
 	// Resources defaults a task's requests/limits when neither the task override
 	// nor the DAG set any.
 	Resources *domain.Resources
+	// Unit is the operator resource unit (executor.unit, ADR 0066). When set it
+	// replaces Resources: every task is sized from its pool_slots, and a task
+	// that declares more than pool_slots x unit is refused (or, under
+	// enforce: warn, run and counted). Nil: no unit.
+	Unit *domain.ResourceUnit
 	// PodSecurity carries the task-pod hardening choices. It lives here, not in
 	// the DAG spec, on purpose: whether untrusted task code may run as root is a
 	// cluster-operator decision. Exposing it per-DAG would let an author elevate
@@ -154,7 +166,20 @@ type Dispatcher struct {
 	// handed to the executor so a task pod that declares no timeout still gets a
 	// deadline floor. Zero (unset / disabled) applies no floor.
 	attemptLifetimeCeiling time.Duration
+	// misfits counts tasks run under executor.unit.enforce=warn although they
+	// do not fit their size (ADR 0066 §3). Nil: not counted.
+	misfits UnitMisfitRecorder
 }
+
+// UnitMisfitRecorder counts a task that does not fit the resource unit but is
+// let through under executor.unit.enforce=warn, by stage ("register" or
+// "dispatch"). observability.Metrics satisfies it.
+type UnitMisfitRecorder interface {
+	RecordUnitMisfit(stage string)
+}
+
+// SetUnitMisfitRecorder wires the counter for tolerated unit misfits.
+func (d *Dispatcher) SetUnitMisfitRecorder(r UnitMisfitRecorder) { d.misfits = r }
 
 // SetAttemptLifetimeCeiling wires the operator's attempt credential ceiling
 // (auth.max_attempt_credential_lifetime) into every dispatched request, where the
@@ -253,6 +278,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if err != nil {
 		return executor.Rejected, fmt.Errorf("resolving task %s: %w", task.TaskID, err)
 	}
+	// Registration refuses a task larger than its size once a unit is
+	// configured; this catches a DAG registered before that (ADR 0066 §3), so no
+	// task runs larger than the slots it is charged.
+	if refused := d.checkUnit(runID, dagID, task); refused != nil {
+		return executor.Refused, refused
+	}
 	token, err := d.issuer.IssueAgentToken(auth.AgentIdentity{
 		TaskInstanceID: r.TaskInstanceID,
 		TenantID:       r.TenantID,
@@ -260,6 +291,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		RunID:          runID,
 		TaskID:         task.TaskID,
 		TryNumber:      r.TryNumber,
+		// The epoch the resolver just claimed for this execution (ADR 0051
+		// amendment), so the token can never be mistaken for another execution
+		// of the same try.
+		AttemptEpoch:    r.AttemptEpoch,
+		HasAttemptEpoch: true,
 	}, d.tokenTTL)
 	if err != nil {
 		return executor.Rejected, fmt.Errorf("issuing agent token for %s: %w", task.TaskID, err)
@@ -284,7 +320,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// cannot run on it (it would silently run as the wrong identity and break keyless
 	// resolution). Such a task takes the dedicated path below, which sets its own SA —
 	// the same degrade-not-strand exclusion as staging (ADR 0058 D5).
-	if d.placer != nil && (r.Staging == nil || !r.Staging.Enabled) && warmSACompatible(task, d.defaultTaskServiceAccount) {
+	// With a resource unit a warm pod is one unit, so only a task of size 1
+	// that declares no resources fits on it (ADR 0066 §3).
+	if d.placer != nil && d.warmEligible(r, task) {
 		wa := &agentv1.WorkAssignment{
 			AssignmentId: uuid.NewString(),
 			AttemptToken: token,
@@ -293,6 +331,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 			TryNumber:    int32(r.TryNumber), //nolint:gosec // try number is a small bounded attempt counter, never near int32 max
 			DagVersionId: dagVersionID,
 			LeaseSeconds: warmLeaseSeconds,
+			AttemptEpoch: int64(r.AttemptEpoch),
 		}
 		if d.placer.Assign(dagVersionID, wa) {
 			return executor.Dispatched, nil
@@ -306,6 +345,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		RunID:                runID,
 		TaskID:               task.TaskID,
 		TryNumber:            r.TryNumber,
+		AttemptEpoch:         r.AttemptEpoch,
 		Image:                r.Image,
 		ImagePullPolicy:      r.ImagePullPolicy,
 		Source:               r.Source,
@@ -323,13 +363,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if task.ExecutionTimeoutSeconds != nil {
 		req.TimeoutSeconds = *task.ExecutionTimeoutSeconds
 	}
-	switch {
-	case task.Resources != nil:
-		req.Resources = *task.Resources
-	case d.defaults.Resources != nil:
-		// L0: no task/DAG resources; fall back to the platform default (ADR 0023).
-		req.Resources = *d.defaults.Resources
-	}
+	req.Resources = d.taskResources(task)
 	if task.Execution != nil {
 		req.Execution = *task.Execution
 	}
@@ -361,6 +395,46 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	req.AgentTokenAudience = d.tokenAudience
 	req.AgentTokenExpirationSeconds = d.tokenExpirationSeconds
 	return d.exec.Execute(ctx, req)
+}
+
+// checkUnit applies the resource unit to a task about to dispatch and returns
+// the refusal, if any. A misfit tolerated under enforce: warn runs with the
+// task's own resources, but is logged and counted.
+func (d *Dispatcher) checkUnit(runID, dagID string, task domain.TaskSpec) error {
+	warned, refused := d.defaults.Unit.Check(task)
+	if warned != nil {
+		slog.Warn("task does not fit its size; running it under executor.unit.enforce=warn",
+			"run", runID, "dag", dagID, "task", task.TaskID, "error", warned)
+		if d.misfits != nil {
+			d.misfits.RecordUnitMisfit("dispatch")
+		}
+	}
+	return refused
+}
+
+// warmEligible reports whether an attempt may go to a warm worker: no
+// staging, the warm ServiceAccount, and, with a resource unit, a size-1 task
+// without resources, since a warm pod is one unit.
+func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
+	return (r.Staging == nil || !r.Staging.Enabled) &&
+		warmSACompatible(task, d.defaultTaskServiceAccount) &&
+		d.defaults.Unit.WarmEligible(task)
+}
+
+// taskResources picks the task pod's resources. With a resource unit the unit
+// sizes every task: its own values where it set them, the rest filled so
+// requests never exceed limits (see ResourceUnit.Apply, ADR 0066 §3). Without one, the task's
+// own resources win, then the L0 platform default (ADR 0023), else none.
+func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
+	switch {
+	case d.defaults.Unit != nil:
+		return *d.defaults.Unit.Apply(task)
+	case task.Resources != nil:
+		return *task.Resources
+	case d.defaults.Resources != nil:
+		return *d.defaults.Resources
+	}
+	return domain.Resources{}
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.

@@ -135,11 +135,12 @@ const statusClientClosedRequest = 499
 // places, and collapsing them into a single opaque message would cost real
 // diagnosability to buy no extra privacy.
 const (
-	detailNotFound     = "the requested resource does not exist"
-	detailConflict     = "the request conflicts with the current state of the resource"
-	detailClientClosed = "the client closed the request before it completed"
-	detailInvalidInput = "the request was rejected by a validation rule"
-	detailInternal     = "the request could not be completed; see the server logs"
+	detailNotFound      = "the requested resource does not exist"
+	detailConflict      = "the request conflicts with the current state of the resource"
+	detailClientClosed  = "the client closed the request before it completed"
+	detailInvalidInput  = "the request was rejected by a validation rule"
+	detailLimitExceeded = "the request would exceed a limit set for this tenant"
+	detailInternal      = "the request could not be completed; see the server logs"
 )
 
 // safeDetail returns the phrase Dexaflow composed for this failure, or fallback
@@ -193,6 +194,11 @@ func handleRepoError(c *gin.Context, err error) {
 	// layer composed the phrase itself with domain.Safef.
 	case errors.Is(err, domain.ErrValidation):
 		AbortProblemCause(c, http.StatusBadRequest, "invalid request", safeDetail(err, detailInvalidInput), err)
+	// A tenant limit the operator set (max_dags, max_runs_per_day,
+	// min_schedule_interval_seconds): the request is valid but not allowed for
+	// this tenant, and the storage layer names the limit with domain.Safef.
+	case errors.Is(err, domain.ErrLimitExceeded):
+		AbortProblemCause(c, http.StatusForbidden, "limit exceeded", safeDetail(err, detailLimitExceeded), err)
 	default:
 		AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
 	}
@@ -503,10 +509,11 @@ func validateParamValue(schema, value json.RawMessage) error {
 		return fmt.Errorf("parsing schema: %w", err)
 	}
 	comp := domain.NewTenantSchemaCompiler()
-	if aerr := comp.AddResource("param_schema.json", doc); aerr != nil {
+	loc := domain.TenantSchemaURL("param_schema.json")
+	if aerr := comp.AddResource(loc, doc); aerr != nil {
 		return fmt.Errorf("loading schema: %w", aerr)
 	}
-	compiled, err := comp.Compile("param_schema.json")
+	compiled, err := comp.Compile(loc)
 	if err != nil {
 		return fmt.Errorf("compiling schema: %w", err)
 	}
@@ -1195,7 +1202,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 			RequirePermission("write", "task_instance"), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
 	}
 	if deps.Versions != nil {
-		r.POST("/api/v2/dags/:dag_id/versions", RequirePermission("write", "dag"), registerVersionHandler(deps.Versions))
+		r.POST("/api/v2/dags/:dag_id/versions", RequirePermission("write", "dag"), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}))
 	}
 	if deps.Xcoms != nil {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))

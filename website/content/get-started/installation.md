@@ -166,7 +166,7 @@ $ dexaflow-mcp --version      # MCP server (see the MCP guide)
 
 | Variable | Effect |
 |---|---|
-| `DEXAFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/dexaflow/releases) for the current tag. |
+| `DEXAFLOW_VERSION=v0.5.1` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/dexaflow/releases) for the current tag. |
 | `DEXAFLOW_NO_SETUP=1` | install binaries only; run `dexaflow setup` yourself later |
 | `DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin` | where to put the binaries |
 
@@ -307,8 +307,8 @@ git clone --depth 1 https://github.com/dexadata/dexaflow   # current main
 cd dexaflow
 
 helm install lf ./helm/dexaflow -n leoflow --create-namespace \
-  --set image.tag=v0.4.0-rc.2 \
-  --set migrations.image.tag=v0.4.0-rc.2 \
+  --set image.tag=v0.5.1 \
+  --set migrations.image.tag=v0.5.1 \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
@@ -318,7 +318,7 @@ helm install lf ./helm/dexaflow -n leoflow --create-namespace \
 
 The chart auto-generates the agent TLS cert regardless of image version, so
 this works on `main` today. Pin `--set image.tag` / `--set migrations.image.tag`
-to a published release tag (`v0.4.0-rc.2` shown — see the
+to a published release tag (`v0.5.1` shown; see the
 [releases](https://github.com/dexadata/dexaflow/releases)); from a source
 checkout the image tags are not baked in, so set them explicitly. Add
 `--branch <TAG>` to the clone to install the chart at a specific tag instead of
@@ -521,7 +521,7 @@ plus `dexaflow` and `dexaflow-agent` binaries) are published by
 
 ```bash
 # Verify the server image at a release tag.
-cosign verify ghcr.io/dexadata/dexaflow-server:v0.4.8 \
+cosign verify ghcr.io/dexadata/dexaflow-server:v0.5.1 \
   --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

@@ -65,6 +65,7 @@ type fakeAsyncStore struct {
 	readErr   error
 	requeued  []asyncRequeue
 	failed    []string
+	refused   []string
 	failNotes []string
 }
 
@@ -81,6 +82,12 @@ func (f *fakeAsyncStore) DispatchAttempts(_ context.Context, _, _ string) (attem
 func (f *fakeAsyncStore) RequeueDispatch(_ context.Context, _, taskID string, countAttempt bool, nextAt time.Time) (bool, error) {
 	f.requeued = append(f.requeued, asyncRequeue{taskID, countAttempt, nextAt})
 	return true, nil
+}
+
+func (f *fakeAsyncStore) FailDispatchRefused(_ context.Context, _, taskID, reason string) error {
+	f.refused = append(f.refused, taskID)
+	f.failNotes = append(f.failNotes, reason)
+	return nil
 }
 
 func (f *fakeAsyncStore) MarkTaskDispatchFailed(_ context.Context, _, taskID, reason string) error {

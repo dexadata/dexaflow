@@ -24,7 +24,8 @@ import (
 type ServiceTenantStore interface {
 	// EnsureTenant creates a tenant with the built-in roles and default pool,
 	// or fills in what is missing; created reports whether it was new.
-	EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int) (created bool, err error)
+	// limits sets the tenant limits it carries and leaves the others.
+	EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int, limits domain.TenantLimitsUpdate) (created bool, err error)
 	// EnsureIssuerUser makes sure a passwordless user linked to (provider,
 	// subject) exists in tenant with exactly roles.
 	EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error)
@@ -87,11 +88,66 @@ func serviceAuth(token string) gin.HandlerFunc {
 	}
 }
 
+// tenantLimitsBody is the optional limits part of the ensure-tenant body. A
+// field left out (or null) leaves that limit as it is; 0 makes it unlimited.
+type tenantLimitsBody struct {
+	MaxDags                    *int `json:"max_dags"`
+	MaxRunsPerDay              *int `json:"max_runs_per_day"`
+	MinScheduleIntervalSeconds *int `json:"min_schedule_interval_seconds"`
+	MaxTaskPoolSlots           *int `json:"max_task_pool_slots"`
+}
+
+// fields pairs each limit with its JSON name, in a fixed order.
+func (b tenantLimitsBody) fields() []struct {
+	name  string
+	value *int
+} {
+	return []struct {
+		name  string
+		value *int
+	}{
+		{"max_dags", b.MaxDags},
+		{"max_runs_per_day", b.MaxRunsPerDay},
+		{"min_schedule_interval_seconds", b.MinScheduleIntervalSeconds},
+		{"max_task_pool_slots", b.MaxTaskPoolSlots},
+	}
+}
+
+// validate returns the name of the first limit outside 0..2147483647 (the
+// INTEGER columns), or "" when every limit given fits.
+func (b tenantLimitsBody) validate() string {
+	for _, f := range b.fields() {
+		if f.value != nil && (*f.value < 0 || *f.value > math.MaxInt32) {
+			return f.name
+		}
+	}
+	return ""
+}
+
+// audit records each limit given in the audit metadata.
+func (b tenantLimitsBody) audit(meta map[string]string) {
+	for _, f := range b.fields() {
+		if f.value != nil {
+			meta[f.name] = strconv.Itoa(*f.value)
+		}
+	}
+}
+
+func (b tenantLimitsBody) update() domain.TenantLimitsUpdate {
+	return domain.TenantLimitsUpdate{
+		MaxDags: b.MaxDags, MaxRunsPerDay: b.MaxRunsPerDay, MinScheduleIntervalSeconds: b.MinScheduleIntervalSeconds,
+		MaxTaskPoolSlots: b.MaxTaskPoolSlots,
+	}
+}
+
 // ensureTenantHandler implements PUT /api/v2/service/tenants/{tenant} with an
-// optional {"display_name": "...", "default_pool_slots": N}: 201 when the
+// optional {"display_name": "...", "default_pool_slots": N, "max_dags": N,
+// "max_runs_per_day": N, "min_schedule_interval_seconds": N,
+// "max_task_pool_slots": N}: 201 when the
 // tenant is new, 200 when it already existed. Either way it ends with the
 // built-in roles and default pool; default_pool_slots, when given, sizes that
-// pool, otherwise a new tenant gets the default tenant's size.
+// pool, otherwise a new tenant gets the default tenant's size. Each limit
+// given is stored; one left out keeps its stored value.
 func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("tenant")
@@ -102,6 +158,7 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 		var body struct {
 			DisplayName      string `json:"display_name"`
 			DefaultPoolSlots *int   `json:"default_pool_slots"`
+			tenantLimitsBody
 		}
 		// The body is optional: an empty one is io.EOF, not a malformed request.
 		if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
@@ -116,11 +173,16 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 				return
 			}
 		}
-		created, err := deps.ServiceTenants.EnsureTenant(c.Request.Context(), name, body.DisplayName, poolSlots)
+		if bad := body.validate(); bad != "" {
+			AbortProblem(c, http.StatusBadRequest, "bad request", bad+" must be a whole number from 0 (unlimited) to 2147483647")
+			return
+		}
+		created, err := deps.ServiceTenants.EnsureTenant(c.Request.Context(), name, body.DisplayName, poolSlots, body.update())
 		meta := map[string]string{"created": strconv.FormatBool(created)}
 		if poolSlots > 0 {
 			meta["default_pool_slots"] = strconv.Itoa(poolSlots)
 		}
+		body.audit(meta)
 		recordService(c, deps, auditServiceTenantEnsure, name, "", "", err, meta)
 		if err != nil {
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", "could not ensure the tenant", err)

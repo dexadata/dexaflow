@@ -1,0 +1,13 @@
+kind: Added
+body: |-
+  **Operators can cap what each tenant schedules.** The operator service API
+  (`PUT /api/v2/service/tenants/{tenant}`) accepts optional `max_dags`,
+  `max_runs_per_day` and `min_schedule_interval_seconds` (0 or absent means
+  unlimited; a field left out keeps its value). Registering a DAG past
+  `max_dags`, or one whose schedule fires more often than the minimum
+  interval, and triggering a run past the tenant's daily cap (manual and
+  scheduled runs together, per UTC day) answer `403` naming the limit. A
+  scheduled run past the daily cap is skipped with one warning per tenant and
+  day and created once the day turns. Existing tenants are unlimited.
+  Migration 040 adds the columns to `tenants`. (#1420)
+time: 2026-10-05T12:00:00.000000000-03:00

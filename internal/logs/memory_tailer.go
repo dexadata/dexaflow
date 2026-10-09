@@ -41,6 +41,13 @@ func (t *MemoryTailer) Publish(_ context.Context, ref Ref, line string) error {
 	return nil
 }
 
+// HasSubscribers reports whether the attempt has a live subscriber.
+func (t *MemoryTailer) HasSubscribers(_ context.Context, ref Ref) (bool, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.subs[ref.Channel()]) > 0, nil
+}
+
 // Subscribe returns a channel of live log lines for the task and a cancel
 // function. The channel is closed on cancel or when the context is done.
 func (t *MemoryTailer) Subscribe(ctx context.Context, ref Ref) (lines <-chan string, cancel func()) {

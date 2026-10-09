@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -164,6 +165,13 @@ func DevBypassAuth() gin.HandlerFunc {
 
 // JWTAuth validates the bearer token on protected routes and stores the user.
 func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
+	return jwtAuth(authn, nil)
+}
+
+// jwtAuth is JWTAuth with an optional trusted-issuer bearer (#1468): a bearer
+// in the Authorization header that is not a valid engine token is then also
+// checked against the trusted issuer. A nil bearer leaves JWTAuth unchanged.
+func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublic(c.Request.URL.Path) {
 			c.Next()
@@ -182,9 +190,10 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
 		// unavailable holds a backend failure seen while checking a candidate. A
 		// later candidate may still authenticate, so it only decides the answer
 		// once every candidate has been tried.
+		fromHeader := bearerToken(c.GetHeader("Authorization")) != ""
 		var unavailable, tenantless error
-		for _, token := range tokens {
-			user, err := authn.Authenticate(c.Request.Context(), token)
+		for i, token := range tokens {
+			user, err := authenticateCandidate(c.Request.Context(), authn, bearer, token, fromHeader && i == 0)
 			if err == nil && user.TenantID == "" {
 				// A principal that names no tenant cannot be scoped. The
 				// authenticator already refuses one; this guard keeps any other
@@ -218,6 +227,18 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
 		// tenantless cause so an operator can tell it from a bad signature.
 		AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "invalid token", tenantless)
 	}
+}
+
+// authenticateCandidate authenticates one candidate token: as an engine token
+// first, then, only for the Authorization header and only when the engine
+// refused it as invalid, as a trusted-issuer bearer. The session cookie is
+// always the engine's own, so it never reaches the issuer.
+func authenticateCandidate(ctx context.Context, authn auth.Authenticator, bearer *issuerBearerAuth, token string, fromHeader bool) (*auth.User, error) {
+	user, err := authn.Authenticate(ctx, token)
+	if err == nil || bearer == nil || !fromHeader || !errors.Is(err, auth.ErrInvalidToken) {
+		return user, err
+	}
+	return bearer.authenticate(ctx, token)
 }
 
 func bearerToken(header string) string {
@@ -268,4 +289,39 @@ func RequirePermission(action, resource string) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// xcomEntriesSegment marks where the task instance route's XCom key starts.
+// The Airflow UI percent-encodes the key, and a key may legitimately hold a
+// slash, so an encoded separator after this segment is part of the key.
+const xcomEntriesSegment = "/xcomEntries/"
+
+// RejectEncodedPathSeparators refuses a request whose path carries a
+// percent-encoded slash (%2F) or backslash (%5C) with 400. gin routes on the
+// decoded path, so /auth%2Ftoken is served as /auth/token, while a reverse
+// proxy or load balancer in front of the server matches its rules on the raw
+// path and would let it through a rule written for /auth/token. Refusing the
+// encoded form keeps both sides reading the same path. The XCom key in the task
+// instance route is the one exception (see xcomEntriesSegment).
+func RejectEncodedPathSeparators() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if hasEncodedPathSeparator(c.Request.URL.EscapedPath()) {
+			AbortProblem(c, http.StatusBadRequest, "bad request", "the request path must not contain an encoded slash or backslash")
+			return
+		}
+		c.Next()
+	}
+}
+
+// hasEncodedPathSeparator reports whether escaped, a request's escaped path,
+// holds %2F or %5C (any case) outside the XCom key of the task instance route.
+func hasEncodedPathSeparator(escaped string) bool {
+	checked := escaped
+	if strings.HasPrefix(escaped, "/api/v2/dags/") {
+		if i := strings.Index(escaped, xcomEntriesSegment); i >= 0 && strings.Contains(escaped[:i], "/taskInstances/") {
+			checked = escaped[:i+len(xcomEntriesSegment)]
+		}
+	}
+	lower := strings.ToLower(checked)
+	return strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c")
 }
