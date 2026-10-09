@@ -15,7 +15,7 @@ permissions:
   security-events: write    # Required for SARIF upload to GitHub Security tab
 
 env:
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
 
 # A newer push to the same pull request supersedes this run, so the older one
 # is cancelled instead of holding runners the newer one needs. Every other run
