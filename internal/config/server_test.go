@@ -976,3 +976,62 @@ func TestServerConfigValidateRefusesNegativeMaxPageLimit(t *testing.T) {
 		t.Error("Validate() = nil with server.max_page_limit -1, want error")
 	}
 }
+
+// TestLoadServerReadsSessionCookieName locks auth.session_cookie_name (#1405):
+// _token by default, so an existing install keeps its sessions, and bound from
+// both env prefixes.
+func TestLoadServerReadsSessionCookieName(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Auth.SessionCookieName != "_token" {
+		t.Fatalf("default session cookie name = %q (%v), want _token", c.Auth.SessionCookieName, err)
+	}
+	for _, env := range []string{"DEXAFLOW_AUTH_SESSION_COOKIE_NAME", "LEOFLOW_AUTH_SESSION_COOKIE_NAME"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "__Host-dexaflow")
+			c, err := LoadServer("", nil)
+			if err != nil || c.Auth.SessionCookieName != "__Host-dexaflow" {
+				t.Errorf("session cookie name = %q (%v), want the value from %s", c.Auth.SessionCookieName, err, env)
+			}
+		})
+	}
+}
+
+// TestValidateSessionCookieName refuses a name a browser would not accept as
+// set: a __Host- or __Secure- cookie without Secure is dropped by the browser,
+// so sign-in would fail with no visible error.
+func TestValidateSessionCookieName(t *testing.T) {
+	cases := []struct {
+		name     string
+		cookie   string
+		insecure bool
+		wantErr  string
+	}{
+		{"default", "_token", false, ""},
+		{"empty keeps the default", "", false, ""},
+		{"host prefix", "__Host-dexaflow", false, ""},
+		{"secure prefix", "__Secure-dexaflow", false, ""},
+		{"plain name over http", "_token", true, ""},
+		{"host prefix without secure", "__Host-dexaflow", true, "auth.session_cookie_insecure"},
+		{"host prefix in another case without secure", "__host-dexaflow", true, "auth.session_cookie_insecure"},
+		{"secure prefix without secure", "__Secure-dexaflow", true, "auth.session_cookie_insecure"},
+		{"space", "my token", false, "auth.session_cookie_name"},
+		{"separator", "a;b", false, "auth.session_cookie_name"},
+		{"equals", "a=b", false, "auth.session_cookie_name"},
+		{"state cookie", "_oidc_state", false, "auth.session_cookie_name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.SessionCookieName = tc.cookie
+			c.Auth.SessionCookieInsecure = tc.insecure
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error naming %q", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -1500,6 +1500,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		ServiceAllowedTenants: cfg.Auth.TrustedIssuer.AllowedTenants,
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
+		SessionCookieName:     cfg.Auth.SessionCookieName,
 	})
 	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg)
 }

@@ -198,6 +198,15 @@ type Dependencies struct {
 	// zero value is the hardened one: a caller that forgets the field gets Secure.
 	// See cookieSecure for why this is a setting and not derived from the request.
 	SessionCookieInsecure bool
+	// SessionCookieName is the session cookie's name (auth.session_cookie_name,
+	// #1405). Empty is _token, the name every earlier release used.
+	SessionCookieName string
+}
+
+// sessionCookie returns the session cookie every handler and the auth
+// middleware share, so setting, clearing and reading it agree on its name.
+func (d Dependencies) sessionCookie() sessionCookieSpec {
+	return sessionCookieSpec{name: d.SessionCookieName, insecure: d.SessionCookieInsecure}
 }
 
 // newIssuerBearerAuth wires the trusted-issuer bearer from deps, or returns nil
@@ -245,7 +254,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {
-		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps)))
+		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps), deps.sessionCookie().cookieName()))
 	}
 
 	r.GET("/healthz", livenessHandler)
@@ -261,7 +270,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// (all password logins rejected) — not ungated. In JWT mode the credential path
 	// is the primary auth, so newBreakGlass returns nil (unchanged).
 	bg := newBreakGlass(deps.OIDCSettings.BreakGlassEmails, deps.AuthAudit, deps.OIDCEnabled)
-	r.POST("/auth/token", authTokenHandler(deps.Authenticator, deps.RateLimiter, deps.TokenTTLSecs, bg, deps.SessionCookieInsecure))
+	r.POST("/auth/token", authTokenHandler(deps.Authenticator, deps.RateLimiter, deps.TokenTTLSecs, bg, deps.sessionCookie()))
 	// Transparent renewal (aresta #5): a still-valid bearer is re-minted with a
 	// fresh short TTL, bounded by max_lifetime. Under the public /api/v2/auth/
 	// prefix like login, it is self-gating — only a valid signed bearer can be
@@ -273,7 +282,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
-	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
+	r.GET("/api/v2/auth/logout", logoutHandler(deps.sessionCookie(), deps.ExternalSignOutURL))
 	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{
 		sso:            deps.OIDCFlow != nil,
 		breakGlass:     len(deps.OIDCSettings.BreakGlassEmails) > 0,
@@ -293,15 +302,15 @@ func NewServer(deps Dependencies) *gin.Engine {
 		// Refusals, the rate limit's included, go back to the external sign-in
 		// when one is configured (see issuerSessionDeps.refuse).
 		handoff := issuerSessionDeps{
-			issuer:          deps.TrustedIssuer,
-			users:           deps.TrustedIssuerUsers,
-			origins:         deps.TrustedIssuerOrigins,
-			audit:           deps.AuthAudit,
-			jwtSecret:       deps.JWTSecret,
-			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,
-			logger:          deps.Logger,
-			insecureCookies: deps.SessionCookieInsecure,
-			signIn:          issuerSignInTarget(deps.ExternalSignInURL),
+			issuer:    deps.TrustedIssuer,
+			users:     deps.TrustedIssuerUsers,
+			origins:   deps.TrustedIssuerOrigins,
+			audit:     deps.AuthAudit,
+			jwtSecret: deps.JWTSecret,
+			tokenTTL:  time.Duration(deps.TokenTTLSecs) * time.Second,
+			logger:    deps.Logger,
+			session:   deps.sessionCookie(),
+			signIn:    issuerSignInTarget(deps.ExternalSignInURL),
 		}
 		r.POST("/api/v2/auth/session", rateLimitByIPWith(issuerLimiter, handoff.refuseRateLimited), issuerSessionHandler(handoff))
 	}
@@ -321,7 +330,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 			tokenTTL:  time.Duration(deps.TokenTTLSecs) * time.Second,
 			logger:    deps.Logger,
 
-			insecureCookies: deps.SessionCookieInsecure,
+			session: deps.sessionCookie(),
 		}))
 	}
 	// Any signed-in user may read these; a scoped token needs dexaflow:read
@@ -351,7 +360,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 		r.GET("/static/*filepath", static)
 		r.HEAD("/static/*filepath", static)
 	}
-	r.NoRoute(uiNoRoute(deps.UI, deps.Authenticator, deps.DevNoAuth))
+	r.NoRoute(uiNoRoute(deps.UI, deps.Authenticator, deps.DevNoAuth, deps.sessionCookie().cookieName()))
 
 	return r
 }
