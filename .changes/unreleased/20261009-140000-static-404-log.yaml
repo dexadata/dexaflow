@@ -1,0 +1,8 @@
+kind: Security
+body: |-
+  **A missing UI asset no longer writes request headers to the INFO log.** Every
+  404 under the public `/static/` path logged the client's `Referer` and
+  `User-Agent` at INFO, so an anonymous client could fill the server log with
+  text of its choosing. The line is now DEBUG and carries only the requested
+  path (#506).
+time: 2026-10-09T14:00:00.000000000-03:00

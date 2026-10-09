@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -164,6 +166,26 @@ func TestStaticMissingFileIs404(t *testing.T) {
 	fixture().StaticHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("missing static file = %d, want 404 (no SPA fallback under /static)", rec.Code)
+	}
+}
+
+func TestStaticMissingFileLogsNoHeadersAtInfo(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/assets/nope.js", http.NoBody)
+	req.Header.Set("User-Agent", "attacker-agent")
+	req.Header.Set("Referer", "https://attacker.example/")
+	fixture().StaticHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing static file = %d, want 404", rec.Code)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("anonymous static 404 logged at INFO: %q", buf.String())
 	}
 }
 
