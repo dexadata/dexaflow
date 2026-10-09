@@ -5,3 +5,4 @@
 #1359 README install instructions for v0.5.0, docs that live on main only
 #1465 ADR 0066 only, nothing to ship; the implementation is picked separately
 #1368 ADR 0064 only, nothing to ship; branching and skip land in the next minor
+#1517 ADR 0067 only, nothing to ship; the implementation is picked separately
