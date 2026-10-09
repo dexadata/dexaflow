@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **The HTTP MCP server can tell OAuth clients where to sign in.** With
+  `--resource` and `--authorization-servers` (`DEXAFLOW_MCP_RESOURCE`,
+  `DEXAFLOW_MCP_AUTHORIZATION_SERVERS`, and optionally `DEXAFLOW_MCP_SCOPES`),
+  `dexaflow-mcp --transport http` serves OAuth protected resource metadata
+  (RFC 9728) under `/.well-known/oauth-protected-resource` and answers a
+  request to `/mcp` without a bearer with `401` and a `WWW-Authenticate`
+  header pointing at it, as the MCP authorization specification requires.
+  MCP clients that sign in with OAuth, such as claude.ai connectors and
+  ChatGPT, can then connect. Off unless both flags are set. (#1470)
+time: 2026-10-08T18:00:00.000000000+00:00
