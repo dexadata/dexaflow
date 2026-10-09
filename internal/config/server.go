@@ -1304,20 +1304,16 @@ func (c *ServerConfig) Validate() error {
 	if c.Scheduler.PoolStarvationThreshold < 0 {
 		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
 	}
-	if err := c.validateSecretPolicies(); err != nil {
-		return err
-	}
-	if err := c.validateExecution(); err != nil {
-		return err
-	}
-	if err := c.Retention.Validate(); err != nil {
-		return err
-	}
-	if err := c.validateExecutorUnit(); err != nil {
-		return err
-	}
-	if err := c.validatePlatformIntegration(); err != nil {
-		return err
+	for _, check := range []func() error{
+		c.validateSecretPolicies,
+		c.validateExecution,
+		c.Retention.Validate,
+		c.validateExecutorUnit,
+		c.validatePlatformIntegration,
+	} {
+		if err := check(); err != nil {
+			return err
+		}
 	}
 	if _, err := egress.NewPolicy(c.Scheduler.Alerts.AllowedCIDRs); err != nil {
 		return fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
