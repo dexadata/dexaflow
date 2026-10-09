@@ -77,3 +77,4 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0064: Branching and skip: in-pod decision, scheduler-side skip cascade](/project/adrs/0064-branching-and-skip/)
 - [ADR 0065: Lite key migration off the published key](/project/adrs/0065-lite-key-migration/)
 - [ADR 0066: Weighted pool slots and an operator resource unit](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)
+- [ADR 0068: Patch content in 0.x is gated by safety, not by kind](/project/adrs/0068-patch-content-gated-by-safety/)
