@@ -7,8 +7,10 @@ body: |-
   attempt (at most once a second), and creates replacement pods in parallel
   (up to 4 at a time). Creates the informer has not shown yet count against
   the version's target and the tenant's `max_warm_pods_per_tenant`, and the
-  fleet is re-read live when a create is never observed and every 5 minutes. The
-  30-second tick stays as a backstop, and the failover reapers and the delete of
-  a drained version's GC anchor still read the cluster live. Off by default:
-  today's polling refill is unchanged.
+  fleet is re-read live when a create is never observed and every 5 minutes,
+  then kept live until the informer holds every pod that read returned, so a
+  hung watch cannot drive extra creates. The 30-second tick stays as a backstop,
+  and the failover reapers and every GC anchor delete still read the cluster
+  live. The informer uses the maintenance Kubernetes client, like the warm-pod
+  client. Off by default: today's polling refill is unchanged.
 time: 2026-10-02T17:30:00.000000000-03:00

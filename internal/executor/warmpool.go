@@ -170,6 +170,11 @@ type WarmPoolReconciler struct {
 	fleetFromCache bool
 	lastLiveList   time.Time
 	now            func() time.Time
+	// liveNames are the pods the last live LIST returned. Until the cache holds
+	// (or saw deleted) every one of them it is behind the cluster, and the
+	// reconciler keeps reading live: a cache that lost its watch must not drive
+	// creates once the create expectations that covered it have expired.
+	liveNames []string
 }
 
 // warmCacheLiveListInterval is how often a reconcile on the cached fleet reads it
@@ -193,6 +198,9 @@ type WarmPodCache interface {
 	// ExpectationExpired reports, once, that an expectation timed out without
 	// its pod being observed: the cache may be missing pods.
 	ExpectationExpired() bool
+	// Covers reports whether the cache holds, or saw deleted, every named pod:
+	// false means it is behind the last live LIST and must not be trusted.
+	Covers(podNames []string) bool
 }
 
 // SetCache switches the reconciler to the cached fleet view and parallel
@@ -213,15 +221,25 @@ func (r *WarmPoolReconciler) listFleet(ctx context.Context) (pods []WarmPodInfo,
 	if r.cache != nil {
 		if cached, synced := r.cache.CachedWarmPods(); synced {
 			expired := r.cache.ExpectationExpired()
-			if !expired && r.now().Sub(r.lastLiveList) < warmCacheLiveListInterval {
+			switch {
+			case expired || r.now().Sub(r.lastLiveList) >= warmCacheLiveListInterval:
+				r.record("warm_pool_cache_live_check")
+			case !r.cache.Covers(r.liveNames):
+				// Still behind the last live LIST: keep reading live until it
+				// catches up, or it would create pods that already exist.
+				r.record("warm_pool_cache_behind")
+			default:
 				return cached, true, nil
 			}
-			r.record("warm_pool_cache_live_check")
 		}
 	}
 	pods, err = r.pods.ListWarmPods(ctx)
 	if err == nil && r.cache != nil {
 		r.lastLiveList = r.now()
+		r.liveNames = r.liveNames[:0]
+		for _, p := range pods {
+			r.liveNames = append(r.liveNames, p.Name)
+		}
 	}
 	return pods, false, err
 }
@@ -354,8 +372,11 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 // drain above only visits versions with pods and would never delete it. No pod
 // references such an anchor, so the cascade is a no-op, exactly as for a version
 // drained to zero. A version that still has a pod is left to the drain and its
-// footgun guard. If the anchors cannot be listed, it takes no action this tick
-// (do-no-harm) and the next tick retries.
+// footgun guard. When the fleet came from the warm-pod cache, the candidates are
+// confirmed with one live LIST first. If the anchors cannot be listed, or the
+// live confirm fails, it takes no action this tick (do-no-harm) and the next
+// tick retries. It also deletes the anchor of a version the event-refill drain
+// emptied while its last pod was still Terminating.
 func (r *WarmPoolReconciler) sweepOrphanAnchors(ctx context.Context, active map[string]bool, byVersion map[string][]WarmPodInfo) {
 	anchors, err := r.pods.ListWarmAnchors(ctx)
 	if err != nil {
@@ -363,6 +384,7 @@ func (r *WarmPoolReconciler) sweepOrphanAnchors(ctx context.Context, active map[
 		r.record("warm_pool_anchor_list_error")
 		return
 	}
+	var orphans []string
 	for _, dagVersionID := range anchors {
 		if dagVersionID == "" || active[dagVersionID] {
 			continue
@@ -370,6 +392,35 @@ func (r *WarmPoolReconciler) sweepOrphanAnchors(ctx context.Context, active map[
 		if _, hasPods := byVersion[dagVersionID]; hasPods {
 			continue
 		}
+		orphans = append(orphans, dagVersionID)
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	if r.fleetFromCache {
+		// The delete cascades to every pod still owned by the anchor, so a
+		// cached "no pod" never authorizes it: a cache that missed a busy pod
+		// would kill its attempt. One live LIST confirms every candidate, as
+		// anchorDrainedLive does for the drain.
+		live, err := r.pods.ListWarmPods(ctx)
+		if err != nil {
+			r.logger.ErrorContext(ctx, "confirming orphan warm anchors live failed; keeping them this tick", "error", err)
+			r.record("warm_pool_anchor_confirm_error")
+			return
+		}
+		hasLive := make(map[string]bool, len(live))
+		for _, p := range live {
+			hasLive[p.DagVersionID] = true
+		}
+		kept := orphans[:0]
+		for _, dv := range orphans {
+			if !hasLive[dv] {
+				kept = append(kept, dv)
+			}
+		}
+		orphans = kept
+	}
+	for _, dagVersionID := range orphans {
 		r.deleteWarmAnchor(ctx, dagVersionID)
 	}
 }
