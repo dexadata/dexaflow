@@ -219,7 +219,7 @@ func connectMCP(t *testing.T, apiURL, token string) *mcpsdk.ClientSession {
 	// A server option that registers more (a tool, resource or prompt behind
 	// a flag) must be turned on here, so what it adds is enumerated and needs
 	// a case too.
-	srv := mcp.NewServer(base, apiURL, "test", true)
+	srv := mcp.NewServer(base, apiURL, "test", true, isolationServerOptions()...)
 	mcpHTTP := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return srv },
 		&mcpsdk.StreamableHTTPOptions{Stateless: true},
@@ -265,6 +265,17 @@ func (f *isolationFixture) readResource(t *testing.T, uri string) outcome {
 	}
 	body, _ := json.Marshal(res)
 	return outcome{request: uri, text: string(body)}
+}
+
+func (f *isolationFixture) getPrompt(t *testing.T, name string, args map[string]string) outcome {
+	t.Helper()
+	req, _ := json.Marshal(map[string]any{"prompt": name, "arguments": args})
+	res, err := f.sess.GetPrompt(context.Background(), &mcpsdk.GetPromptParams{Name: name, Arguments: args})
+	if err != nil {
+		return outcome{request: string(req), text: err.Error(), isError: true}
+	}
+	body, _ := json.Marshal(res)
+	return outcome{request: string(req), text: string(body)}
 }
 
 // assertNoLeak fails when o carries anything only tenant B holds. An
@@ -382,6 +393,24 @@ func isolationCases() map[string]func(*testing.T, *isolationFixture) {
 			f.assertOwnData(t, f.readResource(t, "dag://source/"+f.shared))
 			f.assertNothing(t, f.readResource(t, "dag://source/"+f.bOnly))
 		},
+		// Tenant A's r1 runs failed and tenant B's succeeded, so a prompt that
+		// read B's runs would name B's DAG or count a success.
+		promptCase + "diagnose_latest_failure": func(t *testing.T, f *isolationFixture) {
+			o := f.getPrompt(t, "diagnose_latest_failure", nil)
+			f.assertNoLeak(t, o)
+			if o.isError || !strings.Contains(o.text, `run \"r1\"`) ||
+				(!strings.Contains(o.text, f.shared) && !strings.Contains(o.text, f.aOnly)) {
+				t.Errorf("diagnose_latest_failure did not pick tenant A's failed run:\n%s", o.text)
+			}
+			f.assertNothing(t, f.getPrompt(t, "diagnose_latest_failure", map[string]string{"dag_id": f.bOnly}))
+		},
+		promptCase + "pipeline_health_today": func(t *testing.T, f *isolationFixture) {
+			o := f.getPrompt(t, "pipeline_health_today", nil)
+			f.assertNoLeak(t, o)
+			if o.isError || strings.Contains(o.text, "success") || !strings.Contains(o.text, f.aOnly) {
+				t.Errorf("pipeline_health_today is not tenant A's runs alone:\n%s", o.text)
+			}
+		},
 		"dag://spec/{dag_id}": func(t *testing.T, f *isolationFixture) {
 			o := f.readResource(t, "dag://spec/"+f.shared)
 			f.assertNoLeak(t, o)
@@ -424,6 +453,12 @@ func TestMCPTenantIsolation(t *testing.T) {
 // promptCase prefixes a prompt's name in isolationCases, so a prompt and a
 // tool of the same name stay two cases.
 const promptCase = "prompt:"
+
+// isolationServerOptions turns on every option that registers more, so all
+// of it is enumerated by TestMCPTenantIsolation.
+func isolationServerOptions() []mcp.Option {
+	return []mcp.Option{mcp.WithUIBaseURL("https://ui.example")}
+}
 
 // registeredNames lists every tool name, resource URI, resource template and
 // prompt (as promptCase + name) the server advertises to a client.
