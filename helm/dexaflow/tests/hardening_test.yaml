@@ -444,3 +444,31 @@ tests:
           content:
             port: 9090
             protocol: TCP
+
+  # values.yaml documents the same-namespace form of networkPolicy.ingressFrom.
+  # It used to suggest [{namespaceSelector: {}}], which matches every namespace
+  # (#1076). Render the documented examples so the text cannot drift from what
+  # the policy does.
+  - it: the documented same-namespace ingressFrom renders a podSelector, not an empty namespaceSelector (#1076)
+    templates: [networkpolicy.yaml]
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      networkPolicy.enabled: true
+      networkPolicy.ingressFrom:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: leoflow-tasks
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0]
+          value:
+            podSelector: {}
+      - equal:
+          path: spec.ingress[0].from[1].namespaceSelector.matchLabels
+          value:
+            kubernetes.io/metadata.name: leoflow-tasks
+      - notExists:
+          path: spec.ingress[0].from[0].namespaceSelector
