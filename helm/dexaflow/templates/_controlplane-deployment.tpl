@@ -480,6 +480,17 @@ spec:
               value: {{ .ctx.Values.taskPodSecurity.runAsNonRoot | quote }}
             - name: LEOFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM
               value: {{ .ctx.Values.taskPodSecurity.readOnlyRootFilesystem | quote }}
+            {{- with .ctx.Values.executor.defaults.executionAllowlist }}
+            # Execution (placement) allowlist (issue #629). Fields is always
+            # stamped for the same reason as the hardening above; an empty list
+            # renders "none" because an empty env var would fall back to "*".
+            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS
+              value: {{ if .fields }}{{ join "," .fields | quote }}{{ else }}"none"{{ end }}
+            {{- if .priorityClasses }}
+            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES
+              value: {{ join "," .priorityClasses | quote }}
+            {{- end }}
+            {{- end }}
             # Agent-credential posture (ADR 0055) and warm worker pools (ADR 0058).
             # These three are always stamped, at their defaults too, for the same
             # reason as the task-pod hardening above: they are the security

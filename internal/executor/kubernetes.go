@@ -56,6 +56,12 @@ func NewKubernetesExecutor(clientset kubernetes.Interface, namespace string) *Ku
 // importing Kubernetes error types (ADR 0051 Phase 4). The cause is returned
 // alongside so its text still feeds the scheduler's note/log.
 func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposition, error) {
+	// The operator's execution allowlist (issue #629). The dispatcher already
+	// refused a task that breaks it; this keeps any other Request builder from
+	// placing a pod the operator did not allow.
+	if err := req.ExecutionPolicy.CheckTask(domain.TaskSpec{TaskID: req.TaskID, Execution: &req.Execution}); err != nil {
+		return Refused, err
+	}
 	// Provision the run's shared staging PVC on first use (idempotent), before the
 	// pod that mounts it (ADR 0022).
 	if req.StagingClaim != "" {
