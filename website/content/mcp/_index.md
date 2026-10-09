@@ -106,6 +106,7 @@ never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mo
 | `--server` | `DEXAFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
 | `--transport` | `DEXAFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
 | `--listen` | `DEXAFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
+| `--ui-base-url` | `DEXAFLOW_MCP_UI_BASE_URL` | — | Address of the Dexaflow UI, such as `https://flow.example.com`. When set, results carry `web_url` links into it (see [Links into the UI](#links-into-the-ui)). Must be an absolute `http` or `https` URL without a query or fragment. |
 | `--resource` | `DEXAFLOW_MCP_RESOURCE` | — | `http` only. This endpoint's URL as clients reach it, such as `https://dexaflow.example.com/mcp`. With `--authorization-servers`, turns on [OAuth sign-in discovery](#oauth-sign-in-discovery). `https`, or `http` on a loopback host; no query or fragment. |
 | `--authorization-servers` | `DEXAFLOW_MCP_AUTHORIZATION_SERVERS` | — | `http` only. Comma-separated issuer URLs of the OAuth authorization servers that mint tokens for `--resource`. Required with it. |
 | `--scopes` | `DEXAFLOW_MCP_SCOPES` | — | `http` only. Comma-separated scopes advertised as `scopes_supported`. Omitted when empty. |
@@ -192,6 +193,44 @@ construction (untrusted content, ADR 0050 D10).
 | `dag://source/{dag_id}` | The DAG's `dag.py` source, sanitized and size-capped. |
 | `dag://spec/{dag_id}` | The compiled `dag.json` artifact (the structured task graph). |
 | `health://control-plane` | Control-plane health: component status, executor capability, and version. |
+
+## Prompts
+
+Prompts are ready-made requests a client offers its user, often as a slash command.
+Both are **read-only**: they read the control plane with the caller's token to find
+the runs to look at, then ask the model to make the tool calls they name.
+
+| Prompt | What it asks for | Arguments |
+|---|---|---|
+| `diagnose_latest_failure` | Finds the most recent failed run (by end time) and asks the model to call `diagnose_run` on it, then `search_logs` if a log tail does not show the cause, and to explain the root cause and a fix. | `dag_id` (optional; omit to search every DAG) |
+| `pipeline_health_today` | Counts today's runs (since midnight UTC) by state, lists the failed ones, and asks the model to read `health://control-plane`, call `diagnose_run` on each failure, and summarize. | none |
+
+The control plane has no cross-DAG run query, so without a `dag_id` the prompts
+read the first page of DAGs (up to 200) and a page of runs for each. When there are
+more DAGs, the prompt says how many it did not check.
+
+A prompt reaches the model as the user's own message, so it repeats a DAG or
+run id only when the id is plain: 1 to 128 ASCII letters, digits or `_.:+@~=-`,
+which covers generated run ids such as `manual__2026-10-08T12:00:00+00:00`. Any
+other id (a run id with spaces or quotes, say, which whoever triggered the run
+chose) is withheld, even from links. The prompt then links the DAG and asks the
+model to get the ids from the user.
+
+## Links into the UI
+
+With `--ui-base-url` set, results carry a `web_url` that opens the entity in the
+Dexaflow UI. Without it the field is absent.
+
+| Where | `web_url` opens |
+|---|---|
+| `list_dags`, `dag://list` | the DAG: `<base>/dags/<dag_id>` |
+| `diagnose_run`, `run://detail/...` | the run: `<base>/dags/<dag_id>/runs/<run_id>` |
+| `diagnose_run` failed tasks, `task://instances/...` | the task attempt: `.../runs/<run_id>/tasks/<task_id>?try_number=<n>` |
+| `search_logs` matches | the log line: the task attempt link plus `#<index>`, the line's 0-based position in the UI log viewer |
+
+On initialize, the server's instructions tell the model to link the DAGs, runs,
+tasks and log lines it mentions with `web_url`, and never to build UI links itself.
+Text resources (`log://`, `dag://source/`) carry no link.
 
 ## Wiring an MCP client (Claude Desktop)
 
