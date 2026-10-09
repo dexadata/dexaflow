@@ -1,0 +1,13 @@
+kind: Added
+body: |-
+  **A trusted issuer's tokens can authenticate API requests as a bearer.** Set
+  `auth.trusted_issuer.bearer_audiences` (Helm:
+  `auth.trustedIssuer.bearerAudiences`) and a token the trusted issuer signed
+  for one of those audiences is accepted in the `Authorization: Bearer` header
+  of any `/api/v2` request, reused until it expires, so a remote MCP client
+  behind your platform needs no engine signing secret (ADR 0050 D9). The user
+  linked to the token's subject is reloaded on every request with the roles
+  Dexaflow holds, so deactivating it ends access at once. Lifetime is capped by
+  `bearer_max_lifetime_seconds` (900 unless set, at most 3600). A handoff
+  token is never a bearer, nor the reverse. Off by default. (#1468)
+time: 2026-10-08T17:00:00.000000000+00:00

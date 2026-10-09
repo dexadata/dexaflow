@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -164,6 +165,13 @@ func DevBypassAuth() gin.HandlerFunc {
 
 // JWTAuth validates the bearer token on protected routes and stores the user.
 func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
+	return jwtAuth(authn, nil)
+}
+
+// jwtAuth is JWTAuth with an optional trusted-issuer bearer (#1468): a bearer
+// in the Authorization header that is not a valid engine token is then also
+// checked against the trusted issuer. A nil bearer leaves JWTAuth unchanged.
+func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublic(c.Request.URL.Path) {
 			c.Next()
@@ -182,9 +190,10 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
 		// unavailable holds a backend failure seen while checking a candidate. A
 		// later candidate may still authenticate, so it only decides the answer
 		// once every candidate has been tried.
+		fromHeader := bearerToken(c.GetHeader("Authorization")) != ""
 		var unavailable, tenantless error
-		for _, token := range tokens {
-			user, err := authn.Authenticate(c.Request.Context(), token)
+		for i, token := range tokens {
+			user, err := authenticateCandidate(c.Request.Context(), authn, bearer, token, fromHeader && i == 0)
 			if err == nil && user.TenantID == "" {
 				// A principal that names no tenant cannot be scoped. The
 				// authenticator already refuses one; this guard keeps any other
@@ -218,6 +227,18 @@ func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
 		// tenantless cause so an operator can tell it from a bad signature.
 		AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "invalid token", tenantless)
 	}
+}
+
+// authenticateCandidate authenticates one candidate token: as an engine token
+// first, then, only for the Authorization header and only when the engine
+// refused it as invalid, as a trusted-issuer bearer. The session cookie is
+// always the engine's own, so it never reaches the issuer.
+func authenticateCandidate(ctx context.Context, authn auth.Authenticator, bearer *issuerBearerAuth, token string, fromHeader bool) (*auth.User, error) {
+	user, err := authn.Authenticate(ctx, token)
+	if err == nil || bearer == nil || !fromHeader || !errors.Is(err, auth.ErrInvalidToken) {
+		return user, err
+	}
+	return bearer.authenticate(ctx, token)
 }
 
 func bearerToken(header string) string {
