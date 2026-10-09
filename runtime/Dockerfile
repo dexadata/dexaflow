@@ -18,7 +18,7 @@
 # GO_VERSION is not authoritative here either: go.mod's `toolchain` line is the
 # source of truth for the toolchain, and scripts/check-go-toolchain-pin.sh fails
 # this default when it falls behind (#1036).
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.26.9
 ARG PYTHON_VERSION=3.11
 
 # ── Stage 1: build the static agent binary ───────────────────────────────────
