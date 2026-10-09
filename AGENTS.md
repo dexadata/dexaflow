@@ -47,7 +47,12 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    previous release's schema (`make migrate-down` undoes one migration, so run it
    once per new migration, or follow the rollback steps in the upgrade guide),
    with the time each took and the server healthy after both.
-8. **Performance and soak.** When the candidate touches the scheduler, dispatch
+8. **Performance and reliability.** Every section of
+   [`test/release/perf-reliability-checklist.md`](test/release/perf-reliability-checklist.md)
+   that applies to this candidate (rc, GA, or a patch touching the area) gets its
+   own line: gates on the tagged commit, benchmarks against the previous release,
+   the database at scale, dispatch backpressure, failure injection, warm pools,
+   soak and leaks. At minimum, when the candidate touches the scheduler, dispatch
    or storage: the benchmarks of the area compared with the previous release, and
    a soak run (`make soak`) with no recorded violations.
 9. **Release checklist.**

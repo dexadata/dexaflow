@@ -212,7 +212,9 @@ scripts/cut-release.sh --self-test
 ## rc → GA promotion
 
 Cut `vX.Y.Z-rc.1` first, let the field validate it (especially the upgrade path
-and any security-sensitive change), then promote to `vX.Y.Z`. Today the GA tag
+and any security-sensitive change), then promote to `vX.Y.Z`. Before the GA,
+run the GA rows of `test/release/perf-reliability-checklist.md` and, on a real
+cluster, `test/release/rc-cluster-validation.md`. Today the GA tag
 rebuilds and re-runs the full gate matrix; lightening that to a build-once /
 promote-artifact model is tracked in #878.
 
