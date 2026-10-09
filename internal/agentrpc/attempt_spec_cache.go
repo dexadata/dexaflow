@@ -42,17 +42,21 @@ func attemptSpecOf(spec TaskSpec) attemptSpec {
 }
 
 // attemptKey identifies one attempt. Every field of the authenticated identity
-// that names the attempt is part of it, so another try, run or tenant never
-// shares an entry.
+// that names the attempt is part of it, so another try, run, tenant or
+// execution of the same try (attempt_epoch, ADR 0051) never shares an entry.
+// A token without the epoch claim keys as epoch 0 with hasEpoch unset, apart
+// from a claimed epoch 0.
 type attemptKey struct {
 	tenantID, dagID, runID, taskID, taskInstanceID string
-	tryNumber                                      int
+	tryNumber, attemptEpoch                        int
+	hasEpoch                                       bool
 }
 
 func attemptKeyOf(id auth.AgentIdentity) attemptKey {
 	return attemptKey{
 		tenantID: id.TenantID, dagID: id.DagID, runID: id.RunID, taskID: id.TaskID,
 		taskInstanceID: id.TaskInstanceID, tryNumber: id.TryNumber,
+		attemptEpoch: id.AttemptEpoch, hasEpoch: id.HasAttemptEpoch,
 	}
 }
 

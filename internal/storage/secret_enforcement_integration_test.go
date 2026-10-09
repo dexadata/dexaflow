@@ -225,7 +225,7 @@ func TestSecretRoundTripObserveDoesNotDenyNotLive(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "declares", domain.TaskStateSuccess); err != nil {
 		t.Fatalf("ApplyTransition to success: %v", err)
 	}
-	if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "declares", 1); err != nil || live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "declares", TryNumber: 1}); err != nil || live {
 		t.Fatalf("precondition: declares must be not-live, got live=%v err=%v", live, err)
 	}
 

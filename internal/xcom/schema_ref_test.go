@@ -44,6 +44,9 @@ func TestPushSchemaRefusesLocalFileRefs(t *testing.T) {
 			if strings.Contains(err.Error(), secretMarker) {
 				t.Fatalf("Push error echoes the local file: %v", err)
 			}
+			if name == "relative" && strings.Contains(err.Error(), dir) {
+				t.Fatalf("Push error reveals the server working directory: %v", err)
+			}
 		})
 	}
 }

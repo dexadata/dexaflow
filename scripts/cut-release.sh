@@ -224,6 +224,18 @@ self_test() {
   _eq "$(run_verdict '[{"status":"completed","conclusion":"startup_failure"}]')" "BLOCKED startup_failure" "a startup failure is never GREEN"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"cancelled"}]')" "BLOCKED cancelled" "one cancelled among successes"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"failure"},{"status":"completed","conclusion":"cancelled"}]')" "BLOCKED cancelled" "BLOCKED outranks FAILED, so FLAKE_RE never sees it"
+  # latest_runs: a guard re-run on the same commit (a label added) replaces the
+  # cancelled run it superseded; an older run of ANOTHER workflow still counts.
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"CHANGELOG guard","createdAt":"2026-10-04T10:00:00Z","status":"completed","conclusion":"cancelled"},{"workflowName":"CHANGELOG guard","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"},{"workflowName":"CI","createdAt":"2026-10-04T09:59:59Z","status":"completed","conclusion":"success"}]')")" "GREEN" "a guard run cancelled by its own re-run on the same commit is not judged"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"CI","createdAt":"2026-10-04T10:00:00Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Security","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"}]')")" "BLOCKED cancelled" "the newest run of each workflow is still judged"
+  _eq "$(run_verdict "$(latest_runs '[{"status":"completed","conclusion":"cancelled"},{"workflowName":"CI","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"}]')")" "BLOCKED cancelled" "a run without a workflow name keeps the whole list judged"
+  # Two runs of one guard started in the same second (the prepare PR opened with
+  # its label): the cancelled one was replaced by its sibling. Shape taken from
+  # v0.5.2's prepare PR #1510, where max_by picked the cancelled run.
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"success"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"},{"workflowName":"CI","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"success"}]')")" "GREEN" "a run cancelled by a sibling started in the same second is not judged"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"}]')")" "BLOCKED cancelled" "every tied run cancelled is still BLOCKED"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"success"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"failure"}]')")" "FAILED" "tied runs that both finished are both judged"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"in_progress","conclusion":""}]')")" "PENDING" "a tied sibling still running keeps the cut waiting"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"cancelled"},{"status":"in_progress","conclusion":""}]')" "PENDING" "PENDING outranks BLOCKED"
   # And the REST shape must not regress if anything ever feeds it in.
   _eq "$(run_verdict '[{"status":"completed","conclusion":null}]')" "PENDING" "a null conclusion is treated like an empty one"
@@ -604,6 +616,30 @@ run_verdict() { # <runs-json>
   echo GREEN
 }
 
+# latest_runs <runs-json>: keeps the newest run of each workflow. A pull
+# request's guards run again on the same commit when a label changes, and the
+# concurrency group of a pull request cancels the older run, so the commit
+# carries a cancelled run next to the one that replaced it. Judging both would
+# read that commit as BLOCKED forever. A run without a workflow name leaves the
+# list as it is, so a payload of an unexpected shape is still judged in full.
+#
+# createdAt has one-second resolution, and the prepare PR is opened with its
+# label in the same call, so `opened` and `labeled` start two runs of a guard in
+# the same second and one cancels the other. max_by alone then picks either
+# (v0.5.2 picked the cancelled one and died on a green PR). Among the runs tied
+# at the newest second, a cancelled run is the one its sibling replaced, so the
+# tied runs that were not cancelled are judged, all of them; only when every
+# tied run was cancelled is the cancellation the verdict.
+latest_runs() { # <runs-json>
+  printf '%s' "$1" | jq 'if all(.[]; (.workflowName // "") != "" and (.createdAt // "") != "")
+    then [group_by(.workflowName)[]
+          | (map(.createdAt) | max) as $newest
+          | [.[] | select(.createdAt == $newest)]
+          | ([.[] | select(.conclusion != "cancelled")]) as $live
+          | if ($live | length) > 0 then $live[] else .[] end]
+    else . end' 2>/dev/null || printf '%s' "$1"
+}
+
 # wait_sha_green <sha>: block until every run for <sha> is completed; rerun only
 # transient flakes (bounded); echo GREEN or RED. Robust to the post-rerun window
 # where gh briefly reports the prior conclusion (it waits for pending==0).
@@ -622,8 +658,9 @@ wait_sha_green() {
     # release sha's 4 runs were outside the window and the query returned 0,
     # which run_verdict reports as NONE, spinning to the deadline before dying
     # RED on a green sha.
-    j=$(gh run list --commit "$sha" --limit 100 --json databaseId,status,conclusion 2>/dev/null \
+    j=$(gh run list --commit "$sha" --limit 100 --json databaseId,status,conclusion,workflowName,createdAt 2>/dev/null \
           | jq '[.[]]' 2>/dev/null)
+    j="$(latest_runs "$j")"
     # run_verdict coerces jq's output itself, so a partial or `null` read keeps
     # the loop waiting rather than declaring a verdict.
     verdict="$(run_verdict "$j")"
@@ -888,8 +925,8 @@ create_prepare_pr() { # <branch> <title> <body> [base]
   gh pr create --repo "$REPO" --base "${4:-main}" --head "$1" --title "$2" --body "$3" --label skip-changelog
 }
 
-run_gates() { # <tag>
-  local tag="$1" s ok=0 out rc
+run_gates() { # <tag> <base>
+  local tag="$1" base="$2" s ok=0 out rc
   # nullglob: without it an empty glob leaves the literal pattern, bash exits
   # 127 on it, and the cut dies reporting "gate FAIL check-*.sh".
   shopt -s nullglob
@@ -904,7 +941,14 @@ run_gates() { # <tag>
   for s in "${gates[@]}"; do
     # Capture rather than discard: a bare "gate FAIL <name>" during a cut is
     # unrecoverable, since $logf does not exist until after the tag.
-    if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"; else out="$(bash "$s" 2>&1)"; fi
+    # check-changelog-entry.sh compares [Unreleased] with its base, origin/main
+    # by default. A patch cut builds on release-X.Y, whose [Unreleased] holds the
+    # entries an earlier rc folded, while main's stays empty since fragments
+    # replaced hand edits. Against main, a GA that dates [Unreleased] reads as
+    # "no entry" (empty before, empty after), so the gate gets the cut's base.
+    if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"
+    elif [[ "$s" == *check-changelog-entry* ]]; then out="$(bash "$s" "origin/$base" 2>&1)"
+    else out="$(bash "$s" 2>&1)"; fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
       printf 'gate FAIL %s\n%s\n' "$(basename "$s")" "$out" >&2; ok=1
@@ -980,6 +1024,46 @@ main() {
     git ls-remote --exit-code --heads origin "$base" >/dev/null 2>&1 || base_ok=0
     if [ "$base_ok" = 0 ] && [ "$dry" != 1 ]; then
       die "$base does not exist on origin. Create it from the minor's GA tag first: git push origin v$(minor_of "$version").0^{commit}:refs/heads/$base"
+    fi
+  fi
+
+  # A patch ships everything main gained since vX.Y.0 unless it was skipped on
+  # purpose (scripts/release-gap.sh). Nothing carries a change across on its
+  # own, so without this check a fix merged on main can miss the patch
+  # silently. --resume skips it: the prepare half already passed it.
+  if [ "$base" != main ] && [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
+    local gap_out gap_rc=0
+    gap_out="$("$ROOT/scripts/release-gap.sh" "$version" --fetch 2>&1)" || gap_rc=$?
+    if [ "$gap_rc" != 0 ]; then
+      printf '%s\n' "$gap_out" >&2
+      # 1 is a list of missing commits; anything else means the check did not
+      # run, and nothing was verified, so even a dry run stops.
+      [ "$gap_rc" = 1 ] || die "release-gap.sh could not run (exit $gap_rc, above), so nothing was checked against main"
+      if [ "$dry" = 1 ]; then
+        warn "$base is missing commits from main (above); the real cut will refuse until each is cherry-picked or listed in .github/release-skip.txt"
+      else
+        die "$base is missing commits from main (above): cherry-pick each one, or list it with a reason in .github/release-skip.txt on $base"
+      fi
+    fi
+  fi
+
+  # A release ships docs for every user-facing change it carries, or a
+  # recorded reason why not (scripts/docs-gap.sh). The per pull request guard
+  # judges each change once, when it is opened; this looks again over the whole
+  # release, so a skip nobody justified, or a docs PR that never came, stops
+  # the cut instead of reaching users. --resume skips it: the prepare half
+  # already passed it.
+  if [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
+    local docs_out docs_rc=0
+    docs_out="$("$ROOT/scripts/docs-gap.sh" "$version" --fetch 2>&1)" || docs_rc=$?
+    if [ "$docs_rc" != 0 ]; then
+      printf '%s\n' "$docs_out" >&2
+      [ "$docs_rc" = 1 ] || die "docs-gap.sh could not run (exit $docs_rc, above), so nothing was checked for docs"
+      if [ "$dry" = 1 ]; then
+        warn "user-facing changes on $base ship without docs (above); the real cut will refuse until each is documented, labelled skip-docs with a 'Skip-docs: <reason>' line, or listed in .github/docs-skip.txt on $base"
+      else
+        die "user-facing changes on $base ship without docs (above): document each one, label its pull request skip-docs with a 'Skip-docs: <reason>' line, or list it with a reason in .github/docs-skip.txt on $base"
+      fi
     fi
   fi
 
@@ -1071,7 +1155,7 @@ main() {
   bash "$ROOT/scripts/changelog-fold.sh" "$cv" || die "folding changelog fragments failed"
   is_rc "$version" || date_the_changelog "$cv"
   helm-docs --chart-search-root="$ROOT/helm" >/dev/null 2>&1 || die "helm-docs failed"
-  run_gates "$tag" || die "mechanical gates failed — fix before cutting"
+  run_gates "$tag" "$base" || die "mechanical gates failed — fix before cutting"
 
   # -A on .changes because the fold deletes the fragments it consumed, and a
   # plain `git add <dir>` stages additions but not removals: the prepare PR

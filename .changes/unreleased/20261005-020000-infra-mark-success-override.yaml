@@ -1,0 +1,17 @@
+kind: Fixed
+body: |-
+  **A task that finished during a control plane outage is no longer run
+  again.** When the agent-lost, pod-lost or dispatch-lost reaper marked a task
+  as an infrastructure failure while it was in fact finishing, its durable
+  SUCCESS record could not settle it any more, so the task was re-placed and
+  ran a second time. On Kubernetes the reconciler now settles that record as
+  `success` while the mark is still provisional (unconfirmed, within 2 minutes,
+  run still running), for exactly the attempt the pod names, and says so in the
+  attempt's log and in `dexaflow_reconcile_infra_override_total{mark}`. A
+  FAILED record never overrides a mark. Marking a task `failed` from the UI or
+  API now clears its infrastructure failure kind, so a user's verdict is never
+  re-placed or overridden. Such a task is not terminal, though: if it has tries
+  left, it goes through the normal retry, so its try number goes up and its
+  `retry_delay` applies (before, it was re-placed on the same try without using
+  a retry). (#1124, #900)
+time: 2026-10-05T02:00:00.000000000-03:00

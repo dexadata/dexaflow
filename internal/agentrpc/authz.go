@@ -31,7 +31,32 @@ func (s *Server) requireAttemptToken(id *auth.AgentIdentity) error {
 		return status.Error(codes.PermissionDenied,
 			"a warm-worker token authorizes only Register and AwaitAssignment, not secrets or task RPCs")
 	}
+	// A task token minted before the attempt epoch existed carries no claim. It
+	// is accepted under the epoch-0 rule for this release and metered, so an
+	// operator can see the last one drain before a later release rejects them
+	// (ADR 0051 amendment).
+	if box := s.legacyTokens.Load(); !id.HasAttemptEpoch && box != nil && box.r != nil {
+		box.r.RecordLegacyAttemptToken()
+	}
 	return nil
+}
+
+// LegacyTokenRecorder counts agent RPCs authenticated by a task token that
+// carries no attempt_epoch claim (ADR 0051 amendment). *observability.Metrics
+// satisfies it.
+type LegacyTokenRecorder interface {
+	RecordLegacyAttemptToken()
+}
+
+// legacyRecorderBox holds a LegacyTokenRecorder behind an atomic pointer.
+type legacyRecorderBox struct{ r LegacyTokenRecorder }
+
+// SetLegacyTokenRecorder attaches the legacy-token meter. A nil recorder (the
+// default) counts nothing; acceptance is unchanged either way. It is safe to
+// call while the server is already serving: the boot wiring attaches it after
+// the gRPC listener has started.
+func (s *Server) SetLegacyTokenRecorder(r LegacyTokenRecorder) {
+	s.legacyTokens.Store(&legacyRecorderBox{r: r})
 }
 
 // requireWarmWorkerToken rejects a task-scoped credential on the warm-worker

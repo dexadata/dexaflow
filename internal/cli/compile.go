@@ -851,6 +851,12 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 		// lands them in dag.json and flows them through dispatch→BuildPod exactly
 		// like the per-task values already do.
 		applyDAGDefaults(&spec.Tasks[i], cfg.Defaults)
+		// Size 1 is the default weight; leaving it out keeps dag.json and its
+		// hash identical to a DAG that never set size (ADR 0066). This runs after
+		// both layers so a task's explicit 1 still beats a larger defaults.size.
+		if spec.Tasks[i].PoolSlots == 1 {
+			spec.Tasks[i].PoolSlots = 0
+		}
 	}
 	out, err := json.MarshalIndent(&spec, "", "  ")
 	if err != nil {
@@ -923,6 +929,9 @@ func applyTaskOverride(task *domain.TaskSpec, o *domain.TaskConfig) {
 	if o.Resources != nil {
 		task.Resources = o.Resources
 	}
+	if o.Size != nil {
+		task.PoolSlots = *o.Size
+	}
 	if o.Execution != nil {
 		task.Execution = o.Execution
 	}
@@ -954,16 +963,17 @@ func applyTaskOverride(task *domain.TaskSpec, o *domain.TaskConfig) {
 }
 
 // hasDAGDefaults reports whether the dexaflow.yaml defaults block carries a
-// DAG-wide value the overlay must bake onto tasks (resources or node_selector).
-// Retries/retry_delay/timeout are handled upstream by the parser's default_args,
-// so they don't count here.
+// DAG-wide value the overlay must bake onto tasks (resources, node_selector or
+// size). Retries/retry_delay/timeout are handled upstream by the parser's
+// default_args, so they don't count here.
 func hasDAGDefaults(d *domain.ConfigDefaults) bool {
-	return d != nil && (d.Resources.AsResources() != nil || len(d.NodeSelector) > 0)
+	return d != nil && (d.Resources.AsResources() != nil || len(d.NodeSelector) > 0 || d.Size != nil)
 }
 
-// applyDAGDefaults fills a task's resources and node_selector from the DAG-wide
-// dexaflow.yaml defaults when the task declares none of its own. Per-task values
-// (set by applyTaskOverride or compiled from the DAG) always win; the default
+// applyDAGDefaults fills a task's resources, node_selector and pool_slots from
+// the DAG-wide dexaflow.yaml defaults when the task declares none of its own.
+// Per-task values (set by applyTaskOverride or compiled from the DAG) always
+// win; the default
 // never partially merges into an explicit block. Closes the accepted-but-ignored
 // footgun where defaults.resources / defaults.node_selector reached neither
 // dag.json nor the task pod (EKS validation aresta #6).
@@ -975,6 +985,11 @@ func applyDAGDefaults(task *domain.TaskSpec, d *domain.ConfigDefaults) {
 		if r := d.Resources.AsResources(); r != nil {
 			task.Resources = r
 		}
+	}
+	// A task's own pool_slots (from dag.py or tasks.<id>.size) is more specific
+	// than the DAG-wide size (ADR 0066).
+	if task.PoolSlots == 0 && d.Size != nil {
+		task.PoolSlots = *d.Size
 	}
 	if len(d.NodeSelector) > 0 && (task.Execution == nil || len(task.Execution.NodeSelector) == 0) {
 		if task.Execution == nil {

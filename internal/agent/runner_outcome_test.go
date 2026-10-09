@@ -385,3 +385,24 @@ func TestRunnerOutputPushFailureRecordsTheClassification(t *testing.T) {
 		})
 	}
 }
+
+// TestRunnerRecordNamesTheExecution: the record carries the attempt epoch the
+// task spec names (ADR 0052 amendment), so the reconciler can tell it from a
+// record of another execution of the same try. Epoch 0 is left out.
+func TestRunnerRecordNamesTheExecution(t *testing.T) {
+	for epoch, want := range map[int64]*int64{4: ptrInt64(4), 0: nil} {
+		path := filepath.Join(t.TempDir(), "termination-log")
+		client := &fakeClient{spec: &agentv1.TaskSpec{Operator: "python", Entrypoint: "dag:ok", AttemptEpoch: epoch}}
+		r := newRunner(client, &fakeCmd{exitCode: 0}, &recordingSink{})
+		r.TerminationLogPath = path
+		if err := r.Run(context.Background()); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		rec := readOutcome(t, path)
+		if (want == nil) != (rec.AttemptEpoch == nil) || (want != nil && *rec.AttemptEpoch != *want) {
+			t.Errorf("spec epoch %d: record epoch = %v, want %v", epoch, rec.AttemptEpoch, want)
+		}
+	}
+}
+
+func ptrInt64(n int64) *int64 { return &n }

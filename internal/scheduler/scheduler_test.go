@@ -31,12 +31,17 @@ type fakeStore struct {
 	createdRuns  []string
 	// createdTenants records the tenant of each created scheduled run, in the
 	// same order as createdRuns.
-	createdTenants       []string
-	notes                map[string]string
-	createErr            bool
+	createdTenants []string
+	notes          map[string]string
+	createErr      bool
+	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
+	// these tenants, as the store does once a tenant's daily run cap is reached.
+	limitedTenants       map[string]bool
+	limitedCalls         int
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
+	dispatchRefused      []string
 	// alertAttempts mirrors the real per-episode attempt claim: each call
 	// consumes one, and the claim is refused once the budget is spent or the
 	// episode is already delivered. Backoff is not simulated — the fake is for
@@ -81,6 +86,10 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, _ time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
+	}
+	if f.limitedTenants[tenantID] {
+		f.limitedCalls++
+		return domain.Safef(domain.ErrLimitExceeded, "tenant limit max_runs_per_day of 1 reached")
 	}
 	f.createdRuns = append(f.createdRuns, dagID)
 	f.createdTenants = append(f.createdTenants, tenantID)
@@ -138,6 +147,25 @@ func (f *fakeStore) RecordDispatchBackpressure(_ context.Context, runID, taskID 
 
 func (f *fakeStore) FailDispatchExhausted(_ context.Context, runID, taskID, _ string) error {
 	f.dispatchExhausted = append(f.dispatchExhausted, taskID)
+	return nil
+}
+
+// FailDispatchRefused mirrors the SQL: the task fails and its retry budget is
+// spent (max_tries drops to the current try), so the planner never retries it.
+func (f *fakeStore) FailDispatchRefused(_ context.Context, runID, taskID, _ string) error {
+	f.dispatchRefused = append(f.dispatchRefused, taskID)
+	for i := range f.runs {
+		r := &f.runs[i]
+		if r.RunID != runID {
+			continue
+		}
+		if r.States != nil {
+			r.States[taskID] = domain.TaskStateFailed
+		}
+		if r.MaxTries != nil && r.Tries != nil && r.MaxTries[taskID] > r.Tries[taskID] {
+			r.MaxTries[taskID] = r.Tries[taskID]
+		}
+	}
 	return nil
 }
 
@@ -766,12 +794,15 @@ func TestHeartbeatIsLeadershipAware(t *testing.T) {
 }
 
 type fakeRecorder struct {
+	decisions        []string
 	undispatchable   []string
 	stepDowns        map[string]int
 	reacquireSamples []time.Duration
 }
 
-func (r *fakeRecorder) RecordSchedulerDecision(string)      {}
+func (r *fakeRecorder) RecordSchedulerDecision(d string) {
+	r.decisions = append(r.decisions, d)
+}
 func (r *fakeRecorder) RecordTaskTransition(_, _, _ string) {}
 func (r *fakeRecorder) RecordUndispatchable(reason string) {
 	r.undispatchable = append(r.undispatchable, reason)

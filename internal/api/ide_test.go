@@ -164,6 +164,26 @@ func TestIDEReadMissingIs404(t *testing.T) {
 	}
 }
 
+func TestIDEErrorsDoNotDiscloseHostPaths(t *testing.T) {
+	fs, dir := newWorkspace(t)
+	srv := ideServer(fs)
+	if r := authGet(srv, http.MethodGet, "/api/v2/ide/file?path=nope.py", ""); strings.Contains(r.Body.String(), dir) {
+		t.Errorf("404 body discloses the workspace root %q: %s", dir, r.Body.String())
+	}
+	// Reading a directory as a file fails with an *fs.PathError naming the
+	// absolute path, which used to reach the client on a 500.
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := authGet(srv, http.MethodGet, "/api/v2/ide/file?path=sub", "")
+	if r.Code < 400 {
+		t.Fatalf("reading a directory = %d, want an error", r.Code)
+	}
+	if strings.Contains(r.Body.String(), dir) {
+		t.Errorf("%d body discloses the workspace root %q: %s", r.Code, dir, r.Body.String())
+	}
+}
+
 func TestIDEMissingPathParamIs400(t *testing.T) {
 	fs, _ := newWorkspace(t)
 	srv := ideServer(fs)

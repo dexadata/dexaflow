@@ -143,7 +143,7 @@ func ideTreeHandler(store WorkspaceFS) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		entries, err := store.Tree()
 		if err != nil {
-			AbortProblem(c, http.StatusInternalServerError, "ide_error", err.Error())
+			AbortProblemCause(c, http.StatusInternalServerError, "ide_error", ideErrorDetail, err)
 			return
 		}
 		c.JSON(http.StatusOK, ideTreeDTO{Entries: entries})
@@ -287,7 +287,7 @@ func ideInstallExamplesHandler(store WorkspaceFS, examples fs.FS) gin.HandlerFun
 			return nil
 		})
 		if walkErr != nil {
-			AbortProblem(c, http.StatusInternalServerError, "ide_error", walkErr.Error())
+			AbortProblemCause(c, http.StatusInternalServerError, "ide_error", ideErrorDetail, walkErr)
 			return
 		}
 		c.JSON(http.StatusOK, resp)
@@ -309,15 +309,22 @@ func ideDeleteHandler(store WorkspaceFS) gin.HandlerFunc {
 	}
 }
 
+// ideErrorDetail is the response detail of an IDE filesystem failure. The
+// underlying error names absolute host paths, so it goes to the request log
+// only (#1072).
+const ideErrorDetail = "the workspace operation failed"
+
 // abortIDEError maps a workspace error to the right status: an unsafe path is a
-// client error (400), a missing file is 404, anything else is 500.
+// client error (400), a missing file is 404, anything else is 500. Only the 400
+// echoes the error, which quotes the caller's own relative path; the others
+// carry filesystem errors with host paths and get a constant detail.
 func abortIDEError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, workspace.ErrUnsafePath):
 		AbortProblem(c, http.StatusBadRequest, "invalid_path", err.Error())
 	case errors.Is(err, fs.ErrNotExist):
-		AbortProblem(c, http.StatusNotFound, "not_found", err.Error())
+		AbortProblemCause(c, http.StatusNotFound, "not_found", "no such file in the workspace", err)
 	default:
-		AbortProblem(c, http.StatusInternalServerError, "ide_error", err.Error())
+		AbortProblemCause(c, http.StatusInternalServerError, "ide_error", ideErrorDetail, err)
 	}
 }

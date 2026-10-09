@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -46,6 +47,18 @@ type ServerConfig struct {
 	// Trying keys in order is safe only because AES-GCM is authenticated: a
 	// wrong key fails to open rather than returning plausible garbage.
 	SecretKey string `mapstructure:"secret_key"`
+	// SecretKeyReencryptOnBoot (LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT, default
+	// true) runs the ADR 0019 boot sweep that moves stored secrets onto the
+	// first key of SecretKey. `dexaflow lite` sets it to false: a Lite install
+	// migrates only through the explicit `dexaflow lite migrate-key`, which
+	// records every key before touching a row and verifies before it commits
+	// (ADR 0065). Pro keeps the default.
+	SecretKeyReencryptOnBoot bool `mapstructure:"secret_key_reencrypt_on_boot"`
+	// SecretKeyMigrationLock (LEOFLOW_SECRET_KEY_MIGRATION_LOCK, default false)
+	// makes the server hold the key-migration advisory lock shared for its whole
+	// life, refuse to start while a migration holds it, and exit if it loses it.
+	// `dexaflow lite` sets it to true (ADR 0065 section 3).
+	SecretKeyMigrationLock bool `mapstructure:"secret_key_migration_lock"`
 }
 
 // SecretsSection configures the external secrets backend (ADR 0060). When Backend
@@ -138,7 +151,8 @@ type ObjectLogSection struct {
 	CredentialsFile string `mapstructure:"credentials_file"`
 	// Layout selects how new attempts are written to the bucket: "single"
 	// (default) keeps one object per attempt at {try}.log, rewritten on every
-	// flush; "segmented" writes numbered segments under {try}.log.d/ so a flush
+	// flush; "segmented" writes numbered segments under {try}.log.d/
+	// ({try}.e{epoch}.log.d/ for a later execution of the try) so a flush
 	// uploads only the open segment. Both layouts are always readable. Turn
 	// segmented on only once every replica runs a version that reads it.
 	Layout string `mapstructure:"layout"`
@@ -196,6 +210,50 @@ type ExecutorSection struct {
 	// finished pods stay for the grace period, so they can be inspected with
 	// kubectl.
 	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
+	// KubeClient sets the client-side rate limits of the control plane's
+	// Kubernetes clients.
+	KubeClient KubeClientSection `mapstructure:"kube_client"`
+	// Unit is the resource unit one pool slot stands for (ADR 0066). Unset (the
+	// default) changes nothing. Set, every task pod is sized pool_slots x unit
+	// where the task leaves cpu or memory out, and a task that declares more
+	// than that is refused at registration and at dispatch.
+	Unit ExecutorUnitSection `mapstructure:"unit"`
+}
+
+// ExecutorUnitSection is executor.unit: the CPU and memory of one pool slot,
+// as Kubernetes quantities (both or neither), how a task that does not fit its
+// size is treated (refuse or warn), and the largest pool_slots a task may have
+// while the unit is set.
+type ExecutorUnitSection struct {
+	CPU     string `mapstructure:"cpu"`
+	Memory  string `mapstructure:"memory"`
+	Enforce string `mapstructure:"enforce"`
+	MaxSize int    `mapstructure:"max_size"`
+}
+
+// ResourceUnitConfig is the section as the domain parser takes it.
+func (u ExecutorUnitSection) ResourceUnitConfig() domain.ResourceUnitConfig {
+	return domain.ResourceUnitConfig{CPU: u.CPU, Memory: u.Memory, Enforce: u.Enforce, MaxSize: u.MaxSize}
+}
+
+// KubeClientSection sets the client-side rate limits (client-go token buckets)
+// of the control plane's Kubernetes clients. The dispatch client creates task
+// pods; the agent token exchange builds its own client with the same limits.
+// Maintenance work (pod informer, reconciler, reapers, staging GC, warm pool
+// reconciler) shares the dispatch client unless MaintenanceQPS is set, in which
+// case it gets a separate client and token bucket so a maintenance burst cannot
+// starve pod creation.
+type KubeClientSection struct {
+	// QPS and Burst limit the dispatch client. Defaults are client-go's own
+	// (5 and 10); a non-positive value falls back to them.
+	QPS   float64 `mapstructure:"qps"`
+	Burst int     `mapstructure:"burst"`
+	// MaintenanceQPS and MaintenanceBurst limit a separate maintenance client.
+	// 0 (default) keeps maintenance on the dispatch client, one shared budget as
+	// before. A non-positive burst with a positive QPS falls back to client-go's
+	// default burst.
+	MaintenanceQPS   float64 `mapstructure:"maintenance_qps"`
+	MaintenanceBurst int     `mapstructure:"maintenance_burst"`
 }
 
 // PlatformDefaultsSection configures the lowest-precedence (L0) task defaults,
@@ -405,6 +463,15 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
+	// only: create, resize and delete answer 403 for every role, tenant admin
+	// included. It is for an engine shared by many tenants, where the platform
+	// operator sizes each tenant's pools out of band and a tenant must not be
+	// able to raise its own slot budget. It also makes the scheduler admit a task
+	// naming a pool its tenant has not defined against default_pool, since a
+	// tenant cannot create pools then. Default false keeps pools writable under
+	// write:pool and undefined pools unlimited, today's behavior.
+	PoolsReadOnly bool `mapstructure:"pools_read_only"`
 }
 
 // Server roles (ADR 0049).
@@ -511,6 +578,15 @@ type TrustedIssuerSection struct {
 	// post a handoff. Any other Origin, or none, is refused, so another site
 	// cannot sign a visitor in (login CSRF). Required.
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	// BearerAudiences turns on the bearer mode (#1468): a token whose `aud` is
+	// one of these is accepted as the bearer of any /api/v2 request, reused
+	// within its lifetime, the way a remote MCP client authenticates (ADR 0050
+	// D9). Each must differ from Audience, so a handoff token is never a
+	// bearer. Empty (the default) leaves the mode off.
+	BearerAudiences []string `mapstructure:"bearer_audiences"`
+	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
+	// 900-second default; at most 3600.
+	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
 }
 
 // Enabled reports whether a trusted issuer is configured.
@@ -581,9 +657,13 @@ type AuthSection struct {
 	// "90m"). With warm pools enabled it is also the per-attempt watchdog that
 	// keeps a wedged attempt from pinning a warm slot (a warm pod has no pod-level
 	// deadline; the worker lifetime cap drains between attempts, never
-	// mid-attempt). A non-positive value disables the renewal ceiling, the pod
-	// deadline floor and that watchdog together — a wedged task then has no
-	// wall-clock bound of its own — so boot logs a WARN naming the key.
+	// mid-attempt). An attempt whose agent goes silent after running past the
+	// ceiling is failed by the heartbeat reaper as a task failure with the
+	// credential_ceiling reason (its retry policy applies), never re-placed as an
+	// agent_lost infra loss with a fresh credential (#1461). A non-positive value
+	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
+	// credential_ceiling failure together (a wedged task then has no
+	// wall-clock bound of its own), so boot logs a WARN naming the key.
 	MaxAttemptCredentialLifetime time.Duration `mapstructure:"max_attempt_credential_lifetime"`
 	// AgentTokenTransport selects how the in-pod agent obtains its control-plane
 	// bearer credential (ADR 0055 Fix #3): "envvar" (the default) sets the token as
@@ -728,6 +808,11 @@ type SchedulerSection struct {
 	Enabled        bool            `mapstructure:"enabled"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
 	Alerts         AlertsSection   `mapstructure:"alerts"`
+	// PoolStarvationThreshold is how long a task held only by its pool waits
+	// before the pool is reserved for it, so tasks of fewer slots cannot keep
+	// a larger one out forever (ADR 0066 §4). 0 disables reservations. Pro only:
+	// Lite has no pools.
+	PoolStarvationThreshold time.Duration `mapstructure:"pool_starvation_threshold"`
 }
 
 // AlertsSection guards the destinations of native on-failure alerts (#424).
@@ -812,7 +897,10 @@ var serverDefaults = map[string]any{
 	// comma-separated env var into a list, so the env-only Helm override path
 	// works without a config file — this is what the chart renders (#725). Empty
 	// (the default) trusts no proxy.
-	"server.trusted_proxies":  []string{},
+	"server.trusted_proxies": []string{},
+	// Off by default: pools stay writable through the tenant-facing API under
+	// write:pool. Registered so AutomaticEnv binds the Helm-rendered env var.
+	"server.pools_read_only":  false,
 	"database.url":            "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable",
 	"database.max_open_conns": 25,
 	"database.max_idle_conns": 5,
@@ -887,10 +975,11 @@ var serverDefaults = map[string]any{
 	// here the chart renders the variable and the server ignores it: a setting
 	// that looks configured and is not. TestDocumentedEnvVarsBind caught this
 	// once before, and the rebase onto the session-cookie fix dropped it again.
-	"auth.oidc.auto_redirect":      false,
-	"auth.oidc.clock_skew_seconds": 60,
-	"scheduler.loop_interval_ms":   1000,
-	"scheduler.enabled":            true,
+	"auth.oidc.auto_redirect":             false,
+	"auth.oidc.clock_skew_seconds":        60,
+	"scheduler.loop_interval_ms":          1000,
+	"scheduler.enabled":                   true,
+	"scheduler.pool_starvation_threshold": "60s",
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
@@ -908,6 +997,12 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// client-go's own defaults on one shared client, so an unconfigured install
+	// keeps its effective apiserver budget.
+	"executor.kube_client.qps":               5.0,
+	"executor.kube_client.burst":             10,
+	"executor.kube_client.maintenance_qps":   0.0,
+	"executor.kube_client.maintenance_burst": 0,
 
 	// Alert egress guard: an alert's URL is tenant data (#424). The []string
 	// binds from one comma-separated env var, like server.trusted_proxies.
@@ -924,8 +1019,14 @@ var serverDefaults = map[string]any{
 	// _MEMORY (the env-only Helm override path, #725). Empty leaves the L0 default
 	// unset, so a task inherits no platform resource default unless the operator
 	// configures one. Scalars (Kubernetes quantities, e.g. "250m"/"256Mi").
-	"executor.defaults.resources_cpu":                  "",
-	"executor.defaults.resources_memory":               "",
+	"executor.defaults.resources_cpu":    "",
+	"executor.defaults.resources_memory": "",
+	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_UNIT_CPU / _MEMORY. Empty
+	// (both) means no resource unit (ADR 0066).
+	"executor.unit.cpu":                                "",
+	"executor.unit.memory":                             "",
+	"executor.unit.enforce":                            domain.UnitEnforceRefuse,
+	"executor.unit.max_size":                           domain.DefaultUnitMaxSize,
 	"executor.defaults.run_tasks_as_non_root":          true,
 	"executor.defaults.read_only_task_root_filesystem": false,
 	// Warm worker pools (ADR 0058). Ships a byte-for-byte no-op: warm pools OFF =
@@ -972,24 +1073,28 @@ var serverDefaults = map[string]any{
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `dexaflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
-	"ui.auto_refresh_interval_seconds":         0,
-	"auth.dev_no_auth":                         false,
-	"auth.service_token":                       "",
-	"auth.trusted_issuer.name":                 "",
-	"auth.trusted_issuer.issuer":               "",
-	"auth.trusted_issuer.jwks_url":             "",
-	"auth.trusted_issuer.audience":             "",
-	"auth.trusted_issuer.tenant_claim":         "tenant_id",
-	"auth.trusted_issuer.allowed_tenants":      []string{},
-	"auth.trusted_issuer.max_lifetime_seconds": 0,
-	"auth.trusted_issuer.allowed_origins":      []string{},
-	"auth.external_signin_url":                 "",
-	"auth.external_signout_url":                "",
+	"ui.auto_refresh_interval_seconds":                0,
+	"auth.dev_no_auth":                                false,
+	"auth.service_token":                              "",
+	"auth.trusted_issuer.name":                        "",
+	"auth.trusted_issuer.issuer":                      "",
+	"auth.trusted_issuer.jwks_url":                    "",
+	"auth.trusted_issuer.audience":                    "",
+	"auth.trusted_issuer.tenant_claim":                "tenant_id",
+	"auth.trusted_issuer.allowed_tenants":             []string{},
+	"auth.trusted_issuer.max_lifetime_seconds":        0,
+	"auth.trusted_issuer.allowed_origins":             []string{},
+	"auth.trusted_issuer.bearer_audiences":            []string{},
+	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
+	"auth.external_signin_url":                        "",
+	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
 	"secret_key":                   "",
+	"secret_key_reencrypt_on_boot": true,
+	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
 	// Trace sampling gates (ADR 0062): the defaults trace every request.
@@ -1126,10 +1231,16 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateLogs(); err != nil {
 		return err
 	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err
 	}
 	if err := c.validateExecution(); err != nil {
+		return err
+	}
+	if err := c.validateExecutorUnit(); err != nil {
 		return err
 	}
 	if err := c.validatePlatformIntegration(); err != nil {
@@ -1268,6 +1379,15 @@ func (c *ServerConfig) validateExecution() error {
 		return fmt.Errorf("execution.max_warm_pods_per_tenant must be >= 1 when execution.warm_pools_enabled (got %d): a zero aggregate tenant cap would forbid every warm worker (M4)", c.Execution.MaxWarmPodsPerTenant)
 	}
 	return nil
+}
+
+// validateExecutorUnit checks executor.unit (ADR 0066): unset, or both
+// quantities valid and positive, enforce refuse or warn, max_size positive.
+// It combines with warm pools: a warm pod is then one unit and serves only
+// size-1 tasks that declare no resources.
+func (c *ServerConfig) validateExecutorUnit() error {
+	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	return err
 }
 
 // validateProvider rejects an unknown auth.provider, failing closed at boot
@@ -1464,6 +1584,8 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
 		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 600, "auth.trusted_issuer.max_lifetime_seconds (0 to 600)"},
 		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
+		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
+		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -1475,6 +1597,18 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		return fmt.Errorf("auth.trusted_issuer is incomplete or invalid; set: %s", strings.Join(problems, ", "))
 	}
 	return nil
+}
+
+// bearerAudiencesValid reports whether every bearer audience is set and none
+// is the handoff audience: a token for both would be a one-use handoff and a
+// reusable bearer at once.
+func bearerAudiencesValid(s TrustedIssuerSection) bool {
+	for _, aud := range s.BearerAudiences {
+		if aud == "" || aud == s.Audience {
+			return false
+		}
+	}
+	return true
 }
 
 // validateHomeLink checks ui.home_link (#1290): both fields or neither, and an
