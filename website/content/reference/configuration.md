@@ -623,6 +623,8 @@ before enabling it in production.
 | `DEXAFLOW_OBSERVABILITY_LOG_FORMAT` | `json` | both | Control-plane log format: `json` (default) or `text`. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENABLED` | `true` | both | Enable OpenTelemetry trace export. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENDPOINT` | `localhost:4317` | both | OTLP collector endpoint (when OTel is enabled). |
+| `DEXAFLOW_OBSERVABILITY_OTEL_SAMPLE_RATIO` | `1` | both | Share of request traces kept, from `0` to `1`. An incoming `traceparent` header is not propagated, so every request starts its own trace and is sampled at this ratio; spans within a request follow its decision. `1` traces every request; other values outside the range fail boot. |
+| `DEXAFLOW_OBSERVABILITY_OTEL_SKIP_PROBE_SPANS` | `false` | both | When `true`, no spans are recorded for `/healthz`, `/readyz` and `/static/*`. Their HTTP metrics are still recorded. |
 | `DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES` | `false` | both | Stop publishing every `dexaflow_*` metric a second time under its pre-rename `leoflow_*` name. The default keeps both, so dashboards and alerts on either name work. An opt-in for operators who do not need the `leoflow_*` names; it halves the scrape. Helm: set it through `extraEnv`. |
 
 ### UI (`ui.*`)

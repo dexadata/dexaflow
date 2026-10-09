@@ -872,6 +872,14 @@ type MetricsSection struct {
 type OTelSection struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Endpoint string `mapstructure:"endpoint"`
+	// SampleRatio is the share of request traces kept (1 keeps every trace).
+	// No propagator is installed, so an incoming traceparent is ignored and
+	// every request starts a new root trace; spans within a request follow
+	// its root's decision.
+	SampleRatio float64 `mapstructure:"sample_ratio"`
+	// SkipProbeSpans drops spans for /healthz, /readyz and /static/*. Off by
+	// default (ADR 0062), so every request is traced as before.
+	SkipProbeSpans bool `mapstructure:"skip_probe_spans"`
 }
 
 // serverDefaults lists every leaf key with its default so that AutomaticEnv and
@@ -1091,6 +1099,9 @@ var serverDefaults = map[string]any{
 	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Trace sampling gates (ADR 0062): the defaults trace every request.
+	"observability.otel.sample_ratio":     1.0,
+	"observability.otel.skip_probe_spans": false,
 	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
 	"observability.metrics.drop_legacy_names": false,
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
