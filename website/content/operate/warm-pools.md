@@ -306,6 +306,34 @@ Why it makes reuse safe:
 - **Recycle on suspicion.** Any attempt that trips a security signal — an auth
   failure, or a liveness denial under enforce — **recycles the whole worker** rather
   than serving the next attempt on it. Cheap, bounded insurance.
+- **One live registration per worker.** A warm worker's identity can hold only
+  one assignment stream at a time. While a worker's stream is connected and
+  heartbeating (the worker re-sends its registration on the stream every 15
+  seconds), a second registration under the same identity is refused with
+  `AlreadyExists`, so nothing holding a copy of the worker's credential can open
+  a parallel stream and receive assignments, and the attempt tokens they carry,
+  meant for the real worker. A worker that reconnects after its previous stream
+  ended registers normally. A stream that stays open but sends no heartbeat for
+  60 seconds is treated as stale: a new registration replaces it and the stale
+  stream is closed with `Aborted`.
+
+### Keeping the bootstrap credential from task code
+
+Under the exchange transport the warm pod mounts its projected bootstrap token
+read only at `/var/run/leoflow/token`, in the warm container only, and mounts no
+Kubernetes API token. The agent reads it to authenticate and again when it
+reconnects (the kubelet rotates it). The task process the agent starts does not
+inherit the token path or any agent variable (they are stripped from its
+environment), and the agent is not dumpable, so the task cannot read the
+agent's in-memory credentials through `/proc`.
+
+The agent and the task run in the same container as the same user, so file
+permissions cannot hide the mounted token from a task that knows where to look.
+What bounds that case is the token's scope: it authorizes only `Register` and
+`AwaitAssignment`, never secrets, and the one-live-registration rule above stops
+a task from using it to open a second stream while its own worker is serving.
+Running the task as a separate user would need privileges the restricted Pod
+Security profile does not grant, so it is not done today.
 
 Without the exchange transport a bearer credential would sit in plaintext on the pod
 spec and could not carry a per-attempt identity at all — which is why
