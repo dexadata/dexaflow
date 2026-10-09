@@ -20,7 +20,14 @@ import (
 // key signs plans; nil draws a random key, which suits stdio only, since every
 // HTTP replica must share the key (LoadPlanKey). Without this option the tools
 // are not registered at all.
+//
+// A non-nil key shorter than PlanKeyMinBytes panics: an empty or short HMAC
+// key would let anyone sign a plan, so it is a programming error, never a
+// configuration the server runs with. Load operator keys with LoadPlanKey.
 func WithRunControl(key []byte) Option {
+	if key != nil && len(key) < PlanKeyMinBytes {
+		panic(fmt.Sprintf("mcp.WithRunControl: plan key of %d bytes, want at least %d", len(key), PlanKeyMinBytes))
+	}
 	return func(h *handlers) {
 		if key == nil {
 			key = randomPlanKey()
@@ -276,6 +283,32 @@ func (p clearParams) body(dryRun bool) apiclient.ClearTaskInstancesJSONRequestBo
 	return b
 }
 
+// narrowedTo is the clear that runs after a preview: it names exactly the
+// previewed tasks and expands to nothing more, keeping every other flag. A
+// task that fails between the preview and the clear is then not swept in
+// unseen, as a whole-run or downstream clear would.
+func (p clearParams) narrowedTo(preview []planTI) clearParams {
+	n := p
+	n.TaskIDs = nil
+	for _, ti := range preview {
+		if !slices.Contains(n.TaskIDs, ti.TaskID) {
+			n.TaskIDs = append(n.TaskIDs, ti.TaskID)
+		}
+	}
+	n.IncludeDownstream, n.IncludeUpstream = false, false
+	return n
+}
+
+// clearedSummary reports a clear, and says so when the control plane cleared
+// more task instances than the preview showed (their state moved meanwhile).
+func clearedSummary(runID string, cleared, previewed int) string {
+	s := fmt.Sprintf("Cleared %d task instance(s) of run %q; they will run again.", cleared, stripControl(runID))
+	if cleared > previewed {
+		s += fmt.Sprintf(" That is more than the %d the preview showed: more of the same tasks failed in between.", previewed)
+	}
+	return s
+}
+
 // sendClear runs the clear (or its preview) and returns the task instances it
 // touches (or would).
 func sendClear(ctx context.Context, api *apiclient.ClientWithResponses, dagID string, p clearParams, dryRun bool) ([]planTI, error) {
@@ -315,11 +348,11 @@ func (h *handlers) clearTask(ctx context.Context, req *mcpsdk.CallToolRequest, i
 	case len(preview) == 0:
 		return nil, h.clearOutput(in.DagID, in.RunID, nil, false, "Nothing to clear: no task instance of the run matches."), nil
 	case len(preview) == 1:
-		done, cerr := sendClear(ctx, api, in.DagID, p, false)
+		done, cerr := sendClear(ctx, api, in.DagID, p.narrowedTo(preview), false)
 		if cerr != nil {
 			return nil, controlOutput{}, cerr
 		}
-		return nil, h.clearOutput(in.DagID, in.RunID, done, true, fmt.Sprintf("Cleared %d task instance(s) of run %q; they will run again.", len(done), stripControl(in.RunID))), nil
+		return nil, h.clearOutput(in.DagID, in.RunID, done, true, clearedSummary(in.RunID, len(done), len(preview))), nil
 	case len(preview) > maxPlanTaskInstances:
 		return nil, controlOutput{}, fmt.Errorf("this clear touches %d task instances, more than %d; narrow it with task_ids or use the UI", len(preview), maxPlanTaskInstances)
 	}
@@ -406,12 +439,11 @@ func (h *handlers) applyClear(ctx context.Context, api *apiclient.ClientWithResp
 	if !sameTIs(now, p.Expect) {
 		return controlOutput{}, errors.New("the task instances changed since the plan was made; make a new plan")
 	}
-	done, err := sendClear(ctx, api, p.DagID, *p.Clear, false)
+	done, err := sendClear(ctx, api, p.DagID, p.Clear.narrowedTo(p.Expect), false)
 	if err != nil {
 		return controlOutput{}, err
 	}
-	return h.clearOutput(p.DagID, p.Clear.RunID, done, true,
-		fmt.Sprintf("Cleared %d task instance(s) of run %q; they will run again.", len(done), stripControl(p.Clear.RunID))), nil
+	return h.clearOutput(p.DagID, p.Clear.RunID, done, true, clearedSummary(p.Clear.RunID, len(done), len(p.Expect))), nil
 }
 
 // sameTIs compares two task instance sets regardless of order: the same task

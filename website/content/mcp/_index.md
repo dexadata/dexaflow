@@ -106,7 +106,7 @@ never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mo
 | `--server` | `DEXAFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
 | `--transport` | `DEXAFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
 | `--listen` | `DEXAFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
-| `--run-control` | `DEXAFLOW_MCP_RUN_CONTROL` | off | Register the [run control tools](#run-control). Set the env variable to `true`. |
+| `--run-control` | `DEXAFLOW_MCP_RUN_CONTROL` | off | Register the [run control tools](#run-control). The env variable takes `true`/`false`, `1`/`0` or `t`/`f` in any case; any other value stops the server (exit 2). |
 | `--plan-key-file` | `DEXAFLOW_MCP_PLAN_KEY_FILE` | — | File holding the key, at least 32 bytes, that signs run control plans. Required with `--run-control` on the `http` transport, and the same file on every replica. On stdio a random key is used when unset. |
 | `--ui-base-url` | `DEXAFLOW_MCP_UI_BASE_URL` | — | Address of the Dexaflow UI, such as `https://flow.example.com`. When set, results carry `web_url` links into it (see [Links into the UI](#links-into-the-ui)). Must be an absolute `http` or `https` URL without a query or fragment. |
 | — | `DEXAFLOW_TOKEN` | — | Bearer JWT for the **stdio** transport (ignored on `http`). |
@@ -161,14 +161,32 @@ A call that needs a plan changes nothing. It returns what would happen and a
 
 - **A plan carries the exact operation**, signed with the plan key. The model
   cannot change it, only hand it back.
-- **A plan lasts 10 minutes** and is bound to the caller. Over HTTP that means
-  the bearer's claims, except the ones a token refresh changes, so another
-  user, tenant or client cannot apply it.
+- **A plan lasts 10 minutes** and is bound to the caller. Over HTTP that is
+  the bearer's issuer (`iss`), subject (`sub`), tenant (`tenant_id`, `tenant`
+  or `tid`), client (`azp`, else `client_id`) and scope set, so another user,
+  tenant, client or narrower token cannot apply it. A token without `iss`,
+  `sub` or a tenant cannot plan. A refreshed token, or one whose roles or
+  email changed, still applies the plan; the control plane checks the
+  caller's permissions on the apply call itself.
 - **Apply checks again before acting.** If the task instances are no longer in
   the states the plan showed, or the DAG's paused flag or schedule changed,
   `apply_plan` refuses and asks for a new plan. A plan therefore applies once.
 - **A clear over more than 200 task instances is refused.** Narrow it with
   `task_ids` or use the UI.
+- **A clear runs only what its preview showed.** The clear that follows a
+  preview names the previewed tasks and expands no further, so a task that
+  fails in between is not cleared unseen.
+
+Generate the plan key once and give every replica the same file:
+
+```bash
+openssl rand -base64 48 > plan.key
+chmod 600 plan.key
+dexaflow-mcp --transport http --run-control --plan-key-file plan.key
+```
+
+Changing the key invalidates the plans made in the last 10 minutes, nothing
+else.
 
 ## Resources
 

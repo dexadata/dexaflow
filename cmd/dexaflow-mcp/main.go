@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -57,9 +58,14 @@ func run() int {
 	var uiBaseURL string
 	flag.StringVar(&uiBaseURL, "ui-base-url", os.Getenv("LEOFLOW_MCP_UI_BASE_URL"),
 		"URL of the Dexaflow UI; when set, results carry web_url links into it")
+	runControlDefault, err := runControlFromEnv(os.Getenv)
+	if err != nil {
+		slog.Error("run control", "error", err)
+		return 2
+	}
 	var runControl bool
 	var planKeyFile string
-	flag.BoolVar(&runControl, "run-control", os.Getenv("LEOFLOW_MCP_RUN_CONTROL") == "true",
+	flag.BoolVar(&runControl, "run-control", runControlDefault,
 		"register the run control tools: trigger_run, clear_task, pause_dag, unpause_dag, apply_plan (ADR 0067)")
 	flag.StringVar(&planKeyFile, "plan-key-file", os.Getenv("LEOFLOW_MCP_PLAN_KEY_FILE"),
 		"file holding the key (at least 32 bytes) that signs run control plans; required with --run-control on the http transport, shared by every replica")
@@ -149,6 +155,25 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// runControlFromEnv reads DEXAFLOW_MCP_RUN_CONTROL, or the pre-rename
+// LEOFLOW_MCP_RUN_CONTROL when it is unset, with the usual boolean spellings
+// (strconv.ParseBool). A value it cannot read is an error, not "off", so a
+// typo is noticed at start-up.
+func runControlFromEnv(getenv func(string) string) (bool, error) {
+	for _, name := range []string{"DEXAFLOW_MCP_RUN_CONTROL", "LEOFLOW_MCP_RUN_CONTROL"} {
+		v := getenv(name)
+		if v == "" {
+			continue
+		}
+		on, err := strconv.ParseBool(v)
+		if err != nil {
+			return false, fmt.Errorf("%s=%q: want true or false (also 1/0, t/f)", name, v)
+		}
+		return on, nil
+	}
+	return false, nil
 }
 
 // runControlOption loads the plan key for run control. The http transport

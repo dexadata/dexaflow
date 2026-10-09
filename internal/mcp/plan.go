@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,6 +66,7 @@ type planTI struct {
 // plan_id, signed, so the stateless HTTP transport needs no plan store: the
 // model can only hand it back, never change what it does.
 type plan struct {
+	Version  int          `json:"v"` // planVersion; another version is refused
 	Action   string       `json:"a"` // planClear or planUnpause
 	DagID    string       `json:"d"`
 	Clear    *clearParams `json:"c,omitempty"`
@@ -73,6 +76,9 @@ type plan struct {
 	Expires  int64        `json:"x"`           // unix seconds
 }
 
+// planVersion is the plan_id format sealPlan writes and openPlan accepts.
+const planVersion = 1
+
 const (
 	planClear   = "clear"
 	planUnpause = "unpause"
@@ -80,6 +86,7 @@ const (
 
 // sealPlan signs p with key: base64url(JSON) "." base64url(HMAC-SHA256).
 func sealPlan(key []byte, p plan) (string, error) {
+	p.Version = planVersion
 	b, err := json.Marshal(p)
 	if err != nil {
 		return "", fmt.Errorf("encoding plan: %w", err)
@@ -112,52 +119,139 @@ func openPlan(key []byte, id, caller string, now time.Time) (plan, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return plan{}, fmt.Errorf("decoding plan: %w", err)
 	}
+	if p.Version != planVersion {
+		return plan{}, fmt.Errorf("plan_id has format version %d, this server reads %d; make a new plan", p.Version, planVersion)
+	}
 	if now.Unix() > p.Expires {
 		return plan{}, errors.New("plan expired; make a new plan")
 	}
 	if !hmac.Equal([]byte(p.Caller), []byte(caller)) {
-		return plan{}, errors.New("plan was made by another user, tenant or client")
+		return plan{}, errors.New("plan was made by another caller (issuer, subject, tenant, client or scopes differ); make a new plan")
 	}
 	return p, nil
 }
 
-// unboundClaims are the claims that change when a client refreshes its token
-// for the same caller, so they do not take part in callerKey.
-var unboundClaims = []string{"iat", "exp", "nbf", "jti", "auth_time"}
+// tenantClaims are the claims, in order, that name the caller's tenant: the
+// engine's own tokens carry tenant_id; a trusted issuer's carry the claim its
+// operator configured, commonly one of the others.
+var tenantClaims = []string{"tenant_id", "tenant", "tid"}
+
+// planCaller is who a plan is bound to (ADR 0067): the token's issuer,
+// subject, tenant, client (azp, else client_id) and scope set. Nothing else
+// in the token takes part, so a refresh, or a change of roles or email, keeps
+// the plan; the control plane re-checks the caller's permissions on every
+// apply call anyway.
+type planCaller struct {
+	Issuer  string   `json:"iss"`
+	Subject string   `json:"sub"`
+	Tenant  string   `json:"tenant"`
+	Client  string   `json:"client"`
+	Scopes  []string `json:"scope"`
+}
+
+// bearerToken returns the token of an "Authorization: Bearer" header, the
+// scheme matched in any case (RFC 7235), or "".
+func bearerToken(header http.Header) string {
+	if header == nil {
+		return ""
+	}
+	fields := strings.Fields(header.Get("Authorization"))
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		return ""
+	}
+	return fields[1]
+}
 
 // callerKey names who is calling, to bind a plan to them. On stdio there is
-// one local caller. Over HTTP it is a hash of the bearer's claims minus the
-// ones a refresh changes, so it covers the tenant (whatever its claim's name),
-// the subject, the client and the scopes. The claims are read unverified: the
-// control plane verifies the token of every call, apply included, so a forged
-// token fails there.
+// one local caller. Over HTTP it is a hash of the bearer's planCaller. The
+// claims are read unverified: the control plane verifies the token of every
+// call, apply included, so a forged token fails there.
 func (h *handlers) callerKey(req *mcpsdk.CallToolRequest) (string, error) {
 	if !h.requireBearer {
 		return "stdio", nil
 	}
 	var token string
-	if req != nil && req.Extra != nil && req.Extra.Header != nil {
-		token = strings.TrimSpace(strings.TrimPrefix(req.Extra.Header.Get("Authorization"), "Bearer "))
+	if req != nil && req.Extra != nil {
+		token = bearerToken(req.Extra.Header)
 	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return "", errors.New("cannot bind a plan to this caller: the bearer is not a JWT")
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	claims, err := jwtClaims(token)
 	if err != nil {
 		return "", fmt.Errorf("cannot bind a plan to this caller: %w", err)
 	}
-	var claims map[string]any
-	if err = json.Unmarshal(raw, &claims); err != nil {
+	c, err := callerOf(claims)
+	if err != nil {
 		return "", fmt.Errorf("cannot bind a plan to this caller: %w", err)
 	}
-	for _, c := range unboundClaims {
-		delete(claims, c)
-	}
-	canon, err := json.Marshal(claims) // map keys marshal sorted
+	canon, err := json.Marshal(c)
 	if err != nil {
 		return "", fmt.Errorf("cannot bind a plan to this caller: %w", err)
 	}
 	sum := sha256.Sum256(canon)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// jwtClaims decodes, without verifying, the claims of a three-part JWT.
+func jwtClaims(token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, errors.New("the bearer is not a JWT")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+// callerOf reads the planCaller out of claims. Issuer, subject and tenant are
+// required; a token without a client or a scope binds to their absence.
+func callerOf(claims map[string]any) (planCaller, error) {
+	str := func(name string) string {
+		v, _ := claims[name].(string)
+		return v
+	}
+	c := planCaller{Issuer: str("iss"), Subject: str("sub"), Client: str("azp")}
+	if c.Client == "" {
+		c.Client = str("client_id")
+	}
+	for _, name := range tenantClaims {
+		if c.Tenant = str(name); c.Tenant != "" {
+			break
+		}
+	}
+	switch {
+	case c.Issuer == "":
+		return planCaller{}, errors.New("the token has no iss claim")
+	case c.Subject == "":
+		return planCaller{}, errors.New("the token has no sub claim")
+	case c.Tenant == "":
+		return planCaller{}, fmt.Errorf("the token names no tenant (claims %s)", strings.Join(tenantClaims, ", "))
+	}
+	c.Scopes = scopeSet(claims)
+	return c, nil
+}
+
+// scopeSet is the token's scopes, from a space-separated "scope" claim or an
+// "scp" list, sorted and without duplicates, so their order does not matter.
+func scopeSet(claims map[string]any) []string {
+	var out []string
+	if s, ok := claims["scope"].(string); ok {
+		out = strings.Fields(s)
+	}
+	switch v := claims["scp"].(type) {
+	case string:
+		out = append(out, strings.Fields(v)...)
+	case []any:
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }

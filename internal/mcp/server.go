@@ -78,7 +78,7 @@ func (h *handlers) clientFor(extra *mcpsdk.RequestExtra) (*apiclient.ClientWithR
 	if extra == nil || extra.Header == nil {
 		return nil, fmt.Errorf("missing Authorization header (the http transport requires a per-request bearer)")
 	}
-	token := strings.TrimSpace(strings.TrimPrefix(extra.Header.Get("Authorization"), "Bearer "))
+	token := bearerToken(extra.Header)
 	if token == "" {
 		return nil, fmt.Errorf("missing bearer token (the http transport requires a per-request bearer)")
 	}

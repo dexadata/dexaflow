@@ -36,6 +36,133 @@ var (
 	anaClient = jwtLike(map[string]any{"iss": "portal", "sub": "ana", "tenant": "acme", "azp": "chatgpt", "iat": 1000, "exp": 1300})
 )
 
+// plannerClaims is the caller every binding case plans as; each case changes
+// one claim of a copy of it for the apply.
+func plannerClaims() map[string]any {
+	return map[string]any{
+		"iss": "portal", "sub": "ana", "tenant_id": "acme", "client_id": "claude",
+		"scope": "dexaflow:read dexaflow:run", "roles": []any{"Op"}, "email": "ana@acme.example",
+		"sid": "s1", "iat": 1000, "exp": 1300, "jti": "j1",
+	}
+}
+
+// TestPlanBindsIssuerSubjectTenantClientAndScope: a plan is bound to exactly
+// (iss, sub, tenant, azp or client_id, scope set). Another value of any of
+// them is refused; a change elsewhere in the token (roles, email, session, a
+// reordered scope) still applies, since the control plane re-checks the
+// caller's permissions on the apply call anyway.
+func TestPlanBindsIssuerSubjectTenantClientAndScope(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(map[string]any)
+		ok     bool
+	}{
+		{"same caller, refreshed", func(c map[string]any) { c["iat"], c["exp"], c["jti"] = 1250, 1550, "j2" }, true},
+		{"roles changed", func(c map[string]any) { c["roles"] = []any{"Admin"} }, true},
+		{"email and session changed", func(c map[string]any) { c["email"], c["sid"] = "ana@new.example", "s2" }, true},
+		{"scope reordered", func(c map[string]any) { c["scope"] = "dexaflow:run  dexaflow:read" }, true},
+		{"another issuer", func(c map[string]any) { c["iss"] = "other-portal" }, false},
+		{"another subject", func(c map[string]any) { c["sub"] = "bob" }, false},
+		{"another tenant", func(c map[string]any) { c["tenant_id"] = "globex" }, false},
+		{"another client_id", func(c map[string]any) { c["client_id"] = "chatgpt" }, false},
+		{"azp names another client", func(c map[string]any) { c["azp"] = "chatgpt" }, false},
+		{"narrower scope", func(c map[string]any) { c["scope"] = "dexaflow:read" }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := &controlPlane{dryRun: []string{twoFailed}}
+			h := rcHandlers(t, cp, clock())
+			_, plan, err := h.clearTask(context.Background(), callAs(jwtLike(plannerClaims())), clearTaskInput{DagID: "etl", RunID: "r1", TaskIDs: []string{"load"}, IncludeDownstream: true})
+			if err != nil {
+				t.Fatalf("clearTask: %v", err)
+			}
+			applier := plannerClaims()
+			tc.mutate(applier)
+
+			_, _, err = h.applyPlan(context.Background(), callAs(jwtLike(applier)), applyPlanInput{PlanID: plan.PlanID})
+
+			if (err == nil) != tc.ok {
+				t.Errorf("applyPlan error = %v, want applied %v", err, tc.ok)
+			}
+		})
+	}
+}
+
+// TestPlanNeedsSubjectAndTenant: a caller without a subject or a tenant
+// cannot be bound, so it cannot plan.
+func TestPlanNeedsSubjectAndTenant(t *testing.T) {
+	for _, missing := range []string{"sub", "tenant_id", "iss"} {
+		claims := plannerClaims()
+		delete(claims, missing)
+		h := rcHandlers(t, &controlPlane{dryRun: []string{twoFailed}}, clock())
+
+		_, _, err := h.clearTask(context.Background(), callAs(jwtLike(claims)), clearTaskInput{DagID: "etl", RunID: "r1", TaskIDs: []string{"load"}, IncludeDownstream: true})
+
+		if err == nil || !strings.Contains(err.Error(), missing) {
+			t.Errorf("planned without %s (error %v), want a refusal naming it", missing, err)
+		}
+	}
+}
+
+// TestBearerSchemeIsCaseInsensitive: "bearer" in any case names the token,
+// as RFC 6750 and the HTTP transport's challenge treat it.
+func TestBearerSchemeIsCaseInsensitive(t *testing.T) {
+	cp := &controlPlane{dryRun: []string{twoFailed}}
+	h := rcHandlers(t, cp, clock())
+	req := &mcpsdk.CallToolRequest{Extra: &mcpsdk.RequestExtra{Header: http.Header{"Authorization": []string{"bearer " + anaToken}}}}
+
+	_, plan, err := h.clearTask(context.Background(), req, clearTaskInput{DagID: "etl", RunID: "r1", TaskIDs: []string{"load"}, IncludeDownstream: true})
+	if err != nil || plan.PlanID == "" {
+		t.Fatalf("clearTask with a lowercase scheme = %+v, %v", plan, err)
+	}
+	if got := cp.recorded()[0].Auth; got != "Bearer "+anaToken {
+		t.Errorf("control plane got %q, want the token", got)
+	}
+	if _, _, err := h.applyPlan(context.Background(), callAs(anaToken), applyPlanInput{PlanID: plan.PlanID}); err != nil {
+		t.Errorf("applyPlan after a lowercase-scheme plan: %v", err)
+	}
+}
+
+// TestPlanVersionIsChecked: a plan carries its format version, and one of
+// another version is refused even when its signature verifies.
+func TestPlanVersionIsChecked(t *testing.T) {
+	h := rcHandlers(t, &controlPlane{}, clock())
+	caller, err := h.callerKey(callAs(anaToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := plan{Action: planUnpause, DagID: "etl", Schedule: "0 * * * *", Caller: caller, Expires: clock().Add(time.Minute).Unix()}
+	current, err := sealPlan(h.planKey, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := openPlan(h.planKey, current, caller, *clock()); err != nil || got.Version != planVersion {
+		t.Fatalf("openPlan(current) = %+v, %v; want version %d", got, err, planVersion)
+	}
+	raw, _ := json.Marshal(map[string]any{"v": planVersion + 1, "a": planUnpause, "d": "etl", "w": caller, "x": p.Expires})
+	payload := base64.RawURLEncoding.EncodeToString(raw)
+	future := payload + "." + base64.RawURLEncoding.EncodeToString(planMAC(h.planKey, payload))
+
+	if _, err := openPlan(h.planKey, future, caller, *clock()); err == nil || !strings.Contains(err.Error(), "version") {
+		t.Errorf("openPlan(version %d) = %v, want refused for its version", planVersion+1, err)
+	}
+}
+
+// TestWithRunControlRefusesAShortKey: a key shorter than PlanKeyMinBytes
+// (empty included) would let anyone sign plans, so it is a programming error.
+func TestWithRunControlRefusesAShortKey(t *testing.T) {
+	for _, key := range [][]byte{{}, testPlanKey[:PlanKeyMinBytes-1]} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("WithRunControl(%d-byte key) accepted", len(key))
+				}
+			}()
+			WithRunControl(key)(&handlers{})
+		}()
+	}
+}
+
 type cpCall struct {
 	Method, Path, Auth string
 	Body               map[string]any
@@ -375,6 +502,72 @@ func assertSameClear(t *testing.T, preview, exec map[string]any) {
 	}
 }
 
+// assertNarrowedClear: the executed clear names exactly the previewed task
+// ids, expands to nothing more, and keeps every other flag of the preview.
+func assertNarrowedClear(t *testing.T, preview, exec map[string]any, taskIDs ...string) {
+	t.Helper()
+	ids, _ := exec["task_ids"].([]any)
+	got := make([]string, 0, len(ids))
+	for _, id := range ids {
+		s, _ := id.(string)
+		got = append(got, s)
+	}
+	if strings.Join(got, ",") != strings.Join(taskIDs, ",") {
+		t.Errorf("executed clear task_ids = %v, want the previewed %v", got, taskIDs)
+	}
+	if exec["include_downstream"] != false || exec["include_upstream"] != false {
+		t.Errorf("executed clear %v expands beyond the preview", exec)
+	}
+	for _, k := range []string{"dag_run_id", "only_failed", "run_on_latest_version"} {
+		if exec[k] != preview[k] {
+			t.Errorf("executed clear %s = %v, preview %v", k, exec[k], preview[k])
+		}
+	}
+	if exec["dry_run"] != false {
+		t.Errorf("executed clear dry_run = %v, want false", exec["dry_run"])
+	}
+}
+
+// TestClearOneTaskNarrowsToThePreview: a whole-run clear whose preview finds
+// one task instance runs at once, but names that task, so a task that fails
+// between the preview and the clear is not cleared without a plan.
+func TestClearOneTaskNarrowsToThePreview(t *testing.T) {
+	cp := &controlPlane{dryRun: []string{oneFailed}}
+	h := rcHandlers(t, cp, clock())
+
+	_, out, err := h.clearTask(context.Background(), callAs(anaToken), clearTaskInput{DagID: "etl", RunID: "r1"})
+	if err != nil {
+		t.Fatalf("clearTask: %v", err)
+	}
+	calls := cp.recorded()
+	if len(calls) != 2 {
+		t.Fatalf("calls = %+v, want a dry run then the clear", calls)
+	}
+	if _, ok := calls[0].Body["task_ids"]; ok {
+		t.Errorf("preview = %v, want the whole run (no task_ids)", calls[0].Body)
+	}
+	assertNarrowedClear(t, calls[0].Body, calls[1].Body, "load")
+	if !out.Done {
+		t.Errorf("output = %+v", out)
+	}
+}
+
+// TestClearSaysWhenItClearedMoreThanPreviewed: if the control plane cleared
+// more than the preview showed (the state moved in between), the result says
+// so instead of reporting the preview.
+func TestClearSaysWhenItClearedMoreThanPreviewed(t *testing.T) {
+	cp := &controlPlane{dryRun: []string{oneFailed, twoFailed}}
+	h := rcHandlers(t, cp, clock())
+
+	_, out, err := h.clearTask(context.Background(), callAs(anaToken), clearTaskInput{DagID: "etl", RunID: "r1", TaskIDs: []string{"load"}})
+	if err != nil {
+		t.Fatalf("clearTask: %v", err)
+	}
+	if !out.Done || len(out.TaskInstances) != 2 || !strings.Contains(out.Summary, "more than the 1") {
+		t.Errorf("output = %+v, want both cleared task instances and a note that the preview showed 1", out)
+	}
+}
+
 func TestClearNothingToClear(t *testing.T) {
 	cp := &controlPlane{dryRun: []string{noneToClear}}
 	h := rcHandlers(t, cp, clock())
@@ -415,9 +608,10 @@ func TestClearSeveralPlansThenApplies(t *testing.T) {
 	if len(calls) != 3 || calls[2].Body["dry_run"] != false {
 		t.Fatalf("calls = %+v, want preview, re-preview, clear", calls)
 	}
-	assertSameClear(t, calls[0].Body, calls[2].Body)
-	if calls[2].Body["include_downstream"] != true || calls[2].Auth != "Bearer "+anaLater {
-		t.Errorf("clear = %+v, want include_downstream and the applying caller's token", calls[2])
+	assertSameClear(t, calls[0].Body, calls[1].Body)
+	assertNarrowedClear(t, calls[0].Body, calls[2].Body, "load", "report")
+	if calls[2].Auth != "Bearer "+anaLater {
+		t.Errorf("clear = %+v, want the applying caller's token", calls[2])
 	}
 	if !out.Done || len(out.TaskInstances) != 2 {
 		t.Errorf("apply output = %+v", out)
