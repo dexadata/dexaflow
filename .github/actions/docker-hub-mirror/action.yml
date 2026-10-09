@@ -1,0 +1,29 @@
+name: Pull Docker Hub images through mirror.gcr.io
+description: >
+  Points the runner's Docker daemon at mirror.gcr.io for docker.io pulls, so a
+  `docker build` FROM golang or python does not depend on Docker Hub's anonymous
+  rate limit (429) or its auth endpoint (504). A pull the mirror cannot serve
+  falls back to Docker Hub. registry-mirrors is one of the daemon options a
+  SIGHUP reloads, so the service containers the job already started keep
+  running. The Dockerfiles keep their docker.io names: users build them as is.
+runs:
+  using: composite
+  steps:
+    - name: Add mirror.gcr.io to the daemon's registry mirrors
+      shell: bash
+      run: |
+        set -euo pipefail
+        conf=/etc/docker/daemon.json
+        current='{}'
+        if sudo test -s "$conf"; then current="$(sudo cat "$conf")"; fi
+        echo "$current" | jq '.["registry-mirrors"] = ((.["registry-mirrors"] // []) + ["https://mirror.gcr.io"] | unique)' \
+          | sudo tee "$conf" >/dev/null
+        sudo kill -SIGHUP "$(pidof dockerd)"
+        for _ in $(seq 1 10); do
+          if docker info --format '{{json .RegistryConfig.Mirrors}}' | grep -q mirror.gcr.io; then
+            echo "docker.io pulls now go through mirror.gcr.io"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::warning::the daemon did not pick up mirror.gcr.io; pulls go to Docker Hub directly"
