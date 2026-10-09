@@ -93,14 +93,14 @@ func TestIsDigestPinned(t *testing.T) {
 	cases := map[string]bool{
 		"ghcr.io/dexadata/runtime@sha256:" + hex64:       true,
 		"ghcr.io/dexadata/runtime:0.5.3@sha256:" + hex64: true,
-		"rt@sha256:abc":                                  false,
-		"rt@sha256:":                                     false,
-		"rt@sha256:" + strings.ToUpper(hex64):            false,
-		"rt@sha256:" + hex64 + "0":                       false,
-		"rt@sha256:" + hex64 + ":latest":                 false,
-		"@sha256:" + hex64:                               false,
-		"ghcr.io/dexadata/runtime:0.5.3":                 false,
-		"":                                               false,
+		"rt@sha256:abc":                       false,
+		"rt@sha256:":                          false,
+		"rt@sha256:" + strings.ToUpper(hex64): false,
+		"rt@sha256:" + hex64 + "0":            false,
+		"rt@sha256:" + hex64 + ":latest":      false,
+		"@sha256:" + hex64:                    false,
+		"ghcr.io/dexadata/runtime:0.5.3":      false,
+		"":                                    false,
 	}
 	for image, want := range cases {
 		if got := IsDigestPinned(image); got != want {

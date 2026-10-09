@@ -293,6 +293,16 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if refused := d.checkUnit(runID, dagID, task); refused != nil {
 		return executor.Refused, refused
 	}
+	// Register caps a source-mode source only while the mode is on; a version
+	// registered on the runtime image before it was turned on was never
+	// checked. Refuse it here with register's message rather than let the
+	// apiserver reject an oversize annotation on every try (ADR 0067 §3).
+	sourceMode := domain.SourceModeApplies(d.sourceModeImage, r.Image, r.Source != "")
+	if sourceMode {
+		if refused := domain.CheckSourceModeSize(dagID, r.Source); refused != nil {
+			return executor.Refused, refused
+		}
+	}
 	token, err := d.issuer.IssueAgentToken(auth.AgentIdentity{
 		TaskInstanceID: r.TaskInstanceID,
 		TenantID:       r.TenantID,
@@ -333,7 +343,6 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// that declares no resources fits on it (ADR 0066 §3).
 	// A source-mode attempt never goes warm either (ADR 0067 §3): a warm pod is
 	// built before its task is known, so it cannot carry the task's dag.py.
-	sourceMode := domain.SourceModeApplies(d.sourceModeImage, r.Image, r.Source != "")
 	if d.placer != nil && !sourceMode && d.warmEligible(r, task) {
 		wa := &agentv1.WorkAssignment{
 			AssignmentId: uuid.NewString(),

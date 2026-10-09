@@ -75,14 +75,14 @@ func TestValidateSourceMode(t *testing.T) {
 		mode    SourceModeSection
 		wantErr string
 	}{
-		"off":                {SourceModeSection{}, ""},
-		"off with any image": {SourceModeSection{Image: "rt:latest"}, ""},
-		"on with a digest":         {SourceModeSection{Enabled: true, Image: testRuntimeImage}, ""},
-		"on without image":         {SourceModeSection{Enabled: true}, "execution.source_mode.image is required"},
-		"on with a tag only":       {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime:0.5.3"}, "pinned by digest"},
-		"on with a short digest":   {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime@sha256:abc"}, "pinned by digest"},
-		"on with an empty digest":  {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime@sha256:"}, "pinned by digest"},
-		"on with a trailing tag":   {SourceModeSection{Enabled: true, Image: testRuntimeImage + ":latest"}, "pinned by digest"},
+		"off":                     {SourceModeSection{}, ""},
+		"off with any image":      {SourceModeSection{Image: "rt:latest"}, ""},
+		"on with a digest":        {SourceModeSection{Enabled: true, Image: testRuntimeImage}, ""},
+		"on without image":        {SourceModeSection{Enabled: true}, "execution.source_mode.image is required"},
+		"on with a tag only":      {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime:0.5.3"}, "pinned by digest"},
+		"on with a short digest":  {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime@sha256:abc"}, "pinned by digest"},
+		"on with an empty digest": {SourceModeSection{Enabled: true, Image: "ghcr.io/dexadata/runtime@sha256:"}, "pinned by digest"},
+		"on with a trailing tag":  {SourceModeSection{Enabled: true, Image: testRuntimeImage + ":latest"}, "pinned by digest"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

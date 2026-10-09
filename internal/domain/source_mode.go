@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 // MaxSourceModeBytes caps the dag.py a source-mode version carries (ADR 0067
 // §3). The executor ships the source in a pod annotation, and Kubernetes caps
@@ -8,6 +11,16 @@ import "fmt"
 // for the annotations the executor and operators already set. A constant, not
 // a knob.
 const MaxSourceModeBytes = 128 << 10
+
+// digestPinned matches an image reference that ends in a full sha256 digest.
+var digestPinned = regexp.MustCompile(`^[^@]+@sha256:[a-f0-9]{64}$`)
+
+// IsDigestPinned reports whether image is pinned by a full sha256 digest:
+// a name, then "@sha256:" and exactly 64 lowercase hex characters at the end.
+// The source-mode runtime image must be (ADR 0067 §3).
+func IsDigestPinned(image string) bool {
+	return digestPinned.MatchString(image)
+}
 
 // SourceModeApplies reports whether a version runs in source mode (ADR 0067
 // §3): the mode is on (modeImage, the operator's runtime image, is set), the
@@ -26,8 +39,16 @@ func CheckSourceMode(modeImage string, spec *DAGSpec) error {
 	if spec.Source == "" {
 		return fmt.Errorf("source mode: DAG %q uses the runtime image but has no source", spec.DagID)
 	}
-	if n := len(spec.Source); n > MaxSourceModeBytes {
-		return fmt.Errorf("source mode: DAG %q source is %d bytes, over the %d byte limit; build an image instead", spec.DagID, n, MaxSourceModeBytes)
+	return CheckSourceModeSize(spec.DagID, spec.Source)
+}
+
+// CheckSourceModeSize refuses a source-mode source over MaxSourceModeBytes.
+// Register calls it through CheckSourceMode; dispatch calls it again for a
+// version registered before source mode was turned on, which register never
+// checked (ADR 0067 §3). Both give the same message.
+func CheckSourceModeSize(dagID, source string) error {
+	if n := len(source); n > MaxSourceModeBytes {
+		return fmt.Errorf("source mode: DAG %q source is %d bytes, over the %d byte limit; build an image instead", dagID, n, MaxSourceModeBytes)
 	}
 	return nil
 }

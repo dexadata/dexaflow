@@ -1317,9 +1317,12 @@ func (c *ServerConfig) validateSecretPolicies() error {
 // SourceModeSection is execution.source_mode (ADR 0067 §3).
 type SourceModeSection struct {
 	// Enabled turns source mode on. Default false: Pro ignores a version's source.
+	// Bind via DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED (legacy
+	// LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED).
 	Enabled bool `mapstructure:"enabled"`
-	// Image is the runtime image, pinned by digest, that source-mode versions
-	// name as their image.
+	// Image is the runtime image, pinned by a full sha256 digest, that
+	// source-mode versions name as their image. Bind via
+	// DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE (legacy LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE).
 	Image string `mapstructure:"image"`
 }
 
@@ -1332,8 +1335,9 @@ func (s SourceModeSection) RuntimeImage() string {
 	return s.Image
 }
 
-// validateSourceMode requires a digest-pinned runtime image when source mode is
-// on, so every source-mode task runs the exact image the operator vetted.
+// validateSourceMode requires a runtime image pinned by a full sha256 digest
+// when source mode is on, so every source-mode task runs the exact image the
+// operator vetted.
 func (c *ServerConfig) validateSourceMode() error {
 	m := c.Execution.SourceMode
 	if !m.Enabled {
@@ -1342,8 +1346,8 @@ func (c *ServerConfig) validateSourceMode() error {
 	if m.Image == "" {
 		return errors.New("execution.source_mode.image is required when execution.source_mode.enabled (ADR 0067)")
 	}
-	if !strings.Contains(m.Image, "@sha256:") {
-		return fmt.Errorf("execution.source_mode.image must be pinned by digest (image@sha256:...), got %q (ADR 0067)", m.Image)
+	if !domain.IsDigestPinned(m.Image) {
+		return fmt.Errorf("execution.source_mode.image must be pinned by digest (image@sha256:<64 hex>), got %q (ADR 0067)", m.Image)
 	}
 	return nil
 }
