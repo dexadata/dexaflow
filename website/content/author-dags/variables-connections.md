@@ -9,7 +9,8 @@ description: Expose Variables and Connections to your task pods.
 ---
 
 Dexaflow stores **Variables** and **Connections** in the control plane (connection
-secrets encrypted at rest, AES-256-GCM — ADR 0019) and delivers them to task pods
+secrets encrypted at rest, AES-256-GCM, ADR 0019; on Lite read
+[what that protects](#encryption-at-rest-on-lite)) and delivers them to task pods
 at runtime as environment variables, so your task reads them with the **native
 Airflow APIs** *and* as plain env (ADR 0021).
 
@@ -18,6 +19,26 @@ Tenancy is single-tenant on Lite; Pro adds multi-tenant isolation. The agent
 injects the current tenant's Variables/Connections per
 [ADR 0019](/project/adrs/0019-secret-encryption-at-rest/).
 {{% /alert %}}
+
+## Encryption at rest on Lite
+
+On Pro the key is `DEXAFLOW_SECRET_KEY`, which you provision and keep apart
+from the database. On Lite it is narrower, and worth knowing before you store a
+production credential (#486):
+
+- **The key sits next to the data.** `dexaflow setup` writes a per-install key
+  to `~/.dexaflow/config.yaml`, in the same home directory as the datastore. The
+  encryption protects a copy of the datastore on its own. It does not protect a
+  copy of your whole `~/.dexaflow`, and a `dexaflow lite backup` archive holds
+  the key and the ciphertext together.
+- **An install created before 0.5.0 uses a published key.** Until you run
+  [`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/)
+  (0.5.2 and later), its connection secrets are encrypted with a key compiled
+  into this repository, the same on every such install, so anyone who obtains
+  the datastore can read them. `dexaflow lite` warns about this on every start.
+
+See [Rotating the encryption key](/reference/configuration/#rotating-the-encryption-key)
+for the migration and for key rotation on Pro.
 
 ## Manage them
 Via the Airflow-compatible UI (Admin → Variables / Connections) or the API:
