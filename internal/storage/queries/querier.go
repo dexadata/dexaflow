@@ -21,8 +21,8 @@ type Querier interface {
 	// Guarded on state IN ('queued', 'running') — the same active predicate the
 	// heartbeat and liveness queries use — so a settled attempt is never bound: an
 	// ack that races a reaper settling the row must not stamp a worker onto a
-	// terminal TI. Bounded by (dag_run_id, task_id, try_number) to match exactly the
-	// attempt the assignment named. Returns the affected row count; zero means the
+	// terminal TI. Bounded by (dag_run_id, task_id, try_number, attempt_epoch) to
+	// match exactly the attempt the assignment named. Returns the affected row count; zero means the
 	// attempt already moved on (terminal or superseded), and the caller treats that
 	// as a benign no-op, never an error.
 	BindWarmAttempt(ctx context.Context, arg BindWarmAttemptParams) (int64, error)
@@ -40,7 +40,27 @@ type Querier interface {
 	// attempt rather than looping. A clear resets all three (ResetDagRunToVersion),
 	// making the next genuine failure a fresh episode with a fresh budget.
 	ClaimAlertAttempt(ctx context.Context, arg ClaimAlertAttemptParams) (ClaimAlertAttemptRow, error)
+	// The dispatcher's claim of a new execution attempt (ADR 0051 amendment, A1).
+	// launchQueued creates the pod BEFORE it records `queued`, so a dispatch whose
+	// queued write failed is dispatched again on a later tick with no reset rail in
+	// between; without a claim here both pods would share (try_number,
+	// attempt_epoch). Bumping at dispatch gives every execution its own epoch
+	// whatever path led to it. The token (A2) and the pod label (A4) are minted
+	// from the value returned.
+	//
+	// Guarded to the pre-dispatch states. 'queued' is included because the
+	// buffered dispatcher records queued before its worker resolves the row. A row
+	// that is running or settled is never claimed (zero rows), so a late or
+	// duplicate dispatch cannot move the epoch of the live attempt. The row is the
+	// task's latest try, matching how the dispatcher has always resolved it.
+	ClaimAttemptEpoch(ctx context.Context, arg ClaimAttemptEpochParams) (ClaimAttemptEpochRow, error)
 	ClearDagRuns(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	// The reconciler confirms a provisional infra mark (ADR 0052 amendment, part
+	// 2): the attempt's pods show no SUCCESS record and no task container still
+	// running, so the guess stands and the planner may re-place. Guarded on the
+	// exact attempt and the provisional mark, so a confirmation computed for a
+	// superseded attempt, or a second one, is a no-op.
+	ConfirmInfraFailure(ctx context.Context, arg ConfirmInfraFailureParams) (int64, error)
 	// Grant each copied built-in role the same permissions as its "default" twin.
 	CopyDefaultRolePermissions(ctx context.Context, tenantID pgtype.UUID) error
 	// Give a tenant the built-in roles the migrations seed for "default". Copying
@@ -72,11 +92,15 @@ type Querier interface {
 	CountLocalPasswordUser(ctx context.Context, arg CountLocalPasswordUserParams) (int64, error)
 	CountPools(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountTaskInstanceStatesInWindow(ctx context.Context, arg CountTaskInstanceStatesInWindowParams) ([]CountTaskInstanceStatesInWindowRow, error)
+	CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountUsers(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountVariables(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateDagRun(ctx context.Context, arg CreateDagRunParams) (DagRun, error)
-	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) error
+	// Zero rows means the slot's run already exists (or the DAG has no current
+	// version): the caller then rolls back the charge it took from the tenant's
+	// daily run cap.
+	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error)
 	// try_number starts at 1 to match Airflow (1-based attempts): the first run's
 	// logs live at .../1.log, which is where the UI's log view looks. Retries bump
 	// it via ResetForRetry.
@@ -89,6 +113,11 @@ type Querier interface {
 	// byte-identical to the loop — only the statement count changes (T INSERTs → 1 COPY).
 	CreateTaskInstances(ctx context.Context, arg []CreateTaskInstancesParams) (int64, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
+	// Whether run_id of the DAG dag_id in tenant tenant_id exists: the read behind
+	// a refused daily run cap charge, so a run that already exists keeps its usual
+	// answer (a no-op for a scheduled slot, a conflict for a manual run id) instead
+	// of a refusal, and nothing is written (createRunWithinDailyLimit).
+	DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDagIDParams) (bool, error)
 	DeleteConnection(ctx context.Context, arg DeleteConnectionParams) (int64, error)
 	DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, error)
 	// Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
@@ -102,6 +131,11 @@ type Querier interface {
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	DeleteVariable(ctx context.Context, arg DeleteVariableParams) (int64, error)
+	// Removes the XCom index rows of task instances a clear is resetting (#1131) and
+	// returns their backend keys, so the stored values can be deleted too. XCom
+	// carries no try number, so rows left behind would serve the cleared attempt's
+	// values to the next attempt's downstream.
+	DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error)
 	// The consecutive dispatch-failure count of a task still waiting to run
 	// (scheduled or queued); no row means it has moved on.
 	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
@@ -119,11 +153,23 @@ type Querier interface {
 	// reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 	// reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
 	FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error
-	// Settle a task instance failed from the pod reconciler, guarded by BOTH id and
-	// try_number (ADR 0052): try_number bumps IN PLACE on retry (same row id), so a
-	// stale reconciler acting on a previous attempt's lingering pod must not match the
-	// new running attempt and clobber it. The active-state guard prevents clobbering a
-	// terminal row.
+	// A dispatch the executor refused (ADR 0066 section 3: the task is larger than
+	// its size, or above executor.unit.max_size) fails the task for good. The
+	// verdict is permanent, so no retry can change it: the retry budget is spent by
+	// lowering max_tries to the current try, which makes the planner's
+	// try_number < max_tries check false without counting a try that never ran. A
+	// clear restores the budget from the task as usual (#1131), so an operator who
+	// fixes the DAG or the unit can run it again. Guarded to the dispatch states:
+	// the sync path refuses a scheduled task, the buffered path a scheduled or
+	// queued one, and a row that moved on is left alone.
+	FailDispatchRefused(ctx context.Context, arg FailDispatchRefusedParams) error
+	// Settle a task instance failed from the pod reconciler, guarded by id,
+	// try_number and attempt_epoch (ADR 0052, ADR 0051 amendment): try_number bumps
+	// IN PLACE on retry (same row id), and an infra re-place or reschedule keeps the
+	// try but bumps the epoch, so a stale reconciler acting on a previous attempt's
+	// lingering pod must not match the new attempt and clobber it. The pod's epoch
+	// comes from its leoflow.io/attempt-epoch label, absent meaning 0. The
+	// active-state guard prevents clobbering a terminal row.
 	FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInstanceIfActiveParams) error
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
@@ -155,6 +201,7 @@ type Querier interface {
 	// no row, which the reconcile turns into a fail-closed error.
 	GetRoleIDForUserTenant(ctx context.Context, arg GetRoleIDForUserTenantParams) (pgtype.UUID, error)
 	GetTenantByName(ctx context.Context, name string) (GetTenantByNameRow, error)
+	GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error)
 	GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (GetUserByEmailRow, error)
 	// The by-id lookup backing the per-request authz reload. Returns the tenant
 	// name (not the uuid) so the reconstructed principal matches the login path's
@@ -166,6 +213,10 @@ type Querier interface {
 	// the active flag the login gates on. Never selects password_hash.
 	GetUserByOIDCSubject(ctx context.Context, arg GetUserByOIDCSubjectParams) (GetUserByOIDCSubjectRow, error)
 	GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([]GetUserPermissionsRow, error)
+	// The per-request authz reload in ONE round trip: what GetUserByID,
+	// GetUserRoles and GetUserPermissions return, folded into a single statement.
+	// Permissions are a JSON array of distinct [action, resource] pairs.
+	GetUserPrincipalByID(ctx context.Context, id pgtype.UUID) (GetUserPrincipalByIDRow, error)
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
@@ -198,6 +249,9 @@ type Querier interface {
 	// "run is not current / archived / logical_date in the past" clause: a recency
 	// term would deny a legitimate clear-and-rerun of an old run — credential
 	// lifetime binds to the attempt, never to the run's age or logical date.
+	//
+	// The epoch term is the heartbeat's: exact for a token carrying attempt_epoch,
+	// absent for a claim-less one (ADR 0051 amendment).
 	IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error)
 	LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsParams) ([]LatestRunsForDagsRow, error)
 	ListActiveDagRuns(ctx context.Context) ([]DagRun, error)
@@ -282,18 +336,46 @@ type Querier interface {
 	ListFavoriteDagIDs(ctx context.Context, arg ListFavoriteDagIDsParams) ([]string, error)
 	ListImportErrors(ctx context.Context, tenant string) ([]ListImportErrorsRow, error)
 	// Lists dag_runs currently in 'running' whose task instances are ALL terminal
-	// or never-started (no TI in scheduled/queued/running), alongside the
-	// timestamp of their most recent observable activity. The "no active TI"
-	// filter is the critical safety guarantee: a legitimately-active task (slow
-	// image pull, long-running job) keeps its run out of the candidate set, so
-	// the reaper can never kill a live execution. The shape this catches is the
-	// post-crash one: TIs settled (success/failed/skipped/upstream_failed) but
-	// FinalizeRun did not transition the dag_run — e.g. the server died between
+	// or never-started (every TI in none/success/failed/skipped/upstream_failed),
+	// alongside the timestamp of their most recent observable activity. The "no
+	// live TI" filter is the critical safety guarantee: a run that is still
+	// progressing stays out of the candidate set, so the reaper can never kill a
+	// live execution. Live means any state outside that settled set, which covers
+	// a legitimately-active task (scheduled/queued/running: slow image pull,
+	// long-running job) AND a task parked for the scheduler to bring back
+	// (up_for_retry during its retry_delay, up_for_reschedule between sensor pokes,
+	// the reserved deferred state). Parked states stamp no fresh timestamp on entry,
+	// so last_activity cannot protect them: a retry_delay or poke_interval longer
+	// than the reaper threshold would otherwise fail a healthy run. Listing the
+	// settled states (rather than the live ones) keeps any future non-terminal
+	// state on the safe side by default. `none` stays reapable: a never-started TI
+	// whose upstreams are all settled is decided on the next scheduler tick, and one
+	// whose upstream is still pending already has a live sibling keeping the run
+	// out. A TI released back to `none` for another attempt (the retry release,
+	// the reschedule re-dispatch, the infra re-place, an operator clear) has its
+	// per-attempt timestamps cleared and only becomes `scheduled` on the next
+	// tick, so each release stamps released_at and last_activity counts it: the
+	// release itself is activity, and a run is never reaped in the tick between a
+	// release and none -> scheduled. An infra-failed TI parked in its re-place backoff is `failed` and is covered by
+	// the threshold itself, which sits above that backoff. The shape this catches
+	// is the post-crash one: TIs settled (success/failed/skipped/upstream_failed)
+	// but FinalizeRun did not transition the dag_run, e.g. the server died between
 	// the last TI report and the next scheduler tick. The LIMIT bounds a single
-	// tick's reap work even after a multi-hour outage; the rest are picked up
-	// on the next tick (the reaper is a backstop, not a sprint).
+	// tick's reap work even after a multi-hour outage; the rest are picked up on
+	// the next tick (the reaper is a backstop, not a sprint). The list is only a
+	// snapshot: MarkRunOrphanedRun re-checks the same predicate atomically, so keep
+	// the two in step.
 	ListOrphanCandidates(ctx context.Context) ([]ListOrphanCandidatesRow, error)
 	ListPools(ctx context.Context, arg ListPoolsParams) ([]ListPoolsRow, error)
+	// Provisional infra marks for the reconciler's confirmation pass (ADR 0052
+	// amendment, part 2), oldest first. The LIMIT bounds one sweep's work; the
+	// rest are picked up next sweep. Only queued or running runs: the planner reads
+	// no other run, and the valve is shorter than the orphan threshold, so a mark
+	// of a finished run gates nothing. The join keeps this per-sweep query on
+	// idx_dag_runs_state and idx_ti_run instead of a scan of every failed task
+	// instance, and keeps old unconfirmed marks (a rollback window, marks written
+	// by a previous release) from filling the LIMIT ahead of live ones.
+	ListProvisionalInfraFailures(ctx context.Context) ([]ListProvisionalInfraFailuresRow, error)
 	// Lists every TI currently in `running` alongside the timestamp it entered
 	// running, for the pod-lost reaper (#527). A running TI whose backing pod
 	// vanished before its first heartbeat is invisible to the agent-lost reaper
@@ -304,7 +386,9 @@ type Querier interface {
 	// read them as lost; the warm-worker-lost reaper owns them. The grace period is
 	// applied here, before the LIMIT, so attempts still inside it never take the
 	// slots of those past it; a NULL started_at is never listed (too poorly observed
-	// to reap). The reaper re-checks grace and pod liveness per candidate in Go. The
+	// to reap). The reaper re-checks grace and pod liveness per candidate in Go.
+	// heartbeated lets Lite (no pods) judge a TI whose agent died before its first
+	// heartbeat, which the agent-lost query never lists (#916). The
 	// LIMIT bounds a single tick's reap work even after a large outage; the rest
 	// are picked up next tick.
 	ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error)
@@ -335,10 +419,15 @@ type Querier interface {
 	// (the double-run bug). It is NULL for a dedicated attempt and for a warm attempt
 	// not yet acked, in which case the reaper falls back to its existing pod-liveness
 	// gate unchanged.
+	// attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
+	// teardown name exactly the attempt that was listed.
 	ListStaleQueuedTaskInstances(ctx context.Context) ([]ListStaleQueuedTaskInstancesRow, error)
 	// Returns every attempt for (run, task), oldest first. UNIONs the current
 	// task_instances row with all archived task_instance_history rows so the UI's
 	// /tries endpoint can render one navigable tab per attempt (Lima bug #241).
+	// One entry per try (ADR 0051 amendment, #863): an infra re-place archives the
+	// try and keeps it on the current row, so a history row for the current try is
+	// left out and the current row, the try's latest execution, stands for it.
 	// Each row carries the per-attempt fields PLUS the run-constant fields
 	// (operator, max_tries, map_index) copied from the current TI; archived rows
 	// get them via the JOIN.
@@ -374,6 +463,16 @@ type Querier interface {
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
+	// Share-locks every task instance of a run inside the reap transaction, before
+	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
+	// snapshot under READ COMMITTED) sees committed state and no TI of the run can
+	// change until the reap commits or rolls back. NOWAIT: a TI another transaction
+	// is writing right now is activity, so the reap gives up (lock_not_available,
+	// treated as a no-op by ReapRun) instead of waiting. Waiting would let these
+	// share locks, taken in scan order, form a cycle with a writer that locks
+	// several TIs of the run in another order (a multi-task clear, a batched
+	// scheduler transition); a reap that never waits on a TI cannot be in one.
+	LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error
 	// Stamp a run's on-failure alert as DELIVERED. Called only after a successful
 	// send, which is the whole point of the split: alerted_at now answers "did the
 	// page get through", not "did we try".
@@ -386,11 +485,16 @@ type Querier interface {
 	// stamp from a superseded episode simply matches no row. Same shape as the guard
 	// on ReportTaskResult: a late writer must never clobber newer state.
 	MarkRunAlertDelivered(ctx context.Context, arg MarkRunAlertDeliveredParams) error
-	// Fails an orphaned dag run. The `state = 'running'` guard makes the reap a
-	// safety net, never a takeover: a competing finalizer (the normal scheduler
-	// path) cannot be overwritten. Idempotent: a second call on a run already
-	// failed updates zero rows.
-	MarkRunOrphanedRun(ctx context.Context, id pgtype.UUID) (int64, error)
+	// Fails an orphaned dag run, but only if it is STILL orphaned: the same
+	// predicate ListOrphanCandidates applies (running, no live TI, last activity at
+	// or before the reaper's cutoff) is re-checked in this statement, because the
+	// list is a snapshot and a TI may have moved (failed -> up_for_retry, none ->
+	// scheduled) or fresh activity may have landed since. Keep the two in step. The
+	// `state = 'running'` guard also makes the reap a safety net, never a takeover:
+	// a competing finalizer (the normal scheduler path) cannot be overwritten.
+	// Zero rows means the run is no longer an orphan and nothing may be touched.
+	// Idempotent: a second call on a run already failed updates zero rows.
+	MarkRunOrphanedRun(ctx context.Context, arg MarkRunOrphanedRunParams) (int64, error)
 	// Fails any still-active task instance under an orphaned run. Called together
 	// with MarkRunOrphanedRun inside a single transaction (the repository owns the
 	// atomicity); split because sqlc cannot generate a CTE+UPDATE that reuses one
@@ -400,8 +504,18 @@ type Querier interface {
 	// Fails a TI whose agent went silent. The WHERE state='running' guard
 	// prevents overwriting a TI the agent's last terminal report finally
 	// delivered between our list and our write (defense in depth — a late
-	// report wins over the reaper). Idempotent on a second call.
-	MarkTaskAgentLost(ctx context.Context, id pgtype.UUID) (int64, error)
+	// report wins over the reaper). Idempotent on a second call. Pinned to the
+	// listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
+	// computed for a superseded attempt never fails its replacement.
+	MarkTaskAgentLost(ctx context.Context, arg MarkTaskAgentLostParams) (int64, error)
+	// Fails a TI whose agent went silent after the attempt outlived
+	// auth.max_attempt_credential_lifetime (#1461). Renewal stops at the ceiling,
+	// so the silence is the credential lapsing, not a lost agent: this is a TASK
+	// failure (last_failure_kind NULL, the retry policy applies), never an infra
+	// mark the planner would re-place with a fresh credential. Same guards as
+	// MarkTaskAgentLost: state='running' (a late report wins) and the listed
+	// attempt, (try_number, attempt_epoch) (ADR 0051 amendment).
+	MarkTaskCredentialCeiling(ctx context.Context, arg MarkTaskCredentialCeilingParams) (int64, error)
 	// Fails a TI whose asynchronous dispatch (BufferedDispatcher worker) errored
 	// inside the inner dispatcher. Targets the active row by (dag_run_id,
 	// task_id) and the active states (scheduled/queued) — a TI that already
@@ -411,8 +525,11 @@ type Querier interface {
 	// Fails one queued TI with a dispatch_lost error. The WHERE state='queued'
 	// guard makes the operation idempotent: a second call on a TI that has
 	// since transitioned (real dispatch landed, or already failed) is a no-op,
-	// never overwriting a more meaningful state.
-	MarkTaskDispatchLost(ctx context.Context, id pgtype.UUID) error
+	// never overwriting a more meaningful state. It is also pinned to the listed
+	// attempt, (try_number, attempt_epoch) (ADR 0051 amendment): a row that was
+	// re-placed and re-dispatched between the list and this write is a different
+	// attempt, and a mark computed for the old one must not fail it.
+	MarkTaskDispatchLost(ctx context.Context, arg MarkTaskDispatchLostParams) (int64, error)
 	// The scheduler's scheduled -> queued write after a dispatch was accepted.
 	// Guarded to the exact slot the tick planned: still 'scheduled', with the
 	// next_dispatch_at the tick read. Under buffered dispatch the worker can finish
@@ -424,8 +541,10 @@ type Querier interface {
 	// Fails a running TI whose pod has vanished (deleted/evicted/node lost). The
 	// WHERE state='running' guard makes it idempotent and prevents overwriting a
 	// late terminal report that landed between our list and our write (a live
-	// report wins over the reaper). Idempotent on a second call.
-	MarkTaskPodLost(ctx context.Context, id pgtype.UUID) (int64, error)
+	// report wins over the reaper). Idempotent on a second call. Pinned to the
+	// listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
+	// computed for a superseded attempt never fails its replacement.
+	MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams) (int64, error)
 	// Every named pool's slot cap across all tenants, for the scheduler's per-tick
 	// cross-DAG admission budget (ADR 0053 Stage 3). Keyed by (tenant_id, name) so a
 	// pool name is scoped to its tenant. Pro-only: Lite never calls this.
@@ -451,6 +570,8 @@ type Querier interface {
 	// tick. Guarded to 'scheduled' so a report that raced the dispatch cannot clobber
 	// a row that has since progressed. try_number is untouched: this is infra, not a
 	// task failure.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
 	RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error
 	// Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
@@ -464,6 +585,12 @@ type Querier interface {
 	// already settled the row terminal — the same "moved on" predicate the state
 	// report is guarded by (#467). The agent RPC turns a zero here into a
 	// should_terminate signal so a reaped-but-alive pod stops itself (#474).
+	//
+	// A token carrying attempt_epoch must match it exactly (ADR 0051 amendment). A
+	// claim-less token matches on try_number alone: it is either a pre-upgrade
+	// token or one an old replica re-minted during a rolling upgrade, which drops
+	// the claim it does not know. Fencing its heartbeat would kill a live attempt
+	// for a missing claim; its reports are still fenced as epoch 0.
 	RecordTaskHeartbeat(ctx context.Context, arg RecordTaskHeartbeatParams) (int64, error)
 	RecordXCom(ctx context.Context, arg RecordXComParams) error
 	// Re-dispatch a task parked in up_for_reschedule once its reschedule_at has passed:
@@ -472,6 +599,8 @@ type Querier interface {
 	// and reschedule_at cleared. Unlike ResetTaskInstanceToNone (retry), try_number is
 	// PRESERVED and no task_instance_history row is archived: reschedule is not a retry,
 	// it consumes no attempt (#380). Guarded to the parked state so it is idempotent.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
 	RedispatchRescheduledTaskInstance(ctx context.Context, arg RedispatchRescheduledTaskInstanceParams) error
 	RemoveFavorite(ctx context.Context, arg RemoveFavoriteParams) error
 	// The same re-open as ResetDagRunToVersion, WITHOUT touching dag_version_id: the
@@ -506,6 +635,13 @@ type Querier interface {
 	//     bumps try_number in place rather than inserting a new row.
 	// The agent token already carries the try_number it was dispatched with, so the
 	// value that tells the attempts apart is present at the call site.
+	//
+	// try_number alone is not enough: an infra re-place, a reschedule poke and a
+	// repeated dispatch reuse it. attempt_epoch (ADR 0051 amendment) is the
+	// execution within the try. A token minted without the claim is read as epoch
+	// 0: it matches its own pre-upgrade attempt (rows migrate at 0) and never an
+	// attempt dispatched after the upgrade (the dispatch claim makes those >= 1).
+	// That keeps a superseded agent's RUNNING report off its replacement (#911).
 	// Returns the affected row count so the caller can tell a real write from a
 	// rejected late report instead of dropping it silently.
 	//
@@ -525,7 +661,14 @@ type Querier interface {
 	// until next_dispatch_at, adding one dispatch attempt only when counted
 	// (backpressure is not). Guarded to scheduled/queued, so a task the agent has
 	// since reported on is left alone. warm_worker_id is cleared as in
-	// RequeueForRedispatch: the attempt never ran.
+	// RequeueForRedispatch: the attempt never ran. last_heartbeat_at is cleared
+	// as on every rail that starts a new execution of the row (ADR 0051
+	// amendment, A0). The requeue is a rail, so attempt_epoch is bumped: a late
+	// start or report from the abandoned dispatch is fenced (ADR 0051, A1).
+	// queued_at is cleared too, so the next queued episode stamps a fresh one:
+	// MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept one would
+	// make the dispatch-lost reaper fail the re-offered task as soon as it is
+	// queued again.
 	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding
@@ -535,8 +678,8 @@ type Querier interface {
 	// that is already `queued`, which is why a no-op reclaim left it stuck until the
 	// 3-minute dispatch-lost reaper).
 	//
-	// Guarded to state='queued' — bounded by (dag_run_id, task_id, try_number) to the
-	// exact attempt the assignment named — so it never disturbs a running or settled
+	// Guarded to state='queued' and bounded by (dag_run_id, task_id, try_number,
+	// attempt_epoch) to the exact attempt the assignment named, so it never disturbs a running or settled
 	// TI: zero rows is the guard working, a benign no-op, never an error. It does NOT
 	// bump try_number or infra_attempts: the attempt never ran, this is a re-offer of
 	// the SAME attempt, and the existing dispatch_attempts/backoff on the re-dispatch
@@ -548,21 +691,36 @@ type Querier interface {
 	// (ListBusyWarmWorkerPods), a stale binding would falsely mark the OLD (gone)
 	// worker busy. This is a same-row re-dispatch (the try_number is preserved), so
 	// the clear must happen here; a fresh try lands on a new row that is already NULL.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
 	RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error)
 	// A reschedule-mode sensor (mode='reschedule') poked not-ready: park the active TI
 	// in up_for_reschedule with its next-poke time ($3) so the scheduler re-dispatches
 	// it once reschedule_at passes (#380), without consuming retry budget. Guarded to
-	// the active states so a late report never clobbers a terminal row. ended_at is
-	// left untouched (the task is not finished); started_at is preserved.
-	RescheduleTaskInstance(ctx context.Context, arg RescheduleTaskInstanceParams) error
+	// the active states so a late report never clobbers a terminal row, and on the
+	// attempt (try_number and attempt_epoch, the same rule as ReportTaskResult) so a
+	// poke from a superseded attempt never parks its replacement. Returns the row
+	// count; zero is a stale report. ended_at is left untouched (the task is not
+	// finished); started_at is preserved.
+	RescheduleTaskInstance(ctx context.Context, arg RescheduleTaskInstanceParams) (int64, error)
 	// Settle a lost reschedule from the durable outcome record (ADR 0052): park the TI
-	// in up_for_reschedule with the record's next-poke time, guarded by id AND
-	// try_number (never clobber a different attempt or a terminal row), consuming no
+	// in up_for_reschedule with the record's next-poke time, guarded by id,
+	// try_number and attempt_epoch (never clobber a different attempt or a terminal
+	// row), consuming no
 	// retry budget. Mirrors RescheduleTaskInstance but keyed by id, for the reconciler.
 	RescheduleTaskInstanceByIDIfActive(ctx context.Context, arg RescheduleTaskInstanceByIDIfActiveParams) error
+	// Takes one of the tenant's runs for the current UTC day, resetting the count
+	// when the day has turned. Zero rows means the tenant has no daily cap or has
+	// reached it; the caller tells the two apart from the limit it read. It runs
+	// before the run's INSERT in the same transaction, so a refusal writes nothing.
+	// The UPDATE locks the tenant row until the transaction ends, and Postgres
+	// re-checks the WHERE against the row a concurrent winner committed, so the
+	// count can never pass the cap.
+	ReserveTenantDailyRun(ctx context.Context, id pgtype.UUID) (int64, error)
 	// Archives every failed attempt in the run into task_instance_history then
-	// resets. See ResetTaskInstanceToNone for the per-attempt rationale.
-	ResetAllFailedTaskInstances(ctx context.Context, dagRunID pgtype.UUID) (int64, error)
+	// resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
+	// task ids it reset, so the clear can delete exactly their XCom.
+	ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error)
 	// Clear with run_on_latest_version re-binds the run to the DAG's current
 	// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
 	// re-run after a code/yaml fix picks up the newest image and config — in dev that
@@ -595,6 +753,13 @@ type Querier interface {
 	// failure may re-place off-budget (an app failure at state='failed' must fall to
 	// the normal retry rail). last_failure_kind is cleared so the next attempt's
 	// outcome is classified fresh.
+	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
+	// ResetTaskInstanceToNone.
+	// A provisional mark (infra_confirmed_at NULL, ADR 0052 amendment) is not
+	// re-placed until the reconciler confirms it or InfraConfirmMaxWait has passed
+	// since ended_at (the liveness valve), so a durable SUCCESS record can still
+	// settle the attempt it guessed lost. Both halves carry the guard, so a refused
+	// re-place archives nothing.
 	ResetTaskInstanceInfraReplace(ctx context.Context, arg ResetTaskInstanceInfraReplaceParams) (int64, error)
 	// Resets a TI for retry: snapshot the current per-attempt state into
 	// task_instance_history (so the UI's /tries endpoint can render one tab per
@@ -608,27 +773,75 @@ type Querier interface {
 	// it carries no source-state guard. The scheduler's retry rail uses the guarded
 	// ResetTaskInstanceForRetry instead — do not add a guard here or clear-task
 	// silently no-ops on non-up_for_retry tasks.
+	// last_heartbeat_at is cleared on this and every other rail that starts a new
+	// execution of the row (ADR 0051 amendment, A0): the next attempt reports
+	// RUNNING one heartbeat interval before its first beat, and an inherited value
+	// from the previous attempt would make the agent-lost reaper fail it in that
+	// window.
+	// The same rails bump attempt_epoch (ADR 0051 amendment, A1), so a reset alone
+	// already fences the attempt it superseded before the next dispatch claims its
+	// own epoch (ClaimAttemptEpoch). The archive row records the superseded
+	// attempt's epoch. The archive key stays (task_instance_id, try_number) for
+	// compatibility with the previous release until PR A6 widens it, so one try
+	// keeps one history row: a later execution of the try (higher epoch) replaces
+	// the row an earlier one archived, and the row always holds the try's latest
+	// execution, which is what the tries endpoint shows (ADR 0051 amendment, A5).
+	// An older binary archives with DO NOTHING against the same key, which still
+	// plans and runs. Each execution's log is kept apart by its epoch-keyed object.
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
 	SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag, error)
 	SetTaskInstanceNote(ctx context.Context, arg SetTaskInstanceNoteParams) error
+	// The mark-state endpoint's write (mark success / mark failed). Same stamping
+	// as UpdateTaskInstanceStateByRunTask, and a user's state is a verdict, not a
+	// guess: it clears last_failure_kind and confirms the row, so a reaped task a
+	// user marks failed is neither re-placed nor overridden by a late SUCCESS
+	// record (ADR 0052 amendment).
+	SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskInstanceStateByUserParams) error
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).
 	StampDagRunState(ctx context.Context, arg StampDagRunStateParams) error
 	// Settle a task instance succeeded from its durable outcome record (ADR 0052),
-	// recovering a success whose report was lost. Guarded by id AND try_number so a
-	// stale reconciler never marks a LIVE retry succeeded — which would fire downstream
+	// recovering a success whose report was lost. Guarded by id, try_number and
+	// attempt_epoch so a stale reconciler never marks a LIVE retry or re-place
+	// succeeded (#1130), which would fire downstream
 	// tasks on incomplete work, strictly worse than the bug being fixed. The
-	// active-state guard prevents clobbering a terminal row.
-	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) error
-	// The time a reschedule-mode sensor first entered reschedule (NULL until it does).
-	// Delivered to each re-dispatched pod so get_first_reschedule_date returns the real
-	// value and the sensor honors its cumulative timeout across pokes (#380).
-	TaskInstanceFirstRescheduleAt(ctx context.Context, arg TaskInstanceFirstRescheduleAtParams) (pgtype.Timestamptz, error)
+	// active-state guard prevents clobbering a terminal row. It reports the rows
+	// it changed, so the reconciler can tell a settle that found nothing active
+	// (a reaper may have marked the attempt meanwhile) and try
+	// SucceedTaskInstanceOverInfraMark (ADR 0052 amendment).
+	SucceedTaskInstanceIfActive(ctx context.Context, arg SucceedTaskInstanceIfActiveParams) (int64, error)
+	// A durable SUCCESS overrides a reaper's infra guess (ADR 0052 amendment,
+	// part 1). Admits only a provisional infra mark (agent_lost, pod_lost,
+	// dispatch_lost) of exactly the attempt the pod's labels name, while the
+	// planner still treats it as active: not yet confirmed by the reconciler and
+	// inside the confirmation valve. A run that already finalized is never
+	// touched. An application failure, a user's verdict (SetTaskInstanceStateByUser
+	// clears the infra kind) and every other state are left alone. Returns the
+	// overridden mark (the reaper's reason prefix) and the attempt's log location;
+	// no row means nothing was overridden.
+	SucceedTaskInstanceOverInfraMark(ctx context.Context, arg SucceedTaskInstanceOverInfraMarkParams) (SucceedTaskInstanceOverInfraMarkRow, error)
+	// The per-attempt fields the agent spec carries from the task instance row.
+	// first_reschedule_at is the time a reschedule-mode sensor first entered
+	// reschedule (NULL until it does), delivered to each re-dispatched pod so
+	// get_first_reschedule_date returns the real value and the sensor honors its
+	// cumulative timeout across pokes (#380). max_tries is the attempt budget the
+	// scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
+	// so the runtime's on_failure_callback gate must read it from here (#424).
+	TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
 	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
+	// The range of attempt epochs one try's executions can have, for the log
+	// reader (ADR 0051 amendment, #863). Epochs grow monotonically per row and the
+	// try only grows, so every execution of try N has an epoch above the latest
+	// epoch archived for an earlier try (low, exclusive) and at most the try's own
+	// latest epoch (high, inclusive): the current row's when it is still on try N,
+	// else the try's history row, which holds its latest archived execution. A row
+	// the previous release archived carries epoch 0, so its try reads as epoch 0
+	// alone. Epoch 0 is always read as well, since every pre-upgrade log has it.
+	TryAttemptEpochBounds(ctx context.Context, arg TryAttemptEpochBoundsParams) (TryAttemptEpochBoundsRow, error)
 	// Rewrite one row's ciphertext in place during a key rotation. It touches only
 	// the two encrypted columns, so a re-encryption can never alter a connection's
 	// identity, host, or any field a user set.
@@ -656,6 +869,9 @@ type Querier interface {
 	// and flushes each group through this query. task_id = ANY keeps every row's CASE
 	// self-referential, so an already-stamped row is never re-stamped.
 	UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) error
+	// Sets the limits given and keeps the others: a NULL argument leaves that
+	// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
+	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error)
 	// Tri-state write (#887): COALESCE(EXCLUDED.col, connections.col) preserves the
 	// stored value when the param is NULL, overwrites it when the param is a value,

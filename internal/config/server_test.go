@@ -797,6 +797,8 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS", "acme,globex")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS", "300")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS", "https://portal.example.com,http://localhost:3000")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES", "leoflow-mcp,other-mcp")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS", "600")
 	c, err = LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
@@ -808,7 +810,8 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	got := c.Auth.TrustedIssuer
 	if got.Name != want.Name || got.Issuer != want.Issuer || got.JWKSURL != want.JWKSURL || got.Audience != want.Audience ||
 		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 ||
-		strings.Join(got.AllowedOrigins, ",") != "https://portal.example.com,http://localhost:3000" {
+		strings.Join(got.AllowedOrigins, ",") != "https://portal.example.com,http://localhost:3000" ||
+		strings.Join(got.BearerAudiences, ",") != "leoflow-mcp,other-mcp" || got.BearerMaxLifetimeSeconds != 600 {
 		t.Errorf("TrustedIssuer = %+v, want %+v", got, want)
 	}
 }
@@ -842,6 +845,14 @@ func TestValidateTrustedIssuer(t *testing.T) {
 		{"lifetime above the cap", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 601 }, []string{"auth.trusted_issuer.max_lifetime_seconds"}},
 		{"lifetime at the cap", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 600 }, nil},
 		{"empty tenant claim", func(s *TrustedIssuerSection) { s.TenantClaim = "" }, []string{"auth.trusted_issuer.tenant_claim"}},
+		{"bearer audience", func(s *TrustedIssuerSection) { s.BearerAudiences = []string{"leoflow-mcp"} }, nil},
+		{"bearer audience is the handoff audience", func(s *TrustedIssuerSection) {
+			s.BearerAudiences = []string{"leoflow-mcp", "leoflow-engine"}
+		}, []string{"auth.trusted_issuer.bearer_audiences"}},
+		{"empty bearer audience", func(s *TrustedIssuerSection) { s.BearerAudiences = []string{""} }, []string{"auth.trusted_issuer.bearer_audiences"}},
+		{"bearer lifetime at the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3600 }, nil},
+		{"bearer lifetime above the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3601 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
+		{"negative bearer lifetime", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = -1 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -904,5 +915,50 @@ func TestValidateServiceToken(t *testing.T) {
 				t.Errorf("Validate() = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestLoadServerLogsTailPublish pins the live-tail publish gate: it defaults to
+// "always" (every line published, as before), binds from the DEXAFLOW_* and the
+// legacy LEOFLOW_* variable and from a legacy leoflow.yaml, and rejects an
+// unknown value.
+func TestLoadServerLogsTailPublish(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Logs.Tail.Publish != "always" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"always\" by default", c.Logs.Tail.Publish)
+	}
+	for _, env := range []string{"DEXAFLOW_LOGS_TAIL_PUBLISH", "LEOFLOW_LOGS_TAIL_PUBLISH"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "on_demand")
+			fromEnv, lerr := LoadServer("", nil)
+			if lerr != nil {
+				t.Fatalf("LoadServer: %v", lerr)
+			}
+			if fromEnv.Logs.Tail.Publish != "on_demand" {
+				t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from %s", fromEnv.Logs.Tail.Publish, env)
+			}
+		})
+	}
+	file := filepath.Join(t.TempDir(), "leoflow.yaml")
+	if werr := os.WriteFile(file, []byte("logs:\n  tail:\n    publish: on_demand\n"), 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+	c, err = LoadServer(file, nil)
+	if err != nil {
+		t.Fatalf("LoadServer(leoflow.yaml): %v", err)
+	}
+	if c.Logs.Tail.Publish != "on_demand" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from leoflow.yaml", c.Logs.Tail.Publish)
+	}
+	bad := &ServerConfig{}
+	bad.Auth.Provider = AuthProviderJWT
+	bad.Auth.JWT.Secret = "set"
+	bad.Server.HTTPAddr = "0.0.0.0:8080"
+	bad.Logs.Tail.Publish = "sometimes"
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate() accepted an unknown logs.tail.publish")
 	}
 }

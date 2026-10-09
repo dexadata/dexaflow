@@ -1,0 +1,17 @@
+# Changes on this branch that scripts/docs-gap.sh would list, documented
+# elsewhere or with nothing to document. One line each: #<pull request> or a
+# commit sha of 7 or more characters, then the reason. See RELEASING.md.
+#
+# Merged before the release docs gate existed (v0.5.1 line, audited 2026-10-06).
+#1309 documented in the 0.5.1 upgrade notes (#1446): UI assets gzipped once
+#1312 internal query plan, no setting or visible behaviour
+#1319 migrations 027 to 031 documented in the 0.5.1 upgrade notes (#1446)
+#1322 internal retry timing of the agent, no setting or visible behaviour
+#1324 migrations 032 to 034 documented in the 0.5.1 upgrade notes (#1446)
+#1330 documented in the 0.5.1 upgrade notes (#1446): scheduler tick reads
+#1332 migration 035 documented in the 0.5.1 upgrade notes (#1446)
+#1334 documented in the 0.5.1 upgrade notes (#1446): scheduler tick plans
+#1352 cursor paging documented in #1477 (reference/api, upgrade notes)
+#1354 internal XCom fetch batching, no setting or visible behaviour
+#1392 migration 038 and attempt epochs documented in the 0.5.1 upgrade notes (#1446)
+#1394 attempt epoch token documented in the 0.5.1 upgrade notes (#1446)

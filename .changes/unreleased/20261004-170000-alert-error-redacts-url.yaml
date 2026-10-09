@@ -1,0 +1,8 @@
+kind: Security
+body: |-
+  **A failed alert no longer writes its webhook URL to the server log.** When
+  posting an on-failure alert failed (a refused connection, a timeout, a
+  malformed URL), the logged error carried the full URL of the alert
+  connection, and for a Slack incoming webhook that URL is the credential. The
+  error now names the endpoint by scheme and host only.
+time: 2026-10-04T17:00:00.000000000-03:00

@@ -18,7 +18,7 @@ Closes #
 - [ ] GoDocs on every new exported identifier; cyclomatic complexity ≤ 15 — [ADR 0012](https://dexaflow.dexadata.ai/project/adrs/0012-code-quality-standards/)
 - [ ] No new dependency without justification; `make vuln` clean — [ADR 0014](https://dexaflow.dexadata.ai/project/adrs/0014-supply-chain-security/)
 - [ ] Public `/api/v2/` surface unchanged, or Airflow 3.2.x compatibility preserved
-- [ ] Docs updated if behavior, flags, or config changed
+- [ ] Docs updated under `website/content/` if behavior, flags, config, migrations or the API changed. Nothing user-discoverable? Apply the `skip-docs` label and add a line `Skip-docs: <reason>` to this description.
 - [ ] Changelog recorded: `make changelog` writes `.changes/unreleased/<slug>.yaml` (one file per PR, so it never conflicts). No user-facing change? Apply the `skip-changelog` label instead.
 - [ ] All code, comments, and commit messages are in English
 - [ ] One logical change (no "and also…")

@@ -22,7 +22,7 @@ func (f *fakePodLostStore) ListRunningTasks(_ context.Context, grace time.Durati
 	return f.candidates, f.listErr
 }
 
-func (f *fakePodLostStore) MarkTaskPodLost(_ context.Context, id string) (bool, error) {
+func (f *fakePodLostStore) MarkTaskPodLost(_ context.Context, id string, _, _ int) (bool, error) {
 	if f.markErr != nil {
 		return false, f.markErr
 	}

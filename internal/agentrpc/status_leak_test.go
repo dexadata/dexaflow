@@ -126,7 +126,7 @@ func (s *poisonStore) RecordHeartbeat(context.Context, auth.AgentIdentity) error
 	return s.heartbeatErr
 }
 
-func (s *poisonStore) BindWarmAttempt(context.Context, string, string, int, string) error {
+func (s *poisonStore) BindWarmAttempt(context.Context, string, string, int, int, string) error {
 	return s.bindErr
 }
 

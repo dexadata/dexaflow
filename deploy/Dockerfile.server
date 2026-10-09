@@ -12,7 +12,7 @@
 # stdlib CVE surface is keyed to the toolchain recorded in the binary's build
 # info, so a floating pin means the image the security gate scans and the image
 # the release publishes can differ for reasons no commit explains.
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.26.9
 FROM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src
 
@@ -31,7 +31,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -o /out/dexaflow-server ./cmd/dexaflow-server
 
 # Minimal, non-root runtime.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/dexaflow-server /dexaflow-server
 EXPOSE 8080 9090
 USER nonroot:nonroot

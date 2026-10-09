@@ -51,28 +51,32 @@ type fakeReaperStore struct {
 func (f *fakeReaperStore) ListReapCandidates(context.Context) ([]ReapCandidate, error) {
 	return f.orphanCands, nil
 }
-func (f *fakeReaperStore) ReapRun(_ context.Context, runID string) error {
+func (f *fakeReaperStore) ReapRun(_ context.Context, runID string, _ time.Time) (bool, error) {
 	f.reapedRuns = append(f.reapedRuns, runID)
-	return nil
+	return true, nil
 }
 func (f *fakeReaperStore) ListAgentLostCandidates(context.Context) ([]AgentLostCandidate, error) {
 	return f.agentCands, nil
 }
-func (f *fakeReaperStore) MarkTaskAgentLost(_ context.Context, tiID string) (bool, error) {
+func (f *fakeReaperStore) MarkTaskAgentLost(_ context.Context, tiID string, _, _ int) (bool, error) {
+	f.agentMarked = append(f.agentMarked, tiID)
+	return true, nil
+}
+func (f *fakeReaperStore) MarkTaskCredentialCeiling(_ context.Context, tiID string, _, _ int) (bool, error) {
 	f.agentMarked = append(f.agentMarked, tiID)
 	return true, nil
 }
 func (f *fakeReaperStore) ListStaleQueuedCandidates(context.Context) ([]StaleQueuedCandidate, error) {
 	return f.queuedCands, nil
 }
-func (f *fakeReaperStore) MarkTaskDispatchLost(_ context.Context, tiID string) error {
+func (f *fakeReaperStore) MarkTaskDispatchLost(_ context.Context, tiID string, _, _ int) (bool, error) {
 	f.queuedMarked = append(f.queuedMarked, tiID)
-	return nil
+	return true, nil
 }
 func (f *fakeReaperStore) ListRunningTasks(context.Context, time.Duration) ([]PodLostCandidate, error) {
 	return f.runningCands, nil
 }
-func (f *fakeReaperStore) MarkTaskPodLost(_ context.Context, tiID string) (bool, error) {
+func (f *fakeReaperStore) MarkTaskPodLost(_ context.Context, tiID string, _, _ int) (bool, error) {
 	f.podMarked = append(f.podMarked, tiID)
 	return true, nil
 }
