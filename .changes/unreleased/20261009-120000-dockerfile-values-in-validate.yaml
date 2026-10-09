@@ -11,6 +11,7 @@ body: |-
   They are now part of validating `dexaflow.yaml` (or a legacy `leoflow.yaml`),
   so every command that reads it refuses the project and names the field, and
   both Dockerfile generators run the same check. A project carrying one of these
-  values, which could not be built before, now also fails `validate`, `compile`
-  and the `dexaflow lite` boot. (#1268)
+  values now fails `validate`, `compile` and the `dexaflow lite` boot, even when
+  it ships its own Dockerfile or runs only on Lite, where it used to pass; rename
+  the path or value to upgrade. (#1268)
 time: 2026-10-09T12:00:00.000000000-03:00
