@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **The MCP server can trigger, clear, pause and unpause, behind a flag.** With
+  `--run-control` (`DEXAFLOW_MCP_RUN_CONTROL=true`), `dexaflow-mcp` registers
+  `trigger_run`, `clear_task`, `pause_dag`, `unpause_dag` and `apply_plan`,
+  each acting with the caller's token. A clear over more than one task
+  instance, or an unpause of a scheduled DAG, only returns a plan; `apply_plan`
+  carries it out after the user agrees, within 10 minutes, for the same caller,
+  and only if nothing changed since. The http transport needs
+  `--plan-key-file`, shared by every replica. Off by default. (#1474, ADR 0067)
+time: 2026-10-08T21:00:00.000000000+00:00
