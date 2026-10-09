@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -547,7 +549,12 @@ func writeDAGFile(path string, spec *domain.DAGSpec) error {
 // connectors), built, and removed afterward so the workspace stays clean.
 func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
 	if o.build {
-		name := resolveDockerfileName(cmd, o, cfg)
+		name, fromConfig := resolveDockerfileName(cmd, o, cfg)
+		if fromConfig {
+			if cerr := checkConfiguredDockerfile(dir, name); cerr != nil {
+				return cerr
+			}
+		}
 		dockerfile, cleanup, derr := ensureDockerfile(dir, name, cfg, dagSourcePath(dir, cfg))
 		if derr != nil {
 			return derr
@@ -586,15 +593,56 @@ func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.
 
 // resolveDockerfileName picks the Dockerfile name to look for in the DAG
 // directory: an explicit --dockerfile flag wins, then dexaflow.yaml's
-// build.dockerfile, else the "Dockerfile" default.
-func resolveDockerfileName(cmd *cobra.Command, o compileOptions, cfg *domain.LeoflowConfig) string {
+// build.dockerfile, else the "Dockerfile" default. fromConfig reports that the
+// name came from build.dockerfile, which is the one source confined to the
+// project (#1272): the flag is the operator's own choice on the command line.
+func resolveDockerfileName(cmd *cobra.Command, o compileOptions, cfg *domain.LeoflowConfig) (name string, fromConfig bool) {
 	if cmd.Flags().Changed("dockerfile") {
-		return o.dockerfile
+		return o.dockerfile, false
 	}
 	if cfg.Build != nil && cfg.Build.Dockerfile != "" {
-		return cfg.Build.Dockerfile
+		return cfg.Build.Dockerfile, true
 	}
-	return o.dockerfile
+	return o.dockerfile, false
+}
+
+// checkConfiguredDockerfile refuses a build.dockerfile that resolves outside the
+// project directory once symlinks are followed (#1272).
+//
+// Validate already refuses an absolute path and a `..` escape, but a symlink is
+// lexically clean: `docker/Dockerfile` where docker links to a sibling
+// directory builds from a file nobody reviewed with this dexaflow.yaml, and a
+// Dockerfile that exists is used as-is, skipping every check the generated one
+// gets. So both sides are resolved here, the project directory included, which
+// keeps a project reached through a symlink (a CI workspace often is) working.
+//
+// A name that does not exist is not refused: ensureDockerfile then generates
+// the Dockerfile, which is the guarded path, exactly as before.
+func checkConfiguredDockerfile(dir, name string) error {
+	outside := func(why string) error {
+		return fmt.Errorf("%w: build.dockerfile %q %s, outside the project directory %s; "+
+			"keep the Dockerfile inside the project so it is reviewed with it",
+			domain.ErrInvalidBuildDockerfile, name, why, dir)
+	}
+	if filepath.IsAbs(name) {
+		return outside("is absolute")
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(dir, name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolving build.dockerfile %q: %w", name, err)
+	}
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("resolving the project directory %s: %w", dir, err)
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return outside("resolves to " + strconv.Quote(resolved))
+	}
+	return nil
 }
 
 // compileSummary formats the success line for `dexaflow compile`. When image is
