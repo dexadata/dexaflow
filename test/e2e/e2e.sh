@@ -681,4 +681,16 @@ echo "$splog" | grep -q "E2E_TLS_OK" \
 log "system_packages installed and one real HTTPS handshake completed inside a task pod"
 echo "$splog" | grep "E2E_OPENSSL" || true
 
+# An optional extra-checks script runs here, against the live control plane and
+# the cluster, before cleanup: LEOFLOW_E2E_EXTRA_CHECKS names it, and it gets
+# BASE, TOKEN, METRICS (the server's default metrics listener; this script sets
+# no other), DAG_ID and RUN_ID. e2e-gates.yaml uses it to prove the performance
+# gates it turns on took effect at runtime (test/e2e/perf-gates-on.sh). Unset,
+# which is the default, nothing here changes.
+if [ -n "${LEOFLOW_E2E_EXTRA_CHECKS:-}" ]; then
+  log "Running the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS}"
+  BASE="$API" TOKEN="$TOKEN" METRICS="http://localhost:9090" DAG_ID="$DAG_ID" RUN_ID="$RUN_ID" \
+    bash "$LEOFLOW_E2E_EXTRA_CHECKS" || fail "the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS} failed"
+fi
+
 log "E2E passed"

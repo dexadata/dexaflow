@@ -22,12 +22,13 @@ type redispatchCall struct {
 	runID     string
 	taskID    string
 	tryNumber int
+	epoch     int
 }
 
-func (f *fakeRedispatchStore) RequeueForRedispatch(_ context.Context, runID, taskID string, tryNumber int) error {
+func (f *fakeRedispatchStore) RequeueForRedispatch(_ context.Context, runID, taskID string, tryNumber, attemptEpoch int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, redispatchCall{runID, taskID, tryNumber})
+	f.calls = append(f.calls, redispatchCall{runID, taskID, tryNumber, attemptEpoch})
 	return f.err
 }
 
@@ -66,14 +67,14 @@ func TestHandleReclaimReplacesOnlyDoubleRunSafeReasons(t *testing.T) {
 	t.Run("WorkerGone requeues", func(t *testing.T) {
 		store := &fakeRedispatchStore{}
 		handleReclaim(context.Background(), store, discardLogger(), agentrpc.ReclaimEvent{
-			Reason: agentrpc.ReclaimWorkerGone, RunID: "run-1", TaskID: "extract", TryNumber: 2,
+			Reason: agentrpc.ReclaimWorkerGone, RunID: "run-1", TaskID: "extract", TryNumber: 2, AttemptEpoch: 4,
 		})
 		got := store.recorded()
 		if len(got) != 1 {
 			t.Fatalf("WorkerGone: RequeueForRedispatch calls = %d, want 1", len(got))
 		}
-		if got[0] != (redispatchCall{"run-1", "extract", 2}) {
-			t.Fatalf("WorkerGone: requeued %+v, want run-1/extract/2", got[0])
+		if got[0] != (redispatchCall{"run-1", "extract", 2, 4}) {
+			t.Fatalf("WorkerGone: requeued %+v, want run-1/extract/2 at epoch 4", got[0])
 		}
 	})
 
@@ -82,7 +83,7 @@ func TestHandleReclaimReplacesOnlyDoubleRunSafeReasons(t *testing.T) {
 		handleReclaim(context.Background(), store, discardLogger(), agentrpc.ReclaimEvent{
 			Reason: agentrpc.ReclaimRefused, RunID: "run-2", TaskID: "load", TryNumber: 1,
 		})
-		if got := store.recorded(); len(got) != 1 || got[0] != (redispatchCall{"run-2", "load", 1}) {
+		if got := store.recorded(); len(got) != 1 || got[0] != (redispatchCall{"run-2", "load", 1, 0}) {
 			t.Fatalf("Refused: requeued %+v, want exactly run-2/load/1", got)
 		}
 	})

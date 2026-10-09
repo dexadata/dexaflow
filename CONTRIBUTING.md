@@ -86,6 +86,20 @@ If the PR has no user-facing change at all (release prep, a chore, a
 dependency bump, a docs-only edit), apply the **`skip-changelog`** label to the
 PR instead. Dependabot is exempt automatically.
 
+The **docs guard** works the same way for the docs site. A PR that changes a
+chart value, the authoring schema, a CLI command, a server setting, a
+migration, the OpenAPI document, or adds a changelog fragment of kind Added,
+Changed, Deprecated or Removed updates `website/content/` in the same PR. When
+nothing in it is user-discoverable, apply the **`skip-docs`** label and add a
+line with the reason to the PR description:
+
+```
+Skip-docs: internal refactor, no setting or behaviour an operator can see
+```
+
+The label alone fails the guard. The release cut reads the reason back
+(`scripts/docs-gap.sh`), so write it for the person cutting the release.
+
 #### 5. Pull Request Process
 
 1. Fork the repository and create your branch.
@@ -110,6 +124,25 @@ Changes to the following areas require extra review and are not accepted from fi
 
 If you have a contribution in these areas, please open a discussion issue first.
 
+### Writing a Migration
+
+Migrations live in `migrations/` as `NNN_name.up.sql` and `NNN_name.down.sql`,
+numbered one past the highest file on `main`. They are embedded in the binary
+and applied by golang-migrate on start and by the chart's pre-upgrade Job.
+
+- **Every up has a down.** When a change cannot be undone (a data fix, an enum
+  value), the down file is a comment that says why it is a no-op, and the up
+  must be safe to apply again.
+- **Built-in roles change in every tenant.** A tenant created through the
+  service API copies the built-in roles and their grants from `default` once,
+  when it is created. A migration that adds, changes or revokes a built-in role
+  or one of its grants must therefore apply to every tenant's built-in roles
+  (join on `roles.is_system` across all tenants), never filter on
+  `t.name = 'default'`, and must not touch custom roles (`is_system = false`)
+  or `user_roles`. `migrations/tenant_roles_test.go` fails an up migration that
+  writes `roles` or `role_permissions` and names the default tenant
+  (#1305).
+
 ## Development Environment
 
 ```bash
@@ -129,8 +162,7 @@ docker compose --profile demo up --build
 ### Set up for development
 
 ```bash
-# Optional, for Claude Code users (the file is gitignored):
-cp .github/CLAUDE.md.template ./CLAUDE.md
+# Read AGENTS.md first: the standing rules for PRs, releases and CI.
 
 make setup        # Go tools, Python parser/runtime, pre-commit hook
 make build        # build bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent (plus leoflow* links)

@@ -8,6 +8,7 @@ import (
 
 	"cloud.google.com/go/auth/credentials"
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -93,4 +94,32 @@ func (g *GCSStore) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("getting log object: %w", err)
 	}
 	return r, nil
+}
+
+// List returns the keys under prefix, and with a delimiter each deeper key's
+// common prefix once (see ObjectLister). It needs storage.objects.list.
+func (g *GCSStore) List(ctx context.Context, prefix, delimiter string) ([]string, error) {
+	q := &storage.Query{Prefix: prefix, Delimiter: delimiter}
+	if err := q.SetAttrSelection([]string{"Name"}); err != nil {
+		return nil, fmt.Errorf("listing log objects: %w", err)
+	}
+	it := g.client.Bucket(g.bucket).Objects(ctx, q)
+	var out []string
+	for {
+		attrs, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			return out, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing log objects: %w", err)
+		}
+		if attrs.Prefix != "" {
+			out = append(out, attrs.Prefix)
+		} else {
+			out = append(out, attrs.Name)
+		}
+		if len(out) > maxListedKeys {
+			return nil, errListTooLong
+		}
+	}
 }

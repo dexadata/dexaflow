@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/auth"
@@ -122,7 +123,7 @@ type Store interface {
 	// attempt is never bound (a benign no-op, not an error). Called only on a warm
 	// ack — with warm pools off no assignment is ever acked, so it is never called
 	// and warm_worker_id stays NULL.
-	BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber int, workerPod string) error
+	BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int, workerPod string) error
 }
 
 // XComService stores and retrieves XCom values for the agent.
@@ -193,6 +194,9 @@ type Server struct {
 	// indefinitely on a peer must select on this. nil (the default) keeps streams
 	// open until the peer ends them.
 	shutdown <-chan struct{}
+	// legacyTokens meters task tokens without an attempt_epoch claim (unset or
+	// nil recorder: off). Atomic because it is attached after Serve starts.
+	legacyTokens atomic.Pointer[legacyRecorderBox]
 	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
 	// PushXCom and FetchXCom do not reload the full task spec on every call.
 	attemptSpecs *attemptSpecCache
@@ -282,6 +286,7 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 		RunId:                   id.RunID,
 		TaskId:                  id.TaskID,
 		TryNumber:               clampInt32(id.TryNumber),
+		AttemptEpoch:            int64(id.AttemptEpoch),
 		Operator:                spec.Operator,
 		Entrypoint:              spec.Entrypoint,
 		Environment:             spec.Environment,
@@ -322,6 +327,12 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 	// generic state write (#380).
 	if req.GetState() == agentv1.TaskState_TASK_STATE_UP_FOR_RESCHEDULE {
 		if rerr := s.store.Reschedule(ctx, *id, req.GetRescheduleAt().AsTime()); rerr != nil {
+			// The poke came from a superseded attempt (or onto a settled row): the
+			// same "moved on" answer a stale state report gets (ADR 0051 amendment).
+			if errors.Is(rerr, ErrStaleReport) {
+				slog.Warn("ignoring stale reschedule report; signaling terminate", attemptAttrs(id)...)
+				return &agentv1.ReportStateResponse{Acknowledged: true, ShouldTerminate: true}, nil
+			}
 			return nil, internalStatus("recording reschedule", rerr, attemptAttrs(id)...)
 		}
 		return &agentv1.ReportStateResponse{Acknowledged: true}, nil
@@ -523,8 +534,13 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 		return status.Error(codes.Unavailable, "control plane shutting down; log stream not accepted")
 	default:
 	}
+	// The stream is stored under this execution's attempt epoch, so a second
+	// execution of the same try no longer overwrites it (ADR 0051 amendment,
+	// #863). A token without the claim writes the epoch-0 key, where every
+	// pre-upgrade log already lives.
 	w, oerr := s.logs.Open(logs.Ref{
 		TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber,
+		AttemptEpoch: id.AttemptEpoch,
 	})
 	if oerr != nil {
 		// The agent is told WHICH step failed — without that it sees only a bare
@@ -631,6 +647,20 @@ func writeLines(shutdown <-chan struct{}, w logs.LogWriter, recv func() (*agentv
 // writeLine stores one received line and publishes it for live tailing. attrs
 // carries the attempt identity onto the cause log line of a redacted failure.
 func writeLine(w logs.LogWriter, line *agentv1.LogLine, publish func(string), attrs []any) error {
+	// The agent stamps every line with the time it read it. A stamp the
+	// Timestamp type itself calls invalid (outside years 1 to 9999, a range
+	// inside what time.MarshalJSON accepts, so a valid stamp always encodes) is
+	// refused as the peer's error, as the sink refused it before it took
+	// pre-encoded lines: EncodeLine would store the line under the current time
+	// rather than raw, but nothing of ours sends such a stamp, and the attempt
+	// token the sender holds is no reason to store what it composed. A line
+	// with no stamp at all keeps the Unix epoch it always had.
+	if ts := line.GetTime(); ts != nil {
+		if cause := ts.CheckValid(); cause != nil {
+			slog.Warn("refusing a log line whose timestamp is invalid", causeArgs(cause, attrs)...)
+			return status.Error(codes.InvalidArgument, "log line time is outside the range a timestamp can hold")
+		}
+	}
 	msg := line.GetMessage()
 	// The agent derives the wire level from the source stream (stdout=info,
 	// stderr=error), which mis-colors an error printed to stdout or an info

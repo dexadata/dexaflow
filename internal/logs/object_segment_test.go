@@ -329,6 +329,7 @@ func TestObjectSinkSingleReadSurvivesDeniedSegmentProbe(t *testing.T) {
 // an attempt stored as one object must not fail because the segment probe was
 // refused; it falls back to {try}.log.
 func TestObjectSinkSegmentedReadFallsBackOnDeniedProbe(t *testing.T) {
+	setProbeBackoff(t, time.Millisecond)
 	store := &deniedStore{memStore: newMemStore()}
 	ref := sampleRef()
 	writeOne(t, NewObjectSink(context.Background(), store, "", nil), ref, "legacy")
