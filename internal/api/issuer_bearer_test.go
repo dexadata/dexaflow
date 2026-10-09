@@ -30,7 +30,8 @@ func (f *fakeBearerIssuer) VerifyBearer(_ context.Context, raw string) (*issuer.
 	if raw != "good" {
 		return nil, fmt.Errorf("%w: bad signature", issuer.ErrInvalidToken)
 	}
-	return &issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}, nil
+	// Read only, as the real verifier reads a token without a scope claim.
+	return &issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme", Scopes: []string{auth.ScopeRead}}, nil
 }
 
 // tenantDagRepo records the tenant a DAG listing was scoped to.
