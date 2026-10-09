@@ -75,6 +75,15 @@ the work, and the same DAG version runs many attempts.
   run's per-run staging PVC. Any DAG that declares `staging.enabled: true`
   **automatically falls back to a dedicated pod per task** — this is detected
   statically, no configuration needed.
+- **Tasks that set their own placement or pod metadata.** A warm pod is created
+  before any task is known, so it carries none of a task's `execution` block. A
+  task that sets `node_selector`, `tolerations`, `affinity`,
+  `topology_spread_constraints`, `priority_class_name`, `runtime_class_name`
+  (gVisor, for example), `termination_grace_period_seconds`, `resource_claims`,
+  `labels` or `annotations` **always runs on a dedicated pod**, which applies
+  them. Before this check such a task could land on a warm pod and run without
+  its node, sandbox, device or NetworkPolicy labels. A task that pins a
+  `service_account` other than the warm workers' falls back the same way.
 - **Non-idempotent tasks.** Warm-pool recovery re-runs an attempt after a worker is
   lost, and the safety argument for "a re-run is harmless" holds only for
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
