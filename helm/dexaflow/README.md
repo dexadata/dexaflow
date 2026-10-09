@@ -637,7 +637,7 @@ differ from what's committed.
 | secrets.backendKwargs | string | `""` | Backend kwargs as a JSON object string (e.g. `'{"connections_prefix":"airflow/connections","variables_prefix":"airflow/variables","region_name":"us-east-1"}'`). A kind is served iff its `*_prefix` is present. Keyless auth (IRSA / Workload Identity) uses the task pod's ServiceAccount — set `taskServiceAccount` accordingly. |
 | securityContext.allowPrivilegeEscalation | bool | `false` |  |
 | securityContext.capabilities.drop[0] | string | `"ALL"` |  |
-| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.readOnlyRootFilesystem | bool | `true` |  |
 | securityContext.runAsNonRoot | bool | `true` |  |
 | securityContext.runAsUser | int | `65532` |  |
 | service.annotations | object | `{}` | Service annotations (e.g. cloud LB controller hints, ExternalDNS). |
