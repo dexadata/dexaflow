@@ -1190,7 +1190,9 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		// dispatches settle (success or failed via the sink) instead of leaking
 		// workers and leaving TIs stuck `queued` (#133). nil in Lite/passthrough.
 		drain = func() { drainDispatch(dispatchCloser, logger) }
-		startRetention(ctx, cfg.Retention, storage.NewRetentionStore(pg), sched.IsLeading, metrics, logger)
+		// On the scheduler pool, with the loop and the other janitors: off the
+		// API pool and its statement_timeout (#1339).
+		startRetention(ctx, cfg.Retention, storage.NewRetentionStore(schedPG), sched.IsLeading, metrics, logger)
 		health = sched
 		podDispatch = dispatchOn
 	}

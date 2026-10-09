@@ -611,15 +611,20 @@ no staging volume of it is still live. It goes with its task instances, state
 history, attempt history and XCom index rows, children first. Every batch is
 one short transaction of at most `batch_size` rows, run rows included; a run
 with more rows than that is finished by later batches, each of which checks
-again that the run is still eligible. Active and recent runs are never
+again that the run is still eligible. Before deleting, a batch locks the task
+instances of its runs and checks them again, so a run a clear touched after it
+was selected is kept whole; a run a clear is writing at that moment is skipped
+until a later cycle instead of waited on. Active and recent runs are never
 touched. The janitor sleeps `batch_pause` between batches and a cycle stops
 once it deleted `max_rows_per_cycle` rows; the rest waits for the next cycle.
 Each tenant's runs and each tenant's audit rows take turns, one batch each,
 so no tenant and neither class waits behind another's backlog. Every cycle
 that deletes audit rows writes a `retention.purge` audit entry in the same
 scope with the row count and the cutoff. Turn on `dry_run` first to see what
-a cycle would delete: it only counts (summed across all tenants), logs the
-counts and sets `dexaflow_retention_rows_eligible`, which a deleting cycle
+a cycle would delete: it only counts (summed across all tenants, at most
+10000 runs and 10000 audit rows per tenant, so its cost stays bounded; the
+log says `lower_bound=true` when a tenant reached that cap), logs the counts
+and sets `dexaflow_retention_rows_eligible`, which a deleting cycle
 resets to zero. Metrics: `dexaflow_retention_rows_deleted_total{table}`,
 `dexaflow_retention_rows_eligible{table}` and
 `dexaflow_retention_cycle_duration_seconds`. What the janitor does not delete:

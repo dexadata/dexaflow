@@ -14,9 +14,11 @@ SELECT id FROM tenants ORDER BY id;
 -- still says success until the clear reopens it. Any state added later counts
 -- as unsettled, so it is kept rather than deleted. The janitor calls this once
 -- per batch, so a run whose children span several batches is re-checked each
--- time. FOR UPDATE makes a clear or
--- rerun of the same run wait for the batch to commit; SKIP LOCKED lets the
--- janitor pass over a run another transaction holds instead of waiting on it.
+-- time. FOR UPDATE keeps the run row itself from changing, and SKIP LOCKED
+-- lets the janitor pass over a run another transaction holds. It does NOT stop
+-- a clear: a clear resets task_instances before it touches the run row, so the
+-- janitor then locks and re-checks the task instances
+-- (LockTaskInstancesOfRuns) before it deletes anything.
 SELECT r.id
 FROM dag_runs r
 WHERE r.tenant_id = sqlc.arg(tenant_id)
@@ -32,6 +34,23 @@ WHERE r.tenant_id = sqlc.arg(tenant_id)
 ORDER BY r.ended_at
 LIMIT sqlc.arg(max_runs)
 FOR UPDATE OF r SKIP LOCKED;
+
+-- name: LockTaskInstancesOfRuns :many
+-- Locks every task instance of the locked runs and reports whether each is
+-- still settled. A clear resets task instances without locking the run row
+-- first, so the run lock alone does not keep it out: a clear that committed
+-- since LockExpiredSettledRuns shows here as an unsettled state, and the
+-- janitor drops that run from the batch. Once these locks are held no clear can
+-- change the rows until the batch commits. NOWAIT: a task instance another
+-- transaction is writing (a clear in flight) fails the lock with
+-- lock_not_available instead of waiting, because that clear will next update
+-- the run row the janitor holds, and waiting would deadlock; the janitor skips
+-- the batch and retries on a later cycle.
+SELECT ti.dag_run_id,
+       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed'))::boolean AS settled
+FROM task_instances ti
+WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = ANY(sqlc.arg(run_ids)::uuid[])
+FOR UPDATE OF ti NOWAIT;
 
 -- name: DeleteTaskStateHistoryOfRuns :execrows
 DELETE FROM task_state_history
@@ -89,24 +108,43 @@ WHERE id IN (
   ORDER BY a.occurred_at
   LIMIT sqlc.arg(row_limit));
 
--- name: CountExpiredSettledRuns :one
--- The dry-run count: the same predicate as LockExpiredSettledRuns, across
--- tenants, with no lock.
-SELECT count(*) AS runs,
-       COALESCE(sum((SELECT count(*) FROM task_instances ti WHERE ti.dag_run_id = r.id)), 0)::bigint AS task_instances
-FROM dag_runs r
-WHERE r.state IN ('success', 'failed')
-  AND r.ended_at < sqlc.arg(cutoff)
-  AND NOT EXISTS (
-    SELECT 1 FROM task_instances ti
-    WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
-  AND NOT EXISTS (
-    SELECT 1 FROM staging_volumes s
-    WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active');
+-- name: CountExpiredSettledRunsOfTenant :one
+-- The dry-run count for one tenant: the same predicate as
+-- LockExpiredSettledRuns, with no lock, through the same partial index, and
+-- stopped after max_runs runs so its cost stays bounded however long the
+-- history is. The janitor reports a total that reached the cap as a lower bound.
+SELECT count(*) AS runs, COALESCE(sum(e.task_instances), 0)::bigint AS task_instances
+FROM (
+  SELECT (SELECT count(*) FROM task_instances ti WHERE ti.dag_run_id = r.id) AS task_instances
+  FROM dag_runs r
+  WHERE r.tenant_id = sqlc.arg(tenant_id)
+    AND r.state IN ('success', 'failed')
+    AND r.ended_at < sqlc.arg(cutoff)
+    AND NOT EXISTS (
+      SELECT 1 FROM task_instances ti
+      WHERE ti.dag_run_id = r.id
+        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+    AND NOT EXISTS (
+      SELECT 1 FROM staging_volumes s
+      WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
+  LIMIT sqlc.arg(max_runs)
+) e;
 
--- name: CountExpiredAuditLog :one
-SELECT count(*) FROM audit_log WHERE occurred_at < sqlc.arg(cutoff);
+-- name: CountExpiredTenantAuditLog :one
+-- Audit rows of one tenant older than the cutoff, at most max_rows.
+SELECT count(*) FROM (
+  SELECT 1 FROM audit_log a
+  WHERE a.tenant_id = sqlc.arg(tenant_id) AND a.occurred_at < sqlc.arg(cutoff)
+  LIMIT sqlc.arg(max_rows)
+) e;
+
+-- name: CountExpiredSystemAuditLog :one
+-- System audit rows (no tenant) older than the cutoff, at most max_rows.
+SELECT count(*) FROM (
+  SELECT 1 FROM audit_log a
+  WHERE a.tenant_id IS NULL AND a.occurred_at < sqlc.arg(cutoff)
+  LIMIT sqlc.arg(max_rows)
+) e;
 
 -- name: RecordRetentionPurge :exec
 -- One audit entry per scope a retention cycle purged audit rows from, so the

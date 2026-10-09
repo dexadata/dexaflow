@@ -39,6 +39,9 @@ type Counts struct {
 	TaskInstanceHistory int64
 	XComIndex           int64
 	AuditLog            int64
+	// Capped reports that a dry-run count stopped at its per-tenant cap, so
+	// the counts are a lower bound. Deletes never set it.
+	Capped bool
 }
 
 // Add returns the field-wise sum of c and o.
@@ -50,6 +53,7 @@ func (c Counts) Add(o Counts) Counts {
 		TaskInstanceHistory: c.TaskInstanceHistory + o.TaskInstanceHistory,
 		XComIndex:           c.XComIndex + o.XComIndex,
 		AuditLog:            c.AuditLog + o.AuditLog,
+		Capped:              c.Capped || o.Capped,
 	}
 }
 
@@ -293,7 +297,8 @@ func (j *Janitor) countOnly(ctx context.Context) (Counts, error) {
 		}
 	}
 	j.logger.Info("retention dry run: rows eligible for deletion, summed across all tenants",
-		"dag_runs", got.DagRuns, "task_instances", got.TaskInstances, "audit_log", got.AuditLog)
+		"dag_runs", got.DagRuns, "task_instances", got.TaskInstances, "audit_log", got.AuditLog,
+		"lower_bound", got.Capped)
 	return got, nil
 }
 

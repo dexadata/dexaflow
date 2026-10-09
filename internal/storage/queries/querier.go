@@ -80,10 +80,15 @@ type Querier interface {
 	CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error)
 	// Same newest-run lookup as ListDagsFiltered.
 	CountDagsFiltered(ctx context.Context, arg CountDagsFilteredParams) (int64, error)
-	CountExpiredAuditLog(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
-	// The dry-run count: the same predicate as LockExpiredSettledRuns, across
-	// tenants, with no lock.
-	CountExpiredSettledRuns(ctx context.Context, cutoff pgtype.Timestamptz) (CountExpiredSettledRunsRow, error)
+	// The dry-run count for one tenant: the same predicate as
+	// LockExpiredSettledRuns, with no lock, through the same partial index, and
+	// stopped after max_runs runs so its cost stays bounded however long the
+	// history is. The janitor reports a total that reached the cap as a lower bound.
+	CountExpiredSettledRunsOfTenant(ctx context.Context, arg CountExpiredSettledRunsOfTenantParams) (CountExpiredSettledRunsOfTenantRow, error)
+	// System audit rows (no tenant) older than the cutoff, at most max_rows.
+	CountExpiredSystemAuditLog(ctx context.Context, arg CountExpiredSystemAuditLogParams) (int64, error)
+	// Audit rows of one tenant older than the cutoff, at most max_rows.
+	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
 	// with no password row is an escape hatch that does not open, which is worse
@@ -487,9 +492,11 @@ type Querier interface {
 	// still says success until the clear reopens it. Any state added later counts
 	// as unsettled, so it is kept rather than deleted. The janitor calls this once
 	// per batch, so a run whose children span several batches is re-checked each
-	// time. FOR UPDATE makes a clear or
-	// rerun of the same run wait for the batch to commit; SKIP LOCKED lets the
-	// janitor pass over a run another transaction holds instead of waiting on it.
+	// time. FOR UPDATE keeps the run row itself from changing, and SKIP LOCKED
+	// lets the janitor pass over a run another transaction holds. It does NOT stop
+	// a clear: a clear resets task_instances before it touches the run row, so the
+	// janitor then locks and re-checks the task instances
+	// (LockTaskInstancesOfRuns) before it deletes anything.
 	LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error)
 	// Share-locks every task instance of a run inside the reap transaction, before
 	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
@@ -501,6 +508,17 @@ type Querier interface {
 	// several TIs of the run in another order (a multi-task clear, a batched
 	// scheduler transition); a reap that never waits on a TI cannot be in one.
 	LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error
+	// Locks every task instance of the locked runs and reports whether each is
+	// still settled. A clear resets task instances without locking the run row
+	// first, so the run lock alone does not keep it out: a clear that committed
+	// since LockExpiredSettledRuns shows here as an unsettled state, and the
+	// janitor drops that run from the batch. Once these locks are held no clear can
+	// change the rows until the batch commits. NOWAIT: a task instance another
+	// transaction is writing (a clear in flight) fails the lock with
+	// lock_not_available instead of waiting, because that clear will next update
+	// the run row the janitor holds, and waiting would deadlock; the janitor skips
+	// the batch and retries on a later cycle.
+	LockTaskInstancesOfRuns(ctx context.Context, arg LockTaskInstancesOfRunsParams) ([]LockTaskInstancesOfRunsRow, error)
 	// Stamp a run's on-failure alert as DELIVERED. Called only after a successful
 	// send, which is the whole point of the split: alerted_at now answers "did the
 	// page get through", not "did we try".
