@@ -155,6 +155,12 @@ Dockerfile format and Docker's own operand lexer give some characters a meaning
 no quoting can take away. The refusal always names the field and the value, since
 a stray control character in YAML is invisible in the source.
 
+The check is part of validating `dexaflow.yaml`, so every command that reads the
+file runs it: `dexaflow validate`, `dexaflow compile` with or without `--build`,
+`dexaflow deploy` and `dexaflow lite`. It used to run only while `--build` was
+rendering the Dockerfile, so `validate` called such a project valid and the
+refusal first appeared on the machine about to build the image.
+
 **Refused everywhere: a line break, a vertical tab or a form feed.** These end a
 Dockerfile instruction or split it into new words, so a value carrying one closes
 the instruction it sits in and whatever follows becomes an instruction of its own.
@@ -179,7 +185,8 @@ of the generated Dockerfile and then fails on the missing terminator.
 apostrophe in a directory name is not exotic. Such a project used to build, but
 it was copying the wrong path into the image the whole time: `raw/$schema`
 expanded to whatever the base image set, and `sql\queries` copied `sqlqueries`.
-The build fails now and names the field, which is the point.
+`dexaflow validate` and `dexaflow compile` now fail and name the field, which is
+the point.
 
 **Refused in `base_image`: any whitespace.** An image reference cannot contain
 one, `FROM` has no quoting, and the rest of the line would be read as the

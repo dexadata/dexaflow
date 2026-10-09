@@ -1,0 +1,16 @@
+kind: Security
+body: |-
+  **`dexaflow validate` and plain `dexaflow compile` now refuse a value the
+  generated Dockerfile cannot carry.** The checks that refuse a line break, a
+  vertical tab or a form feed in `base_image`, `dag_source`, `dbt.project`,
+  `dbt_groups.*.project`, `include_paths`, `exclude_paths`, `dependencies` and
+  `system_packages`, whitespace in `base_image`, and `'`, `"`, `\`, `$`, `<` or a
+  leading `--` in a copied path ran only while `compile --build` was rendering the
+  Dockerfile. `validate` and `compile` without `--build` called such a project
+  valid, and the refusal first appeared on the machine about to build the image.
+  They are now part of validating `dexaflow.yaml` (or a legacy `leoflow.yaml`),
+  so every command that reads it refuses the project and names the field, and
+  both Dockerfile generators run the same check. A project carrying one of these
+  values, which could not be built before, now also fails `validate`, `compile`
+  and the `dexaflow lite` boot. (#1268)
+time: 2026-10-09T12:00:00.000000000-03:00
