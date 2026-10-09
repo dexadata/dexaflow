@@ -741,6 +741,10 @@ spec:
           volumeMounts:
             - name: logs
               mountPath: {{ .ctx.Values.config.logsDir }}
+            # The root filesystem is read-only by default (#1225): the Go temp
+            # dir (dbt and subprocess scratch, os.MkdirTemp) lands here instead.
+            - name: tmp
+              mountPath: /tmp
             {{- if and .ctx.Values.agentTLS.enabled (ne .role "api") }}
             # #726 — the private key is mounted only into the role that runs the
             # agent gRPC server. The api role never builds a gRPC server
@@ -776,6 +780,8 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: logs
           {{- if .ctx.Values.logs.persistence.enabled }}
           persistentVolumeClaim:
