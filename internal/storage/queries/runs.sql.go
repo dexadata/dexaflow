@@ -425,24 +425,25 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 }
 
 const createTaskInstance = `-- name: CreateTaskInstance :one
-INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at
+INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number, pool_slots)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots
 `
 
 type CreateTaskInstanceParams struct {
-	TenantID pgtype.UUID `json:"tenant_id"`
-	DagRunID pgtype.UUID `json:"dag_run_id"`
-	TaskID   string      `json:"task_id"`
-	Operator string      `json:"operator"`
-	MaxTries int32       `json:"max_tries"`
-	State    TaskState   `json:"state"`
-	Pool     *string     `json:"pool"`
+	TenantID  pgtype.UUID `json:"tenant_id"`
+	DagRunID  pgtype.UUID `json:"dag_run_id"`
+	TaskID    string      `json:"task_id"`
+	Operator  string      `json:"operator"`
+	MaxTries  int32       `json:"max_tries"`
+	State     TaskState   `json:"state"`
+	Pool      *string     `json:"pool"`
+	PoolSlots int32       `json:"pool_slots"`
 }
 
 // try_number starts at 1 to match Airflow (1-based attempts): the first run's
 // logs live at .../1.log, which is where the UI's log view looks. Retries bump
-// it via ResetForRetry.
+// it via ResetForRetry. pool_slots is the task's EffectivePoolSlots (#1499).
 func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstanceParams) (TaskInstance, error) {
 	row := q.db.QueryRow(ctx, createTaskInstance,
 		arg.TenantID,
@@ -452,6 +453,7 @@ func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstance
 		arg.MaxTries,
 		arg.State,
 		arg.Pool,
+		arg.PoolSlots,
 	)
 	var i TaskInstance
 	err := row.Scan(
@@ -488,6 +490,7 @@ func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstance
 		&i.ReleasedAt,
 		&i.AttemptEpoch,
 		&i.InfraConfirmedAt,
+		&i.PoolSlots,
 	)
 	return i, err
 }
@@ -501,6 +504,7 @@ type CreateTaskInstancesParams struct {
 	State     TaskState   `json:"state"`
 	Pool      *string     `json:"pool"`
 	TryNumber int32       `json:"try_number"`
+	PoolSlots int32       `json:"pool_slots"`
 }
 
 const dagRunExistsByDagID = `-- name: DagRunExistsByDagID :one
@@ -1813,7 +1817,7 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 }
 
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots FROM task_instances
 WHERE dag_run_id = $1
 ORDER BY task_id
 `
@@ -1861,6 +1865,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UU
 			&i.ReleasedAt,
 			&i.AttemptEpoch,
 			&i.InfraConfirmedAt,
+			&i.PoolSlots,
 		); err != nil {
 			return nil, err
 		}
@@ -1873,7 +1878,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UU
 }
 
 const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots FROM task_instances
 WHERE dag_run_id = ANY($1::uuid[])
 ORDER BY dag_run_id, task_id
 `
@@ -1925,6 +1930,7 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 			&i.ReleasedAt,
 			&i.AttemptEpoch,
 			&i.InfraConfirmedAt,
+			&i.PoolSlots,
 		); err != nil {
 			return nil, err
 		}
@@ -2747,7 +2753,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $3
+    WHERE src.dag_run_id = $4
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -2792,23 +2798,36 @@ SET state = 'none',
     max_tries = COALESCE(
         ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
         GREATEST(ti.max_tries, ti.try_number + 1)),
+    -- The size the admission gate charges the re-run is the executing version's
+    -- (#1499, ADR 0066), so PoolSlotUsage sums the same weight; spec_pool_slots
+    -- is parallel to spec_task_ids, and a task the version no longer declares
+    -- keeps the size it had.
+    pool_slots = COALESCE(
+        ($3::int[])[array_position($2::text[], ti.task_id)],
+        ti.pool_slots),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $3
+WHERE ti.dag_run_id = $4
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 RETURNING ti.task_id
 `
 
 type ResetAllFailedTaskInstancesParams struct {
-	SpecRetries []int32     `json:"spec_retries"`
-	SpecTaskIds []string    `json:"spec_task_ids"`
-	DagRunID    pgtype.UUID `json:"dag_run_id"`
+	SpecRetries   []int32     `json:"spec_retries"`
+	SpecTaskIds   []string    `json:"spec_task_ids"`
+	SpecPoolSlots []int32     `json:"spec_pool_slots"`
+	DagRunID      pgtype.UUID `json:"dag_run_id"`
 }
 
 // Archives every failed attempt in the run into task_instance_history then
 // resets. See ResetTaskInstanceToNone for the per-attempt rationale. Returns the
 // task ids it reset, so the clear can delete exactly their XCom.
 func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, resetAllFailedTaskInstances, arg.SpecRetries, arg.SpecTaskIds, arg.DagRunID)
+	rows, err := q.db.Query(ctx, resetAllFailedTaskInstances,
+		arg.SpecRetries,
+		arg.SpecTaskIds,
+		arg.SpecPoolSlots,
+		arg.DagRunID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2867,7 +2886,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $3 AND src.task_id = $4
+    WHERE src.dag_run_id = $4 AND src.task_id = $5
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -2912,16 +2931,24 @@ SET state = 'none',
     max_tries = COALESCE(
         ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
         GREATEST(ti.max_tries, ti.try_number + 1)),
+    -- The size the admission gate charges the re-run is the executing version's
+    -- (#1499, ADR 0066), so PoolSlotUsage sums the same weight; spec_pool_slots
+    -- is parallel to spec_task_ids, and a task the version no longer declares
+    -- keeps the size it had.
+    pool_slots = COALESCE(
+        ($3::int[])[array_position($2::text[], ti.task_id)],
+        ti.pool_slots),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $3 AND ti.task_id = $4
+WHERE ti.dag_run_id = $4 AND ti.task_id = $5
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 `
 
 type ResetFailedTaskInstanceParams struct {
-	SpecRetries []int32     `json:"spec_retries"`
-	SpecTaskIds []string    `json:"spec_task_ids"`
-	DagRunID    pgtype.UUID `json:"dag_run_id"`
-	TaskID      string      `json:"task_id"`
+	SpecRetries   []int32     `json:"spec_retries"`
+	SpecTaskIds   []string    `json:"spec_task_ids"`
+	SpecPoolSlots []int32     `json:"spec_pool_slots"`
+	DagRunID      pgtype.UUID `json:"dag_run_id"`
+	TaskID        string      `json:"task_id"`
 }
 
 // Archives the current attempt into task_instance_history then resets the
@@ -2930,6 +2957,7 @@ func (q *Queries) ResetFailedTaskInstance(ctx context.Context, arg ResetFailedTa
 	result, err := q.db.Exec(ctx, resetFailedTaskInstance,
 		arg.SpecRetries,
 		arg.SpecTaskIds,
+		arg.SpecPoolSlots,
 		arg.DagRunID,
 		arg.TaskID,
 	)
@@ -3108,7 +3136,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $3 AND src.task_id = $4
+    WHERE src.dag_run_id = $4 AND src.task_id = $5
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
         queued_at = EXCLUDED.queued_at,
@@ -3154,15 +3182,23 @@ SET state = 'none',
     max_tries = COALESCE(
         ti.try_number + 1 + ($1::int[])[array_position($2::text[], ti.task_id)],
         GREATEST(ti.max_tries, ti.try_number + 1)),
+    -- The size the admission gate charges the re-run is the executing version's
+    -- (#1499, ADR 0066), so PoolSlotUsage sums the same weight; spec_pool_slots
+    -- is parallel to spec_task_ids, and a task the version no longer declares
+    -- keeps the size it had.
+    pool_slots = COALESCE(
+        ($3::int[])[array_position($2::text[], ti.task_id)],
+        ti.pool_slots),
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $3 AND ti.task_id = $4
+WHERE ti.dag_run_id = $4 AND ti.task_id = $5
 `
 
 type ResetTaskInstanceToNoneParams struct {
-	SpecRetries []int32     `json:"spec_retries"`
-	SpecTaskIds []string    `json:"spec_task_ids"`
-	DagRunID    pgtype.UUID `json:"dag_run_id"`
-	TaskID      string      `json:"task_id"`
+	SpecRetries   []int32     `json:"spec_retries"`
+	SpecTaskIds   []string    `json:"spec_task_ids"`
+	SpecPoolSlots []int32     `json:"spec_pool_slots"`
+	DagRunID      pgtype.UUID `json:"dag_run_id"`
+	TaskID        string      `json:"task_id"`
 }
 
 // Resets a TI for retry: snapshot the current per-attempt state into
@@ -3196,6 +3232,7 @@ func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInst
 	_, err := q.db.Exec(ctx, resetTaskInstanceToNone,
 		arg.SpecRetries,
 		arg.SpecTaskIds,
+		arg.SpecPoolSlots,
 		arg.DagRunID,
 		arg.TaskID,
 	)
@@ -3563,7 +3600,7 @@ const updateTaskInstanceState = `-- name: UpdateTaskInstanceState :one
 UPDATE task_instances
 SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots
 `
 
 type UpdateTaskInstanceStateParams struct {
@@ -3615,6 +3652,7 @@ func (q *Queries) UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskIns
 		&i.ReleasedAt,
 		&i.AttemptEpoch,
 		&i.InfraConfirmedAt,
+		&i.PoolSlots,
 	)
 	return i, err
 }
