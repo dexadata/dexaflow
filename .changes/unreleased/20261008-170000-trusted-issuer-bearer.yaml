@@ -9,5 +9,8 @@ body: |-
   linked to the token's subject is reloaded on every request with the roles
   Dexaflow holds, so deactivating it ends access at once. Lifetime is capped by
   `bearer_max_lifetime_seconds` (900 unless set, at most 3600). A handoff
-  token is never a bearer, nor the reverse. Off by default. (#1468)
+  token is never a bearer, nor the reverse. The issuer's JWKS is downloaded
+  again at most once every 30 seconds, so forged tokens cannot make Dexaflow
+  call the issuer on every request, and an unreachable JWKS answers 503. Off
+  by default. (#1468)
 time: 2026-10-08T17:00:00.000000000+00:00
