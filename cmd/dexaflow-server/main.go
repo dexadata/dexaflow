@@ -2597,7 +2597,11 @@ type liteLeadership interface {
 // a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
 // and the infra re-place after either reap keeps the try number, so failing an
 // attempt whose agent is still alive could run user code twice (#911). Both
-// therefore reap only an attempt whose agent process is gone.
+// therefore reap only an attempt whose agent process is gone. The exception is
+// an attempt still running past credentialCeiling: procs (the subprocess
+// executor) can stop its task, so agent-lost fails it as credential_ceiling, a
+// task failure that is never re-placed, and stops it, the Lite counterpart of
+// a task pod's activeDeadlineSeconds (#1511).
 //
 // The reaper sits behind the same leader-settling gate as the pod path, measured
 // from leadership: a Lite restart leaves detached agents alive with a stale
@@ -2608,7 +2612,8 @@ func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, l
 	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
 	reaper.SetProcessLiveness(procs)
 	// An attempt that outlived auth.max_attempt_credential_lifetime fails for
-	// that reason instead of being re-placed as agent_lost (#1461).
+	// that reason instead of being re-placed as agent_lost (#1461), and one still
+	// running past it is stopped (#1511).
 	reaper.SetAttemptLifetimeCeiling(credentialCeiling)
 	if markers != nil {
 		reaper.SetLogSink(markers)

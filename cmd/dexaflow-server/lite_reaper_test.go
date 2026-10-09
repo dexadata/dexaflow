@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,5 +153,60 @@ func TestLiteReaperFailsPastCeilingAttempt(t *testing.T) {
 	// The never-heartbeated dead agent is not a ceiling case and stays agent_lost.
 	if want := []string{"no-pod/1/3"}; !slices.Equal(store.agentPins, want) {
 		t.Errorf("only the never-heartbeated agent stays agent_lost: got %v, want %v", store.agentPins, want)
+	}
+}
+
+// stoppingLiteProcs reports the agent of r3/t/1 alive and records each
+// StopAttempt, the way the subprocess executor can stop a live attempt.
+type stoppingLiteProcs struct {
+	mu      sync.Mutex
+	stopped []string
+}
+
+func (*stoppingLiteProcs) AttemptProcessAlive(_ context.Context, runID, _ string, _ int) (bool, error) {
+	return runID == "r3", nil
+}
+
+func (p *stoppingLiteProcs) StopAttempt(_ context.Context, runID, taskID string, try int) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.stopped = append(p.stopped, fmt.Sprintf("%s/%s/%d", runID, taskID, try))
+	return true, nil
+}
+
+func (p *stoppingLiteProcs) stops() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.stopped)
+}
+
+// The Lite server hands its subprocess executor to the reaper as the process
+// liveness seam; it must be able to stop a live attempt for #1511 to apply.
+var _ executor.AttemptStopper = (*executor.SubprocessExecutor)(nil)
+
+// TestLiteReaperStopsALiveAttemptPastCeiling pins #1511 on the Lite wiring: an
+// attempt still running past auth.max_attempt_credential_lifetime, with its
+// agent alive, is failed as credential_ceiling and its task is stopped, the
+// Lite counterpart of a task pod's activeDeadlineSeconds.
+func TestLiteReaperStopsALiveAttemptPastCeiling(t *testing.T) {
+	store := &liteReapStore{agentLastHeartbeat: time.Now()}
+	procs := &stoppingLiteProcs{}
+	lead := &fakeLeadership{since: time.Now().Add(-time.Hour), leading: true}
+	reaper := newLiteReaper(store, procs, lead, nil, nil, discardLog(), 11*time.Minute)
+	if err := reaper.ReapOnce(context.Background()); err != nil {
+		t.Fatalf("ReapOnce: %v", err)
+	}
+	if want := []string{"no-pod/1/3"}; !slices.Equal(store.ceilingPins, want) {
+		t.Errorf("the live past-ceiling attempt must be failed for the credential ceiling: got %v, want %v", store.ceilingPins, want)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(procs.stops()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if want := []string{"r3/t/1"}; !slices.Equal(procs.stops(), want) {
+		t.Errorf("the live past-ceiling attempt's task must be stopped: got %v, want %v", procs.stops(), want)
+	}
+	if len(store.agentPins) != 0 {
+		t.Errorf("a live attempt must never be marked agent_lost: got %v", store.agentPins)
 	}
 }
