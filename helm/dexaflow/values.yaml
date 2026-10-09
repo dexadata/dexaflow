@@ -347,6 +347,8 @@ auth:
   existingSecret: ""
   # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
   tokenTtlSeconds: 3600
+  # -- Ceiling, in seconds, on the total age of a renewed user session, measured from first login and kept across every `POST /api/v2/auth/token/renew` (#801). Past it, renewal is refused and the user logs in again. `tokenTtlSeconds` is what bounds a stolen token; this only caps how long a live session may keep refreshing. `0` disables the ceiling. Sets `auth.jwt.max_lifetime_seconds`.
+  sessionMaxLifetimeSeconds: 86400
   # -- Bearer token for the operator service API under `/api/v2/service/` (#1283), which creates tenants (with the built-in roles and default pool) and links passwordless users to `trustedIssuer`. At least 32 characters; generate with `openssl rand -base64 48`. Stored in the chart Secret. It is a root-level credential: whoever holds it can create tenants and grant any role, admin included, in every tenant `trustedIssuer.allowedTenants` covers. Rotate it by changing the Secret and restarting. Empty (the default) leaves the service API off.
   serviceToken: ""
   # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.

@@ -234,9 +234,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// Transparent renewal (aresta #5): a still-valid bearer is re-minted with a
 	// fresh short TTL, bounded by max_lifetime. Under the public /api/v2/auth/
 	// prefix like login, it is self-gating — only a valid signed bearer can be
-	// renewed. Registered only when a renewer is wired.
+	// renewed. Registered only when a renewer is wired. Rate-limited per client
+	// IP on its own limiter (#801), never the login one, so renewal traffic
+	// cannot spend an address's password-login budget.
 	if deps.TokenRenewer != nil {
-		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
+		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
+		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
