@@ -16,8 +16,9 @@ import (
 // the rest cannot appear in a path anyone meant to write.
 const dockerfileSeparators = "\n\r\v\f"
 
-// dockerfileLexMeta are the characters COPY's operand lexer rewrites, which the
-// JSON form does NOT protect against. After parsing, every COPY operand goes
+// dockerfileLexMeta are the characters the operand lexer of COPY and of FROM
+// rewrites, which COPY's JSON form does NOT protect against (FROM has no
+// quoting at all). After parsing, every COPY operand goes
 // through a second pass (instructions.SourcesAndDest.Expand -> shell.Lex
 // .ProcessWord) that strips quotes, eats backslashes and expands $VAR. Measured
 // against BuildKit v0.28.1, in the JSON form:
@@ -55,6 +56,16 @@ func CheckDockerfileWord(field, v string) error {
 // all. Any whitespace there is read as the `FROM <image> AS <stage>` form, and
 // an image reference cannot contain whitespace anyway, so refusing it costs
 // nothing.
+//
+// FROM's operand also goes through the same shell lexer as COPY's (BuildKit's
+// dispatchFrom calls shlex.ProcessWordWithMatches), so the lexer's characters
+// are refused here too (#1271). Measured against Docker 29.8.2's builder:
+// `FROM busybox:1.36$SUFFIX` with no ARG declared pulls busybox:1.36 behind an
+// UndefinedArgInFrom warning, `busybox:1.3'6'` and `busybox:1.3\6` pull
+// busybox:1.36 with no warning at all, and a stray `"` fails the parse. No
+// image reference can contain any of them, so refusing them costs nothing
+// either, and a build that pulls a different image than base_image names is
+// the worst place for a silent rewrite: that image runs every task.
 func CheckImageReference(field, v string) error {
 	if err := CheckDockerfileWord(field, v); err != nil {
 		return err
@@ -63,6 +74,11 @@ func CheckImageReference(field, v string) error {
 		return fmt.Errorf(
 			"%s %q contains whitespace; an image reference cannot, and FROM has no quoting, so the rest would be read as a stage name",
 			field, v)
+	}
+	if i := strings.IndexAny(v, dockerfileLexMeta); i >= 0 {
+		return fmt.Errorf(
+			"%s %q contains %q, which Docker's FROM operand lexer rewrites (it strips quotes, eats backslashes and expands $VAR), so the build would pull a different image than the one named; an image reference cannot contain it, so remove it",
+			field, v, v[i:i+1])
 	}
 	return nil
 }

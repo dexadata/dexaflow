@@ -108,3 +108,49 @@ func TestValidateKeepsWhatTheGeneratedDockerfileCanCarry(t *testing.T) {
 		})
 	}
 }
+
+// FROM's operand goes through the same shell lexer as COPY's (BuildKit's
+// dispatchFrom calls shlex.ProcessWordWithMatches), and #1267 left it with only
+// the separator and whitespace checks (#1271). Measured against Docker 29.8.2's
+// builder: `FROM busybox:1.36$SUFFIX` with no ARG declared pulls busybox:1.36
+// with only an UndefinedArgInFrom warning, `busybox:1.3'6'` and `busybox:1.3\6`
+// pull busybox:1.36 silently, and a stray `"` fails the parse. base_image
+// decides what code runs in every task pod, so a build that pulls a different
+// image than the one named is the worst place for that rewrite.
+func TestValidateRefusesWhatTheFROMLexerRewrites(t *testing.T) {
+	for _, bad := range []string{
+		"ghcr.io/example/runtime:v1$SUFFIX",
+		"ghcr.io/example/runtime${X:-}:v1",
+		"busybox:1.3'6'",
+		`busybox:1.3\6`,
+		`busybox:1.36"`,
+	} {
+		t.Run(bad, func(t *testing.T) {
+			err := dockerfileCfg(func(c *LeoflowConfig) { c.BaseImage = bad }).Validate()
+			if err == nil {
+				t.Fatal("Validate accepted a base_image the FROM lexer rewrites into a different reference")
+			}
+			if !strings.Contains(err.Error(), "base_image") {
+				t.Errorf("the error must name base_image, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "FROM") {
+				t.Errorf("the error must say it is FROM that rewrites it, got: %v", err)
+			}
+		})
+	}
+}
+
+// Every legal image reference shape survives: a registry port, a path, a tag,
+// a digest. None of them can contain the lexer's characters.
+func TestValidateKeepsEveryImageReferenceShape(t *testing.T) {
+	for _, ok := range []string{
+		"python:3.11-slim",
+		"localhost:5000/team/runtime:py3.11",
+		"ghcr.io/dexadata/dexaflow-runtime:py3.11-v0.5.2",
+		"ghcr.io/dexadata/dexaflow-runtime@sha256:" + strings.Repeat("0", 64),
+	} {
+		if err := dockerfileCfg(func(c *LeoflowConfig) { c.BaseImage = ok }).Validate(); err != nil {
+			t.Errorf("base_image %q refused: %v", ok, err)
+		}
+	}
+}

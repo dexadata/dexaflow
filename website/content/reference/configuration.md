@@ -188,9 +188,16 @@ expanded to whatever the base image set, and `sql\queries` copied `sqlqueries`.
 `dexaflow validate` and `dexaflow compile` now fail and name the field, which is
 the point.
 
-**Refused in `base_image`: any whitespace.** An image reference cannot contain
-one, `FROM` has no quoting, and the rest of the line would be read as the
-`FROM <image> AS <stage>` form.
+**Refused in `base_image`: any whitespace, and `'`, `"`, `\` and `$`.** An image
+reference cannot contain any of them. `FROM` has no quoting, so whitespace makes
+the rest of the line read as the `FROM <image> AS <stage>` form. And `FROM`'s
+operand goes through the same lexer as a `COPY` path, so the other four rewrite
+the reference: `runtime:v1$SUFFIX` pulls `runtime:v1` (with only a warning
+about an undeclared build argument), `runtime:v'1'` and `runtime:v\1` pull
+`runtime:v1` with no warning at all, and a stray `"` fails the build. The build
+would run your tasks on a different image than the one `base_image` names.
+Everything a reference can legally hold (a registry host and port, a path, a
+tag, a `@sha256:` digest) is accepted unchanged.
 
 **Refused in a `COPY` path: a leading `--`,** which Docker reads as one of
 `COPY`'s own flags rather than as a path.
