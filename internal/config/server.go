@@ -660,7 +660,9 @@ type AuthSection struct {
 	// mid-attempt). An attempt whose agent goes silent after running past the
 	// ceiling is failed by the heartbeat reaper as a task failure with the
 	// credential_ceiling reason (its retry policy applies), never re-placed as an
-	// agent_lost infra loss with a fresh credential (#1461). A non-positive value
+	// agent_lost infra loss with a fresh credential (#1461). In Lite, which has no
+	// pod deadline, the reaper also fails an attempt still running past the
+	// ceiling with that reason and stops its task (#1511). A non-positive value
 	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
 	// credential_ceiling failure together (a wedged task then has no
 	// wall-clock bound of its own), so boot logs a WARN naming the key.
