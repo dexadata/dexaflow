@@ -149,3 +149,48 @@ func TestRenewTokenDuringAnOutageIsNot401(t *testing.T) {
 		t.Errorf("the log must carry the cause the body withheld; got %s", logBuf.String())
 	}
 }
+
+// TestRenewIsRateLimitedPerIP: /renew is a public auth endpoint like /auth/token
+// and the OIDC routes, so it is throttled per client IP (#801). Once the budget
+// is spent the caller gets 429 and the renewer, which reloads the user from the
+// store, is not reached at all.
+func TestRenewIsRateLimitedPerIP(t *testing.T) {
+	r := &fakeRenewer{renewed: "new-token", ok: true}
+	srv := renewServer(r)
+	for i := 0; i < renewRateLimitPerMinute; i++ {
+		if rec := postRenew(srv, "current-token"); rec.Code != http.StatusOK {
+			t.Fatalf("renew #%d = %d, want 200 within the budget", i+1, rec.Code)
+		}
+	}
+	r.gotToken = ""
+	rec := postRenew(srv, "current-token")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("renew over the budget = %d, want 429", rec.Code)
+	}
+	if r.gotToken != "" {
+		t.Error("a rate-limited renewal still reached the renewer")
+	}
+}
+
+// TestRenewTrafficDoesNotSpendTheLoginBudget: the renew limiter is its own
+// instance. Sharing the login limiter would let renewal traffic lock the
+// address out of password login (and everyone behind the same proxy).
+func TestRenewTrafficDoesNotSpendTheLoginBudget(t *testing.T) {
+	login := auth.NewRateLimiter(5, time.Minute)
+	srv := NewServer(Dependencies{
+		Logger:               discardLogger(),
+		Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:          login,
+		HealthChecks:         map[string]HealthChecker{},
+		CORSOrigins:          []string{"*"},
+		TokenTTLSecs:         3600,
+		TokenRenewer:         &fakeRenewer{renewed: "new-token", ok: true},
+		TokenMaxLifetimeSecs: 86400,
+	})
+	for i := 0; i < renewRateLimitPerMinute+5; i++ {
+		postRenew(srv, "current-token")
+	}
+	if login.Blocked("192.0.2.1") {
+		t.Fatal("renewal traffic spent the password-login budget")
+	}
+}

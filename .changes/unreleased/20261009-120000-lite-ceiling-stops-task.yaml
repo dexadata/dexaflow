@@ -1,0 +1,16 @@
+kind: Fixed
+body: |-
+  **Lite now stops an attempt that outlives `auth.max_attempt_credential_lifetime`.**
+  With the subprocess executor an attempt past the ceiling was only failed as
+  `credential_ceiling` once its task process exited, so a task that never exits
+  kept running with a credential that was no longer renewed, and the try log
+  showed `task succeeded` right before the `killed: credential_ceiling` line.
+  The Lite reaper now fails a live attempt that has been `running` longer than
+  the ceiling as `credential_ceiling` (a task failure, so its retry policy
+  applies) and then stops its task: `SIGTERM` to the task's process group, up to
+  10 s, then `SIGKILL`. This is the Lite counterpart of the task pod's
+  `activeDeadlineSeconds` floor. The `killed: credential_ceiling` line is written
+  once the task and its agent are gone, so it is the last line of the try log.
+  A task that ends on its own first keeps the outcome it reported, and a
+  non-positive ceiling still disables the check. (#1511)
+time: 2026-10-09T12:00:00.000000000-03:00

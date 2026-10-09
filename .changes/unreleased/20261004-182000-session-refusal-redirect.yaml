@@ -1,0 +1,13 @@
+kind: Changed
+body: |-
+  **A refused trusted-issuer sign-in now returns the browser to your external
+  sign-in page instead of a raw JSON error.** With `auth.external_signin_url`
+  set, every refusal of `POST /api/v2/auth/session` (origin not allowed, missing
+  or rejected token, unlinked, inactive or mismatched user, rate limit, server
+  error) answers `303 See Other` to that URL with a stable `error` code appended
+  to its query, such as `error=user_not_linked`, so your page can explain what
+  went wrong. Nothing else from the request goes into the URL, the audit event
+  and server log are unchanged, and a client whose `Accept` asks for JSON and
+  not HTML still gets the problem response. Without the URL, responses are
+  exactly as before.
+time: 2026-10-04T18:20:00.000000000-03:00

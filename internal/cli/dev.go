@@ -595,7 +595,7 @@ func kubectlNamespaceArgs(kubeconfig string) []string {
 // Dockerfile verbatim, so one `dexaflow lite` run would persist a poisoned file
 // that every later `compile --build` then used.
 func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []string) (string, error) {
-	if err := dockerfileWord("dag_source", dagSource); err != nil {
+	if err := domain.CheckDockerfileWord("dag_source", dagSource); err != nil {
 		return "", err
 	}
 	base := filepath.Base(dagSource)
@@ -617,7 +617,7 @@ func devDockerfile(baseImage, dagSource string, deps []string, dbtGroups []strin
 	// Every group is checked before the short-circuit: a `.` group made the
 	// function return before any other group was looked at.
 	for _, project := range dbtGroups {
-		if err := dockerfileWord("dbt_groups.*.project", project); err != nil {
+		if err := domain.CheckDockerfileWord("dbt_groups.*.project", project); err != nil {
 			return "", err
 		}
 	}
@@ -1473,9 +1473,10 @@ func ensureProjectDockerfile(cmd *cobra.Command, dir string, cfg *domain.Leoflow
 	if derr != nil {
 		return fmt.Errorf("resolving dependencies: %w", derr)
 	}
-	// The raw dbt paths, under their own names: devDockerfile only ever sees the
-	// CLEANED list, and filepath.Clean hides the defect rather than refusing it.
-	if derr := checkDbtProjectPaths(cfg); derr != nil {
+	// The same check Validate runs (#1268), on the raw values under their own
+	// names: devDockerfile only ever sees the CLEANED dbt list, and
+	// filepath.Clean hides the defect rather than refusing it.
+	if derr := cfg.ValidateDockerfileValues(); derr != nil {
 		return derr
 	}
 	content, gerr := devDockerfile(devBaseImage, src, deps, dbtGroupProjectDirs(cfg))

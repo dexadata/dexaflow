@@ -773,7 +773,7 @@ type Pool struct {
 <a name="PoolUsage"></a>
 ## type [PoolUsage](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/pool.go#L22-L27>)
 
-PoolUsage is a pool's per\-state occupancy, feeding the Airflow PoolResponse slot fields. The slots admission actually spends are queued\+running; scheduled and deferred are reported for the UI but do not hold a slot.
+PoolUsage is a pool's per\-state occupancy in slots, feeding the Airflow PoolResponse slot fields: each task instance counts its pool\_slots, the size the admission gate charges it \(ADR 0066\), not 1. The slots admission actually spends are queued\+running; scheduled and deferred are reported for the UI but do not hold a slot.
 
 ```go
 type PoolUsage struct {
