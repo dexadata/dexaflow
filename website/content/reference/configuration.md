@@ -579,7 +579,7 @@ and cannot do.
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
 | `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. |
-| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by digest (`image@sha256:...`). Required when source mode is on; the server refuses to start with a tag alone. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: no dedicated value yet, use `extraEnv`. |
 
 ### Logs (`logs.*`)
 
