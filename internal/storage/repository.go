@@ -774,7 +774,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 			return nil, nil
 		}
 		ids, err := q.ResetAllFailedTaskInstances(ctx, queries.ResetAllFailedTaskInstancesParams{
-			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("clearing failed tasks: %w", err)
@@ -785,7 +785,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 	for _, taskID := range taskIDs {
 		if onlyFailed {
 			n, err := q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{
-				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("clearing failed task %q: %w", taskID, err)
@@ -796,7 +796,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 			continue
 		}
 		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
-			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
 		}); err != nil {
 			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
