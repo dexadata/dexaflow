@@ -42,7 +42,10 @@ the model Kubernetes uses:
   The cut runs it and refuses a patch while the list is not empty. The
   commits the cut itself lands on `main` (release prep, docs promotion) never
   count; a Dependabot bump has no milestone, so it shows in the list until it
-  is cherry-picked or skipped.
+  is cherry-picked or skipped. Between cuts the `Release gap watch` workflow
+  runs the same check after every push to `main` and once a day, and keeps an
+  issue titled `Release gap: release-X.Y` open while the list is not empty,
+  with how long ago each commit merged and its open pick pull request.
 - **Nothing user-facing ships undocumented.** `scripts/docs-gap.sh X.Y.Z`
   lists every commit the release ships since the previous GA (on
   `release-X.Y` for a patch, on `main` for a minor) that changes user-facing
