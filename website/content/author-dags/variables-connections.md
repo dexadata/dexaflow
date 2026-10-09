@@ -33,7 +33,7 @@ production credential (#486):
   the key and the ciphertext together.
 - **An install created before 0.5.0 uses a published key.** Until you run
   [`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/)
-  (0.5.2 and later), its connection secrets are encrypted with a key compiled
+  (0.5.1 and later), its connection secrets are encrypted with a key compiled
   into this repository, the same on every such install, so anyone who obtains
   the datastore can read them. `dexaflow lite` warns about this on every start.
 
