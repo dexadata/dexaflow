@@ -272,7 +272,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// configured, on its own per-IP limiter like the OIDC routes.
 	if deps.TrustedIssuer != nil {
 		issuerLimiter := auth.NewRateLimiter(30, time.Minute)
-		r.POST("/api/v2/auth/session", rateLimitByIP(issuerLimiter), issuerSessionHandler(issuerSessionDeps{
+		// Refusals, the rate limit's included, go back to the external sign-in
+		// when one is configured (see issuerSessionDeps.refuse).
+		handoff := issuerSessionDeps{
 			issuer:          deps.TrustedIssuer,
 			users:           deps.TrustedIssuerUsers,
 			origins:         deps.TrustedIssuerOrigins,
@@ -281,7 +283,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,
 			logger:          deps.Logger,
 			insecureCookies: deps.SessionCookieInsecure,
-		}))
+			signIn:          issuerSignInTarget(deps.ExternalSignInURL),
+		}
+		r.POST("/api/v2/auth/session", rateLimitByIPWith(issuerLimiter, handoff.refuseRateLimited), issuerSessionHandler(handoff))
 	}
 	// OIDC/SSO login flow (D1): registered only when a provider was discovered at
 	// boot. Both routes sit under the public /api/v2/auth/ prefix.

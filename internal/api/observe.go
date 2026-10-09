@@ -39,9 +39,19 @@ func Observe(metrics Metrics, tracer trace.Tracer) gin.HandlerFunc {
 
 		status := c.Writer.Status()
 		span.SetAttributes(attribute.Int("http.status_code", status))
+		// A refusal answered with a redirect (the trusted-issuer handoff sends a
+		// refused browser to the external sign-in) is recorded under the status
+		// it stands for, so the route's 4xx/5xx rate and alerts still see it and
+		// it is not counted as a successful 303. The span keeps the real status
+		// and carries the refusal next to it.
+		outcome := status
+		if refused := c.GetInt(contextKeyRefusalStatus); refused != 0 {
+			outcome = refused
+			span.SetAttributes(attribute.Int("dexaflow.refusal_status", refused))
+		}
 		span.End()
 		if metrics != nil {
-			metrics.RecordHTTPRequest(c.Request.Method, route, status, time.Since(start))
+			metrics.RecordHTTPRequest(c.Request.Method, route, outcome, time.Since(start))
 		}
 	}
 }
