@@ -7,7 +7,8 @@ menu: { main: { weight: 30 } }
 ---
 
 A Connection is a piece of credentialised configuration the control plane
-encrypts at rest (ADR 0019) and delivers to a running task as
+encrypts at rest (ADR 0019; on Lite read
+[what that protects](/author-dags/variables-connections/#encryption-at-rest-on-lite)) and delivers to a running task as
 `AIRFLOW_CONN_<CONN_ID>` (ADR 0021). User code (Python `psycopg2`,
 `requests`, your operator of choice) reads the env var and connects.
 
