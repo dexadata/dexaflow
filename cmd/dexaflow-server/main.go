@@ -124,11 +124,13 @@ func run() error {
 	}
 
 	tel, shutdownTel, err := observability.Setup(ctx, observability.Config{
-		ServiceName:  "leoflow-server",
-		LogLevel:     cfg.Observability.LogLevel,
-		LogFormat:    cfg.Observability.LogFormat,
-		OTelEnabled:  cfg.Observability.OTel.Enabled,
-		OTelEndpoint: cfg.Observability.OTel.Endpoint,
+		ServiceName:    "leoflow-server",
+		LogLevel:       cfg.Observability.LogLevel,
+		LogFormat:      cfg.Observability.LogFormat,
+		OTelEnabled:    cfg.Observability.OTel.Enabled,
+		OTelEndpoint:   cfg.Observability.OTel.Endpoint,
+		SampleRatio:    cfg.Observability.OTel.SampleRatio,
+		SkipProbeSpans: cfg.Observability.OTel.SkipProbeSpans,
 	})
 	if err != nil {
 		return fmt.Errorf("observability setup: %w", err)
@@ -1442,6 +1444,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
 		ResourceUnit:                 resourceUnit(cfg),
 		UnitMisfits:                  unitMisfits(tel.Metrics),
+		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2646,7 +2649,11 @@ type liteLeadership interface {
 // a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
 // and the infra re-place after either reap keeps the try number, so failing an
 // attempt whose agent is still alive could run user code twice (#911). Both
-// therefore reap only an attempt whose agent process is gone.
+// therefore reap only an attempt whose agent process is gone. The exception is
+// an attempt still running past credentialCeiling: procs (the subprocess
+// executor) can stop its task, so agent-lost fails it as credential_ceiling, a
+// task failure that is never re-placed, and stops it, the Lite counterpart of
+// a task pod's activeDeadlineSeconds (#1511).
 //
 // The reaper sits behind the same leader-settling gate as the pod path, measured
 // from leadership: a Lite restart leaves detached agents alive with a stale
@@ -2657,7 +2664,8 @@ func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, l
 	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
 	reaper.SetProcessLiveness(procs)
 	// An attempt that outlived auth.max_attempt_credential_lifetime fails for
-	// that reason instead of being re-placed as agent_lost (#1461).
+	// that reason instead of being re-placed as agent_lost (#1461), and one still
+	// running past it is stopped (#1511).
 	reaper.SetAttemptLifetimeCeiling(credentialCeiling)
 	if markers != nil {
 		reaper.SetLogSink(markers)
@@ -2721,6 +2729,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// stays vault-only). The D6 registration relaxation is wired separately in run()
 	// where the Repository is in scope.
 	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
+	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
+	// its registered dag.py. "" (the default) keeps it off.
+	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
 	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
 	// SAME registry the gRPC handler serves. nil when warm pools are off.
 	setWarmPlacer(dispatcher, warmPools)

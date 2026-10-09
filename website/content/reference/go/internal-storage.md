@@ -840,7 +840,7 @@ ListVariables returns a page of variables for the tenant and the total count.
 func (r *Repository) PoolSlotUsage(ctx context.Context, tenant string) (map[string]domain.PoolUsage, error)
 ```
 
-PoolSlotUsage returns per\-pool occupancy for the tenant, keyed by pool name \(a task instance with no pool is counted under the implicit default\_pool\). It feeds the Airflow PoolResponse occupancy fields.
+PoolSlotUsage returns per\-pool occupancy for the tenant, keyed by pool name \(a task instance with no pool is counted under the implicit default\_pool\). Each state sums its task instances' pool\_slots, so the slots match what the admission gate charges \(ADR 0066, \#1499\). It feeds the Airflow PoolResponse occupancy fields.
 
 <a name="Repository.ReconcileUserRoles"></a>
 ### func \(\*Repository\) [ReconcileUserRoles](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repository.go#L279>)

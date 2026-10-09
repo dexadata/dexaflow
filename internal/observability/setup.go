@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -19,6 +20,10 @@ type Config struct {
 	LogFormat    string
 	OTelEnabled  bool
 	OTelEndpoint string
+	// SampleRatio is the share of new root traces kept, in [0, 1].
+	SampleRatio float64
+	// SkipProbeSpans drops spans for /healthz, /readyz and /static/*.
+	SkipProbeSpans bool
 }
 
 // Telemetry bundles the configured observability primitives.
@@ -48,8 +53,12 @@ func Setup(ctx context.Context, cfg Config) (*Telemetry, func(), error) {
 			"observability.otel.enabled=true but observability.otel.endpoint is empty: " +
 				"set the OTLP/gRPC endpoint explicitly (e.g. otel-collector:4317) " +
 				"or set enabled=false to skip tracing (#319)")
+	case cfg.OTelEnabled && !(cfg.SampleRatio >= 0 && cfg.SampleRatio <= 1):
+		return nil, nil, fmt.Errorf(
+			"observability.otel.sample_ratio must be between 0 and 1 (got %v)", cfg.SampleRatio)
 	case cfg.OTelEnabled:
-		tp, err := newTracerProvider(ctx, cfg.OTelEndpoint, cfg.ServiceName)
+		tp, err := newTracerProvider(ctx, cfg.OTelEndpoint, cfg.ServiceName,
+			newSampler(cfg.SampleRatio, cfg.SkipProbeSpans))
 		if err != nil {
 			return nil, nil, err
 		}
