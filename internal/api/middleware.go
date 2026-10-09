@@ -26,7 +26,12 @@ const (
 	// The response says "the request could not be completed"; this says which
 	// SQLSTATE, on which operation, so the operator is not left guessing.
 	contextKeyProblemCause = "leoflow.problem_cause"
-	headerRequestID        = "X-Request-Id"
+	// contextKeyRefusalStatus carries the status a refusal would have answered
+	// when it answers with a redirect instead (the trusted-issuer handoff with an
+	// external sign-in). StructuredLogger logs it and logs at its level, so the
+	// redirect does not turn a 403 or 500 into an INFO line.
+	contextKeyRefusalStatus = "leoflow.refusal_status"
+	headerRequestID         = "X-Request-Id"
 )
 
 // RequestID assigns a request id (honoring an inbound X-Request-Id) and echoes it.
@@ -81,10 +86,15 @@ func StructuredLogger(logger *slog.Logger) gin.HandlerFunc {
 		if cause := c.GetString(contextKeyProblemCause); cause != "" {
 			attrs = append(attrs, "cause", cause)
 		}
+		level := status
+		if refused := c.GetInt(contextKeyRefusalStatus); refused != 0 {
+			attrs = append(attrs, "refusal_status", refused)
+			level = refused
+		}
 		switch {
-		case status >= 500:
+		case level >= 500:
 			logger.Error("http request", attrs...)
-		case status >= 400:
+		case level >= 400:
 			logger.Warn("http request", attrs...)
 		default:
 			logger.Info("http request", attrs...)

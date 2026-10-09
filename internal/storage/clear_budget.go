@@ -15,9 +15,14 @@ import (
 // clear re-binds the run (run_on_latest_version), otherwise the version the run
 // is pinned to. A run with no version yields empty arrays, and every task then
 // keeps its budget, never below the attempt being made.
+//
+// poolSlots, parallel to taskIDs, is each task's EffectivePoolSlots in that
+// same version: a clear writes it to the task instance so PoolSlotUsage weighs
+// the re-run with the size the admission gate charges it (#1499).
 type clearRetryBudget struct {
-	taskIDs []string
-	retries []int32
+	taskIDs   []string
+	retries   []int32
+	poolSlots []int32
 }
 
 // loadClearRetryBudget resolves the version the cleared run will execute and
@@ -42,11 +47,13 @@ func (r *Repository) loadClearRetryBudget(ctx context.Context, dag queries.Dag, 
 }
 
 // retryBudgetOf lists every task's retries the way materialization counts them:
-// the task's own value, else the DAG's default_args.retries, else none.
+// the task's own value, else the DAG's default_args.retries, else none. It
+// lists each task's EffectivePoolSlots alongside.
 func retryBudgetOf(spec domain.DAGSpec) clearRetryBudget {
 	b := clearRetryBudget{
-		taskIDs: make([]string, 0, len(spec.Tasks)),
-		retries: make([]int32, 0, len(spec.Tasks)),
+		taskIDs:   make([]string, 0, len(spec.Tasks)),
+		retries:   make([]int32, 0, len(spec.Tasks)),
+		poolSlots: make([]int32, 0, len(spec.Tasks)),
 	}
 	for _, t := range spec.Tasks {
 		retries := 0
@@ -58,6 +65,7 @@ func retryBudgetOf(spec domain.DAGSpec) clearRetryBudget {
 		}
 		b.taskIDs = append(b.taskIDs, t.TaskID)
 		b.retries = append(b.retries, toInt32(retries))
+		b.poolSlots = append(b.poolSlots, toInt32(t.EffectivePoolSlots()))
 	}
 	return b
 }

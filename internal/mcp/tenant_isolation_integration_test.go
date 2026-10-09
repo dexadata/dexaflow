@@ -216,7 +216,10 @@ func connectMCP(t *testing.T, apiURL, token string) *mcpsdk.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := mcp.NewServer(base, apiURL, "test", true)
+	// A server option that registers more (a tool, resource or prompt behind
+	// a flag) must be turned on here, so what it adds is enumerated and needs
+	// a case too.
+	srv := mcp.NewServer(base, apiURL, "test", true, isolationServerOptions()...)
 	mcpHTTP := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return srv },
 		&mcpsdk.StreamableHTTPOptions{Stateless: true},
@@ -264,6 +267,17 @@ func (f *isolationFixture) readResource(t *testing.T, uri string) outcome {
 	return outcome{request: uri, text: string(body)}
 }
 
+func (f *isolationFixture) getPrompt(t *testing.T, name string, args map[string]string) outcome {
+	t.Helper()
+	req, _ := json.Marshal(map[string]any{"prompt": name, "arguments": args})
+	res, err := f.sess.GetPrompt(context.Background(), &mcpsdk.GetPromptParams{Name: name, Arguments: args})
+	if err != nil {
+		return outcome{request: string(req), text: err.Error(), isError: true}
+	}
+	body, _ := json.Marshal(res)
+	return outcome{request: string(req), text: string(body)}
+}
+
 // assertNoLeak fails when o carries anything only tenant B holds. An
 // identifier the request itself named may be echoed back (a not-found error
 // naming the DAG asked for leaks nothing).
@@ -293,19 +307,36 @@ func (f *isolationFixture) assertOwnData(t *testing.T, o outcome) {
 }
 
 // assertNothing fails unless o, a request for something only tenant B has,
-// came back as an error or empty, and carries nothing of tenant B. Every
-// seeded log line and task error holds seededData, so a result without it
-// holds no log or task data at all.
+// was refused, and carries nothing of tenant B. A successful answer is a
+// failure even without seeded data in it: tenant B's run detail or spec holds
+// no marker, so only the refusal itself proves the read stayed in tenant A.
 func (f *isolationFixture) assertNothing(t *testing.T, o outcome) {
 	t.Helper()
-	if !o.isError && strings.Contains(o.text, seededData) {
-		t.Errorf("request %s returned log or task data, want an error or nothing:\n%s", o.request, o.text)
+	if !o.isError {
+		t.Errorf("request %s succeeded, want it refused:\n%s", o.request, o.text)
 	}
 	f.assertNoLeak(t, o)
 }
 
-// isolationCases has one entry per tool name, resource URI and resource
-// template the MCP server registers. A new one without an entry fails
+// assertEmpty is assertNothing for a read whose control-plane answer to a
+// missing attempt is an empty success rather than an error (a log): o must be
+// refused or carry exactly the empty form, and nothing of tenant B.
+func (f *isolationFixture) assertEmpty(t *testing.T, o outcome, emptyForm string) {
+	t.Helper()
+	if !o.isError && (!strings.Contains(o.text, emptyForm) || strings.Contains(o.text, seededData)) {
+		t.Errorf("request %s returned data, want it refused or %q:\n%s", o.request, emptyForm, o.text)
+	}
+	f.assertNoLeak(t, o)
+}
+
+// The empty forms a missing log attempt comes back as.
+const (
+	emptyLog    = "No logs available for this attempt."
+	emptySearch = `\"total_matches\":0`
+)
+
+// isolationCases has one entry per tool name, resource URI, resource template
+// and prompt the MCP server registers. A new one without an entry fails
 // TestMCPTenantIsolation, so nothing reaches a shared engine untested.
 func isolationCases() map[string]func(*testing.T, *isolationFixture) {
 	return map[string]func(*testing.T, *isolationFixture){
@@ -323,7 +354,7 @@ func isolationCases() map[string]func(*testing.T, *isolationFixture) {
 		"search_logs": func(t *testing.T, f *isolationFixture) {
 			f.assertOwnData(t, f.callTool(t, "search_logs", map[string]any{"dag_id": f.shared, "run_id": "r1", "query": "boom"}))
 			f.assertOwnData(t, f.callTool(t, "search_logs", map[string]any{"dag_id": f.shared, "run_id": "r1", "task_id": "load", "query": "boom"}))
-			f.assertNothing(t, f.callTool(t, "search_logs", map[string]any{"dag_id": f.shared, "run_id": "r1", "task_id": f.bTask, "query": "boom"}))
+			f.assertEmpty(t, f.callTool(t, "search_logs", map[string]any{"dag_id": f.shared, "run_id": "r1", "task_id": f.bTask, "query": "boom"}), emptySearch)
 			f.assertNothing(t, f.callTool(t, "search_logs", map[string]any{"dag_id": f.bOnly, "run_id": "r1", "query": "boom"}))
 		},
 		"dag://list": func(t *testing.T, f *isolationFixture) {
@@ -355,12 +386,30 @@ func isolationCases() map[string]func(*testing.T, *isolationFixture) {
 		},
 		"log://task/{dag_id}/{run_id}/{task_id}/{try_number}": func(t *testing.T, f *isolationFixture) {
 			f.assertOwnData(t, f.readResource(t, "log://task/"+f.shared+"/r1/load/1"))
-			f.assertNothing(t, f.readResource(t, "log://task/"+f.shared+"/r1/"+f.bTask+"/1"))
-			f.assertNothing(t, f.readResource(t, "log://task/"+f.bOnly+"/r1/load/1"))
+			f.assertEmpty(t, f.readResource(t, "log://task/"+f.shared+"/r1/"+f.bTask+"/1"), emptyLog)
+			f.assertEmpty(t, f.readResource(t, "log://task/"+f.bOnly+"/r1/load/1"), emptyLog)
 		},
 		"dag://source/{dag_id}": func(t *testing.T, f *isolationFixture) {
 			f.assertOwnData(t, f.readResource(t, "dag://source/"+f.shared))
 			f.assertNothing(t, f.readResource(t, "dag://source/"+f.bOnly))
+		},
+		// Tenant A's r1 runs failed and tenant B's succeeded, so a prompt that
+		// read B's runs would name B's DAG or count a success.
+		promptCase + "diagnose_latest_failure": func(t *testing.T, f *isolationFixture) {
+			o := f.getPrompt(t, "diagnose_latest_failure", nil)
+			f.assertNoLeak(t, o)
+			if o.isError || !strings.Contains(o.text, `run \"r1\"`) ||
+				(!strings.Contains(o.text, f.shared) && !strings.Contains(o.text, f.aOnly)) {
+				t.Errorf("diagnose_latest_failure did not pick tenant A's failed run:\n%s", o.text)
+			}
+			f.assertNothing(t, f.getPrompt(t, "diagnose_latest_failure", map[string]string{"dag_id": f.bOnly}))
+		},
+		promptCase + "pipeline_health_today": func(t *testing.T, f *isolationFixture) {
+			o := f.getPrompt(t, "pipeline_health_today", nil)
+			f.assertNoLeak(t, o)
+			if o.isError || strings.Contains(o.text, "success") || !strings.Contains(o.text, f.aOnly) {
+				t.Errorf("pipeline_health_today is not tenant A's runs alone:\n%s", o.text)
+			}
 		},
 		"dag://spec/{dag_id}": func(t *testing.T, f *isolationFixture) {
 			o := f.readResource(t, "dag://spec/"+f.shared)
@@ -401,8 +450,18 @@ func TestMCPTenantIsolation(t *testing.T) {
 	}
 }
 
-// registeredNames lists every tool name, resource URI and resource template
-// the server advertises to a client.
+// promptCase prefixes a prompt's name in isolationCases, so a prompt and a
+// tool of the same name stay two cases.
+const promptCase = "prompt:"
+
+// isolationServerOptions turns on every option that registers more, so all
+// of it is enumerated by TestMCPTenantIsolation.
+func isolationServerOptions() []mcp.Option {
+	return []mcp.Option{mcp.WithUIBaseURL("https://ui.example")}
+}
+
+// registeredNames lists every tool name, resource URI, resource template and
+// prompt (as promptCase + name) the server advertises to a client.
 func registeredNames(t *testing.T, sess *mcpsdk.ClientSession) []string {
 	t.Helper()
 	ctx := context.Background()
@@ -418,7 +477,11 @@ func registeredNames(t *testing.T, sess *mcpsdk.ClientSession) []string {
 	if err != nil {
 		t.Fatalf("list resource templates: %v", err)
 	}
-	names := make([]string, 0, len(tools.Tools)+len(resources.Resources)+len(templates.ResourceTemplates))
+	prompts, err := sess.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatalf("list prompts: %v", err)
+	}
+	names := make([]string, 0, len(tools.Tools)+len(resources.Resources)+len(templates.ResourceTemplates)+len(prompts.Prompts))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
 	}
@@ -427,6 +490,9 @@ func registeredNames(t *testing.T, sess *mcpsdk.ClientSession) []string {
 	}
 	for _, rt := range templates.ResourceTemplates {
 		names = append(names, rt.URITemplate)
+	}
+	for _, p := range prompts.Prompts {
+		names = append(names, promptCase+p.Name)
 	}
 	sort.Strings(names)
 	return names
