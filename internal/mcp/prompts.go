@@ -160,19 +160,9 @@ func uncheckedNote(n int) string {
 	return fmt.Sprintf(" Only the first page of DAGs was checked; %d more DAG(s) were not.", n)
 }
 
-func (h *handlers) diagnoseLatestFailurePrompt(ctx context.Context, req *mcpsdk.GetPromptRequest) (*mcpsdk.GetPromptResult, error) {
-	var dagID string
-	if req != nil && req.Params != nil {
-		dagID = strings.TrimSpace(req.Params.Arguments["dag_id"])
-	}
-	api, err := apiFor(h, req)
-	if err != nil {
-		return nil, err
-	}
-	dags, unchecked, err := h.promptDags(ctx, api, dagID)
-	if err != nil {
-		return nil, err
-	}
+// latestFailedRun returns the most recent failed run across dags, or nil when
+// none of them has one.
+func latestFailedRun(ctx context.Context, api *apiclient.ClientWithResponses, dags []string) (*runRef, error) {
 	var latest *runRef
 	for _, id := range dags {
 		runs, err := listRuns(ctx, api, id, string(apiclient.DAGRunStateFailed), promptFailedRunsPerDag)
@@ -188,6 +178,26 @@ func (h *handlers) diagnoseLatestFailurePrompt(ctx context.Context, req *mcpsdk.
 				latest = &ref
 			}
 		}
+	}
+	return latest, nil
+}
+
+func (h *handlers) diagnoseLatestFailurePrompt(ctx context.Context, req *mcpsdk.GetPromptRequest) (*mcpsdk.GetPromptResult, error) {
+	var dagID string
+	if req != nil && req.Params != nil {
+		dagID = strings.TrimSpace(req.Params.Arguments["dag_id"])
+	}
+	api, err := apiFor(h, req)
+	if err != nil {
+		return nil, err
+	}
+	dags, unchecked, err := h.promptDags(ctx, api, dagID)
+	if err != nil {
+		return nil, err
+	}
+	latest, err := latestFailedRun(ctx, api, dags)
+	if err != nil {
+		return nil, err
 	}
 
 	const desc = "Diagnose the most recent failed DAG run"
