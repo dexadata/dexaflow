@@ -34,3 +34,12 @@ JOIN tenants t ON t.id = d.tenant_id
 WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3 AND x.task_id = $4
   AND x.expires_at > now()
 ORDER BY x.key;
+
+-- name: DeleteXComIndexForTasks :many
+-- Removes the XCom index rows of task instances a clear is resetting (#1131) and
+-- returns their backend keys, so the stored values can be deleted too. XCom
+-- carries no try number, so rows left behind would serve the cleared attempt's
+-- values to the next attempt's downstream.
+DELETE FROM xcom_index
+WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = ANY(sqlc.arg(task_ids)::text[])
+RETURNING redis_key;

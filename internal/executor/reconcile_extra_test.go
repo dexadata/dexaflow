@@ -60,15 +60,15 @@ func TestReconcileSkipsPodWithoutTaskInstance(t *testing.T) {
 
 type errReporter struct{}
 
-func (errReporter) FailTask(context.Context, string, int, string) error {
+func (errReporter) FailTask(context.Context, string, int, int, string) error {
 	return errors.New("metadatabase unavailable")
 }
 
-func (errReporter) SucceedTask(context.Context, string, int) error {
+func (errReporter) SucceedTask(context.Context, string, int, int) error {
 	return errors.New("metadatabase unavailable")
 }
 
-func (errReporter) RescheduleTask(context.Context, string, int, time.Time) error {
+func (errReporter) RescheduleTask(context.Context, string, int, int, time.Time) error {
 	return errors.New("metadatabase unavailable")
 }
 

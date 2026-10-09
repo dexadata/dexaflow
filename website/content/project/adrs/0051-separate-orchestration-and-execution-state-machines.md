@@ -19,6 +19,7 @@ that makes the warm-pool safe; it is a prerequisite for ADR 0053 (admission +
 placement) and for PR-N1 (the warm-worker / shared-pod executor).
 **Relates:** ADR 0031 (scheduler architecture — reconciliation loop, two-phase dispatch, two-layer reaping), ADR 0027 (editions: executors + delivery), ADR 0015 (Kubernetes-only container execution), ADR 0002 (pod-per-task), ADR 0004 (thin agent), ADR 0010 (observability), ADR 0049 (split API/scheduler roles)
 **Issues:** #543 (agent exit code conflates task outcome with report delivery), infra-vs-task retry conflation (this ADR)
+**Amendment accepted:** 2026-10-04, an attempt epoch fences an infra re-place from the attempt it replaced (#1130, #911). See the section at the end.
 
 ## Why now — the motivation, strengthened
 
@@ -372,3 +373,396 @@ Each phase ships **independently**, **failing-test-first** (ADR 0011), and is
   DAG-coordinate labels and JSONL fields the execution layer propagates.
 - Argo Workflows — pods carry workflow-coordinate labels the controller reads; the
   project added a SQL backend after etcd pressure.
+
+## Amendment (2026-10-04): an attempt epoch fences an infra re-place from the attempt it replaced
+
+**Status of this amendment:** Accepted (proposed and accepted 2026-10-04 by
+the project owner). The ADR above stays Accepted; this section extends it.
+**Target release:** v0.5.1 ships PR A0 to A5 below; PR A6 (rejecting legacy
+tokens) ships in a later minor release.
+**Decided at acceptance:** the attempt epoch is claimed at dispatch, at the
+cost of one extra write per dispatch (see "the dispatch itself" below).
+**Issues:** #1130, #911 (primary); #901, #863 (same root cause); #896 (the drill
+that surfaced the class).
+
+### What is wrong
+
+Phase 1 made an infra fault re-place the task without consuming the user's
+retry budget, and it did so by design: `ResetTaskInstanceInfraReplace` leaves
+`try_number` untouched and bumps `infra_attempts` instead
+(`internal/storage/queries/runs.sql:404-445`). The ADR treated `try_number` as
+the user-visible retry count, which is right. But every fence in the execution
+path also uses `try_number` as the **attempt identity**, and that is the part
+Phase 1 broke. After an infra re-place the superseded attempt and its
+replacement share `(task_instance, run, task, try)` and nothing in the system
+can tell them apart:
+
+| Fence | Where | Keyed on |
+| --- | --- | --- |
+| Agent identity and token claims | `internal/auth/agent_token.go:29-47` (`AgentIdentity`), `:50-69` (`agentClaims`) | `try_number` |
+| Report fence | `runs.sql:506-546` (`ReportTaskResult`) via `internal/storage/agent_store.go:151-179` | `try_number` + active state |
+| Heartbeat fence and the `should_terminate` kill switch | `runs.sql:735-752`, `internal/agentrpc/server.go:347-360` | `try_number` + active state |
+| Secret liveness | `runs.sql:754-774` (`IsTaskInstanceLive`) | `try_number` + active state |
+| Agent reschedule | `runs.sql:548-561` (`RescheduleTaskInstance`) | **no attempt guard at all** |
+| Reconciler settles | `runs.sql:472-504`, `internal/executor/reconcile.go:292-302, 470-493` | `id` + `try_number` (pod label) |
+| Pod teardown and presence | `internal/executor/pod_terminate.go:41-45, 171-189`, `pod_informer.go:128-135` | label selector `run-id,task-id,try-number` |
+| Reaper marks | `runs.sql:80-90, 883-893, 924-934` | `id` + source state only |
+| Log stream key | `internal/logs/logs.go:117-123`, `internal/logs/object.go:85` | `{task}/{try}.log` |
+| Attempt history | `migrations/016_task_instance_history.up.sql` (`UNIQUE (task_instance_id, try_number)`), `ON CONFLICT DO NOTHING` in every reset rail | `try_number` |
+
+`DeleteTaskPod`'s own comment states the invariant everything relies on, "a
+retry bumps try_number in place ... so a newer live attempt can never match
+this selector" (`pod_terminate.go:35-40`). It holds for the retry rail. It is
+false for the infra rail, and the consequences are concrete:
+
+1. **A stale pod settles the live replacement (#1130).** The reconciler
+   re-classifies every terminal pod on every sweep until it is collected at
+   `podGCGracePeriod = 10m` (`reconcile.go:330, 394-431`). A terminal pod of the
+   superseded attempt that carries a SUCCESS record calls
+   `SucceedTaskInstanceIfActive(id, try)` (`runs.sql:483-492`), and once the
+   replacement is `queued` or `running` the guard matches it. The replacement is
+   marked `success` from work it never did; its own pod then receives
+   `should_terminate` on its next heartbeat and is killed mid-run.
+2. **A superseded agent is accepted as the live one (#911).** The report fence
+   is `try_number = $N AND state IN (...)` (`runs.sql:544-546`). On Lite the
+   subprocess agent is detached on purpose (`internal/executor/subprocess.go:192`,
+   `context.WithoutCancel`) and keeps retrying its RUNNING report without a
+   budget (`internal/agent/runner.go:973-1001`), so after a dispatch-lost re-place
+   its RUNNING report can land on the reset row and start user code concurrently
+   with the replacement.
+3. **Teardown can hit the replacement (#901).** `DeleteTaskPod` lists by the
+   shared selector and deletes whatever matches (`pod_terminate.go:83-104`).
+4. **Logs and history collapse (#863).** Every attempt of one try writes the
+   same object key (the object sink `Put`s over it), and the history archive
+   drops every re-place after the first on `ON CONFLICT DO NOTHING`.
+5. **Reaper marks are not attempt-scoped.** `MarkTaskAgentLost` and
+   `MarkTaskPodLost` match `id AND state='running'`; the candidate's
+   `try_number` is read (`runs.sql:847-867, 895-922`) but never written into the
+   guard, so a candidate that went stale between list and mark can fail the
+   attempt that replaced it.
+
+A sixth defect sits next to these and is fixed by the same change. **No reset
+rail clears `last_heartbeat_at`** (`runs.sql:323-445, 619-683`; the column is
+written only by `RecordTaskHeartbeat`, `runs.sql:747-752`). A re-placed or
+retried attempt that reports RUNNING (`runner.go:570`) inherits the previous
+attempt's heartbeat until its own first beat, one full interval later
+(`runner.go:589, 808-827`). For an attempt that was reaped as `agent_lost` that
+inherited value is already past the threshold by definition, so a maintenance
+sweep landing in that window lists it (`runs.sql:864-865`) and
+`IsAgentLost` (`internal/executor/heartbeat_reap.go:51-56`) fails the
+replacement immediately, spending another infra attempt. The window is not
+specific to the infra rail: a clear of any task that heartbeated before (the
+ordinary clear-and-rerun) and a retry whose `retry_delay` exceeds the threshold
+minus one heartbeat interval inherit an equally stale value, and there the
+spurious `agent_lost` mark costs an infra attempt on a task that was never lost. This is read from the
+source, not reproduced; PR A0 below starts with the failing test.
+
+### Decision
+
+Introduce an **attempt epoch**: a per-row counter that identifies one
+execution attempt, distinct from the user-facing `try_number`.
+
+**A dedicated column, not `infra_attempts`.** `task_instances.attempt_epoch
+INT NOT NULL DEFAULT 0`. `infra_attempts` is a *budget* (`plan.go:323-325`),
+and a budget is something an operator may legitimately want to reset (a clear,
+a policy change); an identity must never go backwards. Coupling the two would
+forbid ever resetting the budget. `infra_attempts` stays exactly as it is.
+
+**Monotonic, bumped on every rail that can start a new execution.** Each of
+these increments `attempt_epoch` and clears `last_heartbeat_at` in the same
+statement:
+
+- `ResetTaskInstanceInfraReplace` (the rail that motivated this);
+- `ResetTaskInstanceForRetry`, `ResetTaskInstanceToNone`,
+  `ResetFailedTaskInstance`, `ResetAllFailedTaskInstances` (the retry and
+  clear rails; `try_number` already differs, but one uniform rule is simpler to
+  test than a list of exceptions, and it makes `attempt_epoch` alone a unique
+  attempt identity within a row);
+- `RedispatchRescheduledTaskInstance` (`runs.sql:447-463`): a reschedule poke
+  reuses `try_number` today, which is why the reconciler has to collect poke
+  pods immediately (`reconcile.go:413-423`); the epoch turns that into defense
+  in depth instead of the only guard;
+- `RequeueForRedispatch` (`runs.sql:973-998`): the reclaimed warm worker
+  "demonstrably will not run" the attempt, and the epoch fences it if it does;
+- `RecordDispatchFailure` (`runs.sql:947-958`): a synchronous dispatch failure
+  is ambiguous (a create that timed out may still have created the pod), so the
+  next dispatch gets a new epoch;
+- `RequeueDispatch` (added by #1347, queued or scheduled back to scheduled):
+  whichever of #1347 and PR A1 merges second adds
+  `attempt_epoch = attempt_epoch + 1` and `last_heartbeat_at = NULL` to it, so
+  it follows the same rule as every other rail;
+- **the dispatch itself.** `launchQueued` creates the pod before it records
+  `queued` (`internal/scheduler/scheduler.go:1053-1064`), and pod names carry a
+  random suffix (`internal/executor/kubernetes.go:785-793`). A dispatch whose
+  `queued` write failed (a database error, or leadership lost between the two
+  statements) is therefore dispatched again on a later tick with no reset rail
+  in between, and both pods would share `(try, epoch)`. The epoch is claimed
+  where the dispatcher resolves the row: `ResolveTask` becomes an
+  `UPDATE ... SET attempt_epoch = attempt_epoch + 1 ... RETURNING` guarded to
+  the pre-dispatch states, and the token, label and annotation are minted from
+  the claimed value. With the claim at dispatch every execution has its own
+  epoch whatever path led to it; the reset-rail bumps above stay, so that a
+  reset alone already fences the attempt it superseded before the next
+  dispatch runs.
+
+  **Decided:** the claim at dispatch is accepted. It costs one extra write
+  per dispatch (the `ResolveTask` read becomes a guarded `UPDATE ...
+  RETURNING`), which is the price of every execution carrying its own epoch
+  whatever path led to it, including a dispatch repeated after a lost
+  `queued` write.
+
+The epoch is never reset. The attempt identity becomes
+`(task_instance_id, try_number, attempt_epoch)`; `try_number` stays in every
+predicate so the legacy path below is a strict narrowing of today's.
+
+**Where the epoch goes.**
+
+- **Agent identity and token claims.** `AgentIdentity` gains `AttemptEpoch`
+  plus a presence bit; `agentClaims` gains `AttemptEpoch *int64
+  json:"attempt_epoch,omitempty"`. The claim name follows the existing
+  snake_case claims (`try_number`, `dag_version_id`). A pointer is required so
+  "absent" (a legacy token) is distinguishable from epoch 0. `mintAgentToken`
+  (`agent_token.go:83-115`) writes it; `identityFromClaims` (`:179-195`) reads
+  it; `RenewAgentToken` (`:134-158`) **preserves it verbatim, including its
+  absence**. Renewal must never upgrade a legacy token to the row's current
+  epoch: that would hand a superseded attempt the identity of its replacement.
+  Dispatch mints it from the resolved row (`internal/dispatch/dispatch.go:256-263`);
+  the exchange transport carries it through the pod identity annotation
+  (`internal/executor/kubernetes.go:326-335`, `PodIdentity` gains
+  `json:"epoch,omitempty"`) and its resolver
+  (`internal/kubeexchange/kubeexchange.go:194-213`); `WorkAssignment` gains an
+  additive `attempt_epoch` field (`proto/agent.proto:235-243`). The agent
+  treats the token as opaque, so **no agent binary change is needed for the
+  fence**.
+- **The report fence.** `ReportTaskResult`, `RecordTaskHeartbeat`,
+  `IsTaskInstanceLive`, `BindWarmAttempt`, `RequeueForRedispatch` and
+  `RescheduleTaskInstance` add the epoch predicate below.
+  `RescheduleTaskInstance` also gains the `try_number` guard it is missing
+  today. A superseded agent therefore gets `ErrStaleReport`, which already maps
+  to `should_terminate` (`server.go:316-326, 356-360`) and a clean exit. That is
+  the #911 fix, and it holds on Lite, where there is no pod to delete.
+- **Pod labels and the teardown selector.** `BuildPod` stamps
+  `leoflow.io/attempt-epoch` (`kubernetes.go:80-87`). `DeleteTaskPod`,
+  `TaskPodPresence` and the informer's `CachedPodActive` take one attempt
+  value `{run, task, try, epoch}`. They keep the `run-id,task-id,try-number`
+  server-side selector and filter the epoch in Go, treating an absent label as
+  epoch 0 (a label selector cannot express "equals 0 or absent"). Deletion is
+  then by name with a UID precondition, as #901 proposed, so a list-then-delete
+  can never act on a pod it did not list.
+- **The reconciler.** `tryNumberOf` (`reconcile.go:292-302`) becomes
+  `attemptOf`, reading both labels. `FailTaskInstanceIfActive`,
+  `SucceedTaskInstanceIfActive` and `RescheduleTaskInstanceByIDIfActive` add
+  `attempt_epoch = $epoch`. This is the #1130 fix: the superseded pod's record
+  no longer matches the replacement.
+- **Reaper marks.** `MarkTaskAgentLost`, `MarkTaskPodLost` and
+  `MarkTaskDispatchLost` add `try_number` and `attempt_epoch` from the candidate
+  row, which the list queries already return or will return.
+- **Logs and history.** `logs.Ref` gains `AttemptEpoch`. The key stays
+  `{try}.log` for epoch 0, so every log written before the upgrade is still
+  found, and becomes `{try}.e{epoch}.log` otherwise. `task_instance_history`
+  gains `attempt_epoch`, which every archive writes. Its unique key stays
+  `(task_instance_id, try_number)` in the release that ships the fence: the
+  previous release archives with `ON CONFLICT (task_instance_id, try_number)`,
+  and Postgres refuses that statement once no unique index has exactly those
+  columns, so swapping the key would break every retry, re-place and clear of
+  an old binary during the rolling upgrade (the migration hook runs first) and
+  after a rollback. The swap to `(task_instance_id, try_number, attempt_epoch)`
+  is the contract half of an expand-contract change and ships with PR A6, when
+  no binary older than the fence can run against the schema. Until then a
+  try's second and later executions are not archived as separate rows. The
+  Airflow-compatible tries and logs endpoints still address a **try**: they
+  collapse a try's epochs into one entry (the latest epoch's state) and serve
+  its log as the epochs' streams in order, each preceded by one system line
+  naming the re-place; neither needs per-epoch rows, because the log reader
+  finds the epochs' streams by key. The per-epoch rows are what a native
+  attempts view reads (#863), once the key is swapped.
+- **The outcome record.** See the ADR 0052 amendment: the record carries the
+  epoch for transport independence, but on the dedicated-pod path the
+  reconciler fences on the **label**, which the control plane wrote and the
+  task cannot change (`AutomountServiceAccountToken: false`,
+  `kubernetes.go:112`).
+
+**The predicate, including legacy tokens.**
+
+```sql
+AND try_number = sqlc.arg(try_number)
+AND attempt_epoch = COALESCE(sqlc.narg(attempt_epoch)::int, 0)
+```
+
+A token or pod without an epoch is treated as epoch 0. Everything minted
+before the upgrade belongs to a row whose epoch the migration set to 0, and
+because the epoch is claimed at dispatch, every attempt dispatched after the
+upgrade carries an epoch of at least 1, so no legacy credential or unlabeled pod
+can match it. A reset-only bump would not be enough: a row that was re-placed,
+re-poked or requeued before the upgrade sits at epoch 0 with no rail left to
+run, and its first post-upgrade dispatch would share epoch 0 with the
+superseded legacy attempt. The one residual case is two legacy attempts that
+already aliased one row before the upgrade (today's bug); they stay
+indistinguishable until that row's next dispatch, exactly as today.
+
+The epoch-0 rule applies to the writes that can settle or move the row:
+`ReportTaskResult`, `RescheduleTaskInstance`, and the warm `BindWarmAttempt`
+and `RequeueForRedispatch` (which always carry an epoch). The heartbeat
+(`RecordTaskHeartbeat`) and the secret liveness read (`IsTaskInstanceLive`)
+match a claim-less token on `try_number` alone and an epoch-carrying token
+exactly:
+
+```sql
+AND try_number = $3
+AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_epoch)::int)
+```
+
+A claim-less token is not always a pre-upgrade one. During a rolling upgrade
+an old replica that renews a new token, or performs the projected-token
+exchange, mints it without the claim it does not know. The two differ in when
+the claim is lost. The exchange happens before the agent's RUNNING report, so
+an exchange-stripped token is fenced at that report: the pod stops before user
+code starts, and the dispatch-lost reaper re-places the row. A renewal happens
+while the task runs, so a renewal-stripped token is the only kind that reaches
+the final report. Fencing its heartbeat would tell a live post-upgrade attempt
+to terminate on its next beat and reaping it would re-place it, once per
+stripped token. Matching heartbeats on the try keeps such an attempt alive and
+resolving its secrets; only its terminal report is fenced, so the worst case
+is one redundant re-place when it finishes, never a wrong outcome. A
+claim-less final report is never accepted on a row past epoch 0: accepting it
+would reopen #911 for every legacy token. #911 stays closed because the superseded
+agent's RUNNING report is fenced (the agent starts user code only after it is
+acknowledged), and #1130 stays closed because the reconciler fences on the pod
+label, not on the token. The cost is that a superseded legacy agent's
+heartbeats keep the replacement's `last_heartbeat_at` fresh until that agent's
+next report tells it to terminate.
+
+### Rollout and compatibility
+
+- **Migration.** One additive, expand-only migration (038; renumber if a
+  concurrent migration lands first): the two columns with `DEFAULT 0` and
+  nothing else, history first and `task_instances` last so its ACCESS
+  EXCLUSIVE lock is held for the shortest time, under a `lock_timeout`. Down
+  drops them. No backfill. The history key swap waits for PR A6 (see Logs and
+  history above).
+- **In-flight attempts at upgrade.** They hold legacy tokens and run in
+  unlabeled pods on rows at epoch 0, so they report, heartbeat, resolve
+  secrets and get settled exactly as today. If one of them is reaped and
+  re-placed after the upgrade, the replacement is epoch 1 and the legacy
+  attempt is fenced out. No in-flight attempt is killed by the upgrade itself.
+  The exception is a second upgrade after a rollback: a rollback keeps the
+  column, so a row 0.5.1 dispatched before the rollback stays at epoch 1 or
+  higher, and a task 0.5.0 started on that row holds a claim-less token that
+  no longer matches. After the second upgrade its final report is rejected and
+  it is re-placed and runs again. This is a documented degraded case, not a
+  wrong outcome: the runbook says to let in-flight tasks drain (or pause
+  dispatch) before upgrading again after a rollback.
+- **Mixed versions during a rolling upgrade.** A new verifier with a token
+  from an old minter: legacy rule above. An old verifier with a new token:
+  the JSON decoder ignores the unknown claim and fences on `try_number` as
+  today. Old agent binaries are unaffected (the token is opaque to them, and
+  the new proto fields are additive). The one degraded cell is an **old leader
+  dispatching a row that a new leader already bumped** (leadership returning
+  to an old replica mid-rollout): its legacy token fails the epoch-0 rule,
+  the attempt is told to terminate, and it is reaped and re-placed. That is
+  one redundant infra re-place for that attempt, never a wrong outcome. An old
+  leader also resets and re-places without bumping; the next dispatch by a new
+  leader claims a fresh epoch, so that window adds no aliasing beyond today's.
+  The same holds after a rollback followed by a second upgrade. A second
+  degraded cell is an **old replica re-minting a new token**: a renewal or a
+  projected-token exchange served by an old replica drops the claim. The
+  attempt keeps heartbeating and resolving secrets (the heartbeat and liveness
+  rule above), but its terminal report is read as epoch 0 and fenced, so it is
+  told to terminate when it finishes and is re-placed once. That holds for a
+  renewal only; an exchange happens before the RUNNING report, so an
+  exchange-stripped attempt is fenced at that report, stops before user code
+  starts, and is re-placed by the dispatch-lost reaper. Both cells last
+  only while old replicas serve agent RPCs: HA installs should finish the
+  rollout promptly, or scale the control plane to one replica for the upgrade,
+  to avoid redundant re-placements (`website/content/operate/upgrades.md`).
+- **Retiring legacy tokens.** The release that ships the fence accepts legacy
+  tokens under the epoch-0 rule and meters them
+  (`agent_legacy_attempt_token_total`). The next minor release rejects a
+  task-scoped token without the claim as `Unauthenticated`. Renewal preserves
+  the absence, so with `auth.max_attempt_credential_lifetime` enabled no
+  legacy token outlives that ceiling; operators who disabled it are told so in
+  the release notes.
+- **Rollback.** The old binary ignores the columns and the claim, and its
+  archive statements still find their `(task_instance_id, try_number)` key, so
+  behavior returns to today's without running the down migration, which is
+  only needed to reclaim the columns. The columns keep their values across the
+  rollback, which matters only for a second upgrade: tasks 0.5.0 started on
+  rows already at epoch 1 or higher are rejected at their final report and
+  re-run (see In-flight attempts at upgrade). Before upgrading again after a
+  rollback, let in-flight tasks drain or pause dispatch.
+
+### Consequences
+
+- `try_number` is once again only the user's retry count, and the infra rail
+  can re-place as often as its budget allows without any fence aliasing.
+- The `DeleteTaskPod` invariant comment becomes true for every rail, and the
+  operator page that asserts the pin (`website/content/operate/scheduler-resilience.md`,
+  per #901) can keep its wording.
+- Cost: one integer column on two tables, one label per pod, one claim per
+  token, and an extra predicate on queries that already filter by primary key
+  or by `(dag_run_id, task_id)`. No new index is needed.
+
+### Alternatives considered
+
+- **Bump `try_number` on an infra re-place.** Rejected by #863 and by Phase 1
+  itself: it bills the user's retry budget and mislabels the retry count shown
+  in the Airflow-compatible API.
+- **Use `infra_attempts` as the epoch.** Rejected above: it is a budget, and it
+  does not move on the reschedule, reclaim or dispatch-failure rails, which
+  reuse `try_number` too.
+- **Fix each symptom locally** (delete by name for #901, a log suffix for #863,
+  a Lite liveness gate for #911, a "pod older than the attempt" check for
+  #1130). Rejected: four patches, each re-deriving attempt identity from
+  timestamps or pod names, and the next fence written against `try_number`
+  reopens the class.
+
+### Implementation plan
+
+Each PR is one logical change, failing test first (ADR 0011). PR A0 to A5
+target v0.5.1, together with PR B1, B2, B3 and B5 of the ADR 0052 amendment.
+PR A6 ships in a later minor release, after the release that meters legacy
+tokens.
+
+- **PR A0: reset rails clear `last_heartbeat_at`.** Independent of the epoch;
+  ship first. Test first (integration, `internal/storage`): a TI that
+  heartbeated, is marked `agent_lost`, re-placed and transitioned to `running`
+  must not appear in `ListAgentLostCandidates`. Same test for the retry rail.
+- **PR A1: schema and identity plumbing, no behavior change.** Migration;
+  every rail listed above bumps `attempt_epoch`; `ResolveTask` claims it.
+  Tests: one integration test per rail asserting the epoch strictly
+  increases, including two dispatches of one row with no reset between them;
+  migration up/down/up test, including the previous release's archive
+  statement running against the migrated schema.
+- **PR A2: token claim.** `agentClaims`, `AgentIdentity`, mint, renew,
+  dispatch, exchange annotation and resolver, `WorkAssignment` and `TaskSpec`
+  proto fields. Tests in `internal/auth`: round trip; renewal preserves absent,
+  0 and N; a legacy token decodes with the presence bit unset. Exchange
+  resolver test with and without the annotation field.
+- **PR A3: report fence (#911).** The predicate on the six agent-path queries,
+  including the missing `try_number` guard on `RescheduleTaskInstance`; the
+  legacy metric. Tests: `internal/agentrpc` server test, a report and a
+  heartbeat carrying a stale epoch get `should_terminate`; integration test
+  reproducing the Lite chain (dispatch-lost, re-place, the old token's RUNNING
+  report is rejected); legacy token accepted at epoch 0, rejected at epoch 1.
+- **PR A4: pods, reconciler and reapers (#1130, #901).** Label, epoch-filtered
+  selectors with name and UID deletes, `attemptOf`, epoch on the three
+  reconciler settles and three reaper marks. Test first, as #1130 specifies, in
+  `internal/executor/reconcile_test.go`: a terminal pod with a SUCCESS record,
+  labels `try-number=1` and no epoch, against a TI at try 1 epoch 1 in
+  `queued`; `SucceedTask` must not settle it. Plus: `DeleteTaskPod` with two
+  pods of one try and different epochs deletes only the matching one; a
+  reaper mark with a stale epoch is a no-op. End to end: extend
+  `test/e2e/chaos-runtime.sh` scenario D to force the re-place, keep the
+  terminal pod, and assert the second pod is not settled from the first
+  pod's record.
+- **PR A5: logs and history (#863).** `Ref` epoch, the key scheme, the
+  collapsed tries endpoint and the concatenating log reader. Tests: two infra
+  attempts on one try produce two objects and one tries entry whose log holds
+  both streams in order; an epoch-0 object written before the change is still
+  served.
+- **PR A6, a later minor release (not v0.5.1): reject legacy tokens and swap
+  the history key.** Test: a task token without the claim is
+  `Unauthenticated`; a warm-worker credential is unaffected. The migration
+  swaps `task_instance_history_unique` to `(task_instance_id, try_number,
+  attempt_epoch)` and the archive rails' `ON CONFLICT` target with it; test:
+  two infra re-places of one try keep two history rows.

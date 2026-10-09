@@ -13,7 +13,7 @@
 name: CHANGELOG guard
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 # pull-requests: read is what lets the exemption step ask the API for the
@@ -22,6 +22,19 @@ on:
 permissions:
   contents: read
   pull-requests: read
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled. The head
+# sha is part of the pull request key here: this guard also runs on labeled
+# and unlabeled, and a label added to the same commit (cut-release.sh opens its
+# prepare pull request with one) must not cancel the run of that commit.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}-{2}', github.workflow, github.event.pull_request.number, github.event.pull_request.head.sha) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changelog-guard:
@@ -85,8 +98,8 @@ jobs:
           fi
       # base_ref goes through the environment rather than into the command text:
       # ${{ }} is substituted before the shell sees it, and git refnames permit
-      # ';', '$(' and backticks. Unreachable while `branches: [main]` pins it,
-      # but nothing would catch it if that pin were widened (#970).
+      # ';', '$(' and backticks. The pin is main and release-* (ADR 0062), and
+      # nothing would catch a refname from a wider pin (#970).
       - name: Fetch the base branch tip
         if: steps.exempt.outputs.exempt != 'true'
         env:

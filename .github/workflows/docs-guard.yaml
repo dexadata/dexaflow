@@ -4,6 +4,8 @@
 # A standalone workflow — not a job in ci.yaml — for the same reason as the
 # CHANGELOG guard: it triggers on `labeled` / `unlabeled` too, so applying
 # `skip-docs` re-runs THIS guard alone and the exemption takes effect at once.
+# It also triggers on `edited`: the label needs a `Skip-docs: <reason>` line in
+# the description, and adding that line has to re-run the guard as well.
 #
 # Why it exists: taskPodSecurity.readOnlyRootFilesystem — the security hardening
 # of the v0.4.5 tranche — shipped in rc.3 with zero mentions anywhere under
@@ -14,12 +16,25 @@ name: Docs guard
 
 on:
   pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main, "release-*"]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
 permissions:
   contents: read
   pull-requests: read
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled. The head
+# sha is part of the pull request key here: this guard also runs on labeled
+# and unlabeled, and a label added to the same commit (cut-release.sh opens its
+# prepare pull request with one) must not cancel the run of that commit.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}-{2}', github.workflow, github.event.pull_request.number, github.event.pull_request.head.sha) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   docs-guard:
@@ -28,10 +43,9 @@ jobs:
     timeout-minutes: 10
     # Dependabot is exempt by author, not by label — the same reasoning the
     # CHANGELOG guard documents: keying on the author keeps one mechanism and
-    # survives a label being removed.
-    if: >-
-      ${{ !contains(github.event.pull_request.labels.*.name, 'skip-docs')
-          && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    # survives a label being removed. The skip-docs label no longer skips the
+    # job: the script accepts it only with a reason in the description.
+    if: ${{ github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The changed-file list comes from the API rather than a git diff: the
@@ -47,5 +61,8 @@ jobs:
         run: |
           gh api --paginate "repos/${{ github.repository }}/pulls/${PR}/files" \
             --jq '.[].filename' > /tmp/changed.txt
-      - name: Require a docs update (or the skip-docs label)
+      - name: Require a docs update (or the skip-docs label with a reason)
+        env:
+          SKIP_DOCS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-docs') && '1' || '0' }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: bash scripts/check-docs-updated.sh HEAD /tmp/changed.txt

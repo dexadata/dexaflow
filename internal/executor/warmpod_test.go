@@ -137,6 +137,29 @@ func TestBuildWarmPodStampsTenantLabel(t *testing.T) {
 	}
 }
 
+// TestBuildWarmPodDropsReservedPrefixMetadata asserts declared warm-pod metadata
+// cannot use the executor-owned leoflow.io/ prefix even for a key the warm pod
+// does not stamp itself: with no TenantID a declared leoflow.io/tenant-id would
+// otherwise attribute the pod to an arbitrary tenant for the M4 cap.
+func TestBuildWarmPodDropsReservedPrefixMetadata(t *testing.T) {
+	spec := baseWarmSpec()
+	spec.Labels = map[string]string{"team": "data-eng", "leoflow.io/tenant-id": "forged"}
+	spec.Annotations = map[string]string{"cost-center": "1234", "leoflow.io/agent-identity": "forged"}
+	pod := BuildWarmPod(spec)
+	if v, ok := pod.Labels[warmTenantLabelKey]; ok {
+		t.Errorf("declared reserved label %s=%q reached the warm pod", warmTenantLabelKey, v)
+	}
+	if v, ok := pod.Annotations["leoflow.io/agent-identity"]; ok {
+		t.Errorf("declared reserved annotation leoflow.io/agent-identity=%q reached the warm pod", v)
+	}
+	if pod.Labels["team"] != "data-eng" || pod.Annotations["cost-center"] != "1234" {
+		t.Errorf("ordinary declared metadata not merged: labels=%v annotations=%v", pod.Labels, pod.Annotations)
+	}
+	if pod.Labels[warmWorkerLabelKey] != warmWorkerLabelVal {
+		t.Errorf("warm-worker label lost: %v", pod.Labels)
+	}
+}
+
 // TestBuildWarmPodCarriesSelfLifecycleCaps locks the four self-lifecycle caps the
 // warm agent enforces on itself (ADR 0058 D9/D10/D6/H3): the attempt count cap, the
 // wall-clock lifetime cap (seconds), the idle-TTL (seconds), and the per-attempt
@@ -367,5 +390,52 @@ func TestBuildWarmPodServiceAccount(t *testing.T) {
 	}
 	if got := BuildWarmPod(baseWarmSpec()).Spec.ServiceAccountName; got != "" {
 		t.Errorf("no default SA → empty ServiceAccountName, got %q", got)
+	}
+}
+
+// TestBuildWarmPodReadOnlyRootFilesystemIsolation locks the warm isolation mode
+// (X3.2): with execution.warm_read_only_root_filesystem on, the warm container's
+// root filesystem is read only even when the task-pod default leaves it writable,
+// so a file one attempt plants on the image (a module on the working directory's
+// sys.path, a ~/.local site-packages entry) cannot be executed by the next one.
+// The writable paths left are the /tmp emptyDir and /dev/shm, and the agent is told to give each
+// attempt its own HOME and XDG dirs inside the scratch it wipes between attempts.
+func TestBuildWarmPodReadOnlyRootFilesystemIsolation(t *testing.T) {
+	spec := baseWarmSpec()
+	spec.ReadOnlyRootFilesystem = true
+	pod := BuildWarmPod(spec)
+
+	sc := pod.Spec.Containers[0].SecurityContext
+	if sc == nil || sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Fatalf("warm container must have a read-only root filesystem, got %+v", sc)
+	}
+	var tmpMounted bool
+	for _, m := range pod.Spec.Containers[0].VolumeMounts {
+		if m.Name == writableTmpVolumeName && m.MountPath == writableTmpMountPath && !m.ReadOnly {
+			tmpMounted = true
+		}
+	}
+	if !tmpMounted {
+		t.Errorf("a writable /tmp emptyDir must be mounted: %+v", pod.Spec.Containers[0].VolumeMounts)
+	}
+	env := warmEnvMap(pod)
+	if env["TMPDIR"] != writableTmpMountPath {
+		t.Errorf("TMPDIR = %q, want %q", env["TMPDIR"], writableTmpMountPath)
+	}
+	if env[warmAttemptHomeEnv] != "1" {
+		t.Errorf("%s = %q, want 1 so the agent gives each attempt its own HOME", warmAttemptHomeEnv, env[warmAttemptHomeEnv])
+	}
+}
+
+// TestBuildWarmPodWritableRootByDefault keeps the default warm pod unchanged: no
+// read-only root, no per-attempt HOME, so a task that writes to its image works
+// exactly as it does today.
+func TestBuildWarmPodWritableRootByDefault(t *testing.T) {
+	pod := BuildWarmPod(baseWarmSpec())
+	if sc := pod.Spec.Containers[0].SecurityContext; sc != nil && sc.ReadOnlyRootFilesystem != nil {
+		t.Errorf("default warm pod must leave readOnlyRootFilesystem unset, got %v", *sc.ReadOnlyRootFilesystem)
+	}
+	if _, ok := warmEnvVar(pod, warmAttemptHomeEnv); ok {
+		t.Errorf("%s must not be set on a default warm pod", warmAttemptHomeEnv)
 	}
 }

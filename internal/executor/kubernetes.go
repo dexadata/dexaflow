@@ -3,10 +3,13 @@ package executor
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +27,15 @@ type KubernetesExecutor struct {
 	clientset kubernetes.Interface
 	namespace string
 	staging   StagingStore
+	// teardown meters a reap teardown that fell back from stop-in-place to
+	// delete (ADR 0052 amendment); nil leaves it unmetered.
+	teardown DecisionRecorder
 }
+
+// SetTeardownRecorder wires the recorder that meters
+// reap_teardown_delete_fallback: a started pod a reap could not stop in place
+// (the patch was refused) and deleted instead.
+func (e *KubernetesExecutor) SetTeardownRecorder(r DecisionRecorder) { e.teardown = r }
 
 // SetStagingStore wires the metadatabase-backed staging-volume lifecycle store
 // (ADR 0022). With no store set, provisioning is not recorded and GC is a no-op.
@@ -78,11 +89,16 @@ func BuildPod(req Request) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName(req),
 			Labels: map[string]string{
-				"leoflow.io/dag-id":     sanitizeLabel(req.DagID),
-				"leoflow.io/task-id":    sanitizeLabel(req.TaskID),
-				"leoflow.io/run-id":     sanitizeLabel(req.RunID),
+				"leoflow.io/dag-id":     labelValue(req.DagID),
+				"leoflow.io/task-id":    labelValue(req.TaskID),
+				"leoflow.io/run-id":     labelValue(req.RunID),
 				"leoflow.io/try-number": strconv.Itoa(req.TryNumber),
-				"leoflow.io/tenant-id":  sanitizeLabel(req.TenantID),
+				// The attempt epoch tells two pods of one try apart (ADR 0051
+				// amendment): teardown, presence and the reconciler's settle
+				// all pin it, so a superseded pod is never mistaken for its
+				// replacement (#1130, #901).
+				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
+				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
 			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
 		},
@@ -134,8 +150,10 @@ func BuildPod(req Request) *corev1.Pod {
 	if req.Execution.ServiceAccount != "" {
 		pod.Spec.ServiceAccountName = req.Execution.ServiceAccount
 	}
-	mergeMetadata(pod.Labels, req.Execution.Labels)
-	mergeMetadata(pod.Annotations, req.Execution.Annotations)
+	dropped := mergeMetadata(pod.Labels, req.Execution.Labels)
+	dropped = append(dropped, mergeMetadata(pod.Annotations, req.Execution.Annotations)...)
+	logDroppedMetadata(dropped, "tenant", req.TenantID, "dag", req.DagID, "run", req.RunID,
+		"task", req.TaskID, "try", req.TryNumber, "pod", pod.Name)
 	mountWritableTmp(pod, req.PodSecurity)
 	mountStagingVolume(pod, req)
 	mountAgentTLSCA(pod, req)
@@ -332,6 +350,10 @@ type PodIdentity struct {
 	RunID          string `json:"run"`
 	TaskID         string `json:"task"`
 	TryNumber      int    `json:"try"`
+	// AttemptEpoch is the execution of TryNumber this pod runs (ADR 0051
+	// amendment). nil on a pod created before the epoch existed, which the
+	// exchange then mints a legacy token for.
+	AttemptEpoch *int `json:"epoch,omitempty"`
 }
 
 // ParseAgentIdentity decodes the AgentIdentityAnnotation payload. It is the read
@@ -365,6 +387,7 @@ type agentToken struct {
 // agentTokenOf projects a Request's token fields into the shared carrier, stamping
 // the task-instance identity so the exchange path is byte-identical to before.
 func agentTokenOf(req Request) agentToken {
+	epoch := req.AttemptEpoch
 	return agentToken{
 		transport:         req.AgentTokenTransport,
 		token:             req.AgentToken,
@@ -375,6 +398,7 @@ func agentTokenOf(req Request) agentToken {
 		identity: &PodIdentity{
 			TaskInstanceID: req.TaskInstanceID, TenantID: req.TenantID, DagID: req.DagID,
 			RunID: req.RunID, TaskID: req.TaskID, TryNumber: req.TryNumber,
+			AttemptEpoch: &epoch,
 		},
 	}
 }
@@ -682,16 +706,50 @@ func buildAffinity(m map[string]any) *corev1.Affinity {
 }
 
 // mergeMetadata overlays operator-declared labels or annotations onto Dexaflow's
-// own pod metadata, but Dexaflow's keys always win a collision: the leoflow.io/*
-// identity labels and the task-instance-id annotation are load-bearing (the
-// reconciler and terminate path select on them), so a DAG cannot shadow them. The
-// own map is mutated in place; a nil declared map is a no-op.
-func mergeMetadata(own, declared map[string]string) {
+// own pod metadata. It is the single merge point for task and warm pods alike.
+// A declared key under domain.ReservedMetadataPrefix is dropped whether or not
+// Dexaflow set it on this pod: other components decide what a pod is from those
+// keys (the token exchange resolves a leoflow.io/warm-worker pod to a
+// warm-worker identity for its leoflow.io/dag-version-id pool, the warm-pool
+// reconciler lists and counts pods by them), so a DAG may neither add nor
+// shadow one. The dropped keys are returned, sorted, for the caller to log with
+// the pod's identity. The own map is mutated in place; a nil declared map is a
+// no-op.
+func mergeMetadata(own, declared map[string]string) (dropped []string) {
 	for k, v := range declared {
+		if domain.IsReservedMetadataKey(k) {
+			dropped = append(dropped, k)
+			continue
+		}
 		if _, taken := own[k]; !taken {
 			own[k] = v
 		}
 	}
+	sort.Strings(dropped)
+	return dropped
+}
+
+// maxLoggedKeyLen bounds a dropped key in the log: the key is author-controlled
+// and is dropped before the apiserver would have capped its length.
+const maxLoggedKeyLen = 128
+
+// logDroppedMetadata warns once per pod about declared metadata dropped under
+// the reserved prefix, with the pod's identity so an operator can find the DAG
+// (versions registered before validation refused such keys still dispatch).
+// Keys only, never values.
+func logDroppedMetadata(dropped []string, identity ...any) {
+	if len(dropped) == 0 {
+		return
+	}
+	keys := make([]string, len(dropped))
+	for i, k := range dropped {
+		if len(k) > maxLoggedKeyLen {
+			k = k[:maxLoggedKeyLen] + "..."
+		}
+		keys[i] = k
+	}
+	slog.Warn("dropping declared pod metadata under the reserved prefix",
+		append(identity, "keys", strings.Join(keys, ","), "prefix", domain.ReservedMetadataPrefix)...)
 }
 
 // nonRootFSGroup is the GID the task base image runs as (runtime/Dockerfile:
@@ -803,6 +861,29 @@ func sanitizeLabel(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+// maxLabelValueLen is the Kubernetes limit on a label value; a longer value is
+// rejected at CREATE. labelHashLen hex characters of the id's SHA-256 replace
+// the overflow, so two long ids sharing a prefix still get distinct values.
+const (
+	maxLabelValueLen = 63
+	labelHashLen     = 12
+)
+
+// labelValue renders an id as a valid label value for the task-pod and staging
+// labels the reapers and GC select on. An id that fits is sanitized exactly as
+// before, so existing pods keep matching across an upgrade; a longer one is cut
+// to a prefix plus a hash of the raw id. Only selection labels use it: identity
+// is never read back from these values (task pods carry it in an annotation).
+func labelValue(id string) string {
+	v := sanitizeLabel(id)
+	if len(v) <= maxLabelValueLen {
+		return v
+	}
+	sum := sha256.Sum256([]byte(id))
+	prefix := strings.TrimRight(v[:maxLabelValueLen-labelHashLen-1], "-")
+	return prefix + "-" + hex.EncodeToString(sum[:])[:labelHashLen]
 }
 
 func randSuffix() string {

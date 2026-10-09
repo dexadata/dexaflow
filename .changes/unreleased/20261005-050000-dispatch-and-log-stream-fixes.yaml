@@ -1,0 +1,15 @@
+kind: Fixed
+body: |-
+  **Buffered dispatch no longer fails or doubles a re-offered task, and invalid
+  UTF-8 in task output no longer ends the log stream.** A task the dispatch
+  worker re-offered (quota backpressure, a retriable error) kept the `queued_at`
+  of its first queued episode, so once that was older than the dispatch-lost
+  threshold the reaper failed the task as `dispatch_lost` as soon as it was
+  queued again; a re-offer now clears it. A dispatch accepted into the buffer
+  with an expired tick context (an overrun tick, a lost leadership) was sent to
+  the cluster while its queued write failed, so the next tick dispatched the
+  same try again; such a request is now deferred. On the agent, one line of
+  task output that was not valid UTF-8 failed the gRPC marshal and closed the
+  whole log stream, losing that line and every later one; invalid bytes are now
+  replaced with U+FFFD.
+time: 2026-10-05T05:00:00.000000000-03:00

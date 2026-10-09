@@ -60,7 +60,7 @@ func (f *flakyStore) PoolBudgets(context.Context) (map[string]int, error) {
 	return map[string]int{}, nil
 }
 
-func (f *flakyStore) CreateScheduledRun(_ context.Context, dagID string, _ time.Time) error {
+func (f *flakyStore) CreateScheduledRun(_ context.Context, _, dagID string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErrOn[dagID] {
@@ -87,6 +87,13 @@ func (f *flakyStore) ApplyTransition(_ context.Context, runID, taskID string, to
 	return nil
 }
 
+func (f *flakyStore) MarkQueued(_ context.Context, runID, taskID string, _ *time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transitions = append(f.transitions, transition{runID, taskID, domain.TaskStateQueued})
+	return true, nil
+}
+
 // ApplyTransitions records one transition per task, matching the equivalent
 // per-task ApplyTransition calls, so the scheduler's batching is invisible here.
 func (f *flakyStore) ApplyTransitions(_ context.Context, runID string, taskIDs []string, to domain.TaskState) error {
@@ -110,6 +117,7 @@ func (f *flakyStore) RecordDispatchBackpressure(context.Context, string, string,
 	return nil
 }
 func (f *flakyStore) FailDispatchExhausted(context.Context, string, string, string) error { return nil }
+func (f *flakyStore) FailDispatchRefused(context.Context, string, string, string) error   { return nil }
 
 func (f *flakyStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
 	f.mu.Lock()

@@ -20,6 +20,41 @@ func (q *Queries) DeleteExpiredXComIndex(ctx context.Context) error {
 	return err
 }
 
+const deleteXComIndexForTasks = `-- name: DeleteXComIndexForTasks :many
+DELETE FROM xcom_index
+WHERE dag_run_id = $1 AND task_id = ANY($2::text[])
+RETURNING redis_key
+`
+
+type DeleteXComIndexForTasksParams struct {
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+	TaskIds  []string    `json:"task_ids"`
+}
+
+// Removes the XCom index rows of task instances a clear is resetting (#1131) and
+// returns their backend keys, so the stored values can be deleted too. XCom
+// carries no try number, so rows left behind would serve the cleared attempt's
+// values to the next attempt's downstream.
+func (q *Queries) DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, deleteXComIndexForTasks, arg.DagRunID, arg.TaskIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var redis_key string
+		if err := rows.Scan(&redis_key); err != nil {
+			return nil, err
+		}
+		items = append(items, redis_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getXComByNames = `-- name: GetXComByNames :one
 SELECT x.redis_key, x.content_type, x.size_bytes, x.created_at
 FROM xcom_index x

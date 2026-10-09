@@ -80,7 +80,7 @@ chaos-dogfood: ## Pre-Lima gate (#231) — Phase 1: run all suites on the host +
 	@bash scripts/chaos/run.sh
 
 CHAOS_IMAGE          ?= leoflow-chaos:local
-CHAOS_GO_VERSION     ?= 1.26.6
+CHAOS_GO_VERSION     ?= 1.26.9
 CHAOS_LINT_VERSION   ?= v2.12.2
 
 .PHONY: chaos-dogfood-docker
@@ -170,10 +170,14 @@ chaos-runtime: ## Runtime fault-injection chaos e2e (#231 Phase 2): kill schedul
 soak: ## Long-running resilience soak (test/soak): 30 min by default, local Postgres + Lite, asserts invariants continuously. Bounded and safe to leave unattended.
 	bash test/soak/soak.sh
 
+# The ceiling must stay above the 10m attempt token TTL (boot refuses
+# otherwise), and the soak_token body must outlast ceiling + TTL (11m + 10m =
+# 21m), or the last renewed token is still valid when the task ends. 25m of body
+# plus the reap leaves the run settled well inside 40m (#1461).
 .PHONY: soak-credential-ceiling
 soak-credential-ceiling: ## Prove the credential-renewal ceiling is enforced: lowers it below soak_token's runtime and REQUIRES the task to fail for that reason.
-	@SOAK_CREDENTIAL_CEILING=4m SOAK_TOKEN_SECONDS=540 \
-	  bash test/soak/soak.sh --duration 20m --mode credential-ceiling \
+	@SOAK_CREDENTIAL_CEILING=11m SOAK_TOKEN_SECONDS=1500 \
+	  bash test/soak/soak.sh --duration 40m --mode credential-ceiling \
 	    --label credential-ceiling --out .soak/credential-ceiling
 
 .PHONY: soak-selftest

@@ -17,7 +17,7 @@ name: Helm CI
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     paths:
       - "helm/**"
       - "scripts/helm-template-checks.sh"
@@ -43,6 +43,16 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -360,11 +370,29 @@ jobs:
         run: |
           set -euo pipefail
           helm uninstall leoflow -n leoflow --wait
-          # No pinned version: the newest chart in the registry IS the previous
-          # release from this PR's point of view, and a pin here would go stale
-          # silently the first time nobody remembered to bump it.
-          repo="oci://ghcr.io/${{ github.repository_owner }}/charts/leoflow"
-          prev="$(helm show chart "$repo" | awk '/^version:/{print $2}')"
+          # Start the previous release on an empty database. The steps above
+          # already migrated it to HEAD, and a released migrate image cannot
+          # start from a schema version it does not ship (golang-migrate fails
+          # with "no migration found for version N" as soon as HEAD adds a
+          # migration). An operator upgrading has a database at the previous
+          # release's version, so that is also the realistic starting point:
+          # the HEAD upgrade below then applies every new migration to it.
+          kubectl -n leoflow exec deploy/postgres -- psql -v ON_ERROR_STOP=1 \
+            -U leoflow -d leoflow -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          # No pinned version, which would go stale silently the first time
+          # nobody remembered to bump it: the previous release is the newest
+          # final chart of HEAD's own minor (#1403). Not the newest chart in the
+          # registry: once main publishes 0.6.x, a release-0.5 run would install
+          # 0.6.x and then "upgrade" it to 0.5.x, a downgrade the 0.5.x migrate
+          # image refuses.
+          owner="${{ github.repository_owner }}"
+          owner="${owner,,}"
+          repo="oci://ghcr.io/${owner}/charts/leoflow"
+          token="$(curl -fsSL "https://ghcr.io/token?scope=repository:${owner}/charts/leoflow:pull" | jq -r .token)"
+          head_version="$(awk '/^version:/{print $2}' helm/dexaflow/Chart.yaml)"
+          prev="$(curl -fsSL -H "Authorization: Bearer ${token}" \
+            "https://ghcr.io/v2/${owner}/charts/leoflow/tags/list?n=1000" \
+            | jq -r '.tags[]' | scripts/prev-chart-version.sh "${head_version}")"
           echo "installing last released chart ${prev}, then upgrading to HEAD"
           # Released images on purpose: the point is a realistic previous release,
           # not HEAD's binaries wearing an old chart. Same in-cluster addresses

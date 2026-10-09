@@ -140,27 +140,17 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 // resolve finds the active user the identity is linked to, in the identity's
 // tenant. On refusal it has already answered the request.
 func (d issuerSessionDeps) resolve(c *gin.Context, id *issuer.Identity) (*auth.User, bool) {
-	user, active, err := d.users.FindUserByOIDCSubject(c.Request.Context(), d.issuer.Provider(), id.Subject)
-	refuse := func(reason string) (*auth.User, bool) {
+	user, reason, err := linkedUser(c.Request.Context(), d.users, d.issuer.Provider(), id)
+	if err != nil {
+		d.logger.Error("trusted issuer sign-in: looking up user", "error", err)
+		d.refuse(c, http.StatusInternalServerError, issuerErrServer, "internal error", "could not look up the account")
+		return nil, false
+	}
+	if reason != "" {
 		d.logger.Warn("trusted issuer sign-in refused: user", "reason", reason, "tenant", id.Tenant, "email", id.Email)
 		d.record(c, auditIssuerLoginFailure, id.Tenant, "", id.Email, map[string]string{"reason": reason})
 		d.refuse(c, http.StatusForbidden, reason, "forbidden", "no active account for this sign-in")
 		return nil, false
-	}
-	switch {
-	case errors.Is(err, auth.ErrUserNotFound):
-		return refuse("user_not_linked")
-	case err != nil:
-		d.logger.Error("trusted issuer sign-in: looking up user", "error", err)
-		d.refuse(c, http.StatusInternalServerError, issuerErrServer, "internal error", "could not look up the account")
-		return nil, false
-	case !active:
-		return refuse("user_inactive")
-	case user.TenantID != id.Tenant:
-		// The subject is linked in another tenant than the token names. Opening a
-		// session in either would let the issuer's claim and Dexaflow's record
-		// disagree about where this person works, so neither wins.
-		return refuse("tenant_mismatch")
 	}
 	return user, true
 }

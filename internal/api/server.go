@@ -14,6 +14,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
@@ -64,6 +65,11 @@ type Dependencies struct {
 	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
 	// JSON object at boot. Nil serves null, the stock look (#1289).
 	UITheme json.RawMessage
+	// UIETagRevalidation (ui.etag_revalidation) relaxes no-store to
+	// "private, no-cache" with Vary: Authorization, Cookie on the routes that
+	// compute an ETag, so the browser can revalidate them and get a 304. False
+	// (the default) keeps no-store on every UI route.
+	UIETagRevalidation bool
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
 	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
@@ -73,6 +79,18 @@ type Dependencies struct {
 	// Edition == "pro" (ADR 0053), otherwise the Pools screen gets the graceful
 	// empty-collection stub, matching how the scheduler's pool gate is Pro-gated.
 	Edition string
+	// PoolsReadOnly is server.pools_read_only: the pool API serves reads only and
+	// every create, resize and delete answers 403 with PoolsReadOnlyDetail, for
+	// every role including tenant admin. False keeps the write:pool-gated CRUD.
+	PoolsReadOnly bool
+	// ResourceUnit is executor.unit (ADR 0066 §3). When set, registering a DAG
+	// whose task declares more than pool_slots x unit answers 400 naming the
+	// size it needs (under enforce: warn it is accepted, logged and counted).
+	// Nil: no unit, no check.
+	ResourceUnit *domain.ResourceUnit
+	// UnitMisfits counts a task registered under executor.unit.enforce=warn
+	// although it does not fit its size. Nil: not counted.
+	UnitMisfits UnitMisfitRecorder
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository
@@ -146,6 +164,10 @@ type Dependencies struct {
 	// (#1284). TrustedIssuerUsers resolves those users (the storage repo).
 	TrustedIssuer      TrustedIssuer
 	TrustedIssuerUsers TrustedIssuerUserStore
+	// TrustedIssuerBearer, when set, also accepts the trusted issuer's tokens
+	// for a bearer audience as the Authorization bearer of any protected
+	// request (#1468). It resolves users through TrustedIssuerUsers.
+	TrustedIssuerBearer TrustedIssuerBearer
 	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
 	// (scheme://host[:port]), so another site cannot sign a browser in.
 	TrustedIssuerOrigins []string
@@ -164,6 +186,15 @@ type Dependencies struct {
 	// zero value is the hardened one: a caller that forgets the field gets Secure.
 	// See cookieSecure for why this is a setting and not derived from the request.
 	SessionCookieInsecure bool
+}
+
+// newIssuerBearerAuth wires the trusted-issuer bearer from deps, or returns nil
+// when it is off.
+func newIssuerBearerAuth(deps Dependencies) *issuerBearerAuth {
+	if deps.TrustedIssuerBearer == nil {
+		return nil
+	}
+	return &issuerBearerAuth{issuer: deps.TrustedIssuerBearer, users: deps.TrustedIssuerUsers, audit: deps.AuthAudit, logger: deps.Logger}
 }
 
 // NewServer builds the gin engine with the full middleware chain, health and
@@ -190,12 +221,13 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(RequestID())
 	r.Use(Observe(deps.Metrics, deps.Tracer))
 	r.Use(StructuredLogger(deps.Logger))
+	r.Use(RejectEncodedPathSeparators())
 	r.Use(CORS(deps.CORSOrigins))
 	r.Use(NoStoreOnVolatileRoutes())
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {
-		r.Use(JWTAuth(deps.Authenticator))
+		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps)))
 	}
 
 	r.GET("/healthz", livenessHandler)
@@ -278,14 +310,14 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
-	registerUISummaries(r, deps.TaskSummary)
+	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
 	registerUITasks(r, deps.Specs)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)
 	registerUIVariables(r, deps.Variables)
 	registerUsers(r, deps.Users, deps.UserAudit)
 	registerUIConnections(r, deps.Connections, deps.ConnectionTest)
-	registerUIPools(r, deps.Pools, deps.Edition == "pro")
+	registerUIPools(r, deps.Pools, deps.Edition == "pro", deps.PoolsReadOnly)
 	registerUIFavorites(r, deps.Favorites)
 	registerImportErrors(r, deps.ImportErrors)
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)

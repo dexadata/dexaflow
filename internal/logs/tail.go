@@ -40,6 +40,26 @@ func (t *RedisTailer) Publish(ctx context.Context, ref Ref, line string) error {
 	return nil
 }
 
+// HasSubscribers reports whether any client, on any replica, may be listening
+// on the attempt's tail channel, so the writer can skip publishing lines nobody
+// would receive. NUMSUB counts the channel's own subscribers; NUMPAT counts
+// pattern subscriptions, which NUMSUB cannot attribute to a channel, so any
+// pattern subscriber (say, a forwarder on log_tail:*) keeps every attempt
+// publishing. Both go in one round trip.
+func (t *RedisTailer) HasSubscribers(ctx context.Context, ref Ref) (bool, error) {
+	ch := ref.Channel()
+	var numSub *redis.MapStringIntCmd
+	var numPat *redis.IntCmd
+	if _, err := t.client.Pipelined(ctx, func(p redis.Pipeliner) error {
+		numSub = p.PubSubNumSub(ctx, ch)
+		numPat = p.PubSubNumPat(ctx)
+		return nil
+	}); err != nil {
+		return false, fmt.Errorf("counting log tail subscribers: %w", err)
+	}
+	return numSub.Val()[ch] > 0 || numPat.Val() > 0, nil
+}
+
 // Subscribe returns a channel of live log lines for the task and a cancel
 // function that ends the subscription. The line channel closes when the
 // subscription is canceled or the context is done.

@@ -1,18 +1,31 @@
 name: CI
 
+# release-* is the per-minor branch every patch is tagged from (ADR 0062). A
+# cherry-pick PR to it gets the same CI as a PR to main, and so does the push
+# that merges it, because cut-release.sh tags only a merge commit that is green.
 on:
   push:
-    branches: [main]
+    branches: [main, "release-*"]
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
 
 permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
   PYTHON_VERSION: "3.11"
   GOLANGCI_LINT_VERSION: "v2.12.2"
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────
@@ -170,29 +183,9 @@ jobs:
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Enforce coverage floor
-        run: |
-          # Coverage floor: 80% (raised from 78 after the alpha-prep batch
-          # — #295/#296/#297/#299 — pushed the filtered total above 80%).
-          # Exclude generated code, main packages, version, and the
-          # process-orchestration of external binaries (Docker/initdb/pg_ctl)
-          # that only integration/e2e can exercise honestly, per ADR 0011.
-          #
-          # /test/ covers the load and soak harnesses (test/load/*,
-          # test/soak/*): `package main` programs that drive a real Postgres and
-          # a real control plane, which is the same category as /cmd/ and was
-          # already being counted by accident. Their pure logic IS tested
-          # (test/soak/monitor/*_test.go); what cannot be covered honestly here
-          # is their database and HTTP orchestration.
-          FLOOR=80
-          EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/cmd/|/test/)'
-          grep -vE "$EXCLUDE" coverage.out > coverage.filtered.out
-          TOTAL=$(go tool cover -func=coverage.filtered.out | tail -1 | awk '{print $3}' | sed 's/%//')
-          echo "Total coverage (filtered): ${TOTAL}% (floor: ${FLOOR}%)"
-          AWK_RESULT=$(awk -v t="$TOTAL" -v f="$FLOOR" 'BEGIN { print (t < f) }')
-          if [ "$AWK_RESULT" = "1" ]; then
-            echo "::error::Coverage ${TOTAL}% is below floor ${FLOOR}% (see ADR 0011)"
-            exit 1
-          fi
+        # The floor and the exclude list live in scripts/coverage-gate.sh,
+        # shared with the pre-commit hook so the two cannot drift (ADR 0011).
+        run: scripts/coverage-gate.sh coverage.out
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

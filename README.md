@@ -89,9 +89,9 @@ coexist out of the box.
 
 ```bash
 kubectl create namespace leoflow
-helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.0 -n leoflow \
-  --set image.tag=v0.5.0 \
-  --set migrations.image.tag=v0.5.0 \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.1 -n leoflow \
+  --set image.tag=v0.5.1 \
+  --set migrations.image.tag=v0.5.1 \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \

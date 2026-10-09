@@ -4,9 +4,9 @@
 #
 # It: preflights, prepares the chart/CHANGELOG bump on a release branch, opens the
 # prepare PR, waits for CI green (re-running ONLY known-transient flakes, never
-# hard-failing on them), squash-merges, waits for main green on the merge commit,
-# then — behind an explicit confirmation gate — tags and pushes, and watches the
-# release workflows to PUBLISHED. A structured log is written for provenance.
+# hard-failing on them), squash-merges, waits for the base branch to go green on
+# the merge commit, then (behind an explicit confirmation gate) tags and pushes,
+# and watches the release workflows to PUBLISHED. A structured log is written for provenance.
 #
 # Usage:
 #   scripts/cut-release.sh v0.4.4-rc.1            # interactive confirm before tag
@@ -15,6 +15,12 @@
 #   scripts/cut-release.sh <version> --resume     # finish a cut that died after
 #                                                 # the prepare PR merged
 #   scripts/cut-release.sh --self-test            # pure-logic cases, no network
+#
+# Which branch a cut lands on follows from the version (ADR 0062): X.Y.0 and
+# its candidates are prepared and tagged on main; every later patch (X.Y.Z-rc.N
+# and X.Y.Z with Z > 0) on release-X.Y, which must already exist. That branch
+# is created once from the vX.Y.0 tag, and the GA cut prints the command. The
+# docs root promotion always targets main, whichever branch the tag came from.
 #
 # A `-rc.N` version keeps CHANGELOG `[Unreleased]`; a GA version (no `-rc`) moves
 # `[Unreleased]` to `[X.Y.Z] - <date>` and opens a fresh `[Unreleased]`.
@@ -74,6 +80,16 @@ chart_version() { printf '%s' "${1#v}"; }
 is_rc() { case "$1" in *-rc.*) return 0 ;; *) return 1 ;; esac; }
 # valid_version: X.Y.Z or X.Y.Z-rc.N (no leading v).
 valid_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; }
+# minor_of: "0.5.1-rc.2" -> "0.5".
+minor_of() { local v="${1#v}"; v="${v%%-*}"; printf '%s' "${v%.*}"; }
+# release_base: the branch a version is cut from (ADR 0062). X.Y.0 and its
+# candidates come from main; every later patch of X.Y comes from release-X.Y,
+# which is created from the vX.Y.0 tag right after that GA ships.
+release_base() {
+  local v="${1#v}" patch
+  v="${v%%-*}"; patch="${v##*.}"
+  if [ "$patch" = 0 ]; then printf 'main'; else printf 'release-%s' "$(minor_of "$v")"; fi
+}
 
 self_test() {
   local fail=0
@@ -98,6 +114,18 @@ self_test() {
   if is_rc "0.4.4"; then echo "FAIL: is_rc ga"; fail=1; fi
   for v in 0.4.4 0.4.4-rc.1 10.20.30 1.2.3-rc.15; do valid_version "$v" || { echo "FAIL: valid_version $v"; fail=1; }; done
   for v in v0.4.4 0.4 0.4.4-rc 0.4.4rc1 1.2.3-alpha; do valid_version "$v" && { echo "FAIL: valid_version accepted bad $v"; fail=1; }; done
+  # release_base decides which branch a tag is cut from (ADR 0062): every
+  # X.Y.0 and its candidates come from main, every later patch of that minor
+  # from release-X.Y. Cutting a patch from main would ship whatever main has
+  # gathered since the minor, which is the thing release branches exist to stop.
+  _eq "$(minor_of 0.5.1-rc.2)"        "0.5"          "minor_of drops patch and rc"
+  _eq "$(minor_of 10.20.30)"          "10.20"        "minor_of multi-digit"
+  _eq "$(release_base 0.5.0)"         "main"         "a minor GA is cut from main"
+  _eq "$(release_base 0.5.0-rc.3)"    "main"         "a minor rc is cut from main"
+  _eq "$(release_base 0.5.1)"         "release-0.5"  "a patch GA is cut from its release branch"
+  _eq "$(release_base 0.5.1-rc.1)"    "release-0.5"  "a patch rc is cut from its release branch"
+  _eq "$(release_base 10.20.3)"       "release-10.20" "multi-digit release branch"
+  _eq "$(release_base 0.5.10)"        "release-0.5"  "patch 10 is still a patch, not 0.5.1"
   # FLAKE_RE decides whether a red run gets rerun or stops the cut, so both ways
   # of getting it wrong cost something real: too broad reruns past a genuine
   # regression, and a pattern that can never match does nothing while looking
@@ -196,6 +224,18 @@ self_test() {
   _eq "$(run_verdict '[{"status":"completed","conclusion":"startup_failure"}]')" "BLOCKED startup_failure" "a startup failure is never GREEN"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"cancelled"}]')" "BLOCKED cancelled" "one cancelled among successes"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"failure"},{"status":"completed","conclusion":"cancelled"}]')" "BLOCKED cancelled" "BLOCKED outranks FAILED, so FLAKE_RE never sees it"
+  # latest_runs: a guard re-run on the same commit (a label added) replaces the
+  # cancelled run it superseded; an older run of ANOTHER workflow still counts.
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"CHANGELOG guard","createdAt":"2026-10-04T10:00:00Z","status":"completed","conclusion":"cancelled"},{"workflowName":"CHANGELOG guard","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"},{"workflowName":"CI","createdAt":"2026-10-04T09:59:59Z","status":"completed","conclusion":"success"}]')")" "GREEN" "a guard run cancelled by its own re-run on the same commit is not judged"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"CI","createdAt":"2026-10-04T10:00:00Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Security","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"}]')")" "BLOCKED cancelled" "the newest run of each workflow is still judged"
+  _eq "$(run_verdict "$(latest_runs '[{"status":"completed","conclusion":"cancelled"},{"workflowName":"CI","createdAt":"2026-10-04T10:00:01Z","status":"completed","conclusion":"success"}]')")" "BLOCKED cancelled" "a run without a workflow name keeps the whole list judged"
+  # Two runs of one guard started in the same second (the prepare PR opened with
+  # its label): the cancelled one was replaced by its sibling. Shape taken from
+  # v0.5.2's prepare PR #1510, where max_by picked the cancelled run.
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"success"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"},{"workflowName":"CI","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"success"}]')")" "GREEN" "a run cancelled by a sibling started in the same second is not judged"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"}]')")" "BLOCKED cancelled" "every tied run cancelled is still BLOCKED"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"success"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"failure"}]')")" "FAILED" "tied runs that both finished are both judged"
+  _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"in_progress","conclusion":""}]')")" "PENDING" "a tied sibling still running keeps the cut waiting"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"cancelled"},{"status":"in_progress","conclusion":""}]')" "PENDING" "PENDING outranks BLOCKED"
   # And the REST shape must not regress if anything ever feeds it in.
   _eq "$(run_verdict '[{"status":"completed","conclusion":null}]')" "PENDING" "a null conclusion is treated like an empty one"
@@ -253,6 +293,14 @@ self_test() {
   _versions '{"root_url":"https://example.invalid/","versions":[{"id":"latest","ref":"v2.0.0","subpath":"","label":"latest","archived":false}]}'
   out="$(_promote v2.0.0)"
   _eq "$(printf '%s' "$out" | jq -r '.versions[] | select(.id=="latest") | .ref')" "v2.0.0" "promoting the current root is a no-op"
+
+  # With release branches a GA can be OLDER than the docs root: a security
+  # patch on release-1.0 after v2.0.0 shipped. Promoting it would point the site
+  # root back at the previous minor and archive the current one.
+  _versions '{"root_url":"https://example.invalid/","versions":[{"id":"latest","ref":"v2.0.0","subpath":"","label":"v2.0.0 (latest)","archived":false}]}'
+  out="$(_promote v1.0.5)"
+  _eq "$(printf '%s' "$out" | jq -r '.versions[] | select(.id=="latest") | .ref')" "v2.0.0" "an older patch never takes the docs root"
+  _eq "$(printf '%s' "$out" | jq -r '[.versions[] | select(.archived==true)] | length')" "0" "and archives nothing"
 
   # restore_docs_file has to undo a STAGED edit, not just a dirty worktree. The
   # commit at the end of promote_docs_pr runs one line after `git add`, so when
@@ -335,6 +383,25 @@ self_test() {
   case "$got" in *"does not hold a prepared"*) echo "  ok   resume_target says why it refused" ;;
     *) printf '  FAIL resume_target message\n    got: %q\n' "$got"; fail=1 ;; esac
 
+  # On a release branch the walk has to run against THAT branch: main carries
+  # the next minor's history, and the prepare commit of a patch exists only on
+  # release-X.Y. The fixture forks a release branch off the 9.9.9 prepare, bumps
+  # it to 9.9.10 and adds an unrelated commit after, the same plateau shape.
+  (
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    cd "$rt" && git checkout -q -b rel HEAD~2 &&
+    printf 'version: 9.9.10\nappVersion: "9.9.10"\n' >helm/dexaflow/Chart.yaml &&
+    git add -A && git commit -qm "release: prepare v9.9.10" &&
+    echo three >c.txt && git add -A && git commit -qm "unrelated three" &&
+    git update-ref refs/remotes/origin/release-9.9 refs/heads/rel && git checkout -q main
+  ) >/dev/null 2>&1 || { echo "  FAIL resume_target: could not build the release-branch fixture"; fail=1; }
+  want="$( cd "$rt" && git rev-parse rel~1 )"
+  got="$( cd "$rt" && resume_target 9.9.10 v9.9.10 release-9.9 2>/dev/null )" && rc=0 || rc=$?
+  _eq "$rc" "0" "resume_target accepts a release branch that carries the patch being cut"
+  _eq "$got" "$want" "resume_target walks the release branch, not main"
+  got="$( cd "$rt" && resume_target 9.9.10 v9.9.10 2>&1 )" && rc=0 || rc=$?
+  _eq "$rc" "1" "resume_target with the default base still judges main"
+
   # A shallow clone truncates rev-list, and the truncation is invisible. At
   # depth 1 the shallow root has no parents, so it is not TREESAME to anything
   # and gets listed even though it never touched Chart.yaml: intro lands on the
@@ -375,6 +442,13 @@ self_test() {
     echo "  FAIL prepare PR is missing --label skip-changelog; the changelog guard will fail it"; fail=1
   fi
   _eq "$(printf '%s\n' "$argv" | grep -cx 'release/v9.9.9-rc.1')" "1" "prepare PR heads the release branch"
+  _eq "$(printf '%s\n' "$argv" | grep -A1 -x -- '--base' | tail -n1)" "main" "prepare PR targets main by default"
+  argv="$(
+    export PATH="$stubdir:$PATH" STUB_ARGV="$stubdir/argv" REPO=o/r
+    create_prepare_pr release/v9.9.10 "release: prepare v9.9.10" body release-9.9 >/dev/null 2>&1
+    cat "$stubdir/argv" 2>/dev/null
+  )"
+  _eq "$(printf '%s\n' "$argv" | grep -A1 -x -- '--base' | tail -n1)" "release-9.9" "a patch prepare PR targets its release branch"
   rm -rf "$stubdir"
 
   # promote_docs_pr had no coverage at all — every case above targets
@@ -542,6 +616,30 @@ run_verdict() { # <runs-json>
   echo GREEN
 }
 
+# latest_runs <runs-json>: keeps the newest run of each workflow. A pull
+# request's guards run again on the same commit when a label changes, and the
+# concurrency group of a pull request cancels the older run, so the commit
+# carries a cancelled run next to the one that replaced it. Judging both would
+# read that commit as BLOCKED forever. A run without a workflow name leaves the
+# list as it is, so a payload of an unexpected shape is still judged in full.
+#
+# createdAt has one-second resolution, and the prepare PR is opened with its
+# label in the same call, so `opened` and `labeled` start two runs of a guard in
+# the same second and one cancels the other. max_by alone then picks either
+# (v0.5.2 picked the cancelled one and died on a green PR). Among the runs tied
+# at the newest second, a cancelled run is the one its sibling replaced, so the
+# tied runs that were not cancelled are judged, all of them; only when every
+# tied run was cancelled is the cancellation the verdict.
+latest_runs() { # <runs-json>
+  printf '%s' "$1" | jq 'if all(.[]; (.workflowName // "") != "" and (.createdAt // "") != "")
+    then [group_by(.workflowName)[]
+          | (map(.createdAt) | max) as $newest
+          | [.[] | select(.createdAt == $newest)]
+          | ([.[] | select(.conclusion != "cancelled")]) as $live
+          | if ($live | length) > 0 then $live[] else .[] end]
+    else . end' 2>/dev/null || printf '%s' "$1"
+}
+
 # wait_sha_green <sha>: block until every run for <sha> is completed; rerun only
 # transient flakes (bounded); echo GREEN or RED. Robust to the post-rerun window
 # where gh briefly reports the prior conclusion (it waits for pending==0).
@@ -560,8 +658,9 @@ wait_sha_green() {
     # release sha's 4 runs were outside the window and the query returned 0,
     # which run_verdict reports as NONE, spinning to the deadline before dying
     # RED on a green sha.
-    j=$(gh run list --commit "$sha" --limit 100 --json databaseId,status,conclusion 2>/dev/null \
+    j=$(gh run list --commit "$sha" --limit 100 --json databaseId,status,conclusion,workflowName,createdAt 2>/dev/null \
           | jq '[.[]]' 2>/dev/null)
+    j="$(latest_runs "$j")"
     # run_verdict coerces jq's output itself, so a partial or `null` read keeps
     # the loop waiting rather than declaring a verdict.
     verdict="$(run_verdict "$j")"
@@ -591,12 +690,13 @@ wait_sha_green() {
 
 # ---- prepare edits ---------------------------------------------------------
 
-# resume_target <chart-version> <tag>: echo the sha --resume should pick up at,
-# or die. Split out so --self-test can drive both answers against a throwaway
+# resume_target <chart-version> <tag> [base]: echo the sha --resume should pick
+# up at, or die. base is the branch the cut targets (release_base), main by
+# default. Split out so --self-test can drive both answers against a throwaway
 # repository; it is the only thing standing between --resume and a tag on the
 # wrong commit.
-resume_target() { # <chart-version> <tag>
-  local cv="$1" tag="$2" tip on_tip c v intro=""
+resume_target() { # <chart-version> <tag> [base]
+  local cv="$1" tag="$2" base="${3:-main}" tip on_tip c v intro=""
   # Every answer below comes out of `git rev-list`, which a shallow clone
   # truncates without saying so. At depth 1 the shallow root has no parents, so
   # it is not TREESAME to anything and is listed even though it never touched
@@ -607,10 +707,10 @@ resume_target() { # <chart-version> <tag>
   # automation, so this is the clone shape CI would hand us.
   [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = false ] ||
     die "--resume: this is a shallow clone — rev-list is truncated here, so the walk would tag the wrong commit (at depth 1, silently the tip). Run: git fetch --unshallow"
-  tip="$(git rev-parse origin/main 2>/dev/null)" || die "--resume: cannot resolve origin/main"
+  tip="$(git rev-parse "origin/$base" 2>/dev/null)" || die "--resume: cannot resolve origin/$base"
   on_tip="$(git show "${tip}:helm/dexaflow/Chart.yaml" 2>/dev/null | awk '/^version:/{print $2; exit}')"
   [ -n "$on_tip" ] || die "--resume: no Chart.yaml version at ${tip:0:8}"
-  [ "$on_tip" = "$cv" ] || die "--resume: main carries chart $on_tip, not $cv — main does not hold a prepared $tag."
+  [ "$on_tip" = "$cv" ] || die "--resume: $base carries chart $on_tip, not $cv; $base does not hold a prepared $tag."
 
   # The tip is the WRONG answer, and it looks right. A chart version is a
   # plateau, not an edge: it stays equal to cv for every commit from the prepare
@@ -618,15 +718,15 @@ resume_target() { # <chart-version> <tag>
   # Measured on this repo: three commits carried 0.4.5-rc.2, and the tip was two
   # unrelated PRs ahead of the prepare commit the tag belongs on. Walk back to
   # the commit that INTRODUCED cv — the same sha the non-resume path produces.
-  for c in $(git rev-list origin/main -- helm/dexaflow/Chart.yaml); do
+  for c in $(git rev-list "origin/$base" -- helm/dexaflow/Chart.yaml); do
     v="$(git show "${c}:helm/dexaflow/Chart.yaml" | awk '/^version:/{print $2; exit}')"
     [ "$v" = "$cv" ] || break
     intro="$c"
   done
-  [ -n "$intro" ] || die "--resume: no commit on main introduces chart $cv"
+  [ -n "$intro" ] || die "--resume: no commit on $base introduces chart $cv"
   if [ "$intro" != "$tip" ]; then
-    warn "resume: main advanced since $tag was prepared; tagging ${intro:0:8} and excluding:"
-    git log --oneline "$intro..origin/main" >&2
+    warn "resume: $base advanced since $tag was prepared; tagging ${intro:0:8} and excluding:"
+    git log --oneline "$intro..origin/$base" >&2
   fi
   printf '%s' "$intro"
 }
@@ -749,6 +849,12 @@ promote_docs_version() { # <tag>
   prev="$(jq -r '(.versions[] | select(.id=="latest") | .ref) // empty' "$f")"
   [ -n "$prev" ] || { warn "versions.json has no \`latest\` entry to repoint"; return 1; }
   if [ "$prev" = "$tag" ]; then log "docs: latest already $tag"; return 0; fi
+  # A patch cut from an older release branch (ADR 0062) must not take the root
+  # from a newer minor: the root serves the newest GA, whichever branch it
+  # came from.
+  if [ "$(printf '%s\n%s\n' "${prev#v}" "${tag#v}" | sort -V | tail -n1)" = "${prev#v}" ]; then
+    log "docs: latest stays $prev, which is newer than $tag"; return 0
+  fi
   tmp="$(mktemp)"
   # The label leads with the version, so the dropdown says which release
   # "latest" IS. Number-first is what Kubernetes, Istio and Docsy's own
@@ -813,13 +919,14 @@ date_the_changelog() {
 # rather than creating any. So the guard finds nothing recorded and fails the
 # PR. FLAKE_RE does not match "records no changelog entry" (correctly: it is not
 # a flake), so wait_sha_green returns RED and the cut dies. Release-prep is
-# exactly the case the label documents.
-create_prepare_pr() { # <branch> <title> <body>
-  gh pr create --repo "$REPO" --base main --head "$1" --title "$2" --body "$3" --label skip-changelog
+# exactly the case the label documents. The guard runs on pull requests to
+# release-* too, so a patch prepare PR needs the label just the same.
+create_prepare_pr() { # <branch> <title> <body> [base]
+  gh pr create --repo "$REPO" --base "${4:-main}" --head "$1" --title "$2" --body "$3" --label skip-changelog
 }
 
-run_gates() { # <tag>
-  local tag="$1" s ok=0 out rc
+run_gates() { # <tag> <base>
+  local tag="$1" base="$2" s ok=0 out rc
   # nullglob: without it an empty glob leaves the literal pattern, bash exits
   # 127 on it, and the cut dies reporting "gate FAIL check-*.sh".
   shopt -s nullglob
@@ -834,7 +941,14 @@ run_gates() { # <tag>
   for s in "${gates[@]}"; do
     # Capture rather than discard: a bare "gate FAIL <name>" during a cut is
     # unrecoverable, since $logf does not exist until after the tag.
-    if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"; else out="$(bash "$s" 2>&1)"; fi
+    # check-changelog-entry.sh compares [Unreleased] with its base, origin/main
+    # by default. A patch cut builds on release-X.Y, whose [Unreleased] holds the
+    # entries an earlier rc folded, while main's stays empty since fragments
+    # replaced hand edits. Against main, a GA that dates [Unreleased] reads as
+    # "no entry" (empty before, empty after), so the gate gets the cut's base.
+    if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"
+    elif [[ "$s" == *check-changelog-entry* ]]; then out="$(bash "$s" "origin/$base" 2>&1)"
+    else out="$(bash "$s" 2>&1)"; fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
       printf 'gate FAIL %s\n%s\n' "$(basename "$s")" "$out" >&2; ok=1
@@ -879,8 +993,12 @@ main() {
 
   version="${version#v}"
   valid_version "$version" || die "invalid version '$version' (want X.Y.Z or X.Y.Z-rc.N)"
-  local tag cv logf; tag="$(normalize_tag "$version")"; cv="$(chart_version "$version")"
+  local tag cv logf base; tag="$(normalize_tag "$version")"; cv="$(chart_version "$version")"
   logf="$ROOT/.release-$tag.log"
+  # Where this cut lands: main for X.Y.0 and its candidates, release-X.Y for
+  # every later patch (ADR 0062). Derived from the version rather than taken
+  # from the checkout, so a patch can never be cut from main by being on it.
+  base="$(release_base "$version")"
 
   # helm and PyYAML are here because run_gates globs scripts/check-*.sh, and
   # check-migrate-pod-selection.sh renders the chart to compare selectors
@@ -890,19 +1008,72 @@ main() {
   for t in gh jq git helm-docs helm; do command -v "$t" >/dev/null || die "missing tool: $t"; done
   python3 -c 'import yaml' 2>/dev/null || die "missing python module: PyYAML (pip install pyyaml) — several scripts/check-*.sh parse YAML"
 
-  log "cutting $tag (chart $cv, $(is_rc "$version" && echo prerelease || echo GA))"
+  log "cutting $tag (chart $cv, $(is_rc "$version" && echo prerelease || echo GA)) from $base"
   # --tags explicitly: `git fetch origin main` does not follow tags, so a local
   # check alone passes in a clone that never saw a tag pushed from elsewhere —
   # which is exactly the --resume situation.
   git fetch origin --tags -q >/dev/null 2>&1 || warn "could not refresh tags — the 'tag already exists' check below is local-only"
   git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 && die "tag $tag already exists"
 
+  # A patch needs its release branch to exist. It is created once, from the
+  # vX.Y.0 tag, by hand: creating it is a one-time decision about the minor,
+  # not a step of every cut. Dry runs report rather than die, so the plan can
+  # be previewed before the branch is made.
+  local base_ok=1
+  if [ "$base" != main ]; then
+    git ls-remote --exit-code --heads origin "$base" >/dev/null 2>&1 || base_ok=0
+    if [ "$base_ok" = 0 ] && [ "$dry" != 1 ]; then
+      die "$base does not exist on origin. Create it from the minor's GA tag first: git push origin v$(minor_of "$version").0^{commit}:refs/heads/$base"
+    fi
+  fi
+
+  # A patch ships everything main gained since vX.Y.0 unless it was skipped on
+  # purpose (scripts/release-gap.sh). Nothing carries a change across on its
+  # own, so without this check a fix merged on main can miss the patch
+  # silently. --resume skips it: the prepare half already passed it.
+  if [ "$base" != main ] && [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
+    local gap_out gap_rc=0
+    gap_out="$("$ROOT/scripts/release-gap.sh" "$version" --fetch 2>&1)" || gap_rc=$?
+    if [ "$gap_rc" != 0 ]; then
+      printf '%s\n' "$gap_out" >&2
+      # 1 is a list of missing commits; anything else means the check did not
+      # run, and nothing was verified, so even a dry run stops.
+      [ "$gap_rc" = 1 ] || die "release-gap.sh could not run (exit $gap_rc, above), so nothing was checked against main"
+      if [ "$dry" = 1 ]; then
+        warn "$base is missing commits from main (above); the real cut will refuse until each is cherry-picked or listed in .github/release-skip.txt"
+      else
+        die "$base is missing commits from main (above): cherry-pick each one, or list it with a reason in .github/release-skip.txt on $base"
+      fi
+    fi
+  fi
+
+  # A release ships docs for every user-facing change it carries, or a
+  # recorded reason why not (scripts/docs-gap.sh). The per pull request guard
+  # judges each change once, when it is opened; this looks again over the whole
+  # release, so a skip nobody justified, or a docs PR that never came, stops
+  # the cut instead of reaching users. --resume skips it: the prepare half
+  # already passed it.
+  if [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
+    local docs_out docs_rc=0
+    docs_out="$("$ROOT/scripts/docs-gap.sh" "$version" --fetch 2>&1)" || docs_rc=$?
+    if [ "$docs_rc" != 0 ]; then
+      printf '%s\n' "$docs_out" >&2
+      [ "$docs_rc" = 1 ] || die "docs-gap.sh could not run (exit $docs_rc, above), so nothing was checked for docs"
+      if [ "$dry" = 1 ]; then
+        warn "user-facing changes on $base ship without docs (above); the real cut will refuse until each is documented, labelled skip-docs with a 'Skip-docs: <reason>' line, or listed in .github/docs-skip.txt on $base"
+      else
+        die "user-facing changes on $base ship without docs (above): document each one, label its pull request skip-docs with a 'Skip-docs: <reason>' line, or list it with a reason in .github/docs-skip.txt on $base"
+      fi
+    fi
+  fi
+
   if [ "$dry" = 1 ] && [ "$resume" = 1 ]; then
     log "DRY RUN (--resume) — no tag, no push:"
-    git fetch origin main -q || die "cannot reach origin"
-    local rsha; rsha="$(resume_target "$cv" "$tag")" || exit 1
-    printf '  would tag:     %s at %s\n  chart there:   %s\n  skipped:       prepare, gates, PR, merge (already on main)\n' \
-      "$tag" "${rsha:0:8}" "$cv"
+    [ "$base_ok" = 1 ] || die "$base does not exist on origin, so there is nothing to resume"
+    git fetch origin "$base" -q || die "cannot reach origin"
+    local rsha; rsha="$(resume_target "$cv" "$tag" "$base")" || exit 1
+    printf '  would tag:     %s at %s\n  chart there:   %s\n  skipped:       prepare, gates, PR, merge (already on %s)\n' \
+      "$tag" "${rsha:0:8}" "$cv" "$base"
     exit 0
   fi
 
@@ -914,8 +1085,15 @@ main() {
     # wrong in the one place someone reads before authorising a release.
     local pending
     pending="$(ls "$ROOT"/.changes/unreleased/*.yaml "$ROOT"/.changes/unreleased/*.yml 2>/dev/null | wc -l | tr -d ' ')"
-    printf '  branch:        release/%s\n  tag:           %s\n  chart version: %s -> %s\n  kind:          %s\n  fragments:     %s\n  changelog:     %s\n' \
-      "$tag" "$tag" "$(read_chart_version)" "$cv" \
+    # The fragments that matter are the ones on the base, not in this checkout.
+    if [ "$base_ok" = 1 ] && git fetch origin "$base" -q 2>/dev/null; then
+      pending="$(git ls-tree --name-only "origin/$base" .changes/unreleased/ 2>/dev/null | grep -cE '\.ya?ml$')"
+    fi
+    local base_note="" from_chart
+    [ "$base_ok" = 1 ] || base_note=" (MISSING on origin: create it from v$(minor_of "$version").0 before the real cut)"
+    from_chart="$(git show "origin/$base:helm/dexaflow/Chart.yaml" 2>/dev/null | awk '/^version:/{print $2; exit}')"
+    printf '  base:          %s%s\n  branch:        release/%s\n  tag:           %s\n  chart version: %s -> %s\n  kind:          %s\n  fragments:     %s\n  changelog:     %s\n' \
+      "$base" "$base_note" "$tag" "$tag" "${from_chart:-$(read_chart_version)}" "$cv" \
       "$(is_rc "$version" && echo 'rc, keeps [Unreleased]' || echo 'GA, dates [Unreleased]')" \
       "$pending pending, folded into [Unreleased] and removed" \
       "$(is_rc "$version" && echo "[Unreleased] gains the $pending folded entry(ies)" || echo "[Unreleased] + $pending folded -> [$cv] - $(date -u +%F)")"
@@ -923,10 +1101,10 @@ main() {
   fi
 
   if ! git diff --quiet || ! git diff --cached --quiet; then die "working tree not clean"; fi
-  [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || warn "not on main (on $(git rev-parse --abbrev-ref HEAD))"
-  # Unchecked, a stale origin/main feeds both the re-cut guard and the branch
+  [ "$(git rev-parse --abbrev-ref HEAD)" = "$base" ] || warn "not on $base (on $(git rev-parse --abbrev-ref HEAD)); the cut builds on origin/$base regardless"
+  # Unchecked, a stale origin/<base> feeds both the re-cut guard and the branch
   # this cut is built on. The --resume path already dies here; so should this.
-  git fetch origin main -q || die "cannot reach origin"
+  git fetch origin "$base" -q || die "cannot reach origin"
 
   local sha
   if [ "$resume" = 1 ]; then
@@ -944,15 +1122,20 @@ main() {
     # cut. If it does, the prepare half genuinely completed and only the tag is
     # missing. If it does not, this is not an interrupted cut and --resume is
     # the wrong tool. There is deliberately no override for that check.
-    git fetch origin main -q || die "--resume: cannot reach origin — refusing to judge main from a stale clone"
-    sha="$(resume_target "$cv" "$tag")" || exit 1
-    log "resume: main already carries $cv at ${sha:0:8}; picking up at the merge-commit gate"
+    git fetch origin "$base" -q || die "--resume: cannot reach origin; refusing to judge $base from a stale clone"
+    sha="$(resume_target "$cv" "$tag" "$base")" || exit 1
+    log "resume: $base already carries $cv at ${sha:0:8}; picking up at the merge-commit gate"
   else
-  # Re-cut guard: the target version must differ from what main already carries,
-  # so `--yes` with a fat-fingered or already-released version can't silently
-  # re-cut the current line.
-  local cur; cur="$(git show origin/main:helm/dexaflow/Chart.yaml | awk '/^version:/{print $2; exit}')"
-  [ "$cv" != "$cur" ] || die "chart on main is already $cur — nothing to cut (re-cut of the same version?)"
+  # Re-cut guard: the target version must differ from what the base already
+  # carries, so `--yes` with a fat-fingered or already-released version can't
+  # silently re-cut the current line.
+  local cur; cur="$(git show "origin/$base:helm/dexaflow/Chart.yaml" | awk '/^version:/{print $2; exit}')"
+  [ "$cv" != "$cur" ] || die "chart on $base is already $cur, nothing to cut (re-cut of the same version?)"
+  # A release branch carries one minor for its whole life. A chart of another
+  # minor there means the branch was made from the wrong tag.
+  if [ "$base" != main ] && [ "$(minor_of "$cur")" != "$(minor_of "$cv")" ]; then
+    die "$base carries chart $cur, not a $(minor_of "$cv").x version. Was it created from the wrong tag?"
+  fi
 
   local branch="release/$tag"
   # Safe re-run (M3): a prior failed cut can leave release/<tag> behind (local or
@@ -962,7 +1145,7 @@ main() {
     die "branch $branch already exists (a prior cut?) — clean it and re-run: git branch -D $branch 2>/dev/null; git push origin :$branch 2>/dev/null; and close/reopen its PR if any"
   fi
   log "prepare on $branch"
-  git checkout -b "$branch" -q origin/main || die "could not create $branch off origin/main"
+  git checkout -b "$branch" -q "origin/$base" || die "could not create $branch off origin/$base"
   bump_chart "$cv"
   # Fold the pending per-PR fragments into [Unreleased] BEFORE dating it (#1200).
   # Contributors write .changes/unreleased/<slug>.yaml instead of editing
@@ -972,7 +1155,7 @@ main() {
   bash "$ROOT/scripts/changelog-fold.sh" "$cv" || die "folding changelog fragments failed"
   is_rc "$version" || date_the_changelog "$cv"
   helm-docs --chart-search-root="$ROOT/helm" >/dev/null 2>&1 || die "helm-docs failed"
-  run_gates "$tag" || die "mechanical gates failed — fix before cutting"
+  run_gates "$tag" "$base" || die "mechanical gates failed — fix before cutting"
 
   # -A on .changes because the fold deletes the fragments it consumed, and a
   # plain `git add <dir>` stages additions but not removals: the prepare PR
@@ -986,20 +1169,20 @@ main() {
   local title body
   if is_rc "$version"; then title="release: prepare $tag"; body="Chart version/appVersion -> $cv (ADR 0028 lockstep). rc keeps [Unreleased]."; \
   else title="release: promote $tag GA"; body="CHANGELOG [Unreleased] -> [$cv] - $(date -u +%F); Chart version/appVersion -> $cv (ADR 0028 lockstep)."; fi
-  create_prepare_pr "$branch" "$title" "$body" >/dev/null
+  create_prepare_pr "$branch" "$title" "$body" "$base" >/dev/null
   local pr; pr="$(gh pr view "$branch" --json number -q .number)"
   log "prepare PR #$pr — waiting for CI"
   [ "$(wait_sha_green "$(git rev-parse "$branch")")" = GREEN ] || die "PR #$pr CI red (non-flake) — inspect and retry"
 
   gh pr merge "$pr" --repo "$REPO" --squash --delete-branch --subject "$title" --body "$body" >/dev/null || die "merge failed"
   log "PR #$pr merged"
-  sleep 8; git fetch origin main -q
-  sha="$(git rev-parse origin/main)"
+  sleep 8; git fetch origin "$base" -q
+  sha="$(git rev-parse "origin/$base")"
   [ "$(git show "$sha:helm/dexaflow/Chart.yaml" | awk '/^version:/{print $2;exit}')" = "$cv" ] || die "guard: Chart at $sha is not $cv"
   fi
 
-  log "main CI on merge commit ${sha:0:8}"
-  [ "$(wait_sha_green "$sha")" = GREEN ] || die "main red on the merge commit — NOT tagging"
+  log "$base CI on merge commit ${sha:0:8}"
+  [ "$(wait_sha_green "$sha")" = GREEN ] || die "$base red on the merge commit: NOT tagging"
 
   confirm_tag "$tag"
   git tag -a "$tag" "$sha" -m "leoflow $tag" || die "creating tag $tag failed"
@@ -1094,6 +1277,12 @@ main() {
     else
       warn "docs root NOT promoted: the $tag release workflows never reached PUBLISHED, and the root must not point at a release with no artifacts. The tag is pushed — once the release is good, promote by hand (RELEASING.md)."
     fi
+  fi
+  # ADR 0062: every later patch of this minor is cut from release-X.Y, made
+  # from this tag. Printed, not done: it is a one-time decision about the
+  # minor, and the operator may want to wait for the release to settle.
+  if ! is_rc "$version" && [ "$base" = main ]; then
+    log "next: create release-$(minor_of "$version") for this minor's patches: git push origin $tag^{commit}:refs/heads/release-$(minor_of "$version")"
   fi
   log "done — log at $logf"
 }
