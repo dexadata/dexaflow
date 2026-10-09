@@ -136,8 +136,8 @@ func TestScopeGateClassifiesEveryRoute(t *testing.T) {
 		key := ri.Method + " " + ri.Path
 		call := scopeCall{key, ri.Method, concretePath(ri.Path), "{}"}
 		withAll := call.do(srv, all)
-		switch {
-		case ri.Method == http.MethodGet || ri.Method == http.MethodHead:
+		switch ri.Method {
+		case http.MethodGet, http.MethodHead:
 			if scopelessReads[key] {
 				if !scopeRefused(withAll) {
 					t.Errorf("%s with every scope = %d %s, want refused (listed as scopeless)", key, withAll.Code, withAll.Body.String())
