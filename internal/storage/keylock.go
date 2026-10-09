@@ -67,3 +67,25 @@ func HoldsKeyMigrationLock(ctx context.Context, q RowQueryer) (bool, error) {
 	}
 	return held, nil
 }
+
+// KeyMigrationLockHeld reports whether any session holds the key-migration
+// lock, in either mode, without taking it. A Lite server holds it shared for
+// its whole life, so a command that only needs to know whether a server is
+// running against this datastore (`dexaflow lite reset-password`, #413) asks
+// here instead of trying the lock, which for a moment could make a server that
+// is starting refuse to boot.
+func KeyMigrationLockHeld(ctx context.Context, q RowQueryer) (bool, error) {
+	classid := KeyMigrationLockID >> 32
+	objid := KeyMigrationLockID & 0xFFFFFFFF
+	var held bool
+	err := q.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM pg_locks
+		   WHERE locktype = 'advisory' AND classid::bigint = $1 AND objid::bigint = $2
+		     AND objsubid = 1 AND granted
+		 )`, classid, objid).Scan(&held)
+	if err != nil {
+		return false, fmt.Errorf("checking for a key-migration lock holder: %w", err)
+	}
+	return held, nil
+}

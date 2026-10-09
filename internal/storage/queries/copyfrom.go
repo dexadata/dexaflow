@@ -37,6 +37,7 @@ func (r iteratorForCreateTaskInstances) Values() ([]interface{}, error) {
 		r.rows[0].State,
 		r.rows[0].Pool,
 		r.rows[0].TryNumber,
+		r.rows[0].PoolSlots,
 	}, nil
 }
 
@@ -48,8 +49,10 @@ func (r iteratorForCreateTaskInstances) Err() error {
 // single COPY instead of T INSERT round-trips. The caller supplies one param row
 // per task with try_number pinned to 1 (matching CreateTaskInstance's literal)
 // and pool carried through so cross-DAG pool occupancy is attributed correctly;
-// columns omitted from the list take their table defaults, so the rows are
-// byte-identical to the loop — only the statement count changes (T INSERTs → 1 COPY).
+// pool_slots carries the task's EffectivePoolSlots so that occupancy is
+// weighted like the admission gate's (#1499). Columns omitted from the list
+// take their table defaults, so the rows are byte-identical to the loop: only
+// the statement count changes (T INSERTs → 1 COPY).
 func (q *Queries) CreateTaskInstances(ctx context.Context, arg []CreateTaskInstancesParams) (int64, error) {
-	return q.db.CopyFrom(ctx, []string{"task_instances"}, []string{"tenant_id", "dag_run_id", "task_id", "operator", "max_tries", "state", "pool", "try_number"}, &iteratorForCreateTaskInstances{rows: arg})
+	return q.db.CopyFrom(ctx, []string{"task_instances"}, []string{"tenant_id", "dag_run_id", "task_id", "operator", "max_tries", "state", "pool", "try_number", "pool_slots"}, &iteratorForCreateTaskInstances{rows: arg})
 }

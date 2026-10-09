@@ -354,6 +354,7 @@ type TaskInstance struct {
 	ReleasedAt        pgtype.Timestamptz `json:"released_at"`
 	AttemptEpoch      int32              `json:"attempt_epoch"`
 	InfraConfirmedAt  pgtype.Timestamptz `json:"infra_confirmed_at"`
+	PoolSlots         int32              `json:"pool_slots"`
 }
 
 type TaskInstanceHistory struct {

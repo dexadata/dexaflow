@@ -12,7 +12,7 @@ import (
 
 // newTracerProvider builds an OTLP/gRPC tracer provider. The exporter connects
 // lazily, so this succeeds even when no collector is reachable yet.
-func newTracerProvider(ctx context.Context, endpoint, serviceName string) (*sdktrace.TracerProvider, error) {
+func newTracerProvider(ctx context.Context, endpoint, serviceName string, sampler sdktrace.Sampler) (*sdktrace.TracerProvider, error) {
 	exporter, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithInsecure(),
@@ -29,5 +29,6 @@ func newTracerProvider(ctx context.Context, endpoint, serviceName string) (*sdkt
 	return sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sampler),
 	), nil
 }
