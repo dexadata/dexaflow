@@ -381,6 +381,10 @@ spec:
             {{- end }}
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
+            # Renewed-session ceiling (#801). Always rendered: 0 is a real value
+            # (no ceiling), so it is never dropped the way `with` would drop it.
+            - name: LEOFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS
+              value: {{ .ctx.Values.auth.sessionMaxLifetimeSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}
             # The operator's own sign-in and sign-out in place of Dexaflow's
             # pages (#1288). Omitted when unset; validated at boot.
@@ -411,6 +415,13 @@ spec:
               value: {{ .maxLifetimeSeconds | quote }}
             - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS
               value: {{ join "," .allowedOrigins | quote }}
+            {{- with .bearerAudiences }}
+            # Trusted-issuer bearer tokens (#1468), off unless audiences are set.
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS
+              value: {{ .bearerMaxLifetimeSeconds | quote }}
             {{- end }}
             {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT
@@ -730,6 +741,10 @@ spec:
           volumeMounts:
             - name: logs
               mountPath: {{ .ctx.Values.config.logsDir }}
+            # The root filesystem is read-only by default (#1225): the Go temp
+            # dir (dbt and subprocess scratch, os.MkdirTemp) lands here instead.
+            - name: tmp
+              mountPath: /tmp
             {{- if and .ctx.Values.agentTLS.enabled (ne .role "api") }}
             # #726 — the private key is mounted only into the role that runs the
             # agent gRPC server. The api role never builds a gRPC server
@@ -765,6 +780,8 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: logs
           {{- if .ctx.Values.logs.persistence.enabled }}
           persistentVolumeClaim:

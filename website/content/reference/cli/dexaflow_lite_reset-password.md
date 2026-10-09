@@ -11,7 +11,7 @@ Reset the Dexaflow Lite admin password.
 
 ### Synopsis
 
-reset-password generates a new admin password, updates it in the Lite database, and shows it once. Run it as the same user as `dexaflow lite` (no sudo). The Lite Postgres must be reachable (start `dexaflow lite` if it is not).
+reset-password generates a new admin password, updates it in the Lite database, and shows it once. It also rotates the per-install session secret in ~/.dexaflow/config.yaml, so every browser session signed before the reset ends: at once when Lite is stopped, or when you restart `dexaflow lite` if it is running (the command says which). Run it as the same user as `dexaflow lite` (no sudo). The Lite Postgres must be reachable (start `dexaflow lite` if it is not).
 
 ```
 dexaflow lite reset-password [flags]

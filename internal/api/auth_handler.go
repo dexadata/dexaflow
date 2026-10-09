@@ -169,6 +169,14 @@ func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSe
 	}
 }
 
+// renewRateLimitPerMinute caps POST /api/v2/auth/token/renew per client IP
+// (#801). A client renews about once per token TTL, so the budget is far above
+// legitimate traffic even for many users behind one proxy, while still bounding
+// how fast one address can drive the store reload each renewal performs. It
+// counts on its own limiter: sharing the login limiter would let renewal traffic
+// lock an address out of password login.
+const renewRateLimitPerMinute = 60
+
 // renewTokenHandler re-mints the caller's still-valid user bearer into a fresh
 // access token, so a long CLI/dev session never has to `dexaflow auth login` again
 // on the hour (EKS validation aresta #5). It is the server half of transparent

@@ -211,8 +211,10 @@ func jwtClaims(token string) (map[string]any, error) {
 // required; a token without a client or a scope binds to their absence.
 func callerOf(claims map[string]any) (planCaller, error) {
 	str := func(name string) string {
-		v, _ := claims[name].(string)
-		return v
+		if v, ok := claims[name].(string); ok {
+			return v
+		}
+		return ""
 	}
 	c := planCaller{Issuer: str("iss"), Subject: str("sub"), Client: str("azp")}
 	if c.Client == "" {

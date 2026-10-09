@@ -578,6 +578,15 @@ type TrustedIssuerSection struct {
 	// post a handoff. Any other Origin, or none, is refused, so another site
 	// cannot sign a visitor in (login CSRF). Required.
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	// BearerAudiences turns on the bearer mode (#1468): a token whose `aud` is
+	// one of these is accepted as the bearer of any /api/v2 request, reused
+	// within its lifetime, the way a remote MCP client authenticates (ADR 0050
+	// D9). Each must differ from Audience, so a handoff token is never a
+	// bearer. Empty (the default) leaves the mode off.
+	BearerAudiences []string `mapstructure:"bearer_audiences"`
+	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
+	// 900-second default; at most 3600.
+	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
 }
 
 // Enabled reports whether a trusted issuer is configured.
@@ -651,7 +660,9 @@ type AuthSection struct {
 	// mid-attempt). An attempt whose agent goes silent after running past the
 	// ceiling is failed by the heartbeat reaper as a task failure with the
 	// credential_ceiling reason (its retry policy applies), never re-placed as an
-	// agent_lost infra loss with a fresh credential (#1461). A non-positive value
+	// agent_lost infra loss with a fresh credential (#1461). In Lite, which has no
+	// pod deadline, the reaper also fails an attempt still running past the
+	// ceiling with that reason and stops its task (#1511). A non-positive value
 	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
 	// credential_ceiling failure together (a wedged task then has no
 	// wall-clock bound of its own), so boot logs a WARN naming the key.
@@ -1056,19 +1067,21 @@ var serverDefaults = map[string]any{
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `dexaflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
-	"ui.auto_refresh_interval_seconds":         0,
-	"auth.dev_no_auth":                         false,
-	"auth.service_token":                       "",
-	"auth.trusted_issuer.name":                 "",
-	"auth.trusted_issuer.issuer":               "",
-	"auth.trusted_issuer.jwks_url":             "",
-	"auth.trusted_issuer.audience":             "",
-	"auth.trusted_issuer.tenant_claim":         "tenant_id",
-	"auth.trusted_issuer.allowed_tenants":      []string{},
-	"auth.trusted_issuer.max_lifetime_seconds": 0,
-	"auth.trusted_issuer.allowed_origins":      []string{},
-	"auth.external_signin_url":                 "",
-	"auth.external_signout_url":                "",
+	"ui.auto_refresh_interval_seconds":                0,
+	"auth.dev_no_auth":                                false,
+	"auth.service_token":                              "",
+	"auth.trusted_issuer.name":                        "",
+	"auth.trusted_issuer.issuer":                      "",
+	"auth.trusted_issuer.jwks_url":                    "",
+	"auth.trusted_issuer.audience":                    "",
+	"auth.trusted_issuer.tenant_claim":                "tenant_id",
+	"auth.trusted_issuer.allowed_tenants":             []string{},
+	"auth.trusted_issuer.max_lifetime_seconds":        0,
+	"auth.trusted_issuer.allowed_origins":             []string{},
+	"auth.trusted_issuer.bearer_audiences":            []string{},
+	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
+	"auth.external_signin_url":                        "",
+	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
@@ -1562,6 +1575,8 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
 		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 600, "auth.trusted_issuer.max_lifetime_seconds (0 to 600)"},
 		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
+		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
+		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -1573,6 +1588,18 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		return fmt.Errorf("auth.trusted_issuer is incomplete or invalid; set: %s", strings.Join(problems, ", "))
 	}
 	return nil
+}
+
+// bearerAudiencesValid reports whether every bearer audience is set and none
+// is the handoff audience: a token for both would be a one-use handoff and a
+// reusable bearer at once.
+func bearerAudiencesValid(s TrustedIssuerSection) bool {
+	for _, aud := range s.BearerAudiences {
+		if aud == "" || aud == s.Audience {
+			return false
+		}
+	}
+	return true
 }
 
 // validateHomeLink checks ui.home_link (#1290): both fields or neither, and an

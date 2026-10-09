@@ -17,10 +17,11 @@ import (
 )
 
 // defaultOrphanGrace and defaultOrphanKillWait bound how long StopOrphanedTask
-// waits for an orphaned task group after SIGTERM and then after SIGKILL. Their
-// sum stays well inside one maintenance phase budget (30 s), so a pass that
-// meets an orphan ignoring SIGTERM still reaches SIGKILL; an orphan that a
-// pass runs out of budget for is simply handled by the next pass.
+// and StopAttempt wait for a task group after SIGTERM and then after SIGKILL.
+// Their sum stays well inside one maintenance phase budget (30 s), so a pass
+// that meets an orphan ignoring SIGTERM still reaches SIGKILL; an orphan that a
+// pass runs out of budget for is simply handled by the next pass. StopAttempt
+// also waits up to defaultOrphanKillWait for the agent to exit after its task.
 const (
 	defaultOrphanGrace    = 10 * time.Second
 	defaultOrphanKillWait = 5 * time.Second
@@ -254,3 +255,73 @@ func (e *SubprocessExecutor) StopOrphanedTask(ctx context.Context, runID, taskID
 	}
 	return true, nil
 }
+
+// StopAttempt stops the task of an attempt whose agent may still be alive: the
+// reaper calls it for an attempt it has just failed for outliving the
+// credential ceiling (auth.max_attempt_credential_lifetime, #1511), the Lite
+// counterpart of a task pod's activeDeadlineSeconds. It sends SIGTERM to the
+// attempt's whole task process group, waits up to the grace, then sends
+// SIGKILL, the same escalation StopOrphanedTask uses, and reports true once no
+// process of the group is left, including when the task had already exited.
+//
+// Only the task group is signaled, never the agent: its PID record carries no
+// start time, so after a restart of this server it could name a reused PID.
+// The agent exits on its own once its task is gone (its terminal report finds
+// the attempt settled and is told to stop), and StopAttempt waits a bounded
+// time for that, so whatever the agent logs about its task's end is written
+// before the caller's own log marker. Like StopOrphanedTask it acts only on a
+// group recorded in this server's record directory whose leader is still the
+// recorded process. No record, or a leader it cannot verify, reports false and
+// signals nothing.
+func (e *SubprocessExecutor) StopAttempt(ctx context.Context, runID, taskID string, tryNumber int) (bool, error) {
+	if err := checkPIDDir(e.pidDir); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	rec, err := procgroup.Read(e.groupPath(runID, taskID, tryNumber))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	stopped, err := procgroup.Stop(ctx, rec, e.orphanGrace, e.orphanKillWait)
+	if err != nil || !stopped {
+		return false, err
+	}
+	agentGone := e.awaitAgentExit(ctx, runID, taskID, tryNumber, e.orphanKillWait)
+	e.logger.Warn("stopped the task process group of an attempt past the credential ceiling",
+		"run", runID, "task", taskID, "try", tryNumber, "agent_pid", rec.AgentPID, "pgid", rec.PGID, "agent_exited", agentGone)
+	return true, nil
+}
+
+// awaitAgentExit polls the attempt's agent until it is gone or d elapses, and
+// reports whether it is gone. The agent reads gone once its PID record is
+// removed (this server saw it exit) or its PID no longer answers signal 0.
+func (e *SubprocessExecutor) awaitAgentExit(ctx context.Context, runID, taskID string, tryNumber int, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for {
+		pid, err := readPID(e.pidPath(runID, taskID, tryNumber))
+		if errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		if err == nil {
+			if alive, perr := processAlive(pid); perr == nil && !alive {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(agentExitPoll):
+		}
+	}
+}
+
+// agentExitPoll is how often awaitAgentExit re-reads the agent's liveness.
+const agentExitPoll = 20 * time.Millisecond
