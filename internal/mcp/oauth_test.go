@@ -196,7 +196,8 @@ func TestHealthzNeedsNoBearer(t *testing.T) {
 func TestProtectedResourceMetadataURL(t *testing.T) {
 	cases := map[string]string{
 		"https://acme.example.com/mcp":  "https://acme.example.com/.well-known/oauth-protected-resource/mcp",
-		"https://acme.example.com/mcp/": "https://acme.example.com/.well-known/oauth-protected-resource/mcp",
+		"https://acme.example.com/mcp/": "https://acme.example.com/.well-known/oauth-protected-resource/mcp/",
+		"https://acme.example.com/":     "https://acme.example.com/.well-known/oauth-protected-resource",
 		"https://acme.example.com":      "https://acme.example.com/.well-known/oauth-protected-resource",
 		"http://localhost:9099/mcp":     "http://localhost:9099/.well-known/oauth-protected-resource/mcp",
 	}
@@ -229,6 +230,14 @@ func TestProtectedResourceValidate(t *testing.T) {
 		{"plain http server", func(p *ProtectedResource) { p.AuthorizationServers = []string{"http://auth.example.com"} }, true},
 		{"empty server", func(p *ProtectedResource) { p.AuthorizationServers = []string{""} }, true},
 		{"empty scope", func(p *ProtectedResource) { p.Scopes = []string{""} }, true},
+		{"resource path with an escaped space", func(p *ProtectedResource) { p.Resource = "https://acme.example.com/a%20b/mcp" }, true},
+		{"resource path with a brace", func(p *ProtectedResource) { p.Resource = "https://acme.example.com/{x}/mcp" }, true},
+		{"resource path with an escaped brace", func(p *ProtectedResource) { p.Resource = "https://acme.example.com/a%7Bb" }, true},
+		{"resource path with an escaped slash", func(p *ProtectedResource) { p.Resource = "https://acme.example.com/a%2Fb/mcp" }, true},
+		{"resource path with a dot segment", func(p *ProtectedResource) { p.Resource = "https://acme.example.com/a/../mcp" }, true},
+		{"resource path with an empty segment", func(p *ProtectedResource) { p.Resource = "https://acme.example.com//mcp" }, true},
+		{"resource with a trailing slash", func(p *ProtectedResource) { p.Resource = "https://acme.example.com/mcp/" }, false},
+		{"resource with a nested path", func(p *ProtectedResource) { p.Resource = "https://acme.example.com/tenant-1/v2/mcp" }, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -241,5 +250,44 @@ func TestProtectedResourceValidate(t *testing.T) {
 				t.Errorf("Validate() = %v, want error %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestHTTPHandlerServesEveryValidResource: a resource Validate accepts never
+// panics the mux, and its metadata answers at exactly the RFC 9728 path,
+// trailing slash included.
+func TestHTTPHandlerServesEveryValidResource(t *testing.T) {
+	cases := map[string]string{
+		"https://acme.example.com/mcp":             "/.well-known/oauth-protected-resource/mcp",
+		"https://acme.example.com/mcp/":            "/.well-known/oauth-protected-resource/mcp/",
+		"https://acme.example.com/tenant-1/v2/mcp": "/.well-known/oauth-protected-resource/tenant-1/v2/mcp",
+		"https://acme.example.com":                 "/.well-known/oauth-protected-resource",
+	}
+	for resource, path := range cases {
+		pr := testProtectedResource()
+		pr.Resource = resource
+		if err := pr.Validate(); err != nil {
+			t.Fatalf("Validate(%q) = %v, want accepted", resource, err)
+		}
+		f := newHTTPFixture(t, pr)
+
+		resp := f.do(t, http.MethodGet, path, "")
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s for resource %q = %d, want 200", path, resource, resp.StatusCode)
+		}
+	}
+}
+
+// TestProtectedResourceValidateNamesThePath: a refused resource path says why,
+// so the operator can fix the flag.
+func TestProtectedResourceValidateNamesThePath(t *testing.T) {
+	pr := testProtectedResource()
+	pr.Resource = "https://acme.example.com/a%20b/mcp"
+
+	err := pr.Validate()
+
+	if err == nil || !strings.Contains(err.Error(), "path") {
+		t.Errorf("Validate() = %v, want an error naming the path", err)
 	}
 }

@@ -106,7 +106,7 @@ never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mo
 | `--server` | `DEXAFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
 | `--transport` | `DEXAFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
 | `--listen` | `DEXAFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
-| `--resource` | `DEXAFLOW_MCP_RESOURCE` | — | `http` only. This endpoint's URL as clients reach it, such as `https://dexaflow.example.com/mcp`. With `--authorization-servers`, turns on [OAuth sign-in discovery](#oauth-sign-in-discovery). `https`, or `http` on a loopback host; no query or fragment. |
+| `--resource` | `DEXAFLOW_MCP_RESOURCE` | — | `http` only. This endpoint's URL as clients reach it, such as `https://dexaflow.example.com/mcp`. With `--authorization-servers`, turns on [OAuth sign-in discovery](#oauth-sign-in-discovery). `https`, or `http` on a loopback host; no query or fragment; path segments of letters, digits and `-._~` only. |
 | `--authorization-servers` | `DEXAFLOW_MCP_AUTHORIZATION_SERVERS` | — | `http` only. Comma-separated issuer URLs of the OAuth authorization servers that mint tokens for `--resource`. Required with it. |
 | `--scopes` | `DEXAFLOW_MCP_SCOPES` | — | `http` only. Comma-separated scopes advertised as `scopes_supported`. Omitted when empty. |
 | — | `DEXAFLOW_TOKEN` | — | Bearer JWT for the **stdio** transport (ignored on `http`). |
@@ -147,7 +147,12 @@ Dexaflow is not the authorization server. It points clients at yours, and the
 tokens they bring are verified by `/api/v2` on every call like any other
 bearer, so they must be ones the control plane accepts, such as tokens of
 your [trusted issuer](/reference/configuration/#trusted-issuer-handoff) for
-one of its bearer audiences. Without these flags nothing changes.
+one of its bearer audiences. MCP clients ask the authorization server for a
+token whose audience is the `--resource` URL (RFC 8707), so add that exact URL
+(for example `https://dexaflow.example.com/mcp`) to the trusted issuer's
+bearer audiences, `auth.trusted_issuer.bearer_audiences` (Helm
+`auth.trustedIssuer.bearerAudiences`); otherwise every tool call fails with a
+`401` from `/api/v2`. Without these flags nothing changes.
 
 ## Auth: getting a token
 

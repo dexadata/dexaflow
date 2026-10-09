@@ -38,3 +38,14 @@ func TestProtectedResourceFromFlagsRefusesAHalfSet(t *testing.T) {
 		t.Error("protectedResource without authorization servers = nil error, want refused")
 	}
 }
+
+// TestProtectedResourceFromFlagsRefusesAnUnroutablePath: a resource path the
+// metadata route cannot carry is refused at start-up (exit 2), not a panic in
+// the HTTP mux.
+func TestProtectedResourceFromFlagsRefusesAnUnroutablePath(t *testing.T) {
+	for _, resource := range []string{"https://acme.example.com/a%20b/mcp", "https://acme.example.com/{x}/mcp"} {
+		if _, err := protectedResource(resource, "https://auth.example.com", ""); err == nil {
+			t.Errorf("protectedResource(%q) = nil error, want refused", resource)
+		}
+	}
+}

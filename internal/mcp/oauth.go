@@ -51,6 +51,9 @@ func (p ProtectedResource) Validate() error {
 	if err := checkURL("mcp resource", p.Resource); err != nil {
 		return err
 	}
+	if err := checkResourcePath(p.Resource); err != nil {
+		return err
+	}
 	if len(p.AuthorizationServers) == 0 {
 		return errors.New("mcp authorization servers are required when the resource is set")
 	}
@@ -80,6 +83,45 @@ func checkURL(what, raw string) error {
 	return fmt.Errorf("%s %q must use https (http only on a loopback host)", what, raw)
 }
 
+// checkResourcePath refuses a resource path the metadata route cannot carry
+// verbatim: anything but letters, digits and -._~ in its segments, an empty or
+// dot segment, or a percent escape. The metadata path is the well-known prefix
+// followed by this path (RFC 9728 section 3.1), so a space or a brace would
+// otherwise reach the HTTP mux as a method or a wildcard, and an escape or a
+// dot segment would be served at a path the client does not derive.
+func checkResourcePath(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("mcp resource %q: %w", raw, err)
+	}
+	path := u.EscapedPath()
+	if path == "" || path == "/" {
+		return nil
+	}
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for i, seg := range segments {
+		if seg == "" && i == len(segments)-1 {
+			continue // one trailing slash is part of the resource
+		}
+		if seg == "" || seg == "." || seg == ".." || !isPlainSegment(seg) {
+			return fmt.Errorf("mcp resource %q: path %q may hold only letters, digits and -._~ in non-empty segments", raw, path)
+		}
+	}
+	return nil
+}
+
+func isPlainSegment(seg string) bool {
+	for _, r := range seg {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '.', r == '_', r == '~':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func isLoopback(host string) bool {
 	if host == "localhost" {
 		return true
@@ -88,14 +130,19 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// metadataPath is the path RFC 9728 derives from the resource: the well-known
-// prefix followed by the resource's own path.
+// metadataPath is the path RFC 9728 section 3.1 derives from the resource:
+// the well-known prefix followed by the resource's own path, verbatim. Only a
+// path that is a lone slash is dropped; a trailing slash after a path stays.
 func (p ProtectedResource) metadataPath() string {
 	u, err := url.Parse(p.Resource)
 	if err != nil {
 		return wellKnownResourcePath
 	}
-	return wellKnownResourcePath + strings.TrimSuffix(u.Path, "/")
+	path := u.EscapedPath()
+	if path == "/" {
+		path = ""
+	}
+	return wellKnownResourcePath + path
 }
 
 // MetadataURL is the absolute URL of the metadata document, the one a 401
@@ -128,6 +175,11 @@ func HTTPHandler(srv *mcpsdk.Server, p ProtectedResource) http.Handler {
 		})
 		mux.Handle(wellKnownResourcePath, meta)
 		if path := p.metadataPath(); path != wellKnownResourcePath {
+			// A pattern ending in a slash matches a whole subtree; {$}
+			// keeps the metadata at exactly its path.
+			if strings.HasSuffix(path, "/") {
+				path += "{$}"
+			}
 			mux.Handle(path, meta)
 		}
 		mcpHandler = auth.RequireBearerToken(anyBearer, &auth.RequireBearerTokenOptions{
