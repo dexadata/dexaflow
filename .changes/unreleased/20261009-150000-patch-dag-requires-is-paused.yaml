@@ -4,5 +4,6 @@ body: |-
   `is_paused`.** The route only pauses and unpauses, but a body without the
   field (`{}`, `{"is_paused": null}`, or another field alone) was read as
   `is_paused: false` and unpaused the DAG, which for a scheduled DAG can start
-  a catch-up. Such a body is now refused with `400`. (#1473)
+  a catch-up. Such a body is now refused with `400`, which the OpenAPI spec
+  documents. (#1473)
 time: 2026-10-09T15:00:00.000000000+00:00
