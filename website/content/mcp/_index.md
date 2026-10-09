@@ -169,6 +169,13 @@ The control plane has no cross-DAG run query, so without a `dag_id` the prompts
 read the first page of DAGs (up to 200) and a page of runs for each. When there are
 more DAGs, the prompt says how many it did not check.
 
+A prompt reaches the model as the user's own message, so it repeats a DAG or
+run id only when the id is plain: 1 to 128 ASCII letters, digits or `_.:+@~=-`,
+which covers generated run ids such as `manual__2026-10-08T12:00:00+00:00`. Any
+other id (a run id with spaces or quotes, say, which whoever triggered the run
+chose) is withheld, even from links. The prompt then links the DAG and asks the
+model to get the ids from the user.
+
 ## Links into the UI
 
 With `--ui-base-url` set, results carry a `web_url` that opens the entity in the
