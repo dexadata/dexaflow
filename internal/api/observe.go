@@ -27,11 +27,12 @@ func Observe(metrics Metrics, tracer trace.Tracer) gin.HandlerFunc {
 		if route == "" {
 			route = "unmatched"
 		}
-		ctx, span := tracer.Start(c.Request.Context(), c.Request.Method+" "+route)
-		span.SetAttributes(
-			attribute.String("http.method", c.Request.Method),
-			attribute.String("http.route", route),
-		)
+		// The attributes go in at start so a sampler can decide on the route.
+		ctx, span := tracer.Start(c.Request.Context(), c.Request.Method+" "+route,
+			trace.WithAttributes(
+				attribute.String("http.method", c.Request.Method),
+				attribute.String("http.route", route),
+			))
 		c.Request = c.Request.WithContext(ctx)
 
 		c.Next()
