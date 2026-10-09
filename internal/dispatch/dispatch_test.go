@@ -174,3 +174,77 @@ func TestDispatchThreadsAttemptLifetimeCeiling(t *testing.T) {
 		t.Errorf("ceiling must reach the request as seconds, got %d want 86400", exec.req.AttemptLifetimeCeilingSeconds)
 	}
 }
+
+// TestDispatchAppliesDefaultLimits: the operator's default limits (#537) fill an
+// empty CPU or memory limit on the task pod, whether the task declared requests
+// only, nothing at all, or got the L0 resource default, and never change a
+// declared limit. Without them a task that declares requests only runs with no
+// limit, which is what the hardening item is about.
+func TestDispatchAppliesDefaultLimits(t *testing.T) {
+	limits, err := domain.ParseDefaultLimits("2", "4Gi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		defaults PlatformDefaults
+		task     *domain.Resources
+		want     domain.ResourceQuantity
+	}{
+		{
+			name:     "requests only",
+			defaults: PlatformDefaults{Limits: limits},
+			task:     &domain.Resources{Requests: &domain.ResourceQuantity{CPU: "500m"}},
+			want:     domain.ResourceQuantity{CPU: "2", Memory: "4Gi"},
+		},
+		{
+			name:     "no resources and no L0 default",
+			defaults: PlatformDefaults{Limits: limits},
+			want:     domain.ResourceQuantity{CPU: "2", Memory: "4Gi"},
+		},
+		{
+			name:     "declared limit kept",
+			defaults: PlatformDefaults{Limits: limits},
+			task:     &domain.Resources{Limits: &domain.ResourceQuantity{Memory: "16Gi"}},
+			want:     domain.ResourceQuantity{CPU: "2", Memory: "16Gi"},
+		},
+		{
+			name: "L0 default limits win over the default limits",
+			defaults: PlatformDefaults{Limits: limits, Resources: &domain.Resources{
+				Requests: &domain.ResourceQuantity{CPU: "250m"},
+				Limits:   &domain.ResourceQuantity{CPU: "250m"},
+			}},
+			want: domain.ResourceQuantity{CPU: "250m", Memory: "4Gi"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			exec := &fakeExecutor{}
+			d := newDispatcher(&fakeResolver{resolved: Resolved{TaskInstanceID: "ti", Image: "etl:v1"}}, &fakeIssuer{token: "t"}, exec)
+			d.SetPlatformDefaults(c.defaults)
+			task := domain.TaskSpec{TaskID: "t", Type: domain.TaskTypePython, Entrypoint: "dag:t", Resources: c.task}
+			if _, err := d.Dispatch(context.Background(), "run", "etl", "", task); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if got := exec.req.Resources.Limits; got == nil || *got != c.want {
+				t.Errorf("limits = %+v; want %+v", got, c.want)
+			}
+			if c.task != nil && c.task.Limits != nil && c.task.Limits.CPU != "" {
+				t.Errorf("dispatch wrote through to the task's resources: %+v", c.task.Limits)
+			}
+		})
+	}
+}
+
+// TestDispatchWithoutDefaultLimitsLeavesLimitsEmpty is the behavior-neutral
+// default: nothing configured, a requests-only task gets no limit, as before.
+func TestDispatchWithoutDefaultLimitsLeavesLimitsEmpty(t *testing.T) {
+	exec := &fakeExecutor{}
+	d := newDispatcher(&fakeResolver{resolved: Resolved{TaskInstanceID: "ti", Image: "etl:v1"}}, &fakeIssuer{token: "t"}, exec)
+	if _, err := d.Dispatch(context.Background(), "run", "etl", "", pythonTask()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if exec.req.Resources.Limits != nil {
+		t.Errorf("limits = %+v; want none", exec.req.Resources.Limits)
+	}
+}

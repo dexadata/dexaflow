@@ -119,6 +119,10 @@ type PlatformDefaults struct {
 	// that declares more than pool_slots x unit is refused (or, under
 	// enforce: warn, run and counted). Nil: no unit.
 	Unit *domain.ResourceUnit
+	// Limits fills an empty CPU or memory limit on every task pod, after the task
+	// and L0 resources above are chosen (executor.defaults.limits_*, #537). Nil:
+	// no default limit. Not applied with a unit, which always sets both limits.
+	Limits *domain.DefaultLimits
 	// PodSecurity carries the task-pod hardening choices. It lives here, not in
 	// the DAG spec, on purpose: whether untrusted task code may run as root is a
 	// cluster-operator decision. Exposing it per-DAG would let an author elevate
@@ -473,16 +477,18 @@ func warmPlacementCompatible(task domain.TaskSpec) bool {
 // sizes every task: its own values where it set them, the rest filled so
 // requests never exceed limits (see ResourceUnit.Apply, ADR 0066 §3). Without one, the task's
 // own resources win, then the L0 platform default (ADR 0023), else none.
+//
+// The default limits then fill any CPU or memory limit still empty (#537).
 func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
 	switch {
 	case d.defaults.Unit != nil:
 		return *d.defaults.Unit.Apply(task)
 	case task.Resources != nil:
-		return *task.Resources
+		return d.defaults.Limits.Apply(*task.Resources)
 	case d.defaults.Resources != nil:
-		return *d.defaults.Resources
+		return d.defaults.Limits.Apply(*d.defaults.Resources)
 	}
-	return domain.Resources{}
+	return d.defaults.Limits.Apply(domain.Resources{})
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.

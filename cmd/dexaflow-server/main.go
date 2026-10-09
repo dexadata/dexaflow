@@ -2876,6 +2876,17 @@ func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
 	return unit
 }
 
+// defaultLimits is the configured default task limits (#537). Config
+// validation already refused an invalid value at boot, so the error branch is
+// unreachable on a running server; nil (no default limits) is its safe reading.
+func defaultLimits(c config.PlatformDefaultsSection) *domain.DefaultLimits {
+	limits, err := domain.ParseDefaultLimits(c.LimitsCPU, c.LimitsMemory)
+	if err != nil {
+		return nil
+	}
+	return limits
+}
+
 // unitMisfits is the API's misfit counter, nil (not a typed nil) without
 // metrics so the handler's nil check holds.
 func unitMisfits(m *observability.Metrics) api.UnitMisfitRecorder {
@@ -2904,6 +2915,7 @@ func platformDefaults(c config.PlatformDefaultsSection) dispatch.PlatformDefault
 			ReadOnlyRootFilesystem: c.ReadOnlyTaskRootFilesystem,
 		},
 	}
+	d.Limits = defaultLimits(c)
 	if c.ResourcesCPU != "" || c.ResourcesMemory != "" {
 		// Set requests AND limits to the same quantity so a task that relies on the
 		// platform default reaches Guaranteed QoS (requests == limits, cpu AND
