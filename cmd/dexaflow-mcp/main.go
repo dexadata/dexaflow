@@ -69,7 +69,7 @@ func run() int {
 	flag.BoolVar(&runControl, "run-control", runControlDefault,
 		"register the run control tools: trigger_run, clear_task, pause_dag, unpause_dag, apply_plan (ADR 0067)")
 	flag.StringVar(&planKeyFile, "plan-key-file", os.Getenv("LEOFLOW_MCP_PLAN_KEY_FILE"),
-		"file holding the key (at least 32 bytes) that signs run control plans; required with --run-control on the http transport, shared by every replica")
+		"file holding the key (at least 32 bytes) that signs run control plans; --run-control on the http transport needs it, the same file on every replica")
 	flag.StringVar(&resource, "resource", os.Getenv("LEOFLOW_MCP_RESOURCE"),
 		"http transport: this endpoint's URL as clients reach it; with --authorization-servers, serves OAuth protected resource metadata (RFC 9728)")
 	flag.StringVar(&authServers, "authorization-servers", os.Getenv("LEOFLOW_MCP_AUTHORIZATION_SERVERS"),
