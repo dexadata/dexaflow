@@ -381,6 +381,10 @@ spec:
             {{- end }}
             - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
+            # Renewed-session ceiling (#801). Always rendered: 0 is a real value
+            # (no ceiling), so it is never dropped the way `with` would drop it.
+            - name: LEOFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS
+              value: {{ .ctx.Values.auth.sessionMaxLifetimeSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}
             # The operator's own sign-in and sign-out in place of Dexaflow's
             # pages (#1288). Omitted when unset; validated at boot.
