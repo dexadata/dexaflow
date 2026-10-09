@@ -33,7 +33,7 @@
 # toolchain recorded in the binary's build info, so a floating tag here would
 # move this image's reported vulnerability set for reasons unrelated to any
 # commit — the same trap security.yaml documents for leoflow-server.
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.26.9
 
 # Build on the NATIVE platform and cross-compile with GOARCH, rather than
 # letting buildx emulate the build stage under QEMU for the arm64 leg. The
