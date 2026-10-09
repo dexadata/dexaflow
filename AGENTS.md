@@ -72,6 +72,12 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
   line that `-x` writes, so a pick without it counts as missing. See
   [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-branches-and-open-main/)
   and [`RELEASING.md`](RELEASING.md).
+- **Patch content is decided by the safety bar of
+  [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/),
+  not by kind.** While the project is 0.x, features and migrations ship in
+  patches when they meet it. A review does not ask to move a change to a minor
+  for being a feature or adding a migration; it names the point of the bar the
+  change fails, with evidence.
 - **Nothing merged to `main` is left out of the release branch by accident.**
   What will never ship in the minor is listed with its reason in
   `.github/release-skip.txt` on the release branch.
