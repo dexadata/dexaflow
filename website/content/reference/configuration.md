@@ -415,7 +415,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_SERVICE_TOKEN` | _(empty)_ | both | Turns on the [operator service API](#operator-service-api) under `/api/v2/service/` and is its bearer credential. At least 32 characters; boot fails on a shorter one. Keep it in a Secret. Empty leaves the API off and its routes absent. Helm: `auth.serviceToken`, or `auth.serviceTokenExistingSecret` naming a Secret with key `serviceToken`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER` | _(empty)_ | both | Turns on the [trusted-issuer handoff](#trusted-issuer-handoff): a platform that already authenticates its users opens a UI session for them by posting a token its own issuer signed. The exact `iss` of those tokens. Empty disables it and the endpoint does not exist. Helm: `auth.trustedIssuer.issuer`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME` | _(empty)_ | both | Name of the trusted issuer, 1-40 lowercase letters, digits or `-`. Users the issuer may sign in are linked under `issuer:<name>`, so keep it stable once users exist. Helm: `auth.trustedIssuer.name`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key, so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key (at most once every 30 seconds), so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Dexaflow. Helm: `auth.trustedIssuer.audience`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Dexaflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS` | _(empty)_ | both | Comma-separated tenants the issuer may sign in to; `*` allows every tenant, for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`. |
@@ -723,11 +723,21 @@ so deactivating or unlinking the user ends its access on the next request,
 whatever the token's expiry.
 
 Anything wrong answers `401`, the same as a bad Dexaflow token; the reason
-stays in the server log. A token that verified but names no active linked user
-in its tenant is also recorded in the audit trail as `issuer.bearer.failure`.
-The bearer is read from the `Authorization` header only, never from the
-session cookie, and a handoff token is never accepted as a bearer, nor a bearer
-as a handoff.
+stays in the server log. A token that does not name the issuer and a bearer
+audience is refused before any signature check. When the token could not be
+checked at all, because the issuer's JWKS or Dexaflow's user store is
+unreachable, the answer is `503`, so the client retries instead of signing in
+again. A token that verified but names no active linked user in its tenant is
+also recorded in the audit trail as `issuer.bearer.failure`. The bearer is read
+from the `Authorization` header only, never from the session cookie, and a
+handoff token is never accepted as a bearer, nor a bearer as a handoff.
+
+Dexaflow caches the issuer's keys and downloads the JWKS again only when a
+token names a key it does not hold, at most once every 30 seconds, for the
+handoff and the bearer together. A forged token therefore cannot make
+Dexaflow call your issuer on every request. After you rotate keys, tokens
+signed with the new key can be refused for up to 30 seconds; publish the new
+key in the JWKS before you sign with it.
 
 Keep bearer tokens short-lived. Dexaflow cannot revoke one before it expires,
 only the user behind it; an MCP gateway that mints one per client for a few
