@@ -36,7 +36,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
   PYTHON_VERSION: "3.11"
 
   # The gates both legs honour, under the DEXAFLOW_ names the configuration
