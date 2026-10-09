@@ -18,6 +18,7 @@ type fakeWarmCache struct {
 	pending         map[string]bool
 	pendingByTenant map[string]int
 	expired         bool
+	uncovered       map[string]bool // pod names Covers reports the cache lacks
 	begun           map[string]int
 	ended           map[string][]string // dag_version -> returned pod names ("" = failed)
 }
@@ -45,6 +46,15 @@ func (c *fakeWarmCache) EndCreate(t WarmTarget, podName string) {
 func (c *fakeWarmCache) CreatesPending(dv string) bool { return c.pending[dv] }
 
 func (c *fakeWarmCache) PendingCreatesByTenant() map[string]int { return c.pendingByTenant }
+
+func (c *fakeWarmCache) Covers(names []string) bool {
+	for _, n := range names {
+		if c.uncovered[n] {
+			return false
+		}
+	}
+	return true
+}
 
 func (c *fakeWarmCache) ExpectationExpired() bool {
 	e := c.expired

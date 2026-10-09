@@ -55,8 +55,14 @@ type WarmPodInformer struct {
 	inflightTenant map[string]int
 	expected       map[string]createExpectation
 	early          map[string]time.Time
-	expired        bool
-	now            func() time.Time
+	// deleted holds the pods the informer saw deleted, for warmDeletedMemory,
+	// so Covers can tell a pod the cache dropped on a delete event from one it
+	// never saw (a cache behind the cluster).
+	deleted map[string]time.Time
+	// cachedNames lists the names of the cached pods; a seam for tests.
+	cachedNames func() map[string]bool
+	expired     bool
+	now         func() time.Time
 }
 
 // createExpectation is one accepted create the cache has not observed yet.
@@ -89,8 +95,10 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 		inflightTenant: map[string]int{},
 		expected:       map[string]createExpectation{},
 		early:          map[string]time.Time{},
+		deleted:        map[string]time.Time{},
 		now:            time.Now,
 	}
+	w.cachedNames = w.listCachedNames
 	if _, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			// A create we were waiting for landed: the reconcile it held back
@@ -261,6 +269,53 @@ func (w *WarmPodInformer) pruneLocked() {
 			delete(w.early, name)
 		}
 	}
+	for name, at := range w.deleted {
+		if now.Sub(at) >= warmDeletedMemory {
+			delete(w.deleted, name)
+		}
+	}
+}
+
+// warmDeletedMemory is how long the informer remembers a pod it saw deleted.
+// It outlasts warmCacheLiveListInterval, so a pod a live LIST returned and that
+// was deleted since still counts as covered by a healthy cache.
+const warmDeletedMemory = 2 * warmCacheLiveListInterval
+
+// Covers reports whether the cache has caught up with the named pods (the ones
+// the reconciler's last live LIST returned): each is cached, or the informer saw
+// it deleted. A name it never saw means the cache is behind the cluster (a hung
+// watch), so the reconciler reads live instead of creating off a stale count.
+func (w *WarmPodInformer) Covers(names []string) bool {
+	if len(names) == 0 {
+		return true
+	}
+	have := w.cachedNames()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pruneLocked()
+	for _, n := range names {
+		if have[n] {
+			continue
+		}
+		if _, gone := w.deleted[n]; gone {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// listCachedNames returns the names of the pods in the informer's cache.
+func (w *WarmPodInformer) listCachedNames() map[string]bool {
+	pods, err := w.lister.Pods(w.namespace).List(labels.Everything())
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(pods))
+	for _, p := range pods {
+		out[p.Name] = true
+	}
+	return out
 }
 
 // observed matches an added pod to its create expectation and reports whether
@@ -280,12 +335,14 @@ func (w *WarmPodInformer) observed(podName, versionLabel string) bool {
 	return false
 }
 
-// forget drops any expectation or early sighting of a deleted pod.
+// forget drops any expectation or early sighting of a deleted pod and
+// remembers the delete for Covers.
 func (w *WarmPodInformer) forget(podName string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.expected, podName)
 	delete(w.early, podName)
+	w.deleted[podName] = w.now()
 }
 
 // podOf unwraps a delete notification, which may be a tombstone.

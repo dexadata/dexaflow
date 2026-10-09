@@ -2826,7 +2826,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		// deletes a worker with an in-flight attempt. store implements it.
 		var warmCache *executor.WarmPodInformer
 		if cfg.Execution.WarmPoolEventRefill {
-			warmCache = buildWarmPodInformer(ctx, cs, cfg.Executor.TaskNamespace, logger)
+			// On the maintenance client, like the task-pod informer and the
+			// warm-pod client the reconciler checks it against (#1315).
+			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, logger)
 			if warmCache != nil && warmPools != nil {
 				// A claimed worker leaves the idle buffer short: refill now.
 				warmPools.SetOnClaim(warmCache.Kick)
