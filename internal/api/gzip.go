@@ -35,9 +35,11 @@ func newGzipWriter() *gzip.Writer {
 // is flushed. Static assets are precompressed by their own handler and are
 // not on these prefixes.
 //
-// Routes that return secrets or tokens (variables, connections, XComs, auth)
-// are never compressed either: with a secret and attacker-reflected input in
-// one compressed body, the response length can leak the secret (BREACH).
+// Routes that return secrets, tokens or code (variables, connections, XComs,
+// auth and the session token, IDE files, DAG sources, a task instance with its
+// rendered fields) are never compressed either: with a secret and
+// attacker-reflected input in one compressed body, the response length can
+// leak the secret (BREACH). Only a full 200 or 201 body is compressed.
 //
 // A handler panic is passed on untouched: the held-back response is dropped
 // so gin.Recovery can still answer 500.
@@ -45,12 +47,18 @@ func GzipJSON() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p := c.Request.URL.Path
 		if !strings.HasPrefix(p, "/api/v2/") && !strings.HasPrefix(p, "/ui/") ||
-			strings.Contains(p, "/logs") || secretBearingPath(p) ||
-			!acceptsGzip(c.Request.Header.Values("Accept-Encoding")) {
+			strings.Contains(p, "/logs") || secretBearingPath(p) {
 			c.Next()
 			return
 		}
-		w := &gzipResponseWriter{ResponseWriter: c.Writer, status: http.StatusOK}
+		// The encoding of an eligible route depends on Accept-Encoding whatever
+		// is decided below, so a cache must key on it for identity answers too.
+		c.Writer.Header().Add("Vary", "Accept-Encoding")
+		if !acceptsGzip(c.Request.Header.Values("Accept-Encoding")) {
+			c.Next()
+			return
+		}
+		w := &gzipResponseWriter{ResponseWriter: c.Writer, status: c.Writer.Status()}
 		c.Writer = w
 		defer func() {
 			if r := recover(); r != nil {
@@ -71,17 +79,26 @@ var secretBearingPrefixes = []string{
 	"/api/v2/connections",
 	"/api/v2/xcoms",
 	"/api/v2/auth/",
+	"/ui/auth/",
+	"/api/v2/ide/",
+	"/api/v2/dagSources",
 }
 
-// secretBearingPath reports whether a path returns secrets, tokens or XCom
-// values, which may hold either.
+// secretBearingPath reports whether a path returns secrets, tokens, code or
+// XCom values, which may hold either. A single task instance (and anything
+// below it) carries rendered fields taken from the spec, so it counts too; the
+// taskInstances list does not.
 func secretBearingPath(p string) bool {
 	for _, prefix := range secretBearingPrefixes {
 		if strings.HasPrefix(p, prefix) {
 			return true
 		}
 	}
-	return strings.Contains(strings.ToLower(p), "xcom")
+	if strings.Contains(strings.ToLower(p), "xcom") {
+		return true
+	}
+	_, rest, found := strings.Cut(p, "/taskInstances/")
+	return found && rest != ""
 }
 
 // acceptsGzip parses Accept-Encoding (RFC 9110 section 12.5.3) and reports
@@ -195,10 +212,9 @@ func (w *gzipResponseWriter) decide(compress bool) error {
 	w.decided = true
 	h := w.Header()
 	compress = compress && h.Get("Content-Encoding") == "" &&
-		w.status >= http.StatusOK && w.status < 300 && w.status != http.StatusNoContent
+		(w.status == http.StatusOK || w.status == http.StatusCreated)
 	if compress {
 		h.Set("Content-Encoding", "gzip")
-		h.Add("Vary", "Accept-Encoding")
 		h.Del("Content-Length")
 		gz, ok := gzipWriters.Get().(*gzip.Writer)
 		if !ok {

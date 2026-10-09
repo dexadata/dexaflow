@@ -8,7 +8,9 @@ body: |-
   clients that accept it; that page shrinks to about 18 KB for under 1 ms of
   CPU. Log routes and anything that streams (a live log tail flushes before
   1 KB) are never compressed, so lines still arrive as they are written.
-  Routes that return secrets or tokens (variables, connections, XComs, auth)
-  are never compressed either, as a BREACH mitigation, and `gzip;q=0` is
-  honored. The default keeps every body uncompressed.
+  Routes that return secrets, tokens or code (variables, connections, XComs,
+  auth and the UI session token, IDE files, DAG sources, a single task
+  instance) are never compressed either, as a BREACH mitigation. Only full
+  `200` and `201` bodies are compressed, every eligible response carries
+  `Vary: Accept-Encoding`, and `gzip;q=0` is honored. The default keeps every body uncompressed.
 time: 2026-10-02T17:40:00.000000000-03:00

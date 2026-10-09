@@ -165,6 +165,11 @@ func TestGzipJSONSkipsSecretBearingRoutes(t *testing.T) {
 		"/api/v2/xcoms/etl/r1/extract/key",
 		"/api/v2/dags/etl/dagRuns/r1/taskInstances/extract/xcomEntries",
 		"/api/v2/auth/token/renew",
+		"/ui/auth/token",
+		"/ui/auth/me",
+		"/api/v2/ide/file",
+		"/api/v2/dagSources/etl",
+		"/api/v2/dags/etl/dagRuns/r1/taskInstances/extract",
 	}
 	for _, p := range paths {
 		r.GET(p, func(c *gin.Context) { c.JSON(http.StatusOK, bigJSON) })
@@ -198,5 +203,49 @@ func TestGzipJSONHonorsAcceptEncodingQuality(t *testing.T) {
 		if got := rec.Header().Get("Content-Encoding") == "gzip"; got != want {
 			t.Errorf("Accept-Encoding %q: gzipped=%v, want %v", ae, got, want)
 		}
+	}
+}
+
+// TestGzipJSONNeverCompressesPartialContent pins that only full bodies are
+// compressed: a 206 keeps an identity Content-Range, so gzipping it would
+// break the range.
+func TestGzipJSONNeverCompressesPartialContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(GzipJSON())
+	r.GET("/api/v2/partial", func(c *gin.Context) {
+		c.Header("Content-Range", "bytes 0-1999/5000")
+		c.JSON(http.StatusPartialContent, bigJSON)
+	})
+	rec := gzipGet(t, r, "/api/v2/partial", true)
+	if rec.Code != http.StatusPartialContent || rec.Header().Get("Content-Encoding") != "" {
+		t.Errorf("206: status %d Content-Encoding %q, want 206 identity", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+}
+
+// TestGzipJSONVariesOnEveryEligibleResponse pins that a cache sees
+// Vary: Accept-Encoding on identity answers of an eligible route too, so it
+// never serves a stored identity body to a gzip client or the reverse.
+func TestGzipJSONVariesOnEveryEligibleResponse(t *testing.T) {
+	r := gzipEngine()
+	for _, path := range []string{"/api/v2/small", "/api/v2/big", "/ui/notmodified"} {
+		rec := gzipGet(t, r, path, true)
+		if got := rec.Header().Values("Vary"); len(got) != 1 || got[0] != "Accept-Encoding" {
+			t.Errorf("%s: Vary %q, want exactly [Accept-Encoding]", path, got)
+		}
+	}
+}
+
+// TestGzipJSONKeepsAStatusSetBeforeTheChain pins that the wrapper starts from
+// the writer's current status: a 404 set before the handlers run (gin's
+// no-route path) is not turned into an empty 200.
+func TestGzipJSONKeepsAStatusSetBeforeTheChain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Status(http.StatusNotFound) })
+	r.Use(GzipJSON())
+	r.GET("/api/v2/nothing", func(c *gin.Context) {})
+	if rec := gzipGet(t, r, "/api/v2/nothing", true); rec.Code != http.StatusNotFound {
+		t.Errorf("status %d, want 404", rec.Code)
 	}
 }
