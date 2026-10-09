@@ -1212,7 +1212,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
 	}
 	if deps.Versions != nil {
-		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}))
+		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage))
 	}
 	if deps.Xcoms != nil {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))
