@@ -20,8 +20,26 @@ type PodLostCandidate struct {
 	TaskID         string
 	// TryNumber pins the best-effort pod delete to exactly this attempt, so a
 	// retry's newer pod is never touched (same invariant as the #474 teardown).
-	TryNumber    int
+	TryNumber int
+	// AttemptEpoch is the epoch the row's current execution was dispatched
+	// with (ADR 0051 amendment). The mark and the pod teardown are pinned to it
+	// as well as to TryNumber, so a row re-placed or re-dispatched between the
+	// list and the write is a different attempt and is left alone.
+	AttemptEpoch int
 	RunningSince time.Time
+	// Heartbeated reports whether the attempt has heartbeated at least once.
+	// Pod-lost ignores it; Lite uses it to judge an agent that died before its
+	// first heartbeat, which agent-lost never lists (#916).
+	Heartbeated bool
+	// TenantID locates the attempt's log stream for the agent_lost marker Lite
+	// writes when it fails a never-heartbeated attempt.
+	TenantID string
+}
+
+// attempt is the execution this candidate names, for the presence reads and
+// the pod teardown.
+func (c PodLostCandidate) attempt() Attempt {
+	return Attempt{RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch}
 }
 
 // IsPodLostCandidate reports whether a running TI has been running long enough
@@ -52,7 +70,7 @@ type PodLostReapStore interface {
 	// idempotent. It returns whether a row was actually updated: false means a
 	// late terminal report transitioned the TI between the list and this write,
 	// so the caller must NOT treat it as reaped (no false log, no pod delete).
-	MarkTaskPodLost(ctx context.Context, taskInstanceID string) (bool, error)
+	MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
 
 // podLostReaper fails `running` TIs whose pod has vanished — the gap between the
@@ -139,7 +157,7 @@ func (r *podLostReaper) run(ctx context.Context) error {
 		// Cache fast-path (PR-10), safe direction only: a cached Pending/Running
 		// pod defers the reap without an apiserver read. A cache MISS is NOT
 		// trusted — fall through to the live read below, preserving the #461 fix.
-		if r.cache != nil && r.cache.CachedPodActive(c.DagRunID, c.TaskID, c.TryNumber) {
+		if r.cache != nil && r.cache.CachedPodActive(c.attempt()) {
 			r.record("pod_lost_cache_active")
 			continue
 		}
@@ -153,7 +171,7 @@ func (r *podLostReaper) run(ctx context.Context) error {
 		//   * pod present but done -> the attempt's outcome is on that pod object;
 		//                            settling it is the reconciler's job. DEFER.
 		//   * no pod at all       -> the pod is genuinely gone; fail as pod_lost.
-		presence, perr := r.pods.TaskPodPresence(ctx, c.DagRunID, c.TaskID, c.TryNumber)
+		presence, perr := r.pods.TaskPodPresence(ctx, c.attempt())
 		if perr != nil {
 			r.logger.Warn("pod-lost: pod liveness unknown; deferring",
 				"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "error", perr)
@@ -189,7 +207,7 @@ func (r *podLostReaper) reapOne(ctx context.Context, c PodLostCandidate) {
 		r.record("pod_lost_gate_skip")
 		return
 	}
-	applied, ferr := r.store.MarkTaskPodLost(ctx, c.TaskInstanceID)
+	applied, ferr := r.store.MarkTaskPodLost(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
 	if ferr != nil {
 		r.logger.Error("marking task pod-lost",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", ferr)
@@ -214,7 +232,7 @@ func (r *podLostReaper) reapOne(ctx context.Context, c PodLostCandidate) {
 		r.record("pod_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.DagRunID, c.TaskID, c.TryNumber); derr != nil {
+	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
 		r.logger.Error("deleting pod-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("pod_lost_pod_delete_error")

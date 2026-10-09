@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **Lite ran every DAG in the same Python venv.** In the subprocess executor
+  each DAG has its own venv under `~/.dexaflow/dev/venvs/<dag_id>/`, but every
+  task ran with the interpreter of the venv the session started with, so a DAG
+  whose `dependencies` were not also installed there failed with
+  `ModuleNotFoundError`. The server copies its own `LEOFLOW_PYTHON` onto
+  `DEXAFLOW_PYTHON` at startup and the agent prefers `DEXAFLOW_PYTHON` when the
+  two differ, while the per-DAG override only set `LEOFLOW_PYTHON`. It now sets
+  both, and each task runs in its own DAG's venv again.
+time: 2026-10-06T00:30:00.000000000+00:00

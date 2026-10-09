@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **Per-tenant ceiling on a task's size.** The service API
+  (`PUT /api/v2/service/tenants/{tenant}`) accepts `max_task_pool_slots`, stored
+  in a new `tenants` column (migration 041, constant default 0, no table
+  rewrite). When set, registering a DAG with a task whose `pool_slots` (its
+  `size`) is above it answers `403` naming the task, its size and the limit.
+  `0`, the default, is unlimited. A platform that sizes each tenant's default
+  pool sets it to the same number, so a task that could never fit is refused
+  when it is pushed instead of waiting forever (ADR 0066, #1466).
+time: 2026-10-06T22:00:00.000000000-03:00

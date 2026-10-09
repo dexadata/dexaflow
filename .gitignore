@@ -1,11 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────
-# AI Agent context files
-# These files contain agent-specific guidance and may include personal,
-# experimental, or evolving instructions. They are not part of the public
-# repository contract.
+# Agent context files
+# AGENTS.md and CLAUDE.md at the root are committed: they carry the standing
+# repository rules. Personal, experimental, or evolving instructions go in the
+# local files below, which are not part of the public repository contract.
 # ─────────────────────────────────────────────────────────────────────────
-CLAUDE.md
-AGENTS.md
+CLAUDE.local.md
 GEMINI.md
 COPILOT.md
 .cursorrules
@@ -26,6 +25,10 @@ dist/
 /leoflow
 /leoflow-server
 /leoflow-agent
+/dexaflow-mcp
+/dexaflow
+/dexaflow-server
+/dexaflow-agent
 *.exe
 *.exe~
 *.dll

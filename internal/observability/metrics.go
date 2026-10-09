@@ -37,6 +37,13 @@ type Metrics struct {
 	HTTPRequestDuration *prometheus.HistogramVec
 	AuthFailures        *prometheus.CounterVec
 
+	// Agent credentials: task tokens authenticated without an attempt_epoch
+	// claim, accepted under the epoch-0 rule (ADR 0051 amendment).
+	AgentLegacyAttemptTokens prometheus.Counter
+	// Reconciler: durable SUCCESS records settled over a reaper's provisional
+	// infra mark, by the mark overridden (ADR 0052 amendment).
+	ReconcileInfraOverrides *prometheus.CounterVec
+
 	// Executor (Kubernetes)
 	PodsCreated        *prometheus.CounterVec
 	PodPendingDuration prometheus.Histogram
@@ -48,6 +55,10 @@ type Metrics struct {
 	DispatchAtCapacity  prometheus.Counter
 	DispatchLatency     prometheus.Histogram
 	DispatchInnerErrors prometheus.Counter
+	// UnitMisfits counts tasks let through under executor.unit.enforce=warn
+	// although they do not fit their size, by stage (register, dispatch;
+	// ADR 0066 §3).
+	UnitMisfits *prometheus.CounterVec
 
 	// Redis observability — port of the #311 step-down pattern for Redis (Pro
 	// only; Lite uses Postgres + in-process tailer per ADR 0026, so these
@@ -138,6 +149,19 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_auth_failures_total", Help: "Authentication failures by reason.",
 		}, []string{"reason"}),
 
+		AgentLegacyAttemptTokens: f.NewCounter(prometheus.CounterOpts{
+			Name: "dexaflow_agent_legacy_attempt_token_total",
+			Help: "Agent RPCs authenticated by a task token without the attempt_epoch claim: one minted before the upgrade, " +
+				"or one an old replica renewed or exchanged during a rolling upgrade. Reports from such a token are read as epoch 0. " +
+				"It falls to zero once the rollout has finished and every pre-upgrade attempt has finished; a later release rejects such tokens.",
+		}),
+
+		ReconcileInfraOverrides: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_reconcile_infra_override_total",
+			Help: "Durable SUCCESS records the reconciler settled over a reaper's provisional infra mark (agent_lost, pod_lost, dispatch_lost), " +
+				"by the mark overridden: a task that finished while the control plane lost track of it, recovered instead of re-run.",
+		}, []string{"mark"}),
+
 		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_pods_created_total", Help: "Pods created by dag and result.",
 		}, []string{"dag_id", "result"}),
@@ -160,6 +184,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		DispatchInnerErrors: f.NewCounter(prometheus.CounterOpts{
 			Name: "dexaflow_dispatch_inner_errors_total", Help: "Errors returned by the inner dispatcher inside a worker.",
 		}),
+		UnitMisfits: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_unit_misfit_total",
+			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, dispatch).",
+		}, []string{"stage"}),
 
 		RedisCommandFailures: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_redis_command_failures_total",
@@ -293,6 +321,22 @@ func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 	m.DispatchLatency.Observe(seconds)
 }
 
+// RecordLegacyAttemptToken counts one agent RPC authenticated by a task token
+// without an attempt_epoch claim (ADR 0051 amendment). It satisfies
+// agentrpc.LegacyTokenRecorder.
+func (m *Metrics) RecordLegacyAttemptToken() { m.AgentLegacyAttemptTokens.Inc() }
+
+// RecordInfraOverride counts one durable SUCCESS settled over an infra mark.
+// It satisfies executor.InfraOverrideRecorder.
+func (m *Metrics) RecordInfraOverride(mark string) {
+	m.ReconcileInfraOverrides.WithLabelValues(mark).Inc()
+}
+
 // RecordDispatchInnerError counts one error returned by the inner dispatcher
 // inside a worker — typically a Kubernetes API failure or pod-create rejection.
 func (m *Metrics) RecordDispatchInnerError() { m.DispatchInnerErrors.Inc() }
+
+// RecordUnitMisfit counts one task let through under executor.unit.enforce=warn
+// although it does not fit its size. It satisfies dispatch.UnitMisfitRecorder
+// and api.UnitMisfitRecorder.
+func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues(stage).Inc() }

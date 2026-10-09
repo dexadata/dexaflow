@@ -298,7 +298,7 @@ only one pod can hold.
 2. **Know what happens to old logs.** Logs written before the switch stay where
    they were. With the object sink the control plane serves logs from the bucket
    only, so keep the old PVC around (or copy it into the bucket under the same
-   `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log` layout) if you need the
+   `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.e{epoch}.log` layout, one object per execution of the try; logs written before 0.5.1 are at `{try}.log`) if you need the
    history in the UI.
 3. **Apply the profile.** `helm upgrade -f values-ha.yaml`. With the PVC gone the
    update strategy auto-selects `RollingUpdate`, the second replica comes up
@@ -345,10 +345,12 @@ database:
 | Pool | Size | Opened by |
 |---|---|---|
 | Requests and scheduling | `database.maxOpenConns` (chart default `20`) | every pod |
+| Scheduler (only when set) | `database.schedulerMaxConns` (chart default `0`, off) | every pod that runs the scheduler |
 | Health checks (`/readyz`, the UI database widget) | `2` | every pod |
 | Scheduler leader lock | `1` | every pod that runs the scheduler (`all` and `scheduler` roles) |
 
-So one pod can hold up to `maxOpenConns + 3` connections, and the cluster-wide
+So one pod can hold up to `maxOpenConns + 3` connections (plus
+`schedulerMaxConns` on a pod that runs the scheduler, when it is set), and the cluster-wide
 ceiling is that number times the most pods that can be up at once: the HPA's
 `maxReplicas` (or `replicaCount`, or `split.api.replicaCount + 1` in split
 mode), plus the surge pods a rolling update starts before it stops old ones.

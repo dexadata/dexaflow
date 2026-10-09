@@ -106,8 +106,48 @@ never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mo
 | `--server` | `DEXAFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
 | `--transport` | `DEXAFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
 | `--listen` | `DEXAFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
+| `--resource` | `DEXAFLOW_MCP_RESOURCE` | — | `http` only. This endpoint's URL as clients reach it, such as `https://dexaflow.example.com/mcp`. With `--authorization-servers`, turns on [OAuth sign-in discovery](#oauth-sign-in-discovery). `https`, or `http` on a loopback host; no query or fragment. |
+| `--authorization-servers` | `DEXAFLOW_MCP_AUTHORIZATION_SERVERS` | — | `http` only. Comma-separated issuer URLs of the OAuth authorization servers that mint tokens for `--resource`. Required with it. |
+| `--scopes` | `DEXAFLOW_MCP_SCOPES` | — | `http` only. Comma-separated scopes advertised as `scopes_supported`. Omitted when empty. |
 | — | `DEXAFLOW_TOKEN` | — | Bearer JWT for the **stdio** transport (ignored on `http`). |
 | `--version` | — | — | Print the version and exit. |
+
+### OAuth sign-in discovery
+
+MCP clients that sign in with OAuth, as the MCP authorization specification
+describes (claude.ai connectors and ChatGPT among them), find the
+authorization server from the MCP server itself. With `--resource` and
+`--authorization-servers` set, the `http` transport:
+
+- serves the protected resource metadata ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728))
+  at the path derived from the resource (`/.well-known/oauth-protected-resource/mcp`
+  for a resource ending in `/mcp`) and at `/.well-known/oauth-protected-resource`:
+
+  ```json
+  {
+    "resource": "https://dexaflow.example.com/mcp",
+    "authorization_servers": ["https://auth.example.com"],
+    "scopes_supported": ["dexaflow:read"],
+    "bearer_methods_supported": ["header"]
+  }
+  ```
+
+- answers a request to `/mcp` without a bearer with `401` and
+  `WWW-Authenticate: Bearer resource_metadata="<metadata URL>"`, which starts
+  the client's sign-in.
+
+```bash
+dexaflow-mcp --transport http --server https://dexaflow.internal \
+  --resource https://dexaflow.example.com/mcp \
+  --authorization-servers https://auth.example.com \
+  --scopes dexaflow:read
+```
+
+Dexaflow is not the authorization server. It points clients at yours, and the
+tokens they bring are verified by `/api/v2` on every call like any other
+bearer, so they must be ones the control plane accepts, such as tokens of
+your [trusted issuer](/reference/configuration/#trusted-issuer-handoff) for
+one of its bearer audiences. Without these flags nothing changes.
 
 ## Auth: getting a token
 

@@ -1,0 +1,9 @@
+kind: Fixed
+body: |-
+  **A tenant schema error revealed the server's working directory.** DAG param
+  schemas and `xcom_schema` were compiled under a bare file name, so a relative
+  `$ref` (refused, nothing was read) and even a plain validation failure named
+  the schema as `file:///<server working directory>/...` in the error returned
+  to the caller. Tenant schemas are now compiled under a `dexaflow://tenant/`
+  base, and their errors never name a local path.
+time: 2026-10-07T01:00:00.000000000+00:00

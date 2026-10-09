@@ -1,0 +1,8 @@
+kind: Security
+body: |-
+  **IDE errors no longer show host paths.** A failed read, write, delete or
+  tree listing in the browser IDE returned the filesystem error to the caller,
+  absolute workspace path included. The response now carries a fixed message
+  and the full error goes to the request log. A path refused as unsafe still
+  echoes the caller's own relative path (#1072).
+time: 2026-10-09T14:10:00.000000000-03:00

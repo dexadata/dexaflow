@@ -1,0 +1,12 @@
+kind: Changed
+body: |-
+  **Going back from 0.5.1 to 0.5.0, and restoring a backup.** 0.5.1 adds
+  migrations 027 to 035, and the 0.5.0 migrate job refuses a database that is
+  ahead of it ("no migration found for version 35"). To go back, use `helm
+  rollback`, or install 0.5.0 with `migrations.enabled=false`: the 0.5.0
+  server runs on the newer schema. On a large `task_instances` table the index
+  builds can outlast Helm's default 5 minute hook timeout, so pass a larger
+  `--timeout` to the upgrade. After restoring a Postgres backup into a running
+  installation, restart the control plane: it caches tenant ids for its
+  lifetime.
+time: 2026-10-05T03:05:00.000000000-03:00
