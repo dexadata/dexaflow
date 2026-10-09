@@ -178,7 +178,7 @@ func (ks *cachedKeySet) download(ctx context.Context) ([]jose.JSONWebKey, error)
 	if err != nil {
 		return nil, fmt.Errorf("fetching jwks: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // read-only fetch; a close error changes nothing
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetching jwks: status %d", resp.StatusCode)
 	}
