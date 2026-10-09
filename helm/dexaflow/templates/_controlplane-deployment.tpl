@@ -411,6 +411,13 @@ spec:
               value: {{ .maxLifetimeSeconds | quote }}
             - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS
               value: {{ join "," .allowedOrigins | quote }}
+            {{- with .bearerAudiences }}
+            # Trusted-issuer bearer tokens (#1468), off unless audiences are set.
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS
+              value: {{ .bearerMaxLifetimeSeconds | quote }}
             {{- end }}
             {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT

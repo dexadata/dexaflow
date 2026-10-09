@@ -341,6 +341,10 @@ auth:
     maxLifetimeSeconds: 0
     # -- Origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. Any other `Origin`, or none, is refused, so another site cannot sign a visitor in as someone else. Required when `issuer` is set.
     allowedOrigins: []
+    # -- Audiences whose tokens from the issuer are accepted as the `Authorization: Bearer` of any `/api/v2` request, reused until they expire (#1468), for remote MCP clients behind your platform (`leoflow-mcp` by convention). Each must differ from `audience`. Empty (the default) leaves the bearer mode off.
+    bearerAudiences: []
+    # -- Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600.
+    bearerMaxLifetimeSeconds: 0
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).

@@ -499,6 +499,8 @@ differ from what's committed.
 | auth.trustedIssuer.allowedOrigins | list | `[]` | Origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. Any other `Origin`, or none, is refused, so another site cannot sign a visitor in as someone else. Required when `issuer` is set. |
 | auth.trustedIssuer.allowedTenants | list | `[]` | Tenants the issuer may sign in to; `["*"]` allows every tenant. Required when `issuer` is set. |
 | auth.trustedIssuer.audience | string | `""` | The `aud` the tokens must carry for this Dexaflow. |
+| auth.trustedIssuer.bearerAudiences | list | `[]` | Audiences whose tokens from the issuer are accepted as the `Authorization: Bearer` of any `/api/v2` request, reused until they expire (#1468), for remote MCP clients behind your platform (`leoflow-mcp` by convention). Each must differ from `audience`. Empty (the default) leaves the bearer mode off. |
+| auth.trustedIssuer.bearerMaxLifetimeSeconds | int | `0` | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. |
 | auth.trustedIssuer.issuer | string | `""` | The exact `iss` of the issuer's tokens. Empty (the default) disables the handoff and renders none of these keys. |
 | auth.trustedIssuer.jwksUrl | string | `""` | Where the issuer publishes its public signing keys. `https`, or `http` on a loopback host. |
 | auth.trustedIssuer.maxLifetimeSeconds | int | `0` | Longest `exp - iat` a handoff token may have. `0` uses 120 seconds; at most 600. |
