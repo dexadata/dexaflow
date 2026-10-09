@@ -74,6 +74,27 @@ cherry-picks of such changes need no separately recorded exception.
 This rule ends at 1.0.0. The 1.0 release decides the patch policy for the
 stable line and records it in a new ADR.
 
+## Prior art
+
+Fast-moving tools with large production use version by upgrade effort rather
+than by kind of change:
+
+- **uv** bumps the minor for breaking changes and the patch for "bug fixes,
+  enhancements, and other non-breaking changes"
+  ([policy](https://docs.astral.sh/uv/reference/policies/versioning/)).
+- **Ruff** ships new options, preview rules and new Python support in patches
+  and keeps the minor for removals and changes to stable behavior
+  ([policy](https://docs.astral.sh/ruff/versioning/)).
+- **Prefect** puts "new capabilities for existing concepts" in patches
+  ([policy](https://docs.prefect.io/v3/release-notes/versioning)).
+- **JAX** adopted EffVer, where each number states the effort to upgrade
+  ([JEP 25516](https://docs.jax.dev/en/latest/jep/25516-effver.html)).
+
+Stateful servers add one rule this record keeps: an operator may skip patches,
+so a migration in a patch must apply in order on top of any earlier patch of
+the same minor, which the contiguous numbering and `golang-migrate` already
+guarantee.
+
 ## Alternatives considered
 
 - **Fixes only in patches, everything else in a minor.** Standard SemVer and
