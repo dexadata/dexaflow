@@ -14,6 +14,14 @@ serves no HTTP API).
      error: it is a boot that reads no file and then fails closed on a tenant
      pin the operator can see configured in the ConfigMap right next to it. */ -}}
 {{- $oidcMountPath := "/etc/leoflow/oidc" -}}
+{{- /* HTTPS on the API listener (#638): only the roles that serve the API get
+     the key, the env and the HTTPS probe scheme. The scheduler role probes the
+     plain metrics port. */ -}}
+{{- $httpTLSValues := .ctx.Values.httpTLS | default dict -}}
+{{- $httpTLS := and $httpTLSValues.enabled (ne .role "scheduler") -}}
+{{- if and $httpTLSValues.enabled (not $httpTLSValues.secretName) -}}
+{{- fail "httpTLS.enabled=true needs httpTLS.secretName: the name of a kubernetes.io/tls Secret (tls.crt, tls.key) for the API listener, typically a cert-manager Certificate." -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -445,6 +453,13 @@ spec:
             - name: LEOFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP
               value: {{ include "leoflow.agentTLS.caConfigMapName" .ctx | quote }}
             {{- end }}
+            {{- if $httpTLS }}
+            # HTTPS on the API listener (#638), from httpTLS.secretName.
+            - name: LEOFLOW_SERVER_HTTP_TLS_CERT
+              value: /etc/leoflow/http-tls/tls.crt
+            - name: LEOFLOW_SERVER_HTTP_TLS_KEY
+              value: /etc/leoflow/http-tls/tls.key
+            {{- end }}
             {{- if .ctx.Values.taskSecret.name }}
             # Mount a Kubernetes Secret read-only into every task pod so a task can
             # read a credential (e.g. a GCP service-account key referenced by a
@@ -692,6 +707,9 @@ spec:
             httpGet:
               path: /healthz
               port: {{ $probePort }}
+              {{- if $httpTLS }}
+              scheme: HTTPS
+              {{- end }}
             periodSeconds: {{ .ctx.Values.probes.startup.periodSeconds }}
             failureThreshold: {{ .ctx.Values.probes.startup.failureThreshold }}
           {{- end }}
@@ -699,6 +717,9 @@ spec:
             httpGet:
               path: /readyz
               port: {{ $probePort }}
+              {{- if $httpTLS }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: {{ .ctx.Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .ctx.Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ include "leoflow.readinessTimeoutSeconds" .ctx }}
@@ -707,6 +728,9 @@ spec:
             httpGet:
               path: /healthz
               port: {{ $probePort }}
+              {{- if $httpTLS }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: {{ .ctx.Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .ctx.Values.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .ctx.Values.probes.liveness.timeoutSeconds }}
@@ -758,6 +782,11 @@ spec:
               mountPath: /etc/leoflow/grpc-tls
               readOnly: true
             {{- end }}
+            {{- if $httpTLS }}
+            - name: http-tls
+              mountPath: /etc/leoflow/http-tls
+              readOnly: true
+            {{- end }}
             {{- if .ctx.Values.database.caConfigMap }}
             # Managed-Postgres CA bundle (#315). The DSN references this path
             # via `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` —
@@ -801,6 +830,11 @@ spec:
             # only trips in the impossible-by-guard case of neither (deployment.yaml
             # fails first with a clearer message).
             secretName: {{ required "agentTLS: no server cert Secret resolved (set agentTLS.serverCertSecret, or keep agentTLS.autoGenerate=true)" (include "leoflow.agentTLS.serverCertSecretName" .ctx) }}
+        {{- end }}
+        {{- if $httpTLS }}
+        - name: http-tls
+          secret:
+            secretName: {{ $httpTLSValues.secretName }}
         {{- end }}
         {{- if .ctx.Values.database.caConfigMap }}
         - name: db-ca

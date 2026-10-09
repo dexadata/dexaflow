@@ -11,7 +11,7 @@ Dexaflow control plane "{{ include "leoflow.fullname" . }}" is installing into n
      via the configured Ingress host(s).
 {{- else }}
      kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "leoflow.roleName" (dict "ctx" . "role" (ternary "api" "all" .Values.split.enabled)) }} {{ .Values.ports.http }}:{{ .Values.ports.http }}
-     # then open http://localhost:{{ .Values.ports.http }}
+     # then open {{ ternary "https" "http" (.Values.httpTLS.enabled | default false) }}://localhost:{{ .Values.ports.http }}
 {{- end }}
 
 Agent gRPC TLS:
