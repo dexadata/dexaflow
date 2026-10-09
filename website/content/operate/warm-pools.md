@@ -83,7 +83,11 @@ the work, and the same DAG version runs many attempts.
   `labels` or `annotations` **always runs on a dedicated pod**, which applies
   them. Before this check such a task could land on a warm pod and run without
   its node, sandbox, device or NetworkPolicy labels. A task that pins a
-  `service_account` other than the warm workers' falls back the same way.
+  `service_account` other than the warm workers' falls back the same way. A
+  value set under `defaults` (a project-wide `node_selector`, for example) is
+  copied onto every task, so it sends every task of the project to a dedicated
+  pod; leave the warm pool off for such a project, since its warm pods would sit
+  idle.
 - **Non-idempotent tasks.** Warm-pool recovery re-runs an attempt after a worker is
   lost, and the safety argument for "a re-run is harmless" holds only for
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
