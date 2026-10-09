@@ -421,6 +421,8 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS` | _(empty)_ | both | Comma-separated tenants the issuer may sign in to; `*` allows every tenant, for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a handoff token may have, its replay window. `0` uses 120 seconds; at most 600. Helm: `auth.trustedIssuer.maxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES` | _(empty)_ | both | Comma-separated audiences whose tokens from the trusted issuer are accepted as the bearer of any `/api/v2` request, reused until they expire: the [bearer mode](#trusted-issuer-bearer-tokens), for remote MCP clients behind your platform (`leoflow-mcp` is the conventional audience). Each must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE`. Empty leaves the mode off. Helm: `auth.trustedIssuer.bearerAudiences`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. Helm: `auth.trustedIssuer.bearerMaxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
@@ -694,6 +696,42 @@ one session: a second post of the same `jti` is refused until the token
 expires. That memory is per server process, so with several replicas a token
 could be accepted once by each; the short lifetime is what bounds that
 window. Mint each token right before posting it, and never put one in a URL.
+
+### Trusted-issuer bearer tokens
+
+A client that calls the API itself, such as a remote MCP client
+([ADR 0050](/project/adrs/0050-mcp-server/) D9), sends a token on every request
+and cannot use the one-use browser handoff. With `bearer_audiences` set, the
+same trusted issuer can mint tokens for it:
+
+```yaml
+auth:
+  trusted_issuer:
+    # ... the handoff keys above ...
+    bearer_audiences: [leoflow-mcp]
+    bearer_max_lifetime_seconds: 300   # 0 uses 900
+```
+
+A request whose `Authorization: Bearer` token is not one Dexaflow signed is
+checked against the issuer's JWKS: signature, `iss`, an `aud` listed in
+`bearer_audiences` and not the handoff `audience`, `exp`, an `iat` no later
+than a minute from now, `exp - iat` within `bearer_max_lifetime_seconds`, a
+`sub`, and an allowed tenant. There is no `jti` rule: the token is reused until
+it expires. On every request Dexaflow then reloads the active user linked to
+(`issuer:<name>`, `sub`) in the token's tenant, with the roles Dexaflow holds,
+so deactivating or unlinking the user ends its access on the next request,
+whatever the token's expiry.
+
+Anything wrong answers `401`, the same as a bad Dexaflow token; the reason
+stays in the server log. A token that verified but names no active linked user
+in its tenant is also recorded in the audit trail as `issuer.bearer.failure`.
+The bearer is read from the `Authorization` header only, never from the
+session cookie, and a handoff token is never accepted as a bearer, nor a bearer
+as a handoff.
+
+Keep bearer tokens short-lived. Dexaflow cannot revoke one before it expires,
+only the user behind it; an MCP gateway that mints one per client for a few
+minutes and caches it is the intended shape.
 
 ### Operator service API
 
