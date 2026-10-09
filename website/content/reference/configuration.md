@@ -751,7 +751,7 @@ so a user can grant a client less than their own rights:
 
 | Scope | Grants |
 |---|---|
-| `dexaflow:read` | Every route that needs a `read` permission. |
+| `dexaflow:read` | Every route that needs a `read` permission, plus the control-plane health and version (`/api/v2/monitor/health`, `/api/v2/monitor/executor`, `/api/v2/version`) and the import errors feed. |
 | `dexaflow:run` | Triggering a run, setting a run's state, clearing or marking task instances, and pausing or unpausing a DAG. |
 | `dexaflow:deploy` | Registering a DAG version (`POST /api/v2/dags/{id}/versions`). |
 
@@ -763,7 +763,14 @@ so a user can grant a client less than their own rights:
 - Every other write (connections, variables, pools, users, deleting a DAG or
   a run, the IDE) is refused to a bearer token whatever its scopes. Use the UI
   or a Dexaflow token for those.
+- Routes that check no permission of their own (the UI's dashboard and
+  menus, `/ui/auth/me`, and the screens Dexaflow only stubs) are refused to a
+  bearer token whatever its scopes, so a route added without a permission
+  check never ignores a token's scopes.
 - A refusal is `403` with a detail that names the missing scope.
+- Pausing and unpausing is `PATCH /api/v2/dags/{id}` with
+  `{"is_paused": true}` or `false`. A body without `is_paused` is refused
+  with `400` rather than read as an unpause.
 
 Dexaflow tokens and the sessions the browser handoff opens carry no scopes;
 only their roles decide.

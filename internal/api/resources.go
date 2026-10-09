@@ -236,13 +236,20 @@ func getDagHandler(repo DagRepository) gin.HandlerFunc {
 func patchDagHandler(repo DagRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			IsPaused bool `json:"is_paused"`
+			IsPaused *bool `json:"is_paused"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
 			return
 		}
-		d, err := repo.SetPaused(c.Request.Context(), tenantOf(c), c.Param("dag_id"), body.IsPaused)
+		// is_paused is all this route sets. A body without it must not read as
+		// false, which would unpause the DAG for a request that asked for
+		// something else.
+		if body.IsPaused == nil {
+			AbortProblem(c, http.StatusBadRequest, "bad request", "is_paused (true or false) is required")
+			return
+		}
+		d, err := repo.SetPaused(c.Request.Context(), tenantOf(c), c.Param("dag_id"), *body.IsPaused)
 		if err != nil {
 			handleRepoError(c, err)
 			return
