@@ -11,44 +11,88 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countExpiredAuditLog = `-- name: CountExpiredAuditLog :one
-SELECT count(*) FROM audit_log WHERE occurred_at < $1
+const countExpiredSettledRunsOfTenant = `-- name: CountExpiredSettledRunsOfTenant :one
+SELECT count(*) AS runs, COALESCE(sum(e.task_instances), 0)::bigint AS task_instances
+FROM (
+  SELECT (SELECT count(*) FROM task_instances ti WHERE ti.dag_run_id = r.id) AS task_instances
+  FROM dag_runs r
+  WHERE r.tenant_id = $1
+    AND r.state IN ('success', 'failed')
+    AND r.ended_at < $2
+    AND NOT EXISTS (
+      SELECT 1 FROM task_instances ti
+      WHERE ti.dag_run_id = r.id
+        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+    AND NOT EXISTS (
+      SELECT 1 FROM staging_volumes s
+      WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
+  LIMIT $3
+) e
 `
 
-func (q *Queries) CountExpiredAuditLog(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error) {
-	row := q.db.QueryRow(ctx, countExpiredAuditLog, cutoff)
+type CountExpiredSettledRunsOfTenantParams struct {
+	TenantID pgtype.UUID        `json:"tenant_id"`
+	Cutoff   pgtype.Timestamptz `json:"cutoff"`
+	MaxRuns  int32              `json:"max_runs"`
+}
+
+type CountExpiredSettledRunsOfTenantRow struct {
+	Runs          int64 `json:"runs"`
+	TaskInstances int64 `json:"task_instances"`
+}
+
+// The dry-run count for one tenant: the same predicate as
+// LockExpiredSettledRuns, with no lock, through the same partial index, and
+// stopped after max_runs runs so its cost stays bounded however long the
+// history is. The janitor reports a total that reached the cap as a lower bound.
+func (q *Queries) CountExpiredSettledRunsOfTenant(ctx context.Context, arg CountExpiredSettledRunsOfTenantParams) (CountExpiredSettledRunsOfTenantRow, error) {
+	row := q.db.QueryRow(ctx, countExpiredSettledRunsOfTenant, arg.TenantID, arg.Cutoff, arg.MaxRuns)
+	var i CountExpiredSettledRunsOfTenantRow
+	err := row.Scan(&i.Runs, &i.TaskInstances)
+	return i, err
+}
+
+const countExpiredSystemAuditLog = `-- name: CountExpiredSystemAuditLog :one
+SELECT count(*) FROM (
+  SELECT 1 FROM audit_log a
+  WHERE a.tenant_id IS NULL AND a.occurred_at < $1
+  LIMIT $2
+) e
+`
+
+type CountExpiredSystemAuditLogParams struct {
+	Cutoff  pgtype.Timestamptz `json:"cutoff"`
+	MaxRows int32              `json:"max_rows"`
+}
+
+// System audit rows (no tenant) older than the cutoff, at most max_rows.
+func (q *Queries) CountExpiredSystemAuditLog(ctx context.Context, arg CountExpiredSystemAuditLogParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countExpiredSystemAuditLog, arg.Cutoff, arg.MaxRows)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const countExpiredSettledRuns = `-- name: CountExpiredSettledRuns :one
-SELECT count(*) AS runs,
-       COALESCE(sum((SELECT count(*) FROM task_instances ti WHERE ti.dag_run_id = r.id)), 0)::bigint AS task_instances
-FROM dag_runs r
-WHERE r.state IN ('success', 'failed')
-  AND r.ended_at < $1
-  AND NOT EXISTS (
-    SELECT 1 FROM task_instances ti
-    WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
-  AND NOT EXISTS (
-    SELECT 1 FROM staging_volumes s
-    WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
+const countExpiredTenantAuditLog = `-- name: CountExpiredTenantAuditLog :one
+SELECT count(*) FROM (
+  SELECT 1 FROM audit_log a
+  WHERE a.tenant_id = $1 AND a.occurred_at < $2
+  LIMIT $3
+) e
 `
 
-type CountExpiredSettledRunsRow struct {
-	Runs          int64 `json:"runs"`
-	TaskInstances int64 `json:"task_instances"`
+type CountExpiredTenantAuditLogParams struct {
+	TenantID pgtype.UUID        `json:"tenant_id"`
+	Cutoff   pgtype.Timestamptz `json:"cutoff"`
+	MaxRows  int32              `json:"max_rows"`
 }
 
-// The dry-run count: the same predicate as LockExpiredSettledRuns, across
-// tenants, with no lock.
-func (q *Queries) CountExpiredSettledRuns(ctx context.Context, cutoff pgtype.Timestamptz) (CountExpiredSettledRunsRow, error) {
-	row := q.db.QueryRow(ctx, countExpiredSettledRuns, cutoff)
-	var i CountExpiredSettledRunsRow
-	err := row.Scan(&i.Runs, &i.TaskInstances)
-	return i, err
+// Audit rows of one tenant older than the cutoff, at most max_rows.
+func (q *Queries) CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countExpiredTenantAuditLog, arg.TenantID, arg.Cutoff, arg.MaxRows)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const deleteDagRunsByID = `-- name: DeleteDagRunsByID :execrows
@@ -271,9 +315,11 @@ type LockExpiredSettledRunsParams struct {
 // still says success until the clear reopens it. Any state added later counts
 // as unsettled, so it is kept rather than deleted. The janitor calls this once
 // per batch, so a run whose children span several batches is re-checked each
-// time. FOR UPDATE makes a clear or
-// rerun of the same run wait for the batch to commit; SKIP LOCKED lets the
-// janitor pass over a run another transaction holds instead of waiting on it.
+// time. FOR UPDATE keeps the run row itself from changing, and SKIP LOCKED
+// lets the janitor pass over a run another transaction holds. It does NOT stop
+// a clear: a clear resets task_instances before it touches the run row, so the
+// janitor then locks and re-checks the task instances
+// (LockTaskInstancesOfRuns) before it deletes anything.
 func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, lockExpiredSettledRuns, arg.TenantID, arg.Cutoff, arg.MaxRuns)
 	if err != nil {
@@ -287,6 +333,54 @@ func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSet
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTaskInstancesOfRuns = `-- name: LockTaskInstancesOfRuns :many
+SELECT ti.dag_run_id,
+       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed'))::boolean AS settled
+FROM task_instances ti
+WHERE ti.tenant_id = $1 AND ti.dag_run_id = ANY($2::uuid[])
+FOR UPDATE OF ti NOWAIT
+`
+
+type LockTaskInstancesOfRunsParams struct {
+	TenantID pgtype.UUID   `json:"tenant_id"`
+	RunIds   []pgtype.UUID `json:"run_ids"`
+}
+
+type LockTaskInstancesOfRunsRow struct {
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+	Settled  bool        `json:"settled"`
+}
+
+// Locks every task instance of the locked runs and reports whether each is
+// still settled. A clear resets task instances without locking the run row
+// first, so the run lock alone does not keep it out: a clear that committed
+// since LockExpiredSettledRuns shows here as an unsettled state, and the
+// janitor drops that run from the batch. Once these locks are held no clear can
+// change the rows until the batch commits. NOWAIT: a task instance another
+// transaction is writing (a clear in flight) fails the lock with
+// lock_not_available instead of waiting, because that clear will next update
+// the run row the janitor holds, and waiting would deadlock; the janitor skips
+// the batch and retries on a later cycle.
+func (q *Queries) LockTaskInstancesOfRuns(ctx context.Context, arg LockTaskInstancesOfRunsParams) ([]LockTaskInstancesOfRunsRow, error) {
+	rows, err := q.db.Query(ctx, lockTaskInstancesOfRuns, arg.TenantID, arg.RunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockTaskInstancesOfRunsRow{}
+	for rows.Next() {
+		var i LockTaskInstancesOfRunsRow
+		if err := rows.Scan(&i.DagRunID, &i.Settled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

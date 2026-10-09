@@ -2,9 +2,11 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/dexadata/dexaflow/internal/retention"
@@ -15,13 +17,23 @@ import (
 type RetentionStore struct {
 	q    *queries.Queries
 	pool poolBeginner
+	// dryRunCap bounds the dry-run count per tenant (runs, and audit rows):
+	// past it the count is a lower bound (Counts.Capped).
+	dryRunCap int
+	// afterRunLock is a test seam run right after the expired runs are locked.
+	afterRunLock func()
 }
+
+// retentionDryRunCap is how many eligible runs and audit rows the dry run
+// counts per tenant before it stops: enough to size a first purge, cheap
+// enough to run on the largest install.
+const retentionDryRunCap = 10000
 
 var _ retention.Store = (*RetentionStore)(nil)
 
 // NewRetentionStore builds a RetentionStore over the given Postgres connection.
 func NewRetentionStore(pg *Postgres) *RetentionStore {
-	return &RetentionStore{q: pg.Queries, pool: pg.Pool}
+	return &RetentionStore{q: pg.Queries, pool: pg.Pool, dryRunCap: retentionDryRunCap}
 }
 
 // TenantIDs lists every tenant.
@@ -65,6 +77,21 @@ func (s *RetentionStore) DeleteFinishedRuns(ctx context.Context, tenant string, 
 	if len(runs) == 0 {
 		return retention.Counts{}, nil
 	}
+	if s.afterRunLock != nil {
+		s.afterRunLock()
+	}
+	runs, err = stillSettled(ctx, qtx, tid, runs)
+	if errors.Is(err, errRetentionRunBusy) {
+		// A clear is writing one of these runs right now; leave the batch to a
+		// later cycle rather than wait on it (it would deadlock on the run row).
+		return retention.Counts{}, nil
+	}
+	if err != nil {
+		return retention.Counts{}, err
+	}
+	if len(runs) == 0 {
+		return retention.Counts{}, nil
+	}
 	c, err := deleteRunRows(ctx, qtx, tid, runs, int32(rowLimit)) //nolint:gosec // bounded by config validation
 	if err != nil {
 		return retention.Counts{}, err
@@ -78,6 +105,41 @@ func (s *RetentionStore) DeleteFinishedRuns(ctx context.Context, tenant string, 
 // deleteRunRows spends a budget of limit rows on the locked runs, one table at
 // a time in FK order. A table that used the whole remaining budget may hold
 // more rows, so the batch stops there and leaves the rest to the next call.
+// errRetentionRunBusy reports that another transaction holds a task instance
+// row of the batch (a clear in flight).
+var errRetentionRunBusy = errors.New("retention: a run of the batch is being written")
+
+// stillSettled locks every task instance of the locked runs and returns the
+// runs whose task instances are all still settled. The run lock does not keep a
+// clear out (a clear resets task instances before it touches the run row), so a
+// run cleared since it was selected is dropped here, whole: none of its rows is
+// deleted. With the task instances locked, no clear can change them until the
+// batch commits. A task instance locked by another transaction returns
+// errRetentionRunBusy instead of waiting (NOWAIT).
+func stillSettled(ctx context.Context, q *queries.Queries, tid pgtype.UUID, runs []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.LockTaskInstancesOfRuns(ctx, queries.LockTaskInstancesOfRunsParams{TenantID: tid, RunIds: runs})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgLockNotAvailable {
+			return nil, errRetentionRunBusy
+		}
+		return nil, fmt.Errorf("locking task instances of expired runs: %w", err)
+	}
+	unsettled := map[pgtype.UUID]bool{}
+	for _, r := range rows {
+		if !r.Settled {
+			unsettled[r.DagRunID] = true
+		}
+	}
+	kept := runs[:0]
+	for _, id := range runs {
+		if !unsettled[id] {
+			kept = append(kept, id)
+		}
+	}
+	return kept, nil
+}
+
 func deleteRunRows(ctx context.Context, q *queries.Queries, tid pgtype.UUID, runs []pgtype.UUID, limit int32) (retention.Counts, error) {
 	var c retention.Counts
 	steps := []struct {
@@ -160,23 +222,71 @@ func (s *RetentionStore) RecordRetentionPurge(ctx context.Context, tenant string
 	return nil
 }
 
-// CountEligible counts what a cycle would delete, without deleting. A nil
-// cutoff leaves that class at zero.
+// CountEligible counts what a retention cycle would delete, for the dry run:
+// expired settled runs and their task instances when runCutoff is set, audit
+// rows when auditCutoff is set (system rows included). Each tenant is counted
+// through its own index range and stops at the dry-run cap, so the count's cost
+// is bounded per tenant; Capped reports that some tenant reached it and the
+// totals are a lower bound.
 func (s *RetentionStore) CountEligible(ctx context.Context, runCutoff, auditCutoff *time.Time) (retention.Counts, error) {
 	var c retention.Counts
+	tenants, err := s.TenantIDs(ctx)
+	if err != nil {
+		return c, err
+	}
+	for _, tenant := range tenants {
+		got, err := s.CountEligibleForTenant(ctx, tenant, runCutoff, auditCutoff)
+		if err != nil {
+			return c, err
+		}
+		c = c.Add(got)
+	}
+	if auditCutoff != nil {
+		n, err := s.q.CountExpiredSystemAuditLog(ctx, queries.CountExpiredSystemAuditLogParams{
+			Cutoff: pgtype.Timestamptz{Time: *auditCutoff, Valid: true}, MaxRows: s.dryRunLimit(),
+		})
+		if err != nil {
+			return c, fmt.Errorf("counting expired system audit rows: %w", err)
+		}
+		c.AuditLog += n
+		c.Capped = c.Capped || n >= int64(s.dryRunLimit())
+	}
+	return c, nil
+}
+
+// CountEligibleForTenant is CountEligible for one tenant, each class stopped
+// at the dry-run cap.
+func (s *RetentionStore) CountEligibleForTenant(ctx context.Context, tenant string, runCutoff, auditCutoff *time.Time) (retention.Counts, error) {
+	var c retention.Counts
+	tid, err := parseUUID(tenant)
+	if err != nil {
+		return c, fmt.Errorf("tenant id: %w", err)
+	}
+	limit := s.dryRunLimit()
 	if runCutoff != nil {
-		row, err := s.q.CountExpiredSettledRuns(ctx, pgtype.Timestamptz{Time: *runCutoff, Valid: true})
+		row, err := s.q.CountExpiredSettledRunsOfTenant(ctx, queries.CountExpiredSettledRunsOfTenantParams{
+			TenantID: tid, Cutoff: pgtype.Timestamptz{Time: *runCutoff, Valid: true}, MaxRuns: limit,
+		})
 		if err != nil {
 			return c, fmt.Errorf("counting expired runs: %w", err)
 		}
 		c.DagRuns, c.TaskInstances = row.Runs, row.TaskInstances
+		c.Capped = row.Runs >= int64(limit)
 	}
 	if auditCutoff != nil {
-		n, err := s.q.CountExpiredAuditLog(ctx, pgtype.Timestamptz{Time: *auditCutoff, Valid: true})
+		n, err := s.q.CountExpiredTenantAuditLog(ctx, queries.CountExpiredTenantAuditLogParams{
+			TenantID: tid, Cutoff: pgtype.Timestamptz{Time: *auditCutoff, Valid: true}, MaxRows: limit,
+		})
 		if err != nil {
 			return c, fmt.Errorf("counting expired audit rows: %w", err)
 		}
 		c.AuditLog = n
+		c.Capped = c.Capped || n >= int64(limit)
 	}
 	return c, nil
+}
+
+// dryRunLimit is the dry-run cap as the queries take it.
+func (s *RetentionStore) dryRunLimit() int32 {
+	return int32(max(s.dryRunCap, 1)) //nolint:gosec // a small constant, or a test value
 }
