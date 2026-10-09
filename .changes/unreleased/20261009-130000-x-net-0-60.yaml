@@ -1,6 +1,7 @@
 kind: Security
 body: |-
-  **`golang.org/x/net` is now v0.60.0.** v0.58.0 carries an HTTP/2 advisory
-  that govulncheck reaches through the agent gRPC server and the HTTP clients,
-  and the image scans flag it in the server and migrate images.
+  **Builds use Go 1.26.9 and `golang.org/x/net` v0.60.0.** Go 1.26.6's
+  `net/http` and x/net v0.58.0's HTTP/2 carry advisories that govulncheck
+  reaches through the agent gRPC server, the API server and the HTTP clients,
+  and the image scans flag them in the server and migrate images.
 time: 2026-10-09T13:00:00.000000000-03:00
