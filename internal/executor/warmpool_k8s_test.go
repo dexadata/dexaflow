@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"reflect"
+	"sort"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -244,5 +246,32 @@ func TestKubernetesWarmPodsDelete(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("after delete listed %d, want 0", len(got))
+	}
+}
+
+// TestKubernetesWarmPodsListWarmAnchors (#1500): it lists exactly the warm-pool GC
+// anchors (label leoflow.io/warm-anchor=true) in its namespace, returning each
+// one's dag_version label; other ConfigMaps and other namespaces are ignored.
+func TestKubernetesWarmPodsListWarmAnchors(t *testing.T) {
+	anchor := func(name, ns, version string) *corev1.ConfigMap {
+		return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns,
+			Labels: map[string]string{warmAnchorLabelKey: warmAnchorLabelVal, warmDagVersionLabelKey: version}}}
+	}
+	cs := fake.NewSimpleClientset(
+		anchor(warmAnchorName("dv-a"), "leoflow", "dv-a"),
+		anchor(warmAnchorName("dv-b"), "leoflow", "dv-b"),
+		anchor(warmAnchorName("dv-other-ns"), "elsewhere", "dv-other-ns"),
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "leoflow"}},
+	)
+	k := NewKubernetesWarmPods(cs, "leoflow", nil)
+
+	got, err := k.ListWarmAnchors(context.Background())
+
+	if err != nil {
+		t.Fatalf("ListWarmAnchors: %v", err)
+	}
+	sort.Strings(got)
+	if want := []string{"dv-a", "dv-b"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ListWarmAnchors = %v, want %v (only this namespace's anchors)", got, want)
 	}
 }
