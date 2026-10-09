@@ -265,14 +265,26 @@ func taskProvidedReason(rec taskoutcome.Record) string {
 
 // withTaskProvided appends a task's own text to a reason the platform built,
 // labeled so it cannot pass for the platform's words. The text is quoted, so a
-// newline or a forged closing bracket cannot leave the label, and the whole
-// result keeps the reason cap.
+// newline or a forged closing bracket cannot leave the label. The task's text is
+// cut to the room the cap leaves after the label, so the label always closes;
+// with no room left the platform's reason is served alone.
 func withTaskProvided(platform, task string) string {
 	if task == "" {
 		return platform
 	}
-	task = taskoutcome.TruncateReason(task, taskoutcome.MaxReasonLen)
-	return boundReason(fmt.Sprintf("%s [task-provided: %q]", platform, task))
+	room := taskoutcome.MaxReasonLen - len(platform) - len(" [task-provided: ]")
+	if room < len(`""`)+1 {
+		return platform
+	}
+	cut := taskoutcome.TruncateReason(task, room)
+	// Quoting can expand the text with escapes, so cut until it fits.
+	for cut != "" && len(strconv.Quote(cut)) > room {
+		cut = taskoutcome.TruncateReason(cut, len(cut)-1)
+	}
+	if cut == "" {
+		return platform
+	}
+	return platform + " [task-provided: " + strconv.Quote(cut) + "]"
 }
 
 // podFailureReason describes a failed pod from what Kubernetes observed, for the

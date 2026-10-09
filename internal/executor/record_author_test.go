@@ -80,6 +80,9 @@ func TestUnmarkedReasonIsBoundedAndDefanged(t *testing.T) {
 	if !strings.HasPrefix(got, "task failed") {
 		t.Errorf("reason = %q, want the platform's rendering first", got)
 	}
+	if !strings.HasSuffix(got, `"]`) {
+		t.Errorf("reason = %q, want the label closed after the cut task text", got)
+	}
 }
 
 // TestAgentMarkedReasonIsStillServed: a genuine agent classification keeps
