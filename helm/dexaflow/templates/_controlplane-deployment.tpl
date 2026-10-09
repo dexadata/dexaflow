@@ -139,7 +139,7 @@ spec:
             # the served SPA shell, mirroring Lite's silver LITE pill.
             - name: LEOFLOW_UI_EDITION
               value: "pro"
-            {{- if .ctx.Values.goMemLimit.enabled }}
+            {{- if (.ctx.Values.goMemLimit | default dict).enabled }}
             # Soft memory limit for the Go GC, a fraction of the container's
             # hard limit (leoflow.goMemLimit). Omitted when off.
             - name: GOMEMLIMIT
@@ -228,6 +228,13 @@ spec:
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
             {{- end }}
+            {{- if .ctx.Values.config.poolsReadOnly }}
+            # Tenant-facing pool API serves reads only (server.pools_read_only):
+            # no tenant role, admin included, can create, resize or delete a pool.
+            # Omitted when false, which keeps the server default (writable).
+            - name: LEOFLOW_SERVER_POOLS_READ_ONLY
+              value: "true"
+            {{- end }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set
@@ -241,6 +248,21 @@ spec:
             - name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
               value: {{ .ctx.Values.executor.defaults.resources.memory | quote }}
             {{- end }}
+            {{- with .ctx.Values.executor.unit }}
+            {{- if or .cpu .memory }}
+            # Resource unit of one pool slot (ADR 0066): tasks are sized
+            # pool_slots x unit. The server refuses to boot with only one of the
+            # two set.
+            - name: LEOFLOW_EXECUTOR_UNIT_CPU
+              value: {{ .cpu | quote }}
+            - name: LEOFLOW_EXECUTOR_UNIT_MEMORY
+              value: {{ .memory | quote }}
+            - name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+              value: {{ .enforce | default "refuse" | quote }}
+            - name: LEOFLOW_EXECUTOR_UNIT_MAX_SIZE
+              value: {{ .maxSize | default 64 | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .ctx.Values.executor.defaults.staging.size }}
             # L0 per-cluster staging-volume size default (ADR 0023). Env is the only
             # override path since the chart ships no server config file (#743).
@@ -251,6 +273,27 @@ spec:
             # L0 per-cluster staging-volume StorageClass default (ADR 0023, #743).
             - name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
               value: {{ .ctx.Values.executor.defaults.staging.storageClass | quote }}
+            {{- end }}
+            {{- with .ctx.Values.executor.kubeClient }}
+            {{- if .qps }}
+            # Kubernetes client rate limits (executor.kube_client). Unset keeps
+            # client-go's QPS 5 / burst 10 on one shared client.
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS
+              value: {{ .qps | quote }}
+            {{- end }}
+            {{- if .burst }}
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST
+              value: {{ .burst | quote }}
+            {{- end }}
+            {{- if .maintenanceQps }}
+            # A separate client and token bucket for maintenance work.
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
+              value: {{ .maintenanceQps | quote }}
+            {{- end }}
+            {{- if .maintenanceBurst }}
+            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
+              value: {{ .maintenanceBurst | quote }}
+            {{- end }}
             {{- end }}
             {{- if .ctx.Values.executor.collectSettledRunPods }}
             # Opt-in: collect a settled run's finished task pods in one
@@ -302,6 +345,11 @@ spec:
               value: {{ .ctx.Values.config.scheduler.enabled | quote }}
             - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
               value: {{ .ctx.Values.config.scheduler.loopIntervalMs | quote }}
+            {{- with .ctx.Values.config.scheduler.poolStarvationThreshold }}
+            # Pool reservation for a starved large task (ADR 0066).
+            - name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .ctx.Values.config.scheduler.dispatch }}
             {{- if .bufferSize }}
             # Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create

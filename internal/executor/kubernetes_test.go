@@ -283,14 +283,15 @@ func TestBuildPodAppliesEphemeralStorage(t *testing.T) {
 }
 
 // TestBuildPodMergesLabelsAndAnnotations asserts operator-declared labels and
-// annotations are merged onto the task pod, but Dexaflow's own leoflow.io/* labels
-// and the task-instance-id annotation win any key collision — a DAG must not be
-// able to shadow the identity the reconciler and terminate path select on.
+// annotations are merged onto the task pod, while a declared key under the
+// reserved leoflow.io/ prefix is dropped, so a DAG cannot shadow the identity
+// the reconciler and terminate path select on.
 func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	req := sampleReq()
 	req.Execution.Labels = map[string]string{
-		"team":              "data-eng",
-		"leoflow.io/dag-id": "hijacked", // collision: Dexaflow must win
+		"team":                     "data-eng",
+		"leoflow.io/dag-id":        "hijacked", // collision: Dexaflow must win
+		"leoflow.io/attempt-epoch": "99",       // the settle fence reads it: Dexaflow must win
 	}
 	req.Execution.Annotations = map[string]string{
 		"cost-center":                 "1234",
@@ -303,16 +304,52 @@ func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	if pod.Labels["leoflow.io/dag-id"] != "etl" {
 		t.Errorf("Dexaflow label overridden by DAG: %q, want etl", pod.Labels["leoflow.io/dag-id"])
 	}
+	if pod.Labels["leoflow.io/attempt-epoch"] != "0" {
+		t.Errorf("attempt-epoch label overridden by DAG: %q, want 0", pod.Labels["leoflow.io/attempt-epoch"])
+	}
 	if pod.Annotations["cost-center"] != "1234" {
 		t.Errorf("declared annotation not merged: %v", pod.Annotations)
 	}
 	if pod.Annotations["leoflow.io/task-instance-id"] != "ti-1" {
 		t.Errorf("Dexaflow annotation overridden by DAG: %q, want ti-1", pod.Annotations["leoflow.io/task-instance-id"])
 	}
-	// Omission leaves only Dexaflow's own metadata (5 labels, 1 annotation).
+	// Omission leaves only Dexaflow's own metadata (6 labels, 1 annotation).
 	base := BuildPod(sampleReq())
-	if len(base.Labels) != 5 || len(base.Annotations) != 1 {
+	if len(base.Labels) != 6 || len(base.Annotations) != 1 {
 		t.Errorf("unexpected base metadata: labels=%v annotations=%v", base.Labels, base.Annotations)
+	}
+}
+
+// TestBuildPodDropsReservedPrefixMetadata asserts a DAG cannot put ANY key under
+// the executor-owned leoflow.io/ prefix on its task pod, not only the keys the
+// executor itself stamps. A dedicated task pod labeled leoflow.io/warm-worker=true
+// would be resolved as a warm worker by the token exchange and listed as one by
+// the warm-pool reconciler, so such keys are dropped while ordinary keys merge.
+func TestBuildPodDropsReservedPrefixMetadata(t *testing.T) {
+	req := sampleReq()
+	req.Execution.Labels = map[string]string{
+		"team":                      "data-eng",
+		"leoflow.io/warm-worker":    "true",
+		"leoflow.io/dag-version-id": "other-version",
+	}
+	req.Execution.Annotations = map[string]string{
+		"cost-center":               "1234",
+		"leoflow.io/agent-identity": `{"task_instance_id":"forged"}`,
+	}
+	pod := BuildPod(req)
+	for _, k := range []string{"leoflow.io/warm-worker", "leoflow.io/dag-version-id"} {
+		if v, ok := pod.Labels[k]; ok {
+			t.Errorf("DAG-declared reserved label %s=%q reached the pod", k, v)
+		}
+	}
+	if v, ok := pod.Annotations["leoflow.io/agent-identity"]; ok {
+		t.Errorf("DAG-declared reserved annotation leoflow.io/agent-identity=%q reached the pod", v)
+	}
+	if pod.Labels["team"] != "data-eng" || pod.Annotations["cost-center"] != "1234" {
+		t.Errorf("ordinary declared metadata not merged: labels=%v annotations=%v", pod.Labels, pod.Annotations)
+	}
+	if pod.Labels["leoflow.io/dag-id"] != "etl" || pod.Annotations["leoflow.io/task-instance-id"] != "ti-1" {
+		t.Errorf("Dexaflow's own metadata lost: labels=%v annotations=%v", pod.Labels, pod.Annotations)
 	}
 }
 
@@ -463,5 +500,20 @@ func TestKubernetesExecutorCreatesPod(t *testing.T) {
 	}
 	if len(pods.Items) != 1 {
 		t.Fatalf("want 1 pod created, got %d", len(pods.Items))
+	}
+}
+
+// TestMergeMetadataReturnsDroppedKeysSorted: the dropped reserved keys come
+// back sorted, so the single per-pod warning is stable.
+func TestMergeMetadataReturnsDroppedKeysSorted(t *testing.T) {
+	own := map[string]string{"leoflow.io/run-id": "r"}
+	dropped := mergeMetadata(own, map[string]string{
+		"leoflow.io/warm-worker": "true", "app": "etl", "leoflow.io/dag-version-id": "v",
+	})
+	if strings.Join(dropped, ",") != "leoflow.io/dag-version-id,leoflow.io/warm-worker" {
+		t.Errorf("dropped = %v", dropped)
+	}
+	if own["app"] != "etl" || own["leoflow.io/run-id"] != "r" || len(own) != 2 {
+		t.Errorf("own = %v", own)
 	}
 }

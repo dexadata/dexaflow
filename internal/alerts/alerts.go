@@ -10,9 +10,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 )
 
@@ -129,7 +131,7 @@ func (n *Notifier) Send(ctx context.Context, channelType, url string, headers ma
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("building %s alert request: %w", channelType, err)
+		return fmt.Errorf("building %s alert request: %w", channelType, redactURLError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
@@ -137,7 +139,7 @@ func (n *Notifier) Send(ctx context.Context, channelType, url string, headers ma
 	}
 	resp, err := n.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending %s alert: %w", channelType, err)
+		return fmt.Errorf("sending %s alert: %w", channelType, redactURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort close of the alert response body
 	//nolint:errcheck // draining the (capped) body for connection reuse; count/err are irrelevant
@@ -146,4 +148,28 @@ func (n *Notifier) Send(ctx context.Context, channelType, url string, headers ma
 		return fmt.Errorf("%s alert endpoint returned %s", channelType, resp.Status)
 	}
 	return nil
+}
+
+// redactURLError replaces the URL a *url.Error carries with its scheme and
+// host. An alert URL is a connection secret (a Slack incoming webhook carries
+// its credential in the path), and these errors are logged. The rest of the
+// chain is kept, so callers can still match its cause with errors.Is/As.
+func redactURLError(err error) error {
+	var ue *neturl.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	return &neturl.Error{Op: ue.Op, URL: redactURL(ue.URL), Err: ue.Err}
+}
+
+// redactURL keeps only the scheme and host (with port) of raw.
+func redactURL(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return "(unparseable URL)"
+	}
+	if u.Host == "" {
+		return "(URL without a host)"
+	}
+	return u.Scheme + "://" + u.Host
 }

@@ -77,17 +77,17 @@ func (f *fakeReporter) put(id string, o settledOutcome) {
 	f.settled[id] = o
 }
 
-func (f *fakeReporter) FailTask(_ context.Context, id string, tryNumber int, reason string) error {
+func (f *fakeReporter) FailTask(_ context.Context, id string, tryNumber, _ int, reason string) error {
 	f.put(id, settledOutcome{kind: settleFailed, tryNumber: tryNumber, reason: reason})
 	return nil
 }
 
-func (f *fakeReporter) SucceedTask(_ context.Context, id string, tryNumber int) error {
+func (f *fakeReporter) SucceedTask(_ context.Context, id string, tryNumber, _ int) error {
 	f.put(id, settledOutcome{kind: settleSucceeded, tryNumber: tryNumber})
 	return nil
 }
 
-func (f *fakeReporter) RescheduleTask(_ context.Context, id string, tryNumber int, at time.Time) error {
+func (f *fakeReporter) RescheduleTask(_ context.Context, id string, tryNumber, _ int, at time.Time) error {
 	f.put(id, settledOutcome{kind: settleReschedule, tryNumber: tryNumber, at: at})
 	return nil
 }
@@ -611,4 +611,97 @@ func mustEncode(t *testing.T, rec taskoutcome.Record) string {
 		t.Fatal(err)
 	}
 	return enc
+}
+
+// epochFencingReporter settles like the storage guard: only the row's
+// current (try, epoch).
+type epochFencingReporter struct {
+	try, epoch int
+	settled    []string
+}
+
+func (f *epochFencingReporter) match(try, epoch int) bool { return try == f.try && epoch == f.epoch }
+
+func (f *epochFencingReporter) FailTask(_ context.Context, _ string, try, epoch int, _ string) error {
+	if f.match(try, epoch) {
+		f.settled = append(f.settled, "failed")
+	}
+	return nil
+}
+
+func (f *epochFencingReporter) SucceedTask(_ context.Context, _ string, try, epoch int) error {
+	if f.match(try, epoch) {
+		f.settled = append(f.settled, "success")
+	}
+	return nil
+}
+
+func (f *epochFencingReporter) RescheduleTask(_ context.Context, _ string, try, epoch int, _ time.Time) error {
+	if f.match(try, epoch) {
+		f.settled = append(f.settled, "reschedule")
+	}
+	return nil
+}
+
+// TestReconcileDoesNotSettleReplacementFromSupersededPod is #1130: a terminal
+// pod of the superseded attempt, carrying a SUCCESS record, labels
+// try-number=1 and no epoch, against a TI on try 1 epoch 1 in queued. The
+// reconciler reads the attempt from the labels (epoch 0), so the settle is
+// fenced and the replacement is not marked success from work it never did.
+func TestReconcileDoesNotSettleReplacementFromSupersededPod(t *testing.T) {
+	stale := withRecord(managedPod("stale", "ti-1", corev1.PodSucceeded), taskoutcome.Succeeded())
+	reporter := &epochFencingReporter{try: 1, epoch: 1}
+	r := NewReconciler(fake.NewClientset(stale), "leoflow", reporter)
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(reporter.settled) != 0 {
+		t.Fatalf("#1130: the superseded pod's record must not settle the replacement, settled %v", reporter.settled)
+	}
+
+	// The replacement's own pod, labeled with its epoch, does settle.
+	own := withRecord(managedPod("own", "ti-1", corev1.PodSucceeded), taskoutcome.Succeeded())
+	own.Labels[podLabelAttemptEpoch] = "1"
+	r = NewReconciler(fake.NewClientset(own), "leoflow", reporter)
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(reporter.settled) != 1 || reporter.settled[0] != "success" {
+		t.Fatalf("the attempt's own pod must settle it, settled %v", reporter.settled)
+	}
+}
+
+// TestReconcileSkipsUnparseableAttemptEpoch: a pod whose epoch label is
+// present but not a number cannot be attributed to an attempt, so it is not
+// settled (the same rule as a missing try-number).
+func TestReconcileSkipsUnparseableAttemptEpoch(t *testing.T) {
+	pod := withRecord(managedPod("odd", "ti-1", corev1.PodSucceeded), taskoutcome.Succeeded())
+	pod.Labels[podLabelAttemptEpoch] = "x"
+	reporter := &epochFencingReporter{try: 1, epoch: 0}
+	r := NewReconciler(fake.NewClientset(pod), "leoflow", reporter)
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(reporter.settled) != 0 {
+		t.Fatalf("an unparseable epoch label must not settle, settled %v", reporter.settled)
+	}
+}
+
+// TestReconcileSettlesLegacyPodOnEpochZeroRow pins the upgrade path: a pod
+// created by a release without the attempt epoch carries no epoch label and
+// counts as epoch 0, so its record still settles a row no post-upgrade
+// dispatch has claimed (epoch 0), exactly as before the upgrade.
+func TestReconcileSettlesLegacyPodOnEpochZeroRow(t *testing.T) {
+	legacy := withRecord(managedPod("legacy", "ti-1", corev1.PodSucceeded), taskoutcome.Succeeded())
+	if _, has := legacy.Labels[podLabelAttemptEpoch]; has {
+		t.Fatalf("precondition: the legacy pod has no epoch label")
+	}
+	reporter := &epochFencingReporter{try: 1, epoch: 0}
+	r := NewReconciler(fake.NewClientset(legacy), "leoflow", reporter)
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(reporter.settled) != 1 || reporter.settled[0] != "success" {
+		t.Fatalf("an unlabeled pod must settle an epoch-0 row, settled %v", reporter.settled)
+	}
 }

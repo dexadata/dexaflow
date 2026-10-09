@@ -14,6 +14,7 @@ import (
 //	heartbeat interval  <  agent-lost threshold  <  settling grace  <  attempt token TTL
 //	2 × maintenance interval  <  settling grace
 //	longest infra re-place delay  <  orphan threshold
+//	task termination grace + 2 × maintenance interval  <  infra confirmation valve  <  orphan threshold
 //	attempt token TTL  <  max attempt credential lifetime   (when the ceiling is enabled)
 //
 // Why each rung matters:
@@ -39,6 +40,15 @@ import (
 //     parked in its longest infra re-place backoff has no activity to show the
 //     orphan-run reaper; the threshold must outlast that parking or the reaper
 //     eats a run that is still recovering from the very fault being retried.
+//   - termination grace + 2×maintenance < infra confirmation valve (ADR 0052
+//     amendment): a reaped pod is stopped in place, its task container exits
+//     within the termination grace, and the reconciler needs a sweep after that
+//     to read the record and confirm or override the mark. A valve that opens
+//     sooner lets the planner re-place on the guess before the evidence could
+//     be read. A DAG that declares a longer termination grace gets the valve,
+//     not the record, for that task.
+//   - infra confirmation valve < orphan threshold: a run whose only live task
+//     is a provisional mark shows no activity to the orphan-run reaper.
 //   - token TTL < credential lifetime: heartbeat renewal keeps an attempt's
 //     bearer alive only while the attempt is younger than the ceiling. A ceiling
 //     below the TTL means the first renewal is already refused, the bearer
@@ -73,6 +83,13 @@ type ResilienceLadder struct {
 	// A non-positive value is the documented "no ceiling" setting; the rung that
 	// depends on it is then trivially satisfied and skipped.
 	MaxAttemptCredentialLifetime time.Duration
+	// TaskTerminationGrace is the default termination grace of a task pod: how
+	// long a pod stopped in place may take for its task container to exit.
+	TaskTerminationGrace time.Duration
+	// InfraConfirmMaxWait is the scheduler's infra confirmation valve
+	// (scheduler.InfraConfirmMaxWait), passed in for the same reason as
+	// InfraReplaceMaxDelay.
+	InfraConfirmMaxWait time.Duration
 }
 
 // maxAttemptCredentialLifetimeKey is the config key of the one operator-tunable
@@ -111,8 +128,10 @@ func ValidateResilienceLadder(l ResilienceLadder) error {
 	rec := ladderRung{"maintenance interval", l.ReconcileInterval}
 	orphan := ladderRung{"orphan threshold", l.OrphanThreshold}
 	replace := ladderRung{"longest infra re-place delay", l.InfraReplaceMaxDelay}
+	termGrace := ladderRung{"task termination grace", l.TaskTerminationGrace}
+	valve := ladderRung{"infra confirmation valve", l.InfraConfirmMaxWait}
 
-	for _, r := range []ladderRung{hb, thr, grace, ttl, rec, orphan, replace} {
+	for _, r := range []ladderRung{hb, thr, grace, ttl, rec, orphan, replace, termGrace, valve} {
 		if r.d <= 0 {
 			return fmt.Errorf("resilience ladder: %s (%v) must be positive", r.name, r.d)
 		}
@@ -124,6 +143,12 @@ func ValidateResilienceLadder(l ResilienceLadder) error {
 		{lo: grace, hi: ttl, why: "a re-heartbeat must still authenticate and renew the bearer when the grace ends"},
 		{lo: twoRec, hi: grace, why: "at least two reconcile-then-reap cycles must complete under a new leader before the settling gate may open, so a transiently failed settle is retried before any reaper acts"},
 		{lo: replace, hi: orphan, why: "a run parked in its longest infra re-place backoff must not be reaped as orphaned while it is still recovering"},
+		{
+			lo:  ladderRung{"task termination grace + 2 × maintenance interval", l.TaskTerminationGrace + 2*l.ReconcileInterval},
+			hi:  valve,
+			why: "a stopped task pod's container must exit and a reconcile sweep must read its record before the planner may act on the infra guess",
+		},
+		{lo: valve, hi: orphan, why: "a run whose only live task is a provisional infra mark must not be reaped as orphaned while the mark awaits confirmation"},
 	}
 	if l.MaxAttemptCredentialLifetime > 0 {
 		ceiling := ladderRung{maxAttemptCredentialLifetimeKey, l.MaxAttemptCredentialLifetime}

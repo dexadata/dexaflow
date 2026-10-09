@@ -74,3 +74,6 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0060: External secrets resolution — pod-side, provider-neutral SecretResolver](/project/adrs/0060-external-secrets-resolution/)
 - [ADR 0061: Secret locality — private scratch, masked on read](/project/adrs/0061-secret-locality/)
 - [ADR 0062: Release branches per minor, main always open](/project/adrs/0062-release-branches-and-open-main/)
+- [ADR 0064: Branching and skip: in-pod decision, scheduler-side skip cascade](/project/adrs/0064-branching-and-skip/)
+- [ADR 0065: Lite key migration off the published key](/project/adrs/0065-lite-key-migration/)
+- [ADR 0066: Weighted pool slots and an operator resource unit](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)

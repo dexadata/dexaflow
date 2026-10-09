@@ -37,12 +37,14 @@ func TestRecordersIncrementCounters(t *testing.T) {
 	m.RecordHTTPRequest("GET", "/api/v2/dags", 200, 5*time.Millisecond)
 	m.RecordSchedulerDecision("panic")    // backs the scheduler resilience metric
 	m.RecordUndispatchable("no_executor") // backs the undispatchable signal (#46)
+	m.RecordUnitMisfit("register")        // backs executor.unit.enforce=warn (ADR 0066)
 
 	// Each recorder must have incremented its counter to 1.
 	for name, want := range map[string]float64{
 		"dexaflow_http_requests_total":        1,
 		"dexaflow_scheduler_decisions_total":  1,
 		"dexaflow_tasks_undispatchable_total": 1,
+		"dexaflow_unit_misfit_total":          1,
 	} {
 		if got := counterTotal(t, reg, name); got != want {
 			t.Errorf("%s = %v, want %v", name, got, want)
@@ -154,5 +156,22 @@ func TestEveryRegisteredMetricHasItsLegacyTwin(t *testing.T) {
 		if suffix, ok := strings.CutPrefix(name, "dexaflow_"); ok && !names["leoflow_"+suffix] {
 			t.Errorf("%s has no leoflow_%s twin", name, suffix)
 		}
+	}
+}
+
+// TestRecordInfraOverrideCountsByMark: every durable SUCCESS the reconciler
+// settles over an infra mark is counted under the mark it overrode (ADR 0052
+// amendment), so a recovered success is never silent.
+func TestRecordInfraOverrideCountsByMark(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	m.RecordInfraOverride("agent_lost")
+	m.RecordInfraOverride("agent_lost")
+	m.RecordInfraOverride("pod_lost")
+	if got := counterTotal(t, reg, "dexaflow_reconcile_infra_override_total"); got != 3 {
+		t.Errorf("dexaflow_reconcile_infra_override_total = %v, want 3", got)
+	}
+	if got := m.ReconcileInfraOverrides.WithLabelValues("agent_lost"); got == nil {
+		t.Fatal("the counter must be labeled by mark")
 	}
 }

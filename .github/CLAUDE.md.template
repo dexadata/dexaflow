@@ -80,7 +80,8 @@ Dockerfile    ┘                              │          └─ User Python c
 
 ```
 dexaflow/
-├── CLAUDE.md                  # This file
+├── AGENTS.md                  # Standing repository rules
+├── CLAUDE.md                  # Loads AGENTS.md and this template
 ├── README.md
 ├── LICENSE                    # Apache 2.0
 ├── Makefile
@@ -131,7 +132,7 @@ dexaflow/
 7. **Never break the `/api/v2/` API surface.** It must remain Airflow 3.2.x compatible.
 8. **Never use Python outside of `parser/` and inside user task containers.**
 9. **When in doubt about an architectural choice, stop and ask.** Don't guess on irreversible decisions.
-10. **Agent context files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, etc.) are gitignored.** They are never committed. The template at `.github/CLAUDE.md.template` is the source of truth for the canonical context; copy from it.
+10. **`AGENTS.md` at the root holds the standing repository rules** (release candidate reviews, branches, migrations, CI hygiene, commit and PR text) and is committed, with a short root `CLAUDE.md` that loads it and this template. This template is the source of truth for the codebase context. Personal context files (`CLAUDE.local.md`, `GEMINI.md`, etc.) are gitignored and never committed.
 11. **A test that bypasses the documented path proves nothing.** Before trusting
     a green suite, ask which path it exercised. The mixed-mode e2e hand-wrote a
     Dockerfile (hiding a missing COPY), overrode `DBT_PROFILES_DIR` (hiding an

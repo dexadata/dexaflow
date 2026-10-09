@@ -269,3 +269,38 @@ func RequirePermission(action, resource string) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// xcomEntriesSegment marks where the task instance route's XCom key starts.
+// The Airflow UI percent-encodes the key, and a key may legitimately hold a
+// slash, so an encoded separator after this segment is part of the key.
+const xcomEntriesSegment = "/xcomEntries/"
+
+// RejectEncodedPathSeparators refuses a request whose path carries a
+// percent-encoded slash (%2F) or backslash (%5C) with 400. gin routes on the
+// decoded path, so /auth%2Ftoken is served as /auth/token, while a reverse
+// proxy or load balancer in front of the server matches its rules on the raw
+// path and would let it through a rule written for /auth/token. Refusing the
+// encoded form keeps both sides reading the same path. The XCom key in the task
+// instance route is the one exception (see xcomEntriesSegment).
+func RejectEncodedPathSeparators() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if hasEncodedPathSeparator(c.Request.URL.EscapedPath()) {
+			AbortProblem(c, http.StatusBadRequest, "bad request", "the request path must not contain an encoded slash or backslash")
+			return
+		}
+		c.Next()
+	}
+}
+
+// hasEncodedPathSeparator reports whether escaped, a request's escaped path,
+// holds %2F or %5C (any case) outside the XCom key of the task instance route.
+func hasEncodedPathSeparator(escaped string) bool {
+	checked := escaped
+	if strings.HasPrefix(escaped, "/api/v2/dags/") {
+		if i := strings.Index(escaped, xcomEntriesSegment); i >= 0 && strings.Contains(escaped[:i], "/taskInstances/") {
+			checked = escaped[:i+len(xcomEntriesSegment)]
+		}
+	}
+	lower := strings.ToLower(checked)
+	return strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c")
+}

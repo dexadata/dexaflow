@@ -313,6 +313,28 @@ func TestBuffered_DispatchAfterClose_ReturnsAtCapacity(t *testing.T) {
 	}
 }
 
+// TestBuffered_DispatchWithDoneContext_Defers: a request accepted with a dead
+// context would be dispatched by a worker while the scheduler's queued write
+// fails on that same context, so the next tick dispatches the task again. A done
+// context must defer without enqueueing.
+func TestBuffered_DispatchWithDoneContext_Defers(t *testing.T) {
+	inner := &recordingInner{}
+	d := dispatch.NewBuffered(inner, &recordingSink{}, discardLogger(), nil,
+		dispatch.BufferConfig{BufferSize: 4, Workers: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	disp, err := d.Dispatch(ctx, "r", "d", "", domain.TaskSpec{TaskID: "t"})
+	if !errors.Is(err, dispatch.ErrAtCapacity) || disp != executor.Deferred {
+		t.Fatalf("Dispatch with a done context = (%v, %v), want (Deferred, ErrAtCapacity)", disp, err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+	if n := inner.callCount.Load(); n != 0 {
+		t.Errorf("inner saw %d calls, want 0: a deferred request must not be dispatched", n)
+	}
+}
+
 // TestBuffered_ConcurrentDispatchAndClose_NoPanic: Dispatch racing Close must never
 // panic (send-on-closed). Run with -race to also catch the data race (#133).
 func TestBuffered_ConcurrentDispatchAndClose_NoPanic(t *testing.T) {

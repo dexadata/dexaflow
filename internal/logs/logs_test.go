@@ -221,6 +221,38 @@ func TestEncodeLineRoundTrip(t *testing.T) {
 	}
 }
 
+// TestEncodeLineNeverReturnsRawMessage: a time JSON cannot encode (a year past
+// 9999, or before 0) used to make EncodeLine hand the message back unencoded,
+// so a message holding a newline was stored as two lines, the second one a log
+// entry composed by whoever sent the message. The line is always one JSON
+// object, and such a time is replaced by the current one.
+func TestEncodeLineNeverReturnsRawMessage(t *testing.T) {
+	forged := "real\n{\"ts\":\"2026-01-01T00:00:00Z\",\"level\":\"error\",\"stream\":\"stderr\",\"msg\":\"FORGED\"}"
+	for name, ts := range map[string]time.Time{
+		"year 10000": time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
+		"year -1":    time.Date(-1, 1, 1, 0, 0, 0, 0, time.UTC),
+		"zero":       {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			before := time.Now().UTC().Add(-time.Second)
+			line := EncodeLine(Event{Time: ts, Level: "info", Stream: "stdout", Message: forged})
+			if strings.Contains(line, "\n") {
+				t.Fatalf("EncodeLine() = %q: more than one line", line)
+			}
+			if !strings.HasPrefix(line, "{") {
+				t.Fatalf("EncodeLine() = %q, want a JSON object", line)
+			}
+			got := DecodeLine(line)
+			if got.Message != forged || got.Level != "info" || got.Stream != "stdout" {
+				t.Errorf("EncodeLine()->DecodeLine() = %+v, want the message escaped inside the event", got)
+			}
+			if got.Time.Before(before) || got.Time.After(time.Now().Add(time.Second)) {
+				t.Errorf("time = %v, want the current time in place of %v", got.Time, ts)
+			}
+		})
+	}
+}
+
 // A Ref component is a path segment. Any component carrying a separator or a
 // parent reference escapes the log root, which turns a task's own log stream
 // into an arbitrary file write by the control-plane process. run_id is the

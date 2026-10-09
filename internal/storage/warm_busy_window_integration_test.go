@@ -148,7 +148,7 @@ func TestListBusyWarmWorkerPodsQueuedBoundIntegration(t *testing.T) {
 	reDag := fmt.Sprintf("busy_queued_redispatch_%d", stamp)
 	rePod := fmt.Sprintf("leoflow-warm-bqredis-%d", stamp)
 	reRun := seedQueuedWarmTask(t, repo, sched, exec, ctx, reDag, "load", rePod)
-	if err := exec.RequeueForRedispatch(ctx, reRun, "load", 1); err != nil {
+	if err := exec.RequeueForRedispatch(ctx, reRun, "load", 1, 0); err != nil {
 		t.Fatalf("RequeueForRedispatch: %v", err)
 	}
 

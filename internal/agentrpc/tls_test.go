@@ -89,7 +89,7 @@ func (tlsFakeStore) ReportState(context.Context, auth.AgentIdentity, domain.Task
 }
 func (tlsFakeStore) Reschedule(context.Context, auth.AgentIdentity, time.Time) error { return nil }
 func (tlsFakeStore) RecordHeartbeat(context.Context, auth.AgentIdentity) error       { return nil }
-func (tlsFakeStore) BindWarmAttempt(context.Context, string, string, int, string) error {
+func (tlsFakeStore) BindWarmAttempt(context.Context, string, string, int, int, string) error {
 	return nil
 }
 

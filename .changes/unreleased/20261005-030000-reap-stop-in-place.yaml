@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **A reaped task pod that was still running is now stopped in place instead
+  of deleted, so its outcome record survives.** The reapers' teardown lowers
+  the pod's `activeDeadlineSeconds` to 1 second: the containers stop with the
+  normal termination grace, and the pod object stays with the task container's
+  termination message, which the reconciler reads and then collects. A pod that
+  never started is still deleted. The chart's executor Role gains `patch` on
+  pods; with a Role that does not grant it, the teardown deletes the pod as
+  before and meters `reap_teardown_delete_fallback`. (#900)
+time: 2026-10-05T03:00:00.000000000-03:00

@@ -145,6 +145,7 @@ message TaskSpec {
     bool on_failure_callback = 23;                   // The task declares an Airflow on_failure_callback (#424). The agent stamps LEOFLOW_ON_FAILURE_CALLBACK=1 so the runtime re-imports dag.py and runs it in-process on the task's final failure. The callable itself is not carried.
     repeated string declared_variables = 24;         // The variable names this task declared (dexaflow.yaml). The agent asks a pod-side external secret resolver only for declared names, so declaration stays the scope authority for externally-sourced secrets too (ADR 0060 / ADR 0055).
     repeated string declared_connections = 25;       // The connection ids this task declared (dexaflow.yaml). Same role as declared_variables for connections.
+    int64 attempt_epoch = 26;                         // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one
@@ -264,6 +265,7 @@ message WorkAssignment {
     int32 try_number = 5;
     string dag_version_id = 6;  // the pool identity this assignment belongs to
     int64 lease_seconds = 7;    // ack deadline: unacked within it => the attempt is reclaimed
+    int64 attempt_epoch = 8;    // the execution of try_number this assignment is (ADR 0051 amendment); also carried in attempt_token, which is what the control plane fences on
 }
 
 // WorkerMessage is everything a warm worker sends UP the AwaitAssignment stream:

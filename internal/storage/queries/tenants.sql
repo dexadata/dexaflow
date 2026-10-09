@@ -61,3 +61,37 @@ SELECT EXISTS (
     SELECT 1 FROM pools p JOIN tenants t ON t.id = p.tenant_id
     WHERE t.name = $1 AND p.is_default
 )::bool AS has_default;
+
+-- name: UpdateTenantLimits :exec
+-- Sets the limits given and keeps the others: a NULL argument leaves that
+-- column as it is, 0 makes the limit unlimited (migrations 040 and 041).
+UPDATE tenants
+SET max_dags = COALESCE(sqlc.narg(max_dags)::int, max_dags),
+    max_runs_per_day = COALESCE(sqlc.narg(max_runs_per_day)::int, max_runs_per_day),
+    min_schedule_interval_seconds = COALESCE(sqlc.narg(min_schedule_interval_seconds)::int, min_schedule_interval_seconds),
+    max_task_pool_slots = COALESCE(sqlc.narg(max_task_pool_slots)::int, max_task_pool_slots),
+    updated_at = now()
+WHERE id = sqlc.arg(tenant_id)::uuid;
+
+-- name: GetTenantLimits :one
+SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots
+FROM tenants
+WHERE id = $1;
+
+-- name: CountTenantDags :one
+SELECT count(*) FROM dags WHERE tenant_id = $1;
+
+-- name: ReserveTenantDailyRun :execrows
+-- Takes one of the tenant's runs for the current UTC day, resetting the count
+-- when the day has turned. Zero rows means the tenant has no daily cap or has
+-- reached it; the caller tells the two apart from the limit it read. It runs
+-- before the run's INSERT in the same transaction, so a refusal writes nothing.
+-- The UPDATE locks the tenant row until the transaction ends, and Postgres
+-- re-checks the WHERE against the row a concurrent winner committed, so the
+-- count can never pass the cap.
+UPDATE tenants
+SET runs_day_count = CASE WHEN runs_day = (now() AT TIME ZONE 'UTC')::date THEN runs_day_count + 1 ELSE 1 END,
+    runs_day = (now() AT TIME ZONE 'UTC')::date
+WHERE id = $1
+  AND max_runs_per_day > 0
+  AND (runs_day IS DISTINCT FROM (now() AT TIME ZONE 'UTC')::date OR runs_day_count < max_runs_per_day);

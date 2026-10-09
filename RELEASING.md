@@ -30,6 +30,34 @@ the model Kubernetes uses:
   fragment with it: patch notes are folded from the fragments on the release
   branch. Only bug, regression and security fixes and release docs are
   cherry-picked, plus what the ADR records as an exception.
+- **Every PR to `main` names its release as a milestone** (`v0.5.1`,
+  `v0.5.2`, ...). The milestone guard check fails a PR without one. A PR
+  milestoned for the patch being cut needs its cherry-pick; one milestoned for
+  a later release stays on `main` until then.
+- **Nothing on `main` is left behind by accident.** `scripts/release-gap.sh
+  X.Y.Z` lists every commit on `main` since `vX.Y.0` that `release-X.Y` does
+  not carry, ignoring PRs milestoned for a later release and the lines of
+  `.github/release-skip.txt` on the release branch (`#N reason` or
+  `<sha> reason`, for what will never ship in this minor, such as an ADR).
+  The cut runs it and refuses a patch while the list is not empty. The
+  commits the cut itself lands on `main` (release prep, docs promotion) never
+  count; a Dependabot bump has no milestone, so it shows in the list until it
+  is cherry-picked or skipped.
+- **Nothing user-facing ships undocumented.** `scripts/docs-gap.sh X.Y.Z`
+  lists every commit the release ships since the previous GA (on
+  `release-X.Y` for a patch, on `main` for a minor) that changes user-facing
+  surface without editing `website/content/`: a chart value, the authoring
+  schema, a CLI command, a server setting (`internal/config`), a migration,
+  the OpenAPI document, or a changelog fragment of kind Added, Changed,
+  Deprecated or Removed. Such a commit passes when its PR (or, for a
+  cherry-pick, the original PR on `main`) carries the `skip-docs` label and a
+  `Skip-docs: <reason>` line in its description, or when
+  `.github/docs-skip.txt` on the branch being cut lists it (`#N reason` or
+  `<sha> reason`, for example `#1352 documented in #1477`). The cut runs it
+  for every rc and GA and refuses while the list is not empty. The docs guard
+  applies the same rule to each PR when it is opened, so the list is normally
+  empty; it catches what the per-PR check could not, such as a skip with no
+  reason or a docs PR that was promised and never merged.
 - **Only the newest release branch takes patches.** An older one gets a
   security fix only when the owner decides so for that fix.
 
@@ -161,6 +189,12 @@ scripts/cut-release.sh v0.4.4-rc.1
 
 # Promote it to GA once the RC is validated in staging
 scripts/cut-release.sh v0.4.4
+
+# What main carries that the patch would miss (the cut refuses while non-empty)
+scripts/release-gap.sh 0.5.1 --fetch
+
+# User-facing changes the release would ship without docs (the cut refuses while non-empty)
+scripts/docs-gap.sh 0.5.2 --fetch
 
 # A patch of a minor that already shipped is cut from release-0.5
 scripts/cut-release.sh v0.5.1-rc.1
