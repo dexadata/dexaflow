@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -116,8 +117,9 @@ func TestVerifyAcceptsATokenFromTheTrustedIssuer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
+	// A handoff token carries no scopes: the session it opens is unscoped.
 	want := Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}
-	if *id != want {
+	if !reflect.DeepEqual(*id, want) {
 		t.Errorf("identity = %+v, want %+v", *id, want)
 	}
 }
