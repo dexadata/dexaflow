@@ -36,3 +36,41 @@ func TestKubernetesExecuteRefusesARequestOutsideTheExecutionAllowlist(t *testing
 		t.Errorf("a refused request created %d pod(s)", len(pods.Items))
 	}
 }
+
+// The service account on a request may be the operator's default, filled in by
+// the dispatcher after it checked the task's own; the executor must not refuse
+// it (issue #537 C2).
+func TestKubernetesExecuteDoesNotRecheckTheFilledInServiceAccount(t *testing.T) {
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{ServiceAccounts: []string{"etl"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewKubernetesExecutor(fake.NewClientset(), "leoflow")
+	req := sampleReq()
+	req.Execution.ServiceAccount = "operator-default"
+	req.ExecutionPolicy = policy
+	if disp, err := e.Execute(context.Background(), req); err != nil || disp != Dispatched {
+		t.Fatalf("Execute = %v, %v; want Dispatched", disp, err)
+	}
+}
+
+// The image allowlist (issue #537 C2) is enforced on the request's image.
+func TestKubernetesExecuteRefusesAnImageOutsideTheAllowlist(t *testing.T) {
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{Images: []string{"registry.example.com/*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := fake.NewClientset()
+	e := NewKubernetesExecutor(cs, "leoflow")
+	req := sampleReq()
+	req.Image = "docker.io/someone/miner:latest"
+	req.ExecutionPolicy = policy
+	disp, err := e.Execute(context.Background(), req)
+	if err == nil || disp != Refused || !strings.Contains(err.Error(), "miner") {
+		t.Fatalf("Execute = %v, %v; want Refused naming the image", disp, err)
+	}
+	pods, _ := cs.CoreV1().Pods("leoflow").List(context.Background(), metav1.ListOptions{})
+	if len(pods.Items) != 0 {
+		t.Errorf("a refused request created %d pod(s)", len(pods.Items))
+	}
+}

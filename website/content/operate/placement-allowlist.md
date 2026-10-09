@@ -71,6 +71,38 @@ allow or refuse the wrong field.
 take. Leave it empty to accept any priority class (as long as
 `priority_class_name` itself is allowed).
 
+## Restricting service accounts and images
+
+The same section also limits who a task runs as and what it runs:
+
+```yaml
+executor:
+  defaults:
+    executionAllowlist:
+      serviceAccounts: [etl-reader, reports]
+      images: ["registry.example.com/team-a/*", "busybox:1.36"]
+```
+
+```bash
+DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_SERVICE_ACCOUNTS=etl-reader,reports
+DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES=registry.example.com/team-a/*,busybox:1.36
+```
+
+- `serviceAccounts`, when set, is the list of values `execution.service_account`
+  may take. A task that names no service account runs as the operator's task
+  ServiceAccount (`executor.task_service_account`, Helm `taskServiceAccount`),
+  which is never checked. Without this list an author can name any
+  ServiceAccount in the task namespace, and with it whatever cloud identity that
+  account is bound to.
+- `images`, when set, is the list of DAG images that may run. An entry is an
+  exact image reference, or a prefix ending in `*` (`*` is allowed only at the
+  end). Prefer a prefix that ends in `/` so `registry.example.com/team-a*` does
+  not also match `team-ab`.
+  With [source mode](/operate/source-mode/) on, a DAG pushed in source mode
+  runs on the runtime image, so list that image too or those DAGs are refused.
+
+Both are empty by default, which allows any service account and any image.
+
 ## What an author sees
 
 A DAG whose task sets a field outside the list is refused when it is pushed:

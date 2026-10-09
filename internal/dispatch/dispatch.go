@@ -431,6 +431,11 @@ func (d *Dispatcher) refuseBeforeToken(runID, dagID string, task domain.TaskSpec
 	if refused := d.defaults.ExecutionPolicy.CheckTask(task); refused != nil {
 		return false, refused
 	}
+	// The image allowlist (issue #537 C2) checks the image this run resolved,
+	// the one the pod (or a warm worker of this version) would run.
+	if refused := d.defaults.ExecutionPolicy.CheckImage(r.Image); refused != nil {
+		return false, fmt.Errorf("task %q: %w", task.TaskID, refused)
+	}
 	// Register caps a source-mode source only while the mode is on; a version
 	// registered on the runtime image before it was turned on was never
 	// checked. Refuse it here with register's message rather than let the
