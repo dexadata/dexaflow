@@ -420,11 +420,18 @@ Enable is gated on all of the above passing **and** the two security flips
 
 ## Running on GKE Sandbox (gVisor)
 
-Running warm pools under GKE Sandbox (`runtimeClassName: gvisor`) works, with one thing to know if you also run your own admission policy on the task namespace.
+Warm pools can run under GKE Sandbox (`runtimeClassName: gvisor`), with two things to know: how warm workers get the gVisor runtime class at all, and what GKE Sandbox stamps on a pod if you also run your own admission policy on the task namespace.
+
+**Dexaflow does not put warm workers in the sandbox.** A dedicated task pod takes `runtimeClassName`, node selector, tolerations and affinity from its DAG's `execution` settings. A warm worker is created before any task is known, from the operator's settings only, and gets none of them. The dispatcher also does not keep a task that pins `runtime_class_name` off warm workers: a size-1 task of a DAG that asks for `gvisor` can run on a warm worker that is a plain `runc` pod on an ordinary node, with no error or warning. Until that is fixed, run warm pools on GKE Sandbox only with a mutating admission policy on the task namespace that sets, on every pod:
+
+- `spec.runtimeClassName: gvisor`;
+- the toleration for the sandbox node taint, `sandbox.gke.io/runtime=gvisor:NoSchedule`, unless the RuntimeClass's own `scheduling` already adds it.
+
+Then every task pod, warm or dedicated, runs in the sandbox whatever its DAG declares. Without such a policy, do not rely on `runtime_class_name` for isolation while warm pools are on.
 
 **GKE Sandbox edits gVisor pods at admission, before any ValidatingAdmissionPolicy of yours sees them:**
 
-- `dev.gvisor.internal.seccomp.<container>: RuntimeDefault` on each container that asks for the `RuntimeDefault` seccomp profile. A user-set value, such as `Unconfined`, is rewritten to `RuntimeDefault`.
+- `dev.gvisor.internal.seccomp.<container>: RuntimeDefault` on each container that asks for the `RuntimeDefault` seccomp profile. A user-set value, such as `Unconfined`, is rewritten to `RuntimeDefault`. Dexaflow asks for `RuntimeDefault` on every task container, so every gVisor task pod, warm or dedicated, gets `dev.gvisor.internal.seccomp.task`.
 - For every `emptyDir` volume, three gVisor mount hints:
   - `dev.gvisor.spec.mount.<volume>.type: bind`
   - `dev.gvisor.spec.mount.<volume>.share: container` when one container mounts the volume (a warm worker's `leoflow-tmp`), or `pod` when several do
@@ -435,29 +442,32 @@ Running warm pools under GKE Sandbox (`runtimeClassName: gvisor`) works, with on
 - user-set annotations starting with `dev.gvisor.internal.` or `dev.gvisor.spec.mount.` ("user annotations starting with … are not allowed");
 - `hostNetwork`, `hostPID`, `hostIPC`, `hostPath`, `privileged: true` and `allowPrivilegeEscalation: true`.
 
-**If your policy refuses `dev.gvisor.*` annotations** (a sound rule, since runsc reads them as flags), allow exactly the keys and values above, and only for the pod's own `emptyDir` volumes. Otherwise every warm worker is refused. The symptom is ERROR lines `creating warm worker` in the server log carrying your policy's denial, `warm_pool_create_error` rising, and no worker ever registering. Dedicated task pods can keep working meanwhile, because a pod with no `emptyDir` gets no mount hints. Check what your cluster stamps with a server-side dry run of a warm pod in a namespace your policy does not bind, for example `kubectl create --dry-run=server -o json -f warm-pod.json`, and read `.metadata.annotations`.
+Which dexaflow pods have an `emptyDir`: the `leoflow-tmp` volume is added to dedicated task pods when `taskPodSecurity.readOnlyRootFilesystem` is on, and to warm workers when either that or `execution.warmReadOnlyRootFilesystem` is on. With both off (the chart defaults), no dexaflow pod gets mount hints, but every gVisor pod still gets the seccomp key.
+
+**If your policy refuses `dev.gvisor.*` annotations** (a sound rule, since runsc reads them as flags), allow exactly the keys and values above, and the mount hints only for the pod's own `emptyDir` volumes. Otherwise every gVisor task pod is refused, warm and dedicated alike, because each one carries at least the seccomp key. For warm workers the symptom is ERROR lines `creating warm worker` in the server log carrying your policy's denial, `dexaflow_scheduler_decisions_total{decision_type="warm_pool_create_error"}` rising, and no worker ever registering; dedicated task pods fail to dispatch with the same denial. Check what your cluster stamps with a server-side dry run of a warm pod in a namespace your policy does not bind, for example `kubectl create --dry-run=server -o json -f warm-pod.json`, and read `.metadata.annotations`.
 
 ### Sizing against a pod deadline
 
-If the task namespace caps `activeDeadlineSeconds` on every pod (a mutating policy that enforces a task time limit, for example), the cap applies to warm workers too, so a worker's whole life must fit inside it. The server checks the lifetime only after an attempt ends, so the worst case is:
+If the task namespace caps `activeDeadlineSeconds` on every pod (a mutating policy that enforces a task time limit, for example), the cap applies to warm workers too, so a worker's whole life must fit inside it. The worker checks its own lifetime only after an attempt ends, so the worst case is:
 
 ```text
 maxWorkerLifetime + workerIdleTtl + longest attempt + pod start  <=  activeDeadlineSeconds
 ```
 
-The longest attempt is bounded by `auth.max_attempt_credential_lifetime`. With a 2040 s deadline and 30 minute attempts, for instance, `maxWorkerLifetime: 90s` and `workerIdleTtl: 90s` leave 60 s for the pod to start. If the sum exceeds the deadline, the kubelet can kill a warm pod in the middle of an attempt, and the attempt is then recovered as a lost worker.
+The longest attempt is bounded by `auth.max_attempt_credential_lifetime`. With a 2040 s deadline and 30 minute attempts, for instance, `maxWorkerLifetime: 90s` and `workerIdleTtl: 90s` leave 60 s for the pod to start. If the sum exceeds the deadline, the kubelet can kill a warm pod in the middle of an attempt, and the attempt is then recovered as a lost worker. "Pod start" covers everything before the worker first registers: image pull, the token exchange, and any reconnect backoff while it looks for the scheduler leader. The worker's lifetime clock also restarts when it reconnects after a leader change, so leave extra margin on a control plane that fails over often.
 
 Short values have a cost: an idle worker exits after `workerIdleTtl` and is replaced on the next reconcile, so attempts of a DAG version that arrive further apart than that land on dedicated pods. Size `workerIdleTtl` against how often each DAG version runs before you expect a high warm-hit rate.
 
 ### Checking a real cluster by hand
 
-Fakes cannot show admission, the token exchange or placement on a real cluster, so run this check once on each cluster where you enable warm pools, and again after a cluster, GKE or policy upgrade. [`test/gcp/`](https://github.com/dexadata/dexaflow/tree/main/test/gcp) provisions a throwaway GKE cluster for this (`provision.sh`, then `teardown.sh`), and `warm-pool-ab.sh` measures warm against dedicated latency on it.
+Fakes cannot show admission, the token exchange or placement on a real cluster, so run this check once on each cluster where you enable warm pools, and again after a cluster, GKE or policy upgrade. [`test/gcp/`](https://github.com/dexadata/dexaflow/tree/main/test/gcp) provisions a throwaway GKE cluster for this (`provision.sh`, then `teardown.sh`), and `warm-pool-ab.sh` measures warm against dedicated latency on it. Those scripts do not set up GKE Sandbox or any admission policy: for the sandbox checks, add a sandbox node pool and your own policies to that cluster first.
 
 1. **Workers are admitted and start.** Give a DAG `min_idle_workers: 1` (or set `minIdleWorkers`) and wait one reconcile. `kubectl -n <task namespace> get pods -l leoflow.io/warm-worker=true -o wide` lists a Running `leoflow-warm-<dag_version>-…` pod on the node pool you expect. If none appears, look for `creating warm worker` ERROR lines in the server log: the apiserver's refusal is in them.
-2. **Workers register with a worker-scoped credential.** The server logs `exchanged projected token for a WORKER-scoped agent JWT` and then `warm worker registered` for the pod.
-3. **Attempts run on the warm worker.** Trigger a run whose task prints its container's UTS hostname, which Kubernetes sets to the pod name: `cat /proc/sys/kernel/hostname`. The task log must show a `leoflow-warm-<that dag_version>-…` name, not a dedicated task pod's. A worker may recycle between your first look and the attempt, so match the DAG version, not one pod name.
-4. **Each worker serves its own tenant.** Its `leoflow.io/dag-version-id` label is a version the tenant's own session lists, and its `leoflow.io/tenant-id` label is that tenant's.
-5. **Nothing is left after the idle TTL.** Once `workerIdleTtl` plus a reconcile has passed with no runs: no warm pod stays in `Succeeded` or `Failed`, and every `leoflow-pool-<dag_version>` anchor ConfigMap (`-l leoflow.io/warm-anchor=true`) belongs to a version that still has a live warm pod or is still active.
+2. **Workers run in the sandbox.** On GKE Sandbox, `kubectl -n <task namespace> get pods -l leoflow.io/warm-worker=true -o custom-columns=NAME:.metadata.name,RUNTIME:.spec.runtimeClassName,NODE:.spec.nodeName` shows `gvisor` for every warm worker, on a sandbox node. An empty runtime column means your mutating policy did not apply and the worker runs on `runc`: stop here and fix the policy before turning warm pools on for sandboxed DAGs.
+3. **Workers register with a worker-scoped credential.** The server logs `exchanged projected token for a WORKER-scoped agent JWT` and then `warm worker registered` for the pod.
+4. **Attempts run on the warm worker.** Trigger a run whose task prints its container's UTS hostname, which Kubernetes sets to the pod name: `cat /proc/sys/kernel/hostname`. The task log must show a `leoflow-warm-<that dag_version>-…` name, not a dedicated task pod's. A worker may recycle between your first look and the attempt, so match the DAG version, not one pod name.
+5. **Each worker serves its own tenant.** Its `leoflow.io/dag-version-id` label is a version the tenant's own session lists, and its `leoflow.io/tenant-id` label is that tenant's.
+6. **Nothing is left after the idle TTL.** Once `workerIdleTtl` plus a reconcile has passed with no runs: no warm pod stays in `Succeeded` or `Failed`, and every `leoflow-pool-<dag_version>` anchor ConfigMap (`-l leoflow.io/warm-anchor=true`) belongs to a version that still has a live warm pod or is still active. Until [#1501](https://github.com/dexadata/dexaflow/pull/1501) (issue #1500) is released, this step can fail for a version whose warm pods were never created, for example because admission refused every create: its anchor ConfigMap is never deleted. Delete such an anchor by hand once the version has no warm pod and no active run.
 
 ## Configuration reference
 
