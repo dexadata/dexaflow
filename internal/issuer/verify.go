@@ -133,9 +133,10 @@ func (u *usedIDs) claim(id string, exp, now time.Time) bool {
 }
 
 // New builds a Verifier. It makes no network call: the JWKS is fetched on the
-// first Verify and cached, refreshed when a token names an unknown key id, so
-// key rotation needs no restart and an issuer outage cannot block boot.
-func New(ctx context.Context, cfg Config) *Verifier {
+// first Verify and cached, refreshed when a token names an unknown key id (at
+// most once per KeyRefreshCooldown), so key rotation needs no restart and an
+// issuer outage cannot block boot. The handoff and the bearer share the cache.
+func New(_ context.Context, cfg Config) *Verifier {
 	if cfg.MaxLifetime <= 0 {
 		cfg.MaxLifetime = DefaultMaxLifetime
 	}
@@ -143,9 +144,9 @@ func New(ctx context.Context, cfg Config) *Verifier {
 		cfg.BearerMaxLifetime = DefaultBearerMaxLifetime
 	}
 	ver := &Verifier{cfg: cfg, now: time.Now}
-	keys := gooidc.NewRemoteKeySet(ctx, cfg.JWKSURL)
 	algs := []string{gooidc.RS256, gooidc.ES256, gooidc.PS256}
 	now := func() time.Time { return ver.now() }
+	keys := newCachedKeySet(cfg.JWKSURL, algs, now)
 	ver.v = gooidc.NewVerifier(cfg.Issuer, keys, &gooidc.Config{
 		ClientID:             cfg.Audience,
 		SupportedSigningAlgs: algs,

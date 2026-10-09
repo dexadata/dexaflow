@@ -24,6 +24,9 @@ func (*fakeBearerIssuer) Provider() string { return "issuer:portal" }
 
 func (f *fakeBearerIssuer) VerifyBearer(_ context.Context, raw string) (*issuer.Identity, error) {
 	f.calls++
+	if raw == "keys-down" {
+		return nil, fmt.Errorf("%w: jwks answered 503", issuer.ErrKeysUnavailable)
+	}
 	if raw != "good" {
 		return nil, fmt.Errorf("%w: bad signature", issuer.ErrInvalidToken)
 	}
@@ -187,6 +190,22 @@ func TestIssuerBearerStoreOutageIs503(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestIssuerKeyOutageIs503: when the issuer's JWKS cannot be downloaded the
+// token could not be checked, which is an outage, not a bad token, so the
+// client is not told to sign in again.
+func TestIssuerKeyOutageIs503(t *testing.T) {
+	f := newBearerFixture(t, &fakeIssuerUsers{user: linkedReader(), active: true}, true)
+
+	rec := f.get("/api/v2/dags", "keys-down")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+	if len(f.audit.events) != 0 {
+		t.Errorf("audit events = %v, want none", f.audit.events)
 	}
 }
 

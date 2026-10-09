@@ -2,6 +2,8 @@ package issuer
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -34,8 +36,18 @@ func (v *Verifier) VerifyBearer(ctx context.Context, raw string) (*Identity, err
 	if !v.BearerEnabled() {
 		return nil, ErrBearerDisabled
 	}
+	// Cheap and unverified, so a token that is not even addressed to us costs
+	// no signature check and no JWKS download. The verified claims are
+	// checked again below.
+	if err := v.precheckBearer(raw); err != nil {
+		return nil, err
+	}
+	ctx, outage := withKeyOutage(ctx)
 	tok, err := v.bearer.Verify(ctx, raw)
 	if err != nil {
+		if outage.hit.Load() {
+			return nil, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 	if slices.Contains(tok.Audience, v.cfg.Audience) || !slices.ContainsFunc(tok.Audience, v.bearerAudience) {
@@ -65,6 +77,49 @@ func bearerScopes(claims map[string]any) ([]string, error) {
 		return nil, fmt.Errorf("%w: scope claim is %T, want a space-separated string", ErrInvalidToken, raw)
 	}
 	return append([]string{}, strings.Fields(s)...), nil
+}
+
+// precheckBearer reads raw's payload without verifying it and refuses a
+// token that does not name the trusted issuer and a bearer audience (and not
+// the handoff audience).
+func (v *Verifier) precheckBearer(raw string) error {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("%w: not a compact JWS", ErrInvalidToken)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return fmt.Errorf("%w: payload is not base64url", ErrInvalidToken)
+	}
+	var claims struct {
+		Iss string          `json:"iss"`
+		Aud json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return fmt.Errorf("%w: payload is not a JSON object", ErrInvalidToken)
+	}
+	if claims.Iss != v.cfg.Issuer {
+		return fmt.Errorf("%w: issuer %q is not the trusted issuer", ErrInvalidToken, claims.Iss)
+	}
+	aud := audiences(claims.Aud)
+	if slices.Contains(aud, v.cfg.Audience) || !slices.ContainsFunc(aud, v.bearerAudience) {
+		return fmt.Errorf("%w: audience %v is not a bearer audience", ErrInvalidToken, aud)
+	}
+	return nil
+}
+
+// audiences reads an aud claim, a string or an array of strings. Anything
+// else reads as no audience.
+func audiences(raw json.RawMessage) []string {
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return []string{one}
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil {
+		return many
+	}
+	return nil
 }
 
 func (v *Verifier) bearerAudience(aud string) bool {
