@@ -46,8 +46,9 @@ func (s *slowTailReader) Tail(ctx context.Context, _, _, _, _ string, _ int) (li
 
 // TestLogTailOutlivesTheServerReadTimeout pins that a configured
 // server.read_timeout bounds reading a request, never a live tail. net/http
-// cancels the request context when the read deadline passes while a handler
-// is still running, so a tail must lift the deadline once it starts streaming.
+// clears the read deadline once the request body is consumed, and no write
+// deadline is set, so a tail keeps streaming past the read timeout. The test
+// guards that standard library behavior.
 func TestLogTailOutlivesTheServerReadTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

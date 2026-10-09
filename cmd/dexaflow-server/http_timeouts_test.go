@@ -86,3 +86,15 @@ func TestNewHTTPServerIdleZeroKeepsIdleConnectionsWithReadTimeout(t *testing.T) 
 		t.Errorf("idle keep-alive connection closed after the read timeout: %v", err)
 	}
 }
+
+// TestNewHTTPServerHeaderTimeoutNeverExceedsReadTimeout pins that a
+// server.read_timeout below the fixed 10s header timeout also bounds reading
+// the headers, so the shorter setting the operator chose is the one that holds.
+func TestNewHTTPServerHeaderTimeoutNeverExceedsReadTimeout(t *testing.T) {
+	cfg := &config.ServerConfig{}
+	cfg.Server.ReadTimeout = 3 * time.Second
+	srv := newHTTPServer(":0", http.NotFoundHandler(), cfg)
+	if srv.ReadHeaderTimeout != 3*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 3s (capped by read_timeout)", srv.ReadHeaderTimeout)
+	}
+}

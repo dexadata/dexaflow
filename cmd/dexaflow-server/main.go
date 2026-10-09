@@ -1508,15 +1508,20 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 // net/http uses ReadTimeout as the idle timeout when IdleTimeout is 0, so with
 // only a read timeout set an idle 0 is passed on as negative (no idle timeout):
 // idle keep-alive connections stay open, as before, until idle_timeout is set.
+// The header timeout is 10s, or read_timeout when that is shorter.
 func newHTTPServer(addr string, handler http.Handler, cfg *config.ServerConfig) *http.Server {
 	idle := cfg.Server.IdleTimeout
 	if idle == 0 && cfg.Server.ReadTimeout > 0 {
 		idle = -1
 	}
+	header := 10 * time.Second
+	if rt := cfg.Server.ReadTimeout; rt > 0 && rt < header {
+		header = rt
+	}
 	return &http.Server{
 		Addr:              addr,
 		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: header,
 		ReadTimeout:       cfg.Server.ReadTimeout,
 		IdleTimeout:       idle,
 	}
