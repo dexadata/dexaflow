@@ -106,6 +106,8 @@ never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mo
 | `--server` | `DEXAFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
 | `--transport` | `DEXAFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
 | `--listen` | `DEXAFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
+| `--run-control` | `DEXAFLOW_MCP_RUN_CONTROL` | off | Register the [run control tools](#run-control). The env variable takes `true`/`false`, `1`/`0` or `t`/`f` in any case; any other value stops the server (exit 2). |
+| `--plan-key-file` | `DEXAFLOW_MCP_PLAN_KEY_FILE` | — | File holding the key, at least 32 bytes, that signs run control plans. Required with `--run-control` on the `http` transport, and the same file on every replica. On stdio a random key is used when unset. |
 | `--ui-base-url` | `DEXAFLOW_MCP_UI_BASE_URL` | — | Address of the Dexaflow UI, such as `https://flow.example.com`. When set, results carry `web_url` links into it (see [Links into the UI](#links-into-the-ui)). Must be an absolute `http` or `https` URL without a query or fragment. |
 | `--resource` | `DEXAFLOW_MCP_RESOURCE` | — | `http` only. This endpoint's URL as clients reach it, such as `https://dexaflow.example.com/mcp`. With `--authorization-servers`, turns on [OAuth sign-in discovery](#oauth-sign-in-discovery). `https`, or `http` on a loopback host; no query or fragment. |
 | `--authorization-servers` | `DEXAFLOW_MCP_AUTHORIZATION_SERVERS` | — | `http` only. Comma-separated issuer URLs of the OAuth authorization servers that mint tokens for `--resource`. Required with it. |
@@ -176,6 +178,55 @@ leads with a few high-value ones. All are **read-only**.
 | `list_dags` | List registered DAGs with their paused state (compact). | `limit` (default 25, max 200), `tag` |
 | `diagnose_run` | Diagnose one DAG run in a single call — its state, which task instances failed, a truncated tail of each failed task's log, the tasks each failure blocks downstream, and any dbt models involved. Replaces chaining list-runs → get-run → list-tasks → get-logs. | `dag_id`, `run_id`, `log_tail_lines` (default 40, max 200) |
 | `search_logs` | Search one task attempt's log for a case-insensitive substring, returning matching lines with line numbers instead of the whole log. | `dag_id`, `run_id`, `task_id`, `try_number` (default 1), `query`, `max_matches` (default 20, max 100) |
+
+## Run control
+
+With `--run-control`, the server also registers tools that change state
+([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/)). Without the
+flag they do not exist at all. Each call uses the caller's token, so the control
+plane's roles decide, and for a trusted-issuer bearer token, its `dexaflow:run`
+scope too.
+
+| Tool | What it does | Plan first when |
+|---|---|---|
+| `trigger_run` | Starts a run now (`dag_id`, optional `conf` and `note`). | never |
+| `clear_task` | Clears task instances of a run so they run again: `dag_id`, `run_id`, optional `task_ids`, `include_downstream`, `include_upstream`, `only_failed` (default true) and `run_on_latest_version`. It previews the clear first. | the clear touches more than one task instance |
+| `pause_dag` | Pauses a DAG. | never |
+| `unpause_dag` | Unpauses a DAG. | the DAG has a schedule, since unpausing starts runs |
+| `apply_plan` | Carries out a plan (`plan_id`). | — |
+
+A call that needs a plan changes nothing. It returns what would happen and a
+`plan_id`, and the model is told to show it to the user and to call
+`apply_plan` only if they agree.
+
+- **A plan carries the exact operation**, signed with the plan key. The model
+  cannot change it, only hand it back.
+- **A plan lasts 10 minutes** and is bound to the caller. Over HTTP that is
+  the bearer's issuer (`iss`), subject (`sub`), tenant (`tenant_id`, `tenant`
+  or `tid`), client (`azp`, else `client_id`) and scope set, so another user,
+  tenant, client or narrower token cannot apply it. A token without `iss`,
+  `sub` or a tenant cannot plan. A refreshed token, or one whose roles or
+  email changed, still applies the plan; the control plane checks the
+  caller's permissions on the apply call itself.
+- **Apply checks again before acting.** If the task instances are no longer in
+  the states the plan showed, or the DAG's paused flag or schedule changed,
+  `apply_plan` refuses and asks for a new plan. A plan therefore applies once.
+- **A clear over more than 200 task instances is refused.** Narrow it with
+  `task_ids` or use the UI.
+- **A clear runs only what its preview showed.** The clear that follows a
+  preview names the previewed tasks and expands no further, so a task that
+  fails in between is not cleared unseen.
+
+Generate the plan key once and give every replica the same file:
+
+```bash
+openssl rand -base64 48 > plan.key
+chmod 600 plan.key
+dexaflow-mcp --transport http --run-control --plan-key-file plan.key
+```
+
+Changing the key invalidates the plans made in the last 10 minutes, nothing
+else.
 
 ## Resources
 
