@@ -1355,7 +1355,12 @@ func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.Trusted
 	if !s.Enabled() {
 		return nil
 	}
-	return issuer.New(ctx, issuer.Config{
+	return issuer.New(ctx, trustedIssuerConfig(s))
+}
+
+// trustedIssuerConfig maps auth.trusted_issuer onto the verifier's config.
+func trustedIssuerConfig(s config.TrustedIssuerSection) issuer.Config {
+	return issuer.Config{
 		Name:           s.Name,
 		Issuer:         s.Issuer,
 		JWKSURL:        s.JWKSURL,
@@ -1363,7 +1368,21 @@ func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.Trusted
 		TenantClaim:    s.TenantClaim,
 		AllowedTenants: s.AllowedTenants,
 		MaxLifetime:    time.Duration(s.MaxLifetimeSeconds) * time.Second,
-	})
+
+		BearerAudiences:   s.BearerAudiences,
+		BearerMaxLifetime: time.Duration(s.BearerMaxLifetimeSeconds) * time.Second,
+	}
+}
+
+// issuerBearer returns the trusted issuer as the verifier of request bearers
+// when auth.trusted_issuer.bearer_audiences is set (#1468), or nil, which
+// leaves the bearer mode off.
+func issuerBearer(ti api.TrustedIssuer) api.TrustedIssuerBearer {
+	v, ok := ti.(*issuer.Verifier)
+	if !ok || !v.BearerEnabled() {
+		return nil
+	}
+	return v
 }
 
 // newUIServer builds the embedded UI server from cfg and returns it with the
@@ -1467,6 +1486,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
+		TrustedIssuerBearer: issuerBearer(trustedIssuer),
 		// Operator service API (#1283): off unless auth.service_token is set.
 		ServiceToken:   cfg.Auth.ServiceToken,
 		ServiceTenants: repo,
