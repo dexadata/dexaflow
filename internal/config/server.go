@@ -303,6 +303,9 @@ type ExecutionSection struct {
 	// is gated at boot on the security prerequisites (token-exchange transport +
 	// liveness enforcement) because a warm pod reuses one credential across attempts.
 	WarmPoolsEnabled bool `mapstructure:"warm_pools_enabled"`
+	// SourceMode runs a version on the operator's runtime image from the dag.py
+	// it was registered with, with no image build (ADR 0067 §3). Off by default.
+	SourceMode SourceModeSection `mapstructure:"source_mode"`
 	// MaxAttemptsPerWorker caps how many attempts a warm worker serves before it is
 	// drained and recycled (ADR 0058 D9). Bounds credential-leak and stale-image
 	// exposure by forcing a fresh pod periodically. Default 50.
@@ -472,6 +475,22 @@ type ServerSection struct {
 	// secret (BREACH). Other JSON can still echo request input next to private
 	// data, which is the trade-off of turning this on. Off by default (ADR 0062).
 	GzipResponses bool `mapstructure:"gzip_responses"`
+	// MaxPageLimit caps the `limit` a list endpoint accepts, and the
+	// `dag_runs_limit` of /ui/dags; a larger value is served as the cap, like
+	// Airflow's [api] maximum_page_limit. 0 (the default, ADR 0062 gate) keeps
+	// today's behavior: no cap.
+	MaxPageLimit int `mapstructure:"max_page_limit"`
+	// ReadTimeout bounds reading a whole request, headers and body, on the API
+	// and metrics listeners: a slow client cannot hold a connection open by
+	// trickling a body. Set it above the slowest legitimate upload. It never
+	// limits a response: net/http lifts the read deadline once the body is
+	// read, so live log tails are unaffected. 0 (the default, ADR 0062 gate)
+	// means no limit, as before.
+	ReadTimeout time.Duration `mapstructure:"read_timeout"`
+	// IdleTimeout closes a keep-alive connection that has been idle this long.
+	// 0 (the default) keeps idle connections open, as before, even when
+	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
+	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
 	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
 	// only: create, resize and delete answer 403 for every role, tenant admin
 	// included. It is for an engine shared by many tenants, where the platform
@@ -669,7 +688,9 @@ type AuthSection struct {
 	// mid-attempt). An attempt whose agent goes silent after running past the
 	// ceiling is failed by the heartbeat reaper as a task failure with the
 	// credential_ceiling reason (its retry policy applies), never re-placed as an
-	// agent_lost infra loss with a fresh credential (#1461). A non-positive value
+	// agent_lost infra loss with a fresh credential (#1461). In Lite, which has no
+	// pod deadline, the reaper also fails an attempt still running past the
+	// ceiling with that reason and stops its task (#1511). A non-positive value
 	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
 	// credential_ceiling failure together (a wedged task then has no
 	// wall-clock bound of its own), so boot logs a WARN naming the key.
@@ -879,6 +900,14 @@ type MetricsSection struct {
 type OTelSection struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Endpoint string `mapstructure:"endpoint"`
+	// SampleRatio is the share of request traces kept (1 keeps every trace).
+	// No propagator is installed, so an incoming traceparent is ignored and
+	// every request starts a new root trace; spans within a request follow
+	// its root's decision.
+	SampleRatio float64 `mapstructure:"sample_ratio"`
+	// SkipProbeSpans drops spans for /healthz, /readyz and /static/*. Off by
+	// default (ADR 0062), so every request is traced as before.
+	SkipProbeSpans bool `mapstructure:"skip_probe_spans"`
 }
 
 // serverDefaults lists every leaf key with its default so that AutomaticEnv and
@@ -1100,12 +1129,22 @@ var serverDefaults = map[string]any{
 	"secrets.backend_kwargs":       "",
 	// Gate (ADR 0062): false sends every API body uncompressed, as before.
 	"server.gzip_responses": false,
+	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
+	"server.max_page_limit": 0,
+	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
+	"server.read_timeout": "0s",
+	"server.idle_timeout": "0s",
+	// Trace sampling gates (ADR 0062): the defaults trace every request.
+	"observability.otel.sample_ratio":     1.0,
+	"observability.otel.skip_probe_spans": false,
 	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
 	"observability.metrics.drop_legacy_names": false,
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
 	"execution.warm_read_only_root_filesystem": false,
+	"execution.source_mode.enabled":            false,
+	"execution.source_mode.image":              "",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -1220,6 +1259,18 @@ const (
 	AgentTokenTransportExchange = "exchange"
 )
 
+// validateNonNegative refuses settings where a negative value would silently
+// read as "off" instead of failing boot.
+func (c *ServerConfig) validateNonNegative() error {
+	if c.Server.MaxPageLimit < 0 {
+		return fmt.Errorf("server.max_page_limit must not be negative (got %d); 0 leaves list pages uncapped", c.Server.MaxPageLimit)
+	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
+	return nil
+}
+
 // Validate reports configuration errors that must abort startup.
 func (c *ServerConfig) Validate() error {
 	if err := c.validateRole(); err != nil {
@@ -1231,8 +1282,8 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateLogs(); err != nil {
 		return err
 	}
-	if c.Scheduler.PoolStarvationThreshold < 0 {
-		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	if err := c.validateNonNegative(); err != nil {
+		return err
 	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err
@@ -1331,7 +1382,46 @@ func (c *ServerConfig) validateSecretPolicies() error {
 	return nil
 }
 
+// SourceModeSection is execution.source_mode (ADR 0067 §3).
+type SourceModeSection struct {
+	// Enabled turns source mode on. Default false: Pro ignores a version's source.
+	// Bind via DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED (legacy
+	// LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED).
+	Enabled bool `mapstructure:"enabled"`
+	// Image is the runtime image, pinned by a full sha256 digest, that
+	// source-mode versions name as their image. Bind via
+	// DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE (legacy LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE).
+	Image string `mapstructure:"image"`
+}
+
+// RuntimeImage returns the runtime image when source mode is on, and "" when
+// it is off, the form the dispatcher and the register check take.
+func (s SourceModeSection) RuntimeImage() string {
+	if !s.Enabled {
+		return ""
+	}
+	return s.Image
+}
+
+// validateSourceMode requires a runtime image pinned by a full sha256 digest
+// when source mode is on, so every source-mode task runs the exact image the
+// operator vetted.
+func (c *ServerConfig) validateSourceMode() error {
+	m := c.Execution.SourceMode
+	if !m.Enabled {
+		return nil
+	}
+	if m.Image == "" {
+		return errors.New("execution.source_mode.image is required when execution.source_mode.enabled (ADR 0067)")
+	}
+	if !domain.IsDigestPinned(m.Image) {
+		return fmt.Errorf("execution.source_mode.image must be pinned by digest (image@sha256:<64 hex>), got %q (ADR 0067)", m.Image)
+	}
+	return nil
+}
+
 // validateExecution enforces the warm-pool boot gate (ADR 0058 N1a), fail-closed.
+// It first checks execution.source_mode, which does not depend on warm pools.
 // The whole block is gated on WarmPoolsEnabled: with warm pools OFF (the default)
 // none of these fields is validated, so an operator who never turns warm pools on
 // is unaffected. With warm pools ON it rejects, rather than silently correcting:
@@ -1356,6 +1446,9 @@ func (c *ServerConfig) validateSecretPolicies() error {
 // (execution_timeout / the warm-worker watchdog <= the ceiling), enforced on the
 // execution path, not here.
 func (c *ServerConfig) validateExecution() error {
+	if err := c.validateSourceMode(); err != nil {
+		return err
+	}
 	if !c.Execution.WarmPoolsEnabled {
 		return nil
 	}
@@ -1758,6 +1851,12 @@ func isLoopbackHost(host string) bool {
 // validateRole rejects an unknown server.role (ADR 0049). Empty is valid (defaults
 // to "all"). A typo like "worker" is a loud boot failure, not a silent monolith.
 func (c *ServerConfig) validateRole() error {
+	// The listener timeouts are validated with the role: both shape how this
+	// process serves HTTP. A negative duration is a typo, not "off".
+	if c.Server.ReadTimeout < 0 || c.Server.IdleTimeout < 0 {
+		return fmt.Errorf("server.read_timeout (%v) and server.idle_timeout (%v) must not be negative; 0 disables them",
+			c.Server.ReadTimeout, c.Server.IdleTimeout)
+	}
 	switch c.Server.Role {
 	case "", RoleAll, RoleAPI, RoleScheduler:
 		return nil

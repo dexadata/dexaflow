@@ -151,7 +151,7 @@ func (q *Queries) PoolBudgets(ctx context.Context) ([]PoolBudgetsRow, error) {
 }
 
 const poolSlotUsage = `-- name: PoolSlotUsage :many
-SELECT COALESCE(pool, 'default_pool') AS pool, state, count(*) AS n
+SELECT COALESCE(pool, 'default_pool') AS pool, state, sum(pool_slots)::bigint AS n
 FROM task_instances
 WHERE tenant_id = $1 AND state IN ('scheduled', 'queued', 'running', 'deferred')
 GROUP BY COALESCE(pool, 'default_pool'), state
@@ -163,10 +163,12 @@ type PoolSlotUsageRow struct {
 	N     int64     `json:"n"`
 }
 
-// Per-pool occupancy for a tenant: how many of the tenant's task instances sit in
-// each non-terminal state, grouped by the instance's pool (a NULL pool is the
-// implicit default_pool). Feeds the Airflow PoolResponse occupancy fields; the
-// gate itself counts queued+running as the occupied slots.
+// Per-pool occupancy for a tenant: how many slots the tenant's task instances
+// take in each non-terminal state, grouped by the instance's pool (a NULL pool
+// is the implicit default_pool). Each instance weighs its pool_slots, the size
+// the admission gate charges it (ADR 0066, #1499), not 1. Feeds the Airflow
+// PoolResponse occupancy fields; the gate itself counts queued+running as the
+// occupied slots.
 func (q *Queries) PoolSlotUsage(ctx context.Context, tenantID pgtype.UUID) ([]PoolSlotUsageRow, error) {
 	rows, err := q.db.Query(ctx, poolSlotUsage, tenantID)
 	if err != nil {

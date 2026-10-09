@@ -319,3 +319,32 @@ func TestHoldsKeyMigrationLockAfterTermination(t *testing.T) {
 		t.Error("a terminated session still reports holding the lock")
 	}
 }
+
+// KeyMigrationLockHeld lets a command that is not a lock party see whether a
+// Lite server is running against the datastore (#413), without taking the lock
+// itself: taking it even briefly could make a server starting at that moment
+// refuse to boot.
+func TestKeyMigrationLockHeldSeesAnotherSession(t *testing.T) {
+	dsn := freshKeyMigrationDB(t)
+	ctx := context.Background()
+	server, observer := keyMigrationConn(t, dsn), keyMigrationConn(t, dsn)
+
+	if held, err := storage.KeyMigrationLockHeld(ctx, observer); err != nil || held {
+		t.Fatalf("idle datastore reported as locked: %v %v", held, err)
+	}
+	if ok, err := storage.TryKeyMigrationLockShared(ctx, server); err != nil || !ok {
+		t.Fatalf("shared lock on an idle datastore: %v %v", ok, err)
+	}
+	if held, err := storage.KeyMigrationLockHeld(ctx, observer); err != nil || !held {
+		t.Fatalf("a server's shared lock was not seen: %v %v", held, err)
+	}
+	if mine, err := storage.HoldsKeyMigrationLock(ctx, observer); err != nil || mine {
+		t.Errorf("the observer took the lock while looking at it: %v %v", mine, err)
+	}
+	if _, err := server.Exec(ctx, "SELECT pg_advisory_unlock_shared($1)", storage.KeyMigrationLockID); err != nil {
+		t.Fatal(err)
+	}
+	if held, err := storage.KeyMigrationLockHeld(ctx, observer); err != nil || held {
+		t.Errorf("a released lock is still reported: %v %v", held, err)
+	}
+}

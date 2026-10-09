@@ -48,6 +48,10 @@ type Dependencies struct {
 	// 1 KB or more for clients that accept it; streams are never compressed.
 	// False (the default) sends every body as identity.
 	GzipResponses bool
+	// MaxPageLimit (server.max_page_limit) caps the limit of every list
+	// endpoint and the dag_runs_limit of /ui/dags. Non-positive (the default)
+	// leaves them uncapped.
+	MaxPageLimit int
 	// TokenRenewer re-mints a still-valid user bearer with a fresh short TTL so a
 	// long CLI/dev session need not re-login every TokenTTLSecs (aresta #5). Nil
 	// leaves the renew route unregistered (renewal simply unavailable). In practice
@@ -95,6 +99,10 @@ type Dependencies struct {
 	// UnitMisfits counts a task registered under executor.unit.enforce=warn
 	// although it does not fit its size. Nil: not counted.
 	UnitMisfits UnitMisfitRecorder
+	// SourceModeImage is the runtime image when execution.source_mode is on
+	// (ADR 0067 §3), "" when it is off. Registering a version on that image
+	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
+	SourceModeImage string
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository
@@ -228,6 +236,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(RejectEncodedPathSeparators())
 	r.Use(CORS(deps.CORSOrigins))
 	r.Use(NoStoreOnVolatileRoutes())
+	if deps.MaxPageLimit > 0 {
+		r.Use(maxPageLimit(deps.MaxPageLimit))
+	}
 	if deps.GzipResponses {
 		r.Use(GzipJSON())
 	}
@@ -254,9 +265,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// Transparent renewal (aresta #5): a still-valid bearer is re-minted with a
 	// fresh short TTL, bounded by max_lifetime. Under the public /api/v2/auth/
 	// prefix like login, it is self-gating — only a valid signed bearer can be
-	// renewed. Registered only when a renewer is wired.
+	// renewed. Registered only when a renewer is wired. Rate-limited per client
+	// IP on its own limiter (#801), never the login one, so renewal traffic
+	// cannot spend an address's password-login budget.
 	if deps.TokenRenewer != nil {
-		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
+		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
+		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
@@ -276,7 +290,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// configured, on its own per-IP limiter like the OIDC routes.
 	if deps.TrustedIssuer != nil {
 		issuerLimiter := auth.NewRateLimiter(30, time.Minute)
-		r.POST("/api/v2/auth/session", rateLimitByIP(issuerLimiter), issuerSessionHandler(issuerSessionDeps{
+		// Refusals, the rate limit's included, go back to the external sign-in
+		// when one is configured (see issuerSessionDeps.refuse).
+		handoff := issuerSessionDeps{
 			issuer:          deps.TrustedIssuer,
 			users:           deps.TrustedIssuerUsers,
 			origins:         deps.TrustedIssuerOrigins,
@@ -285,7 +301,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,
 			logger:          deps.Logger,
 			insecureCookies: deps.SessionCookieInsecure,
-		}))
+			signIn:          issuerSignInTarget(deps.ExternalSignInURL),
+		}
+		r.POST("/api/v2/auth/session", rateLimitByIPWith(issuerLimiter, handoff.refuseRateLimited), issuerSessionHandler(handoff))
 	}
 	// OIDC/SSO login flow (D1): registered only when a provider was discovered at
 	// boot. Both routes sit under the public /api/v2/auth/ prefix.

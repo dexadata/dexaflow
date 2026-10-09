@@ -124,11 +124,13 @@ func run() error {
 	}
 
 	tel, shutdownTel, err := observability.Setup(ctx, observability.Config{
-		ServiceName:  "leoflow-server",
-		LogLevel:     cfg.Observability.LogLevel,
-		LogFormat:    cfg.Observability.LogFormat,
-		OTelEnabled:  cfg.Observability.OTel.Enabled,
-		OTelEndpoint: cfg.Observability.OTel.Endpoint,
+		ServiceName:    "leoflow-server",
+		LogLevel:       cfg.Observability.LogLevel,
+		LogFormat:      cfg.Observability.LogFormat,
+		OTelEnabled:    cfg.Observability.OTel.Enabled,
+		OTelEndpoint:   cfg.Observability.OTel.Endpoint,
+		SampleRatio:    cfg.Observability.OTel.SampleRatio,
+		SkipProbeSpans: cfg.Observability.OTel.SkipProbeSpans,
 	})
 	if err != nil {
 		return fmt.Errorf("observability setup: %w", err)
@@ -268,7 +270,7 @@ func run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
-	metricsSrv := &http.Server{Addr: cfg.Server.MetricsAddr, Handler: api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), ReadHeaderTimeout: 10 * time.Second}
+	metricsSrv := newHTTPServer(cfg.Server.MetricsAddr, api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), cfg)
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
 	return keyLockExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
@@ -1432,6 +1434,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedProxies:               cfg.Server.TrustedProxies,
 		TokenTTLSecs:                 cfg.Auth.JWT.TokenTTLSeconds,
 		GzipResponses:                cfg.Server.GzipResponses,
+		MaxPageLimit:                 cfg.Server.MaxPageLimit,
 		TokenRenewer:                 authn,
 		TokenMaxLifetimeSecs:         cfg.Auth.JWT.MaxLifetimeSeconds,
 		InstanceName:                 cfg.UI.InstanceName,
@@ -1443,6 +1446,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
 		ResourceUnit:                 resourceUnit(cfg),
 		UnitMisfits:                  unitMisfits(tel.Metrics),
+		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -1497,7 +1501,35 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 	})
-	return &http.Server{Addr: cfg.Server.HTTPAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg)
+}
+
+// newHTTPServer builds an HTTP listener with the configured timeouts. The
+// header timeout is always on. ReadTimeout and IdleTimeout come from
+// server.read_timeout and server.idle_timeout (0, the default, leaves them
+// off). WriteTimeout is deliberately never set: a write deadline would cut
+// live log tails and long downloads mid-stream.
+//
+// net/http uses ReadTimeout as the idle timeout when IdleTimeout is 0, so with
+// only a read timeout set an idle 0 is passed on as negative (no idle timeout):
+// idle keep-alive connections stay open, as before, until idle_timeout is set.
+// The header timeout is 10s, or read_timeout when that is shorter.
+func newHTTPServer(addr string, handler http.Handler, cfg *config.ServerConfig) *http.Server {
+	idle := cfg.Server.IdleTimeout
+	if idle == 0 && cfg.Server.ReadTimeout > 0 {
+		idle = -1
+	}
+	header := 10 * time.Second
+	if rt := cfg.Server.ReadTimeout; rt > 0 && rt < header {
+		header = rt
+	}
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: header,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		IdleTimeout:       idle,
+	}
 }
 
 // executorDispatchEnabled decides what /api/v2/monitor/executor reports for
@@ -2619,7 +2651,11 @@ type liteLeadership interface {
 // a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
 // and the infra re-place after either reap keeps the try number, so failing an
 // attempt whose agent is still alive could run user code twice (#911). Both
-// therefore reap only an attempt whose agent process is gone.
+// therefore reap only an attempt whose agent process is gone. The exception is
+// an attempt still running past credentialCeiling: procs (the subprocess
+// executor) can stop its task, so agent-lost fails it as credential_ceiling, a
+// task failure that is never re-placed, and stops it, the Lite counterpart of
+// a task pod's activeDeadlineSeconds (#1511).
 //
 // The reaper sits behind the same leader-settling gate as the pod path, measured
 // from leadership: a Lite restart leaves detached agents alive with a stale
@@ -2630,7 +2666,8 @@ func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, l
 	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
 	reaper.SetProcessLiveness(procs)
 	// An attempt that outlived auth.max_attempt_credential_lifetime fails for
-	// that reason instead of being re-placed as agent_lost (#1461).
+	// that reason instead of being re-placed as agent_lost (#1461), and one still
+	// running past it is stopped (#1511).
 	reaper.SetAttemptLifetimeCeiling(credentialCeiling)
 	if markers != nil {
 		reaper.SetLogSink(markers)
@@ -2694,6 +2731,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// stays vault-only). The D6 registration relaxation is wired separately in run()
 	// where the Repository is in scope.
 	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
+	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
+	// its registered dag.py. "" (the default) keeps it off.
+	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
 	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
 	// SAME registry the gRPC handler serves. nil when warm pools are off.
 	setWarmPlacer(dispatcher, warmPools)

@@ -450,19 +450,38 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.ListDagRunsByDagWithVersion(ctx, queries.ListDagRunsByDagWithVersionParams{DagID: dag.ID, Limit: toInt32(limit), Offset: toInt32(offset)})
+	out, err := r.listDagRunsPage(ctx, dag.ID, dagID, limit, offset)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing dag runs: %w", err)
+		return nil, 0, err
 	}
 	total, err := r.q.CountDagRunsByDag(ctx, dag.ID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
 	}
+	return out, int(total), nil
+}
+
+// ListDagRunsPage is ListDagRuns without the total: it skips the COUNT over
+// every run of the DAG, for callers that never use it (the grid, the latest
+// run header, the in-memory run scans).
+func (r *Repository) ListDagRunsPage(ctx context.Context, tenant, dagID string, limit, offset int) ([]domain.DagRun, error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, err
+	}
+	return r.listDagRunsPage(ctx, dag.ID, dagID, limit, offset)
+}
+
+func (r *Repository) listDagRunsPage(ctx context.Context, dagUUID pgtype.UUID, dagID string, limit, offset int) ([]domain.DagRun, error) {
+	rows, err := r.q.ListDagRunsByDagWithVersion(ctx, queries.ListDagRunsByDagWithVersionParams{DagID: dagUUID, Limit: toInt32(limit), Offset: toInt32(offset)})
+	if err != nil {
+		return nil, fmt.Errorf("listing dag runs: %w", err)
+	}
 	out := make([]domain.DagRun, 0, len(rows))
 	for _, run := range rows {
 		out = append(out, mapDagRunWithVersion(queries.GetDagRunWithVersionRow(run), dagID))
 	}
-	return out, int(total), nil
+	return out, nil
 }
 
 // ListDagRunsAfter returns up to limit of a DAG's runs strictly before the
@@ -774,7 +793,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 			return nil, nil
 		}
 		ids, err := q.ResetAllFailedTaskInstances(ctx, queries.ResetAllFailedTaskInstancesParams{
-			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("clearing failed tasks: %w", err)
@@ -785,7 +804,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 	for _, taskID := range taskIDs {
 		if onlyFailed {
 			n, err := q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{
-				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("clearing failed task %q: %w", taskID, err)
@@ -796,7 +815,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 			continue
 		}
 		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
-			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries,
+			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
 		}); err != nil {
 			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}

@@ -166,12 +166,15 @@ func TestListActiveStagingVolumesRunIDShapes(t *testing.T) {
 }
 
 // TestPoolSlotUsageHasAnActiveTenantIndex guards PoolSlotUsage behind
-// /api/v2/pools: it must be answerable from an index holding only the
+// /api/v2/pools: it must find its rows through an index holding only the
 // tenant's task instances in its four states, with pool alongside, instead of
 // filtering every task instance the tenant ever ran (296 ms at 5M rows).
-// idx_ti_state cannot serve it because it leaves out deferred. On a test table
-// this small the planner rightly ignores such an index either way, so this
-// checks the index itself; the PR records the plan at 5M rows.
+// idx_ti_state cannot serve it because it leaves out deferred. Since #1499 the
+// query sums pool_slots, which the index does not carry, so it reads one heap
+// row per active task instance; that stays bounded by the active rows, not by
+// the tenant's history. On a test table this small the planner rightly ignores
+// such an index either way, so this checks the index itself; the PRs record
+// the plan at 5M rows.
 func TestPoolSlotUsageHasAnActiveTenantIndex(t *testing.T) {
 	f, ctx := seedSlotFixture(t)
 	rows, err := f.pg.Pool.Query(ctx, `
