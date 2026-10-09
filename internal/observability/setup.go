@@ -53,7 +53,7 @@ func Setup(ctx context.Context, cfg Config) (*Telemetry, func(), error) {
 			"observability.otel.enabled=true but observability.otel.endpoint is empty: " +
 				"set the OTLP/gRPC endpoint explicitly (e.g. otel-collector:4317) " +
 				"or set enabled=false to skip tracing (#319)")
-	case cfg.OTelEnabled && (cfg.SampleRatio < 0 || cfg.SampleRatio > 1):
+	case cfg.OTelEnabled && !(cfg.SampleRatio >= 0 && cfg.SampleRatio <= 1):
 		return nil, nil, fmt.Errorf(
 			"observability.otel.sample_ratio must be between 0 and 1 (got %v)", cfg.SampleRatio)
 	case cfg.OTelEnabled:

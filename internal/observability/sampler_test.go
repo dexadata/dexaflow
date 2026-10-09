@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -82,10 +83,10 @@ func TestSamplerSkipsProbesWhenEnabled(t *testing.T) {
 }
 
 // TestSetupRejectsSampleRatioOutOfRange pins boot validation: a ratio outside
-// [0, 1] is a typo, not a request to sample "a lot".
+// [0, 1], NaN included, is a typo, not a request to sample "a lot".
 func TestSetupRejectsSampleRatioOutOfRange(t *testing.T) {
 	t.Cleanup(resetGlobalTracerProvider)
-	for _, ratio := range []float64{-0.1, 1.5} {
+	for _, ratio := range []float64{-0.1, 1.5, math.NaN()} {
 		_, _, err := Setup(context.Background(), Config{
 			ServiceName:  "leoflow-test",
 			OTelEnabled:  true,
