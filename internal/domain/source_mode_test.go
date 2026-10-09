@@ -68,3 +68,43 @@ func TestCheckSourceMode(t *testing.T) {
 		})
 	}
 }
+
+// Dispatch re-checks the cap with the same rule and message as register, for a
+// version registered before source mode was turned on (ADR 0067 §3).
+func TestCheckSourceModeSize(t *testing.T) {
+	atCap := strings.Repeat("x", MaxSourceModeBytes)
+	if err := CheckSourceModeSize("etl", atCap); err != nil {
+		t.Errorf("CheckSourceModeSize at the cap = %v, want nil", err)
+	}
+	err := CheckSourceModeSize("etl", atCap+"x")
+	if err == nil || !strings.Contains(err.Error(), "131073 bytes") || !strings.Contains(err.Error(), `"etl"`) {
+		t.Errorf("CheckSourceModeSize over the cap = %v, want an error naming the DAG and 131073 bytes", err)
+	}
+	regErr := CheckSourceMode("rt", &DAGSpec{DagID: "etl", Image: "rt", Source: atCap + "x"})
+	if regErr == nil || regErr.Error() != err.Error() {
+		t.Errorf("register error %v and dispatch error %v differ", regErr, err)
+	}
+}
+
+// The runtime image must carry a full sha256 digest: "@sha256:" and exactly 64
+// lowercase hex characters at the end of the reference.
+func TestIsDigestPinned(t *testing.T) {
+	hex64 := strings.Repeat("0123456789abcdef", 4)
+	cases := map[string]bool{
+		"ghcr.io/dexadata/runtime@sha256:" + hex64:       true,
+		"ghcr.io/dexadata/runtime:0.5.3@sha256:" + hex64: true,
+		"rt@sha256:abc":                                  false,
+		"rt@sha256:":                                     false,
+		"rt@sha256:" + strings.ToUpper(hex64):            false,
+		"rt@sha256:" + hex64 + "0":                       false,
+		"rt@sha256:" + hex64 + ":latest":                 false,
+		"@sha256:" + hex64:                               false,
+		"ghcr.io/dexadata/runtime:0.5.3":                 false,
+		"":                                               false,
+	}
+	for image, want := range cases {
+		if got := IsDigestPinned(image); got != want {
+			t.Errorf("IsDigestPinned(%q) = %v, want %v", image, got, want)
+		}
+	}
+}

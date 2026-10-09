@@ -1,9 +1,11 @@
 package executor
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // ADR 0067 §3: a source-mode pod carries dag.py in an annotation, projects it
@@ -77,5 +79,51 @@ func TestBuildPodIgnoresSourceOutsideSourceMode(t *testing.T) {
 		if m.Name == sourceVolumeName {
 			t.Errorf("source mount added outside source mode: %+v", m)
 		}
+	}
+}
+
+// The pod informer keeps no copy of a task's source (ADR 0067 §3): its cache
+// holds every managed pod for the life of the process, and the source can be
+// 128 KiB per pod. The transform drops only the source annotation.
+func TestDropSourceAnnotation(t *testing.T) {
+	pod := BuildPod(func() Request { r := sampleReq(); r.Source = "print(1)\n"; r.SourceMode = true; return r }())
+	out, err := dropSourceAnnotation(pod)
+	if err != nil {
+		t.Fatalf("dropSourceAnnotation: %v", err)
+	}
+	got := out.(*corev1.Pod)
+	if _, ok := got.Annotations[SourceAnnotation]; ok {
+		t.Errorf("source annotation kept in the cache copy")
+	}
+	if got.Annotations["leoflow.io/task-instance-id"] != "ti-1" {
+		t.Errorf("other annotations lost: %v", got.Annotations)
+	}
+	// Not a pod (a tombstone, say): passed through untouched.
+	other := "not a pod"
+	if o, err := dropSourceAnnotation(other); err != nil || o != other {
+		t.Errorf("dropSourceAnnotation(non-pod) = %v, %v; want it unchanged", o, err)
+	}
+}
+
+func TestPodInformerCacheDropsSourceAnnotation(t *testing.T) {
+	p := informerPod("p-src", "run-a", "extract", corev1.PodRunning)
+	p.Annotations = map[string]string{SourceAnnotation: "print(1)\n", "keep": "me"}
+	cs := fake.NewClientset(p)
+	pi := NewPodInformer(cs, "leoflow")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pi.Start(ctx)
+	if !pi.WaitForCacheSync(ctx) {
+		t.Fatal("cache did not sync")
+	}
+	cached, err := pi.lister.Pods("leoflow").Get("p-src")
+	if err != nil {
+		t.Fatalf("cached pod: %v", err)
+	}
+	if _, ok := cached.Annotations[SourceAnnotation]; ok {
+		t.Errorf("informer cache holds the source annotation")
+	}
+	if cached.Annotations["keep"] != "me" {
+		t.Errorf("informer cache lost other annotations: %v", cached.Annotations)
 	}
 }
