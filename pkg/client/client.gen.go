@@ -267,7 +267,7 @@ type DAGRunCreate struct {
 	Note        *string                 `json:"note,omitempty"`
 }
 
-// DAGUpdate defines model for DAGUpdate.
+// DAGUpdate is_paused must be present; a body without it is refused with 400. It is not listed under required so the generated Go client keeps the field a pointer.
 type DAGUpdate struct {
 	IsPaused *bool `json:"is_paused,omitempty"`
 }
@@ -3859,11 +3859,18 @@ type UpdateDagResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DAG
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r UpdateDagResponse) GetJSON200() *DAG {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateDagResponse) GetJSON400() *Error {
+	return r.JSON400
 }
 
 // GetBody returns the raw response body bytes
@@ -5852,6 +5859,13 @@ func ParseUpdateDagResponse(rsp *http.Response) (*UpdateDagResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 
