@@ -112,14 +112,16 @@ type Querier interface {
 	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error)
 	// try_number starts at 1 to match Airflow (1-based attempts): the first run's
 	// logs live at .../1.log, which is where the UI's log view looks. Retries bump
-	// it via ResetForRetry.
+	// it via ResetForRetry. pool_slots is the task's EffectivePoolSlots (#1499).
 	CreateTaskInstance(ctx context.Context, arg CreateTaskInstanceParams) (TaskInstance, error)
 	// Batched form of CreateTaskInstance: materializes every task of one run in a
 	// single COPY instead of T INSERT round-trips. The caller supplies one param row
 	// per task with try_number pinned to 1 (matching CreateTaskInstance's literal)
 	// and pool carried through so cross-DAG pool occupancy is attributed correctly;
-	// columns omitted from the list take their table defaults, so the rows are
-	// byte-identical to the loop — only the statement count changes (T INSERTs → 1 COPY).
+	// pool_slots carries the task's EffectivePoolSlots so that occupancy is
+	// weighted like the admission gate's (#1499). Columns omitted from the list
+	// take their table defaults, so the rows are byte-identical to the loop: only
+	// the statement count changes (T INSERTs → 1 COPY).
 	CreateTaskInstances(ctx context.Context, arg []CreateTaskInstancesParams) (int64, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
 	// Whether run_id of the DAG dag_id in tenant tenant_id exists: the read behind
@@ -595,10 +597,12 @@ type Querier interface {
 	// cross-DAG admission budget (ADR 0053 Stage 3). Keyed by (tenant_id, name) so a
 	// pool name is scoped to its tenant. Pro-only: Lite never calls this.
 	PoolBudgets(ctx context.Context) ([]PoolBudgetsRow, error)
-	// Per-pool occupancy for a tenant: how many of the tenant's task instances sit in
-	// each non-terminal state, grouped by the instance's pool (a NULL pool is the
-	// implicit default_pool). Feeds the Airflow PoolResponse occupancy fields; the
-	// gate itself counts queued+running as the occupied slots.
+	// Per-pool occupancy for a tenant: how many slots the tenant's task instances
+	// take in each non-terminal state, grouped by the instance's pool (a NULL pool
+	// is the implicit default_pool). Each instance weighs its pool_slots, the size
+	// the admission gate charges it (ADR 0066, #1499), not 1. Feeds the Airflow
+	// PoolResponse occupancy fields; the gate itself counts queued+running as the
+	// occupied slots.
 	PoolSlotUsage(ctx context.Context, tenantID pgtype.UUID) ([]PoolSlotUsageRow, error)
 	// A pod CREATE was refused by cluster backpressure — a ResourceQuota 403 or an
 	// API Priority & Fairness 429 (ADR 0053). Back off the next attempt to $3 WITHOUT

@@ -304,6 +304,9 @@ type ExecutionSection struct {
 	// is gated at boot on the security prerequisites (token-exchange transport +
 	// liveness enforcement) because a warm pod reuses one credential across attempts.
 	WarmPoolsEnabled bool `mapstructure:"warm_pools_enabled"`
+	// SourceMode runs a version on the operator's runtime image from the dag.py
+	// it was registered with, with no image build (ADR 0067 §3). Off by default.
+	SourceMode SourceModeSection `mapstructure:"source_mode"`
 	// MaxAttemptsPerWorker caps how many attempts a warm worker serves before it is
 	// drained and recycled (ADR 0058 D9). Bounds credential-leak and stale-image
 	// exposure by forcing a fresh pod periodically. Default 50.
@@ -579,6 +582,15 @@ type TrustedIssuerSection struct {
 	// post a handoff. Any other Origin, or none, is refused, so another site
 	// cannot sign a visitor in (login CSRF). Required.
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	// BearerAudiences turns on the bearer mode (#1468): a token whose `aud` is
+	// one of these is accepted as the bearer of any /api/v2 request, reused
+	// within its lifetime, the way a remote MCP client authenticates (ADR 0050
+	// D9). Each must differ from Audience, so a handoff token is never a
+	// bearer. Empty (the default) leaves the mode off.
+	BearerAudiences []string `mapstructure:"bearer_audiences"`
+	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
+	// 900-second default; at most 3600.
+	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
 }
 
 // Enabled reports whether a trusted issuer is configured.
@@ -652,7 +664,9 @@ type AuthSection struct {
 	// mid-attempt). An attempt whose agent goes silent after running past the
 	// ceiling is failed by the heartbeat reaper as a task failure with the
 	// credential_ceiling reason (its retry policy applies), never re-placed as an
-	// agent_lost infra loss with a fresh credential (#1461). A non-positive value
+	// agent_lost infra loss with a fresh credential (#1461). In Lite, which has no
+	// pod deadline, the reaper also fails an attempt still running past the
+	// ceiling with that reason and stops its task (#1511). A non-positive value
 	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
 	// credential_ceiling failure together (a wedged task then has no
 	// wall-clock bound of its own), so boot logs a WARN naming the key.
@@ -1121,19 +1135,21 @@ var serverDefaults = map[string]any{
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `dexaflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
-	"ui.auto_refresh_interval_seconds":         0,
-	"auth.dev_no_auth":                         false,
-	"auth.service_token":                       "",
-	"auth.trusted_issuer.name":                 "",
-	"auth.trusted_issuer.issuer":               "",
-	"auth.trusted_issuer.jwks_url":             "",
-	"auth.trusted_issuer.audience":             "",
-	"auth.trusted_issuer.tenant_claim":         "tenant_id",
-	"auth.trusted_issuer.allowed_tenants":      []string{},
-	"auth.trusted_issuer.max_lifetime_seconds": 0,
-	"auth.trusted_issuer.allowed_origins":      []string{},
-	"auth.external_signin_url":                 "",
-	"auth.external_signout_url":                "",
+	"ui.auto_refresh_interval_seconds":                0,
+	"auth.dev_no_auth":                                false,
+	"auth.service_token":                              "",
+	"auth.trusted_issuer.name":                        "",
+	"auth.trusted_issuer.issuer":                      "",
+	"auth.trusted_issuer.jwks_url":                    "",
+	"auth.trusted_issuer.audience":                    "",
+	"auth.trusted_issuer.tenant_claim":                "tenant_id",
+	"auth.trusted_issuer.allowed_tenants":             []string{},
+	"auth.trusted_issuer.max_lifetime_seconds":        0,
+	"auth.trusted_issuer.allowed_origins":             []string{},
+	"auth.trusted_issuer.bearer_audiences":            []string{},
+	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
+	"auth.external_signin_url":                        "",
+	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
@@ -1158,6 +1174,8 @@ var serverDefaults = map[string]any{
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
 	"execution.warm_read_only_root_filesystem": false,
+	"execution.source_mode.enabled":            false,
+	"execution.source_mode.image":              "",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -1386,7 +1404,46 @@ func (c *ServerConfig) validateSecretPolicies() error {
 	return nil
 }
 
+// SourceModeSection is execution.source_mode (ADR 0067 §3).
+type SourceModeSection struct {
+	// Enabled turns source mode on. Default false: Pro ignores a version's source.
+	// Bind via DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED (legacy
+	// LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED).
+	Enabled bool `mapstructure:"enabled"`
+	// Image is the runtime image, pinned by a full sha256 digest, that
+	// source-mode versions name as their image. Bind via
+	// DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE (legacy LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE).
+	Image string `mapstructure:"image"`
+}
+
+// RuntimeImage returns the runtime image when source mode is on, and "" when
+// it is off, the form the dispatcher and the register check take.
+func (s SourceModeSection) RuntimeImage() string {
+	if !s.Enabled {
+		return ""
+	}
+	return s.Image
+}
+
+// validateSourceMode requires a runtime image pinned by a full sha256 digest
+// when source mode is on, so every source-mode task runs the exact image the
+// operator vetted.
+func (c *ServerConfig) validateSourceMode() error {
+	m := c.Execution.SourceMode
+	if !m.Enabled {
+		return nil
+	}
+	if m.Image == "" {
+		return errors.New("execution.source_mode.image is required when execution.source_mode.enabled (ADR 0067)")
+	}
+	if !domain.IsDigestPinned(m.Image) {
+		return fmt.Errorf("execution.source_mode.image must be pinned by digest (image@sha256:<64 hex>), got %q (ADR 0067)", m.Image)
+	}
+	return nil
+}
+
 // validateExecution enforces the warm-pool boot gate (ADR 0058 N1a), fail-closed.
+// It first checks execution.source_mode, which does not depend on warm pools.
 // The whole block is gated on WarmPoolsEnabled: with warm pools OFF (the default)
 // none of these fields is validated, so an operator who never turns warm pools on
 // is unaffected. With warm pools ON it rejects, rather than silently correcting:
@@ -1411,6 +1468,9 @@ func (c *ServerConfig) validateSecretPolicies() error {
 // (execution_timeout / the warm-worker watchdog <= the ceiling), enforced on the
 // execution path, not here.
 func (c *ServerConfig) validateExecution() error {
+	if err := c.validateSourceMode(); err != nil {
+		return err
+	}
 	if !c.Execution.WarmPoolsEnabled {
 		return nil
 	}
@@ -1639,6 +1699,8 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
 		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 600, "auth.trusted_issuer.max_lifetime_seconds (0 to 600)"},
 		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
+		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
+		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -1650,6 +1712,18 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		return fmt.Errorf("auth.trusted_issuer is incomplete or invalid; set: %s", strings.Join(problems, ", "))
 	}
 	return nil
+}
+
+// bearerAudiencesValid reports whether every bearer audience is set and none
+// is the handoff audience: a token for both would be a one-use handoff and a
+// reusable bearer at once.
+func bearerAudiencesValid(s TrustedIssuerSection) bool {
+	for _, aud := range s.BearerAudiences {
+		if aud == "" || aud == s.Audience {
+			return false
+		}
+	}
+	return true
 }
 
 // validateHomeLink checks ui.home_link (#1290): both fields or neither, and an

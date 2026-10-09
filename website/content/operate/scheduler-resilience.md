@@ -344,8 +344,9 @@ cannot be probed, so the reapers keep deferring.
 What this does **not** cover, plainly:
 
 - **An agent that is alive but wedged** (the process exists, its heartbeat
-  stopped) is never reaped by Lite. Stop the process yourself; the next cycle
-  then reaps the TI as `agent_lost`.
+  stopped) is not reaped by Lite before the credential ceiling (see
+  [below](#an-attempt-that-outlives-the-credential-ceiling-fails)). Stop the
+  process yourself; the next cycle then reaps the TI as `agent_lost`.
 - **PID reuse.** If the agent died while the server was down and the OS hands
   its PID to an unrelated process, that attempt reads alive and is deferred
   until that process exits. This can only delay a reap, never cause a false
@@ -365,7 +366,9 @@ What this does **not** cover, plainly:
   is also silent past the agent-lost threshold or still `queued` past the
   dispatch-lost threshold.
 - **A task that hangs inside a live agent** is the agent's own
-  `execution_timeout_seconds` to stop, exactly as on Kubernetes.
+  `execution_timeout_seconds` to stop, exactly as on Kubernetes. Past
+  `auth.max_attempt_credential_lifetime` the reaper stops it in any case, the
+  way the pod's `activeDeadlineSeconds` floor does on Kubernetes.
 
 ## Tuning the thresholds
 
@@ -411,8 +414,32 @@ when the reaper only gets to it after the ceiling: a node that dies at minute
 the attempt's last heartbeat measured from its `running` transition, not by
 the time of the reap. The settling gate, the destructive gate, the attempt pin
 and the pod teardown are the same as for `agent_lost`. A non-positive ceiling disables the check along with the rest of the ceiling.
-In Lite the reaper still waits for the attempt's agent and task processes to
-exit before it fails the attempt, as it does for `agent_lost`.
+
+**In Lite the reaper also ends the attempt at the ceiling**
+([#1511](https://github.com/dexadata/dexaflow/issues/1511)). There is no pod
+deadline in Lite, so before this an attempt past the ceiling was failed only
+once its task process exited on its own: a task that never exits kept running
+with a credential that was no longer renewed, and the try log could show
+`task succeeded` right before `killed: credential_ceiling`. Now, on every reaper
+pass, a `running` attempt that entered `running` longer ago than the ceiling and
+whose agent or task process is still alive is failed with the same
+`credential_ceiling` reason (a task failure, so its retry policy applies), and
+then its task is stopped: `SIGTERM` to the task's whole process group, up to
+10 s to exit, then `SIGKILL` and up to 5 s more, the same escalation used for
+an orphaned task. The age counts from the `running` transition, which comes
+after the dispatch the credential ceiling counts from, so the credential has
+always stopped renewing by then. The attempt is marked first, through the same
+guarded write as above (`running` only, pinned to the attempt), so whichever of
+the mark and the agent's own terminal report lands first decides the outcome
+and the other changes nothing. Once marked, the agent's next heartbeat or
+report is told to terminate. The `killed: credential_ceiling` line is written
+after the task and its agent have exited, so it is the last line of the try
+log. Like the orphan stop, the server only signals a task group it recorded and
+can verify; it never signals the agent itself. Unlike Kubernetes, where a
+declared `execution_timeout` longer than the ceiling sets the pod deadline, Lite
+stops the attempt at the ceiling regardless: past it the attempt could not
+report its result anyway, and Lite has no durable outcome record to recover it
+from. This runs on Linux and macOS, where a task group can be probed.
 
 The defaults are conservative on purpose: too-tight thresholds risk reaping a
 legitimately slow dispatch (Kubernetes pod-pull latency under contention) or a
@@ -589,6 +616,9 @@ your Prometheus dashboard:
 |---|---|
 | `agent_lost` | TI failed by the heartbeat reaper |
 | `agent_lost_credential_ceiling` | TI failed by the heartbeat reaper as `credential_ceiling`: its agent went silent after the attempt ran past `auth.max_attempt_credential_lifetime`. A task failure under the retry policy, not re-placed ([#1461](https://github.com/dexadata/dexaflow/issues/1461)) |
+| `credential_ceiling_stopped` | Lite only: a `running` attempt with a live agent or task was still running past `auth.max_attempt_credential_lifetime`; it was failed as `credential_ceiling` and its task stopped ([#1511](https://github.com/dexadata/dexaflow/issues/1511)) |
+| `credential_ceiling_stop_error` | Lite only: such an attempt was failed, but its task could not be stopped (no verifiable task group record, or the signal failed); stop the process by hand |
+| `credential_ceiling_noop`, `credential_ceiling_error`, `credential_ceiling_gate_skip`, `credential_ceiling_process_query_error` | Lite only: the attempt's own report settled it first, the mark failed (retried next cycle), the destructive gate closed, or its process liveness could not be read (deferred) |
 | `dispatch_lost` | TI failed by the dispatch-lost reaper |
 | `dispatch_lost_deferred` | Dispatch-lost skipped because the TI's pod is live (slow start, [#461](https://github.com/dexadata/dexaflow/issues/461)) — a healthy signal, not a fault |
 | `pod_lost` | TI failed by the pod-lost reaper (no pod at all for the attempt) |

@@ -76,9 +76,14 @@ type Request struct {
 	// materializes it to a per-TI temp dir so `python -m leoflow_runtime
 	// dag:<task>` can importlib it from there — this is how multi-DAG Lite setups
 	// avoid the ModuleNotFoundError that hit Lima 2026-06-01 when the agent's
-	// global workdir didn't carry the user's dag.py. Empty for Pro (the
-	// container image already carries the source); ignored by the K8s executor.
+	// global workdir didn't carry the user's dag.py. The K8s executor ignores it
+	// unless SourceMode is set (the container image carries the source).
 	Source string
+	// SourceMode tells the K8s executor to ship Source into the pod as dag.py
+	// (ADR 0067 §3). The dispatcher sets it only for a version on the operator's
+	// runtime image that carries a source. Ignored by the subprocess executor,
+	// which always materializes Source.
+	SourceMode bool
 
 	// Agent connection details injected into the worker environment.
 	ControlPlaneAddr string

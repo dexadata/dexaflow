@@ -1,0 +1,33 @@
+suite: renewed session ceiling reaches the chart (#801)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders the server default ceiling when the value is left alone
+    template: deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS, value: "86400"}}
+
+  - it: renders a configured ceiling
+    set:
+      auth.sessionMaxLifetimeSeconds: 28800
+    template: deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS, value: "28800"}}
+
+  - it: renders 0, which disables the ceiling, instead of dropping it
+    set:
+      auth.sessionMaxLifetimeSeconds: 0
+    template: deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS, value: "0"}}

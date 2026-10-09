@@ -2,9 +2,11 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/logs"
@@ -159,8 +161,13 @@ type agentLostReaper struct {
 	gate destructiveGate
 	// ceiling is auth.max_attempt_credential_lifetime. An attempt that went
 	// silent past it is failed for the credential ceiling, not as agent_lost
-	// (see OutlivedCredentialCeiling). Zero or negative disables the distinction.
+	// (see OutlivedCredentialCeiling). In Lite it also bounds a live attempt:
+	// one still running past it is failed and stopped (see runPastCeiling).
+	// Zero or negative disables both.
 	ceiling time.Duration
+	// ceilingStops tracks the background stops runPastCeiling starts, so a
+	// test can wait for them.
+	ceilingStops sync.WaitGroup
 }
 
 // runningLister is the ListRunningTasks slice of PodLostReapStore.
@@ -183,6 +190,9 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 		}
 	}()
 	now := time.Now().UTC()
+	// The ceiling pass runs first, so an attempt it settles is not listed again
+	// below as a silent agent in the same pass.
+	ceilingErr := r.runPastCeiling(ctx, now)
 	// A control-plane restart manufactures the very silence this reaper punishes:
 	// every in-flight TI's last heartbeat elapses during the outage, and the
 	// heartbeat receiver is the process that just came back. Reaper.settling holds
@@ -190,7 +200,7 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 	// time run is reached a stale heartbeat is a real one.
 	candidates, err := r.store.ListAgentLostCandidates(ctx)
 	if err != nil {
-		return err
+		return errors.Join(ceilingErr, err)
 	}
 	for _, c := range candidates {
 		if !IsAgentLost(c, r.threshold, now) {
@@ -201,7 +211,126 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 		}
 		r.reapOne(ctx, c, now)
 	}
-	return r.runNeverHeartbeated(ctx, now)
+	return errors.Join(ceilingErr, r.runNeverHeartbeated(ctx, now))
+}
+
+// runPastCeiling is the Lite-only bound on a live attempt (#1511): a `running`
+// TI whose attempt has been running longer than the credential ceiling and
+// whose agent or task is still alive is failed as credential_ceiling and its
+// task is stopped. It is the Lite counterpart of the task pod's
+// activeDeadlineSeconds floor. Without it such an attempt runs on with a
+// credential that is no longer renewed, and is only failed once its task exits
+// on its own, if ever. The age is measured from the running transition, which
+// is after the dispatch the credential ceiling counts from, so the credential
+// has always stopped renewing by then.
+//
+// An attempt whose processes are gone is left to the silent-agent paths, which
+// already settle it as credential_ceiling or agent_lost; a liveness error
+// defers. It needs a ProcessLiveness that can stop an attempt (AttemptStopper),
+// the running lister Lite wires, and a positive ceiling; anything else (the
+// pod path, or no ceiling) makes it a no-op.
+func (r *agentLostReaper) runPastCeiling(ctx context.Context, now time.Time) error {
+	stopper, ok := r.procs.(AttemptStopper)
+	if !ok || r.running == nil || r.ceiling <= 0 {
+		return nil
+	}
+	candidates, err := r.running.ListRunningTasks(ctx, r.ceiling)
+	if err != nil {
+		return err
+	}
+	for _, c := range candidates {
+		if c.RunningSince.IsZero() || now.Sub(c.RunningSince) <= r.ceiling {
+			continue
+		}
+		alive, perr := r.procs.AttemptProcessAlive(ctx, c.DagRunID, c.TaskID, c.TryNumber)
+		if perr != nil {
+			r.logger.Warn("credential ceiling: process liveness of an attempt past the ceiling unknown; deferring",
+				"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", perr)
+			r.record("credential_ceiling_process_query_error")
+			continue
+		}
+		if !alive {
+			continue
+		}
+		r.failPastCeiling(ctx, stopper, c)
+	}
+	return nil
+}
+
+// failPastCeiling fails one live attempt past the ceiling and stops its task.
+//
+// The mark comes first and is the only finalization: it is the same guarded
+// write the silent-agent path uses (state='running', pinned to the listed try
+// and epoch), so whichever of it and the agent's own terminal report lands
+// first wins, and the other is a no-op. Marking before the stop is what keeps
+// the outcome credential_ceiling: a task stopped first would be reported by its
+// still-authenticated agent as an ordinary failure. Once marked, the agent's
+// next heartbeat or report is told to terminate, and its credential is never
+// renewed again.
+//
+// The stop then runs in the background, since a task that ignores SIGTERM
+// holds it for the grace and the kill wait, longer than a pass should wait.
+// The log marker is written when the stop returns, after the agent has logged
+// its task's end and exited, so the ceiling line is the last line of the try
+// log. A stop that fails is metered and logged; the attempt stays failed.
+func (r *agentLostReaper) failPastCeiling(ctx context.Context, stopper AttemptStopper, c PodLostCandidate) {
+	if !gateOpen(r.gate, ctx) {
+		r.record("credential_ceiling_gate_skip")
+		return
+	}
+	applied, err := r.store.MarkTaskCredentialCeiling(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
+	if err != nil {
+		r.logger.Error("marking task credential-ceiling",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", err)
+		r.record("credential_ceiling_error")
+		return
+	}
+	if !applied {
+		r.record("credential_ceiling_noop")
+		return
+	}
+	r.logger.Warn("attempt still running past auth.max_attempt_credential_lifetime; failing as credential_ceiling and stopping its task",
+		"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "try", c.TryNumber,
+		"running_since", c.RunningSince, "ceiling", r.ceiling)
+	r.record("credential_ceiling_stopped")
+	// Detached from the pass's cancellation, which may come first: the stop
+	// bounds itself (grace, kill wait, agent exit wait).
+	stopCtx := context.WithoutCancel(ctx)
+	r.ceilingStops.Add(1)
+	go func() {
+		defer r.ceilingStops.Done()
+		r.stopPastCeiling(stopCtx, stopper, c)
+	}()
+}
+
+// stopPastCeiling stops the attempt's task and then writes its log marker. ctx
+// is detached from the pass's cancellation (see failPastCeiling).
+func (r *agentLostReaper) stopPastCeiling(ctx context.Context, stopper AttemptStopper, c PodLostCandidate) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.logger.Error("credential ceiling stop panic recovered", "panic", rec, "stack", string(debug.Stack()))
+			r.record("credential_ceiling_panic")
+		}
+	}()
+	stopped, err := stopper.StopAttempt(ctx, c.DagRunID, c.TaskID, c.TryNumber)
+	msg := fmt.Sprintf("killed: credential_ceiling (attempt running since %s outlived auth.max_attempt_credential_lifetime %s; task stopped)",
+		c.RunningSince.UTC().Format(time.RFC3339), r.ceiling)
+	if err != nil || !stopped {
+		r.logger.Error("could not stop the task of an attempt failed for the credential ceiling",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", err)
+		r.record("credential_ceiling_stop_error")
+		msg = fmt.Sprintf("killed: credential_ceiling (attempt running since %s outlived auth.max_attempt_credential_lifetime %s; its task could not be stopped)",
+			c.RunningSince.UTC().Format(time.RFC3339), r.ceiling)
+	}
+	r.writeMarker(AgentLostCandidate{
+		TaskInstanceID: c.TaskInstanceID, TenantID: c.TenantID, DagRunID: c.DagRunID, DagID: c.DagID,
+		TaskID: c.TaskID, TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
+	}, time.Now().UTC(), msg)
+}
+
+// waitCeilingStops waits for every background stop runPastCeiling started.
+func (r *agentLostReaper) waitCeilingStops() {
+	r.ceilingStops.Wait()
 }
 
 // runNeverHeartbeated is the Lite-only half of agent-lost: a TI that reported
