@@ -1,0 +1,14 @@
+kind: Security
+body: |-
+  **A warm worker identity now holds only one assignment stream at a time.**
+  A second registration under a worker identity whose stream was still
+  connected used to replace it, so anything holding a copy of that worker's
+  credential could take over its assignments, and with them the attempt
+  tokens meant for the real worker. The control plane now refuses a second
+  registration with `AlreadyExists` while the first stream is connected and
+  heartbeating; warm workers send that heartbeat on their stream every 15
+  seconds. A reconnect after the previous stream ended is accepted as before,
+  and a stream silent for 60 seconds is replaced and closed. Tests now also pin
+  that the warm pod mounts its bootstrap token read only, in the warm container
+  only, and that the task process never inherits its location (#1546).
+time: 2026-10-09T18:00:00.000000000-03:00

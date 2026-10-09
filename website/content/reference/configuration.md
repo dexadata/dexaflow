@@ -403,7 +403,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_PROVIDER` | `jwt` | both | Credential authenticator: `jwt` (default — username/password issues an HS256 token) or `oidc` (adds the OIDC/SSO login flow on top; the JWT authenticator stays the request-path verifier in both modes). `oidc` is Pro-gated and fails boot closed unless its prerequisites are met (see [OIDC / SSO](#oidc--sso-authoidc)). |
 | `DEXAFLOW_AUTH_JWT_SECRET` | — *(required)* | both | Signs API/agent tokens. Required for both `jwt` and `oidc` (both mint the app's own HS256 token). |
 | `DEXAFLOW_AUTH_JWT_TOKEN_TTL_SECONDS` | `3600` | both | Lifetime, in seconds, of an issued API token. |
-| `DEXAFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS` | `86400` | both | Ceiling, in seconds, on the **total** age of a transparently renewed session, measured from first login and preserved across every renewal. Past it, `POST /api/v2/auth/token/renew` refuses and the user must log in again; the short `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long a live session may keep refreshing. A non-positive value disables the ceiling. Renewal also re-checks that the account is still active, so a deactivated user stops being issued tokens as well as being refused on use. The chart has no value for this yet — set it through `extraEnv`. |
+| `DEXAFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS` | `86400` | both | Ceiling, in seconds, on the **total** age of a transparently renewed session, measured from first login and preserved across every renewal. Past it, `POST /api/v2/auth/token/renew` refuses and the user must log in again; the short `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long a live session may keep refreshing. A non-positive value disables the ceiling. Renewal also re-checks that the account is still active, so a deactivated user stops being issued tokens as well as being refused on use. The renew endpoint is rate-limited to 60 requests a minute per client IP, on a budget separate from login's. Helm: `auth.sessionMaxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | both | Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force). A successful login consumes no budget. `dexaflow lite` raises this well above the default (local single-user tool). |
 | `DEXAFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)). Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
 | `DEXAFLOW_SECRET_KEY_REENCRYPT_ON_BOOT` | `true` | both | Re-encrypt stored connection secrets onto the first `DEXAFLOW_SECRET_KEY` entry at startup ([Rotating the encryption key](#rotating-the-encryption-key)). `dexaflow lite` sets it to `false`: Lite moves keys only through [`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/). |
@@ -411,11 +411,11 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_SECRET_SCOPING` | `permissive` | both | Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `permissive` (delivers the whole tenant vault; warns when a DAG declares a narrower set), `enforce` (delivers only the declared subset — empty declaration ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable. Helm: `auth.secretScoping`. |
 | `DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |
-| `DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME` | `24h` | both | Duration ceiling on how long one attempt's agent credential may be kept alive by heartbeat renewal ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)). A runaway-task backstop; the short per-attempt TTL is what bounds a stolen token. An attempt still running past it fails as a task failure with `credential_ceiling` (subject to its retries) instead of being re-placed as `agent_lost` ([#1461](https://github.com/dexadata/dexaflow/issues/1461)). A non-positive value disables the ceiling. No Helm value yet; `extraEnv` only ([#955](https://github.com/dexadata/dexaflow/issues/955)). |
+| `DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME` | `24h` | both | Duration ceiling on how long one attempt's agent credential may be kept alive by heartbeat renewal ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)). A runaway-task backstop; the short per-attempt TTL is what bounds a stolen token. An attempt still running past it fails as a task failure with `credential_ceiling` (subject to its retries) instead of being re-placed as `agent_lost` ([#1461](https://github.com/dexadata/dexaflow/issues/1461)); in Lite the reaper also stops its task at the ceiling ([#1511](https://github.com/dexadata/dexaflow/issues/1511)). A non-positive value disables the ceiling. No Helm value yet; `extraEnv` only ([#955](https://github.com/dexadata/dexaflow/issues/955)). |
 | `DEXAFLOW_AUTH_SERVICE_TOKEN` | _(empty)_ | both | Turns on the [operator service API](#operator-service-api) under `/api/v2/service/` and is its bearer credential. At least 32 characters; boot fails on a shorter one. Keep it in a Secret. Empty leaves the API off and its routes absent. Helm: `auth.serviceToken`, or `auth.serviceTokenExistingSecret` naming a Secret with key `serviceToken`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER` | _(empty)_ | both | Turns on the [trusted-issuer handoff](#trusted-issuer-handoff): a platform that already authenticates its users opens a UI session for them by posting a token its own issuer signed. The exact `iss` of those tokens. Empty disables it and the endpoint does not exist. Helm: `auth.trustedIssuer.issuer`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME` | _(empty)_ | both | Name of the trusted issuer, 1-40 lowercase letters, digits or `-`. Users the issuer may sign in are linked under `issuer:<name>`, so keep it stable once users exist. Helm: `auth.trustedIssuer.name`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key, so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key (at most once every 30 seconds), so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Dexaflow. Helm: `auth.trustedIssuer.audience`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Dexaflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS` | _(empty)_ | both | Comma-separated tenants the issuer may sign in to; `*` allows every tenant, for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`. |
@@ -423,7 +423,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES` | _(empty)_ | both | Comma-separated audiences whose tokens from the trusted issuer are accepted as the bearer of any `/api/v2` request, reused until they expire: the [bearer mode](#trusted-issuer-bearer-tokens), for remote MCP clients behind your platform (`leoflow-mcp` is the conventional audience). Each must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE`. Empty leaves the mode off. Helm: `auth.trustedIssuer.bearerAudiences`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. Helm: `auth.trustedIssuer.bearerMaxLifetimeSeconds`. |
-| `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
+| `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. A refused [trusted-issuer handoff](#trusted-issuer-handoff) is also sent back here, with an `error` code. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
 | `DEXAFLOW_AUTH_DEV_NO_AUTH` | `false` | dev-only | Legacy escape hatch — bypasses auth entirely, treating every request as admin. Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite uses a real admin login generated by `dexaflow setup`; set this only for ephemeral test scaffolds. |
@@ -570,6 +570,20 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_WARM_POOL_EVENT_REFILL` | `false` | Pro | Refill warm pools on events instead of every 30s: the reconciler reads the warm fleet from a dedicated pod informer instead of a LIST per tick, reacts at once when a warm worker is deleted, fails or is claimed by an attempt, and creates replacements concurrently (up to 4 at a time). The periodic tick stays as a backstop. Helm: `execution.warmPoolEventRefill`. |
 | `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
 
+### Source mode (`execution.source_mode.*`)
+
+Pro runs a DAG version straight from the `dag.py` it was registered with, with
+no image build ([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/)).
+A version runs in source mode when the mode is on, its `image` is exactly the
+runtime image below, and it carries a source. Every other version runs as
+before. See [Source mode](/operate/source-mode/) for what a source-mode DAG can
+and cannot do.
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: no dedicated value yet, use `extraEnv`. |
+
 ### Logs (`logs.*`)
 
 | Variable | Default | Edition | Purpose |
@@ -609,6 +623,8 @@ before enabling it in production.
 | `DEXAFLOW_OBSERVABILITY_LOG_FORMAT` | `json` | both | Control-plane log format: `json` (default) or `text`. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENABLED` | `true` | both | Enable OpenTelemetry trace export. |
 | `DEXAFLOW_OBSERVABILITY_OTEL_ENDPOINT` | `localhost:4317` | both | OTLP collector endpoint (when OTel is enabled). |
+| `DEXAFLOW_OBSERVABILITY_OTEL_SAMPLE_RATIO` | `1` | both | Share of request traces kept, from `0` to `1`. An incoming `traceparent` header is not propagated, so every request starts its own trace and is sampled at this ratio; spans within a request follow its decision. `1` traces every request; other values outside the range fail boot. |
+| `DEXAFLOW_OBSERVABILITY_OTEL_SKIP_PROBE_SPANS` | `false` | both | When `true`, no spans are recorded for `/healthz`, `/readyz` and `/static/*`. Their HTTP metrics are still recorded. |
 | `DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES` | `false` | both | Stop publishing every `dexaflow_*` metric a second time under its pre-rename `leoflow_*` name. The default keeps both, so dashboards and alerts on either name work. An opt-in for operators who do not need the `leoflow_*` names; it halves the scrape. Helm: set it through `extraEnv`. |
 
 ### UI (`ui.*`)
@@ -684,9 +700,46 @@ password and without the platform holding Dexaflow's signing secret:
 The token never creates a user and never grants roles: the user must already
 exist and be linked to the issuer, and its roles are the ones Dexaflow holds.
 Refusals set no cookie and answer `400` (no token), `401` (token rejected),
-`403` (origin not allowed, or no active linked user in that tenant) or `500`, with the reason in the
-server log and the audit trail (`issuer.login.success` /
-`issuer.login.failure`), never in the response.
+`403` (origin not allowed, or no active linked user in that tenant), `429`
+(more than 30 posts a minute from one address) or `500`, with the reason in
+the server log and the audit trail (`issuer.login.success` /
+`issuer.login.failure`), never in the response body. With an external sign-in
+URL set, only a stable code reaches the browser, as described next.
+
+With `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` set, a refusal
+sends the browser back to that URL with `303 See Other` instead of leaving it
+on a JSON error page, with a stable `error` code appended to the URL's own
+query (`https://portal.example.com/sign-in?lang=pt-BR&error=user_not_linked`).
+Your page can show a message for the code; it must not post a new token on its
+own when `error` is present, or a lasting refusal becomes a redirect loop. The
+parameter is not authenticated: anyone can link to your page with any
+`?error=` value, so map the known codes below to fixed messages and never print
+the value back. An `error` parameter already in the configured URL is replaced,
+not duplicated. Request metrics and traces count a redirected refusal under the
+status it stands for (`dexaflow.refusal_status` on the span), not as a `303`.
+
+| Refusal | Without the URL | `error` with the URL |
+|---|---|---|
+| Too many posts from one address | `429` | `rate_limited` |
+| `Origin` missing or not in `allowed_origins` | `403` | `origin_not_allowed` |
+| No `token` field | `400` | `token_missing` |
+| Token already used (or the server could not record its `jti`) | `401` | `token_replayed` |
+| Token without `iat`, issued in the future, or living longer than `max_lifetime_seconds` | `401` | `token_lifetime` |
+| Tenant claim missing or not in `allowed_tenants` | `401` | `tenant_not_allowed` |
+| Any other bad token (signature, issuer, audience, expired, no `sub` or `jti`) | `401` | `invalid_token` |
+| Subject not linked to the issuer | `403` | `user_not_linked` |
+| Linked user deactivated | `403` | `user_inactive` |
+| User linked in another tenant than the token names | `403` | `tenant_mismatch` |
+| Dexaflow could not look up the user or open the session | `500` | `server_error` |
+
+The code is the only thing added to the URL: never the token, the subject,
+the email, the tenant or the origin. The redirect always goes to the
+configured URL and nowhere a request names. The audit event and the server log
+are the same either way, and the request's log line keeps the refusal's status
+as `refusal_status` and its level. A caller whose `Accept` asks for
+`application/json` or `application/problem+json` and not `text/html` is a
+script rather than a browser, and keeps the problem response with the status
+above even with the URL set.
 
 Only pages on `allowed_origins` can post a handoff: browsers send `Origin` on
 every cross-site form post, and Dexaflow refuses any other, so a page elsewhere
@@ -724,11 +777,21 @@ so deactivating or unlinking the user ends its access on the next request,
 whatever the token's expiry.
 
 Anything wrong answers `401`, the same as a bad Dexaflow token; the reason
-stays in the server log. A token that verified but names no active linked user
-in its tenant is also recorded in the audit trail as `issuer.bearer.failure`.
-The bearer is read from the `Authorization` header only, never from the
-session cookie, and a handoff token is never accepted as a bearer, nor a bearer
-as a handoff.
+stays in the server log. A token that does not name the issuer and a bearer
+audience is refused before any signature check. When the token could not be
+checked at all, because the issuer's JWKS or Dexaflow's user store is
+unreachable, the answer is `503`, so the client retries instead of signing in
+again. A token that verified but names no active linked user in its tenant is
+also recorded in the audit trail as `issuer.bearer.failure`. The bearer is read
+from the `Authorization` header only, never from the session cookie, and a
+handoff token is never accepted as a bearer, nor a bearer as a handoff.
+
+Dexaflow caches the issuer's keys and downloads the JWKS again only when a
+token names a key it does not hold, at most once every 30 seconds, for the
+handoff and the bearer together. A forged token therefore cannot make
+Dexaflow call your issuer on every request. After you rotate keys, tokens
+signed with the new key can be refused for up to 30 seconds; publish the new
+key in the JWKS before you sign with it.
 
 Keep bearer tokens short-lived. Dexaflow cannot revoke one before it expires,
 only the user behind it; an MCP gateway that mints one per client for a few

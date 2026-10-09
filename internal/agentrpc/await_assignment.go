@@ -53,8 +53,10 @@ func (s *Server) EnableWarmPools(onReclaim func(ReclaimEvent)) {
 // while the main select pumps assignments from the worker's outbound channel
 // down the stream. The handler exits — deregistering the worker (defer) — on
 // context cancellation, the control plane's shutdown signal (SetShutdown), a
-// stream Send error, or the receive loop ending (clean EOF or a transport
-// error).
+// stream Send error, the receive loop ending (clean EOF or a transport
+// error), or a newer registration superseding this stream after it went silent
+// past the liveness grace. A second stream for an identity whose first stream is
+// still live is refused with AlreadyExists (one live registration per identity).
 func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServer) error {
 	if s.warmPools == nil {
 		return status.Error(codes.FailedPrecondition, "warm pools disabled")
@@ -90,7 +92,7 @@ func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServ
 	// Receive loop: acks and slot-free signals feed the registry. It ends on EOF
 	// (clean close) or any transport error, reported once on recvErr.
 	recvErr := make(chan error, 1)
-	go s.pumpWorkerMessages(stream, id.WorkerID, recvErr)
+	go s.pumpWorkerMessages(stream, worker, recvErr)
 
 	for {
 		select {
@@ -110,6 +112,11 @@ func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServ
 			// A nil channel never fires, so an unwired server (tests, embedders)
 			// behaves exactly as before.
 			return status.Error(codes.Unavailable, "control plane shutting down; assignment stream closed")
+		case <-worker.superseded:
+			// This stream went silent past the liveness grace and a newer
+			// registration under the same identity replaced it. End it so only one
+			// connection serves the identity at a time.
+			return status.Error(codes.Aborted, "superseded by a newer registration of this worker")
 		case rerr := <-recvErr:
 			if errors.Is(rerr, io.EOF) {
 				return nil
@@ -157,20 +164,31 @@ func (s *Server) registerFromStream(stream agentv1.AgentService_AwaitAssignmentS
 	// binding degrades to per-pod liveness for this worker, never a refusal.
 	podName := reg.GetPodName()
 	send := make(chan *agentv1.WorkAssignment, 1)
-	worker := s.warmPools.Register(identity, dagVersion, podName, send)
+	worker, err := s.warmPools.Register(identity, dagVersion, podName, send, stream.Context().Done())
+	if err != nil {
+		// One live registration per identity: a second stream for a worker whose
+		// first stream is still connected and heartbeating is refused, so two
+		// connections can never share one worker's assignments.
+		slog.Warn("warm worker refused: identity already has a live registration",
+			"identity", identity, "dag_version", dagVersion, "pod_name", podName)
+		return nil, status.Error(codes.AlreadyExists, "worker identity already has a live registration")
+	}
 	slog.Info("warm worker registered", "identity", identity, "dag_version", dagVersion, "pod_name", podName)
 	return worker, nil
 }
 
 // pumpWorkerMessages drains WorkerMessages off the stream into the registry
 // until the stream ends, then reports the terminating error once on recvErr.
-func (s *Server) pumpWorkerMessages(stream agentv1.AgentService_AwaitAssignmentServer, identity string, recvErr chan<- error) {
+// Every message counts as a liveness signal for the worker's registration.
+func (s *Server) pumpWorkerMessages(stream agentv1.AgentService_AwaitAssignmentServer, worker *registeredWorker, recvErr chan<- error) {
+	identity := worker.identity
 	for {
 		msg, rerr := stream.Recv()
 		if rerr != nil {
 			recvErr <- rerr
 			return
 		}
+		s.warmPools.Touch(worker)
 		switch m := msg.Msg.(type) {
 		case *agentv1.WorkerMessage_Ack:
 			if binding, ok := s.warmPools.Ack(m.Ack.GetAssignmentId(), m.Ack.GetStarted()); ok {
@@ -181,8 +199,9 @@ func (s *Server) pumpWorkerMessages(stream agentv1.AgentService_AwaitAssignmentS
 		case *agentv1.WorkerMessage_SlotFree:
 			s.warmPools.MarkFree(identity)
 		case *agentv1.WorkerMessage_Register:
-			// A re-registration on an established stream is redundant; the worker is
-			// already keyed by its authenticated identity. Ignore.
+			// A re-registration on an established stream is the worker's periodic
+			// heartbeat: the Touch above already refreshed its liveness, and the
+			// worker stays keyed by its authenticated identity.
 		}
 	}
 }
