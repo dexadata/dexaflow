@@ -37,6 +37,25 @@ func NewKubernetesWarmPods(cs kubernetes.Interface, namespace string, newSpec Wa
 	return &KubernetesWarmPods{clientset: cs, namespace: namespace, newSpec: newSpec}
 }
 
+// warmAnchorSelector selects exactly the warm-pool GC anchors (ADR 0058 D11),
+// the label EnsureWarmAnchor stamps.
+const warmAnchorSelector = warmAnchorLabelKey + "=" + warmAnchorLabelVal
+
+// ListWarmAnchors returns the dag_version (its label) of every warm-pool GC
+// anchor in the namespace (#1500). An anchor without the label reads "" and is
+// skipped by the reconciler, never deleted on a guess.
+func (k *KubernetesWarmPods) ListWarmAnchors(ctx context.Context) ([]string, error) {
+	list, err := k.clientset.CoreV1().ConfigMaps(k.namespace).List(ctx, metav1.ListOptions{LabelSelector: warmAnchorSelector})
+	if err != nil {
+		return nil, fmt.Errorf("listing warm anchors: %w", err)
+	}
+	out := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		out = append(out, list.Items[i].Labels[warmDagVersionLabelKey])
+	}
+	return out, nil
+}
+
 // warmPodSelector selects exactly the warm-worker pods (excludes ordinary task
 // pods), the label BuildWarmPod stamps.
 const warmPodSelector = warmWorkerLabelKey + "=" + warmWorkerLabelVal

@@ -58,7 +58,7 @@ func (g unitGate) check(spec *domain.DAGSpec) error {
 	return nil
 }
 
-func registerVersionHandler(repo DagVersionRepository, unit unitGate) gin.HandlerFunc {
+func registerVersionHandler(repo DagVersionRepository, unit unitGate, sourceModeImage string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var spec domain.DAGSpec
 		if err := c.ShouldBindJSON(&spec); err != nil {
@@ -74,6 +74,10 @@ func registerVersionHandler(repo DagVersionRepository, unit unitGate) gin.Handle
 			return
 		}
 		if err := unit.check(&spec); err != nil {
+			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
+			return
+		}
+		if err := domain.CheckSourceMode(sourceModeImage, &spec); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
 			return
 		}

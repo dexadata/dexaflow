@@ -472,3 +472,37 @@ tests:
             kubernetes.io/metadata.name: leoflow-tasks
       - notExists:
           path: spec.ingress[0].from[0].namespaceSelector
+
+  # ─── Read-only root filesystem (#1225) ──────────────────────────────────
+  - it: the control-plane container runs with a read-only root filesystem and a writable /tmp
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: tmp
+            mountPath: /tmp
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: tmp
+            emptyDir: {}
+
+  - it: an operator can still opt back into a writable root filesystem
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      securityContext.readOnlyRootFilesystem: false
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: false

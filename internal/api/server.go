@@ -91,6 +91,10 @@ type Dependencies struct {
 	// UnitMisfits counts a task registered under executor.unit.enforce=warn
 	// although it does not fit its size. Nil: not counted.
 	UnitMisfits UnitMisfitRecorder
+	// SourceModeImage is the runtime image when execution.source_mode is on
+	// (ADR 0067 §3), "" when it is off. Registering a version on that image
+	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
+	SourceModeImage string
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository
@@ -164,6 +168,10 @@ type Dependencies struct {
 	// (#1284). TrustedIssuerUsers resolves those users (the storage repo).
 	TrustedIssuer      TrustedIssuer
 	TrustedIssuerUsers TrustedIssuerUserStore
+	// TrustedIssuerBearer, when set, also accepts the trusted issuer's tokens
+	// for a bearer audience as the Authorization bearer of any protected
+	// request (#1468). It resolves users through TrustedIssuerUsers.
+	TrustedIssuerBearer TrustedIssuerBearer
 	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
 	// (scheme://host[:port]), so another site cannot sign a browser in.
 	TrustedIssuerOrigins []string
@@ -182,6 +190,15 @@ type Dependencies struct {
 	// zero value is the hardened one: a caller that forgets the field gets Secure.
 	// See cookieSecure for why this is a setting and not derived from the request.
 	SessionCookieInsecure bool
+}
+
+// newIssuerBearerAuth wires the trusted-issuer bearer from deps, or returns nil
+// when it is off.
+func newIssuerBearerAuth(deps Dependencies) *issuerBearerAuth {
+	if deps.TrustedIssuerBearer == nil {
+		return nil
+	}
+	return &issuerBearerAuth{issuer: deps.TrustedIssuerBearer, users: deps.TrustedIssuerUsers, audit: deps.AuthAudit, logger: deps.Logger}
 }
 
 // NewServer builds the gin engine with the full middleware chain, health and
@@ -214,7 +231,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {
-		r.Use(JWTAuth(deps.Authenticator))
+		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps)))
 	}
 
 	r.GET("/healthz", livenessHandler)
@@ -234,9 +251,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// Transparent renewal (aresta #5): a still-valid bearer is re-minted with a
 	// fresh short TTL, bounded by max_lifetime. Under the public /api/v2/auth/
 	// prefix like login, it is self-gating — only a valid signed bearer can be
-	// renewed. Registered only when a renewer is wired.
+	// renewed. Registered only when a renewer is wired. Rate-limited per client
+	// IP on its own limiter (#801), never the login one, so renewal traffic
+	// cannot spend an address's password-login budget.
 	if deps.TokenRenewer != nil {
-		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
+		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
+		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
@@ -256,7 +276,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// configured, on its own per-IP limiter like the OIDC routes.
 	if deps.TrustedIssuer != nil {
 		issuerLimiter := auth.NewRateLimiter(30, time.Minute)
-		r.POST("/api/v2/auth/session", rateLimitByIP(issuerLimiter), issuerSessionHandler(issuerSessionDeps{
+		// Refusals, the rate limit's included, go back to the external sign-in
+		// when one is configured (see issuerSessionDeps.refuse).
+		handoff := issuerSessionDeps{
 			issuer:          deps.TrustedIssuer,
 			users:           deps.TrustedIssuerUsers,
 			origins:         deps.TrustedIssuerOrigins,
@@ -265,7 +287,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,
 			logger:          deps.Logger,
 			insecureCookies: deps.SessionCookieInsecure,
-		}))
+			signIn:          issuerSignInTarget(deps.ExternalSignInURL),
+		}
+		r.POST("/api/v2/auth/session", rateLimitByIPWith(issuerLimiter, handoff.refuseRateLimited), issuerSessionHandler(handoff))
 	}
 	// OIDC/SSO login flow (D1): registered only when a provider was discovered at
 	// boot. Both routes sit under the public /api/v2/auth/ prefix.

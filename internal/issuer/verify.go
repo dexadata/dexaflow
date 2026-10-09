@@ -68,6 +68,13 @@ type Config struct {
 	AllowedTenants []string
 	// MaxLifetime caps exp - iat; zero means DefaultMaxLifetime.
 	MaxLifetime time.Duration
+	// BearerAudiences are the `aud` values of tokens accepted as a bearer on
+	// every request (VerifyBearer). Empty turns the bearer mode off. They must
+	// differ from Audience, so a handoff token is never a bearer.
+	BearerAudiences []string
+	// BearerMaxLifetime caps exp - iat of a bearer; zero means
+	// DefaultBearerMaxLifetime.
+	BearerMaxLifetime time.Duration
 }
 
 // Identity is what a verified token says about the user.
@@ -79,10 +86,13 @@ type Identity struct {
 
 // Verifier checks tokens against one trusted issuer.
 type Verifier struct {
-	cfg  Config
-	v    *gooidc.IDTokenVerifier
-	now  func() time.Time
-	used usedIDs
+	cfg Config
+	v   *gooidc.IDTokenVerifier
+	// bearer verifies signature, issuer and expiry of bearer tokens; their
+	// audience is checked against BearerAudiences by VerifyBearer.
+	bearer *gooidc.IDTokenVerifier
+	now    func() time.Time
+	used   usedIDs
 }
 
 // usedIDs remembers the jti of every accepted token until it expires, so each
@@ -120,18 +130,29 @@ func (u *usedIDs) claim(id string, exp, now time.Time) bool {
 }
 
 // New builds a Verifier. It makes no network call: the JWKS is fetched on the
-// first Verify and cached, refreshed when a token names an unknown key id, so
-// key rotation needs no restart and an issuer outage cannot block boot.
-func New(ctx context.Context, cfg Config) *Verifier {
+// first Verify and cached, refreshed when a token names an unknown key id (at
+// most once per KeyRefreshCooldown), so key rotation needs no restart and an
+// issuer outage cannot block boot. The handoff and the bearer share the cache.
+func New(_ context.Context, cfg Config) *Verifier {
 	if cfg.MaxLifetime <= 0 {
 		cfg.MaxLifetime = DefaultMaxLifetime
 	}
+	if cfg.BearerMaxLifetime <= 0 {
+		cfg.BearerMaxLifetime = DefaultBearerMaxLifetime
+	}
 	ver := &Verifier{cfg: cfg, now: time.Now}
-	keys := gooidc.NewRemoteKeySet(ctx, cfg.JWKSURL)
+	algs := []string{gooidc.RS256, gooidc.ES256, gooidc.PS256}
+	now := func() time.Time { return ver.now() }
+	keys := newCachedKeySet(cfg.JWKSURL, algs, now)
 	ver.v = gooidc.NewVerifier(cfg.Issuer, keys, &gooidc.Config{
 		ClientID:             cfg.Audience,
-		SupportedSigningAlgs: []string{gooidc.RS256, gooidc.ES256, gooidc.PS256},
-		Now:                  func() time.Time { return ver.now() },
+		SupportedSigningAlgs: algs,
+		Now:                  now,
+	})
+	ver.bearer = gooidc.NewVerifier(cfg.Issuer, keys, &gooidc.Config{
+		SkipClientIDCheck:    true,
+		SupportedSigningAlgs: algs,
+		Now:                  now,
 	})
 	return ver
 }
@@ -146,19 +167,9 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
-	if tok.Subject == "" {
-		return nil, fmt.Errorf("%w: no subject", ErrInvalidToken)
-	}
-	if tok.IssuedAt.IsZero() || tok.Expiry.Sub(tok.IssuedAt) > v.cfg.MaxLifetime || tok.IssuedAt.After(v.now().Add(clockSkew)) {
-		return nil, fmt.Errorf("%w: iat %v, exp %v, max %v", ErrLifetime, tok.IssuedAt, tok.Expiry, v.cfg.MaxLifetime)
-	}
-	var claims map[string]any
-	if err := tok.Claims(&claims); err != nil {
-		return nil, fmt.Errorf("%w: decoding claims: %w", ErrInvalidToken, err)
-	}
-	tenant, ok := claims[v.cfg.TenantClaim].(string)
-	if !ok || tenant == "" || !v.allowed(tenant) {
-		return nil, fmt.Errorf("%w: claim %q = %v", ErrTenantNotAllowed, v.cfg.TenantClaim, claims[v.cfg.TenantClaim])
+	id, claims, err := v.identity(tok, v.cfg.MaxLifetime)
+	if err != nil {
+		return nil, err
 	}
 	jti, ok := claims["jti"].(string)
 	if !ok || jti == "" {
@@ -168,11 +179,33 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 	if !v.used.claim(jti, tok.Expiry, v.now()) {
 		return nil, fmt.Errorf("%w: jti %q", ErrReplayed, jti)
 	}
+	return id, nil
+}
+
+// identity applies the checks a handoff and a bearer share to a token whose
+// signature, issuer and expiry already verified: a subject, a bounded and not
+// post-dated lifetime, and an allowed tenant. It returns the claims too, for
+// the checks that differ.
+func (v *Verifier) identity(tok *gooidc.IDToken, maxLifetime time.Duration) (*Identity, map[string]any, error) {
+	if tok.Subject == "" {
+		return nil, nil, fmt.Errorf("%w: no subject", ErrInvalidToken)
+	}
+	if tok.IssuedAt.IsZero() || tok.Expiry.Sub(tok.IssuedAt) > maxLifetime || tok.IssuedAt.After(v.now().Add(clockSkew)) {
+		return nil, nil, fmt.Errorf("%w: iat %v, exp %v, max %v", ErrLifetime, tok.IssuedAt, tok.Expiry, maxLifetime)
+	}
+	var claims map[string]any
+	if err := tok.Claims(&claims); err != nil {
+		return nil, nil, fmt.Errorf("%w: decoding claims: %w", ErrInvalidToken, err)
+	}
+	tenant, ok := claims[v.cfg.TenantClaim].(string)
+	if !ok || tenant == "" || !v.allowed(tenant) {
+		return nil, nil, fmt.Errorf("%w: claim %q = %v", ErrTenantNotAllowed, v.cfg.TenantClaim, claims[v.cfg.TenantClaim])
+	}
 	id := &Identity{Subject: tok.Subject, Tenant: tenant}
 	if email, ok := claims["email"].(string); ok {
 		id.Email = email
 	}
-	return id, nil
+	return id, claims, nil
 }
 
 func (v *Verifier) allowed(tenant string) bool {

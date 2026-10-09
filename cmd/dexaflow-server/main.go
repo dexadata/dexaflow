@@ -124,11 +124,13 @@ func run() error {
 	}
 
 	tel, shutdownTel, err := observability.Setup(ctx, observability.Config{
-		ServiceName:  "leoflow-server",
-		LogLevel:     cfg.Observability.LogLevel,
-		LogFormat:    cfg.Observability.LogFormat,
-		OTelEnabled:  cfg.Observability.OTel.Enabled,
-		OTelEndpoint: cfg.Observability.OTel.Endpoint,
+		ServiceName:    "leoflow-server",
+		LogLevel:       cfg.Observability.LogLevel,
+		LogFormat:      cfg.Observability.LogFormat,
+		OTelEnabled:    cfg.Observability.OTel.Enabled,
+		OTelEndpoint:   cfg.Observability.OTel.Endpoint,
+		SampleRatio:    cfg.Observability.OTel.SampleRatio,
+		SkipProbeSpans: cfg.Observability.OTel.SkipProbeSpans,
 	})
 	if err != nil {
 		return fmt.Errorf("observability setup: %w", err)
@@ -1355,7 +1357,12 @@ func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.Trusted
 	if !s.Enabled() {
 		return nil
 	}
-	return issuer.New(ctx, issuer.Config{
+	return issuer.New(ctx, trustedIssuerConfig(s))
+}
+
+// trustedIssuerConfig maps auth.trusted_issuer onto the verifier's config.
+func trustedIssuerConfig(s config.TrustedIssuerSection) issuer.Config {
+	return issuer.Config{
 		Name:           s.Name,
 		Issuer:         s.Issuer,
 		JWKSURL:        s.JWKSURL,
@@ -1363,7 +1370,21 @@ func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.Trusted
 		TenantClaim:    s.TenantClaim,
 		AllowedTenants: s.AllowedTenants,
 		MaxLifetime:    time.Duration(s.MaxLifetimeSeconds) * time.Second,
-	})
+
+		BearerAudiences:   s.BearerAudiences,
+		BearerMaxLifetime: time.Duration(s.BearerMaxLifetimeSeconds) * time.Second,
+	}
+}
+
+// issuerBearer returns the trusted issuer as the verifier of request bearers
+// when auth.trusted_issuer.bearer_audiences is set (#1468), or nil, which
+// leaves the bearer mode off.
+func issuerBearer(ti api.TrustedIssuer) api.TrustedIssuerBearer {
+	v, ok := ti.(*issuer.Verifier)
+	if !ok || !v.BearerEnabled() {
+		return nil
+	}
+	return v
 }
 
 // newUIServer builds the embedded UI server from cfg and returns it with the
@@ -1423,6 +1444,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
 		ResourceUnit:                 resourceUnit(cfg),
 		UnitMisfits:                  unitMisfits(tel.Metrics),
+		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -1467,6 +1489,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
+		TrustedIssuerBearer: issuerBearer(trustedIssuer),
 		// Operator service API (#1283): off unless auth.service_token is set.
 		ServiceToken:   cfg.Auth.ServiceToken,
 		ServiceTenants: repo,
@@ -2597,7 +2621,11 @@ type liteLeadership interface {
 // a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
 // and the infra re-place after either reap keeps the try number, so failing an
 // attempt whose agent is still alive could run user code twice (#911). Both
-// therefore reap only an attempt whose agent process is gone.
+// therefore reap only an attempt whose agent process is gone. The exception is
+// an attempt still running past credentialCeiling: procs (the subprocess
+// executor) can stop its task, so agent-lost fails it as credential_ceiling, a
+// task failure that is never re-placed, and stops it, the Lite counterpart of
+// a task pod's activeDeadlineSeconds (#1511).
 //
 // The reaper sits behind the same leader-settling gate as the pod path, measured
 // from leadership: a Lite restart leaves detached agents alive with a stale
@@ -2608,7 +2636,8 @@ func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, l
 	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
 	reaper.SetProcessLiveness(procs)
 	// An attempt that outlived auth.max_attempt_credential_lifetime fails for
-	// that reason instead of being re-placed as agent_lost (#1461).
+	// that reason instead of being re-placed as agent_lost (#1461), and one still
+	// running past it is stopped (#1511).
 	reaper.SetAttemptLifetimeCeiling(credentialCeiling)
 	if markers != nil {
 		reaper.SetLogSink(markers)
@@ -2672,6 +2701,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// stays vault-only). The D6 registration relaxation is wired separately in run()
 	// where the Repository is in scope.
 	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
+	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
+	// its registered dag.py. "" (the default) keeps it off.
+	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
 	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
 	// SAME registry the gRPC handler serves. nil when warm pools are off.
 	setWarmPlacer(dispatcher, warmPools)

@@ -49,9 +49,11 @@ rules:
   # reconciler-as-deleter cannot cover. EnsureWarmAnchor creates it (idempotent,
   # tolerating AlreadyExists) and GETs it to read the UID stamped on the owned
   # pods; the reconciler deletes it only once the version has fully drained.
+  # It LISTs the anchors (label leoflow.io/warm-anchor=true) to also delete the
+  # anchor of an inactive version whose pods were never created (#1500).
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["create", "get", "delete"]
+    verbs: ["create", "get", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

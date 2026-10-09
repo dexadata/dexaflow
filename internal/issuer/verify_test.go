@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,9 +22,13 @@ import (
 // fakeJWKS publishes one RSA key, the way an operator's issuer would.
 type fakeJWKS struct {
 	srv   *httptest.Server
-	key   *rsa.PrivateKey
-	kid   string
 	calls atomic.Int32
+	// down makes the endpoint answer 503, like an issuer outage.
+	down atomic.Bool
+
+	mu  sync.Mutex // guards key and kid, which rotate swaps
+	key *rsa.PrivateKey
+	kid string
 }
 
 func newFakeJWKS(t *testing.T) *fakeJWKS {
@@ -35,6 +40,12 @@ func newFakeJWKS(t *testing.T) *fakeJWKS {
 	f := &fakeJWKS{key: key, kid: "k1"}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		f.calls.Add(1)
+		if f.down.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
 			"kty": "RSA", "use": "sig", "alg": "RS256", "kid": f.kid,
@@ -48,8 +59,11 @@ func newFakeJWKS(t *testing.T) *fakeJWKS {
 
 func (f *fakeJWKS) sign(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
 	t.Helper()
+	f.mu.Lock()
+	kid := f.kid
+	f.mu.Unlock()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tok.Header["kid"] = f.kid
+	tok.Header["kid"] = kid
 	s, err := tok.SignedString(key)
 	if err != nil {
 		t.Fatal(err)
