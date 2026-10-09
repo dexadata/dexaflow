@@ -55,6 +55,9 @@ func run() int {
 		"transport: stdio | http")
 	flag.StringVar(&listen, "listen", envOr("LEOFLOW_MCP_LISTEN", ":9099"),
 		"listen address for the http transport")
+	var uiBaseURL string
+	flag.StringVar(&uiBaseURL, "ui-base-url", os.Getenv("LEOFLOW_MCP_UI_BASE_URL"),
+		"URL of the Dexaflow UI; when set, results carry web_url links into it")
 	flag.StringVar(&resource, "resource", os.Getenv("LEOFLOW_MCP_RESOURCE"),
 		"http transport: this endpoint's URL as clients reach it; with --authorization-servers, serves OAuth protected resource metadata (RFC 9728)")
 	flag.StringVar(&authServers, "authorization-servers", os.Getenv("LEOFLOW_MCP_AUTHORIZATION_SERVERS"),
@@ -68,6 +71,10 @@ func run() int {
 		return 2
 	}
 	httpMode := transport == "http"
+	if err := mcp.ValidateUIBaseURL(uiBaseURL); err != nil {
+		slog.Error("invalid --ui-base-url", "error", err)
+		return 2
+	}
 
 	// stdio: the process token IS the caller's identity. http: identity is the
 	// per-request bearer (ADR 0050 D9), so the base client holds NO ambient token
@@ -81,7 +88,7 @@ func run() int {
 		slog.Error("building control-plane client", "error", err)
 		return 1
 	}
-	srv := mcp.NewServer(apiClient, server, version, httpMode)
+	srv := mcp.NewServer(apiClient, server, version, httpMode, mcp.WithUIBaseURL(uiBaseURL))
 
 	if httpMode {
 		pr, err := protectedResource(resource, authServers, scopes)

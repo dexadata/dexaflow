@@ -36,6 +36,15 @@ type fakeWarmPods struct {
 	ensureErr         map[string]error  // per dag_version EnsureWarmAnchor error (nil = ok)
 	anchorUID         map[string]string // dag_version -> UID EnsureWarmAnchor returns (default: "uid-<dv>")
 	deletedAnchors    []string          // dag_versions DeleteWarmAnchor was called for, in order
+	anchors           []string          // dag_versions ListWarmAnchors reports an anchor for
+	anchorListErr     error             // ListWarmAnchors error (nil = ok)
+}
+
+func (f *fakeWarmPods) ListWarmAnchors(context.Context) ([]string, error) {
+	if f.anchorListErr != nil {
+		return nil, f.anchorListErr
+	}
+	return f.anchors, nil
 }
 
 func (f *fakeWarmPods) ListWarmPods(context.Context) ([]WarmPodInfo, error) {
@@ -735,6 +744,64 @@ func TestWarmPoolAnchorNotDeletedWhileInactiveVersionHasPod(t *testing.T) {
 	}
 	if len(pods.deletedAnchors) != 0 {
 		t.Errorf("deletedAnchors = %v, want none while any pod still exists", pods.deletedAnchors)
+	}
+}
+
+// TestWarmPoolAnchorDeletedForInactiveVersionThatNeverHadAPod (#1500): every
+// create of a version was refused (admission), so its anchor exists but no pod
+// was ever listed for it. Once the version is inactive, the reconciler must still
+// delete that anchor: zero pods reference it, so the cascade is a no-op. An
+// active version with no pod yet keeps its anchor (it is still being created).
+func TestWarmPoolAnchorDeletedForInactiveVersionThatNeverHadAPod(t *testing.T) {
+	targets := &fakeWarmTargets{targets: []WarmTarget{{DagVersionID: "dv1", EffectiveMinIdle: 0, MaxPoolSize: 8}}}
+	pods := &fakeWarmPods{anchors: []string{"neverstarted", "dv1"}}
+
+	reconcileWarmBusy(t, targets, pods, busySet())
+
+	if !anchorDeleted(pods, "neverstarted") {
+		t.Errorf("deletedAnchors = %v, want 'neverstarted' deleted (inactive, no pod ever listed)", pods.deletedAnchors)
+	}
+	if anchorDeleted(pods, "dv1") {
+		t.Errorf("deletedAnchors = %v, must NEVER delete an active version's anchor", pods.deletedAnchors)
+	}
+}
+
+// TestWarmPoolAnchorOfInactiveVersionWithAPodIsNotDeletedTwice (#1500): an
+// inactive version that still has a pod is handled by the drain (its anchor is
+// deleted once the drain leaves zero pods, or kept while one remains); the
+// orphan sweep must not delete it on its own.
+func TestWarmPoolAnchorOfInactiveVersionWithAPodIsNotDeletedTwice(t *testing.T) {
+	targets := &fakeWarmTargets{}
+	pods := &fakeWarmPods{
+		existing: warmPods("busyver", "b1"),
+		anchors:  []string{"busyver"},
+	}
+
+	reconcileWarmBusy(t, targets, pods, busySet("b1"))
+
+	if anchorDeleted(pods, "busyver") {
+		t.Errorf("deletedAnchors = %v, must NOT delete busyver's anchor (its busy pod still references it)", pods.deletedAnchors)
+	}
+}
+
+// TestWarmPoolAnchorListErrorDeletesNothing (#1500): when the anchors cannot be
+// listed, the orphan sweep takes no action this tick (do-no-harm) and the drain
+// of versions that have pods is unaffected.
+func TestWarmPoolAnchorListErrorDeletesNothing(t *testing.T) {
+	targets := &fakeWarmTargets{}
+	pods := &fakeWarmPods{
+		existing:      warmPods("gone", "idle1"),
+		anchors:       []string{"neverstarted"},
+		anchorListErr: errors.New("apiserver down"),
+	}
+
+	reconcileWarmBusy(t, targets, pods, busySet())
+
+	if anchorDeleted(pods, "neverstarted") {
+		t.Errorf("deletedAnchors = %v, must not delete an orphan anchor when the anchor list failed", pods.deletedAnchors)
+	}
+	if !anchorDeleted(pods, "gone") {
+		t.Errorf("deletedAnchors = %v, want the drained 'gone' anchor still deleted", pods.deletedAnchors)
 	}
 }
 

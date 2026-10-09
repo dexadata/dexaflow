@@ -178,3 +178,47 @@ func TestRegisterVersionWarnAcceptsAMisfitAndCountsIt(t *testing.T) {
 		t.Errorf("size above max_size = %d %s, want 400 naming max_size", rec.Code, rec.Body.String())
 	}
 }
+
+// With source mode on (ADR 0067 §3), a version on the runtime image must carry
+// a source within the cap; a version on its own image registers as before.
+func TestRegisterVersionChecksSourceMode(t *testing.T) {
+	const rt = "ghcr.io/dexadata/runtime@sha256:abc"
+	spec := func(image, source string) string {
+		b, err := json.Marshal(domain.DAGSpec{SchemaVersion: "1.0", DagID: "etl", DagVersion: "v1", Image: image, Source: source,
+			Tasks: []domain.TaskSpec{{TaskID: "a", Type: "python", Entrypoint: "dag:a"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	server := func(mode string) *gin.Engine {
+		return NewServer(Dependencies{
+			Logger:          discardLogger(),
+			Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:     auth.NewRateLimiter(100, time.Minute),
+			CORSOrigins:     []string{"*"},
+			Versions:        &fakeVersionRepo{created: true},
+			SourceModeImage: mode,
+		})
+	}
+	oversize := strings.Repeat("x", domain.MaxSourceModeBytes+1)
+	cases := map[string]struct {
+		mode, image, source string
+		want                int
+		wantBody            string
+	}{
+		"on, runtime image with a source": {rt, rt, "print(1)\n", http.StatusCreated, ""},
+		"on, runtime image, no source":    {rt, rt, "", http.StatusBadRequest, "has no source"},
+		"on, runtime image, oversize":     {rt, rt, oversize, http.StatusBadRequest, "source mode"},
+		"on, own image, no source":        {rt, "img:v1", "", http.StatusCreated, ""},
+		"off, runtime image, no source":   {"", rt, "", http.StatusCreated, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := authGet(server(tc.mode), http.MethodPost, "/api/v2/dags/etl/versions", spec(tc.image, tc.source))
+			if rec.Code != tc.want || !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Errorf("register = %d %s, want %d mentioning %q", rec.Code, rec.Body.String(), tc.want, tc.wantBody)
+			}
+		})
+	}
+}

@@ -16,9 +16,11 @@ type Pool struct {
 // so the admission gate is always well-defined. Matches Airflow's default_pool.
 const DefaultPoolName = "default_pool"
 
-// PoolUsage is a pool's per-state occupancy, feeding the Airflow PoolResponse
-// slot fields. The slots admission actually spends are queued+running; scheduled
-// and deferred are reported for the UI but do not hold a slot.
+// PoolUsage is a pool's per-state occupancy in slots, feeding the Airflow
+// PoolResponse slot fields: each task instance counts its pool_slots, the size
+// the admission gate charges it (ADR 0066), not 1. The slots admission actually
+// spends are queued+running; scheduled and deferred are reported for the UI but
+// do not hold a slot.
 type PoolUsage struct {
 	Running   int
 	Queued    int

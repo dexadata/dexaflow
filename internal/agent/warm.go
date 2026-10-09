@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
@@ -95,6 +96,16 @@ type WarmRunner struct {
 	// fields and are threaded into every per-attempt Runner.
 	TerminationLogPath string
 	HeartbeatInterval  time.Duration
+
+	// StreamHeartbeat is how often the worker re-sends its WorkerRegister on the
+	// open assignment stream, idle or busy, as a liveness heartbeat. The control
+	// plane allows one live registration per worker identity and judges liveness
+	// by these heartbeats, so a duplicate registration of a live worker is refused
+	// while a wedged stream can still be replaced. Zero uses
+	// DefaultHeartbeatInterval; a negative value disables it. A control plane
+	// that predates the heartbeat ignores a re-registration on an established
+	// stream, so it is safe in a mixed-version rollout.
+	StreamHeartbeat time.Duration
 
 	// Self-lifecycle bounds (ADR 0058 D9/D10/D6/H3), populated from the warm-pod env
 	// in main.go. A warm worker that exits is replaced by the reconciler
@@ -225,10 +236,16 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 // FailedPrecondition-coded error is the not-leader rejection Run reconnects on. A
 // failed TASK is a normal outcome and never ends the loop.
 func (w *WarmRunner) serve(ctx context.Context, dagVersionID string) error {
-	stream, err := w.connect(ctx, dagVersionID)
+	raw, err := w.connect(ctx, dagVersionID)
 	if err != nil {
 		return err
 	}
+	// Every Send on this stream goes through one lock: the heartbeat goroutine
+	// sends concurrently with the serve loop's acks and slot-free signals, and a
+	// gRPC stream does not allow concurrent Sends.
+	stream := &lockedSendStream{AgentService_AwaitAssignmentClient: raw}
+	stopHeartbeat := w.startStreamHeartbeat(ctx, stream, dagVersionID)
+	defer stopHeartbeat()
 
 	// D9/D10 accounting: bound the worker by attempts served and wall-clock age.
 	// Both are checked only BETWEEN attempts (after SlotFree), so a recycle is always
@@ -333,6 +350,61 @@ func (w *WarmRunner) connect(ctx context.Context, dagVersionID string) (agentv1.
 		return nil, fmt.Errorf("sending worker register: %w", serr)
 	}
 	return stream, nil
+}
+
+// lockedSendStream serializes Send on an AwaitAssignment client stream so the
+// stream heartbeat and the serve loop can both send. Recv stays unlocked: gRPC
+// allows one sender and one receiver to run concurrently.
+type lockedSendStream struct {
+	agentv1.AgentService_AwaitAssignmentClient
+	mu sync.Mutex
+}
+
+// Send sends m on the underlying stream while holding the send lock.
+func (s *lockedSendStream) Send(m *agentv1.WorkerMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.AgentService_AwaitAssignmentClient.Send(m)
+}
+
+// startStreamHeartbeat re-sends the worker's WorkerRegister on stream every
+// StreamHeartbeat until the returned stop function is called. stop waits for the
+// goroutine to exit, so nothing is sent on the stream after serve returns. A send
+// error ends the heartbeat quietly: the serve loop sees the broken stream on its
+// own Recv and handles it there.
+func (w *WarmRunner) startStreamHeartbeat(ctx context.Context, stream *lockedSendStream, dagVersionID string) func() {
+	interval := w.StreamHeartbeat
+	if interval == 0 {
+		interval = DefaultHeartbeatInterval
+	}
+	if interval < 0 {
+		return func() {}
+	}
+	hbCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				if err := stream.Send(&agentv1.WorkerMessage{
+					Msg: &agentv1.WorkerMessage_Register{
+						Register: &agentv1.WorkerRegister{DagVersionId: dagVersionID, PodName: w.PodName},
+					},
+				}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // backoffSleep waits a jittered exponential backoff before reconnect n (1-based),
