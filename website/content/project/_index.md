@@ -18,6 +18,12 @@ The record of how Dexaflow got here and where it is going.
     <span class="lf-card__desc">The <em>why</em> behind Dexaflow's design, ADR by ADR — immutable once accepted.</span>
     <span class="lf-card__more">Read the ADRs →</span>
   </a>
+  <a class="lf-card" href="/project/specs/">
+    <span class="lf-card__icon"><i class="fa-solid fa-compass-drafting"></i></span>
+    <span class="lf-card__title">Specs</span>
+    <span class="lf-card__desc">What a large change will build, written before the code, with the template to start one.</span>
+    <span class="lf-card__more">Read the specs →</span>
+  </a>
   <a class="lf-card" href="/project/roadmap/">
     <span class="lf-card__icon"><i class="fa-solid fa-map"></i></span>
     <span class="lf-card__title">Roadmap</span>

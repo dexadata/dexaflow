@@ -25,6 +25,12 @@ How to work on Dexaflow itself.
     <span class="lf-card__desc">The <code>dexaflow lite</code> hot-reload loop for DAGs, and <code>make lite-redeploy</code> for Go changes.</span>
     <span class="lf-card__more">Set up your loop →</span>
   </a>
+  <a class="lf-card" href="/contribute/recipes/">
+    <span class="lf-card__icon"><i class="fa-solid fa-list-check"></i></span>
+    <span class="lf-card__title">Recipes</span>
+    <span class="lf-card__desc">Step by step for the common changes: add a migration, record a change, backport to a release branch.</span>
+    <span class="lf-card__more">Follow a recipe →</span>
+  </a>
   <a class="lf-card" href="/contribute/build-docs/">
     <span class="lf-card__icon"><i class="fa-solid fa-book"></i></span>
     <span class="lf-card__title">Build the docs</span>
