@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/connectors"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/connectors"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // ConnectionTester checks whether a connection is well-formed. The default
@@ -59,7 +59,7 @@ func connectorDependencyNudge(connType string) string {
 		return ""
 	}
 	return "to use this connection from a task hook, declare the provider in your " +
-		"DAG's leoflow.yaml: connectors: [" + connType + "]"
+		"DAG's dexaflow.yaml: connectors: [" + connType + "]"
 }
 
 // defaultConnPorts maps connection types to their well-known port, used when the

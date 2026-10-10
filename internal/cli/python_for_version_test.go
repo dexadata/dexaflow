@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestParsePythonMinor covers the `python_version` field as it is actually
@@ -48,7 +48,7 @@ func TestParsePythonMinor(t *testing.T) {
 	}
 }
 
-// TestResolvePythonForVersion is the regression for #1092: `leoflow dev` built
+// TestResolvePythonForVersion is the regression for #1092: `dexaflow lite` built
 // every venv on the managed CPython 3.11 whatever the project declared, so a
 // project pinned to 3.13 ran on 3.13 in the cluster and 3.11 locally.
 //
@@ -318,17 +318,17 @@ func TestDagVenvKeptWhenPyvenvCfgUnreadable(t *testing.T) {
 }
 
 // TestInstallHintOnlyOffersSetupForTheVersionItInstalls guards an error message
-// that used to send the user around a loop it cannot end: `leoflow setup`
+// that used to send the user around a loop it cannot end: `dexaflow setup`
 // provisions exactly one minor — the managed build's — so offering it to someone
 // who asked for 3.13 means setup succeeds, 3.13 is still missing, and the same
 // error comes back.
 func TestInstallHintOnlyOffersSetupForTheVersionItInstalls(t *testing.T) {
-	if got := installHint(minPythonMinor); !strings.Contains(got, "leoflow setup") {
-		t.Errorf("installHint(3.%d) = %q, want it to offer `leoflow setup` — that is the version setup installs", minPythonMinor, got)
+	if got := installHint(minPythonMinor); !strings.Contains(got, "dexaflow setup") {
+		t.Errorf("installHint(3.%d) = %q, want it to offer `dexaflow setup` — that is the version setup installs", minPythonMinor, got)
 	}
 	got := installHint(minPythonMinor + 2)
-	if strings.Contains(got, "leoflow setup") {
-		t.Errorf("installHint(3.%d) = %q, must not offer `leoflow setup`: setup only ever provisions 3.%d", minPythonMinor+2, got, minPythonMinor)
+	if strings.Contains(got, "dexaflow setup") {
+		t.Errorf("installHint(3.%d) = %q, must not offer `dexaflow setup`: setup only ever provisions 3.%d", minPythonMinor+2, got, minPythonMinor)
 	}
 	if !strings.Contains(got, fmt.Sprintf("3.%d", minPythonMinor+2)) {
 		t.Errorf("installHint = %q, want it to name the version the user actually needs", got)
@@ -338,7 +338,7 @@ func TestInstallHintOnlyOffersSetupForTheVersionItInstalls(t *testing.T) {
 // TestDevEnforcedPythonVersion is the regression for the blocker the review
 // caught in the first cut of #1092: ApplyDefaults fills python_version with
 // "3.11" for every config that omits it, and discovery defaults EVERY project,
-// so enforcing the field unconditionally turned a working `leoflow dev` into a
+// so enforcing the field unconditionally turned a working `dexaflow lite` into a
 // hard refusal on any host without a 3.11 — over a value the CLI invented and
 // then attributed to the user ("this project declares python_version 3.11").
 //

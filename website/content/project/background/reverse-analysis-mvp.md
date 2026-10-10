@@ -20,10 +20,10 @@ Cross-checked against the Airflow 3.x docs (XCom, task states, task logging).
 
 ---
 
-## 1. Airflow 3.2 key concepts (from the docs) and how Leoflow maps
+## 1. Airflow 3.2 key concepts (from the docs) and how Dexaflow maps
 
 ### XCom
-| Airflow behavior | Leoflow status |
+| Airflow behavior | Dexaflow status |
 |---|---|
 | Default key `return_value`; `@task` return auto-pushes | ✅ runtime writes the return value; agent pushes `return_value` |
 | TaskFlow function args pulled from upstream XCom (`transform(extract())`) | ✅ #51 — parser emits `xcom_input`, runner binds `fn(**kwargs)` |
@@ -33,7 +33,7 @@ Cross-checked against the Airflow 3.x docs (XCom, task states, task logging).
 | `multiple_outputs=True` splits a dict into keyed XComs | ❌ not implemented (not MVP) |
 
 ### Task instance states (13 in Airflow)
-`none → scheduled → queued → running → success` is the happy path. Leoflow's
+`none → scheduled → queued → running → success` is the happy path. Dexaflow's
 `task_state` enum has: none, scheduled, queued, running, success, failed,
 skipped, upstream_failed, up_for_retry. **Not modeled:** `deferred` (v0.3,
 deprioritized), `up_for_reschedule` (sensors), `restarting`, `removed`. None are
@@ -43,7 +43,7 @@ MVP-blocking.
 Airflow: per-attempt files `dag_id=.../run_id=.../task_id=.../attempt={try}.log`;
 UI fetches structured JSON (`content[]` of `{timestamp,event,level,logger,...}`)
 with `::group::`/`::endgroup::` collapsible source markers; live tail while
-running. **Leoflow matches all of these** (#36 ship, #43 structured `::group::`,
+running. **Dexaflow matches all of these** (#36 ship, #43 structured `::group::`,
 #44 real level/stream, live tail via Redis).
 
 ---
@@ -59,15 +59,15 @@ Real Airflow `bash_push` log (Accept: application/json), first items:
   "logger": "airflow.dag_processing...", "filename": "manager.py", "lineno": 209 },
 { "timestamp": "...Z", "event": "Task instance is in running state", "level": "info", "logger": "task.stdout" }
 ```
-Leoflow's `serveStructuredLogs` produces the same shape (group fold + per-line
+Dexaflow's `serveStructuredLogs` produces the same shape (group fold + per-line
 level). Difference: Airflow emits framework log lines (DagBag load, state
-transitions) with rich `logger`/`filename`/`lineno`; Leoflow currently emits the
+transitions) with rich `logger`/`filename`/`lineno`; Dexaflow currently emits the
 **task's own stdout/stderr** only. For MVP that is acceptable — the user's task
 prints are what matter — but the logs are "thinner" than Airflow's.
 
 `example_xcom` task set (mixes operator types + TaskFlow + cross-operator pull):
 `bash_push`, `bash_pull`, `pull_value_from_bash_push`, `push_by_returning`,
-`puller`, `push` — all `success`. XCom shape matches Leoflow's `xcomEntries`.
+`puller`, `push` — all `success`. XCom shape matches Dexaflow's `xcomEntries`.
 
 ---
 
@@ -88,7 +88,7 @@ Target: **3-task DAG, XCom between tasks, clear logs, home filters, no stuck.**
 
 ### Remaining MVP-relevant gaps (small, non-blocking)
 1. **XCom not cleared on retry/clear** — Airflow purges XCom on retry for
-   idempotency; Leoflow relies on Redis TTL. Low risk (return_value overwrites),
+   idempotency; Dexaflow relies on Redis TTL. Low risk (return_value overwrites),
    but a clean clear should purge. (follow-up)
 2. **Operator XCom (Bash/HTTP)** — only Python `@task` XCom is wired. For the MVP
    "3 operators passing XCom", use **3 Python tasks** (the clean path). Mixed
@@ -122,7 +122,7 @@ release smoke (the k3d e2e already asserts state + log shipping + XCom #51).
 
 Driving the entire Airflow 3.2 SPA (Home, Dags list, every DAG tab, a task
 instance's tabs, Assets, Browse, Admin) and capturing every `/ui/` and `/api/v2/`
-call yields 98 unique endpoints. Grouped by Leoflow status:
+call yields 98 unique endpoints. Grouped by Dexaflow status:
 
 ### Implemented (real data)
 `/api/v2/version`, `/monitor/health`(+`/executor`), `/dags`, `/dags/{id}`,

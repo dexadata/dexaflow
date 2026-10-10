@@ -40,11 +40,11 @@ run_step() {
 }
 
 # --- helpers wrapping the checks that need composition -----------------------
-helm_lint()        { helm lint helm/leoflow "${HELM_SET[@]}"; }
+helm_lint()        { helm lint helm/dexaflow "${HELM_SET[@]}"; }
 helm_docs_fresh()  {
   command -v helm-docs >/dev/null || { echo "helm-docs not installed"; return 1; }
-  helm-docs -c helm/leoflow >/dev/null 2>&1
-  git diff --exit-code -- helm/leoflow/README.md
+  helm-docs -c helm/dexaflow >/dev/null 2>&1
+  git diff --exit-code -- helm/dexaflow/README.md
 }
 ui_smoke() {
   # A real ui-smoke failure must surface as FAIL; only a MISSING node is skipped.
@@ -60,9 +60,9 @@ ui_smoke() {
   # a no-op python3.11 so `setup` skips the CPython download (the parser is unused here)
   mkdir -p "$home_dir/bin"; printf '#!/bin/sh\n' > "$home_dir/bin/python3.11"; chmod +x "$home_dir/bin/python3.11"
   LEOFLOW_DATABASE_URL="$db" PATH="$home_dir/bin:$PATH" ./bin/leoflow db reset --yes >/dev/null 2>&1
-  setup_out="$(HOME="$home_dir" PATH="$home_dir/bin:$PATH" ./bin/leoflow setup --workspace "$home_dir/ws" </dev/null 2>&1)"
+  setup_out="$(HOME="$home_dir" PATH="$home_dir/bin:$PATH" ./bin/dexaflow setup --workspace "$home_dir/ws" </dev/null 2>&1)"
   pw="$(printf '%s\n' "$setup_out" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
-  hash="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$home_dir/.leoflow/config.yaml" 2>/dev/null)"
+  hash="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$home_dir/.dexaflow/config.yaml" 2>/dev/null)"
   if [ -z "$pw" ] || [ -z "$hash" ]; then echo "ui-smoke: setup did not yield admin creds"; rm -rf "$home_dir"; return 1; fi
   printf 'print("hello")\n' > "$home_dir/ws/dag.py"
   LEOFLOW_SERVER_HTTP_ADDR="127.0.0.1:${port}" LEOFLOW_SERVER_GRPC_ADDR="127.0.0.1:19091" \
@@ -108,7 +108,7 @@ run_step "govulncheck (make vuln)"                 make vuln
 
 # --- Helm gates --------------------------------------------------------------
 run_step "helm lint"                     helm_lint
-run_step "helm unittest"                 helm unittest helm/leoflow
+run_step "helm unittest"                 helm unittest helm/dexaflow
 run_step "helm-template-checks.sh"       bash scripts/helm-template-checks.sh
 run_step "rbac-covers-executor.sh"       bash scripts/rbac-covers-executor.sh
 run_step "check-dependabot-dirs.sh"      bash scripts/check-dependabot-dirs.sh
@@ -135,7 +135,7 @@ done
 
 printf '\n\033[1mStill required by hand (this script cannot do it):\033[0m\n'
 cat <<'MANUAL'
-  - Lite (all role): `leoflow lite` (or the server with no role) → open the UI,
+  - Lite (all role): `dexaflow lite` (or the server with no role) → open the UI,
     trigger a DAG, confirm it runs and the dashboard/logs render.
   - Pro (split): `helm install ... --set split.enabled=true
     --set logs.persistence.accessMode=ReadWriteMany` on a real cluster → confirm

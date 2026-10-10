@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // connectionsToSeed decides which of a DAG's declared connections Lite may take
@@ -37,7 +37,7 @@ import (
 //     with its name, never its value: storing garbage would replace "this
 //     connection is missing", which registration says clearly, with a
 //     connection that exists and fails inside the task.
-//   - LITE ONLY. Enforced by the caller — this runs from `leoflow dev`, which
+//   - LITE ONLY. Enforced by the caller — this runs from `dexaflow lite`, which
 //     is the unsandboxed dev loop, and has no path into a Pro control plane.
 //
 // lookup is the environment accessor (os.Getenv in production), injected so the
@@ -69,7 +69,7 @@ func connectionsToSeed(declared []string, existing map[string]bool, lookup func(
 }
 
 // seedDeclaredConnections writes, into the Lite vault, the declared connections
-// this machine's environment already carries — so the first `leoflow dev` of a
+// this machine's environment already carries — so the first `dexaflow lite` of a
 // project works without declaring the same value twice (#1103).
 //
 // It is deliberately BEST EFFORT and never fails the reload: registration
@@ -80,7 +80,7 @@ func connectionsToSeed(declared []string, existing map[string]bool, lookup func(
 // happen, and the point here is to remove a step the developer knows about, not
 // to hide one.
 //
-// Lite only: this is reachable from `leoflow dev`, the unsandboxed local loop.
+// Lite only: this is reachable from `dexaflow lite`, the unsandboxed local loop.
 // Nothing calls it from a path that can reach a Pro control plane.
 func seedDeclaredConnections(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, token, serverURL string) {
 	if ws == nil {
@@ -111,10 +111,10 @@ func seedDeclaredConnections(ctx context.Context, cmd *cobra.Command, ws *Worksp
 	for _, conn := range seed {
 		resp, cerr := c.CreateConnectionWithResponse(ctx, connectionBody(conn))
 		if cerr != nil || resp.StatusCode() >= 300 {
-			devPrintf(cmd.OutOrStdout(), "  (warning) could not seed connection %q from the environment; define it with `leoflow connections set %s`\n", conn.ConnID, conn.ConnID)
+			devPrintf(cmd.OutOrStdout(), "  (warning) could not seed connection %q from the environment; define it with `dexaflow connections set %s`\n", conn.ConnID, conn.ConnID)
 			continue
 		}
-		devPrintf(cmd.OutOrStdout(), "▸ seeded connection %q from AIRFLOW_CONN_%s (value not shown; `leoflow connections set` overrides it)\n",
+		devPrintf(cmd.OutOrStdout(), "▸ seeded connection %q from AIRFLOW_CONN_%s (value not shown; `dexaflow connections set` overrides it)\n",
 			conn.ConnID, strings.ToUpper(conn.ConnID))
 	}
 	for _, s := range skipped {

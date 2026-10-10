@@ -8,17 +8,17 @@ weight: 30
 description: "The Go control plane, the split API/scheduler roles, and the execution data flow."
 ---
 
-Leoflow is a **Go control plane** that compiles each DAG to an immutable artifact and
-runs it **pod-per-task**. The diagram below traces one DAG from `leoflow compile` in
+Dexaflow is a **Go control plane** that compiles each DAG to an immutable artifact and
+runs it **pod-per-task**. The diagram below traces one DAG from `dexaflow compile` in
 dev, through the split API/scheduler roles of the control plane, to the executor that
 launches task pods — the sections that follow walk each stage in turn.
 
 ```mermaid
 flowchart LR
   subgraph Dev["Dev / CI"]
-    A[leoflow.yaml + dag.py] -->|leoflow compile| B[dag.json + image]
+    A[dexaflow.yaml + dag.py] -->|dexaflow compile| B[dag.json + image]
   end
-  B -->|leoflow push| API
+  B -->|dexaflow push| API
 
   subgraph CP["Control plane (Go) · role=all collapses both into one process (Lite)"]
     subgraph APIR["role=api · restricted"]
@@ -76,7 +76,7 @@ only the scheduler holds pod-create and agent-facing rights. `role=all` (the
 default, and Lite's only mode) collapses both into one process, byte-for-byte the
 historical monolith. (`RoleAll`/`RoleAPI`/`RoleScheduler` +
 `ServesAPI`/`ServesScheduler` in `internal/config/server.go`; gated in
-`cmd/leoflow-server/main.go`.)
+`cmd/dexaflow-server/main.go`.)
 
 **Authentication.** The API authenticates every request with a bearer JWT
 ([ADR 0008](/project/adrs/0008-jwt-auth/)). For human login it also supports
@@ -91,7 +91,7 @@ verification failure is a hard `403` that never falls back to a default identity
 **Worker pod.** Each task runs in its own pod from the DAG's image. The
 **agent** (Go, PID 1) talks gRPC to the control plane: fetches the task spec,
 runs the user code, streams logs, pushes XCom, reports state. That channel is
-**TLS** ([#58](https://github.com/neochaotic/leoflow/issues/58)) — one-way
+**TLS** ([#58](https://github.com/dexadata/dexaflow/issues/58)) — one-way
 (server) TLS: the agent verifies the control plane's certificate against a CA and
 authenticates itself with its bearer token, never a client cert. The Helm chart
 auto-generates a stable self-signed CA + server cert by default
@@ -156,9 +156,9 @@ by link from [Warm worker pools](/operate/warm-pools/)).
 ## Authentication: OIDC/SSO login flow
 
 With OIDC configured ([ADR 0057](/project/adrs/0057-oidc-sso/)), a browser logging in
-never sees a Leoflow password — it is redirected to the identity provider, and
+never sees a Dexaflow password — it is redirected to the identity provider, and
 the control plane only trusts the identity once the returned ID token passes every
-check, including the **tenant pin**. On success the browser carries a Leoflow
+check, including the **tenant pin**. On success the browser carries a Dexaflow
 session token, exactly as a password login would.
 
 ```mermaid
@@ -184,7 +184,7 @@ identity. (`internal/api/oidc_handler.go`, `internal/oidc/`.)
 
 ## Map-reduce (fan-in) data flow
 
-Leoflow treats *N independent tasks → 1 aggregator* — the map-reduce
+Dexaflow treats *N independent tasks → 1 aggregator* — the map-reduce
 topology that dominates ML and batch pipelines — as a first-class shape
 in the DAG. The activation criterion is purely syntactic: the parser
 captures fan-in when **a parameter is bound to a list (or tuple) where
@@ -221,7 +221,7 @@ The pipeline:
    For each parameter it fetches every upstream's `return_value` via the
    existing `FetchXCom` gRPC (N round-trips), assembles the values into
    a JSON array in **declaration order**, and stamps
-   `LEOFLOW_XCOM_<PARAM>` with the array. A missing upstream contributes
+   `DEXAFLOW_XCOM_<PARAM>` with the array. A missing upstream contributes
    `null` so the reducer always receives `len(upstreams)` elements.
 
 4. **Runtime** (`_resolve_kwargs`) JSON-decodes the env var; the reducer

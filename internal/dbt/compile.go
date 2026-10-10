@@ -3,12 +3,12 @@ package dbt
 import (
 	"fmt"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // Meta carries the DAG metadata a dbt manifest does not provide: identity,
 // version, image, ownership, schedule, and the granularity strategy. These come
-// from the Leoflow project config, not from dbt.
+// from the Dexaflow project config, not from dbt.
 type Meta struct {
 	// Warn, when set, receives advisories that are not build failures — passed
 	// through to Render. nil means say nothing (#1114).
@@ -21,7 +21,7 @@ type Meta struct {
 	Tags        []string
 	Schedule    string
 	Granularity Granularity
-	// Connections and Variables are the secret names the leoflow.yaml declares
+	// Connections and Variables are the secret names the dexaflow.yaml declares
 	// (ADR 0045 / ADR 0055). They must reach the spec: what a task pod is allowed
 	// to see is derived from what the DAG declares. Dropping them here does not
 	// merely omit a field — under `auth.secret_scoping: enforce` the pod is

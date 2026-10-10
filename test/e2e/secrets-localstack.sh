@@ -76,7 +76,7 @@ done
 log "Scaffolding the DAG project ($DAG_ID) that DECLARES an external connection + variable"
 mkdir -p "$WORKDIR/$DAG_ID"
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat > "$WORKDIR/$DAG_ID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$DAG_ID/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: ${DAG_ID}
 description: Declares a connection + variable resolved from an external backend.

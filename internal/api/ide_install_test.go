@@ -13,8 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/workspace"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/workspace"
 )
 
 // mockExamplesFS produces a small embedded-FS replacement with two example
@@ -22,10 +22,10 @@ import (
 // real embed.FS uses. Enough for the install handler to walk and decide.
 func mockExamplesFS() fs.FS {
 	return fstest.MapFS{
-		"examples/bash_pipeline/dag.py":       &fstest.MapFile{Data: []byte("print('bash')\n")},
-		"examples/bash_pipeline/leoflow.yaml": &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: bash_pipeline\n")},
-		"examples/csv_report/dag.py":          &fstest.MapFile{Data: []byte("print('csv')\n")},
-		"examples/csv_report/leoflow.yaml":    &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: csv_report\n")},
+		"examples/bash_pipeline/dag.py":        &fstest.MapFile{Data: []byte("print('bash')\n")},
+		"examples/bash_pipeline/dexaflow.yaml": &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: bash_pipeline\n")},
+		"examples/csv_report/dag.py":           &fstest.MapFile{Data: []byte("print('csv')\n")},
+		"examples/csv_report/dexaflow.yaml":    &fstest.MapFile{Data: []byte("schema_version: \"1.0\"\ndag_id: csv_report\n")},
 	}
 }
 
@@ -49,7 +49,7 @@ func newWorkspaceWithProject(t *testing.T, name string) WorkspaceFS {
 	if err := os.MkdirAll(projectDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "leoflow.yaml"),
+	if err := os.WriteFile(filepath.Join(projectDir, "dexaflow.yaml"),
 		[]byte("schema_version: \"1.0\"\ndag_id: "+name+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func newWorkspaceWithProject(t *testing.T, name string) WorkspaceFS {
 // TestInstallExamplesSkipsRootCollision covers #298b (alpha-prep): when the
 // workspace already has a top-level project with the same name as an
 // embedded example, the install must skip that example wholesale — otherwise
-// the next `leoflow lite` boot refuses to start (multi-DAG discovery rejects
+// the next `dexaflow lite` boot refuses to start (multi-DAG discovery rejects
 // duplicate dag_ids). The handler reports skipped examples in a dedicated
 // response field so the IDE can surface "skipped: bash_pipeline (already
 // exists)" to the user instead of silently producing a broken workspace.

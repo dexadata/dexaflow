@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
   REGISTRY: ghcr.io
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
 
       # ── QEMU + Buildx so the arm64 control-plane image builds on the amd64 runner ──
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -111,9 +111,9 @@ jobs:
             exit 1
           fi
 
-  # ── Build + push leoflow-migrate (golang-migrate + Leoflow migrations)
+  # ── Build + push leoflow-migrate (golang-migrate + Dexaflow migrations)
   # The Helm chart's migration Job (#34/#48) defaults to
-  # ghcr.io/neochaotic/leoflow-migrate:<tag>; this job publishes that image,
+  # ghcr.io/dexadata/leoflow-migrate:<tag>; this job publishes that image,
   # multi-arch, on every release tag in parallel with install-smoke.
   #
   # Dockerfile.migrate builds golang-migrate's own CLI from the version in our
@@ -124,7 +124,7 @@ jobs:
   # simpler shape, and it builds the same file the blocking Trivy gate in
   # security.yaml scans on every PR.
   migrate-image:
-    name: Build + push leoflow-migrate image
+    name: Build + push dexaflow-migrate image
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -140,7 +140,7 @@ jobs:
           cosign-release: v2.4.3
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -153,7 +153,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-migrate
+          # Published under its name since the rename and its pre-rename
+          # name: one build, both tags, same digest, both signed below.
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-migrate
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-migrate
           # ref,event=tag stamps the tag verbatim (v0.0.1-prealpha.N); the
           # semver pattern strips the leading `v` so users pinning by version
           # (0.0.1-prealpha.N) work too. Server publishes BOTH forms from
@@ -195,10 +199,10 @@ jobs:
             ./scripts/cosign-retry.sh sign --yes "${tag}@${DIGEST}"
           done
 
-  # ── Build + push the Leoflow task base image (runtime/Dockerfile)
-  # A DAG image is `FROM ghcr.io/neochaotic/leoflow-runtime:py<ver>` (ADR 0003):
+  # ── Build + push the Dexaflow task base image (runtime/Dockerfile)
+  # A DAG image is `FROM ghcr.io/dexadata/leoflow-runtime:py<ver>` (ADR 0003):
   # the base ships the leoflow-agent (PID 1) and the leoflow_runtime helper, so a
-  # `leoflow compile --build` needs nothing but a registry. Before this job the
+  # `dexaflow compile --build` needs nothing but a registry. Before this job the
   # base only existed locally (built from a source checkout), which blocked
   # testing Pro without the repo (#318). One leg per supported Python so an author
   # picks the interpreter via `python_version`. Multi-arch + keyless cosign mirror
@@ -215,9 +219,9 @@ jobs:
   # stops rebuilding an EOL line the day after, so the base freezes with whatever
   # OS CVEs it has. The leg keeps being published until then because `base_image`
   # pins make a silent drop a broken build for somebody else; the schema carries
-  # the removal date and `leoflow compile` warns the author.
+  # the removal date and `dexaflow compile` warns the author.
   runtime-image:
-    name: Build + push leoflow-runtime base (py${{ matrix.python }})
+    name: Build + push dexaflow-runtime base (py${{ matrix.python }})
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -237,7 +241,7 @@ jobs:
           cosign-release: v2.4.3
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -250,7 +254,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
+          # Published under its name since the rename and its pre-rename
+          # name: one build, both tags, same digest, both signed below.
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
           # Two tags per Python line: an immutable per-release pin
           # (py3.11-v0.0.2-rc.1) and a moving line tag (py3.11) the docs and the
           # generated DAG Dockerfile default to. No bare `:latest` — the tag must
@@ -342,7 +350,7 @@ jobs:
             sleep 10
           done
 
-      - name: Install Leoflow via the published install.sh
+      - name: Install Dexaflow via the published install.sh
         env:
           LEOFLOW_VERSION: ${{ github.ref_name }} # pin to the just-pushed tag
         run: |
@@ -356,11 +364,11 @@ jobs:
       - name: Verify the binary and managed CPython run
         run: |
           set -eu
-          leoflow version
-          "$HOME/.leoflow/python/bin/python3.11" --version
+          dexaflow version
+          "$HOME/.dexaflow/python/bin/python3.11" --version
 
   # ── Cold-start smoke (#96): the actual user flow we cannot reproduce in
-  # any other gate — install fresh, run `leoflow setup`, boot `leoflow lite`,
+  # any other gate — install fresh, run `dexaflow setup`, boot `dexaflow lite`,
   # wait for /readyz to respond. Catches the class of bug where the binary
   # is installed correctly but boot fails (Postgres race / connection bugs /
   # agent port collision / etc.).
@@ -381,7 +389,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Install Leoflow via the published install.sh
+      - name: Install Dexaflow via the published install.sh
         env:
           LEOFLOW_VERSION: ${{ github.ref_name }}
         run: |
@@ -391,13 +399,13 @@ jobs:
           # passes. Verified: a 404 through that pipe gives exit 0.
           curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.sh" -o /tmp/install.sh
           sh /tmp/install.sh
-      - name: leoflow setup (non-interactive, defaults)
+      - name: dexaflow setup (non-interactive, defaults)
         run: |
           set -eu
           export PATH="$HOME/.local/bin:$PATH"
           mkdir -p /tmp/ws
-          leoflow setup --workspace /tmp/ws </dev/null
-      # Take the image download off the boot clock. `leoflow lite --postgres
+          dexaflow setup --workspace /tmp/ws </dev/null
+      # Take the image download off the boot clock. `dexaflow lite --postgres
       # docker` brings up the embedded compose (docker-compose.dev.yaml,
       # materialized under ~/.leoflow on a binary-only install), so on a fresh
       # runner the pull otherwise happens inside the poll below.
@@ -425,17 +433,17 @@ jobs:
             sleep 10
           done
           echo "::warning::could not pre-pull postgres:16; the pull will happen inside the boot budget instead"
-      - name: Boot leoflow lite and wait for /readyz
+      - name: Boot dexaflow lite and wait for /readyz
         run: |
           set -eu
           export PATH="$HOME/.local/bin:$PATH"
-          # This job stays cheap only because `leoflow setup </dev/null` above is
+          # This job stays cheap only because `dexaflow setup </dev/null` above is
           # non-interactive and persists lite_executor: subprocess. If that
-          # default ever flips to k8s, `leoflow lite` starts building a k3d
+          # default ever flips to k8s, `dexaflow lite` starts building a k3d
           # cluster inside the budget below and this job will look flaky.
           #
           # Background lite; capture stdout+stderr so we can dump on failure.
-          leoflow lite --postgres docker --port 8088 --host 127.0.0.1 >/tmp/lite.log 2>&1 &
+          dexaflow lite --postgres docker --port 8088 --host 127.0.0.1 >/tmp/lite.log 2>&1 &
           LITE_PID=$!
           # 240s, not 60. What retracted v0.4.5-rc.1 was NOT the image pull —
           # the log shows `postgres Pulled` and the container Healthy well
@@ -539,7 +547,7 @@ jobs:
   # Verifying the `:v<tag>` manifest is sufficient: it and the un-prefixed
   # `:<version>` manifest resolve to the same digest, and both were signed.
   verify-server-signature:
-    name: Verify leoflow-server image signature
+    name: Verify dexaflow-server and dexaflow-mcp image signatures
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -559,9 +567,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: cosign verify leoflow-server
+      - name: cosign verify dexaflow-server
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-server:${{ github.ref_name }}
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-server:${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -569,6 +577,19 @@ jobs:
           # second retry policy that drifts from it. verify fetches the Sigstore
           # TUF root and talks to Rekor and Fulcio, none of which we control, and
           # an unretried flake here retracts the release to a draft (#983).
+          ./scripts/cosign-retry.sh verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
+            "${IMAGE}"
+
+      - name: cosign verify dexaflow-mcp
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-mcp:${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Signed by the same docker_signs block as the server image, so the
+          # same identity pins apply.
           ./scripts/cosign-retry.sh verify \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \

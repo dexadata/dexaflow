@@ -21,7 +21,7 @@
 //
 //	# 1. bring up Postgres and migrate + seed the `default` tenant
 //	docker compose -f docker-compose.dev.yaml up -d
-//	go run ./cmd/leoflow db reset --yes
+//	go run ./cmd/dexaflow db reset --yes
 //	# 2. run the experiment
 //	DATABASE_URL='postgres://leoflow:leoflow@localhost:5432/leoflow_dev?sslmode=disable' \
 //	  go run ./test/load/scheduler_ceiling --n 50,200,500,1000 --window 5s
@@ -40,11 +40,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/observability"
-	"github.com/neochaotic/leoflow/internal/scheduler"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/observability"
+	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 func main() {
@@ -76,7 +76,7 @@ func run() error {
 	ctx := context.Background()
 	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: *dbURL})
 	if err != nil {
-		return fmt.Errorf("connecting to Postgres (is it up and migrated? `leoflow db reset --yes`): %w", err)
+		return fmt.Errorf("connecting to Postgres (is it up and migrated? `dexaflow db reset --yes`): %w", err)
 	}
 	defer pg.Close()
 
@@ -167,10 +167,10 @@ func seedRuns(ctx context.Context, repo *storage.Repository, store *storage.Sche
 		}
 		created, rerr := repo.RegisterDagVersion(ctx, "default", spec, hash)
 		if rerr != nil {
-			return fmt.Errorf("registering %s (is the `default` tenant seeded? `leoflow db reset --yes`): %w", dagID, rerr)
+			return fmt.Errorf("registering %s (is the `default` tenant seeded? `dexaflow db reset --yes`): %w", dagID, rerr)
 		}
 		if !created {
-			return fmt.Errorf("registering %s: version already existed (stale data? try `leoflow db reset --yes`)", dagID)
+			return fmt.Errorf("registering %s: version already existed (stale data? try `dexaflow db reset --yes`)", dagID)
 		}
 		if _, cerr := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
 			RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: now,
@@ -223,7 +223,7 @@ func measure(ctx context.Context, sched *scheduler.Scheduler, metrics *observabi
 		}
 	}
 
-	stepDownsBefore := counterTotal(reg, "leoflow_scheduler_step_downs_total")
+	stepDownsBefore := counterTotal(reg, "dexaflow_scheduler_step_downs_total")
 
 	var samples []time.Duration
 	deadline := time.Now().Add(window)
@@ -256,7 +256,7 @@ func measure(ctx context.Context, sched *scheduler.Scheduler, metrics *observabi
 		p99:       percentile(samples, 0.99),
 		max:       samples[len(samples)-1],
 		mean:      sum / time.Duration(len(samples)),
-		stepDowns: counterTotal(reg, "leoflow_scheduler_step_downs_total") - stepDownsBefore,
+		stepDowns: counterTotal(reg, "dexaflow_scheduler_step_downs_total") - stepDownsBefore,
 	}, nil
 }
 
@@ -311,7 +311,7 @@ func printTable(rows []result, window time.Duration) {
 }
 
 // cleanup removes every DAG (and its cascaded versions/runs/task instances) this
-// run created. Best-effort: a failure is logged, not fatal — `leoflow db reset`
+// run created. Best-effort: a failure is logged, not fatal — `dexaflow db reset`
 // is always the clean slate.
 func cleanup(ctx context.Context, pg *storage.Postgres, prefix string, logger *slog.Logger) {
 	like := prefix + "%"
@@ -319,10 +319,10 @@ func cleanup(ctx context.Context, pg *storage.Postgres, prefix string, logger *s
 	// dropping the DAG cascades versions, so runs must go before their versions.
 	if _, err := pg.Pool.Exec(ctx,
 		`DELETE FROM dag_runs WHERE dag_id IN (SELECT id FROM dags WHERE dag_id LIKE $1)`, like); err != nil {
-		logger.Warn("load cleanup: deleting dag_runs failed; run `leoflow db reset --yes`", "error", err)
+		logger.Warn("load cleanup: deleting dag_runs failed; run `dexaflow db reset --yes`", "error", err)
 	}
 	if _, err := pg.Pool.Exec(ctx, `DELETE FROM dags WHERE dag_id LIKE $1`, like); err != nil {
-		logger.Warn("load cleanup: deleting dags failed; run `leoflow db reset --yes`", "error", err)
+		logger.Warn("load cleanup: deleting dags failed; run `dexaflow db reset --yes`", "error", err)
 	}
 }
 

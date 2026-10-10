@@ -10,7 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/neochaotic/leoflow/internal/xcom"
+	"github.com/dexadata/dexaflow/internal/xcom"
 )
 
 func testClient(t *testing.T) *redis.Client {
@@ -58,5 +58,22 @@ func TestRedisBackendRoundTrip(t *testing.T) {
 	}
 	if _, ferr := b.Fetch(ctx, key); ferr != xcom.ErrNotFound {
 		t.Errorf("Fetch after delete = %v, want ErrNotFound", ferr)
+	}
+}
+
+func TestRedisBackendFetchMany(t *testing.T) {
+	ctx := context.Background()
+	b := xcom.NewRedisBackend(testClient(t))
+	k1, k2 := "xcom:test:dag:many:a:return_value", "xcom:test:dag:many:b:return_value"
+	t.Cleanup(func() { _ = b.Delete(ctx, k1); _ = b.Delete(ctx, k2) })
+	if err := b.Push(ctx, k1, xcom.Entry{Value: []byte(`1`), ContentType: "application/json", SizeBytes: 1}, time.Minute); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	entries, found, err := b.FetchMany(ctx, []string{k1, k2})
+	if err != nil {
+		t.Fatalf("FetchMany: %v", err)
+	}
+	if !found[0] || string(entries[0].Value) != `1` || found[1] {
+		t.Errorf("FetchMany = %+v %v, want only the first key found", entries, found)
 	}
 }

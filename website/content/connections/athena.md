@@ -10,13 +10,13 @@ description: Amazon Athena connection
 ---
 
 Run SQL against Amazon Athena (serverless Presto/Trino over S3) from a managed
-Leoflow Connection. Athena has no host or port — the region, schema, and work
+Dexaflow Connection. Athena has no host or port — the region, schema, and work
 group live in **Extra**.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: athena_demo
 connectors:
   - athena
@@ -73,7 +73,7 @@ with DAG("athena_demo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: athena_demo
 python_version: "3.12"

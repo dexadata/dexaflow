@@ -13,8 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/ui"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/ui"
 )
 
 func uiServer() *gin.Engine {
@@ -29,12 +29,12 @@ func uiServer() *gin.Engine {
 
 func TestUIConfigInstanceNameConfigurable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cases := map[string]string{"": "Leoflow", "Leoflow · DEV": "Leoflow · DEV"}
+	cases := map[string]string{"": "Dexaflow", "Dexaflow · DEV": "Dexaflow · DEV"}
 	for in, want := range cases {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/config", http.NoBody)
-		uiConfigHandler(in, 30)(c)
+		uiConfigHandler(in, 30, nil)(c)
 		var cfg map[string]any
 		if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
 			t.Fatalf("unmarshal: %v", err)
@@ -69,7 +69,7 @@ func TestUIConfigAutoRefreshIntervalConfigurable(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/config", http.NoBody)
-			uiConfigHandler("Leoflow", tc.in)(c)
+			uiConfigHandler("Dexaflow", tc.in, nil)(c)
 			var cfg map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -97,8 +97,8 @@ func TestUIConfigIsPublicAndShaped(t *testing.T) {
 			t.Errorf("config missing required field %q", field)
 		}
 	}
-	if cfg["instance_name"] != "Leoflow" {
-		t.Errorf("instance_name = %v, want Leoflow", cfg["instance_name"])
+	if cfg["instance_name"] != "Dexaflow" {
+		t.Errorf("instance_name = %v, want Dexaflow", cfg["instance_name"])
 	}
 	if cfg["auto_refresh_interval"].(float64) != 30 {
 		t.Errorf("auto_refresh_interval = %v, want 30", cfg["auto_refresh_interval"])
@@ -343,5 +343,37 @@ func TestShellGateDeniesOnABackendError(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "<div id=\"root\"") {
 		t.Error("the authenticated SPA shell was served while the user store was unreachable")
+	}
+}
+
+// TestUIConfigServesConfiguredTheme covers #1289: the Airflow 3.2.1 UI reads a
+// Chakra theme from /ui/config (`theme`: tokens, globalCss, icon,
+// icon_dark_mode), so branding goes through the SPA's own mechanism. Unset
+// stays null, which the spec allows and the UI reads as "no custom theme".
+func TestUIConfigServesConfiguredTheme(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := map[string]struct {
+		theme json.RawMessage
+		want  string
+	}{
+		"unset is null": {nil, `null`},
+		"configured":    {json.RawMessage(`{"icon":"/brand.svg","tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}`), `{"icon":"/brand.svg","tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/config", http.NoBody)
+
+			uiConfigHandler("Leoflow", 30, tc.theme)(c)
+
+			var cfg map[string]json.RawMessage
+			if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if string(cfg["theme"]) != tc.want {
+				t.Errorf("theme = %s, want %s", cfg["theme"], tc.want)
+			}
+		})
 	}
 }

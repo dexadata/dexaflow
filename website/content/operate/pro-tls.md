@@ -67,7 +67,7 @@ chart use them verbatim and skip auto-generation. The clean way to provision
 that cert is [cert-manager](https://cert-manager.io).
 
 An operator-ready values file is at
-[`helm/leoflow/examples/values-pro-tls.yaml`](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/examples/values-pro-tls.yaml)
+[`helm/dexaflow/examples/values-pro-tls.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-pro-tls.yaml)
 — `-f` it after the steps below. (The full chart value reference is the
 [Helm chart](/operate/helm-chart/) page.)
 
@@ -89,7 +89,7 @@ never leaves the cluster):
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
-  name: leoflow-selfsigned
+  name: dexaflow-selfsigned
   namespace: leoflow
 spec:
   selfSigned: {}
@@ -107,28 +107,28 @@ The Certificate's `secretName` must match `agentTLS.serverCertSecret`:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: leoflow-agent-tls
+  name: dexaflow-agent-tls
   namespace: leoflow
 spec:
-  secretName: leoflow-agent-tls          # == agentTLS.serverCertSecret
+  secretName: dexaflow-agent-tls          # == agentTLS.serverCertSecret
   duration: 2160h                        # 90d
   renewBefore: 360h                      # 15d
   issuerRef:
-    name: leoflow-selfsigned
+    name: dexaflow-selfsigned
     kind: Issuer
   dnsNames:
-    - leoflow.leoflow.svc                 # the control-plane Service DNS
-    - leoflow.leoflow.svc.cluster.local
+    - dexaflow.leoflow.svc                 # the control-plane Service DNS
+    - dexaflow.leoflow.svc.cluster.local
     # When split.enabled=true (ADR 0049) the scheduler runs as its own
     # Service and task pods dial IT, not the api Service. The agent verifies
     # the server hostname, so the cert MUST also carry the scheduler DNS or
     # every task's connection fails verification and hangs. Drop these two
     # SANs only if you run the fused `all` role (split.enabled=false).
-    - leoflow-scheduler.leoflow.svc
-    - leoflow-scheduler.leoflow.svc.cluster.local
+    - dexaflow-scheduler.leoflow.svc
+    - dexaflow-scheduler.leoflow.svc.cluster.local
 ```
 
-> The Service names above assume a release named `leoflow` in namespace
+> The Service names above assume a release named `dexaflow` in namespace
 > `leoflow`; both derive from the chart fullname. If you install under a
 > different release/namespace, substitute `<fullname>` and `<fullname>-scheduler`
 > (run `helm template` and read the `Service` names) into every SAN.
@@ -144,26 +144,26 @@ standard way, or copy the issuer's `ca.crt` into a ConfigMap keyed `ca.crt`. Set
 ## 5. Install
 
 ```console
-$ helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <VERSION> \
+$ helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
     -n leoflow --create-namespace \
     -f values-pro-tls.yaml
 ```
 
-(Use the chart version for the [latest release](https://github.com/neochaotic/leoflow/releases) —
+(Use the chart version for the [latest release](https://github.com/dexadata/dexaflow/releases) —
 the tag with the leading `v` stripped. From a source checkout, swap the OCI
-reference for `./helm/leoflow`.)
+reference for `./helm/dexaflow`.)
 
 ## Troubleshooting
 
 - **`the Pro edition requires TLS on the agent gRPC channel, but it is off`** — the
-  server refused to boot because `LEOFLOW_SERVER_GRPC_TLS_CERT`/`_KEY` are unset:
+  server refused to boot because `DEXAFLOW_SERVER_GRPC_TLS_CERT`/`_KEY` are unset:
   the cert Secret didn't mount, or the server was started outside this chart.
   Provide the cert as above (#281).
 - **`agentTLS.enabled=false is not a supported configuration`** — helm refused the
   install. This chart only deploys the Pro edition, and that edition cannot boot
   without a cert, so turning TLS off buys a `CrashLoopBackOff`, not a plaintext
   deployment. Provision the cert as above; for a plaintext local loop use the Lite
-  dev server (`leoflow lite`), not this chart (#459).
+  dev server (`dexaflow lite`), not this chart (#459).
 - **`agentTLS.caConfigMap is required when agentTLS.enabled`** — helm refused the
   install because the CA ConfigMap is missing. Without it task pods fail the cert
   chain (`x509: certificate signed by unknown authority`) and hang (#280). Do step 4.

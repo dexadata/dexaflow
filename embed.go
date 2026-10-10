@@ -1,4 +1,4 @@
-// Package leoflow embeds the Python parser and runtime package sources so a
+// Package dexaflow embeds the Python parser and runtime package sources so a
 // binary-only install (no source checkout) can provision them. The dev source
 // trees under parser/ and runtime/python/ remain the canonical copies; this
 // embed reads them directly at build time, so there is no duplicated source.
@@ -9,12 +9,13 @@
 // README.md (what pip needs) so the dev-only test fixtures and dot-caches
 // (.pytest_cache, .ruff_cache, .coverage) are not embedded. Build from a clean
 // tree (no __pycache__) so stale bytecode is not embedded.
-package leoflow
+package dexaflow
 
 import "embed"
 
-// Four patterns across two directives, and runtime/python/leoflow has to be its
-// own: all:runtime/python/leoflow_runtime cannot match it. Omitting it is silent
+// Five patterns across two directives, and runtime/python/dexaflow and
+// runtime/python/leoflow (its pre-rename re-export) each have to be their own:
+// all:runtime/python/leoflow_runtime cannot match them. Omitting it is silent
 // — hatchling ships a wheel without a `packages` entry whose directory is absent,
 // no error and no warning, so a binary-only Lite install would build every
 // per-DAG venv from a pysrc tree with no authoring package in it (#17). The all:
@@ -22,10 +23,10 @@ import "embed"
 // does. .gitignore is named explicitly for the same reason — a directory walk
 // skips dotfiles, and that one has to travel: hatchling resolves its ignore
 // patterns by walking up from its own root, so without it a build from
-// ~/.leoflow/pysrc reaches $HOME's. embed_test.go asserts each of these arrives.
+// ~/.dexaflow/pysrc reaches $HOME's. embed_test.go asserts each of these arrives.
 //
 //go:embed all:parser/leoflow_parser parser/pyproject.toml parser/README.md
-//go:embed all:runtime/python/leoflow_runtime all:runtime/python/leoflow runtime/python/pyproject.toml runtime/python/README.md runtime/python/.gitignore
+//go:embed all:runtime/python/leoflow_runtime all:runtime/python/dexaflow all:runtime/python/leoflow runtime/python/pyproject.toml runtime/python/README.md runtime/python/.gitignore
 var pythonSources embed.FS
 
 // PythonSources returns the embedded parser and runtime package sources, rooted
@@ -35,9 +36,9 @@ func PythonSources() embed.FS { return pythonSources }
 //go:embed docker-compose.dev.yaml
 var devCompose []byte
 
-// DevCompose returns the embedded docker-compose for Leoflow Lite's local
+// DevCompose returns the embedded docker-compose for Dexaflow Lite's local
 // Postgres + Redis, so a binary-only install (no source checkout) can bring the
-// datastores up with `leoflow lite` alone — it is materialized under ~/.leoflow
+// datastores up with `dexaflow lite` alone — it is materialized under ~/.dexaflow
 // on first run.
 func DevCompose() []byte { return devCompose }
 
@@ -45,7 +46,7 @@ func DevCompose() []byte { return devCompose }
 var exampleDAGs embed.FS
 
 // ExampleDAGs returns the embedded DAG examples (one subdirectory per DAG,
-// each with dag.py + leoflow.yaml). The Lite IDE's "Download examples"
+// each with dag.py + dexaflow.yaml). The Lite IDE's "Download examples"
 // button materializes them into the user's workspace under examples/, so a
 // fresh install can try every operator without a separate git checkout.
 // Root is "examples/" — the same layout as the source tree.

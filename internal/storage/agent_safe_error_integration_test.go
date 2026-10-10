@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestExecutionStoreProducesSafeErrorsForTheAgentFacingMessage closes, for the

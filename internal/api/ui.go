@@ -1,16 +1,17 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
-// supportedMenuItems are the Airflow 3.2.1 UI menu sections Leoflow backs. The
+// supportedMenuItems are the Airflow 3.2.1 UI menu sections Dexaflow backs. The
 // UI renders only the sections /ui/auth/menus authorizes, so omitting the rest
 // (Assets, Pools, Providers, Jobs, XComs, ...) hides them without modifying the
 // SPA. Each value must be a real 3.2.1 MenuItem enum member (validMenuItems).
@@ -79,8 +80,8 @@ const DefaultUIAutoRefreshIntervalSeconds = 30
 // autoRefreshIntervalSecs is the SPA's polling cadence for DAG / DagRun /
 // task-instance state refresh (non-positive values fall back to the
 // production default).
-func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int) {
-	r.GET("/ui/config", uiConfigHandler(instanceName, autoRefreshIntervalSecs))
+func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage) {
+	r.GET("/ui/config", uiConfigHandler(instanceName, autoRefreshIntervalSecs, theme))
 	r.GET("/ui/auth/me", uiMeHandler())
 	r.GET("/ui/auth/menus", uiMenusHandler())
 	r.POST("/ui/auth/token", uiTokenHandler(tokenTTLSecs))
@@ -88,17 +89,18 @@ func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefres
 
 // uiConfigHandler returns the UI ConfigResponse (Airflow 3.2.1 shape). It keeps
 // every spec-required field present; values stay minimal for the MVP (Phase 5.3
-// tunes them). theme is null — required-but-nullable in the spec — meaning "no
-// custom Chakra theme". is_db_isolation_mode is intentionally absent: it is not
+// tunes them). theme is the operator's Chakra theme (#1289), or null when none
+// is configured: required-but-nullable in the spec, read as "no custom
+// theme". is_db_isolation_mode is intentionally absent: it is not
 // part of the 3.2.1 ConfigResponse.
 //
 // autoRefreshIntervalSecs controls the SPA's polling cadence for DAG / DagRun
 // state. A non-positive value falls back to DefaultUIAutoRefreshIntervalSeconds
 // so a misconfigured env var cannot accidentally drop it to 0 (which would
 // hammer the DB). See docs/configuration.md.
-func uiConfigHandler(instanceName string, autoRefreshIntervalSecs int) gin.HandlerFunc {
+func uiConfigHandler(instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage) gin.HandlerFunc {
 	if instanceName == "" {
-		instanceName = "Leoflow"
+		instanceName = "Dexaflow"
 	}
 	if autoRefreshIntervalSecs <= 0 {
 		autoRefreshIntervalSecs = DefaultUIAutoRefreshIntervalSeconds
@@ -116,10 +118,19 @@ func uiConfigHandler(instanceName string, autoRefreshIntervalSecs int) gin.Handl
 			"dashboard_alert":                 []any{},
 			"show_external_log_redirect":      false,
 			"external_log_name":               nil,
-			"theme":                           nil,
+			"theme":                           themeOrNull(theme),
 			"multi_team":                      false,
 		})
 	}
+}
+
+// themeOrNull renders an unset theme as JSON null rather than as an empty
+// raw message, which would not be valid JSON.
+func themeOrNull(theme json.RawMessage) any {
+	if len(theme) == 0 {
+		return nil
+	}
+	return theme
 }
 
 // uiTokenHandler implements POST /ui/auth/token: it re-mints a bearer token for
@@ -163,7 +174,7 @@ func uiMeHandler() gin.HandlerFunc {
 	}
 }
 
-// uiMenusHandler returns the menu sections Leoflow backs, filtered to those the
+// uiMenusHandler returns the menu sections Dexaflow backs, filtered to those the
 // current user is authorized for, so the UI hides both unbacked sections and
 // sections the caller lacks permission to use (MenuItemCollectionResponse).
 func uiMenusHandler() gin.HandlerFunc {
@@ -195,7 +206,7 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool) gin.Han
 				return
 			}
 			AbortProblem(c, http.StatusNotImplemented, "not implemented",
-				"this action is not available in Leoflow yet")
+				"this action is not available in Dexaflow yet")
 			return
 		case strings.HasPrefix(path, "/api/"):
 			AbortProblem(c, http.StatusNotFound, "not found", "API route not found")
@@ -228,7 +239,9 @@ func shellSessionValid(c *gin.Context, authn auth.Authenticator) bool {
 		return false
 	}
 	for _, token := range candidateTokens(c) {
-		if _, err := authn.Authenticate(c.Request.Context(), token); err == nil {
+		// Same rule as JWTAuth: a principal with no tenant is no session, so
+		// the shell gate and the data plane never disagree about it.
+		if u, err := authn.Authenticate(c.Request.Context(), token); err == nil && u.TenantID != "" {
 			return true
 		}
 	}

@@ -12,20 +12,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
-// newUninstallCommand removes the Leoflow installation (~/.leoflow). It confirms
+// newUninstallCommand removes the Dexaflow installation (~/.dexaflow). It confirms
 // first (unless --yes); --purge additionally removes the DAG workspace and the
 // Docker datastore volumes.
 func newUninstallCommand() *cobra.Command {
 	var yes, purge bool
 	cmd := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the Leoflow installation (~/.leoflow).",
-		Long: "uninstall removes the managed Leoflow home (~/.leoflow): the binaries, config, " +
+		Short: "Remove the Dexaflow installation (~/.dexaflow).",
+		Long: "uninstall removes the managed Dexaflow home (~/.dexaflow): the binaries, config, " +
 			"managed Python, Monaco assets, and local dev state. It does NOT remove your DAG " +
-			"workspace or your datastore (the managed Postgres data in ~/.leoflow/pgdata and this " +
+			"workspace or your datastore (the managed Postgres data in ~/.dexaflow/pgdata and this " +
 			"install's Docker volume) unless you pass --purge — so a reinstall keeps your data. It " +
 			"asks for confirmation unless --yes is given. (To upgrade instead, just re-run install.sh " +
 			"— it replaces the binaries and keeps your config.)",
@@ -45,11 +45,19 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	if err != nil {
 		return fmt.Errorf("resolving home dir: %w", err)
 	}
-	root := filepath.Join(home, ".leoflow")
+	root := stateDirIn(home)
 	if _, serr := os.Stat(root); errors.Is(serr, os.ErrNotExist) {
 		devPrintf(out, "Nothing to remove: %s does not exist.\n", root)
 		return nil
 	}
+
+	// uninstall deletes config.yaml, so it takes the config lock like every
+	// other writer (ADR 0065 section 3) and refuses during a key migration.
+	release, lerr := lockConfigDir(root, configLockExclusive, false)
+	if lerr != nil {
+		return lerr
+	}
+	defer release()
 
 	// Read the workspace path before deleting, so --purge can remove it too.
 	workspace := ""
@@ -58,32 +66,20 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	}
 
 	binDir := installBinDir()
-	devPrintf(out, "This will remove the Leoflow installation:\n  %s  (config, managed Python, Monaco, sources)\n", root)
+	devPrintf(out, "This will remove the Dexaflow installation:\n  %s  (config, managed Python, Monaco, sources)\n", root)
 	if binDir != "" {
-		devPrintf(out, "  the leoflow binaries in %s\n", binDir)
+		devPrintf(out, "  the dexaflow binaries (and their leoflow links) in %s\n", binDir)
 	}
 	if purge {
 		if workspace != "" {
 			devPrintf(out, "  %s  (your DAG workspace)\n", workspace)
 		}
-		devPrintln(out, "  your datastore: the managed Postgres data (~/.leoflow/pgdata) AND this install's Docker volume")
+		devPrintln(out, "  your datastore: the managed Postgres data (~/.dexaflow/pgdata) AND this install's Docker volume")
 	} else {
 		devPrintln(out, "  (keeping your datastore — the managed pgdata and the Docker volume — and your DAG workspace; pass --purge to remove them)")
 	}
 
-	// The datastore survives a plain uninstall; the key that decrypts its
-	// connection secrets does not, because it lives in the config.yaml this
-	// command deletes (#486). Say so before the confirmation, not after: the
-	// user is about to make their preserved data unreadable while this command's
-	// own help says a reinstall keeps it.
-	if strandsDatastoreKey(configFileSecrets(filepath.Join(root, "config.yaml")).secretKey != "", !purge) {
-		devPrintln(out, "")
-		devPrintln(out, "  WARNING: your datastore is kept, but the key that decrypts its connection")
-		devPrintln(out, "           secrets is in the config being removed. A reinstall generates a NEW")
-		devPrintln(out, "           key, and the stored passwords will not be readable.")
-		devPrintf(out, "           Copy `secret_key` out of %s first if you want them back.\n",
-			filepath.Join(root, "config.yaml"))
-	}
+	warnIfStrandingKey(out, root, purge)
 
 	if !yes && !confirmDestructive(cmd) {
 		devPrintln(out, "aborted.")
@@ -93,12 +89,12 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 	if rerr := removeLeoflowHome(cmd, root, purge); rerr != nil {
 		return rerr
 	}
-	devPrintf(out, "✓ removed the Leoflow install at %s\n", root)
+	devPrintf(out, "✓ removed the Dexaflow install at %s\n", root)
 	if !purge {
-		devPrintln(out, "  (kept your datastore for a future reinstall — `leoflow uninstall --purge` removes it)")
+		devPrintln(out, "  (kept your datastore for a future reinstall — `dexaflow uninstall --purge` removes it)")
 	}
 	// Remove the binaries too — install.sh places them on a PATH dir (e.g.
-	// /usr/local/bin), NOT under ~/.leoflow, so removing the home alone left a
+	// /usr/local/bin), NOT under ~/.dexaflow, so removing the home alone left a
 	// working `leoflow` behind.
 	removeBinariesIn(out, installBinDir())
 	if purge && workspace != "" {
@@ -108,12 +104,28 @@ func runUninstall(cmd *cobra.Command, yes, purge bool) error {
 			devPrintf(out, "✓ removed workspace %s\n", workspace)
 		}
 	}
-	devPrintln(out, "Done. If install.sh added a 'leoflow' PATH line to your shell profile, remove it.")
+	devPrintln(out, "Done. If install.sh added a dexaflow (or, before the rename, leoflow) PATH line to your shell profile, remove it.")
 	return nil
 }
 
+// warnIfStrandingKey warns, before the confirmation, when the datastore is kept
+// but the key that decrypts its connection secrets lives in the config.yaml
+// this command deletes (#486): the user is about to make their preserved data
+// unreadable while this command's own help says a reinstall keeps it.
+func warnIfStrandingKey(out io.Writer, root string, purge bool) {
+	if !strandsDatastoreKey(configFileSecrets(filepath.Join(root, "config.yaml")).secretKey != "", !purge) {
+		return
+	}
+	devPrintln(out, "")
+	devPrintln(out, "  WARNING: your datastore is kept, but the key that decrypts its connection")
+	devPrintln(out, "           secrets is in the config being removed. A reinstall generates a NEW")
+	devPrintln(out, "           key, and the stored passwords will not be readable.")
+	devPrintf(out, "           Copy `secret_key` out of %s first if you want them back.\n",
+		filepath.Join(root, "config.yaml"))
+}
+
 // installBinDir is the directory the running leoflow binary lives in — where
-// install.sh placed the binaries (/usr/local/bin, ~/.local/bin, or ~/.leoflow/bin).
+// install.sh placed the binaries (/usr/local/bin, ~/.local/bin, or ~/.dexaflow/bin).
 func installBinDir() string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -122,15 +134,20 @@ func installBinDir() string {
 	return filepath.Dir(exe)
 }
 
-// removeBinariesIn deletes the leoflow binaries from dir (leoflow last — it is the
-// running process; on Linux unlinking a running binary is safe). A removal failure
-// (e.g. /usr/local/bin without sudo) is reported, not fatal, so ~/.leoflow is still
+// removeBinariesIn deletes the dexaflow binaries from dir, and the leoflow-named
+// entry points older installs left there, with the CLI last (it is the running
+// process; on Linux unlinking a running binary is safe). A removal failure
+// (e.g. /usr/local/bin without sudo) is reported, not fatal, so ~/.dexaflow is still
 // cleaned.
 func removeBinariesIn(out io.Writer, dir string) {
 	if dir == "" {
 		return
 	}
-	for _, name := range []string{"leoflow-server", "leoflow-agent", "leoflow"} {
+	for _, name := range []string{
+		"dexaflow-server", "dexaflow-agent", "dexaflow-mcp",
+		"leoflow-server", "leoflow-agent", "leoflow-mcp",
+		"leoflow", "dexaflow",
+	} {
 		p := filepath.Join(dir, name)
 		if _, err := os.Stat(p); err != nil {
 			continue
@@ -156,11 +173,25 @@ func confirmDestructive(cmd *cobra.Command) bool {
 	return answer == "yes" || answer == "y"
 }
 
-// removeLeoflowHome removes the Leoflow home, stopping a running managed Postgres
+// removeLeoflowHome removes the Dexaflow home, stopping a running managed Postgres
 // first (so no orphaned process points at a half-removed data dir). With purge it
 // also drops this install's Docker volume and removes the datastore; without it,
 // the datastore (managed pgdata / the Docker volume) is preserved for a reinstall.
 func removeLeoflowHome(cmd *cobra.Command, root string, purge bool) error {
+	// root may be the ~/.dexaflow link to a pre-rename ~/.dexaflow
+	// (config.HomeDirIn). Work on the real directory, then drop the link, so the
+	// data goes and no dangling link stays behind.
+	if target, err := filepath.EvalSymlinks(root); err == nil && target != root {
+		if rerr := removeLeoflowHome(cmd, target, purge); rerr != nil {
+			return rerr
+		}
+		if _, serr := os.Stat(target); errors.Is(serr, os.ErrNotExist) {
+			if lerr := os.Remove(root); lerr != nil && !errors.Is(lerr, os.ErrNotExist) {
+				return fmt.Errorf("removing %s: %w", root, lerr)
+			}
+		}
+		return nil
+	}
 	stopManagedPostgres(cmd)
 	if purge {
 		// Best-effort: stop the Docker datastore and drop this install's volume

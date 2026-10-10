@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // registerSecondVersion publishes a new version of an existing DAG and returns

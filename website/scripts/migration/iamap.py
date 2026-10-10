@@ -1,5 +1,5 @@
 """
-Single source of truth for the Leoflow docs Hugo+Docsy migration (Phase F1).
+Single source of truth for the Dexaflow docs Hugo+Docsy migration (Phase F1).
 
 Maps every source page under docs/ to its new home under website/content/, per the
 approved 9-section UX-first IA. Drives BOTH file placement and internal-link
@@ -31,7 +31,7 @@ PAGES = {
     "quickstart.md": dict(
         dest="get-started/quickstart.md", title="Quickstart", link="Quickstart",
         weight=10,
-        desc="Get Leoflow Lite running locally in two commands — the fastest path to a running DAG."),
+        desc="Get Dexaflow Lite running locally in two commands — the fastest path to a running DAG."),
     "installation.md": dict(
         dest="get-started/installation.md", title="Installation", link="Installation",
         weight=30, desc="Install the leoflow CLI and provision the managed Python runtime."),
@@ -39,21 +39,21 @@ PAGES = {
     # ---- Author DAGs ----
     "dag-authoring.md": dict(
         dest="author-dags/dag-authoring.md", title="DAG authoring", link="DAG authoring",
-        weight=10, desc="Author a DAG: leoflow.yaml plus dag.py compiled to one immutable artifact."),
+        weight=10, desc="Author a DAG: dexaflow.yaml plus dag.py compiled to one immutable artifact."),
     "airflow-operators.md": dict(
         dest="author-dags/operators-sensors.md", title="Airflow operators & sensors",
         link="Operators & sensors", weight=20,
-        desc="Use Airflow operators and sensors from your DAGs on Leoflow."),
+        desc="Use Airflow operators and sensors from your DAGs on Dexaflow."),
     "dbt.md": dict(
         dest="author-dags/dbt.md", title="dbt projects as DAGs", link="dbt",
-        weight=30, desc="Render a dbt project into a Leoflow DAG with native model-level tasks."),
+        weight=30, desc="Render a dbt project into a Dexaflow DAG with native model-level tasks."),
     "variables-connections.md": dict(
         dest="author-dags/variables-connections.md", title="Variables & Connections",
         link="Variables & Connections", weight=40,
         desc="Expose Variables and Connections to your task pods."),
     "alerting.md": dict(
         dest="author-dags/alerting.md", title="On-failure alerting", link="Alerting",
-        weight=50, desc="Notify on run failure from leoflow.yaml — Slack or a generic webhook, no extra task and no Python."),
+        weight=50, desc="Notify on run failure from dexaflow.yaml — Slack or a generic webhook, no extra task and no Python."),
     "cookbook/map-reduce.md": dict(
         dest="author-dags/map-reduce.md", title="Map-reduce for ML", link="Map-reduce",
         weight=60, desc="Fan-out plus reduce as a Python list comprehension — native map-reduce for ML/AI."),
@@ -66,7 +66,7 @@ PAGES = {
         desc="A worked 1 GB ETL that shares data between tasks through the per-run staging volume."),
     "lite-web-editor.md": dict(
         dest="author-dags/lite-web-editor.md", title="The Lite web editor", link="Lite web editor",
-        weight=90, desc="Edit and run DAGs from the browser in Leoflow Lite."),
+        weight=90, desc="Edit and run DAGs from the browser in Dexaflow Lite."),
 
     # ---- Deploy & operate ----
     "first-pro-dag.md": dict(
@@ -78,10 +78,10 @@ PAGES = {
         weight=20, desc="Build, push and register DAGs from CI — GitHub Actions, GitLab CI, Cloud Build."),
     "upgrades.md": dict(
         dest="operate/upgrades.md", title="Upgrades", link="Upgrades",
-        weight=40, desc="Upgrade a Leoflow control plane safely, edition by edition."),
+        weight=40, desc="Upgrade a Dexaflow control plane safely, edition by edition."),
     "backup-restore.md": dict(
         dest="operate/backup-restore.md", title="Backup & restore", link="Backup & restore",
-        weight=50, desc="Back up and restore Leoflow state — metadata, secrets, and logs."),
+        weight=50, desc="Back up and restore Dexaflow state — metadata, secrets, and logs."),
     "troubleshooting.md": dict(
         dest="operate/troubleshooting.md", title="Troubleshooting & observability",
         link="Troubleshooting", weight=60,
@@ -117,17 +117,17 @@ PAGES = {
         weight=60, desc="The LEOFLOW_* environment variables and config keys for the server."),
     "mcp.md": dict(
         dest="reference/mcp.md", title="MCP server", link="MCP server",
-        weight=80, desc="The Leoflow MCP server — resources and tools for agents."),
+        weight=80, desc="The Dexaflow MCP server — resources and tools for agents."),
 
     # ---- Contribute ----
     "contributing.md": dict(
         dest="contribute/contributing.md", title="Contributing", link="Contributing",
-        weight=10, desc="How to contribute to Leoflow — workflow, standards, and the TDD gate."),
+        weight=10, desc="How to contribute to Dexaflow — workflow, standards, and the TDD gate."),
 
     # ---- Project ----
     "roadmap-to-release.md": dict(
         dest="project/roadmap.md", title="Roadmap", link="Roadmap",
-        weight=20, desc="The historical road to release — where Leoflow has been heading."),
+        weight=20, desc="The historical road to release — where Dexaflow has been heading."),
     "planning/airflow-connector-compatibility.md": dict(
         dest="project/planning/airflow-connector-compatibility.md",
         title="Airflow 3.X connector compatibility", link="Connector compatibility",

@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
-	"github.com/neochaotic/leoflow/internal/scheduler"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 // SchedulerStore is the sqlc-backed implementation of scheduler.Store.
@@ -25,6 +26,11 @@ type SchedulerStore struct {
 	// to resolve each active dag_version's effective warm target (ADR 0058 N1b2b).
 	// Zero value = warm pools off, so ActiveWarmTargets reports every target as 0.
 	warmExec config.ExecutionSection
+	// provisionalInfraMarks makes the reapers' infra marks provisional
+	// (infra_confirmed_at NULL) for the reconciler to confirm (ADR 0052
+	// amendment, part 2). Set only where a reconciler runs (Kubernetes); false
+	// (Lite) confirms each mark at mark time, which behaves exactly as before.
+	provisionalInfraMarks bool
 }
 
 // poolBeginner is the slice of pgxpool.Pool the store uses to start the orphan
@@ -52,6 +58,7 @@ type taskMaps struct {
 	dispatchAttempts map[string]int
 	nextDispatchAt   map[string]*time.Time
 	infraFailed      map[string]bool
+	infraProvisional map[string]bool
 	infraAttempts    map[string]int
 }
 
@@ -68,6 +75,7 @@ func taskInstanceMaps(tis []queries.TaskInstance) taskMaps {
 		dispatchAttempts: make(map[string]int, n),
 		nextDispatchAt:   make(map[string]*time.Time, n),
 		infraFailed:      make(map[string]bool, n),
+		infraProvisional: make(map[string]bool, n),
 		infraAttempts:    make(map[string]int, n),
 	}
 	for _, ti := range tis {
@@ -99,6 +107,11 @@ func taskInstanceMaps(tis []queries.TaskInstance) taskMaps {
 		if ti.LastFailureKind != nil && *ti.LastFailureKind == "infra" &&
 			domain.TaskState(ti.State) == domain.TaskStateFailed {
 			m.infraFailed[ti.TaskID] = true
+			// Not yet confirmed by the reconciler (ADR 0052 amendment, part 2):
+			// the planner holds it as active until confirmation or the valve.
+			if !ti.InfraConfirmedAt.Valid {
+				m.infraProvisional[ti.TaskID] = true
+			}
 		}
 		if ti.InfraAttempts > 0 {
 			m.infraAttempts[ti.TaskID] = int(ti.InfraAttempts)
@@ -114,13 +127,21 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 	if err != nil {
 		return nil, fmt.Errorf("listing active runs: %w", err)
 	}
+	tisByRun, err := s.taskInstancesByRun(ctx, runs)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]scheduler.RunState, 0, len(runs))
+	s.specs.beginTick()
 	for _, run := range runs {
 		// The spec is immutable per dag_version_id (see specCache), so N active
 		// runs sharing a version decode it once, not N times. The cached spec is
 		// shared read-only: copy Tasks before applyDefaultRetries so filling a
 		// run's retry defaults never writes through the shared backing array.
-		_, cached, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		// getWithGraph, like getForTick, keeps every version this tick reads
+		// cached through the next tick, so more active versions than the cache
+		// bound never thrash.
+		cached, graph, err := s.specs.getWithGraph(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -128,11 +149,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		spec.Tasks = make([]domain.TaskSpec, len(cached.Tasks))
 		copy(spec.Tasks, cached.Tasks)
 		applyDefaultRetries(&spec)
-		tis, err := s.q.ListTaskInstancesByRun(ctx, run.ID)
-		if err != nil {
-			return nil, fmt.Errorf("listing task instances: %w", err)
-		}
-		ts := taskInstanceMaps(tis)
+		ts := taskInstanceMaps(tisByRun[run.ID])
 		// Build per-task retry_delay_seconds from the DAG spec so the planner
 		// can gate `up_for_retry → none` on the user-declared cooldown (#201).
 		// TaskSpec.RetryDelaySeconds is *int (omitempty); nil = no cooldown.
@@ -151,6 +168,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			TenantID:          uuidToString(run.TenantID),
 			State:             domain.DagRunState(run.State),
 			Tasks:             spec.Tasks,
+			Graph:             graph,
 			States:            ts.states,
 			Tries:             ts.tries,
 			MaxTries:          ts.maxTries,
@@ -160,6 +178,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			NextDispatchAt:    ts.nextDispatchAt,
 			DispatchAttempts:  ts.dispatchAttempts,
 			InfraFailed:       ts.infraFailed,
+			InfraProvisional:  ts.infraProvisional,
 			InfraAttempts:     ts.infraAttempts,
 			Now:               time.Now(),
 			Alerts:            spec.Alerts,
@@ -169,11 +188,86 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 	return out, nil
 }
 
+// taskInstancesByRun loads the task instances of every given run in one query
+// and groups them by run. One round trip per tick replaces the one-per-run reads
+// that made the tick's database cost grow with the number of active runs. The
+// query orders by (dag_run_id, task_id), so each run's slice keeps the task_id
+// order the per-run query returned. A run with no rows (not yet materialized)
+// is simply absent, which taskInstanceMaps reads as an empty run, as before.
+func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.DagRun) (map[pgtype.UUID][]queries.TaskInstance, error) {
+	if len(runs) == 0 {
+		return map[pgtype.UUID][]queries.TaskInstance{}, nil
+	}
+	ids := make([]pgtype.UUID, len(runs))
+	for i, run := range runs {
+		ids[i] = run.ID
+	}
+	tis, err := s.q.ListTaskInstancesByRuns(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("listing task instances: %w", err)
+	}
+	byRun := make(map[pgtype.UUID][]queries.TaskInstance, len(runs))
+	for start := 0; start < len(tis); {
+		end := start + 1
+		for end < len(tis) && tis[end].DagRunID == tis[start].DagRunID {
+			end++
+		}
+		byRun[tis[start].DagRunID] = tis[start:end:end]
+		start = end
+	}
+	return byRun, nil
+}
+
 // SetWarmExecution records the operator's warm-pool config so ActiveWarmTargets
 // can resolve each active dag_version's effective warm target. main.go calls it
 // only when warm pools are enabled; left unset, warm pools read as off (every
 // target 0).
 func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection) { s.warmExec = exec }
+
+// SetProvisionalInfraMarks makes every reaper infra mark provisional until the
+// pod reconciler confirms it (ADR 0052 amendment, part 2). main.go calls it
+// only when the Kubernetes reconciler is wired with this store as its
+// confirmer; without a confirmer a provisional mark would wait for the
+// liveness valve on every reap.
+func (s *SchedulerStore) SetProvisionalInfraMarks(on bool) { s.provisionalInfraMarks = on }
+
+// ListProvisionalInfraFailures returns the provisional infra marks (failed,
+// infra, not yet confirmed) of queued or running runs, oldest first and
+// bounded, for the reconciler's confirmation pass.
+func (s *SchedulerStore) ListProvisionalInfraFailures(ctx context.Context) ([]executor.ProvisionalInfraFailure, error) {
+	rows, err := s.q.ListProvisionalInfraFailures(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing provisional infra failures: %w", err)
+	}
+	out := make([]executor.ProvisionalInfraFailure, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, executor.ProvisionalInfraFailure{
+			TaskInstanceID: uuidToString(r.TaskInstanceID),
+			DagRunID:       uuidToString(r.DagRunID),
+			TaskID:         r.TaskID,
+			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
+		})
+	}
+	return out, nil
+}
+
+// ConfirmInfraFailure stamps a provisional infra mark confirmed, guarded on
+// the exact attempt and on the mark still being provisional. It reports
+// whether a row was confirmed.
+func (s *SchedulerStore) ConfirmInfraFailure(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := s.q.ConfirmInfraFailure(ctx, queries.ConfirmInfraFailureParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("confirming infra failure: %w", err)
+	}
+	return n == 1, nil
+}
 
 // activeWarmVersion is one active dag_version's warm-relevant spec fields — the
 // pure input to warmTargets, extracted so the projection is unit-testable without
@@ -191,6 +285,10 @@ type activeWarmVersion struct {
 	// a warm worker carries no per-run /staging mount, so its attempts must run on
 	// dedicated pods. Kept on the pure input so the exclusion is unit-testable.
 	staging bool
+	// hasSource marks a version that carries its dag.py. On the runtime image
+	// with source mode on it runs in source mode and is excluded from warm pools
+	// (ADR 0067 §3): a warm pod cannot carry the task's source.
+	hasSource bool
 }
 
 // warmTargets dedupes the active versions (many runs share one immutable
@@ -208,6 +306,10 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection) []e
 		seen[v.dagVersionID] = true
 		if v.staging {
 			// ADR 0058 D5: staging versions never get a warm pool.
+			continue
+		}
+		if domain.SourceModeApplies(exec.SourceMode.RuntimeImage(), v.image, v.hasSource) {
+			// ADR 0067 §3: source-mode versions always run on cold pods.
 			continue
 		}
 		out = append(out, executor.WarmTarget{
@@ -245,7 +347,7 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			continue
 		}
 		seen[run.DagVersionID] = true
-		_, spec, err := s.specs.get(ctx, s.q, run.DagVersionID)
+		_, spec, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
 		if err != nil {
 			return nil, err
 		}
@@ -256,7 +358,8 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			tenantID:     uuidToString(run.TenantID),
 			// ADR 0058 D5: a staging version is excluded from warm pools by
 			// warmTargets. Defense-in-depth alongside the dispatch-path guard.
-			staging: spec.Staging != nil && spec.Staging.Enabled,
+			staging:   spec.Staging != nil && spec.Staging.Enabled,
+			hasSource: spec.Source != "",
 		})
 	}
 	return warmTargets(versions, s.warmExec), nil
@@ -279,6 +382,14 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 	if err != nil {
 		return fmt.Errorf("loading run: %w", err)
 	}
+	if _, err := s.q.CreateTaskInstances(ctx, taskInstanceRows(run.TenantID, rid, tasks)); err != nil {
+		return fmt.Errorf("creating task instances for run %q: %w", runID, err)
+	}
+	return nil
+}
+
+// taskInstanceRows builds the COPY rows MaterializeTasks writes, one per task.
+func taskInstanceRows(tenantID, runID pgtype.UUID, tasks []domain.TaskSpec) []queries.CreateTaskInstancesParams {
 	rows := make([]queries.CreateTaskInstancesParams, len(tasks))
 	for i, t := range tasks {
 		maxTries := int32(1)
@@ -286,8 +397,8 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 			maxTries = toInt32(*t.Retries + 1)
 		}
 		rows[i] = queries.CreateTaskInstancesParams{
-			TenantID: run.TenantID,
-			DagRunID: rid,
+			TenantID: tenantID,
+			DagRunID: runID,
 			TaskID:   t.TaskID,
 			Operator: string(t.Type),
 			MaxTries: maxTries,
@@ -298,12 +409,12 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 			// pool occupancy is attributed correctly (Wave-2 review HIGH-1).
 			Pool:      poolOrNil(t.Pool),
 			TryNumber: 1,
+			// The size the admission gate charges the task (ADR 0066), so
+			// PoolSlotUsage sums slots rather than counting instances (#1499).
+			PoolSlots: toInt32(t.EffectivePoolSlots()),
 		}
 	}
-	if _, err := s.q.CreateTaskInstances(ctx, rows); err != nil {
-		return fmt.Errorf("creating task instances for run %q: %w", runID, err)
-	}
-	return nil
+	return rows
 }
 
 // poolOrNil maps an unset task pool to a NULL column so a task with no declared
@@ -416,8 +527,9 @@ func (s *SchedulerStore) ResetForInfraReplace(ctx context.Context, runID, taskID
 		return false, err
 	}
 	n, err := s.q.ResetTaskInstanceInfraReplace(ctx, queries.ResetTaskInstanceInfraReplaceParams{
-		DagRunID: rid,
-		TaskID:   taskID,
+		DagRunID:              rid,
+		TaskID:                taskID,
+		ConfirmMaxWaitSeconds: scheduler.InfraConfirmMaxWait.Seconds(),
 	})
 	if err != nil {
 		return false, err
@@ -455,6 +567,66 @@ func (s *SchedulerStore) RecordDispatchBackpressure(ctx context.Context, runID, 
 	})
 }
 
+// MarkQueued moves a task from the scheduled slot this tick planned to queued
+// after its dispatch was accepted. expectNextDispatchAt is the next_dispatch_at
+// the tick read (nil when unset). It reports false, with no error, when the row
+// has moved on: a buffered worker already failed or re-offered the task, or the
+// agent already reported (see MarkTaskInstanceQueued).
+func (s *SchedulerStore) MarkQueued(ctx context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return false, err
+	}
+	expect := pgtype.Timestamptz{}
+	if expectNextDispatchAt != nil {
+		expect = pgtype.Timestamptz{Time: *expectNextDispatchAt, Valid: true}
+	}
+	n, err := s.q.MarkTaskInstanceQueued(ctx, queries.MarkTaskInstanceQueuedParams{
+		DagRunID:             rid,
+		TaskID:               taskID,
+		ExpectNextDispatchAt: expect,
+	})
+	return n > 0, err
+}
+
+// RequeueDispatch re-offers a task whose buffered dispatch failed in the worker:
+// back to scheduled, held until nextAt, with one more dispatch attempt when
+// countAttempt. It reports false when the task is no longer scheduled or queued.
+func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt bool, nextAt time.Time) (bool, error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return false, err
+	}
+	inc := int32(0)
+	if countAttempt {
+		inc = 1
+	}
+	n, err := s.q.RequeueDispatch(ctx, queries.RequeueDispatchParams{
+		DagRunID:         rid,
+		TaskID:           taskID,
+		NextDispatchAt:   pgtype.Timestamptz{Time: nextAt, Valid: true},
+		AttemptIncrement: inc,
+	})
+	return n > 0, err
+}
+
+// DispatchAttempts returns the consecutive dispatch-failure count of a task
+// still scheduled or queued; active is false when it has moved on.
+func (s *SchedulerStore) DispatchAttempts(ctx context.Context, runID, taskID string) (attempts int, active bool, err error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return 0, false, err
+	}
+	n, err := s.q.DispatchAttemptsForActive(ctx, queries.DispatchAttemptsForActiveParams{DagRunID: rid, TaskID: taskID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return int(n), true, nil
+}
+
 // FailDispatchExhausted fails a scheduled task as dispatch_failed once its
 // dispatch-attempt budget is spent (ADR 0031 Amendment A).
 func (s *SchedulerStore) FailDispatchExhausted(ctx context.Context, runID, taskID, reason string) error {
@@ -463,6 +635,22 @@ func (s *SchedulerStore) FailDispatchExhausted(ctx context.Context, runID, taskI
 		return err
 	}
 	return s.q.FailDispatchExhausted(ctx, queries.FailDispatchExhaustedParams{
+		DagRunID:     rid,
+		TaskID:       taskID,
+		ErrorMessage: &reason,
+	})
+}
+
+// FailDispatchRefused fails a task whose dispatch the executor refused (ADR
+// 0066 section 3) and spends its retry budget, so a permanent refusal is not
+// dispatched and refused again once per retry. It serves both the sync path
+// (a scheduled task) and the buffered path (a scheduled or queued one).
+func (s *SchedulerStore) FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return err
+	}
+	return s.q.FailDispatchRefused(ctx, queries.FailDispatchRefusedParams{
 		DagRunID:     rid,
 		TaskID:       taskID,
 		ErrorMessage: &reason,
@@ -549,6 +737,7 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 	out := make([]scheduler.ScheduledDAG, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, scheduler.ScheduledDAG{
+			TenantID:      uuidToString(r.TenantID),
 			DagID:         r.DagID,
 			Schedule:      strOrEmpty(r.Schedule),
 			LastLogical:   timeFromAny(r.LastLogical),
@@ -560,14 +749,31 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 	return out, nil
 }
 
-// CreateScheduledRun inserts a scheduled run for a DAG (idempotent on run_id).
-func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, dagID string, logical time.Time) error {
+// CreateScheduledRun inserts a scheduled run for the DAG dagID owned by the
+// tenant tenantID (a tenant UUID), idempotent on run_id. The tenant is explicit
+// because a dag_id is unique only within its tenant (#209). A tenant at its
+// max_runs_per_day gets domain.ErrLimitExceeded and no run.
+func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error {
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return fmt.Errorf("scheduled run tenant id %q: %w", tenantID, err)
+	}
 	runID := "scheduled__" + logical.UTC().Format(time.RFC3339)
-	return s.q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
-		RunID:       runID,
-		LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
-		Tenant:      "default",
-		DagID:       dagID,
+	return createRunWithinDailyLimit(ctx, s.q, s.pool, tid, runCreation{
+		insert: func(q *queries.Queries) (bool, error) {
+			n, err := q.CreateScheduledRunByDagID(ctx, queries.CreateScheduledRunByDagIDParams{
+				RunID:       runID,
+				LogicalDate: pgtype.Timestamptz{Time: logical, Valid: true},
+				TenantID:    tid,
+				DagID:       dagID,
+			})
+			return n > 0, err
+		},
+		// A slot that already exists is a no-op (ON CONFLICT DO NOTHING), at
+		// the cap too.
+		exists: func(q *queries.Queries) (bool, error) {
+			return q.DagRunExistsByDagID(ctx, queries.DagRunExistsByDagIDParams{TenantID: tid, DagID: dagID, RunID: runID})
+		},
 	})
 }
 
@@ -641,47 +847,68 @@ func (s *SchedulerStore) ListReapCandidates(ctx context.Context) ([]executor.Rea
 	return out, nil
 }
 
+// pgLockNotAvailable is the SQLSTATE a NOWAIT row lock raises when another
+// transaction holds a conflicting lock.
+const pgLockNotAvailable = "55P03"
+
 // ReapRun fails an orphaned dag run, then any of its still-active task
-// instances, inside a single transaction. The run UPDATE comes first and is
-// guarded by `state = 'running'`: if zero rows are touched, the run was no
-// longer running (a competing finalizer beat us) and we abort with a clean
-// rollback — the TI table is never touched. This guarantees we cannot leave a
-// run as `success`/`failed` while flipping its TIs to `failed (orphaned)`.
-// Idempotent: a second call on an already-failed run no-ops.
-func (s *SchedulerStore) ReapRun(ctx context.Context, runID string) error {
+// instances, inside a single transaction, and reports whether it did. The list
+// the reaper decided from is only a snapshot, so the orphan predicate is
+// re-checked atomically here: the run's task instances are share-locked first,
+// without waiting (a task instance being written counts as activity and makes
+// the reap a no-op), then the run UPDATE applies the same predicate
+// ListReapCandidates does (still running, no live task instance, last activity
+// at or before quietBefore). If
+// zero rows are touched the run is no longer an orphan (a task instance moved,
+// fresh activity landed, or a competing finalizer settled it), the transaction
+// rolls back without touching any task instance, and ReapRun returns false so
+// the caller leaves the run's pods alone. This guarantees we cannot leave a run
+// as `success`/`failed` while flipping its TIs to `failed (orphaned)`, nor fail
+// a run that resumed between the list and the reap. Idempotent: a second call
+// on an already-failed run returns false.
+func (s *SchedulerStore) ReapRun(ctx context.Context, runID string, quietBefore time.Time) (bool, error) {
 	rid, err := parseUUID(runID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("beginning reap tx: %w", err)
+		return false, fmt.Errorf("beginning reap tx: %w", err)
 	}
 	defer func() {
 		// Rollback after a successful commit is a no-op (tx is closed) and after
-		// a returned error there is no recovery to do — pgx logs it via the pool
+		// a returned error there is no recovery to do; pgx logs it via the pool
 		// already. Silencing it keeps the lint happy without hiding a real bug.
 		_ = tx.Rollback(ctx) //nolint:errcheck // best-effort cleanup; commit path returns the meaningful error
 	}()
 	q := s.q.WithTx(tx)
-	rows, err := q.MarkRunOrphanedRun(ctx, rid)
+	if lerr := q.LockRunTaskInstancesForReap(ctx, rid); lerr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(lerr, &pgErr) && pgErr.Code == pgLockNotAvailable {
+			// A task instance of the run is being written right now: that is
+			// activity, so the run is not an orphan this cycle.
+			return false, nil
+		}
+		return false, fmt.Errorf("locking orphan candidate task instances: %w", lerr)
+	}
+	rows, err := q.MarkRunOrphanedRun(ctx, queries.MarkRunOrphanedRunParams{
+		ID:          rid,
+		QuietBefore: pgtype.Timestamptz{Time: quietBefore, Valid: true},
+	})
 	if err != nil {
-		return fmt.Errorf("failing orphaned run: %w", err)
+		return false, fmt.Errorf("failing orphaned run: %w", err)
 	}
 	if rows == 0 {
-		// Not running any longer — the normal scheduler path finalized it between
-		// our list and our reap. Abort without touching task instances; the
-		// caller treats a no-op reap as success (the run is no longer an orphan
-		// either way).
-		return nil
+		// No longer an orphan: abort without touching task instances.
+		return false, nil
 	}
 	if err := q.MarkRunOrphanedTaskInstances(ctx, rid); err != nil {
-		return fmt.Errorf("failing orphaned task instances: %w", err)
+		return false, fmt.Errorf("failing orphaned task instances: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("committing reap tx: %w", err)
+		return false, fmt.Errorf("committing reap tx: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // ListAgentLostCandidates returns every `running` TI with a non-null
@@ -698,6 +925,10 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 		if r.LastHeartbeatAt.Valid {
 			last = r.LastHeartbeatAt.Time.UTC()
 		}
+		var started time.Time
+		if r.StartedAt.Valid {
+			started = r.StartedAt.Time.UTC()
+		}
 		out = append(out, executor.AgentLostCandidate{
 			TaskInstanceID: uuidToString(r.TaskInstanceID),
 			TenantID:       uuidToString(r.TenantID),
@@ -705,6 +936,8 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 			DagID:          r.DagIDText,
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
+			StartedAt:      started,
 			LastHeartbeat:  last,
 		})
 	}
@@ -732,15 +965,40 @@ func (s *SchedulerStore) MarkTaskDispatchFailed(ctx context.Context, runID, task
 // MarkTaskAgentLost transitions one TI to `failed` with the agent_lost
 // reason. The WHERE state='running' guard makes this idempotent and prevents
 // a late terminal report being overwritten — if the row already moved, we
-// touch zero rows and return nil.
-func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID string) (bool, error) {
+// touch zero rows and return nil. It is pinned to the listed attempt,
+// (tryNumber, attemptEpoch) (ADR 0051 amendment): a mark computed for a
+// superseded execution is a no-op on its replacement.
+func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return false, err
 	}
-	n, err := s.q.MarkTaskAgentLost(ctx, tid)
+	n, err := s.q.MarkTaskAgentLost(ctx, queries.MarkTaskAgentLostParams{
+		Provisional: s.provisionalInfraMarks,
+		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
 	if err != nil {
 		return false, fmt.Errorf("marking task agent-lost: %w", err)
+	}
+	return n == 1, nil
+}
+
+// MarkTaskCredentialCeiling fails one running TI whose attempt outlived
+// auth.max_attempt_credential_lifetime (#1461) as a task failure with the
+// credential_ceiling reason: no infra kind, so the planner applies the task's
+// retry policy instead of re-placing it, and no provisional mark, since there is
+// no infra guess for the reconciler to confirm. Guarded and pinned to the listed
+// attempt exactly like MarkTaskAgentLost.
+func (s *SchedulerStore) MarkTaskCredentialCeiling(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := s.q.MarkTaskCredentialCeiling(ctx, queries.MarkTaskCredentialCeilingParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("marking task credential-ceiling: %w", err)
 	}
 	return n == 1, nil
 }
@@ -765,6 +1023,7 @@ func (s *SchedulerStore) ListStaleQueuedCandidates(ctx context.Context) ([]execu
 			DagID:          r.DagIDText,
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
 			QueuedAt:       qed,
 			WarmWorkerID:   strOrEmpty(r.WarmWorkerID),
 		})
@@ -788,6 +1047,7 @@ func (s *SchedulerStore) ListWarmBoundRunningTIs(ctx context.Context) ([]executo
 			DagRunID:       uuidToString(r.DagRunID),
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
 			WarmWorkerID:   strOrEmpty(r.WarmWorkerID),
 		})
 	}
@@ -819,23 +1079,29 @@ func (s *SchedulerStore) ListBusyWarmWorkerPods(ctx context.Context) (map[string
 
 // MarkTaskDispatchLost transitions one TI to `failed` with the dispatch_lost
 // reason. The WHERE state='queued' guard makes this idempotent: a TI that
-// has since been dispatched (real progress landed) is left alone.
-func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceID string) error {
+// has since been dispatched (real progress landed) is left alone, and so is a
+// row on a different (tryNumber, attemptEpoch) than the one listed (ADR 0051
+// amendment). It returns whether a row was actually updated.
+func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := s.q.MarkTaskDispatchLost(ctx, tid); err != nil {
-		return fmt.Errorf("marking task dispatch-lost: %w", err)
+	n, err := s.q.MarkTaskDispatchLost(ctx, queries.MarkTaskDispatchLostParams{
+		Provisional: s.provisionalInfraMarks,
+		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("marking task dispatch-lost: %w", err)
 	}
-	return nil
+	return n > 0, nil
 }
 
-// ListRunningTasks returns every `running` TI with the timestamp it entered
-// running, for the pod-lost reaper (#527). The reaper applies the grace period
-// and the pod-liveness check per row, so the SQL stays simple.
-func (s *SchedulerStore) ListRunningTasks(ctx context.Context) ([]executor.PodLostCandidate, error) {
-	rows, err := s.q.ListRunningTasks(ctx)
+// ListRunningTasks returns the `running`, non-warm TIs that have been running
+// for at least grace, with the timestamp each entered running, for the pod-lost
+// reaper (#527). The reaper still applies the pod-liveness check per row.
+func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Duration) ([]executor.PodLostCandidate, error) {
+	rows, err := s.q.ListRunningTasks(ctx, grace.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("listing running tasks: %w", err)
 	}
@@ -851,7 +1117,10 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context) ([]executor.PodLo
 			DagID:          r.DagIDText,
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
+			AttemptEpoch:   int(r.AttemptEpoch),
 			RunningSince:   since,
+			Heartbeated:    r.Heartbeated,
+			TenantID:       uuidToString(r.TenantID),
 		})
 	}
 	return out, nil
@@ -859,13 +1128,17 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context) ([]executor.PodLo
 
 // MarkTaskPodLost transitions one TI to `failed` with the pod_lost reason. The
 // WHERE state='running' guard makes it idempotent: a TI that has since moved on
-// (a late terminal report landed) is left alone.
-func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID string) (bool, error) {
+// (a late terminal report landed) is left alone, and so is a row on a different
+// (tryNumber, attemptEpoch) than the one listed (ADR 0051 amendment).
+func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return false, err
 	}
-	n, err := s.q.MarkTaskPodLost(ctx, tid)
+	n, err := s.q.MarkTaskPodLost(ctx, queries.MarkTaskPodLostParams{
+		Provisional: s.provisionalInfraMarks,
+		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
 	if err != nil {
 		return false, fmt.Errorf("marking task pod-lost: %w", err)
 	}

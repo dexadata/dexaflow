@@ -11,16 +11,16 @@ description: Take a DAG from Lite to a Kubernetes control plane — your first P
 This is the end-to-end Pro path: take one DAG from source to a running task on a
 control plane — in **one command**. Where the 2-minute [Lite loop](/contribute/local-dev-loop/)
 hides the artifact boundary so you can iterate, Pro makes it explicit, because that
-boundary is what `leoflow deploy` automates for you.
+boundary is what `dexaflow deploy` automates for you.
 
 A DAG is an **immutable artifact** — a `dag.json` + a container image, versioned
-together ([ADR 0003](/project/adrs/0003-dag-as-image/)). `leoflow deploy` moves it across
+together ([ADR 0003](/project/adrs/0003-dag-as-image/)). `dexaflow deploy` moves it across
 every boundary in one shot:
 
 ```mermaid
 flowchart LR
-  A[dag.py + leoflow.yaml] --> B[compile → dag.json]
-  B --> C[build DAG image<br/>FROM leoflow-runtime]
+  A[dag.py + dexaflow.yaml] --> B[compile → dag.json]
+  B --> C[build DAG image<br/>FROM dexaflow-runtime]
   C --> D[push image → your registry]
   D --> E[re-pin by digest<br/>+ register → control plane]
   E --> F[runs in a pod]
@@ -28,10 +28,10 @@ flowchart LR
 
 {{% alert title="Two versions of this walkthrough" color="info" %}}
 - **The simple path (below)** — a minimal DAG with a `Dockerfile`, deployed
-  today with `leoflow deploy`. Everything here runs as-is.
+  today with `dexaflow deploy`. Everything here runs as-is.
 - **[The complete path](#the-complete-path--your-own-dag-yaml-driven)** — author
   your own DAG with **no Dockerfile** (the build is synthesized from
-  `leoflow.yaml`) and real `connectors:`. That richer flow is still landing;
+  `dexaflow.yaml`) and real `connectors:`. That richer flow is still landing;
   it is shown at the end so you can see where this is going.
 {{% /alert %}}
 
@@ -39,7 +39,7 @@ flowchart LR
 
 - **`docker`** (or `podman`/`nerdctl` — pass `--builder`). Used to build and push
   the DAG image. On Docker Desktop, cross-building for the cluster "just works".
-- The **`leoflow` CLI** and Python 3.11+ on your machine (`leoflow setup` once).
+- The **`dexaflow` CLI** and Python 3.11+ on your machine (`dexaflow setup` once).
 - **A container registry your cluster can pull from** — anywhere: Docker Hub, GHCR,
   Amazon ECR, Google Artifact Registry, Azure ACR, or a private one. You push the
   DAG image there; the control plane pulls it. (Lite needs none — this is a Pro
@@ -50,18 +50,18 @@ flowchart LR
 ## Step 0 — log in once
 
 ```console
-$ leoflow auth login --server https://pro.example.com
+$ dexaflow auth login --server https://pro.example.com
 Username: admin
 Password:
-Logged in to https://pro.example.com (token saved to ~/.leoflow/config.yaml)
+Logged in to https://pro.example.com (token saved to ~/.dexaflow/config.yaml)
 ```
 
-The token is stored, so every later `leoflow deploy` needs **no auth flags**. The
+The token is stored, so every later `dexaflow deploy` needs **no auth flags**. The
 password is read hidden — it never lands in your shell history. (This is the
 control-plane login; it is unrelated to `docker login`, which authenticates your
 *builder* to the registry — do that once too: `docker login ghcr.io`.)
 
-## Step 1 — a project (`dag.py` + `leoflow.yaml` + `Dockerfile`)
+## Step 1 — a project (`dag.py` + `dexaflow.yaml` + `Dockerfile`)
 
 ```python title="dag.py"
 from airflow.sdk import DAG, task
@@ -78,7 +78,7 @@ with DAG("first_pro_dag", schedule=None) as dag:
     load(extract())
 ```
 
-```yaml title="leoflow.yaml"
+```yaml title="dexaflow.yaml"
 dag_id: first_pro_dag
 python_version: "3.11"
 dependencies:
@@ -92,25 +92,25 @@ registry:
 ```
 
 ```dockerfile title="Dockerfile"
-FROM ghcr.io/neochaotic/leoflow-runtime:py3.11
+FROM ghcr.io/dexadata/dexaflow-runtime:py3.11
 RUN pip install --no-cache-dir requests==2.32.3
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
 ```
 
 {{% alert title="The base image is ours; you never build it" color="success" %}}
-Your image layers `FROM` the **published Leoflow task base**
-(`ghcr.io/neochaotic/leoflow-runtime:py3.11`) — it bundles the `leoflow-agent`
+Your image layers `FROM` the **published Dexaflow task base**
+(`ghcr.io/dexadata/dexaflow-runtime:py3.11`) — it bundles the `dexaflow-agent`
 (PID 1, talks gRPC to the control plane) and the `leoflow_runtime` helper, is
 multi-arch and signed, and is built by our CI. You only add your deps and copy
 your DAG in. (In [the complete path](#the-complete-path--your-own-dag-yaml-driven)
-even this Dockerfile goes away — it is synthesized from `leoflow.yaml`.)
+even this Dockerfile goes away — it is synthesized from `dexaflow.yaml`.)
 {{% /alert %}}
 
 ## Step 2 — deploy (one command)
 
 ```console
-$ leoflow deploy
+$ dexaflow deploy
 Deploy first_pro_dag -> https://pro.example.com? [y/N] y
 …  (compile → build for linux/amd64 → push → register)
 Deployed first_pro_dag -> https://pro.example.com
@@ -120,7 +120,7 @@ Deployed first_pro_dag -> https://pro.example.com
 
 That one command crossed every boundary:
 
-1. **compile** — parsed `dag.py`, overlaid `leoflow.yaml`, ran the guardrails
+1. **compile** — parsed `dag.py`, overlaid `dexaflow.yaml`, ran the guardrails
    (unknown `task_id`, unsupported operator, duplicate keys), wrote `dag.json`.
 2. **build** — built the image from your `Dockerfile`, **for the cluster's
    architecture** (`linux/amd64` by default, so a macOS/arm64 laptop produces an
@@ -138,7 +138,7 @@ Add `--trigger` to kick a run immediately, or trigger from the Airflow UI.
 ## Step 3 — trigger and watch it run
 
 ```console
-$ leoflow deploy --trigger
+$ dexaflow deploy --trigger
 …
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
@@ -155,7 +155,7 @@ shows state and logs. That is the whole Pro lifecycle, in one verb.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `deploy requires a container registry…` | no `registry:` in `leoflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
+| `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
 | `denied` / `unauthorized` on push | builder not logged in to the registry | `docker login ghcr.io` (registry auth ≠ control-plane auth) |
 | Task pod: `exec format error` | image arch ≠ cluster arch | already handled — deploy builds `linux/amd64`; for a Graviton cluster pass `--platform linux/arm64` |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …` — create them on Pro (UI/API) first; see [Variables & Connections](/author-dags/variables-connections/) |
@@ -168,28 +168,28 @@ collects every gate `deploy`/`push` enforce, with the exact error and the fix.
 ## Deploy more than one DAG
 
 ```bash
-leoflow deploy <dag_id>     # a specific DAG in a multi-DAG workspace
-leoflow deploy --all        # every DAG in the workspace (best-effort; non-zero exit if any fail)
-leoflow deploy --skip-build # reuse the existing image (skip docker build/push); dag.json is still recompiled from leoflow.yaml/dag.py
+dexaflow deploy <dag_id>     # a specific DAG in a multi-DAG workspace
+dexaflow deploy --all        # every DAG in the workspace (best-effort; non-zero exit if any fail)
+dexaflow deploy --skip-build # reuse the existing image (skip docker build/push); dag.json is still recompiled from dexaflow.yaml/dag.py
 ```
 
 ## Build in one CI job, deploy in another
 
-`leoflow deploy` builds, pushes and registers in one command, and that is the
+`dexaflow deploy` builds, pushes and registers in one command, and that is the
 path to use when one machine does all three. A CI/CD pipeline usually splits
 them: a build job that produces the image, and a deploy job, often on a
 different runner with different credentials, that only registers it.
 
 ```bash
 # build job
-leoflow compile . --output dag.json --build --push --dag-version "$VERSION"
+dexaflow compile . --output dag.json --build --push --dag-version "$VERSION"
 
 # deploy job, later, possibly elsewhere
-leoflow deploy . --skip-build --dag-version "$VERSION"
+dexaflow deploy . --skip-build --dag-version "$VERSION"
 ```
 
 The two steps have to name the **same image**, and the name comes from
-`registry.tag_strategy` in `leoflow.yaml`. Pass the same `--dag-version` to
+`registry.tag_strategy` in `dexaflow.yaml`. Pass the same `--dag-version` to
 both, and run both from the same commit when the strategy is `git_sha`.
 
 {{% alert title="Prefer tag_strategy: git_sha for a split pipeline" color="info" %}}
@@ -212,7 +212,7 @@ about the tag.
 
 {{% alert title="Not yet the default path" color="warning" %}}
 The flow below is the **complete, Dockerfile-free** authoring experience. The
-yaml-driven build (synthesizing the image from `leoflow.yaml`) is still
+yaml-driven build (synthesizing the image from `dexaflow.yaml`) is still
 landing. On the current release, keep the `Dockerfile` from Step 1.
 This section shows where the happy path is going.
 {{% /alert %}}
@@ -234,7 +234,7 @@ with DAG("orders_report", schedule="@daily") as dag:
     load()
 ```
 
-```yaml title="leoflow.yaml"
+```yaml title="dexaflow.yaml"
 dag_id: orders_report
 python_version: "3.11"
 connectors:
@@ -245,21 +245,21 @@ registry:
 ```
 
 ```console
-$ leoflow auth login --server https://pro.example.com   # once
-$ leoflow deploy --trigger
+$ dexaflow auth login --server https://pro.example.com   # once
+$ dexaflow deploy --trigger
 note: this DAG expects connection(s): warehouse
       create them on the control plane (UI or API) before the run.
 Deployed orders_report -> https://pro.example.com
   image ghcr.io/your-org/orders-report@sha256:… · triggered run manual__…
 ```
 
-`leoflow compile --build` synthesizes the image from the yaml — `FROM` our base,
+`dexaflow compile --build` synthesizes the image from the yaml — `FROM` our base,
 your `connectors:`/`dependencies:` installed, your DAG copied in. The only
 Dockerfiles in the repo are the ones under `examples/`.
 
 ## From here
 
-- **Automate it.** `leoflow deploy` is exactly what a pipeline runs on every push —
+- **Automate it.** `dexaflow deploy` is exactly what a pipeline runs on every push —
   see [CI/CD & deploy examples](/operate/cicd-deploy/) for GitHub Actions / GitLab / Cloud Build
   recipes (and the Python-on-the-runner notes).
 - **The design.** [ADR 0041](/project/adrs/0041-leoflow-deploy-pipelineless/) records why

@@ -20,7 +20,7 @@ anywhere someone is speaking for the project.
 
 ## Reporting
 
-Open a [private report](https://github.com/neochaotic/leoflow/security/advisories/new)
+Open a [private report](https://github.com/dexadata/dexaflow/security/advisories/new)
 or contact [@neochaotic](https://github.com/neochaotic) directly. Reports stay
 between us. This is a single-maintainer project, so there is no independent
 appeal — if the problem is with me, that is worth knowing before you invest
@@ -30,5 +30,5 @@ time here.
 
 *This replaced Contributor Covenant 2.1, whose enforcement ladder and "community
 leaders" described a governance structure that does not exist here. Shorter and
-true beats longer and borrowed. If Leoflow ever joins a foundation that requires
+true beats longer and borrowed. If Dexaflow ever joins a foundation that requires
 the Covenant, it comes back.*

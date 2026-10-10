@@ -1,4 +1,4 @@
-# Leoflow task base image.
+# Dexaflow task base image.
 #
 # A DAG image is built FROM this base (ADR 0003): it provides the leoflow-agent
 # (PID 1, talks gRPC to the control plane) and the leoflow_runtime Python helper
@@ -18,7 +18,7 @@
 # GO_VERSION is not authoritative here either: go.mod's `toolchain` line is the
 # source of truth for the toolchain, and scripts/check-go-toolchain-pin.sh fails
 # this default when it falls behind (#1036).
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.26.9
 ARG PYTHON_VERSION=3.11
 
 # ── Stage 1: build the static agent binary ───────────────────────────────────
@@ -53,8 +53,8 @@ ARG VERSION=dev
 ARG GIT_COMMIT=none
 ARG BUILD_DATE=unknown
 RUN CGO_ENABLED=0 go build -trimpath \
-	-ldflags="-s -w -X 'github.com/neochaotic/leoflow/internal/version.version=${VERSION}' -X 'github.com/neochaotic/leoflow/internal/version.gitCommit=${GIT_COMMIT}' -X 'github.com/neochaotic/leoflow/internal/version.buildDate=${BUILD_DATE}'" \
-	-o /out/leoflow-agent ./cmd/leoflow-agent
+	-ldflags="-s -w -X 'github.com/dexadata/dexaflow/internal/version.version=${VERSION}' -X 'github.com/dexadata/dexaflow/internal/version.gitCommit=${GIT_COMMIT}' -X 'github.com/dexadata/dexaflow/internal/version.buildDate=${BUILD_DATE}'" \
+	-o /out/dexaflow-agent ./cmd/dexaflow-agent
 
 # ── Stage 2: runtime base ─────────────────────────────────────────────────────
 # Debian 13 (trixie). The suite is pinned explicitly rather than left implicit
@@ -77,8 +77,8 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # this line. That makes it a user-visible change, not an internal one.
 FROM python:${PYTHON_VERSION}-slim-trixie
 
-LABEL org.opencontainers.image.source="https://github.com/neochaotic/leoflow"
-LABEL org.opencontainers.image.description="Leoflow task base image (agent + Python runtime)"
+LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
+LABEL org.opencontainers.image.description="Dexaflow task base image (agent + Python runtime)"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Run as a NUMERIC non-root UID (not a login name). A PodSecurity `restricted`
@@ -104,16 +104,40 @@ RUN groupadd --gid 65532 leoflow \
  && useradd --create-home --home-dir /home/leoflow --uid 65532 --gid 65532 leoflow \
  && chmod 0700 /home/leoflow
 
-COPY --from=agent-build /out/leoflow-agent /usr/local/bin/leoflow-agent
+COPY --from=agent-build /out/dexaflow-agent /usr/local/bin/dexaflow-agent
+# Pre-rename name, kept as a link: control planes and DAG images from before the
+# rename launch the agent as `leoflow-agent`, and executor.agent_path defaults to it.
+RUN ln -s dexaflow-agent /usr/local/bin/leoflow-agent
 COPY runtime/python /opt/leoflow-runtime
 RUN pip install --no-cache-dir /opt/leoflow-runtime
 
-# Leoflow DAGs are authored with the Apache Airflow Task SDK (`from airflow.sdk
+# Dexaflow DAGs are authored with the Apache Airflow Task SDK (`from airflow.sdk
 # import DAG, task`), so the task container must be able to import it to load the
 # user's dag.py. This is the lightweight Task SDK, not airflow-core, pinned to
-# the 3.3.x line Leoflow targets (ADR 0003 / parser SDK version).
+# the 3.3.x line Dexaflow targets (ADR 0003 / parser SDK version).
 ARG AIRFLOW_TASK_SDK_VERSION=1.3.1
 RUN pip install --no-cache-dir "apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERSION}"
+
+# setuptools is upgraded ONLY where the base image already ships it. The
+# python:3.10 and 3.11 slim images preinstall setuptools 79.0.1, whose vendored
+# jaraco.context 5.3.0 (CVE-2026-23949) and wheel 0.45.1 (CVE-2026-24049) are
+# fixable HIGH findings in the daily image scan (#1299). 80.10.2 is the first
+# release vendoring the fixed versions of both (jaraco.context 6.1.0, wheel
+# 0.46.3), and it stays on the 80.x line on purpose: setuptools 82 removed
+# pkg_resources, which user DAG code on these lines may still import. One
+# visible change comes with it: 79.0.1 warns about importing pkg_resources with a
+# DeprecationWarning, hidden by default when a library does the import, while
+# 80.10.2 raises a UserWarning, which is shown by default. A task whose
+# dependencies import pkg_resources gains that warning line in its log, and a
+# filter that turns UserWarning into an error now trips on it. The 3.12
+# and 3.13 images ship no setuptools at all, and installing it there would add
+# a package (and its findings) that the image does not have today, hence the
+# guard rather than an unconditional install. Run after the Task SDK install so
+# no later resolver step can move it back.
+ARG SETUPTOOLS_VERSION=80.10.2
+RUN if pip show --quiet setuptools >/dev/null 2>&1; then \
+      pip install --no-cache-dir "setuptools==${SETUPTOOLS_VERSION}"; \
+    fi
 
 # dbt defaults its writable artifacts (target/, logs/, profiles.yml) to the project
 # directory, but a compiled DAG image COPYs the project read-only (root-owned), so
@@ -129,4 +153,4 @@ USER 65532:65532
 WORKDIR /home/leoflow
 
 # The agent is PID 1; it fetches the task spec and runs the user code.
-ENTRYPOINT ["leoflow-agent"]
+ENTRYPOINT ["dexaflow-agent"]

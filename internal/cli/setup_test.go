@@ -65,19 +65,19 @@ func TestRunSetupVenvless(t *testing.T) {
 	}
 	// Sources extracted, workspace + manifest + config created — no parser venv.
 	for _, p := range []string{
-		filepath.Join(home, ".leoflow", "pysrc", "parser", "pyproject.toml"),
-		filepath.Join(home, ".leoflow", "setup.json"),
-		filepath.Join(home, ".leoflow", "config.yaml"),
+		filepath.Join(home, ".dexaflow", "pysrc", "parser", "pyproject.toml"),
+		filepath.Join(home, ".dexaflow", "setup.json"),
+		filepath.Join(home, ".dexaflow", "config.yaml"),
 		ws,
 	} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("expected %s to exist: %v", p, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(home, ".leoflow", "parser-venv")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".dexaflow", "parser-venv")); !os.IsNotExist(err) {
 		t.Error("a parser-venv was created; setup must be venv-less (ADR 0024)")
 	}
-	cfg, _ := os.ReadFile(filepath.Join(home, ".leoflow", "config.yaml"))
+	cfg, _ := os.ReadFile(filepath.Join(home, ".dexaflow", "config.yaml"))
 	if !strings.Contains(string(cfg), "leoflow_parser") || !strings.Contains(string(cfg), "PYTHONPATH") {
 		t.Errorf("config.yaml should set a PYTHONPATH-based parser_cmd:\n%s", cfg)
 	}
@@ -93,7 +93,7 @@ func TestRunSetupDryRun(t *testing.T) {
 		t.Fatalf("setup --dry-run err = %v", err)
 	}
 	s := out.String()
-	for _, want := range []string{"leoflow setup", "platform", "executor", "dry run"} {
+	for _, want := range []string{"dexaflow setup", "platform", "executor", "dry run"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("dry-run output missing %q\n---\n%s", want, s)
 		}
@@ -164,7 +164,7 @@ func TestRunSetupReRunKeepsSettings(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// Pre-existing config + manifest = a re-run: must not re-prompt or re-generate.
-	lf := filepath.Join(home, ".leoflow")
+	lf := filepath.Join(home, ".dexaflow")
 	if err := os.MkdirAll(lf, 0o750); err != nil {
 		t.Fatal(err)
 	}

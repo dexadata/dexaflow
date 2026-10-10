@@ -9,8 +9,8 @@ menu:
     weight: 20
 ---
 
-Everything about writing DAGs for Leoflow. A DAG is a `dag.py` on the Airflow Task
-SDK plus a `leoflow.yaml` for packaging and bindings, compiled to one immutable
+Everything about writing DAGs for Dexaflow. A DAG is a `dag.py` on the Airflow Task
+SDK plus a `dexaflow.yaml` for packaging and bindings, compiled to one immutable
 artifact.
 
 New to authoring? Start with **[DAG authoring](/author-dags/dag-authoring/)** for
@@ -22,7 +22,7 @@ task below.
     <span class="lf-card__badge">Start here</span>
     <span class="lf-card__icon"><i class="fa-solid fa-pen-ruler"></i></span>
     <span class="lf-card__title">DAG authoring</span>
-    <span class="lf-card__desc">The project layout, the two files (<code>dag.py</code> + <code>leoflow.yaml</code>), and the compile model.</span>
+    <span class="lf-card__desc">The project layout, the two files (<code>dag.py</code> + <code>dexaflow.yaml</code>), and the compile model.</span>
     <span class="lf-card__more">Learn the model →</span>
   </a>
   <a class="lf-card" href="/author-dags/dbt/">
@@ -34,7 +34,7 @@ task below.
   <a class="lf-card" href="/author-dags/airflow-compatibility/">
     <span class="lf-card__icon"><i class="fa-brands fa-python"></i></span>
     <span class="lf-card__title">Airflow compatibility</span>
-    <span class="lf-card__desc">You write standard Airflow Task SDK code; Leoflow adds a thin runtime and <code>leoflow.yaml</code> — it never re-implements Airflow's Python API.</span>
+    <span class="lf-card__desc">You write standard Airflow Task SDK code; Dexaflow adds a thin runtime and <code>dexaflow.yaml</code> — it never re-implements Airflow's Python API.</span>
     <span class="lf-card__more">See the model →</span>
   </a>
   <a class="lf-card" href="/author-dags/map-reduce/">
@@ -58,7 +58,7 @@ task below.
   <a class="lf-card" href="/author-dags/alerting/">
     <span class="lf-card__icon"><i class="fa-solid fa-bell"></i></span>
     <span class="lf-card__title">On-failure alerting</span>
-    <span class="lf-card__desc">Notify on run failure straight from <code>leoflow.yaml</code> — no extra task.</span>
+    <span class="lf-card__desc">Notify on run failure straight from <code>dexaflow.yaml</code> — no extra task.</span>
     <span class="lf-card__more">Set up alerts →</span>
   </a>
   <a class="lf-card" href="/author-dags/lite-web-editor/">

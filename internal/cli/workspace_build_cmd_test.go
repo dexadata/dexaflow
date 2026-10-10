@@ -10,7 +10,7 @@ import (
 )
 
 // writeBuildProject lays down a minimal buildable project: a dag.py and a
-// leoflow.yaml with a registry, which is all DiscoverProjects needs.
+// dexaflow.yaml with a registry, which is all DiscoverProjects needs.
 func writeBuildProject(t *testing.T, ws, name, imageName string) string {
 	t.Helper()
 	dir := filepath.Join(ws, name)
@@ -21,7 +21,7 @@ func writeBuildProject(t *testing.T, ws, name, imageName string) string {
 		t.Fatal(err)
 	}
 	yaml := "dag_id: " + name + "\nregistry:\n  url: reg.io/team\n  image_name: " + imageName + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -80,7 +80,7 @@ func runBuildCmd(t *testing.T, args ...string) (stdout string, err error) {
 	return out.String(), err
 }
 
-// TestBuildCommandDrivesTheBuilder locks what `leoflow build` actually hands the
+// TestBuildCommandDrivesTheBuilder locks what `dexaflow build` actually hands the
 // builder — the wiring, not the helper. buildTargets can derive a perfect
 // reference and the command still shell out with a broken one, which is exactly
 // what happened: the raw (empty) --dag-version/--sha flags reached
@@ -131,7 +131,7 @@ func TestBuildCommandDrivesTheBuilder(t *testing.T) {
 }
 
 // TestBuildCommandResolvesVersionFromGitWhenNotGiven: with no --dag-version the
-// command must fall back exactly as `leoflow deploy` does. Without the fallback
+// command must fall back exactly as `dexaflow deploy` does. Without the fallback
 // the tag is empty for every tag strategy, which is the default invocation.
 func TestBuildCommandResolvesVersionFromGitWhenNotGiven(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -219,7 +219,7 @@ func TestBuildCommandRepeatsSkipsInTheSummary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(noReg, "dag.py"), []byte("# dag\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(noReg, "leoflow.yaml"), []byte("dag_id: orphan\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(noReg, "dexaflow.yaml"), []byte("dag_id: orphan\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LEOFLOW_PARSER_CMD", stubParser(t, bin))
@@ -242,7 +242,7 @@ func TestBuildCommandIsRegistered(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("`leoflow build` is not registered on the root command")
+	t.Fatal("`dexaflow build` is not registered on the root command")
 }
 
 func nonEmptyLines(t *testing.T, path string) []string {

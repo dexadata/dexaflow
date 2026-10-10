@@ -8,7 +8,7 @@
 # because the subprocess executor's materialize step saw an empty Source.
 #
 # This script is the regression guard: it builds the CLI, scaffolds a subdir
-# DAG project, runs `leoflow compile`, and asserts the resulting dag.json
+# DAG project, runs `dexaflow compile`, and asserts the resulting dag.json
 # carries the source verbatim. No Postgres, no Redis, no agent — just the
 # parser→spec contract that multi-DAG depends on. Fast (~3-5 s in CI), so it
 # runs on every PR.
@@ -25,11 +25,11 @@ cleanup() { rm -rf "$HOME_DIR"; }
 trap cleanup EXIT
 
 echo "==> building leoflow"
-go build -o "$HOME_DIR/leoflow" ./cmd/leoflow
+go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow
 
 echo "==> scaffolding a multi-DAG workspace (one DAG in a subdir)"
 mkdir -p "$WS/hello"
-cat > "$WS/hello/leoflow.yaml" <<'EOF'
+cat > "$WS/hello/dexaflow.yaml" <<'EOF'
 dag_id: hello
 python_version: "3.11"
 EOF
@@ -50,7 +50,7 @@ EOF
 echo "==> compiling the subdir DAG"
 OUT="$HOME_DIR/hello.json"
 "$HOME_DIR/leoflow" compile "$WS/hello" --output "$OUT" >"$HOME_DIR/compile.log" 2>&1 \
-  || fail "leoflow compile failed:\n$(cat "$HOME_DIR/compile.log")"
+  || fail "dexaflow compile failed:\n$(cat "$HOME_DIR/compile.log")"
 [ -s "$OUT" ] || fail "compile produced an empty dag.json"
 pass "compile produced a non-empty dag.json"
 
@@ -77,7 +77,7 @@ pass "dag.json.source is byte-for-byte dag.py"
 
 echo "==> sanity: a second subdir DAG compiles independently (multi-DAG layout)"
 mkdir -p "$WS/second"
-cat > "$WS/second/leoflow.yaml" <<'EOF'
+cat > "$WS/second/dexaflow.yaml" <<'EOF'
 dag_id: second
 python_version: "3.11"
 EOF

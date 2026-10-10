@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // dagsPauseServer serves a DAG list and records every PATCH so a test can

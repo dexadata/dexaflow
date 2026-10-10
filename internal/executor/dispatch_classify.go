@@ -24,7 +24,7 @@ const (
 	// the cluster has headroom again. The scheduler backs the task off and
 	// re-offers it indefinitely, never counting it against the dispatch-attempt
 	// budget and never driving the task to dispatch_failed: the cluster asking
-	// Leoflow to slow down is not the user's task failing.
+	// Dexaflow to slow down is not the user's task failing.
 	Backpressure
 	// Rejected is a permanent dispatch failure that will not clear on its own: an
 	// invalid image, an RBAC denial, an admission-webhook rejection, a bad spec,
@@ -32,6 +32,19 @@ const (
 	// subprocess executor can return). The scheduler keeps the historical
 	// bounded-backoff → dispatch_failed behavior (ADR 0031 Amendment A).
 	Rejected
+	// Deferred means the dispatch was never attempted: the control plane's own
+	// buffered dispatch queue was full (or shutting down). Nothing reached the
+	// runtime, so the scheduler leaves the task scheduled for a later tick and
+	// records nothing: no backoff, no dispatch-attempt increment, no
+	// dispatch_failed. It is local backpressure, not a failed dispatch.
+	Deferred
+	// Refused is a permanent "this task may not run here" decided before the
+	// runtime is called, such as a task larger than its size under an operator
+	// resource unit (ADR 0066 §3). A retry cannot change the verdict, so the
+	// scheduler fails the task on the first attempt, with the message as its
+	// reason, and spends no dispatch retries on it. Unlike Rejected, which also
+	// covers errors that clear on retry, Refused is never retried.
+	Refused
 )
 
 // String renders the disposition for logs and error notes.
@@ -43,6 +56,10 @@ func (d Disposition) String() string {
 		return "backpressure"
 	case Rejected:
 		return "rejected"
+	case Deferred:
+		return "deferred"
+	case Refused:
+		return "refused"
 	default:
 		return "unknown"
 	}

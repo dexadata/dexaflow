@@ -1,8 +1,9 @@
 name: Helm chart release
 
-# Publish the Leoflow Helm chart as an OCI artifact on every release tag AND
+# Publish the Dexaflow Helm chart as an OCI artifact on every release tag AND
 # every release-candidate tag. ADR 0028: the chart ships as an OCI artifact in
-# the same registry as the images (`oci://ghcr.io/neochaotic/charts/leoflow`),
+# the same registry as the images (`oci://ghcr.io/dexadata/charts/dexaflow`,
+# and `charts/leoflow` for releases installed before the rename),
 # co-versioned with the release tag (chart `version` + `appVersion` move in
 # lockstep with the tag). RC tags publish the chart too so the team can pull it
 # via OCI while an RC bakes in staging.
@@ -41,7 +42,7 @@ jobs:
       # ── Preflight: gate the OCI publish on a passing chart check ──
       # `helm package` below stamps version/appVersion from the tag, so the
       # PUBLISHED chart is always correct — but the source Chart.yaml is what
-      # the from-source `helm install ./helm/leoflow` and the RC cluster-
+      # the from-source `helm install ./helm/dexaflow` and the RC cluster-
       # validation runbook use, and ADR 0028 says the two move in lockstep.
       # This step FAILS the tag if Chart.yaml lags the tag (arestas #3), so a
       # cut cannot ship a source tree whose default image tags point at the
@@ -53,7 +54,7 @@ jobs:
         run: bash scripts/check-chart-version-matches-tag.sh
 
       - name: Gate — helm lint
-        run: helm lint helm/leoflow
+        run: helm lint helm/dexaflow
 
       - name: Gate — chart contract (env + Secret keys render)
         run: bash scripts/helm-template-checks.sh
@@ -84,36 +85,44 @@ jobs:
 
       # Stamp version + appVersion at package time from the tag rather than
       # hand-editing Chart.yaml (ADR 0028: both move in lockstep with the tag).
-      - name: helm package
+      #
+      # The chart is published twice from the same templates: as `dexaflow`, for
+      # new installs, and as `leoflow`, its name before the rename. The chart name
+      # feeds the selector labels and resource names, so an existing release can
+      # only be upgraded in place by a chart with the name it was installed with;
+      # `charts/leoflow` keeps that path working with no extra values.
+      - name: helm package (dexaflow and leoflow)
         run: |
           set -euo pipefail
-          helm package helm/leoflow \
+          helm package helm/dexaflow \
+            --version "${{ steps.ver.outputs.version }}" \
+            --app-version "${{ steps.ver.outputs.version }}"
+          legacy="$(mktemp -d)/leoflow"
+          cp -R helm/dexaflow "${legacy}"
+          sed -i 's/^name: dexaflow$/name: leoflow/' "${legacy}/Chart.yaml"
+          grep -q '^name: leoflow$' "${legacy}/Chart.yaml"
+          helm package "${legacy}" \
             --version "${{ steps.ver.outputs.version }}" \
             --app-version "${{ steps.ver.outputs.version }}"
 
       # `helm push` authenticates via the docker credential store that the GHCR
-      # login above populated. It prints `Digest: sha256:…` on push; capture it
-      # so cosign can sign the chart by digest (immutable), the same shape the
+      # login above populated. It prints `Digest: sha256:...` on push; capture it
+      # so cosign can sign each chart by digest (immutable), the same shape the
       # migrate/runtime image jobs sign in release.yaml.
-      - name: helm push (OCI)
-        id: push
+      - name: helm push (OCI) and sign
         run: |
           set -euo pipefail
-          chart="leoflow-${{ steps.ver.outputs.version }}.tgz"
-          helm push "${chart}" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts" 2>&1 | tee push.log
-          digest="$(awk '/Digest: /{print $2}' push.log)"
-          if [ -z "${digest}" ]; then
-            echo "::error::could not parse pushed chart digest from helm push output"
-            exit 1
-          fi
-          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "Pushed oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/leoflow @ ${digest}"
-
-      # Keyless cosign sign by digest — mirrors the migrate-image / runtime-image
-      # signing in release.yaml (ADR 0014/0028). `--yes` skips the OIDC prompt;
-      # CI answers the Sigstore challenge with the GH OIDC token (id-token: write).
-      - name: Sign chart with cosign (keyless)
-        run: |
-          set -euo pipefail
-          cosign sign --yes \
-            "${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/leoflow@${{ steps.push.outputs.digest }}"
+          for name in dexaflow leoflow; do
+            chart="${name}-${{ steps.ver.outputs.version }}.tgz"
+            helm push "${chart}" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts" 2>&1 | tee push.log
+            digest="$(awk '/Digest: /{print $2}' push.log)"
+            if [ -z "${digest}" ]; then
+              echo "::error::could not parse pushed ${name} chart digest from helm push output"
+              exit 1
+            fi
+            echo "Pushed oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name} @ ${digest}"
+            # Keyless cosign sign by digest (ADR 0014/0028). `--yes` skips the
+            # OIDC prompt; CI answers the Sigstore challenge with the GH OIDC token.
+            cosign sign --yes \
+              "${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name}@${digest}"
+          done

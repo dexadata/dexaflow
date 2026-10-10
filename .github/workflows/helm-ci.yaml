@@ -17,7 +17,7 @@ name: Helm CI
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     paths:
       - "helm/**"
       - "scripts/helm-template-checks.sh"
@@ -44,6 +44,16 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: helm lint + template-checks + kubeconform
@@ -56,7 +66,7 @@ jobs:
           version: v4.2.0
 
       - name: helm lint
-        run: helm lint helm/leoflow
+        run: helm lint helm/dexaflow
 
       # The helm-docs gate below diffs the README against helm-docs' own output,
       # so it is SATISFIED by a row helm-docs renders wrong. A " --" in the prose
@@ -70,7 +80,7 @@ jobs:
       # helm-docs: ensure the chart README is in sync with values.yaml. If a
       # contributor edits values.yaml (adds/removes keys, changes a `# --`
       # description) without regenerating, this gate fails with the exact diff
-      # so they know to run `helm-docs -c helm/leoflow` locally and re-commit.
+      # so they know to run `helm-docs -c helm/dexaflow` locally and re-commit.
       # Pinned to v1.14.2 per ADR 0014.
       - name: helm-docs check (README in sync with values.yaml)
         run: |
@@ -78,14 +88,14 @@ jobs:
           curl -fsSL https://github.com/norwoodj/helm-docs/releases/download/v1.14.2/helm-docs_1.14.2_Linux_x86_64.tar.gz \
             | tar xz -C /usr/local/bin helm-docs
           helm-docs --version
-          helm-docs --chart-search-root=helm/leoflow --dry-run > /tmp/rendered-README.md
-          if ! diff -u helm/leoflow/README.md /tmp/rendered-README.md; then
-            echo "::error::helm/leoflow/README.md is out of sync with values.yaml" >&2
-            echo "Run \`helm-docs -c helm/leoflow\` locally and commit the regenerated README." >&2
+          helm-docs --chart-search-root=helm/dexaflow --dry-run > /tmp/rendered-README.md
+          if ! diff -u helm/dexaflow/README.md /tmp/rendered-README.md; then
+            echo "::error::helm/dexaflow/README.md is out of sync with values.yaml" >&2
+            echo "Run \`helm-docs -c helm/dexaflow\` locally and commit the regenerated README." >&2
             exit 1
           fi
 
-      # helm-unittest: template-logic unit tests under helm/leoflow/tests/.
+      # helm-unittest: template-logic unit tests under helm/dexaflow/tests/.
       # Catches regressions the rendered-and-grep contract (helm-template-
       # checks.sh) can't easily express — e.g. "fails install with the exact
       # error message when redis.url is empty", "Secret omits keys when
@@ -100,7 +110,7 @@ jobs:
           # signed, so we explicitly opt out. (On Helm 3.x this flag didn't
           # exist — see #187 history.)
           helm plugin install --version v1.1.0 --verify=false https://github.com/helm-unittest/helm-unittest
-          helm unittest helm/leoflow
+          helm unittest helm/dexaflow
 
       # Contract test: every required env entry + Secret key must be present
       # in the rendered chart (covered by scripts/helm-template-checks.sh).
@@ -135,7 +145,7 @@ jobs:
           # agentTLS.enabled defaults to true (#263), so exercise the TLS-on render
           # path with BOTH the server cert and the CA trust bundle — the chart now
           # requires the pair (#280), mirroring a real cert-manager Pro install.
-          helm template leoflow helm/leoflow \
+          helm template leoflow helm/dexaflow \
             --set database.url='postgres://x:x@x/x' \
             --set redis.url='redis://x/0' \
             --set auth.jwtSecret=x \
@@ -153,6 +163,9 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: none
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -206,7 +219,11 @@ jobs:
       # REAL default install path a new user hits.
       - name: helm install (auto-gen agent TLS, no cert-manager)
         run: |
-          helm install leoflow helm/leoflow -n leoflow \
+          # nameOverride=leoflow renders exactly what the published charts/leoflow
+          # copy renders: this job exercises an install from before the rename,
+          # the path existing operators upgrade along. Default dexaflow naming is
+          # checked in the template job.
+          helm install leoflow helm/dexaflow -n leoflow --set nameOverride=leoflow \
             --set image.repository=leoflow-server --set image.tag=ci \
             --set image.pullPolicy=IfNotPresent \
             --set migrations.image.repository=leoflow-migrate --set migrations.image.tag=ci \
@@ -234,7 +251,7 @@ jobs:
       - name: HPA the apiserver accepts (#947)
         run: |
           set -euo pipefail
-          helm template leoflow helm/leoflow -n leoflow \
+          helm template leoflow helm/dexaflow -n leoflow \
             --set database.url='postgres://x:x@x/x' --set redis.url='redis://x/0' \
             --set auth.jwtSecret=x --set 'secretKey=leoflow-helm-ci-secret-key-32by!' \
             --set logs.persistence.enabled=false \
@@ -287,7 +304,7 @@ jobs:
       # between the install above and this point is written against THIS release.
       - name: helm upgrade smoke (in-place)
         run: |
-          helm upgrade leoflow helm/leoflow -n leoflow --reuse-values \
+          helm upgrade leoflow helm/dexaflow -n leoflow --reuse-values \
             --set config.scheduler.loopIntervalMs=750 \
             --wait --timeout 240s
           kubectl -n leoflow rollout status deploy/leoflow --timeout=120s
@@ -356,11 +373,29 @@ jobs:
         run: |
           set -euo pipefail
           helm uninstall leoflow -n leoflow --wait
-          # No pinned version: the newest chart in the registry IS the previous
-          # release from this PR's point of view, and a pin here would go stale
-          # silently the first time nobody remembered to bump it.
-          repo="oci://ghcr.io/${{ github.repository_owner }}/charts/leoflow"
-          prev="$(helm show chart "$repo" | awk '/^version:/{print $2}')"
+          # Start the previous release on an empty database. The steps above
+          # already migrated it to HEAD, and a released migrate image cannot
+          # start from a schema version it does not ship (golang-migrate fails
+          # with "no migration found for version N" as soon as HEAD adds a
+          # migration). An operator upgrading has a database at the previous
+          # release's version, so that is also the realistic starting point:
+          # the HEAD upgrade below then applies every new migration to it.
+          kubectl -n leoflow exec deploy/postgres -- psql -v ON_ERROR_STOP=1 \
+            -U leoflow -d leoflow -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          # No pinned version, which would go stale silently the first time
+          # nobody remembered to bump it: the previous release is the newest
+          # final chart of HEAD's own minor (#1403). Not the newest chart in the
+          # registry: once main publishes 0.6.x, a release-0.5 run would install
+          # 0.6.x and then "upgrade" it to 0.5.x, a downgrade the 0.5.x migrate
+          # image refuses.
+          owner="${{ github.repository_owner }}"
+          owner="${owner,,}"
+          repo="oci://ghcr.io/${owner}/charts/leoflow"
+          token="$(curl -fsSL "https://ghcr.io/token?scope=repository:${owner}/charts/leoflow:pull" | jq -r .token)"
+          head_version="$(awk '/^version:/{print $2}' helm/dexaflow/Chart.yaml)"
+          prev="$(curl -fsSL -H "Authorization: Bearer ${token}" \
+            "https://ghcr.io/v2/${owner}/charts/leoflow/tags/list?n=1000" \
+            | jq -r '.tags[]' | scripts/prev-chart-version.sh "${head_version}")"
           echo "installing last released chart ${prev}, then upgrading to HEAD"
           # Released images on purpose: the point is a realistic previous release,
           # not HEAD's binaries wearing an old chart. Same in-cluster addresses
@@ -386,7 +421,13 @@ jobs:
           #
           # The image overrides point at the images this job built and loaded into
           # kind, because no registry has an image for an unreleased version.
-          helm upgrade leoflow helm/leoflow -n leoflow --reset-then-reuse-values \
+          # Upgrade through the chart as it is published under its pre-rename
+          # name (helm-release.yaml packages the same templates as `leoflow`):
+          # that is the chart an existing release is upgraded with.
+          legacy="$(mktemp -d)/leoflow"
+          cp -R helm/dexaflow "${legacy}"
+          sed -i 's/^name: dexaflow$/name: leoflow/' "${legacy}/Chart.yaml"
+          helm upgrade leoflow "${legacy}" -n leoflow --reset-then-reuse-values \
             --set image.repository=leoflow-server --set image.tag=ci \
             --set image.pullPolicy=IfNotPresent \
             --set migrations.image.repository=leoflow-migrate --set migrations.image.tag=ci \

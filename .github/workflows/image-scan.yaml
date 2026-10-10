@@ -58,8 +58,11 @@ on:
       - ".trivyignore.yaml"
       - "scripts/trivy-report.py"
       - ".github/workflows/image-scan.yaml"
+  # A PR to a release-* branch (ADR 0062) is scanned like one to main. Pushes
+  # stay main-only: the push path updates the single tracking issue, and a
+  # release branch writing its findings there would overwrite main's.
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
     # Same inputs. On a PR this reports into the job summary and stays green —
     # the author sees what their change does to the image without being blocked
     # by findings that were already there.
@@ -92,7 +95,7 @@ env:
   TRIVY_VERSION: "0.72.0"
   # Matches ci.yaml, so the agent baked into the scanned runtime image is built
   # with the toolchain that ships.
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
   GATE_SEVERITY: "CRITICAL,HIGH"
   ISSUE_TITLE: "Container image CVEs: fixable findings in published images"
 
@@ -102,7 +105,7 @@ jobs:
   # HEAD still produces the published image, which is the normal case, but the
   # gap is real and worth stating: a base CVE in an already-published `py3.11`
   # that HEAD no longer produces is invisible here. Scan the tag directly when
-  # that is the question — `trivy image ghcr.io/neochaotic/leoflow-runtime:py3.11`
+  # that is the question — `trivy image ghcr.io/dexadata/dexaflow-runtime:py3.11`
   # needs no build.
   scan:
     name: Scan the images HEAD builds
@@ -167,6 +170,10 @@ jobs:
       # One DB pull for every scan below.
       - name: Warm the vulnerability database
         run: trivy image --download-db-only
+
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: ${{ env.PY_LINES }}
 
       - name: Build images
         run: |

@@ -11,7 +11,7 @@ import (
 
 const tokenIssuer = "leoflow"
 
-// DevTokenSubject is the subject of the in-process token that `leoflow dev` mints
+// DevTokenSubject is the subject of the in-process token that `dexaflow lite` mints
 // for its admin. It intentionally has no user row, so Authenticate trusts its
 // signed claims as the ONLY subject exempt from the per-request DB authz reload.
 const DevTokenSubject = "leoflow-dev"
@@ -20,7 +20,7 @@ const DevTokenSubject = "leoflow-dev"
 // from agent identity tokens (see audienceAgent).
 const audienceUser = "leoflow-user"
 
-// jwtClaims is the Leoflow JWT payload.
+// jwtClaims is the Dexaflow JWT payload.
 type jwtClaims struct {
 	TenantID string   `json:"tenant_id"`
 	Email    string   `json:"email,omitempty"`
@@ -63,7 +63,7 @@ func (a *JWTAuthenticator) clock() time.Time {
 }
 
 // MintUserToken signs a user JWT directly, without checking credentials against
-// a store. It is for trusted in-process callers only — notably `leoflow dev`,
+// a store. It is for trusted in-process callers only — notably `dexaflow lite`,
 // which runs its own control plane and must register DAGs without a login
 // round-trip. The token validates under Authenticate using the same secret.
 func MintUserToken(secret string, ttl time.Duration, user User) (string, error) {
@@ -97,7 +97,7 @@ func (a *JWTAuthenticator) IssueToken(ctx context.Context, creds Credentials) (s
 //
 // Two cases fall back to the signed claims instead of the reload: a nil store
 // (no data plane bound — the trusted in-process minting context) and a subject
-// with no backing row (a directly-minted token, e.g. `leoflow dev`). Any other
+// with no backing row (a directly-minted token, e.g. `dexaflow lite`). Any other
 // store failure fails closed, so a flaky database cannot silently disable
 // revocation.
 func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*User, error) {
@@ -108,9 +108,9 @@ func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*Use
 	if err != nil || !parsed.Valid {
 		return nil, errors.Join(ErrInvalidToken, err)
 	}
-	claimed := &User{ID: c.Subject, TenantID: c.TenantID, Email: c.Email, Roles: c.Roles}
+	claimed, cerr := claimsPrincipal(&c)
 	if a.store == nil {
-		return claimed, nil
+		return claimed, cerr
 	}
 	user, active, err := a.store.FindUserByID(ctx, c.Subject)
 	if err != nil {
@@ -121,7 +121,7 @@ func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*Use
 			// claimed roles until the token expires — deletion revokes at once, like
 			// is_active=false.
 			if c.Subject == DevTokenSubject {
-				return claimed, nil
+				return claimed, cerr
 			}
 			return nil, errors.Join(ErrInvalidToken, err)
 		}
@@ -178,7 +178,7 @@ func (a *JWTAuthenticator) mintUserToken(user *User, ttl time.Duration, origin t
 // audience, HS256). It is the server half of transparent CLI token renewal (EKS
 // validation aresta #5): the short access-token TTL still bounds a stolen token,
 // while renewal keeps a genuinely live session working so a long dev session
-// never has to `leoflow auth login` again on the hour. It is modeled directly on
+// never has to `dexaflow auth login` again on the hour. It is modeled directly on
 // RenewAgentToken.
 //
 // The session's original login time is preserved across every renewal (the oiat
@@ -233,6 +233,17 @@ func (a *JWTAuthenticator) RenewUserToken(ctx context.Context, token string, ttl
 	return renewed, true, nil
 }
 
+// claimsPrincipal builds the principal a token's signed claims describe, for
+// the branches that trust them (no store bound, or the dev-token subject). A
+// principal that names no tenant cannot be scoped, so it is refused as an
+// invalid token instead of being served some default tenant.
+func claimsPrincipal(c *jwtClaims) (*User, error) {
+	if c.TenantID == "" {
+		return nil, errors.Join(ErrInvalidToken, ErrTenantlessToken)
+	}
+	return &User{ID: c.Subject, TenantID: c.TenantID, Email: c.Email, Roles: c.Roles}, nil
+}
+
 // reloadForRenewal resolves the principal a renewal will re-mint, preferring the
 // store over the incoming token's claims. It is the read side that makes renewal
 // obey the same revocation rule as request authentication, and it mirrors
@@ -241,15 +252,15 @@ func (a *JWTAuthenticator) RenewUserToken(ctx context.Context, token string, ttl
 // and any other store error fails closed (propagated unchanged, so the handler
 // can tell "rejected" apart from "could not be determined").
 func (a *JWTAuthenticator) reloadForRenewal(ctx context.Context, c *jwtClaims) (*User, error) {
-	claimed := &User{ID: c.Subject, TenantID: c.TenantID, Email: c.Email, Roles: c.Roles}
+	claimed, cerr := claimsPrincipal(c)
 	if a.store == nil {
-		return claimed, nil
+		return claimed, cerr
 	}
 	user, active, err := a.store.FindUserByID(ctx, c.Subject)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			if c.Subject == DevTokenSubject {
-				return claimed, nil
+				return claimed, cerr
 			}
 			return nil, errors.Join(ErrInvalidToken, err)
 		}

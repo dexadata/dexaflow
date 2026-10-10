@@ -11,26 +11,26 @@ import (
 
 	"github.com/spf13/cobra"
 
-	leoflow "github.com/neochaotic/leoflow"
-	"github.com/neochaotic/leoflow/internal/setup"
+	dexaflow "github.com/dexadata/dexaflow"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // pysrcMarker is the checksum sentinel written beside the extracted Python sources
 // so a binary upgrade (new embedded parser vs stale on-disk copy) is detectable.
 const pysrcMarker = ".leoflow-pysrc-checksum"
 
-// pysrcRoot returns the extracted Python-sources root (~/.leoflow/pysrc) that
-// `leoflow setup` writes and the parser runs from.
+// pysrcRoot returns the extracted Python-sources root (~/.dexaflow/pysrc) that
+// `dexaflow setup` writes and the parser runs from.
 func pysrcRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving home for pysrc: %w", err)
 	}
-	return filepath.Join(home, ".leoflow", "pysrc"), nil
+	return filepath.Join(stateDirIn(home), "pysrc"), nil
 }
 
 // parserPysrcDir returns the extracted parser-sources directory
-// (~/.leoflow/pysrc/parser) that ensurePysrc writes and the bundled
+// (~/.dexaflow/pysrc/parser) that ensurePysrc writes and the bundled
 // `python3 -m leoflow_parser` imports from. It is empty when the home
 // directory cannot be resolved — the caller then leaves PYTHONPATH untouched
 // and falls back to the ambient environment.
@@ -82,14 +82,14 @@ func withParserPythonPath(env []string) []string {
 // without re-extracting on every invocation.
 func pythonSourcesChecksum() (string, error) {
 	h := sha256.New()
-	err := fs.WalkDir(leoflow.PythonSources(), ".", func(p string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(dexaflow.PythonSources(), ".", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
 			return nil
 		}
-		b, rerr := fs.ReadFile(leoflow.PythonSources(), p)
+		b, rerr := fs.ReadFile(dexaflow.PythonSources(), p)
 		if rerr != nil {
 			return rerr
 		}
@@ -105,9 +105,9 @@ func pythonSourcesChecksum() (string, error) {
 
 // ensurePysrcIn re-extracts the bundled parser+runtime under dir when they are
 // missing or have drifted from this binary's embedded copy — the binary-upgrade
-// case (#239). Without it, `leoflow compile` runs against a stale parser after a
+// case (#239). Without it, `dexaflow compile` runs against a stale parser after a
 // manual binary swap (e.g. one predating dbt support), failing with a confusing
-// "not supported by Leoflow" error instead of self-healing. The checksum guards
+// "not supported by Dexaflow" error instead of self-healing. The checksum guards
 // against re-extracting on every call.
 func ensurePysrcIn(dir string, logf func(format string, args ...any)) error {
 	want, err := pythonSourcesChecksum()
@@ -120,7 +120,7 @@ func ensurePysrcIn(dir string, logf func(format string, args ...any)) error {
 	if statErr == nil && strings.TrimSpace(string(cur)) == want {
 		return nil
 	}
-	if exErr := setup.ExtractFS(leoflow.PythonSources(), dir); exErr != nil {
+	if exErr := setup.ExtractFS(dexaflow.PythonSources(), dir); exErr != nil {
 		return fmt.Errorf("refreshing bundled parser sources under %s: %w", dir, exErr)
 	}
 	//nolint:errcheck // a failed marker write just re-extracts next time; not fatal
@@ -131,8 +131,8 @@ func ensurePysrcIn(dir string, logf func(format string, args ...any)) error {
 	return nil
 }
 
-// ensurePysrc self-heals ~/.leoflow/pysrc before compile runs the parser, so a
-// binary upgrade never leaves `leoflow compile` on a stale parser. Best-effort: a
+// ensurePysrc self-heals ~/.dexaflow/pysrc before compile runs the parser, so a
+// binary upgrade never leaves `dexaflow compile` on a stale parser. Best-effort: a
 // failure is logged and compile proceeds with whatever is on disk (its own error
 // surfaces if the parser truly cannot run), so this never blocks a working setup.
 func ensurePysrc(cmd *cobra.Command) {

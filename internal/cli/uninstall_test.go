@@ -16,13 +16,17 @@ import (
 // removed, while unrelated files in the same dir are left untouched.
 func TestRemoveBinariesIn(t *testing.T) {
 	dir := t.TempDir()
-	for _, n := range []string{"leoflow", "leoflow-server", "leoflow-agent", "other-tool"} {
+	all := []string{
+		"dexaflow", "dexaflow-server", "dexaflow-agent", "dexaflow-mcp",
+		"leoflow", "leoflow-server", "leoflow-agent", "leoflow-mcp",
+	}
+	for _, n := range append(all, "other-tool") {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	removeBinariesIn(&bytes.Buffer{}, dir)
-	for _, n := range []string{"leoflow", "leoflow-server", "leoflow-agent"} {
+	for _, n := range all {
 		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
 			t.Errorf("%s should have been removed", n)
 		}
@@ -34,25 +38,25 @@ func TestRemoveBinariesIn(t *testing.T) {
 }
 
 // TestResolveLiteProjectRejectsNonProjectArg covers the CLI clarity fix: an
-// explicit `leoflow lite <arg>` that is not a project (e.g. the `leoflow lite
-// uninstall` typo) fails with an actionable message, not a cryptic leoflow.yaml error.
+// explicit `dexaflow lite <arg>` that is not a project (e.g. the `dexaflow lite
+// uninstall` typo) fails with an actionable message, not a cryptic dexaflow.yaml error.
 func TestResolveLiteProjectRejectsNonProjectArg(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
 
 	if _, err := resolveLiteProject(cmd, []string{"uninstall"}); err == nil {
 		t.Fatal("a non-project argument should error")
-	} else if !strings.Contains(err.Error(), "workspace path") || !strings.Contains(err.Error(), "leoflow uninstall") {
+	} else if !strings.Contains(err.Error(), "workspace path") || !strings.Contains(err.Error(), "dexaflow uninstall") {
 		// The error must name the typo (so the user sees what was misparsed)
-		// and hint at the actual `leoflow uninstall` command so they recover
-		// quickly. Post-Phase-3 wording shifted from "no Leoflow project" to
+		// and hint at the actual `dexaflow uninstall` command so they recover
+		// quickly. Post-Phase-3 wording shifted from "no Dexaflow project" to
 		// "workspace path" since the canonical model is a workspace, not a
 		// single project.
 		t.Errorf("error should be actionable, got: %v", err)
 	}
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte("dag_id: x\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte("dag_id: x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := resolveLiteProject(cmd, []string{dir}); err != nil || got != dir {
@@ -139,7 +143,7 @@ func TestUninstallWired(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("`leoflow uninstall` should be registered on the root command")
+		t.Error("`dexaflow uninstall` should be registered on the root command")
 	}
 }
 
@@ -184,5 +188,37 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An install from before the rename has its state in ~/.leoflow behind a
+// ~/.dexaflow link (config.HomeDirIn). Removing it must remove the data, not
+// just the link, and leave no link pointing at nothing.
+func TestRemoveLeoflowHomeThroughTheLegacyLink(t *testing.T) {
+	for _, purge := range []bool{true, false} {
+		home := t.TempDir()
+		legacy := filepath.Join(home, ".leoflow")
+		if err := os.MkdirAll(filepath.Join(legacy, "python"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(legacy, "config.yaml"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(home, ".dexaflow")
+		if err := os.Symlink(".leoflow", link); err != nil {
+			t.Fatal(err)
+		}
+		cmd := &cobra.Command{}
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		if err := removeLeoflowHome(cmd, link, purge); err != nil {
+			t.Fatalf("purge=%v: %v", purge, err)
+		}
+		if _, err := os.Lstat(legacy); !os.IsNotExist(err) {
+			t.Errorf("purge=%v: ~/.leoflow still exists (err=%v)", purge, err)
+		}
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			t.Errorf("purge=%v: the ~/.dexaflow link was left behind (err=%v)", purge, err)
+		}
 	}
 }

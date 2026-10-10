@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // airflowConnURI renders a connection as an Airflow connection URI

@@ -12,7 +12,7 @@ description: Cut task start latency with pre-warmed worker pods.
 {{% alert title="Pro · off by default" color="info" %}}
 Warm worker pools are a **Pro** feature, gated behind
 `execution.warm_pools_enabled` (default **`false`**). With the flag off,
-Leoflow runs a **dedicated pod per task attempt** — the historical behavior
+Dexaflow runs a **dedicated pod per task attempt** — the historical behavior
 ([ADR 0002](/project/adrs/0002-pod-per-task/)), byte-for-byte unchanged. Lite ignores
 the flag entirely. Turning warm pools on has hard security prerequisites; read
 [How to enable](#how-to-enable) before you flip it.
@@ -75,6 +75,19 @@ the work, and the same DAG version runs many attempts.
   run's per-run staging PVC. Any DAG that declares `staging.enabled: true`
   **automatically falls back to a dedicated pod per task** — this is detected
   statically, no configuration needed.
+- **Tasks that set their own placement or pod metadata.** A warm pod is created
+  before any task is known, so it carries none of a task's `execution` block. A
+  task that sets `node_selector`, `tolerations`, `affinity`,
+  `topology_spread_constraints`, `priority_class_name`, `runtime_class_name`
+  (gVisor, for example), `termination_grace_period_seconds`, `resource_claims`,
+  `labels` or `annotations` **always runs on a dedicated pod**, which applies
+  them. Before this check such a task could land on a warm pod and run without
+  its node, sandbox, device or NetworkPolicy labels. A task that pins a
+  `service_account` other than the warm workers' falls back the same way. A
+  value set under `defaults` (a project-wide `node_selector`, for example) is
+  copied onto every task, so it sends every task of the project to a dedicated
+  pod; leave the warm pool off for such a project, since its warm pods would sit
+  idle.
 - **Non-idempotent tasks.** Warm-pool recovery re-runs an attempt after a worker is
   lost, and the safety argument for "a re-run is harmless" holds only for
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
@@ -106,8 +119,8 @@ enforcement from [ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness
 control plane **refuses to boot** with warm pools on unless both are set:
 
 ```
-auth.agent_token_transport = exchange   # LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT
-auth.secret_liveness_mode  = enforce    # LEOFLOW_AUTH_SECRET_LIVENESS_MODE
+auth.agent_token_transport = exchange   # DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT
+auth.secret_liveness_mode  = enforce    # DEXAFLOW_AUTH_SECRET_LIVENESS_MODE
 ```
 
 This coupling is deliberate and has **no safe degraded mode** — the degraded mode
@@ -128,12 +141,12 @@ transport is selected — see
 ### 2. Turn on the pool and tune it
 
 The pool knobs live under the chart's `execution` values (which map to the
-`LEOFLOW_EXECUTION_*` server environment). Start with the default,
+`DEXAFLOW_EXECUTION_*` server environment). Start with the default,
 `minIdleWorkers: 0`:
 
 ```yaml
 execution:
-  warmPoolsEnabled: true      # LEOFLOW_EXECUTION_WARM_POOLS_ENABLED
+  warmPoolsEnabled: true      # DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED
   minIdleWorkers: 0           # default: scale-to-zero, no standing cost
 ```
 
@@ -222,13 +235,24 @@ Each attempt runs in a **fresh child process, hard-scrubbed, forked from a prist
 template — never from a sibling attempt.** Before each attempt the worker:
 
 - **rebuilds the environment from scratch** — only that attempt's `AIRFLOW_VAR_*` /
-  `AIRFLOW_CONN_*` + `LEOFLOW_*`, with no residue from a prior attempt, and the
+  `AIRFLOW_CONN_*` + `DEXAFLOW_*`, with no residue from a prior attempt, and the
   agent-only variable strip re-runs per attempt;
 - **resets the agent scratch and redirects `TMPDIR` into it** — the child's
   `TMPDIR` points at a per-attempt subdirectory of the agent scratch that is wiped
   before every attempt, so a token cache, a dbt profile, or `~/.aws`-style
   credentials written to `$TMPDIR` do not survive into the next attempt;
-- **drops the prior attempt's task JWT** before minting the next one.
+- **drops the prior attempt's task JWT** before minting the next one;
+- **kills every process the previous attempt left behind**, including one that
+  detached with `setsid`, and checks that none is left before it accepts the next
+  assignment. A survivor it cannot kill ends the worker instead, and the pool
+  replaces the pod.
+
+The agent itself is **not dumpable**, so an attempt cannot read the worker's
+credentials out of `/proc/<agent>/environ` or `/proc/<agent>/mem` even though it
+runs as the same user. A side effect operators should know: a non-dumpable
+process writes no core dump, so a warm agent that crashes leaves its log and exit
+code but no core file. Task processes are not affected, since `execve` makes each
+attempt dumpable again.
 
 The invariant, tested rather than best-effort: *each attempt's child forks from a
 pristine template, never from a sibling attempt; no attempt observes another
@@ -246,10 +270,18 @@ control on a writable root filesystem — most notably **`$HOME`** (which keeps 
 image-baked `~/.config` and anything a task writes there, e.g. `~/.aws/credentials`
 or a `~/.dbt/profiles.yml`), the container image layers, and mounted volumes. These
 persist for the whole worker's lifetime and are shared by every attempt the worker
-serves (same tenant + DAG version). Tasks that write secrets to `$HOME` rather than
-`$TMPDIR` should run warm pods with a **read-only task root filesystem**
-(`read_only_task_root_filesystem`) so those writes fail closed instead of leaking to
-the next attempt.
+serves (same tenant + DAG version). Turn on
+**`execution.warm_read_only_root_filesystem`** to close this: the warm container's
+root filesystem becomes read only, each attempt gets its own `$HOME` and XDG dirs
+(`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`) inside the
+scratch the worker wipes, and the other writable paths a read-only root leaves,
+the `/tmp` emptyDir and the pod's `/dev/shm` tmpfs, are emptied before each
+attempt and again as soon as it ends, so a generated dbt profile does not stay on
+an idle worker. A task that writes anywhere else (its working directory, an image
+path) fails with it on, and a task that reads config baked into the image's home
+dir must point at it explicitly, for example with `DBT_PROFILES_DIR`. The setting
+takes effect on warm pods created after it is turned on: running warm pods keep
+their spec until they recycle (`workerIdleTtl`, `maxWorkerLifetime`).
 {{% /alert %}}
 
 Because a fresh scrubbed child and a fresh per-attempt token are mandatory, there is
@@ -287,6 +319,34 @@ Why it makes reuse safe:
 - **Recycle on suspicion.** Any attempt that trips a security signal — an auth
   failure, or a liveness denial under enforce — **recycles the whole worker** rather
   than serving the next attempt on it. Cheap, bounded insurance.
+- **One live registration per worker.** A warm worker's identity can hold only
+  one assignment stream at a time. While a worker's stream is connected and
+  heartbeating (the worker re-sends its registration on the stream every 15
+  seconds), a second registration under the same identity is refused with
+  `AlreadyExists`, so nothing holding a copy of the worker's credential can open
+  a parallel stream and receive assignments, and the attempt tokens they carry,
+  meant for the real worker. A worker that reconnects after its previous stream
+  ended registers normally. A stream that stays open but sends no heartbeat for
+  60 seconds is treated as stale: a new registration replaces it and the stale
+  stream is closed with `Aborted`.
+
+### Keeping the bootstrap credential from task code
+
+Under the exchange transport the warm pod mounts its projected bootstrap token
+read only at `/var/run/leoflow/token`, in the warm container only, and mounts no
+Kubernetes API token. The agent reads it to authenticate and again when it
+reconnects (the kubelet rotates it). The task process the agent starts does not
+inherit the token path or any agent variable (they are stripped from its
+environment), and the agent is not dumpable, so the task cannot read the
+agent's in-memory credentials through `/proc`.
+
+The agent and the task run in the same container as the same user, so file
+permissions cannot hide the mounted token from a task that knows where to look.
+What bounds that case is the token's scope: it authorizes only `Register` and
+`AwaitAssignment`, never secrets, and the one-live-registration rule above stops
+a task from using it to open a second stream while its own worker is serving.
+Running the task as a separate user would need privileges the restricted Pod
+Security profile does not grant, so it is not done today.
 
 Without the exchange transport a bearer credential would sit in plaintext on the pod
 spec and could not carry a per-attempt identity at all — which is why
@@ -399,14 +459,65 @@ Each of these is unprovable in fakes; validate every one before you enable:
 Enable is gated on all of the above passing **and** the two security flips
 (`agent_token_transport=exchange`, `secret_liveness_mode=enforce`) being in place.
 
+## Running on GKE Sandbox (gVisor)
+
+Warm pools can run under GKE Sandbox (`runtimeClassName: gvisor`), with two things to know: how warm workers get the gVisor runtime class at all, and what GKE Sandbox stamps on a pod if you also run your own admission policy on the task namespace.
+
+**Dexaflow does not put warm workers in the sandbox.** A dedicated task pod takes `runtimeClassName`, node selector, tolerations and affinity from its DAG's `execution` settings. A warm worker is created before any task is known, from the operator's settings only, and gets none of them. The dispatcher also does not keep a task that pins `runtime_class_name` off warm workers: a size-1 task of a DAG that asks for `gvisor` can run on a warm worker that is a plain `runc` pod on an ordinary node, with no error or warning. Until that is fixed, run warm pools on GKE Sandbox only with a mutating admission policy on the task namespace that sets, on every pod:
+
+- `spec.runtimeClassName: gvisor`;
+- the toleration for the sandbox node taint, `sandbox.gke.io/runtime=gvisor:NoSchedule`, unless the RuntimeClass's own `scheduling` already adds it.
+
+Then every task pod, warm or dedicated, runs in the sandbox whatever its DAG declares. Without such a policy, do not rely on `runtime_class_name` for isolation while warm pools are on.
+
+**GKE Sandbox edits gVisor pods at admission, before any ValidatingAdmissionPolicy of yours sees them:**
+
+- `dev.gvisor.internal.seccomp.<container>: RuntimeDefault` on each container that asks for the `RuntimeDefault` seccomp profile. A user-set value, such as `Unconfined`, is rewritten to `RuntimeDefault`. Dexaflow asks for `RuntimeDefault` on every task container, so every gVisor task pod, warm or dedicated, gets `dev.gvisor.internal.seccomp.task`.
+- For every `emptyDir` volume, three gVisor mount hints:
+  - `dev.gvisor.spec.mount.<volume>.type: bind`
+  - `dev.gvisor.spec.mount.<volume>.share: container` when one container mounts the volume (a warm worker's `leoflow-tmp`), or `pod` when several do
+  - `dev.gvisor.spec.mount.<volume>.options: rw,rprivate`
+
+**It also refuses some requests itself,** with fixed messages:
+
+- user-set annotations starting with `dev.gvisor.internal.` or `dev.gvisor.spec.mount.` ("user annotations starting with … are not allowed");
+- `hostNetwork`, `hostPID`, `hostIPC`, `hostPath`, `privileged: true` and `allowPrivilegeEscalation: true`.
+
+Which dexaflow pods have an `emptyDir`: the `leoflow-tmp` volume is added to dedicated task pods when `taskPodSecurity.readOnlyRootFilesystem` is on, and to warm workers when either that or `execution.warmReadOnlyRootFilesystem` is on. With both off (the chart defaults), no dexaflow pod gets mount hints, but every gVisor pod still gets the seccomp key.
+
+**If your policy refuses `dev.gvisor.*` annotations** (a sound rule, since runsc reads them as flags), allow exactly the keys and values above, and the mount hints only for the pod's own `emptyDir` volumes. Otherwise every gVisor task pod is refused, warm and dedicated alike, because each one carries at least the seccomp key. For warm workers the symptom is ERROR lines `creating warm worker` in the server log carrying your policy's denial, `dexaflow_scheduler_decisions_total{decision_type="warm_pool_create_error"}` rising, and no worker ever registering; dedicated task pods fail to dispatch with the same denial. Check what your cluster stamps with a server-side dry run of a warm pod in a namespace your policy does not bind, for example `kubectl create --dry-run=server -o json -f warm-pod.json`, and read `.metadata.annotations`.
+
+### Sizing against a pod deadline
+
+If the task namespace caps `activeDeadlineSeconds` on every pod (a mutating policy that enforces a task time limit, for example), the cap applies to warm workers too, so a worker's whole life must fit inside it. The worker checks its own lifetime only after an attempt ends, so the worst case is:
+
+```text
+maxWorkerLifetime + workerIdleTtl + longest attempt + pod start  <=  activeDeadlineSeconds
+```
+
+The longest attempt is bounded by `auth.max_attempt_credential_lifetime`. With a 2040 s deadline and 30 minute attempts, for instance, `maxWorkerLifetime: 90s` and `workerIdleTtl: 90s` leave 60 s for the pod to start. If the sum exceeds the deadline, the kubelet can kill a warm pod in the middle of an attempt, and the attempt is then recovered as a lost worker. "Pod start" covers everything before the worker first registers: image pull, the token exchange, and any reconnect backoff while it looks for the scheduler leader. The worker's lifetime clock also restarts when it reconnects after a leader change, so leave extra margin on a control plane that fails over often.
+
+Short values have a cost: an idle worker exits after `workerIdleTtl` and is replaced on the next reconcile, so attempts of a DAG version that arrive further apart than that land on dedicated pods. Size `workerIdleTtl` against how often each DAG version runs before you expect a high warm-hit rate.
+
+### Checking a real cluster by hand
+
+Fakes cannot show admission, the token exchange or placement on a real cluster, so run this check once on each cluster where you enable warm pools, and again after a cluster, GKE or policy upgrade. [`test/gcp/`](https://github.com/dexadata/dexaflow/tree/main/test/gcp) provisions a throwaway GKE cluster for this (`provision.sh`, then `teardown.sh`), and `warm-pool-ab.sh` measures warm against dedicated latency on it. Those scripts do not set up GKE Sandbox or any admission policy: for the sandbox checks, add a sandbox node pool and your own policies to that cluster first.
+
+1. **Workers are admitted and start.** Give a DAG `min_idle_workers: 1` (or set `minIdleWorkers`) and wait one reconcile. `kubectl -n <task namespace> get pods -l leoflow.io/warm-worker=true -o wide` lists a Running `leoflow-warm-<dag_version>-…` pod on the node pool you expect. If none appears, look for `creating warm worker` ERROR lines in the server log: the apiserver's refusal is in them.
+2. **Workers run in the sandbox.** On GKE Sandbox, `kubectl -n <task namespace> get pods -l leoflow.io/warm-worker=true -o custom-columns=NAME:.metadata.name,RUNTIME:.spec.runtimeClassName,NODE:.spec.nodeName` shows `gvisor` for every warm worker, on a sandbox node. An empty runtime column means your mutating policy did not apply and the worker runs on `runc`: stop here and fix the policy before turning warm pools on for sandboxed DAGs.
+3. **Workers register with a worker-scoped credential.** The server logs `exchanged projected token for a WORKER-scoped agent JWT` and then `warm worker registered` for the pod.
+4. **Attempts run on the warm worker.** Trigger a run whose task prints its container's UTS hostname, which Kubernetes sets to the pod name: `cat /proc/sys/kernel/hostname`. The task log must show a `leoflow-warm-<that dag_version>-…` name, not a dedicated task pod's. A worker may recycle between your first look and the attempt, so match the DAG version, not one pod name.
+5. **Each worker serves its own tenant.** Its `leoflow.io/dag-version-id` label is a version the tenant's own session lists, and its `leoflow.io/tenant-id` label is that tenant's.
+6. **Nothing is left after the idle TTL.** Once `workerIdleTtl` plus a reconcile has passed with no runs: no warm pod stays in `Succeeded` or `Failed`, and every `leoflow-pool-<dag_version>` anchor ConfigMap (`-l leoflow.io/warm-anchor=true`) belongs to a version that still has a live warm pod or is still active. Until [#1501](https://github.com/dexadata/dexaflow/pull/1501) (issue #1500) is released, this step can fail for a version whose warm pods were never created, for example because admission refused every create: its anchor ConfigMap is never deleted. Delete such an anchor by hand once the version has no warm pod and no active run.
+
 ## Configuration reference
 
 Pool knobs live under `execution` in the Helm chart values and map to the
-`LEOFLOW_EXECUTION_*` server environment. All are **operator-scoped** (never
+`DEXAFLOW_EXECUTION_*` server environment. All are **operator-scoped** (never
 DAG-author-settable). With `warmPoolsEnabled: false` (the default) **none** of the
 others is read — the deployment is byte-for-byte pod-per-task.
 
-| Chart value (`execution.`) | Env (`LEOFLOW_EXECUTION_`) | Type / unit | Default | Meaning |
+| Chart value (`execution.`) | Env (`DEXAFLOW_EXECUTION_`) | Type / unit | Default | Meaning |
 |---|---|---|---|---|
 | `warmPoolsEnabled` | `WARM_POOLS_ENABLED` | bool | `false` | Master switch for N:1 pod reuse. Off ⇒ dedicated pod-per-task. Requires the exchange + enforce security flips at boot. |
 | `minIdleWorkers` | `MIN_IDLE_WORKERS` | int (pods) | `0` | Warm pods kept ready **per DAG version**. `0` = scale-to-zero. A DAG author may request warmth per DAG; this is the operator floor when the DAG declares none, and the value is clamped to `maxPoolSize`. |
@@ -415,6 +526,7 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `maxWorkerLifetime` | `MAX_WORKER_LIFETIME` | duration | `1h` | Wall-clock ceiling on a worker before it drains + recycles, independent of attempt count. Must be > 0. |
 | `workerIdleTtl` | `WORKER_IDLE_TTL` | duration | `5m` | How long an idle worker is kept before recycle. Must be > 0. |
 | `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; promised idle floors are always honored. Must be ≥ 1. |
+| `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` and `/dev/shm` emptied around each attempt (see [isolation](#isolation-between-attempts)). Applies to warm pods created after it is turned on. Dedicated task pods are not affected. |
 
 Durations accept Go duration strings (`"90s"`, `"5m"`, `"1h"`). When
 `warmPoolsEnabled` is on, the server **validates these at boot and refuses to start**
@@ -425,7 +537,7 @@ silent correction.
 The related auth knobs — `agent_token_transport`, `secret_liveness_mode`,
 `secret_scoping`, `max_attempt_credential_lifetime` — are documented on the
 [Agent credential transport](/operate/agent-credential-transport/) page and in the
-[Configuration reference](/reference/configuration/#server-environment-leoflow_).
+[Configuration reference](/reference/configuration/#server-environment-dexaflow_).
 
 ## See also
 
@@ -437,4 +549,4 @@ The related auth knobs — `agent_token_transport`, `secret_liveness_mode`,
   record.
 - [ADR 0055 — Secret scoping and token liveness](/project/adrs/0055-secret-scoping-and-token-liveness/) —
   the security prerequisite this feature depends on.
-- [Configuration reference](/reference/configuration/) — every `LEOFLOW_*` server variable.
+- [Configuration reference](/reference/configuration/) — every `DEXAFLOW_*` server variable.

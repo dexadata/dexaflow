@@ -9,7 +9,7 @@ import (
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // StateCookieTTL bounds how long a login may sit at the IdP before the callback

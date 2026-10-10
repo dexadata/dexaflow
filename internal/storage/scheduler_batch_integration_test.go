@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/scheduler"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // retriesPtr is a small helper for building TaskSpecs with explicit retries.

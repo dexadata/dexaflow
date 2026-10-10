@@ -274,7 +274,7 @@ func TestRenewUserTokenFailsClosedOnStoreError(t *testing.T) {
 }
 
 // TestRenewUserTokenAllowsDevSubjectWithNoUserRow preserves the first of
-// Authenticate's two carve-outs on the renewal path: the in-process `leoflow dev`
+// Authenticate's two carve-outs on the renewal path: the in-process `dexaflow lite`
 // token intentionally has no user row, so its signed claims stay the source of
 // truth and its session keeps renewing.
 func TestRenewUserTokenAllowsDevSubjectWithNoUserRow(t *testing.T) {
@@ -298,7 +298,7 @@ func TestRenewUserTokenAllowsDevSubjectWithNoUserRow(t *testing.T) {
 }
 
 // TestRenewUserTokenAllowsNilStore preserves Authenticate's other carve-out: with
-// no data plane bound (the trusted in-process minting context — `leoflow dev`,
+// no data plane bound (the trusted in-process minting context — `dexaflow lite`,
 // tests) there is nothing to reload, so renewal proceeds on the signed claims.
 func TestRenewUserTokenAllowsNilStore(t *testing.T) {
 	a := NewJWTAuthenticator(nil, "secret", time.Hour)

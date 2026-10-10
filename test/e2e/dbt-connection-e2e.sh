@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # End-to-end test for dbt MANAGED CONNECTIONS on a real Kubernetes cluster (k3d),
-# ADR 0043 #2. A dbt task gets its warehouse credentials from a Leoflow managed
+# ADR 0043 #2. A dbt task gets its warehouse credentials from a Dexaflow managed
 # connection (not a baked profiles.yml): the runtime generates profiles.yml in the
 # pod from the connection delivered over the agent seam.
 #
@@ -104,7 +104,7 @@ log "Generating the manifest (dbt parse is offline; the bad host is fine for par
 # Pin the DAG image to the host arch (see e2e.sh): the loader defaults to
 # linux/amd64, which fails FROM an arm64 base on a Lima/dev host → ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat >"$PROJ/leoflow.yaml" <<YAML
+cat >"$PROJ/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: ${DAG_ID}
 build:

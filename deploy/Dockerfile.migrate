@@ -1,4 +1,4 @@
-# Bundles the Leoflow SQL migrations with the golang-migrate CLI, for the Helm
+# Bundles the Dexaflow SQL migrations with the golang-migrate CLI, for the Helm
 # chart's migration Job (#34/#48). Run as:
 #   migrate -path /migrations -database <url> up
 #
@@ -33,7 +33,7 @@
 # toolchain recorded in the binary's build info, so a floating tag here would
 # move this image's reported vulnerability set for reasons unrelated to any
 # commit — the same trap security.yaml documents for leoflow-server.
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.26.9
 
 # Build on the NATIVE platform and cross-compile with GOARCH, rather than
 # letting buildx emulate the build stage under QEMU for the arm64 leg. The
@@ -56,7 +56,7 @@ ARG TARGETARCH
 # and `postgresql://` schemes the Helm Job's LEOFLOW_DATABASE_URL uses; `pgx5`
 # covers the `pgx5://` scheme the Lite path uses (internal/cli/dev.go), so a DSN
 # that works in one place works in the other. Postgres is the only database
-# Leoflow supports, so no other driver is built in.
+# Dexaflow supports, so no other driver is built in.
 #
 # The version stamped into the binary is READ from the module graph rather than
 # written here, so `migrate -version` cannot drift from the version actually
@@ -73,9 +73,8 @@ RUN set -eux; \
 		-ldflags="-s -w -X main.Version=${version}" \
 		-o /out/migrate github.com/golang-migrate/migrate/v4/cmd/migrate
 
-# Distroless static, Debian 13 (trixie). Same family as leoflow-server, which is
-# still on debian12 — not the same suite, and this is the suite
-# runtime/Dockerfile moved to in #1038.
+# Distroless static, Debian 13 (trixie): the same base as leoflow-server
+# (#1400) and the suite runtime/Dockerfile moved to in #1038.
 #
 # It carries a CA bundle, /etc/passwd with the nonroot user, and six base
 # packages (base-files, ca-certificates, media-types, netbase, tzdata,
@@ -98,8 +97,8 @@ RUN set -eux; \
 # shared DSN starts the server and fails this Job.
 FROM gcr.io/distroless/static-debian13:nonroot
 
-LABEL org.opencontainers.image.source="https://github.com/neochaotic/leoflow"
-LABEL org.opencontainers.image.description="golang-migrate CLI plus the Leoflow SQL migrations, for the Helm migration Job"
+LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
+LABEL org.opencontainers.image.description="golang-migrate CLI plus the Dexaflow SQL migrations, for the Helm migration Job"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --from=build /out/migrate /usr/local/bin/migrate
@@ -112,7 +111,7 @@ COPY migrations/*.sql /migrations/
 
 # 65532 numerically, not `nonroot` by name: a PodSecurity `restricted` namespace
 # verifies runAsNonRoot against the image's user and the kubelet can only
-# resolve a numeric UID. This is the UID helm/leoflow/values.yaml pins for the
+# resolve a numeric UID. This is the UID helm/dexaflow/values.yaml pins for the
 # migration Job, and the migrations are world-readable, so the Job's
 # readOnlyRootFilesystem + drop-ALL posture needs no change.
 USER 65532:65532

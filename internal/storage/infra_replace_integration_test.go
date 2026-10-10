@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
-	"github.com/neochaotic/leoflow/internal/scheduler"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 type okDispatcher struct{}
@@ -64,7 +64,7 @@ func seedInfraFailed(t *testing.T, repo *storage.Repository, sched *storage.Sche
 	if err := pg.Pool.QueryRow(ctx, "SELECT id::text FROM task_instances WHERE dag_run_id=$1::uuid AND task_id='t'", runUUID).Scan(&tiID); err != nil {
 		t.Fatalf("select ti id: %v", err)
 	}
-	ok, err := sched.MarkTaskAgentLost(ctx, tiID)
+	ok, err := sched.MarkTaskAgentLost(ctx, tiID, 1, 0)
 	if err != nil || !ok {
 		t.Fatalf("MarkTaskAgentLost ok=%v err=%v", ok, err)
 	}

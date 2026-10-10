@@ -10,10 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// stagingLabel marks PVCs Leoflow manages for per-run staging, so GC can find
+// stagingLabel marks PVCs Dexaflow manages for per-run staging, so GC can find
 // them without touching anything else in the namespace.
 const stagingLabel = "leoflow.io/staging"
 
@@ -63,9 +63,9 @@ func (e *KubernetesExecutor) ensureStagingClaim(ctx context.Context, req Request
 			Name: req.StagingClaim,
 			Labels: map[string]string{
 				stagingLabel:           "true",
-				"leoflow.io/run-id":    sanitizeLabel(req.RunID),
-				"leoflow.io/dag-id":    sanitizeLabel(req.DagID),
-				"leoflow.io/tenant-id": sanitizeLabel(req.TenantID),
+				"leoflow.io/run-id":    labelValue(req.RunID),
+				"leoflow.io/dag-id":    labelValue(req.DagID),
+				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
 			// The label is sanitized (run IDs contain label-illegal chars); GC needs
 			// the raw run_id to check run state, so keep it as an annotation.

@@ -4,7 +4,7 @@
 #
 #   internal/api/health.go        probeBudget          — how long /readyz will spend
 #   helm/.../_helpers.tpl         $min                 — the floor the chart refuses to go under
-#   helm/leoflow/values.yaml      probes.readiness.timeoutSeconds — what the kubelet actually gets
+#   helm/dexaflow/values.yaml      probes.readiness.timeoutSeconds — what the kubelet actually gets
 #
 # The invariant is  probeBudget < floor <= default:  the server has to give up
 # before the kubelet does, or the kubelet cancels a probe that was about to
@@ -128,4 +128,4 @@ self_test() {
 [ "${1:-}" = "--self-test" ] && { self_test; exit $?; }
 
 cd "$(dirname "$0")/.."
-check "${1:-internal/api/health.go}" "${2:-helm/leoflow/templates/_helpers.tpl}" "${3:-helm/leoflow/values.yaml}"
+check "${1:-internal/api/health.go}" "${2:-helm/dexaflow/templates/_helpers.tpl}" "${3:-helm/dexaflow/values.yaml}"

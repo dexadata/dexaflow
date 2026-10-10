@@ -9,25 +9,33 @@ name: Soak harness smoke (short, bounded)
 #
 # What CI IS good for is the thing that silently rots: whether the harness still
 # builds, boots, registers its six DAGs, samples, asserts and writes a verdict.
-# That is a 6-minute run, which disappears into the existing budget. It gates the
-# harness, never the long-run behavior. See test/soak/README.md section 6.4.
+# That is a 6-minute run. It gates the harness, never the long-run behavior.
+# See test/soak/README.md section 6.4.
+#
+# Nightly and on rc tags, not per push: the Actions queue has a handful of
+# runners, and a scheduler change no longer waits on this job to merge. A
+# harness that broke during the day shows up red the next morning, and every
+# release candidate carries a run of its own. It can also be started by hand
+# (workflow_dispatch), for instance on a release-X.Y branch before a cut.
 on:
+  schedule:
+    - cron: "30 3 * * *"
   push:
-    paths:
-      - "test/soak/**"
-      - "internal/scheduler/**"
-      - "internal/storage/scheduler_store.go"
-      - ".github/workflows/soak-smoke.yaml"
-  pull_request:
-    paths:
-      - "test/soak/**"
-      - "internal/scheduler/**"
-      - "internal/storage/scheduler_store.go"
-      - ".github/workflows/soak-smoke.yaml"
+    tags: ["v*-rc.*"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   soak-smoke:
@@ -40,9 +48,10 @@ jobs:
       PYTHONPATH: parser
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/docker-hub-mirror
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
           cache: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:

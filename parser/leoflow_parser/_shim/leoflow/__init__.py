@@ -1,26 +1,12 @@
-"""Leoflow authoring primitives available to a ``dag.py`` at parse time (ADR 0043).
+"""The authoring package under its name before the rename.
 
-Only structure is recorded here; the heavy config (project, granularity,
-connection) lives in ``leoflow.yaml`` and is resolved by the Go compiler after
-parsing. A ``dag.py`` is never executed at runtime, so these stubs exist solely
-for the parser/shim.
+DAGs written for Leoflow import ``from leoflow import dbt_group``. They keep
+compiling: this module re-exports ``dexaflow``, so both names refer to the same
+objects.
 """
 from __future__ import annotations
 
-from airflow._core import BaseOperator
+from dexaflow import _DbtGroup, dbt_group
 
-
-class _DbtGroup(BaseOperator):
-    """Placeholder for a dbt project embedded as a task group. It registers into
-    the active DAG and participates in ``>>`` wiring like any task; the compiler
-    maps it to a ``dbt_group`` task that the Go compiler later expands into one
-    task per dbt node, namespaced under the group name."""
-
-    __leoflow_dbt_group__ = True
-
-
-def dbt_group(name: str) -> _DbtGroup:
-    """Embed a dbt project (configured under ``leoflow.yaml`` ``dbt_groups: <name>``)
-    as a task group. Returns the placeholder operator for ``>>`` wiring; its
-    ``task_id`` is the group name."""
-    return _DbtGroup(task_id=name)
+# _DbtGroup is re-exported for code that checks the placeholder's type.
+__all__ = ["_DbtGroup", "dbt_group"]

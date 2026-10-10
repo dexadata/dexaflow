@@ -42,7 +42,7 @@
 # in the task namespace for the whole run:
 #
 #   probe-task   carries leoflow.io/run-id, which is what the chart's task
-#                policy selects (helm/leoflow/templates/task-networkpolicy.yaml
+#                policy selects (helm/dexaflow/templates/task-networkpolicy.yaml
 #                selects on `leoflow.io/run-id Exists`).
 #   probe-plain  identical, WITHOUT that label. Nothing selects it, ever.
 #
@@ -315,7 +315,7 @@ probe() { # <pod> <host> <port>  -> ALLOWED|DROPPED|REFUSED
 # by appending to one array that is never empty.
 build_policy_args() { # <allowMetadataEgress value or empty>
   local hatch="$1"
-  POLICY_ARGS=(template leoflow "$EXP_REPO_ROOT/helm/leoflow"
+  POLICY_ARGS=(template leoflow "$EXP_REPO_ROOT/helm/dexaflow"
     --namespace leoflow-system
     -s templates/task-networkpolicy.yaml
     --set "taskNamespace=$TASK_NS"

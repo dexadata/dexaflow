@@ -1,6 +1,6 @@
 # Load tests
 
-Load/scale harnesses for Leoflow's control plane. The README calls load tests
+Load/scale harnesses for Dexaflow's control plane. The README calls load tests
 the remaining Phase 6 gap; this directory is where they land, one experiment at
 a time.
 
@@ -17,8 +17,9 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 3 | Reaper cost — orphan/heartbeat sweep vs. run count | — | not yet |
 | 4 | API read fan-out — dashboard queries under many DAGs | — | not yet |
 | 5 | Log tailer — SSE fan-out under many concurrent viewers | — | not yet |
+| 6 | Query plans at scale: hot queries on 1M runs and 5M task instances | [`query_plans/`](query_plans/) | ✅ implemented |
 
-Only Experiment 1 is built. The others are documented extension points.
+Experiments 1 and 6 are built. The others are documented extension points.
 
 ## Prerequisites
 
@@ -74,19 +75,64 @@ delta observed during each window. The harness cleans up every DAG it created on
 exit (best-effort); a fresh `migrate up` on an empty database is always the clean
 slate.
 
-### Known limitation: `leoflow_scheduler_loop_duration_seconds` is not wired
+### Known limitation: `dexaflow_scheduler_loop_duration_seconds` is not wired
 
-The declared SLI `leoflow_scheduler_loop_duration_seconds` is **defined** in
+The declared SLI `dexaflow_scheduler_loop_duration_seconds` is **defined** in
 `internal/observability/metrics.go` but is **never `Observe`d inside the scheduler
 loop** (grep confirms: only `metrics_test.go` observes it). A `/metrics` scrape
 today would therefore report an empty histogram for it. Until that observation is
 wired into `Scheduler.tick`/`Step`, this harness times `Step` **directly** (the
 faithful equivalent) and also feeds each measured duration into the real
 histogram object, so a future scrape — or a one-line follow-up that moves the
-`Observe` into the loop — sees the same distribution. `leoflow_scheduler_step_downs_total`
+`Observe` into the loop — sees the same distribution. `dexaflow_scheduler_step_downs_total`
 **is** scraped from the live registry (it stays 0 here: leadership never churns in
-the harness). `leoflow_dispatch_queue_depth` is a dispatcher gauge and is out of
+the harness). `dexaflow_dispatch_queue_depth` is a dispatcher gauge and is out of
 scope for Experiment 1 (no dispatcher is wired).
+
+## Experiment 6: query plans at scale
+
+Most read paths look fine on a laptop with a few hundred runs and degrade only
+once `dag_runs` and `task_instances` hold millions of rows. Experiment 6 seeds a
+dedicated tenant (`load-query-plans`) sized like a busy installation and runs
+`EXPLAIN (ANALYZE, BUFFERS)` on the hot queries the UI, the API and the
+maintenance loops issue.
+
+The SQL comes from `internal/storage/queries/*.sql` at run time, so it always
+measures what ships. Every `EXPLAIN` runs in a transaction that is rolled back,
+so the mutating case (`DeleteDag`) leaves the dataset as it was. The first run of
+each case warms the cache and is discarded.
+
+Seeding the default dataset takes a few minutes and adds about 2 GB, so use a
+throwaway database. The dataset is kept between runs; `--reseed` rebuilds it and
+`--drop` removes it.
+
+```sh
+DATABASE_URL='postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable' \
+  go run ./test/load/query_plans
+```
+
+Flags:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--db` | `$DATABASE_URL`, then `$DEXAFLOW_DATABASE_URL`, then `$LEOFLOW_DATABASE_URL` | Postgres URL |
+| `--dags` | `1000` | DAGs; every 20th is inactive and every 10th paused |
+| `--runs-per-dag` | `1000` | hourly runs per DAG; every 17th failed |
+| `--tasks-per-run` | `5` | task instances per run |
+| `--audit` | `1000000` | `audit_log` rows |
+| `--versions` | `51` | versions of the DAG `DeleteDag` removes |
+| `--staging` | `200` | active staging volumes (capped by the running runs) |
+| `--running-every` | `7` | every Nth DAG has a running newest run |
+| `--repeat` | `5` | `EXPLAIN ANALYZE` runs per case, including the warm up |
+| `--only` | all | comma-separated case names |
+| `--plans` | `false` | print each case's text plan after the table |
+| `--reseed` | `false` | drop and rebuild the dataset |
+| `--drop` | `false` | drop the dataset and exit |
+
+Output is a Markdown table per case: median, best and worst execution time, the
+time spent in triggers (FK checks and cascades, already part of execution time)
+and the tables read with a sequential scan. Recorded results live in
+[`BASELINE.md`](BASELINE.md).
 
 ## Adding an experiment
 
@@ -97,7 +143,7 @@ scope for Experiment 1 (no dispatcher is wired).
    `prometheus.NewRegistry()` you own. Do **not** modify product code.
 3. Keep it cluster-free: prefer seeding rows directly over booting executors.
    If a signal genuinely needs the full server (e.g. the SSE tailer for
-   Experiment 5), boot `leoflow lite` the way `test/e2e/lite-*.sh` does and
+   Experiment 5), boot `dexaflow lite` the way `test/e2e/lite-*.sh` does and
    scrape its `/metrics`, and say so in this table.
 4. Add a row to the _Experiments_ table above and a section here.
 5. It must `go build`, `go vet`, and `gofmt` clean, and actually run.

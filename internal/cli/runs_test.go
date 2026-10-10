@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// seedSessionConfig writes the config file `leoflow auth login` produces — a
+// seedSessionConfig writes the config file `dexaflow auth login` produces — a
 // server_url plus the JWT it obtained — and returns its path. Tests point the
 // CLI at it with --config so nothing reads the developer's real ~/.leoflow.
 func seedSessionConfig(t *testing.T, serverURL, token string) string {
@@ -43,9 +43,9 @@ func authRecorder(t *testing.T, body string) (srv *httptest.Server, got *string)
 	return srv, &auth
 }
 
-// TestRunsListRegistered pins the ergonomics fix that `leoflow runs list`
+// TestRunsListRegistered pins the ergonomics fix that `dexaflow runs list`
 // exists: users reach for it before discovering the operator alias
-// `leoflow admin runs list`. It must resolve to a `list` subcommand under
+// `dexaflow admin runs list`. It must resolve to a `list` subcommand under
 // `runs`, not fall back to the `runs` group itself.
 func TestRunsListRegistered(t *testing.T) {
 	root := NewRootCommand()
@@ -81,7 +81,7 @@ func TestRunsListInvokesLister(t *testing.T) {
 }
 
 // TestRunsTriggerUsesConfigToken pins the contract that a user who just ran
-// `leoflow auth login` can trigger a run without repeating the credential:
+// `dexaflow auth login` can trigger a run without repeating the credential:
 // the persisted token must reach the control plane as a bearer token.
 func TestRunsTriggerUsesConfigToken(t *testing.T) {
 	srv, gotAuth := authRecorder(t, `{"dag_run_id":"run-1","state":"queued"}`)
@@ -306,7 +306,7 @@ func logsServer(t *testing.T, tryNumber int, bodyByTry map[int]string) (srv *htt
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
-// TestRunsLogsRegistered pins that `leoflow runs logs` exists as a subcommand
+// TestRunsLogsRegistered pins that `dexaflow runs logs` exists as a subcommand
 // under `runs`, next to `trigger`/`status`/`list`.
 func TestRunsLogsRegistered(t *testing.T) {
 	root := NewRootCommand()

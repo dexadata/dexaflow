@@ -1,4 +1,4 @@
-"""Tests for the Leoflow DAG compiler against fixture DAGs."""
+"""Tests for the Dexaflow DAG compiler against fixture DAGs."""
 from __future__ import annotations
 
 import json
@@ -140,7 +140,7 @@ def test_min_idle_workers_is_never_emitted(monkeypatch, tmp_path, dag_schema):
     The field exists downstream (dag-schema.json accepts it; the Go DAGSpec
     carries it; EffectiveMinIdle and the scheduler store read it) but has no
     author entry point today: it is absent from the authoring schema
-    (leoflow.yaml, additionalProperties:false) and the compiler never writes
+    (dexaflow.yaml, additionalProperties:false) and the compiler never writes
     it. So a compiled artifact never carries the key and the Go
     ``spec.MinIdleWorkers`` is always 0. This test locks that inert contract so
     the seam cannot silently become half-wired.

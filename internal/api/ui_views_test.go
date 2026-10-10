@@ -8,10 +8,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/ui"
-	"github.com/neochaotic/leoflow/internal/version"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/ui"
+	"github.com/dexadata/dexaflow/internal/version"
 )
 
 func viewsServer(runs []domain.DagRun, user *auth.User) *gin.Engine {

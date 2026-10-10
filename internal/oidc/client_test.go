@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // TestIdPCallsAreBoundedByAClientTimeout is the regression test for the half of

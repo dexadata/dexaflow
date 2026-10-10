@@ -9,7 +9,7 @@ weight: 70
 description: dbt Cloud connection
 ---
 
-Trigger and monitor dbt Cloud jobs from a task via a managed Leoflow Connection and
+Trigger and monitor dbt Cloud jobs from a task via a managed Dexaflow Connection and
 the dbt Cloud provider hook. The conn_type is `dbt_cloud`. A connection carries the
 **account id** (login) plus an **API token** (password) — there is no host, the hook
 targets the dbt Cloud API.
@@ -20,7 +20,7 @@ targets the dbt Cloud API.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: dbt_cloud_run
 connectors:
   - dbt_cloud
@@ -56,7 +56,7 @@ def run_job() -> None:
 
     hook = DbtCloudHook(dbt_cloud_conn_id="dbt_cloud_default")
     print("run_job: triggering job via DbtCloudHook(dbt_cloud_default)")
-    run = hook.trigger_job_run(job_id=1234, cause="Triggered by Leoflow")
+    run = hook.trigger_job_run(job_id=1234, cause="Triggered by Dexaflow")
     print(f"run_job: started run {run.json()['data']['id']}")
 
 
@@ -65,7 +65,7 @@ with DAG("dbt_cloud_run", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: dbt_cloud_run
 description: Trigger a dbt Cloud job via DbtCloudHook.
@@ -81,7 +81,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `dbt_cloud`. Set the account id in Login and the
    API token in Password.
-2. `leoflow lite path/to/this/dag` → trigger `dbt_cloud_run`.
+2. `dexaflow lite path/to/this/dag` → trigger `dbt_cloud_run`.
 
 ## Security notes
 

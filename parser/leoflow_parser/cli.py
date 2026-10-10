@@ -1,4 +1,4 @@
-"""Command-line entry point for the Leoflow DAG parser."""
+"""Command-line entry point for the Dexaflow DAG parser."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,7 @@ def main(argv: list[str] | None = None) -> int:
 
     compile_cmd = sub.add_parser("compile", help="compile a DAG into dag.json")
     compile_cmd.add_argument("--source", required=True, help="path to the DAG Python file")
-    compile_cmd.add_argument("--config", required=True, help="path to leoflow.yaml")
+    compile_cmd.add_argument("--config", required=True, help="path to dexaflow.yaml")
     compile_cmd.add_argument("--output", required=True, help="path to write dag.json")
     compile_cmd.add_argument("--image", required=True, help="container image reference")
     compile_cmd.add_argument("--dag-version", default="dev", help="DAG version label")

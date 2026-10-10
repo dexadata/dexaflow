@@ -9,14 +9,14 @@ weight: 440
 description: Samba connection
 ---
 
-Connect a task to an SMB/CIFS file share over a managed Leoflow Connection.
+Connect a task to an SMB/CIFS file share over a managed Dexaflow Connection.
 The host, port, credentials, and an Extra blob (`share_type`) are encrypted at
 rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: samba_pull
 connectors:
   - samba
@@ -65,7 +65,7 @@ with DAG("samba_pull", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: samba_pull
 python_version: "3.11"

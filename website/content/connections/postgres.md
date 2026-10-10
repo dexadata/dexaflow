@@ -10,7 +10,7 @@ description: Postgres connection
 ---
 
 Connect a task to an external Postgres (the warehouse, an OLAP, a vendor
-DB) over a managed Leoflow Connection.
+DB) over a managed Dexaflow Connection.
 
 ## URI shape
 
@@ -41,8 +41,8 @@ covered by `TestConnectionDeliveryChainOfCustodyIntegration` — see #138.
 
 | Example | Declares the provider via | In the task |
 |---|---|---|
-| [`postgres_load`](https://github.com/neochaotic/leoflow/tree/main/examples/postgres_load) | `dependencies: [psycopg2-binary==2.9.10]` | raw `psycopg2` |
-| [`postgres_hook_load`](https://github.com/neochaotic/leoflow/tree/main/examples/postgres_hook_load) | `connectors: [postgres]` (one line) | Airflow's `PostgresHook` |
+| [`postgres_load`](https://github.com/dexadata/dexaflow/tree/main/examples/postgres_load) | `dependencies: [psycopg2-binary==2.9.10]` | raw `psycopg2` |
+| [`postgres_hook_load`](https://github.com/dexadata/dexaflow/tree/main/examples/postgres_hook_load) | `connectors: [postgres]` (one line) | Airflow's `PostgresHook` |
 
 Both read the managed `pg_target` Connection (delivered as
 `AIRFLOW_CONN_PG_TARGET`) and write 20 rows into the target. The raw one falls

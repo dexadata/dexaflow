@@ -1,4 +1,4 @@
-"""Map a managed Leoflow/Airflow connection URI to a dbt profile (ADR 0043, #2).
+"""Map a managed Dexaflow/Airflow connection URI to a dbt profile (ADR 0043, #2).
 
 Connections are delivered to the task pod as ``AIRFLOW_CONN_<ID>`` (an Airflow
 connection URI). A dbt task generates its ``profiles.yml`` from that at runtime,
@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 
 def _uri_extra(query: str) -> dict:
-    """Merge direct query params and the ``__extra__`` JSON blob Leoflow carries in
+    """Merge direct query params and the ``__extra__`` JSON blob Dexaflow carries in
     the URI into one dict."""
     parsed = {k: v[0] for k, v in parse_qs(query).items()}
     raw = parsed.pop("__extra__", None)
@@ -208,7 +208,7 @@ def write_dbt_profile(
         raise RuntimeError(msg)
     output = dbt_profile_from_uri(uri)
     if schema:
-        output["schema"] = schema  # explicit leoflow.yaml schema wins over the URI/default
+        output["schema"] = schema  # explicit dexaflow.yaml schema wins over the URI/default
     profile = {profile_name: {"target": "dev", "outputs": {"dev": output}}}
     path = os.path.join(profiles_dir, "profiles.yml")
     # profiles.yml carries warehouse credentials (password / private key / keyfile /
@@ -221,7 +221,7 @@ def write_dbt_profile(
 
 
 def write_dbt_default_duckdb(profile_name: str, profiles_dir: str, db_path: str = "") -> str:
-    """Write a default duckdb ``profiles.yml`` — Leoflow's zero-server local warehouse
+    """Write a default duckdb ``profiles.yml`` — Dexaflow's zero-server local warehouse
     when a dbt group has no managed connection (Lite). An empty db_path is in-memory.
     Written as JSON (valid YAML) so dbt reads it with no PyYAML dependency.
     """

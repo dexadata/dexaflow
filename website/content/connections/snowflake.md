@@ -9,7 +9,7 @@ weight: 470
 description: Snowflake connection
 ---
 
-Connect a task to Snowflake via a managed Leoflow Connection and Airflow's
+Connect a task to Snowflake via a managed Dexaflow Connection and Airflow's
 `SnowflakeHook`. Unlike the SQL connectors, a Snowflake connection has **no
 meaningful host:port** — its defining fields (account, warehouse, database, role,
 region) live in **Extra**, and the connection form renders them as labeled fields
@@ -21,7 +21,7 @@ One line of `connectors:` sugar installs `apache-airflow-providers-snowflake`
 (which pulls the Snowflake driver):
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: snowflake_load
 connectors:
   - snowflake
@@ -48,7 +48,7 @@ blob) is pinned by `TestSnowflakeConnectionURIShapeIntegration`.
 
 ## dbt auth: password or key-pair (service account)
 
-When a dbt task uses this connection, Leoflow generates its `profiles.yml` from the
+When a dbt task uses this connection, Dexaflow generates its `profiles.yml` from the
 connection at runtime. Two auth modes are supported:
 
 | Mode | What to set in Extra | dbt profile emitted |
@@ -101,7 +101,7 @@ with DAG("snowflake_load", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: snowflake_load
 description: Load rows into Snowflake via SnowflakeHook.
@@ -117,7 +117,7 @@ connectors:
 
 1. Create the Connection in **Admin → Connections → +**, type `snowflake`. Fill
    Login, Password, Schema, and the Account/Warehouse/Database/Role fields.
-2. `leoflow lite path/to/this/dag` → open `snowflake_load` → **Trigger DAG**.
+2. `dexaflow lite path/to/this/dag` → open `snowflake_load` → **Trigger DAG**.
 3. The task log reports `load: connecting via SnowflakeHook(snowflake_default)`
    then the row count.
 

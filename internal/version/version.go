@@ -35,7 +35,7 @@ func Get() Info {
 
 // String returns a single-line, human-readable rendering of the build metadata.
 func (i Info) String() string {
-	return fmt.Sprintf("leoflow %s (commit %s, built %s, %s)",
+	return fmt.Sprintf("dexaflow %s (commit %s, built %s, %s)",
 		i.Version, i.GitCommit, i.BuildDate, i.GoVersion)
 }
 

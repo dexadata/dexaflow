@@ -18,12 +18,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/neochaotic/leoflow/internal/agent"
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/xcom"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent"
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/xcom"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // genCert writes a self-signed cert+key valid for 127.0.0.1 to dir and returns
@@ -89,7 +89,7 @@ func (tlsFakeStore) ReportState(context.Context, auth.AgentIdentity, domain.Task
 }
 func (tlsFakeStore) Reschedule(context.Context, auth.AgentIdentity, time.Time) error { return nil }
 func (tlsFakeStore) RecordHeartbeat(context.Context, auth.AgentIdentity) error       { return nil }
-func (tlsFakeStore) BindWarmAttempt(context.Context, string, string, int, string) error {
+func (tlsFakeStore) BindWarmAttempt(context.Context, string, string, int, int, string) error {
 	return nil
 }
 

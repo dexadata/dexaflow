@@ -9,14 +9,14 @@ weight: 540
 description: Zendesk connection
 ---
 
-Connect a task to the Zendesk Support API over a managed Leoflow Connection.
+Connect a task to the Zendesk Support API over a managed Dexaflow Connection.
 The subdomain host, agent email, API token, and an Extra blob are encrypted at
 rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: zendesk_export
 connectors:
   - zendesk
@@ -65,7 +65,7 @@ with DAG("zendesk_export", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: zendesk_export
 python_version: "3.11"

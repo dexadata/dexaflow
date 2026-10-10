@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -8,9 +9,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -43,6 +47,18 @@ type ServerConfig struct {
 	// Trying keys in order is safe only because AES-GCM is authenticated: a
 	// wrong key fails to open rather than returning plausible garbage.
 	SecretKey string `mapstructure:"secret_key"`
+	// SecretKeyReencryptOnBoot (LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT, default
+	// true) runs the ADR 0019 boot sweep that moves stored secrets onto the
+	// first key of SecretKey. `dexaflow lite` sets it to false: a Lite install
+	// migrates only through the explicit `dexaflow lite migrate-key`, which
+	// records every key before touching a row and verifies before it commits
+	// (ADR 0065). Pro keeps the default.
+	SecretKeyReencryptOnBoot bool `mapstructure:"secret_key_reencrypt_on_boot"`
+	// SecretKeyMigrationLock (LEOFLOW_SECRET_KEY_MIGRATION_LOCK, default false)
+	// makes the server hold the key-migration advisory lock shared for its whole
+	// life, refuse to start while a migration holds it, and exit if it loses it.
+	// `dexaflow lite` sets it to true (ADR 0065 section 3).
+	SecretKeyMigrationLock bool `mapstructure:"secret_key_migration_lock"`
 }
 
 // SecretsSection configures the external secrets backend (ADR 0060). When Backend
@@ -76,6 +92,28 @@ type LogsSection struct {
 	// Sink configures the object-store backend; read only when Backend is "s3" or
 	// "gcs".
 	Sink ObjectLogSection `mapstructure:"sink"`
+	// Tail configures the live-tail fan-out of task log lines.
+	Tail LogTailSection `mapstructure:"tail"`
+}
+
+// Live-tail publish modes (logs.tail.publish).
+const (
+	// LogTailPublishAlways publishes every received log line for the live
+	// tail as it arrives (the default).
+	LogTailPublishAlways = "always"
+	// LogTailPublishOnDemand publishes only while a follower is subscribed,
+	// probing at most once a second per log stream and replaying the lines
+	// held since the last probe that found nobody.
+	LogTailPublishOnDemand = "on_demand"
+)
+
+// LogTailSection configures the live-tail fan-out.
+type LogTailSection struct {
+	// Publish is "always" (default: every line is published, as before) or
+	// "on_demand" (lines are published only while someone follows the attempt;
+	// a new follower may see its first live lines up to about a second late).
+	// Bind via DEXAFLOW_LOGS_TAIL_PUBLISH (legacy LEOFLOW_LOGS_TAIL_PUBLISH).
+	Publish string `mapstructure:"publish"`
 }
 
 // ObjectLogSection configures the object-store log backend for both the "s3" and
@@ -111,6 +149,13 @@ type ObjectLogSection struct {
 	// (recommended) uses Application Default Credentials — GKE Workload Identity
 	// keyless. GCS-only.
 	CredentialsFile string `mapstructure:"credentials_file"`
+	// Layout selects how new attempts are written to the bucket: "single"
+	// (default) keeps one object per attempt at {try}.log, rewritten on every
+	// flush; "segmented" writes numbered segments under {try}.log.d/
+	// ({try}.e{epoch}.log.d/ for a later execution of the try) so a flush
+	// uploads only the open segment. Both layouts are always readable. Turn
+	// segmented on only once every replica runs a version that reads it.
+	Layout string `mapstructure:"layout"`
 }
 
 // ExecutorSection configures how tasks are executed.
@@ -123,7 +168,7 @@ type ExecutorSection struct {
 	TaskNamespace string `mapstructure:"task_namespace"`
 	// Type selects the pod-path executor: "kubernetes" (default, pod-per-task) or
 	// "subprocess" (dev only, runs the agent on the host without isolation, used
-	// by `leoflow dev`).
+	// by `dexaflow lite`).
 	Type string `mapstructure:"type"`
 	// AgentPath is the leoflow-agent binary the subprocess executor runs (dev only).
 	AgentPath string `mapstructure:"agent_path"`
@@ -148,7 +193,7 @@ type ExecutorSection struct {
 	// TaskSecretName names a Kubernetes Secret mounted (read-only) into every task
 	// pod at TaskSecretMountPath. It lets a task read a credential that lives in
 	// the cluster's secret store (e.g. a GCP service-account key) referenced by a
-	// connection's key_path — so Leoflow never stores the key itself (ADR 0035).
+	// connection's key_path — so Dexaflow never stores the key itself (ADR 0035).
 	// Empty = no secret mounted.
 	TaskSecretName string `mapstructure:"task_secret_name"`
 	// TaskSecretMountPath is where TaskSecretName is mounted in the task pod.
@@ -157,6 +202,58 @@ type ExecutorSection struct {
 	// DAG artifact left empty (ADR 0023, layer L0). They never override a value
 	// baked into dag.json, keeping the artifact portable across clusters.
 	Defaults PlatformDefaultsSection `mapstructure:"defaults"`
+	// CollectSettledRunPods deletes a settled run's finished task pods as soon
+	// as the reconciler has recorded every outcome, in one DeleteCollection by
+	// the run's label instead of one delete per pod after the grace period. It
+	// needs the deletecollection verb on pods (the chart grants it only when this
+	// is on) and falls back to per-pod deletes without it. Off by default:
+	// finished pods stay for the grace period, so they can be inspected with
+	// kubectl.
+	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
+	// KubeClient sets the client-side rate limits of the control plane's
+	// Kubernetes clients.
+	KubeClient KubeClientSection `mapstructure:"kube_client"`
+	// Unit is the resource unit one pool slot stands for (ADR 0066). Unset (the
+	// default) changes nothing. Set, every task pod is sized pool_slots x unit
+	// where the task leaves cpu or memory out, and a task that declares more
+	// than that is refused at registration and at dispatch.
+	Unit ExecutorUnitSection `mapstructure:"unit"`
+}
+
+// ExecutorUnitSection is executor.unit: the CPU and memory of one pool slot,
+// as Kubernetes quantities (both or neither), how a task that does not fit its
+// size is treated (refuse or warn), and the largest pool_slots a task may have
+// while the unit is set.
+type ExecutorUnitSection struct {
+	CPU     string `mapstructure:"cpu"`
+	Memory  string `mapstructure:"memory"`
+	Enforce string `mapstructure:"enforce"`
+	MaxSize int    `mapstructure:"max_size"`
+}
+
+// ResourceUnitConfig is the section as the domain parser takes it.
+func (u ExecutorUnitSection) ResourceUnitConfig() domain.ResourceUnitConfig {
+	return domain.ResourceUnitConfig{CPU: u.CPU, Memory: u.Memory, Enforce: u.Enforce, MaxSize: u.MaxSize}
+}
+
+// KubeClientSection sets the client-side rate limits (client-go token buckets)
+// of the control plane's Kubernetes clients. The dispatch client creates task
+// pods; the agent token exchange builds its own client with the same limits.
+// Maintenance work (pod informer, reconciler, reapers, staging GC, warm pool
+// reconciler) shares the dispatch client unless MaintenanceQPS is set, in which
+// case it gets a separate client and token bucket so a maintenance burst cannot
+// starve pod creation.
+type KubeClientSection struct {
+	// QPS and Burst limit the dispatch client. Defaults are client-go's own
+	// (5 and 10); a non-positive value falls back to them.
+	QPS   float64 `mapstructure:"qps"`
+	Burst int     `mapstructure:"burst"`
+	// MaintenanceQPS and MaintenanceBurst limit a separate maintenance client.
+	// 0 (default) keeps maintenance on the dispatch client, one shared budget as
+	// before. A non-positive burst with a positive QPS falls back to client-go's
+	// default burst.
+	MaintenanceQPS   float64 `mapstructure:"maintenance_qps"`
+	MaintenanceBurst int     `mapstructure:"maintenance_burst"`
 }
 
 // PlatformDefaultsSection configures the lowest-precedence (L0) task defaults,
@@ -206,6 +303,9 @@ type ExecutionSection struct {
 	// is gated at boot on the security prerequisites (token-exchange transport +
 	// liveness enforcement) because a warm pod reuses one credential across attempts.
 	WarmPoolsEnabled bool `mapstructure:"warm_pools_enabled"`
+	// SourceMode runs a version on the operator's runtime image from the dag.py
+	// it was registered with, with no image build (ADR 0067 §3). Off by default.
+	SourceMode SourceModeSection `mapstructure:"source_mode"`
 	// MaxAttemptsPerWorker caps how many attempts a warm worker serves before it is
 	// drained and recycled (ADR 0058 D9). Bounds credential-leak and stale-image
 	// exposure by forcing a fresh pod periodically. Default 50.
@@ -240,6 +340,18 @@ type ExecutionSection struct {
 	// misconfiguration), and the cap is enforced only by refusing to CREATE new
 	// warm pods — never by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
+	// WarmReadOnlyRootFilesystem mounts every warm worker's root filesystem read
+	// only and gives each attempt its own HOME and XDG dirs inside the scratch the
+	// worker wipes between attempts, plus a sweep of the shared /tmp emptyDir and
+	// /dev/shm before each attempt and after it ends. It closes X3.2: on a
+	// writable root a file one attempt plants on the image (a module on the
+	// working directory's sys.path, a ~/.local site-packages entry) is executed
+	// by the next attempt on the same worker. Default false keeps
+	// today's writable root, since a task that writes outside $HOME, $TMPDIR, /tmp
+	// and /dev/shm would fail with it on. It applies to warm pods created after it
+	// is turned on. Dedicated task pods are not affected; they follow
+	// executor.defaults.read_only_task_root_filesystem.
+	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -275,12 +387,12 @@ func (e ExecutionSection) EffectiveMinIdle(dagMinIdle int) int {
 // UISection configures the embedded Airflow UI.
 type UISection struct {
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Leoflow"; `leoflow lite` sets it to mark the environment.
+	// falls back to "Dexaflow"; `dexaflow lite` sets it to mark the environment.
 	InstanceName string `mapstructure:"instance_name"`
 	// AutoRefreshIntervalSeconds is the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Zero (the default) falls back to api.DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `leoflow lite` sets it to 1s for a snappy inner
+	// (30s, production-safe). `dexaflow lite` sets it to 1s for a snappy inner
 	// loop so the SPA reflects state changes almost immediately during dev.
 	AutoRefreshIntervalSeconds int `mapstructure:"auto_refresh_interval_seconds"`
 	// Edition marks the running edition; "lite" shows the silver LITE badge and
@@ -291,9 +403,39 @@ type UISection struct {
 	// Workspace is the DAG project directory the Lite web editor edits (ADR 0025).
 	// Empty disables the editor (Production, or Lite without one).
 	Workspace string `mapstructure:"workspace"`
-	// MonacoDir is where the pinned Monaco bundle was fetched by `leoflow setup`;
+	// MonacoDir is where the pinned Monaco bundle was fetched by `dexaflow setup`;
 	// the editor page is served Monaco from it. Empty shows a setup hint.
 	MonacoDir string `mapstructure:"monaco_dir"`
+	// HomeLink is an optional, persistent link from the UI back to the platform
+	// the operator serves Dexaflow from (#1290). Empty shows no link.
+	HomeLink HomeLinkSection `mapstructure:"home_link"`
+	// Theme is a JSON object in the shape of Airflow's `[api] theme` (#1289):
+	// `tokens` (Chakra design tokens, such as colors.brand and fonts),
+	// `globalCss`, `icon` and `icon_dark_mode`. The UI applies it through its
+	// own theming. Empty keeps the stock look.
+	Theme string `mapstructure:"theme"`
+	// FaviconURL replaces the UI's favicon. It must be http(s) or root-relative.
+	FaviconURL string `mapstructure:"favicon_url"`
+	// StylesheetURLs are extra stylesheets loaded by every UI page, typically
+	// the web fonts a theme's fonts tokens name. Each must be http(s) or
+	// root-relative.
+	StylesheetURLs []string `mapstructure:"stylesheet_urls"`
+	// ETagRevalidation lets the browser revalidate the UI routes that compute
+	// an ETag (the grid's task summaries) with "private, no-cache" instead of
+	// no-store, so an unchanged grid poll is answered 304. The browser then
+	// keeps the last grid body in its private cache after logout, revalidated
+	// before any use. Off by default (ADR 0062 gate): every UI route keeps
+	// no-store.
+	ETagRevalidation bool `mapstructure:"etag_revalidation"`
+}
+
+// HomeLinkSection is the operator's way back from the UI: a label and the
+// absolute http(s) URL it opens, in the same tab. Both are set or neither.
+type HomeLinkSection struct {
+	// Label is the link text, for example the operator's portal name.
+	Label string `mapstructure:"label"`
+	// URL is where the link goes. It must be an absolute http:// or https:// URL.
+	URL string `mapstructure:"url"`
 }
 
 // HTTPExecutorSection configures HTTP-related executor knobs.
@@ -324,6 +466,15 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
+	// only: create, resize and delete answer 403 for every role, tenant admin
+	// included. It is for an engine shared by many tenants, where the platform
+	// operator sizes each tenant's pools out of band and a tenant must not be
+	// able to raise its own slot budget. It also makes the scheduler admit a task
+	// naming a pool its tenant has not defined against default_pool, since a
+	// tenant cannot create pools then. Default false keeps pools writable under
+	// write:pool and undefined pools unlimited, today's behavior.
+	PoolsReadOnly bool `mapstructure:"pools_read_only"`
 }
 
 // Server roles (ADR 0049).
@@ -368,6 +519,25 @@ type DatabaseSection struct {
 	URL          string `mapstructure:"url"`
 	MaxOpenConns int    `mapstructure:"max_open_conns"`
 	MaxIdleConns int    `mapstructure:"max_idle_conns"`
+	// SchedulerMaxConns, when positive, gives the scheduler loop, its reapers
+	// and its janitors a pool of their own with this many connections, so API
+	// traffic that saturates the main pool cannot stall a scheduler tick. Only
+	// a process with scheduler.enabled opens it. 0 (the default) keeps them on
+	// the main pool.
+	SchedulerMaxConns int `mapstructure:"scheduler_max_conns"`
+	// StatementTimeoutMS, when positive, sets statement_timeout on every
+	// connection of the main pool, which serves the API. It is never applied to
+	// the leader election pool (its session holds the scheduler's advisory
+	// lock), the health pool or the scheduler pool, and the few writes that
+	// cascade over a DAG's history lift it for their own transaction. Without a
+	// scheduler pool the scheduler shares the main pool and so the timeout too.
+	// 0 (the default) sets nothing.
+	StatementTimeoutMS int `mapstructure:"statement_timeout_ms"`
+	// ConnMaxLifetimeJitterMS, when positive, adds up to this much random time
+	// to each connection's lifetime in the main, scheduler and health pools, so
+	// replicas started together do not all reconnect at the same moment. 0 (the
+	// default) leaves the pgx default, or what the DSN sets.
+	ConnMaxLifetimeJitterMS int `mapstructure:"conn_max_lifetime_jitter_ms"`
 }
 
 // RedisSection configures the Redis connection.
@@ -384,6 +554,47 @@ type RedisSection struct {
 	CAFile string `mapstructure:"ca_file"`
 }
 
+// TrustedIssuerSection configures one trusted external issuer (#1284). Its
+// tokens are verified against its published JWKS and name an existing user,
+// linked by (issuer:<name>, subject), in an allowed tenant; they never create
+// users or grant roles.
+type TrustedIssuerSection struct {
+	// Name identifies the issuer; its users are linked under "issuer:<name>".
+	// Lowercase letters, digits and '-'. Keep it stable once users exist.
+	Name string `mapstructure:"name"`
+	// Issuer is the exact `iss` the tokens carry.
+	Issuer string `mapstructure:"issuer"`
+	// JWKSURL is where the issuer publishes its public signing keys: https, or
+	// http on a loopback host for local development.
+	JWKSURL string `mapstructure:"jwks_url"`
+	// Audience is the `aud` the tokens must carry for this Dexaflow.
+	Audience string `mapstructure:"audience"`
+	// TenantClaim names the string claim carrying the Dexaflow tenant name.
+	TenantClaim string `mapstructure:"tenant_claim"`
+	// AllowedTenants lists the tenants the issuer may sign in to; "*" allows
+	// every tenant.
+	AllowedTenants []string `mapstructure:"allowed_tenants"`
+	// MaxLifetimeSeconds caps exp - iat of a token, the replay window of a
+	// handoff. Zero uses the 120-second default; at most 600.
+	MaxLifetimeSeconds int `mapstructure:"max_lifetime_seconds"`
+	// AllowedOrigins are the origins (scheme://host[:port]) whose pages may
+	// post a handoff. Any other Origin, or none, is refused, so another site
+	// cannot sign a visitor in (login CSRF). Required.
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	// BearerAudiences turns on the bearer mode (#1468): a token whose `aud` is
+	// one of these is accepted as the bearer of any /api/v2 request, reused
+	// within its lifetime, the way a remote MCP client authenticates (ADR 0050
+	// D9). Each must differ from Audience, so a handoff token is never a
+	// bearer. Empty (the default) leaves the mode off.
+	BearerAudiences []string `mapstructure:"bearer_audiences"`
+	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
+	// 900-second default; at most 3600.
+	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
+}
+
+// Enabled reports whether a trusted issuer is configured.
+func (s TrustedIssuerSection) Enabled() bool { return s.Issuer != "" }
+
 // AuthSection configures authentication.
 type AuthSection struct {
 	Provider string     `mapstructure:"provider"`
@@ -392,8 +603,27 @@ type AuthSection struct {
 	// "oidc" (Pro-gated); the JWT authenticator remains the request-path verifier
 	// in both modes.
 	OIDC OIDCSection `mapstructure:"oidc"`
+	// TrustedIssuer lets a platform that already authenticates its users open a
+	// UI session for them with a token its own issuer signed (#1284). Empty
+	// Issuer disables it.
+	TrustedIssuer TrustedIssuerSection `mapstructure:"trusted_issuer"`
+	// ServiceToken enables the operator service API under /api/v2/service/
+	// (#1283), which creates tenants and links users to the trusted issuer. It
+	// is the bearer credential for that API: at least 32 characters, kept in a
+	// Secret. Empty disables the API.
+	ServiceToken string `mapstructure:"service_token"`
+	// ExternalSignInURL hands unauthenticated UI visitors to the operator's own
+	// sign-in instead of Dexaflow's page, with the requested path in a `next`
+	// query parameter (#1288). The operator's flow is expected to return them
+	// with a Dexaflow session. Empty keeps Dexaflow's page; `?local=1` reaches it
+	// either way.
+	ExternalSignInURL string `mapstructure:"external_signin_url"`
+	// ExternalSignOutURL is where sign-out lands after clearing the session, so
+	// the operator can end their own session too (#1288). Empty returns to
+	// Dexaflow's sign-in page.
+	ExternalSignOutURL string `mapstructure:"external_signout_url"`
 	// DevNoAuth disables authentication entirely, treating every request as an
-	// admin. It exists ONLY for `leoflow dev` (local, unsandboxed). It is false by
+	// admin. It exists ONLY for `dexaflow lite` (local, unsandboxed). It is false by
 	// default and the server logs a prominent warning when it is on. NEVER set
 	// this in production (LEOFLOW_AUTH_DEV_NO_AUTH).
 	DevNoAuth bool `mapstructure:"dev_no_auth"`
@@ -430,9 +660,15 @@ type AuthSection struct {
 	// "90m"). With warm pools enabled it is also the per-attempt watchdog that
 	// keeps a wedged attempt from pinning a warm slot (a warm pod has no pod-level
 	// deadline; the worker lifetime cap drains between attempts, never
-	// mid-attempt). A non-positive value disables the renewal ceiling, the pod
-	// deadline floor and that watchdog together — a wedged task then has no
-	// wall-clock bound of its own — so boot logs a WARN naming the key.
+	// mid-attempt). An attempt whose agent goes silent after running past the
+	// ceiling is failed by the heartbeat reaper as a task failure with the
+	// credential_ceiling reason (its retry policy applies), never re-placed as an
+	// agent_lost infra loss with a fresh credential (#1461). In Lite, which has no
+	// pod deadline, the reaper also fails an attempt still running past the
+	// ceiling with that reason and stops its task (#1511). A non-positive value
+	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
+	// credential_ceiling failure together (a wedged task then has no
+	// wall-clock bound of its own), so boot logs a WARN naming the key.
 	MaxAttemptCredentialLifetime time.Duration `mapstructure:"max_attempt_credential_lifetime"`
 	// AgentTokenTransport selects how the in-pod agent obtains its control-plane
 	// bearer credential (ADR 0055 Fix #3): "envvar" (the default) sets the token as
@@ -469,7 +705,7 @@ type JWTSection struct {
 	// MaxLifetimeSeconds is the hard ceiling on how long a user session may be kept
 	// alive by transparent token renewal (aresta #5), measured since first login
 	// (the token's oiat claim). Past it, POST /api/v2/auth/token/renew is refused
-	// and the user must `leoflow auth login` again. The short TokenTTLSeconds still
+	// and the user must `dexaflow auth login` again. The short TokenTTLSeconds still
 	// bounds a stolen token independently; this only caps the total renewed
 	// lifetime, mirroring auth.max_attempt_credential_lifetime for agent tokens.
 	// Generous by default (24h) so a normal dev day never re-logs in mid-session; a
@@ -506,7 +742,7 @@ type OIDCSection struct {
 	// GroupsClaim is the ID-token claim carrying the user's IdP groups (default
 	// "groups"). Its values drive RoleMappings.
 	GroupsClaim string `mapstructure:"groups_claim"`
-	// RoleMappings maps an IdP group value to an existing Leoflow role name.
+	// RoleMappings maps an IdP group value to an existing Dexaflow role name.
 	// Default-DENY: a group with no mapping grants no role. Configure via a YAML
 	// config file only. The chart ships none today, so this map has no route
 	// through Helm (#1143).
@@ -526,7 +762,7 @@ type OIDCSection struct {
 	// TenantClaim selects which IdP claim identifies the tenant: "tid" (Entra) or
 	// "hd" (Google Workspace).
 	TenantClaim string `mapstructure:"tenant_claim"`
-	// TenantClaims maps a TenantClaim value to a Leoflow tenant name. A value not
+	// TenantClaims maps a TenantClaim value to a Dexaflow tenant name. A value not
 	// present here is rejected (403) — the login never falls back to "default".
 	//
 	// Decoded OUT-OF-BAND (mapstructure:"-"), not by viper: a Google Workspace
@@ -554,7 +790,7 @@ type OIDCSection struct {
 	// (oidc_provider, oidc_subject) and CreateOIDCUser, reached only from this
 	// path, is the sole statement that writes those columns, so no API, CLI or
 	// migration can pre-create an OIDC identity (ADR 0057, amendment on D4).
-	// cmd/leoflow-server warns about this at boot.
+	// cmd/dexaflow-server warns about this at boot.
 	JITProvisioning bool `mapstructure:"jit_provisioning"`
 	// AutoRedirect starts the login flow on the sign-in page instead of rendering
 	// it, for a deployment where that page is a screen to acknowledge for nothing
@@ -576,6 +812,31 @@ type SchedulerSection struct {
 	LoopIntervalMS int             `mapstructure:"loop_interval_ms"`
 	Enabled        bool            `mapstructure:"enabled"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
+	Alerts         AlertsSection   `mapstructure:"alerts"`
+	// PoolStarvationThreshold is how long a task held only by its pool waits
+	// before the pool is reserved for it, so tasks of fewer slots cannot keep
+	// a larger one out forever (ADR 0066 §4). 0 disables reservations. Pro only:
+	// Lite has no pools.
+	PoolStarvationThreshold time.Duration `mapstructure:"pool_starvation_threshold"`
+}
+
+// AlertsSection guards the destinations of native on-failure alerts (#424).
+// An alert's URL and headers come from a tenant's connection, so on a shared
+// engine a tenant could otherwise point one at the control plane's own network:
+// loopback, a private service, or the cloud metadata endpoint.
+type AlertsSection struct {
+	// BlockPrivateDestinations refuses alert requests to loopback, private,
+	// link-local (including 169.254.169.254), shared, unspecified, multicast and
+	// broadcast addresses. The check runs on the address actually dialed, after
+	// DNS resolution and on every redirect, and the guarded client does not use
+	// the proxy environment. Off by default, so an existing install that alerts
+	// an in-cluster endpoint keeps working.
+	BlockPrivateDestinations bool `mapstructure:"block_private_destinations"`
+	// AllowedCIDRs exempts these ranges (CIDRs or single addresses) from the
+	// block, e.g. an on-premises chat server. Validated at startup even while the
+	// block is off, so a typo surfaces before anyone turns it on; applied only
+	// while it is on.
+	AllowedCIDRs []string `mapstructure:"allowed_cidrs"`
 }
 
 // DispatchSection sizes the BufferedDispatcher (#127). BufferSize=0 keeps the
@@ -596,15 +857,32 @@ type DispatchSection struct {
 
 // ObservabilitySection configures logging, metrics, and tracing.
 type ObservabilitySection struct {
-	OTel      OTelSection `mapstructure:"otel"`
-	LogLevel  string      `mapstructure:"log_level"`
-	LogFormat string      `mapstructure:"log_format"`
+	OTel      OTelSection    `mapstructure:"otel"`
+	LogLevel  string         `mapstructure:"log_level"`
+	LogFormat string         `mapstructure:"log_format"`
+	Metrics   MetricsSection `mapstructure:"metrics"`
+}
+
+// MetricsSection configures the Prometheus scrape.
+type MetricsSection struct {
+	// DropLegacyNames stops publishing every dexaflow_* family a second time
+	// under its pre-rename leoflow_* name. Off by default (ADR 0062 gate), so
+	// dashboards and alerts written against the old names keep working.
+	DropLegacyNames bool `mapstructure:"drop_legacy_names"`
 }
 
 // OTelSection configures OpenTelemetry export.
 type OTelSection struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Endpoint string `mapstructure:"endpoint"`
+	// SampleRatio is the share of request traces kept (1 keeps every trace).
+	// No propagator is installed, so an incoming traceparent is ignored and
+	// every request starts a new root trace; spans within a request follow
+	// its root's decision.
+	SampleRatio float64 `mapstructure:"sample_ratio"`
+	// SkipProbeSpans drops spans for /healthz, /readyz and /static/*. Off by
+	// default (ADR 0062), so every request is traced as before.
+	SkipProbeSpans bool `mapstructure:"skip_probe_spans"`
 }
 
 // serverDefaults lists every leaf key with its default so that AutomaticEnv and
@@ -624,10 +902,19 @@ var serverDefaults = map[string]any{
 	// comma-separated env var into a list, so the env-only Helm override path
 	// works without a config file — this is what the chart renders (#725). Empty
 	// (the default) trusts no proxy.
-	"server.trusted_proxies":  []string{},
+	"server.trusted_proxies": []string{},
+	// Off by default: pools stay writable through the tenant-facing API under
+	// write:pool. Registered so AutomaticEnv binds the Helm-rendered env var.
+	"server.pools_read_only":  false,
 	"database.url":            "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable",
 	"database.max_open_conns": 25,
 	"database.max_idle_conns": 5,
+	// Pool tuning, all off by default (0) so an install that sets none of them
+	// keeps one shared pool, no statement timeout and no lifetime jitter.
+	// Registered so the DEXAFLOW_/LEOFLOW_DATABASE_* variables bind.
+	"database.scheduler_max_conns":         0,
+	"database.statement_timeout_ms":        0,
+	"database.conn_max_lifetime_jitter_ms": 0,
 	// Empty by default: no Redis configured selects the embedded edition (Lite —
 	// XCom on Postgres, in-process log tailer, ADR 0026). Production sets this
 	// explicitly via the Helm chart (external Redis).
@@ -693,10 +980,11 @@ var serverDefaults = map[string]any{
 	// here the chart renders the variable and the server ignores it: a setting
 	// that looks configured and is not. TestDocumentedEnvVarsBind caught this
 	// once before, and the rebase onto the session-cookie fix dropped it again.
-	"auth.oidc.auto_redirect":      false,
-	"auth.oidc.clock_skew_seconds": 60,
-	"scheduler.loop_interval_ms":   1000,
-	"scheduler.enabled":            true,
+	"auth.oidc.auto_redirect":             false,
+	"auth.oidc.clock_skew_seconds":        60,
+	"scheduler.loop_interval_ms":          1000,
+	"scheduler.enabled":                   true,
+	"scheduler.pool_starvation_threshold": "60s",
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
@@ -712,7 +1000,20 @@ var serverDefaults = map[string]any{
 	"executor.task_service_account":         "",
 	"executor.task_secret_name":             "",
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
+	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// client-go's own defaults on one shared client, so an unconfigured install
+	// keeps its effective apiserver budget.
+	"executor.kube_client.qps":               5.0,
+	"executor.kube_client.burst":             10,
+	"executor.kube_client.maintenance_qps":   0.0,
+	"executor.kube_client.maintenance_burst": 0,
+
+	// Alert egress guard: an alert's URL is tenant data (#424). The []string
+	// binds from one comma-separated env var, like server.trusted_proxies.
+	"scheduler.alerts.block_private_destinations": false,
+	"scheduler.alerts.allowed_cidrs":              []string{},
+
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE /
 	// _STORAGE_CLASS (the env-only Helm override path, #743, same class as #725).
 	// Empty leaves the L0 default unset, so a staging PVC inherits the cluster's
@@ -723,8 +1024,14 @@ var serverDefaults = map[string]any{
 	// _MEMORY (the env-only Helm override path, #725). Empty leaves the L0 default
 	// unset, so a task inherits no platform resource default unless the operator
 	// configures one. Scalars (Kubernetes quantities, e.g. "250m"/"256Mi").
-	"executor.defaults.resources_cpu":                  "",
-	"executor.defaults.resources_memory":               "",
+	"executor.defaults.resources_cpu":    "",
+	"executor.defaults.resources_memory": "",
+	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_UNIT_CPU / _MEMORY. Empty
+	// (both) means no resource unit (ADR 0066).
+	"executor.unit.cpu":                                "",
+	"executor.unit.memory":                             "",
+	"executor.unit.enforce":                            domain.UnitEnforceRefuse,
+	"executor.unit.max_size":                           domain.DefaultUnitMaxSize,
 	"executor.defaults.run_tasks_as_non_root":          true,
 	"executor.defaults.read_only_task_root_filesystem": false,
 	// Warm worker pools (ADR 0058). Ships a byte-for-byte no-op: warm pools OFF =
@@ -741,6 +1048,7 @@ var serverDefaults = map[string]any{
 	"execution.max_warm_pods_per_tenant": 100,
 	"logs.dir":                           "/var/log/leoflow",
 	"logs.backend":                       "disk",
+	"logs.tail.publish":                  LogTailPublishAlways,
 	"logs.sink.bucket":                   "",
 	"logs.sink.prefix":                   "",
 	"logs.sink.region":                   "",
@@ -749,29 +1057,62 @@ var serverDefaults = map[string]any{
 	"logs.sink.access_key_id":            "",
 	"logs.sink.secret_access_key":        "",
 	"logs.sink.credentials_file":         "",
+	"logs.sink.layout":                   "single",
 	"observability.otel.enabled":         false,
 	"observability.otel.endpoint":        "localhost:4317",
 	"observability.log_level":            "info",
 	"observability.log_format":           "json",
-	"ui.instance_name":                   "Leoflow",
+	"ui.instance_name":                   "Dexaflow",
 	"ui.edition":                         "",
 	"ui.workspace":                       "",
 	"ui.monaco_dir":                      "",
+	"ui.home_link.label":                 "",
+	"ui.home_link.url":                   "",
+	"ui.theme":                           "",
+	"ui.favicon_url":                     "",
+	"ui.stylesheet_urls":                 []string{},
+	"ui.etag_revalidation":               false,
 	// Must appear here even though the zero value is meaningful (the handler
 	// falls back to api.DefaultUIAutoRefreshIntervalSeconds when ≤ 0): viper's
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
-	// was silently dropped, so `leoflow lite` (which exports the env var to
+	// was silently dropped, so `dexaflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
-	"ui.auto_refresh_interval_seconds": 0,
-	"auth.dev_no_auth":                 false,
+	"ui.auto_refresh_interval_seconds":                0,
+	"auth.dev_no_auth":                                false,
+	"auth.service_token":                              "",
+	"auth.trusted_issuer.name":                        "",
+	"auth.trusted_issuer.issuer":                      "",
+	"auth.trusted_issuer.jwks_url":                    "",
+	"auth.trusted_issuer.audience":                    "",
+	"auth.trusted_issuer.tenant_claim":                "tenant_id",
+	"auth.trusted_issuer.allowed_tenants":             []string{},
+	"auth.trusted_issuer.max_lifetime_seconds":        0,
+	"auth.trusted_issuer.allowed_origins":             []string{},
+	"auth.trusted_issuer.bearer_audiences":            []string{},
+	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
+	"auth.external_signin_url":                        "",
+	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
 	"secret_key":                   "",
+	"secret_key_reencrypt_on_boot": true,
+	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Trace sampling gates (ADR 0062): the defaults trace every request.
+	"observability.otel.sample_ratio":     1.0,
+	"observability.otel.skip_probe_spans": false,
+	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
+	"observability.metrics.drop_legacy_names": false,
+	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
+	// today's writable warm root.
+	"execution.warm_read_only_root_filesystem": false,
+	"execution.source_mode.enabled":            false,
+	"execution.source_mode.image":              "",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -781,7 +1122,7 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 	for key, val := range serverDefaults {
 		v.SetDefault(key, val)
 	}
-	v.SetEnvPrefix("LEOFLOW")
+	v.SetEnvPrefix("DEXAFLOW")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 
@@ -795,6 +1136,9 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		if err := v.BindPFlags(flags); err != nil {
 			return nil, fmt.Errorf("binding flags: %w", err)
 		}
+	}
+	if err := bindBothPrefixes(v, strings.NewReplacer(".", "_", "-", "_")); err != nil {
+		return nil, err
 	}
 
 	var c ServerConfig
@@ -894,11 +1238,23 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateLogs(); err != nil {
 		return err
 	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err
 	}
 	if err := c.validateExecution(); err != nil {
 		return err
+	}
+	if err := c.validateExecutorUnit(); err != nil {
+		return err
+	}
+	if err := c.validatePlatformIntegration(); err != nil {
+		return err
+	}
+	if _, err := egress.NewPolicy(c.Scheduler.Alerts.AllowedCIDRs); err != nil {
+		return fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)
 	}
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
 	// verify), so the JWT secret is required for either.
@@ -933,6 +1289,11 @@ func isLoopbackListenAddr(addr string) bool {
 // boot instead of losing every task log to a nonexistent bucket. Empty and
 // "disk" are always valid — the on-disk default is unaffected.
 func (c *ServerConfig) validateLogs() error {
+	switch c.Logs.Tail.Publish {
+	case "", LogTailPublishAlways, LogTailPublishOnDemand:
+	default:
+		return fmt.Errorf(`unknown logs.tail.publish %q (want %q or %q)`, c.Logs.Tail.Publish, LogTailPublishAlways, LogTailPublishOnDemand)
+	}
 	switch c.Logs.Backend {
 	case "", "disk":
 		return nil
@@ -940,7 +1301,12 @@ func (c *ServerConfig) validateLogs() error {
 		if c.Logs.Sink.Bucket == "" {
 			return fmt.Errorf(`logs.sink.bucket is required when logs.backend is %q (set LEOFLOW_LOGS_SINK_BUCKET)`, c.Logs.Backend)
 		}
-		return nil
+		switch c.Logs.Sink.Layout {
+		case "", "single", "segmented":
+			return nil
+		default:
+			return fmt.Errorf(`unknown logs.sink.layout %q (want "single" or "segmented")`, c.Logs.Sink.Layout)
+		}
 	default:
 		return fmt.Errorf(`unknown logs.backend %q (want "disk", "s3" or "gcs")`, c.Logs.Backend)
 	}
@@ -972,7 +1338,46 @@ func (c *ServerConfig) validateSecretPolicies() error {
 	return nil
 }
 
+// SourceModeSection is execution.source_mode (ADR 0067 §3).
+type SourceModeSection struct {
+	// Enabled turns source mode on. Default false: Pro ignores a version's source.
+	// Bind via DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED (legacy
+	// LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED).
+	Enabled bool `mapstructure:"enabled"`
+	// Image is the runtime image, pinned by a full sha256 digest, that
+	// source-mode versions name as their image. Bind via
+	// DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE (legacy LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE).
+	Image string `mapstructure:"image"`
+}
+
+// RuntimeImage returns the runtime image when source mode is on, and "" when
+// it is off, the form the dispatcher and the register check take.
+func (s SourceModeSection) RuntimeImage() string {
+	if !s.Enabled {
+		return ""
+	}
+	return s.Image
+}
+
+// validateSourceMode requires a runtime image pinned by a full sha256 digest
+// when source mode is on, so every source-mode task runs the exact image the
+// operator vetted.
+func (c *ServerConfig) validateSourceMode() error {
+	m := c.Execution.SourceMode
+	if !m.Enabled {
+		return nil
+	}
+	if m.Image == "" {
+		return errors.New("execution.source_mode.image is required when execution.source_mode.enabled (ADR 0067)")
+	}
+	if !domain.IsDigestPinned(m.Image) {
+		return fmt.Errorf("execution.source_mode.image must be pinned by digest (image@sha256:<64 hex>), got %q (ADR 0067)", m.Image)
+	}
+	return nil
+}
+
 // validateExecution enforces the warm-pool boot gate (ADR 0058 N1a), fail-closed.
+// It first checks execution.source_mode, which does not depend on warm pools.
 // The whole block is gated on WarmPoolsEnabled: with warm pools OFF (the default)
 // none of these fields is validated, so an operator who never turns warm pools on
 // is unaffected. With warm pools ON it rejects, rather than silently correcting:
@@ -997,6 +1402,9 @@ func (c *ServerConfig) validateSecretPolicies() error {
 // (execution_timeout / the warm-worker watchdog <= the ceiling), enforced on the
 // execution path, not here.
 func (c *ServerConfig) validateExecution() error {
+	if err := c.validateSourceMode(); err != nil {
+		return err
+	}
 	if !c.Execution.WarmPoolsEnabled {
 		return nil
 	}
@@ -1020,6 +1428,15 @@ func (c *ServerConfig) validateExecution() error {
 		return fmt.Errorf("execution.max_warm_pods_per_tenant must be >= 1 when execution.warm_pools_enabled (got %d): a zero aggregate tenant cap would forbid every warm worker (M4)", c.Execution.MaxWarmPodsPerTenant)
 	}
 	return nil
+}
+
+// validateExecutorUnit checks executor.unit (ADR 0066): unset, or both
+// quantities valid and positive, enforce refuse or warn, max_size positive.
+// It combines with warm pools: a warm pod is then one unit and serves only
+// size-1 tasks that declare no resources.
+func (c *ServerConfig) validateExecutorUnit() error {
+	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	return err
 }
 
 // validateProvider rejects an unknown auth.provider, failing closed at boot
@@ -1148,9 +1565,210 @@ func tenantPinHint(c *ServerConfig) string {
 		return ""
 	}
 	return ". The tenant pin decides whether any login can succeed: a claim value that is absent or not mapped is rejected with 403 (audited as tenant_not_allowed) and never falls back to the default tenant, so without it every SSO login fails. " +
-		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Leoflow tenant. " +
+		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Dexaflow tenant. " +
 		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by LEOFLOW_CONFIG; no LEOFLOW_AUTH_OIDC_* environment variable can carry it. " +
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
+}
+
+// validatePlatformIntegration checks the settings an operator uses to serve
+// Dexaflow from inside a larger platform: external sign-in and sign-out (#1288),
+// the trusted issuer (#1284), the service API token (#1283), the home link
+// (#1290) and branding (#1289).
+func (c *ServerConfig) validatePlatformIntegration() error {
+	if err := validateExternalAuthURL("auth.external_signin_url", c.Auth.ExternalSignInURL); err != nil {
+		return err
+	}
+	if err := validateExternalAuthURL("auth.external_signout_url", c.Auth.ExternalSignOutURL); err != nil {
+		return err
+	}
+	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
+		return err
+	}
+	if t := c.Auth.ServiceToken; t != "" && len(strings.TrimSpace(t)) < 32 {
+		return errors.New("auth.service_token must be at least 32 characters (generate one with `openssl rand -base64 48`)")
+	}
+	if err := validateHomeLink(c.UI.HomeLink); err != nil {
+		return err
+	}
+	return validateBranding(c.UI)
+}
+
+// validateExternalAuthURL checks one of the #1288 settings: empty, or an
+// absolute http(s) URL with a host. A relative URL would send the browser back
+// into Dexaflow, where the sign-in route redirects again: a loop.
+func validateExternalAuthURL(key, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid URL (got %q): %w", key, raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%s must be an absolute http:// or https:// URL (got %q)", key, raw)
+	}
+	return nil
+}
+
+// issuerNamePattern is the shape of a trusted issuer's name: it becomes part of
+// the provider key stored on every linked user.
+var issuerNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
+
+// validateTrustedIssuer checks auth.trusted_issuer (#1284) when any key is set.
+// Every missing or malformed key is reported in one error, so first-time setup
+// is one edit rather than a chain of restarts.
+func validateTrustedIssuer(s TrustedIssuerSection) error {
+	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 {
+		return nil
+	}
+	checks := []struct {
+		ok      bool
+		problem string
+	}{
+		{issuerNamePattern.MatchString(s.Name), "auth.trusted_issuer.name (1-40 lowercase letters, digits or '-')"},
+		{s.Issuer != "", "auth.trusted_issuer.issuer"},
+		{jwksURLAllowed(s.JWKSURL), "auth.trusted_issuer.jwks_url (https, or http on a loopback host)"},
+		{s.Audience != "", "auth.trusted_issuer.audience"},
+		{s.TenantClaim != "", "auth.trusted_issuer.tenant_claim"},
+		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
+		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 600, "auth.trusted_issuer.max_lifetime_seconds (0 to 600)"},
+		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
+		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
+		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
+	}
+	var problems []string
+	for _, c := range checks {
+		if !c.ok {
+			problems = append(problems, c.problem)
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("auth.trusted_issuer is incomplete or invalid; set: %s", strings.Join(problems, ", "))
+	}
+	return nil
+}
+
+// bearerAudiencesValid reports whether every bearer audience is set and none
+// is the handoff audience: a token for both would be a one-use handoff and a
+// reusable bearer at once.
+func bearerAudiencesValid(s TrustedIssuerSection) bool {
+	for _, aud := range s.BearerAudiences {
+		if aud == "" || aud == s.Audience {
+			return false
+		}
+	}
+	return true
+}
+
+// validateHomeLink checks ui.home_link (#1290): both fields or neither, and an
+// absolute http(s) URL with a host, so a typo fails boot instead of rendering a
+// dead link and no other scheme (javascript:, data:) can reach the page.
+func validateHomeLink(l HomeLinkSection) error {
+	if l == (HomeLinkSection{}) {
+		return nil
+	}
+	if l.URL == "" {
+		return errors.New("ui.home_link.url is required when ui.home_link.label is set")
+	}
+	if strings.TrimSpace(l.Label) == "" {
+		return errors.New("ui.home_link.label is required when ui.home_link.url is set")
+	}
+	u, err := url.Parse(l.URL)
+	if err != nil {
+		return fmt.Errorf("ui.home_link.url must be a valid URL (got %q): %w", l.URL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("ui.home_link.url must start with http:// or https:// (got %q)", l.URL)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("ui.home_link.url must include a host (got %q)", l.URL)
+	}
+	return nil
+}
+
+// themeKeys are the top-level keys of a theme the Airflow 3.2.1 UI reads.
+var themeKeys = map[string]bool{"tokens": true, "globalCss": true, "icon": true, "icon_dark_mode": true}
+
+// validateBranding checks the #1289 settings: ui.theme is a JSON object with
+// only the keys the UI reads (an unknown key is almost always a typo the UI
+// would ignore in silence), and every URL, the theme's icons included, is
+// http(s) or root-relative.
+func validateBranding(u UISection) error {
+	if u.Theme != "" {
+		var theme map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(u.Theme), &theme); err != nil {
+			return fmt.Errorf("ui.theme must be a JSON object: %w", err)
+		}
+		for key, raw := range theme {
+			if !themeKeys[key] {
+				return fmt.Errorf("ui.theme has unknown key %q (the UI reads tokens, globalCss, icon, icon_dark_mode)", key)
+			}
+			if key != "icon" && key != "icon_dark_mode" {
+				continue
+			}
+			var icon string
+			if err := json.Unmarshal(raw, &icon); err != nil {
+				return fmt.Errorf("ui.theme icon %q must be a string URL", key)
+			}
+			if err := checkAssetURL(icon); err != nil {
+				return fmt.Errorf("ui.theme icon %q: %w", key, err)
+			}
+		}
+	}
+	if u.FaviconURL != "" {
+		if err := checkAssetURL(u.FaviconURL); err != nil {
+			return fmt.Errorf("ui.favicon_url: %w", err)
+		}
+	}
+	for _, sheet := range u.StylesheetURLs {
+		if err := checkAssetURL(sheet); err != nil {
+			return fmt.Errorf("ui.stylesheet_urls: %w", err)
+		}
+	}
+	return nil
+}
+
+// checkAssetURL accepts an absolute http(s) URL with a host or a root-relative
+// path ("/brand/logo.svg"). It refuses every other scheme and the
+// protocol-relative "//host" form, which would load from a host nobody named.
+func checkAssetURL(raw string) error {
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q is not a valid URL: %w", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%q must be an http(s) URL or a root-relative path", raw)
+	}
+	return nil
+}
+
+// originsValid reports whether list is non-empty and every entry is a bare
+// http(s) origin, the exact form a browser sends in the Origin header.
+func originsValid(list []string) bool {
+	if len(list) == 0 {
+		return false
+	}
+	for _, o := range list {
+		u, err := url.Parse(o)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// jwksURLAllowed accepts an https URL with a host, or http on a loopback host
+// for local development, like the OIDC redirect URL.
+func jwksURLAllowed(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname()))
 }
 
 // validateRedirectURL requires the OIDC callback URL to use https so the

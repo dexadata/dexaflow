@@ -21,7 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestIsTaskInstanceLiveRunningAttemptIsLive: the ordinary path — a running,
@@ -32,7 +33,7 @@ func TestIsTaskInstanceLiveRunningAttemptIsLive(t *testing.T) {
 	dagID := fmt.Sprintf("live_running_%d", time.Now().UnixNano())
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 
-	live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 1)
+	live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 1})
 	if err != nil {
 		t.Fatalf("IsTaskInstanceLive on a running attempt: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestIsTaskInstanceLiveRunningAttemptIsLive(t *testing.T) {
 		t.Fatalf("running attempt reads not-live; a live task's token must always resolve secrets")
 	}
 	// The unknown-attempt companion: a try that never existed is not live.
-	if other, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 2); err != nil || other {
+	if other, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 2}); err != nil || other {
 		t.Fatalf("unknown attempt 2 reads live=%v err=%v, want live=false", other, err)
 	}
 }
@@ -61,13 +62,13 @@ func TestIsTaskInstanceLiveTerminalIsNotLive(t *testing.T) {
 			runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 
 			// Live before the transition (two-sided: prove availability first).
-			if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 1); err != nil || !live {
+			if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 1}); err != nil || !live {
 				t.Fatalf("pre-terminal live=%v err=%v, want live=true", live, err)
 			}
 			if err := sched.ApplyTransition(ctx, runUUID, "load", tc.state); err != nil {
 				t.Fatalf("ApplyTransition to %s: %v", tc.state, err)
 			}
-			if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 1); err != nil || live {
+			if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 1}); err != nil || live {
 				t.Fatalf("terminal (%s) attempt reads live=%v err=%v, want live=false", tc.state, live, err)
 			}
 		})
@@ -101,11 +102,11 @@ func TestIsTaskInstanceLiveSupersededByRetry(t *testing.T) {
 	}
 
 	// Old attempt (try 1) is superseded — not live.
-	if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 1); err != nil || live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 1}); err != nil || live {
 		t.Fatalf("superseded attempt 1 reads live=%v err=%v, want live=false", live, err)
 	}
 	// New attempt (try 2) is live.
-	if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 2); err != nil || !live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 2}); err != nil || !live {
 		t.Fatalf("current attempt 2 reads live=%v err=%v, want live=true", live, err)
 	}
 }
@@ -148,7 +149,7 @@ func TestIsTaskInstanceLiveClearedOldRunReruns(t *testing.T) {
 		t.Fatalf("ClearTaskInstances: %v", err)
 	}
 	// none is not an active state — not live yet.
-	if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 2); err != nil || live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 2}); err != nil || live {
 		t.Fatalf("cleared-but-not-yet-dispatched attempt 2 reads live=%v err=%v, want live=false", live, err)
 	}
 	// Re-dispatch the rerun to running.
@@ -159,11 +160,11 @@ func TestIsTaskInstanceLiveClearedOldRunReruns(t *testing.T) {
 	}
 
 	// The rerun of a year-old run is live — no recency denial (the hazard).
-	if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 2); err != nil || !live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 2}); err != nil || !live {
 		t.Fatalf("rerun of an old run reads live=%v err=%v, want live=true (a recency clause would wrongly deny this)", live, err)
 	}
 	// The cleared old attempt (try 1) is not live.
-	if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "load", 1); err != nil || live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "load", TryNumber: 1}); err != nil || live {
 		t.Fatalf("cleared old attempt 1 reads live=%v err=%v, want live=false", live, err)
 	}
 }

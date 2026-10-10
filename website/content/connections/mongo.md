@@ -9,14 +9,14 @@ weight: 290
 description: MongoDB connection
 ---
 
-Connect a task to MongoDB via a managed Leoflow Connection and `MongoHook`. The
+Connect a task to MongoDB via a managed Dexaflow Connection and `MongoHook`. The
 conn_type is `mongo`. It is the host:port + login/password shape; the **Schema**
 field carries the database (or auth database).
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: mongo_load
 connectors:
   - mongo
@@ -63,7 +63,7 @@ with DAG("mongo_load", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: mongo_load
 description: Load documents into MongoDB via MongoHook.

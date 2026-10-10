@@ -10,13 +10,13 @@ description: InfluxDB connection
 ---
 
 Connect a task to an InfluxDB time-series database (the `InfluxDBHook`) over a
-managed Leoflow Connection. InfluxDB 2.x authenticates with an **org + token**
+managed Dexaflow Connection. InfluxDB 2.x authenticates with an **org + token**
 carried in Extra — not login/password.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: influxdb_smoke
 connectors:
   - influxdb
@@ -74,7 +74,7 @@ with DAG("influxdb_smoke", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: influxdb_smoke
 python_version: "3.11"

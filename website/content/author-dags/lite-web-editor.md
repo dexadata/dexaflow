@@ -6,10 +6,10 @@ aliases:
 title: The Lite web editor
 linkTitle: Lite web editor
 weight: 90
-description: Edit and run DAGs from the browser in Leoflow Lite.
+description: Edit and run DAGs from the browser in Dexaflow Lite.
 ---
 
-Leoflow **Lite** ships a small built-in code editor so you can edit a DAG project
+Dexaflow **Lite** ships a small built-in code editor so you can edit a DAG project
 straight from the browser — no separate IDE, no extra process. It is a
 **Lite-only** convenience for the local, single-machine workflow; **Pro**
 teams author DAGs in their own editor and ship them through the GitOps flow.
@@ -28,11 +28,11 @@ your own editor against the same workspace folder. See
 
 ## Opening it
 
-When you run `leoflow lite <project>`, the served UI shows a small **IDE** button
+When you run `dexaflow lite <project>`, the served UI shows a small **IDE** button
 (a `< >` icon) in the bottom-right corner. Click it — the editor opens in a **new
 tab** at `/ide`, scoped to your project workspace.
 
-![The Leoflow home with the LITE badge at top-center and the IDE button at bottom-right](/assets/screenshots/lite-ide-button.png)
+![The Dexaflow home with the LITE badge at top-center and the IDE button at bottom-right](/assets/screenshots/lite-ide-button.png)
 
 <figure markdown>
   ![Close-up of the IDE button](/assets/screenshots/lite-ide-button-zoom.png)
@@ -87,7 +87,7 @@ A few small UX rules the editor enforces so the cursor never lies to you:
   and ALL its contents?" so you can never confuse it with a single-file
   delete.
 
-Saving a file is exactly like editing it on disk — the `leoflow lite` watcher
+Saving a file is exactly like editing it on disk — the `dexaflow lite` watcher
 picks up the change and **hot-reloads** the DAG, same as if you had saved from any
 editor. (Remember the [reload gotcha](/contribute/local-dev-loop/#the-edit--reload--see-it-cycle):
 the open Airflow tab does not auto-refresh DAG *structure* — reload it.)
@@ -95,19 +95,19 @@ the open Airflow tab does not auto-refresh DAG *structure* — reload it.)
 ## Provisioning the editor assets
 
 To keep the binary light, the Monaco bundle (~13 MB) is **not** baked into the
-`leoflow` binary. It is downloaded **once**, pinned and SHA-256-verified, by:
+`dexaflow` binary. It is downloaded **once**, pinned and SHA-256-verified, by:
 
 ```bash
-leoflow setup            # end-user install
+dexaflow setup            # end-user install
 # or, for the from-source contributor loop:
-leoflow lite provision
+dexaflow lite provision
 ```
 
-into `~/.leoflow/assets/monaco/<version>/`. After that first fetch the editor
+into `~/.dexaflow/assets/monaco/<version>/`. After that first fetch the editor
 works **fully offline**.
 
 If the assets are not present yet (for example, an offline install), the `/ide`
-page shows a short hint to run `leoflow setup` instead of a broken screen. The
+page shows a short hint to run `dexaflow setup` instead of a broken screen. The
 rest of Lite — scheduling, runs, the API — is unaffected.
 
 ## Security

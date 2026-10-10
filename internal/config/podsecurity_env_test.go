@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // The task-pod hardening defaults are cluster-operator policy, so they must be

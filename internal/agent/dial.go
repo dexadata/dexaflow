@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -95,8 +97,15 @@ func OpenLogSink(ctx context.Context, client agentv1.AgentServiceClient) (LogSin
 }
 
 // Send forwards a single log line to the control plane, serialized so concurrent
-// stdout/stderr writers never call the underlying stream's Send at once.
+// stdout/stderr writers never call the underlying stream's Send at once. Task
+// output is arbitrary bytes but LogLine's message is a proto string: invalid
+// UTF-8 fails the marshal, and gRPC then tears down the whole stream, losing
+// this line, every later one and any still queued. Invalid sequences are
+// replaced with U+FFFD instead.
 func (s *grpcLogSink) Send(line *agentv1.LogLine) error {
+	if !utf8.ValidString(line.Message) {
+		line.Message = strings.ToValidUTF8(line.Message, "\uFFFD")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stream.Send(line)

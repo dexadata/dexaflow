@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
 // BootstrapStage names the startup step a pre-registration failure happened in.

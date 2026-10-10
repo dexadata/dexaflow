@@ -18,7 +18,7 @@ JOIN tenants t ON t.id = u.tenant_id
 WHERE t.name = $1 AND u.email = $2;
 
 -- name: GetUserByOIDCSubject :one
--- Resolve an OIDC identity to a Leoflow user by its immutable (provider,
+-- Resolve an OIDC identity to a Dexaflow user by its immutable (provider,
 -- subject) pair (the trusted link key). Returns the tenant name (not the uuid)
 -- so the reconstructed principal matches the login path's User.TenantID, plus
 -- the active flag the login gates on. Never selects password_hash.
@@ -41,6 +41,31 @@ RETURNING id, email, is_active, created_at;
 -- name (not the uuid) so the reconstructed principal matches the login path's
 -- User.TenantID, plus the active flag the authenticator gates on.
 SELECT u.id, t.name AS tenant, u.email, u.is_active
+FROM users u
+JOIN tenants t ON t.id = u.tenant_id
+WHERE u.id = $1;
+
+-- name: GetUserPrincipalByID :one
+-- The per-request authz reload in ONE round trip: what GetUserByID,
+-- GetUserRoles and GetUserPermissions return, folded into a single statement.
+-- Permissions are a JSON array of distinct [action, resource] pairs.
+SELECT u.id, t.name AS tenant, u.email, u.is_active,
+       ARRAY(
+           SELECT r.name
+           FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+           WHERE ur.user_id = u.id
+       )::text[] AS roles,
+       COALESCE((
+           SELECT json_agg(json_build_array(dp.action, dp.resource))
+           FROM (
+               SELECT DISTINCT p.action, p.resource
+               FROM user_roles ur
+               JOIN role_permissions rp ON rp.role_id = ur.role_id
+               JOIN permissions p ON p.id = rp.permission_id
+               WHERE ur.user_id = u.id
+           ) dp
+       ), '[]'::json)::json AS permissions
 FROM users u
 JOIN tenants t ON t.id = u.tenant_id
 WHERE u.id = $1;

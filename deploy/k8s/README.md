@@ -1,13 +1,13 @@
-# Leoflow Pro on GKE — reproducible test cluster
+# Dexaflow Pro on GKE — reproducible test cluster
 
 > **Cloud-portable.** This setup is not GKE-specific — it runs unchanged on
 > **EKS / GKE / AKS** (and vanilla clusters): it needs only cert-manager, the
-> local Leoflow chart, and the official Postgres/Redis charts. The `gke` scripts
+> local Dexaflow chart, and the official Postgres/Redis charts. The `gke` scripts
 > here are simply where it started; the directory is named `deploy/k8s` because
 > the recipe is cloud-agnostic.
 
 Scripted, parameterized provisioning of a **GKE cluster for testing & finalizing
-the Leoflow Pro Helm chart**. Everything is driven by environment variables and
+the Dexaflow Pro Helm chart**. Everything is driven by environment variables and
 reads your active `gcloud` project, so **no environment-specific id, account, or
 secret is committed here** — only placeholders.
 
@@ -63,7 +63,7 @@ cd deploy/k8s
 # 2. Install cluster add-ons (cert-manager — required by the Pro agent-TLS channel)
 ./01-install-addons.sh
 
-# 3. Install Leoflow Pro (official Postgres + Redis, agent-TLS, generated secrets)
+# 3. Install Dexaflow Pro (official Postgres + Redis, agent-TLS, generated secrets)
 ./02-install-leoflow.sh
 ```
 
@@ -98,7 +98,7 @@ With the cluster + cert-manager up, the Pro install:
 3. Issues the agent gRPC server cert via **cert-manager** (self-signed root CA →
    server leaf, SANs for `leoflow.leoflow.svc.cluster.local`), and publishes the
    CA as a `ConfigMap` for `agentTLS.caConfigMap`.
-4. `helm upgrade --install` from `helm/leoflow`, pinning `image.tag` +
+4. `helm upgrade --install` from `helm/dexaflow`, pinning `image.tag` +
    `migrations.image.tag` (default `v0.0.1-prealpha.28`).
 
 Open the UI after install:

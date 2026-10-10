@@ -1,4 +1,4 @@
-"""gcp_gcs_load — write + read a GCS object using a managed Leoflow Connection.
+"""gcp_gcs_load — write + read a GCS object using a managed Dexaflow Connection.
 
 Demonstrates the `google_cloud_platform` connection in **both** auth modes:
 
@@ -45,7 +45,7 @@ def _field(extra: dict, name: str):
 
 
 def gcp_credentials(conn_id: str = GCP_CONN):
-    """Resolve GCP credentials from a Leoflow Connection. Returns (creds, project, mode).
+    """Resolve GCP credentials from a Dexaflow Connection. Returns (creds, project, mode).
 
     Resolution (first match wins): keyfile_dict -> key_path (K8s Secret) ->
     key_secret_name (GCP Secret Manager) -> ADC (keyless / Workload Identity).
@@ -101,8 +101,8 @@ def gcs_roundtrip() -> str:
     print(f"gcp auth mode: {mode}  project: {project}")
 
     client = storage.Client(project=project, credentials=creds)
-    blob = client.bucket(bucket_name).blob("leoflow/gcp_gcs_load.txt")
-    payload = "hello from leoflow gcp_gcs_load"
+    blob = client.bucket(bucket_name).blob("dexaflow/gcp_gcs_load.txt")
+    payload = "hello from dexaflow gcp_gcs_load"
     blob.upload_from_string(payload)
     got = blob.download_as_text()
     assert got == payload, f"roundtrip mismatch: {got!r}"

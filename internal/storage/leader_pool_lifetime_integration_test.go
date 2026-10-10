@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/scheduler"
-	"github.com/neochaotic/leoflow/internal/storage"
 )
 
 // TestLeaderPoolKeepsItsSessionAndItsLock is the regression test for #1199.

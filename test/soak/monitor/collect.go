@@ -21,8 +21,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // sample is one observation of the whole system. Every field is written to
@@ -562,6 +562,11 @@ func (c *collector) counters(ctx context.Context) (stepDowns, undispatchable, at
 	}
 	sc := bufio.NewScanner(io.LimitReader(resp.Body, 8<<20))
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	// A control plane since the rename publishes each family twice, as
+	// dexaflow_* and leoflow_*; an older one only as leoflow_*. Sum per prefix
+	// and use dexaflow_ when it is there, so nothing is counted twice.
+	sums := map[string]*[3]metric{"dexaflow_": {}, "leoflow_": {}}
+	seen := map[string]bool{}
 	for sc.Scan() {
 		line := sc.Text()
 		if line == "" || line[0] == '#' {
@@ -571,16 +576,29 @@ func (c *collector) counters(ctx context.Context) (stepDowns, undispatchable, at
 		if !ok {
 			continue
 		}
-		switch name {
-		case "leoflow_scheduler_step_downs_total":
-			stepDowns += metric(val)
-		case "leoflow_tasks_undispatchable_total":
-			undispatchable += metric(val)
-		case "leoflow_dispatch_at_capacity_total":
-			atCapacity += metric(val)
+		for prefix, acc := range sums {
+			suffix, ok := strings.CutPrefix(name, prefix)
+			if !ok {
+				continue
+			}
+			switch suffix {
+			case "scheduler_step_downs_total":
+				acc[0] += metric(val)
+			case "tasks_undispatchable_total":
+				acc[1] += metric(val)
+			case "dispatch_at_capacity_total":
+				acc[2] += metric(val)
+			default:
+				continue
+			}
+			seen[prefix] = true
 		}
 	}
-	return stepDowns, undispatchable, atCapacity
+	use := sums["leoflow_"]
+	if seen["dexaflow_"] {
+		use = sums["dexaflow_"]
+	}
+	return use[0], use[1], use[2]
 }
 
 // metricsPath appends /metrics unless the operator already pointed --metrics at
@@ -618,8 +636,8 @@ func checkMetricsEndpoint(ctx context.Context, client *http.Client, base string)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s answered %d, which is not an exposition page; Lite serves /metrics on --port + 1010", target, resp.StatusCode)
 	}
-	if !strings.Contains(string(body), "leoflow_") {
-		return fmt.Errorf("%s answered 200 but exports no leoflow_ metric family; is that the control plane's metrics listener?", target)
+	if !strings.Contains(string(body), "dexaflow_") && !strings.Contains(string(body), "leoflow_") {
+		return fmt.Errorf("%s answered 200 but exports no dexaflow_ (or leoflow_) metric family; is that the control plane's metrics listener?", target)
 	}
 	return nil
 }

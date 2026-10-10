@@ -1,5 +1,5 @@
 # Provider packages the connector catalog is generated from (scripts/gen_connectors.py).
-# Pinned to the Airflow line in CLAUDE.md (3.2.x). Grow this list to curate more
+# Pinned to the Airflow line in AGENTS.md (3.2.x). Grow this list to curate more
 # connectors; re-run the codegen to regenerate internal/connectors/catalog.json.
 apache-airflow==3.2.1
 # --- the core data/warehouse + protocol head (already shipped) ---

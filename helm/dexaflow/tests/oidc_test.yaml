@@ -1,0 +1,406 @@
+# Chart contract for OIDC/SSO (#1143).
+#
+# The server has had a complete OIDC implementation for several releases and this
+# chart could not reach it: values.yaml exposed no `auth.oidc.*` key, and the pod
+# had no volume a server config file could be mounted into. `extraEnv` was not a
+# way around it either, `auth.oidc.tenant_claims` is a MAP, no environment
+# variable can carry one, and the server fails boot closed without it. So SSO was
+# not something you could configure badly; it was something you could not
+# configure at all.
+#
+# These tests pin the properties the fix rests on:
+#   1. OFF renders NOTHING, so an install that does not use SSO is untouched.
+#   2. ON delivers the scalars as env and the two maps as a mounted file, and the
+#      three places that must agree on the mount path do agree.
+#   3. The client secret goes to the Secret, never to the ConfigMap.
+#   4. Dotted map keys survive the render quoted (a Google `hd` value is a domain).
+#   5. An unsatisfiable SSO config is refused at render, not at boot.
+suite: OIDC / SSO configuration (#1143)
+templates:
+  # secret.yaml and oidc-config.yaml are in scope so the deployment's two
+  # checksum annotations can resolve their `include` references (same reason as
+  # deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+  - oidc-config.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  # Property 1. The block is inert until asked for: no ConfigMap object, no
+  # volume, no env var. An operator who upgrades onto this chart version without
+  # touching their values gets the pod spec they already had.
+  - it: renders no OIDC ConfigMap when SSO is off
+    template: oidc-config.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders no OIDC volume, mount or env when SSO is off
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_PROVIDER
+            value: "oidc"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_CONFIG
+            value: /etc/leoflow/oidc/config.yaml
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: oidc-config
+            mountPath: /etc/leoflow/oidc
+            readOnly: true
+
+  # Property 2. LEOFLOW_CONFIG has to resolve to the file the volume actually
+  # projects. A mismatch is not a render error: it is a server that reads no file
+  # and then fails boot on a tenant pin the operator can see sitting in the
+  # ConfigMap next to the pod, which is the most expensive possible way to spell a
+  # typo. One template-local variable defines the path and all three sites read it;
+  # this asserts the three agree in the OUTPUT, where a future refactor would break
+  # them.
+  - it: points LEOFLOW_CONFIG at the file the oidc volume projects
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.clientSecret: topsecret
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_CONFIG
+            value: /etc/leoflow/oidc/config.yaml
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: oidc-config
+            mountPath: /etc/leoflow/oidc
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-config
+            configMap:
+              name: leoflow-oidc
+              items:
+                - key: config.yaml
+                  path: config.yaml
+
+  # auth.provider is the switch that turns the OIDC code path on at all; without it
+  # every other key here is configuration the server loads and never looks at.
+  - it: sets the auth provider and the OIDC scalars as env vars
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_PROVIDER
+            value: "oidc"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_ISSUER
+            value: https://accounts.google.com
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_TENANT_CLAIM
+            value: hd
+      # Comma-joined rather than one variable per element: viper's decode hook
+      # splits it back into the []string the server wants, the same mechanism
+      # config.trustedProxies and config.cors.allowedOrigins already rely on.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_SCOPES
+            value: openid,email,profile
+
+  # The flag that decides whether ANY login can complete. A login is matched to a
+  # user by (provider, subject), and JIT is the only code path that ever writes
+  # those two columns, so with it off there is no account to match and every first
+  # login is denied (audited no_user_jit_off) with a generic 403. The chart
+  # therefore ships it ON, unlike the server default, and pins the value here
+  # because a silent flip back to false takes SSO with it.
+  - it: enables JIT provisioning, without which no first login can succeed
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_JIT_PROVISIONING
+            value: "true"
+
+  # The three optional list/scalar keys are OMITTED when empty rather than stamped
+  # with a blank, because each has a meaning at its zero value that the server
+  # already implements. Stamping "" would say nothing the default does not, and
+  # this is the assertion that keeps that decision from eroding.
+  - it: omits the optional keys instead of stamping them empty
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_DEFAULT_ROLE
+            value: ""
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS
+            value: ""
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_BREAK_GLASS_EMAILS
+            value: ""
+
+  # Property 3. A ConfigMap is readable by anything with `get` on the namespace and
+  # is not encrypted at rest, so the code-exchange credential takes the jwtSecret
+  # route instead: the chart-managed Secret, delivered by secretKeyRef.
+  # documentIndex 0 is the DURABLE Secret since #1142; index 1 is the hook copy
+  # that feeds the migration Job and carries databaseUrl alone.
+  - it: keeps the client secret in the Secret
+    template: secret.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.clientSecret: topsecret
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: stringData.oidcClientSecret
+          value: topsecret
+
+  - it: delivers the client secret by secretKeyRef, never as a literal value
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.clientSecret: topsecret
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: leoflow-credentials
+                key: oidcClientSecret
+
+  # Separate from auth.existingSecret on purpose: the JWT signing key and the IdP
+  # client secret rotate on different schedules and usually have different owners.
+  - it: reads the client secret from an existingSecret when one is named
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.existingSecret: my-idp-secret
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: my-idp-secret
+                key: oidcClientSecret
+
+  # A public client using PKCE has no client secret, and validateOIDC does not
+  # require one. Rendering the secretKeyRef anyway would point at a Secret key
+  # nothing writes, and the pod would sit in CreateContainerConfigError.
+  - it: renders no client-secret reference for a public (PKCE-only) client
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_OIDC_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: leoflow-credentials
+                key: oidcClientSecret
+
+  # Property 4, and the whole reason these two keys need a file. viper's key
+  # delimiter is ".", so a dotted map key is split into nested maps and fails to
+  # decode (#826); the server parses them out-of-band from the raw YAML, and the
+  # quoting here is what keeps a Google Workspace `hd` domain, always dotted,
+  # one key rather than two levels of nesting.
+  - it: writes the two maps into the mounted config with their keys quoted
+    template: oidc-config.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+        sub.example.co.uk: acme
+      auth.oidc.roleMappings:
+        app.admins: admin
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: '"example\.com": "default"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: '"sub\.example\.co\.uk": "acme"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: '"app\.admins": "admin"'
+
+  # The file is partial ON PURPOSE. viper ranks env above a config file, and a key
+  # a file omits keeps the value it already had: so a file holding only the two
+  # maps can neither override nor blank anything the Deployment's env delivers. A
+  # later change that started writing other keys here would invert that silently,
+  # so pin the absence, and pin the credential's absence hardest.
+  - it: keeps the mounted config free of every key that has an env route
+    template: oidc-config.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.clientSecret: topsecret
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - notMatchRegex:
+          path: data["config.yaml"]
+          pattern: 'client_secret|topsecret|issuer|client_id|redirect_url'
+
+  # Property 5. The server reports every missing OIDC key in ONE error because each
+  # boot failure on Kubernetes costs a values edit, an upgrade and a rollout to
+  # learn the next one. The render guard owes the operator the same, one step
+  # earlier, where a GitOps sync can actually show it, since Argo never renders
+  # NOTES.txt.
+  - it: refuses to render an SSO install with no tenant pin
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+    asserts:
+      - failedTemplate:
+          errorPattern: "auth.oidc.tenantClaim, auth.oidc.tenantClaims"
+
+  - it: refuses a non-https issuer
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: http://idp.internal
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - failedTemplate:
+          errorPattern: "must be an https:// URL"
+
+  # extraEnv renders last and last-wins, so this entry would repoint the server
+  # away from the mounted file and take the tenant pin, which has no other route,
+  # with it. The resulting boot failure looks exactly like a missing pin the
+  # operator can see configured in the ConfigMap. Refused only while SSO is on:
+  # pointing LEOFLOW_CONFIG at a file of your own is legitimate otherwise.
+  - it: refuses an extraEnv entry that repoints LEOFLOW_CONFIG while SSO is on
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+      extraEnv:
+        - name: LEOFLOW_CONFIG
+          value: /etc/mine/config.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: "extraEnv must not set LEOFLOW_CONFIG"
+
+  # A ConfigMap volume's projection is not what the server re-reads: LoadServer
+  # parses the file once at boot. Without this annotation an edited tenant map
+  # would sit on disk unread until somebody noticed and restarted the pod by hand.
+  - it: rolls the pod when the OIDC maps change
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - exists:
+          path: spec.template.metadata.annotations["checksum/oidc-config"]

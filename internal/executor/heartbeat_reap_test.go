@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // fakeLogSink captures the final markers a reaper appends to a task's log
@@ -72,13 +72,15 @@ type fakeHeartbeatStore struct {
 	failed     []string
 	failErr    error
 	markNoop   bool // when true, MarkTaskAgentLost reports 0 rows updated (a late terminal report won the race)
+	// ceilingPins records each credential-ceiling mark as "ti/try/epoch" (#1461).
+	ceilingPins []string
 }
 
 func (f *fakeHeartbeatStore) ListAgentLostCandidates(context.Context) ([]AgentLostCandidate, error) {
 	return f.candidates, f.listErr
 }
 
-func (f *fakeHeartbeatStore) MarkTaskAgentLost(_ context.Context, tiID string) (bool, error) {
+func (f *fakeHeartbeatStore) MarkTaskAgentLost(_ context.Context, tiID string, _, _ int) (bool, error) {
 	if f.failErr != nil {
 		return false, f.failErr
 	}
@@ -86,6 +88,17 @@ func (f *fakeHeartbeatStore) MarkTaskAgentLost(_ context.Context, tiID string) (
 		return false, nil
 	}
 	f.failed = append(f.failed, tiID)
+	return true, nil
+}
+
+func (f *fakeHeartbeatStore) MarkTaskCredentialCeiling(_ context.Context, tiID string, try, epoch int) (bool, error) {
+	if f.failErr != nil {
+		return false, f.failErr
+	}
+	if f.markNoop {
+		return false, nil
+	}
+	f.ceilingPins = append(f.ceilingPins, tiID+"/"+strconv.Itoa(try)+"/"+strconv.Itoa(epoch))
 	return true, nil
 }
 
@@ -261,9 +274,15 @@ func (p *panicHeartbeatStore) ListAgentLostCandidates(context.Context) ([]AgentL
 	}
 	return []AgentLostCandidate{{TaskInstanceID: "doomed", LastHeartbeat: time.Now().Add(-1 * time.Hour)}}, nil
 }
-func (p *panicHeartbeatStore) MarkTaskAgentLost(context.Context, string) (bool, error) {
+func (p *panicHeartbeatStore) MarkTaskAgentLost(context.Context, string, int, int) (bool, error) {
 	if p.panicOnFail {
 		panic("boom: MarkTaskAgentLost")
+	}
+	return true, nil
+}
+func (p *panicHeartbeatStore) MarkTaskCredentialCeiling(context.Context, string, int, int) (bool, error) {
+	if p.panicOnFail {
+		panic("boom: MarkTaskCredentialCeiling")
 	}
 	return true, nil
 }

@@ -6,7 +6,7 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
-// A leoflow.yaml alerts: block (native on-failure alerting, #424) unmarshals into
+// A dexaflow.yaml alerts: block (native on-failure alerting, #424) unmarshals into
 // the typed config and validates against the canonical schema.
 func TestAlertsConfigUnmarshalsAndValidates(t *testing.T) {
 	const y = `
@@ -51,7 +51,7 @@ func TestAlertsConfigRejectsUnknownType(t *testing.T) {
 }
 
 // An alert rule without a connection is rejected: the endpoint and its secret must
-// come from a managed connection, never a literal URL/token in leoflow.yaml (which
+// come from a managed connection, never a literal URL/token in dexaflow.yaml (which
 // would then be rendered into dag.json). Aligns with the env-ref secret discipline.
 func TestAlertsConfigRequiresConn(t *testing.T) {
 	c := &LeoflowConfig{

@@ -9,7 +9,7 @@ weight: 210
 description: Hive CLI connection
 ---
 
-Run HiveQL through the Hive CLI / Beeline from a task via a managed Leoflow Connection
+Run HiveQL through the Hive CLI / Beeline from a task via a managed Dexaflow Connection
 and Airflow's `HiveCliHook`. The conn_type is `hive_cli`. A connection carries the
 **host:port** plus credentials, and beeline/kerberos tuning in **Extra**.
 
@@ -19,7 +19,7 @@ and Airflow's `HiveCliHook`. The conn_type is `hive_cli`. A connection carries t
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: hive_cli_run
 connectors:
   - hive_cli
@@ -67,7 +67,7 @@ with DAG("hive_cli_run", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: hive_cli_run
 description: Run HiveQL via HiveCliHook.
@@ -83,7 +83,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `hive_cli`. Set Host, Port, Login, Password, and
    any beeline/kerberos hints in Extra.
-2. `leoflow lite path/to/this/dag` → trigger `hive_cli_run`.
+2. `dexaflow lite path/to/this/dag` → trigger `hive_cli_run`.
 
 ## Security notes
 

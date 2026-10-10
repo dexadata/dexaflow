@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // WorkspaceSpec is the resolved view of a Lite workspace: the list of DAG
@@ -73,7 +73,7 @@ func ResolveWorkspace(dir string) (*WorkspaceSpec, error) {
 }
 
 // WatchedPaths returns the file paths the mtime-polling watcher should track:
-// every project's leoflow.yaml (when present) and dag.py. A save in any of
+// every project's dexaflow.yaml (when present) and dag.py. A save in any of
 // them must trigger a reload, since lite recompiles+reregisters every project
 // on each reload.
 func (w *WorkspaceSpec) WatchedPaths() []string {

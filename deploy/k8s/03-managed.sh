@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 03-managed.sh — Switch the Leoflow Pro install to managed datastores
+# 03-managed.sh — Switch the Dexaflow Pro install to managed datastores
 #                 (Cloud SQL for Postgres + Memorystore for Redis).
 #
 # This is the production-realistic path, run AFTER 00/01/02 (the in-cluster test
@@ -43,7 +43,7 @@ REDIS_INSTANCE="${REDIS_INSTANCE:-leoflow-redis}"
 REDIS_SIZE="${REDIS_SIZE:-1}"             # GB (Basic tier)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHART_DIR="$(cd "$SCRIPT_DIR/../../helm/leoflow" && pwd)"
+CHART_DIR="$(cd "$SCRIPT_DIR/../../helm/dexaflow" && pwd)"
 VALUES_LOCAL="$SCRIPT_DIR/values.local.yaml"            # from 02 (reused secrets)
 VALUES_MANAGED="$SCRIPT_DIR/values.managed.local.yaml"  # gitignored output
 

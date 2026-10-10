@@ -10,13 +10,13 @@ description: GCP SSH connection
 ---
 
 Run commands on a Google Compute Engine VM over SSH from a task, via a managed
-Leoflow Connection. The host, port, and credentials are encrypted at rest and
+Dexaflow Connection. The host, port, and credentials are encrypted at rest and
 delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: gcpssh_run
 connectors:
   - gcpssh
@@ -69,7 +69,7 @@ with DAG("gcpssh_run", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: gcpssh_run
 python_version: "3.11"

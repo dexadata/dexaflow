@@ -1,7 +1,7 @@
 //go:build integration
 
 // Package storage_test holds the Lima dogfood regression suite: each test
-// reproduces a bug a user actually hit running `leoflow lite` end-to-end and
+// reproduces a bug a user actually hit running `dexaflow lite` end-to-end and
 // asserts the contract the fix must satisfy. They are reality-anchored — the
 // kind of failure a unit test on a fake store would NEVER catch because the
 // bug lives at the SQL layer or in the composition of multiple steps.
@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestLimaBug1_ClearResetsQueuedAtIntegration reproduces the dispatch-lost
@@ -75,7 +75,7 @@ func TestLimaBug1_ClearResetsQueuedAtIntegration(t *testing.T) {
 	// MarkTaskDispatchLost is idempotent at the SQL layer (WHERE state='queued')
 	// so a second call before any clear is a no-op — that's not the bug.
 	tiID := taskInstanceID(t, sched, ctx, runUUID, "hello")
-	if err := sched.MarkTaskDispatchLost(ctx, tiID); err != nil {
+	if _, err := sched.MarkTaskDispatchLost(ctx, tiID, 1, 0); err != nil {
 		t.Fatalf("MarkTaskDispatchLost: %v", err)
 	}
 	if got := taskInstanceState(t, sched, ctx, runUUID, "hello"); got != domain.TaskStateFailed {

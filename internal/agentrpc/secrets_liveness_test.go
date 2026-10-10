@@ -5,10 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // fakeLiveness is a scripted liveness predicate: it returns (live, err) and
@@ -20,7 +21,7 @@ type fakeLiveness struct {
 	calls int
 }
 
-func (f *fakeLiveness) IsTaskInstanceLive(_ context.Context, _, _ string, _ int) (bool, error) {
+func (f *fakeLiveness) IsTaskInstanceLive(_ context.Context, _ auth.AgentIdentity) (bool, error) {
 	f.calls++
 	return f.live, f.err
 }

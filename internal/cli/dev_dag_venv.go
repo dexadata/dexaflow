@@ -35,9 +35,9 @@ func sanitizeDagIDForFs(id string) string {
 }
 
 // dagVenvDir returns the per-DAG venv directory under the Lite dev home —
-// ~/.leoflow/dev/venvs/<sanitized-dag-id>. The "venvs" suffix (plural) is
+// ~/.dexaflow/dev/venvs/<sanitized-dag-id>. The "venvs" suffix (plural) is
 // deliberate so it never collides with the legacy single-venv layout at
-// ~/.leoflow/dev/venv (#346).
+// ~/.dexaflow/dev/venv (#346).
 func dagVenvDir(home, dagID string) string {
 	return filepath.Join(home, "venvs", sanitizeDagIDForFs(dagID))
 }
@@ -257,13 +257,14 @@ func dagVenvMinorMismatch(dir, pythonVersion string) (stale bool, builtOn int, e
 // binary-upgrade case (#239). An empty checksum makes the import gate the sole
 // signal.
 //
-// Both packages are probed: leoflow_runtime runs the task, and leoflow carries
-// the authoring names a dag.py imports at its top — which the runner re-imports
+// All three packages are probed: leoflow_runtime runs the task, and dexaflow
+// (and leoflow, its pre-rename re-export) carry the authoring names a dag.py
+// imports at its top, which the runner re-imports
 // per task, so a venv missing it fails every python task (#17). Gating on
 // leoflow_runtime alone would leave a venv built before that package existed
 // looking healthy whenever the checksum signal is empty.
 func ensureDagVenvRuntime(ctx context.Context, cmd *cobra.Command, home, dagID, runtimeSrc, py string, inst installer) error {
-	check := exec.CommandContext(ctx, py, "-c", "import leoflow_runtime, leoflow") //nolint:gosec // py is a managed per-DAG venv interpreter
+	check := exec.CommandContext(ctx, py, "-c", "import leoflow_runtime, leoflow, dexaflow") //nolint:gosec // py is a managed per-DAG venv interpreter
 	importOK := check.Run() == nil
 	want, cerr := runtimeSrcChecksum(runtimeSrc)
 	need := !importOK

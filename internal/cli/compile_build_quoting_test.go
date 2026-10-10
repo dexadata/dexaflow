@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 func renderFor(t *testing.T, mutate func(*domain.LeoflowConfig)) string {

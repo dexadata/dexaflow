@@ -1,8 +1,8 @@
 """gcp_dataform_trigger — compile a Dataform repository and run its workflow using
-the real Google provider operators, through Leoflow's generic operator path (ADR 0040).
+the real Google provider operators, through Dexaflow's generic operator path (ADR 0040).
 
 This is the reference for **chained operators**: ``invoke`` consumes ``compile``'s
-output with the idiomatic ``{{ ti.xcom_pull('compile')['name'] }}`` — Leoflow resolves
+output with the idiomatic ``{{ ti.xcom_pull('compile')['name'] }}`` — Dexaflow resolves
 the upstream's return_value exactly like Airflow does, so the two operators chain.
 
 Set the constants below for your environment. Credentials come from the

@@ -1,0 +1,47 @@
+suite: ui home link reaches the chart (#1290)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders both variables when the link is set
+    set:
+      ui.homeLink.label: Back to portal
+      ui.homeLink.url: https://portal.example.com
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_HOME_LINK_LABEL
+            value: Back to portal
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_HOME_LINK_URL
+            value: https://portal.example.com
+
+  # Off by default: nothing rendered, so the server's own default (no link)
+  # decides and an operator never finds an empty variable the chart chose.
+  - it: renders neither variable when unset
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_HOME_LINK_URL
+            value: ""
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_UI_HOME_LINK_LABEL
+            value: ""

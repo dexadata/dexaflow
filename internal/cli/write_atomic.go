@@ -21,6 +21,39 @@ import (
 // rename within a directory is atomic, so a reader sees the old file or the new
 // one and never a partial.
 func writeFileAtomic(path string, data []byte) error {
+	return writeFileAtomicWith(path, data, atomicOpts{})
+}
+
+// Stages of writeFileAtomicWith, reported to atomicOpts.hook as each completes.
+const (
+	atomicTempWritten = "temp-written" // the temp file is written, synced and closed
+	atomicRenamed     = "renamed"      // the temp file replaced the target
+	atomicDirSynced   = "dir-synced"   // the directory entry is durable
+)
+
+// atomicOpts adjusts writeFileAtomicWith.
+type atomicOpts struct {
+	// ownerFrom names the file whose owner the result takes, when it is not the
+	// target itself: a NEW file (the pre-image of `migrate-key`) has no owner to
+	// preserve, and under sudo it would otherwise end up root-owned.
+	ownerFrom string
+	// hook is told each stage as it completes. The crash-injection tests stop
+	// the process there (ADR 0065 section 9).
+	hook func(stage string)
+}
+
+func (o atomicOpts) stage(s string) {
+	if o.hook != nil {
+		o.hook(s)
+	}
+}
+
+// writeFileAtomicWith is writeFileAtomic with options. After the rename it also
+// fsyncs the directory: the rename is atomic, but until the directory entry is
+// on disk a power loss can bring back the old file, and a command that just
+// recorded an encryption key there must not report it as written (ADR 0065
+// gap 3).
+func writeFileAtomicWith(path string, data []byte, opts atomicOpts) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
 	if err != nil {
@@ -48,21 +81,45 @@ func writeFileAtomic(path string, data []byte) error {
 	}
 	// Keep the existing file's owner. os.WriteFile rewrote the SAME inode, so
 	// ownership survived; a temp file plus rename creates a NEW one owned by
-	// whoever is running. The installer prints `sudo leoflow lite
+	// whoever is running. The installer prints `sudo dexaflow lite
 	// reset-password` as the password-recovery command, so that path is not
-	// hypothetical: without this the user's ~/.leoflow/config.yaml becomes
-	// root-owned 0600, their next non-root `leoflow lite` cannot read it, the
+	// hypothetical: without this the user's ~/.dexaflow/config.yaml becomes
+	// root-owned 0600, their next non-root `dexaflow lite` cannot read it, the
 	// control plane silently drops to no-auth, and every connection encrypted
 	// under the per-install key becomes unreadable.
 	//
 	// Best effort: chown fails for a non-root user changing owner, which is the
 	// normal case and where there is nothing to preserve anyway.
-	preserveOwner(path, tmpName)
+	ownerRef := path
+	if opts.ownerFrom != "" {
+		ownerRef = opts.ownerFrom
+	}
+	preserveOwner(ownerRef, tmpName)
+	opts.stage(atomicTempWritten)
 
 	if rerr := os.Rename(tmpName, path); rerr != nil {
 		return fmt.Errorf("replacing %s: %w", path, rerr)
 	}
+	opts.stage(atomicRenamed)
+	if serr := syncDir(dir); serr != nil {
+		return fmt.Errorf("flushing the directory %s after replacing %s: %w", dir, filepath.Base(path), serr)
+	}
+	opts.stage(atomicDirSynced)
 	return nil
+}
+
+// syncDir fsyncs a directory so a rename or unlink in it is durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir) //nolint:gosec // the directory of a file this process just wrote
+	if err != nil {
+		return err
+	}
+	serr := d.Sync()
+	cerr := d.Close()
+	if serr != nil {
+		return serr
+	}
+	return cerr
 }
 
 // preserveOwner gives tmp the uid/gid of an existing target, so replacing it by

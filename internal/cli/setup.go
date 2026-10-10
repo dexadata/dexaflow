@@ -18,12 +18,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	leoflow "github.com/neochaotic/leoflow"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/setup"
+	dexaflow "github.com/dexadata/dexaflow"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
-// leoflowLogo is the wordmark shown atop `leoflow setup` on a terminal (figlet
+// leoflowLogo is the wordmark shown atop `dexaflow setup` on a terminal (figlet
 // "standard"). It is plain ASCII so it renders anywhere; printed only with color
 // (TTY), so piped/CI output stays clean.
 const leoflowLogo = ` _                __ _
@@ -40,8 +40,8 @@ type liteSettings struct {
 	Port       int
 }
 
-// setupManifest records what `leoflow setup` provisioned, so later runs and
-// `leoflow doctor` can report the managed state.
+// setupManifest records what `dexaflow setup` provisioned, so later runs and
+// `dexaflow doctor` can report the managed state.
 type setupManifest struct {
 	Python     string    `json:"python"`
 	Workspace  string    `json:"workspace"`
@@ -151,15 +151,15 @@ func executorFromChoice(choice string) (string, bool) {
 }
 
 // newSetupCommand bootstraps the managed runtime: a usable Python 3.11 (the
-// system one or a downloaded relocatable CPython), the ~/.leoflow layout, and a
+// system one or a downloaded relocatable CPython), the ~/.dexaflow layout, and a
 // workspace directory for the user's DAG projects.
 func newSetupCommand() *cobra.Command {
 	var workspace string
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Bootstrap the managed Leoflow runtime (Python, parser, workspace).",
-		Long: "setup prepares ~/.leoflow: it ensures a Python 3.11 is available " +
+		Short: "Bootstrap the managed Dexaflow runtime (Python, parser, workspace).",
+		Long: "setup prepares ~/.dexaflow: it ensures a Python 3.11 is available " +
 			"(using a system interpreter if present, otherwise downloading a pinned, " +
 			"checksum-verified relocatable CPython — no sudo, no system packages), " +
 			"extracts the embedded parser and runtime sources, points the parser at the " +
@@ -170,7 +170,7 @@ func newSetupCommand() *cobra.Command {
 			return runSetup(cmd, workspace, dryRun)
 		},
 	}
-	cmd.Flags().StringVar(&workspace, "workspace", "", "workspace dir for your DAG projects (default ~/leoflow)")
+	cmd.Flags().StringVar(&workspace, "workspace", "", "workspace dir for your DAG projects (default ~/dexaflow, or an existing ~/leoflow)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "detect and print the plan without downloading or writing anything")
 	return cmd
 }
@@ -181,7 +181,7 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("resolving home directory: %w", err)
 	}
-	leoflowHome := filepath.Join(homeDir, ".leoflow")
+	leoflowHome := stateDirIn(homeDir)
 
 	r := setup.Detect(setup.Probe{
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
@@ -190,14 +190,14 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 
 	def := liteSettings{Workspace: workspaceFlag, Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 	if def.Workspace == "" {
-		def.Workspace = filepath.Join(homeDir, "leoflow")
+		def.Workspace = defaultWorkspaceIn(homeDir)
 	}
 
 	pal := newPalette(colorEnabled(out))
 	if pal.cyan != "" { // only on a real terminal — keep CI/pipe output clean
 		_, _ = fmt.Fprintf(out, "%s%s%s\n", pal.cyan, leoflowLogo, pal.reset) //nolint:errcheck // best-effort terminal output
 	}
-	_, _ = fmt.Fprintf(out, "leoflow setup\n\n  platform   %s/%s%s\n", r.OS, r.Arch, libcSuffix(r.Libc)) //nolint:errcheck // best-effort terminal output
+	_, _ = fmt.Fprintf(out, "dexaflow setup\n\n  platform   %s/%s%s\n", r.OS, r.Arch, libcSuffix(r.Libc)) //nolint:errcheck // best-effort terminal output
 
 	// Prompt only on first setup. On a re-run the config already exists and is not
 	// rewritten, so re-asking would silently discard the answers — instead keep the
@@ -209,7 +209,7 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 		lc = gatherLiteConfig(interactive, bufio.NewReader(os.Stdin), out, def)
 	} else {
 		lc = loadManifestSettings(leoflowHome, def)
-		_, _ = fmt.Fprintln(out, "\n  already configured (~/.leoflow/config.yaml) — keeping your settings.\n  change the admin with `leoflow lite reset-password`.") //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintln(out, "\n  already configured (~/.dexaflow/config.yaml) — keeping your settings.\n  change the admin with `dexaflow lite reset-password`.") //nolint:errcheck // best-effort terminal output
 	}
 
 	_, _ = fmt.Fprintf(out, "\n  workspace  %s\n  executor   %s\n  port       %d\n  admin      %s\n", lc.Workspace, lc.Executor, lc.Port, lc.AdminEmail) //nolint:errcheck // best-effort terminal output
@@ -219,11 +219,11 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 		// not the one setup will use. Saying "using system 3.12" here and then
 		// downloading is the gap #1224 reported, and a dry run that misdescribes
 		// the real run is worse than no dry run.
-		_, _ = fmt.Fprintf(out, "  python     %s can parse DAGs, but setup needs python3.11 specifically\n             and will download a managed CPython 3.11 under ~/.leoflow/python (needs network)\n", r.PythonPath) //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintf(out, "  python     %s can parse DAGs, but setup needs python3.11 specifically\n             and will download a managed CPython 3.11 under ~/.dexaflow/python (needs network)\n", r.PythonPath) //nolint:errcheck // best-effort terminal output
 	case r.PythonAvailable:
 		_, _ = fmt.Fprintf(out, "  python     using system %s\n", r.PythonPath) //nolint:errcheck // best-effort terminal output
 	default:
-		_, _ = fmt.Fprintln(out, "  python     no python3.11/3.12/3.13 on PATH; will install a relocatable CPython 3.11 under ~/.leoflow/python") //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintln(out, "  python     no python3.11/3.12/3.13 on PATH; will install a relocatable CPython 3.11 under ~/.dexaflow/python") //nolint:errcheck // best-effort terminal output
 	}
 
 	if dryRun {
@@ -263,14 +263,14 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 	}
 
 	pysrcDir := filepath.Join(leoflowHome, "pysrc")
-	if exErr := setup.ExtractFS(leoflow.PythonSources(), pysrcDir); exErr != nil {
+	if exErr := setup.ExtractFS(dexaflow.PythonSources(), pysrcDir); exErr != nil {
 		return "", fmt.Errorf("extracting embedded Python sources: %w", exErr)
 	}
 	_, _ = fmt.Fprintf(out, "  sources    extracted parser + runtime to %s\n", pysrcDir) //nolint:errcheck // best-effort terminal output
 
 	// Fetch the Monaco editor bundle for the Lite web editor (ADR 0025).
 	// Best-effort: an offline install still succeeds; the editor page shows a
-	// `leoflow setup` hint until the bundle is present.
+	// `dexaflow setup` hint until the bundle is present.
 	if _, mErr := setup.EnsureMonaco(cmd.Context(), nil, leoflowHome, func(format string, a ...any) {
 		_, _ = fmt.Fprintf(out, "  "+format+"\n", a...) //nolint:errcheck // best-effort terminal output
 	}); mErr != nil {
@@ -282,32 +282,9 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 
 	// On first setup, generate the admin password, store ONLY its hash, and return
 	// the plaintext for the one-time display. A re-run leaves the config untouched.
-	var generated string
-	if !liteConfigExists(leoflowHome) {
-		pw, hash, herr := generateAdminCredential()
-		if herr != nil {
-			return "", herr
-		}
-		// Per-install JWT secret: a reinstall (which rewrites this file) invalidates
-		// every token the previous install minted, so the SPA stops silently
-		// accepting a stale browser token and the fresh login screen appears (#121).
-		jwtSecret, jerr := generateJWTSecret()
-		if jerr != nil {
-			return "", jerr
-		}
-		// Per-install connection-encryption key. Lite shipped a constant
-		// compiled into this repository, so every install shared it and a
-		// database file gave up every credential in it (#486).
-		//
-		key, kerr := generateSecretKey()
-		if kerr != nil {
-			return "", kerr
-		}
-		sec := liteFileSecrets{jwtSecret: jwtSecret, secretKey: key}
-		if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, sec); wErr != nil {
-			return "", fmt.Errorf("writing config: %w", wErr)
-		}
-		generated = pw
+	generated, gerr := writeFirstLiteConfig(leoflowHome, parserCmd, lc)
+	if gerr != nil {
+		return "", gerr
 	}
 
 	if wsErr := os.MkdirAll(lc.Workspace, 0o750); wsErr != nil {
@@ -321,6 +298,52 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 		return "", fmt.Errorf("writing setup manifest: %w", wErr)
 	}
 	return generated, nil
+}
+
+// writeFirstLiteConfig writes config.yaml when there is none yet, under the
+// config lock (ADR 0065 section 3), and returns the generated admin password
+// ("" when a config already existed and was left untouched).
+//
+// It generates a fresh per-install key. When the datastore already holds rows
+// under the published key (a config.yaml deleted by hand, an uninstall that
+// kept the datastore), those rows do not open under it; they are not touched,
+// and `dexaflow lite` reports them as Stranded and names
+// `dexaflow lite migrate-key`, which recovers them.
+func writeFirstLiteConfig(leoflowHome, parserCmd string, lc liteSettings) (string, error) {
+	if mkErr := os.MkdirAll(leoflowHome, 0o700); mkErr != nil {
+		return "", fmt.Errorf("creating %s: %w", leoflowHome, mkErr)
+	}
+	release, lerr := lockConfigDir(leoflowHome, configLockExclusive, false)
+	if lerr != nil {
+		return "", lerr
+	}
+	defer release()
+	if liteConfigExists(leoflowHome) {
+		return "", nil
+	}
+	pw, hash, herr := generateAdminCredential()
+	if herr != nil {
+		return "", herr
+	}
+	// Per-install JWT secret: a reinstall (which rewrites this file) invalidates
+	// every token the previous install minted, so the SPA stops silently
+	// accepting a stale browser token and the fresh login screen appears (#121).
+	jwtSecret, jerr := generateJWTSecret()
+	if jerr != nil {
+		return "", jerr
+	}
+	// Per-install connection-encryption key. Lite shipped a constant compiled
+	// into this repository, so every install shared it and a database file gave
+	// up every credential in it (#486).
+	key, kerr := generateSecretKey()
+	if kerr != nil {
+		return "", kerr
+	}
+	sec := liteFileSecrets{jwtSecret: jwtSecret, secretKey: key}
+	if wErr := writeLiteConfig(leoflowHome, parserCmd, lc, hash, sec); wErr != nil {
+		return "", fmt.Errorf("writing config: %w", wErr)
+	}
+	return pw, nil
 }
 
 // generateAdminCredential returns a humanized plaintext password and its bcrypt
@@ -348,27 +371,27 @@ func printSetupSummary(out io.Writer, lc liteSettings, generatedPassword string)
 		// unmissable. Stays readable on a non-TTY (palette empties to plain text).
 		const sep = "═══════════════════════════════════════════════════════════════"
 		_, _ = fmt.Fprintf(out, "\n  %s%s%s\n", p.bold, sep, p.reset)                                               //nolint:errcheck // best-effort terminal output
-		_, _ = fmt.Fprintf(out, "    %sLEOFLOW LITE ADMIN — SAVE NOW (shown only once)%s\n", p.bold, p.reset)       //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintf(out, "    %sDEXAFLOW LITE ADMIN — SAVE NOW (shown only once)%s\n", p.bold, p.reset)      //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "  %s%s%s\n\n", p.bold, sep, p.reset)                                               //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "    user:      %s\n", lc.AdminEmail)                                               //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "    password:  %s%s%s%s%s\n", p.bold, p.cyan, generatedPassword, p.reset, p.reset) //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "    open:      %shttp://localhost:%d%s\n\n", p.cyan, lc.Port, p.reset)             //nolint:errcheck // best-effort terminal output
-		_, _ = fmt.Fprintln(out, "    Forgot it? Run: leoflow lite reset-password")                                 //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintln(out, "    Forgot it? Run: dexaflow lite reset-password")                                //nolint:errcheck // best-effort terminal output
 		_, _ = fmt.Fprintf(out, "  %s%s%s\n", p.bold, sep, p.reset)                                                 //nolint:errcheck // best-effort terminal output
 	} else {
-		_, _ = fmt.Fprintln(out, "\n  admin already configured (~/.leoflow/config.yaml); reset with `leoflow lite reset-password`.") //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintln(out, "\n  admin already configured (~/.dexaflow/config.yaml); reset with `dexaflow lite reset-password`.") //nolint:errcheck // best-effort terminal output
 	}
 	_, _ = fmt.Fprintln(out, "\n  SECURITY: Lite uses a short, human-friendly password and is meant for local/")     //nolint:errcheck // best-effort terminal output
 	_, _ = fmt.Fprintln(out, "  trusted use only. Run it on an internal network or VPN — never expose it publicly.") //nolint:errcheck // best-effort terminal output
 	// AAA close: tell the dev exactly what to do next, with what it does.
 	_, _ = fmt.Fprintf(out, "\n  %s✓ You're all set!%s\n", p.green, p.reset) //nolint:errcheck // best-effort terminal output
-	devPrintf(out, "\n      Start Leoflow Lite:        %sleoflow lite%s\n"+
+	devPrintf(out, "\n      Start Dexaflow Lite:        %sdexaflow lite%s\n"+
 		"        (opens the UI, scaffolds a starter DAG in %s if empty, and hot-reloads on save)\n"+
-		"      Reach it from your network: %sleoflow lite --host 0.0.0.0%s\n",
+		"      Reach it from your network: %sdexaflow lite --host 0.0.0.0%s\n",
 		p.cyan, p.reset, lc.Workspace, p.cyan, p.reset)
 }
 
-// liteConfigExists reports whether ~/.leoflow/config.yaml is already present.
+// liteConfigExists reports whether ~/.dexaflow/config.yaml is already present.
 func liteConfigExists(leoflowHome string) bool {
 	_, err := os.Stat(filepath.Join(leoflowHome, "config.yaml"))
 	return err == nil
@@ -401,18 +424,18 @@ func loadManifestSettings(leoflowHome string, def liteSettings) liteSettings {
 	return out
 }
 
-// writeLiteConfig writes the Lite settings to ~/.leoflow/config.yaml (0600). Only
+// writeLiteConfig writes the Lite settings to ~/.dexaflow/config.yaml (0600). Only
 // the bcrypt hash of the admin password is stored — never the plaintext. The
 // per-install JWT secret rotates here (#121): a reinstall invalidates the prior
 // install's tokens, so the SPA stops auto-accepting a stale browser token.
-// writeLiteConfig rewrites ~/.leoflow/config.yaml.
+// writeLiteConfig rewrites ~/.dexaflow/config.yaml.
 //
 // The secrets travel as one struct because they must move together: every one
 // of them is the only copy of something, and a rewrite that carries two of the
 // three forward silently destroys the third.
 func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash string, sec liteFileSecrets) error {
 	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, "# Written by `leoflow setup` (Leoflow Lite).\n")
+	_, _ = fmt.Fprintf(&b, "# Written by `dexaflow setup` (Dexaflow Lite).\n")
 	_, _ = fmt.Fprintf(&b, "parser_cmd: %q\n", parserCmd)
 	_, _ = fmt.Fprintf(&b, "workspace: %q\n", lc.Workspace)
 	_, _ = fmt.Fprintf(&b, "lite_executor: %q\n", lc.Executor)
@@ -433,10 +456,10 @@ func writeLiteConfig(leoflowHome, parserCmd string, lc liteSettings, adminHash s
 }
 
 // generateSecretKey returns a fresh per-install connection-encryption key (32
-// random bytes, hex-encoded). Same shape and lifecycle as the JWT secret: a
-// reinstall rotates it, and the previous install's rows are re-encrypted rather
-// than orphaned because the old key travels to the server as a read-only
-// fallback (#486).
+// random bytes, hex-encoded), for `dexaflow setup` on a new install and for
+// `dexaflow lite migrate-key` on a Legacy one (#486, ADR 0065). Nothing
+// re-encrypts rows under it implicitly: rows under any other key stay as they
+// are until `dexaflow lite migrate-key` moves them.
 func generateSecretKey() (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -446,7 +469,7 @@ func generateSecretKey() (string, error) {
 }
 
 // generateJWTSecret returns a fresh per-install JWT signing secret (32 random
-// bytes, hex-encoded). Persisted under ~/.leoflow/config.yaml at setup so a
+// bytes, hex-encoded). Persisted under ~/.dexaflow/config.yaml at setup so a
 // reinstall rotates it and invalidates every token the previous install minted.
 func generateJWTSecret() (string, error) {
 	var b [32]byte
@@ -456,7 +479,7 @@ func generateJWTSecret() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// writeSetupManifest persists the provisioning manifest to ~/.leoflow/setup.json.
+// writeSetupManifest persists the provisioning manifest to ~/.dexaflow/setup.json.
 func writeSetupManifest(leoflowHome string, m setupManifest) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

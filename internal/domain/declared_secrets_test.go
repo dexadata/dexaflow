@@ -75,8 +75,8 @@ func TestDAGSpecDeclaredSecretsAbsentIsEmpty(t *testing.T) {
 	}
 }
 
-// leoflow.yaml may declare variables/connections per-DAG and per-task; the
-// author-facing config validates against the leoflow.yaml schema (the source
+// dexaflow.yaml may declare variables/connections per-DAG and per-task; the
+// author-facing config validates against the dexaflow.yaml schema (the source
 // keys the compiler carries into dag.json).
 func TestLeoflowConfigValidateAcceptsDeclaredSecrets(t *testing.T) {
 	cfg := validLeoflowConfig()

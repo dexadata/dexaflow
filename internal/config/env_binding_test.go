@@ -32,11 +32,15 @@ func bindableEnvVars() map[string]struct{} {
 // credential) are not treated as server settings.
 func docEnvVarsFromReference(t *testing.T) []string {
 	t.Helper()
-	envRe := regexp.MustCompile(`LEOFLOW_[A-Z0-9_]+`)
+	// The reference names variables by their current DEXAFLOW_ spelling; the
+	// LEOFLOW_ spelling binds to the same key (bindBothPrefixes). Both are
+	// normalized to the legacy form bindableEnvVars uses.
+	envRe := regexp.MustCompile(`(?:DEXAFLOW|LEOFLOW)_[A-Z0-9_]+`)
 	seen := map[string]struct{}{}
 	var vars []string
 	for _, firstCol := range docSettingFirstColumns(t) {
 		for _, v := range envRe.FindAllString(firstCol, -1) {
+			v = "LEOFLOW_" + strings.TrimPrefix(strings.TrimPrefix(v, "DEXAFLOW_"), "LEOFLOW_")
 			if _, dup := seen[v]; dup {
 				continue
 			}
@@ -45,7 +49,7 @@ func docEnvVarsFromReference(t *testing.T) []string {
 		}
 	}
 	if len(vars) == 0 {
-		t.Fatal("no LEOFLOW_* variables parsed from the configuration reference")
+		t.Fatal("no DEXAFLOW_* variables parsed from the configuration reference")
 	}
 	return vars
 }
@@ -205,8 +209,12 @@ func TestRegisteredKeysAreDocumented(t *testing.T) {
 		}
 	}
 	for key := range serverDefaults {
-		env := "LEOFLOW_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+		suffix := strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+		env := "DEXAFLOW_" + suffix
 		if _, ok := documented[env]; ok {
+			continue
+		}
+		if _, ok := documented["LEOFLOW_"+suffix]; ok {
 			continue
 		}
 		if _, ok := documented[key]; ok {
@@ -215,5 +223,67 @@ func TestRegisteredKeysAreDocumented(t *testing.T) {
 		t.Errorf("%s (%s) is registered in serverDefaults but is named in no "+
 			"settings table in website/content/reference/configuration.md, so "+
 			"an operator has no documented way to reach it", key, env)
+	}
+}
+
+// The loaders read DEXAFLOW_* themselves, not only when a binary mirrored the
+// environment first: any caller of LoadServer or Load gets the documented names.
+func TestLoadServerReadsTheNewPrefix(t *testing.T) {
+	t.Setenv("DEXAFLOW_SERVER_TRUSTED_PROXIES", "10.1.0.0/16")
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if len(c.Server.TrustedProxies) != 1 || c.Server.TrustedProxies[0] != "10.1.0.0/16" {
+		t.Fatalf("TrustedProxies = %#v, want [10.1.0.0/16]", c.Server.TrustedProxies)
+	}
+}
+
+// When both spellings are set, the current one wins, through the loader too.
+func TestLoadServerNewPrefixWinsOverLegacy(t *testing.T) {
+	t.Setenv("LEOFLOW_SERVER_TRUSTED_PROXIES", "192.168.0.0/16")
+	t.Setenv("DEXAFLOW_SERVER_TRUSTED_PROXIES", "10.2.0.0/16")
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if len(c.Server.TrustedProxies) != 1 || c.Server.TrustedProxies[0] != "10.2.0.0/16" {
+		t.Fatalf("TrustedProxies = %#v, want the DEXAFLOW_ value", c.Server.TrustedProxies)
+	}
+}
+
+// The CLI loader (Load) honors the new prefix too.
+func TestLoadReadsTheNewPrefix(t *testing.T) {
+	t.Setenv("DEXAFLOW_TOKEN", "tok-new")
+	c, err := Load("", nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.Token != "tok-new" {
+		t.Fatalf("Token = %q, want tok-new", c.Token)
+	}
+}
+
+// TestLoadServerPoolsReadOnly proves server.pools_read_only defaults to false,
+// so an upgrade changes nothing, and binds from the environment, the only
+// override path a Helm install has. Consequence when unbound: an operator who
+// turned the lock on to protect the slot budgets of a shared engine would see it
+// silently ignored, and every tenant's admin could still resize its pools.
+func TestLoadServerPoolsReadOnly(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if c.Server.PoolsReadOnly {
+		t.Fatal("server.pools_read_only must default to false")
+	}
+
+	t.Setenv("DEXAFLOW_SERVER_POOLS_READ_ONLY", "true")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if !c.Server.PoolsReadOnly {
+		t.Fatal("DEXAFLOW_SERVER_POOLS_READ_ONLY=true did not bind server.pools_read_only")
 	}
 }

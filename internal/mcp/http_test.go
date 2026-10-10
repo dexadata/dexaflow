@@ -8,7 +8,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // authRoundTripper stamps every outbound request with a bearer token — the job
@@ -51,7 +51,7 @@ func TestHTTPTransportPassesTokenThrough(t *testing.T) {
 	}
 	srv := NewServer(base, cp.URL, "test", true) // http transport: per-request bearer
 
-	// The MCP server, served over Streamable HTTP exactly as cmd/leoflow-mcp does.
+	// The MCP server, served over Streamable HTTP exactly as cmd/dexaflow-mcp does.
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return srv },
 		&mcpsdk.StreamableHTTPOptions{Stateless: true},

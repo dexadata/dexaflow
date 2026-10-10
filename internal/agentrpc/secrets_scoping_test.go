@@ -3,7 +3,7 @@ package agentrpc
 import (
 	"testing"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // TestSecretScopingDefaultIsPermissiveWholeVault is the SAFE-default contract: a

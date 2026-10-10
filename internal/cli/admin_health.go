@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // healthyStatus is the component status string the control plane reports for a
@@ -30,7 +30,7 @@ type adminHealthReport struct {
 	healthy    bool
 }
 
-// newAdminHealthCommand builds `leoflow admin health`: a post-deploy smoke test
+// newAdminHealthCommand builds `dexaflow admin health`: a post-deploy smoke test
 // that prints component health, executor capability, and version, and exits
 // non-zero when the control plane is unhealthy.
 func newAdminHealthCommand() *cobra.Command {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 func stubsServer() *gin.Engine {

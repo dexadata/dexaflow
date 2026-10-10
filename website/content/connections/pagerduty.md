@@ -9,14 +9,14 @@ weight: 360
 description: PagerDuty connection
 ---
 
-Trigger PagerDuty incidents and alerts from a task over a managed Leoflow
+Trigger PagerDuty incidents and alerts from a task over a managed Dexaflow
 Connection. `PagerdutyHook` uses a REST API token for the REST API and an
 Events-API routing key (integration key) for Events v2 alerts.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: pagerduty_alert
 connectors:
   - pagerduty
@@ -58,7 +58,7 @@ def trigger():
     hook.create_event(
         summary="DAG failed",
         severity="critical",
-        source="leoflow",
+        source="dexaflow",
     )
 
 
@@ -67,7 +67,7 @@ with DAG("pagerduty_alert", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: pagerduty_alert
 python_version: "3.12"

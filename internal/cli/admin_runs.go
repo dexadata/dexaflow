@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // adminRun is a flattened DAG run, carrying its owning DAG id so runs collected
@@ -32,7 +32,7 @@ func newAdminRunsCommand() *cobra.Command {
 	return cmd
 }
 
-// newAdminRunsListCommand builds `leoflow admin runs list`: list runs, optionally
+// newAdminRunsListCommand builds `dexaflow admin runs list`: list runs, optionally
 // narrowed by state (server-side), by DAG, and by age — the "what is stuck?"
 // query. Because runs are exposed per DAG, an unfiltered listing walks every
 // registered DAG.

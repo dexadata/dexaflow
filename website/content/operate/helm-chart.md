@@ -6,7 +6,7 @@ aliases:
 title: Helm chart
 linkTitle: Helm chart
 weight: 30
-description: Install and configure the Leoflow Pro control plane on Kubernetes with the official Helm chart.
+description: Install and configure the Dexaflow Pro control plane on Kubernetes with the official Helm chart.
 ---
 
 The **Pro** control plane installs on Kubernetes via the official Helm chart. The
@@ -16,12 +16,12 @@ with cosign. It runs on any cluster with an external Postgres + Redis.
 ## Install from the published OCI chart
 
 Every release tag publishes the chart as a **cosign-signed OCI artifact** to
-`oci://ghcr.io/neochaotic/charts/leoflow` ([ADR 0028](/project/adrs/0028-release-versioning-two-editions/)),
+`oci://ghcr.io/dexadata/charts/dexaflow` ([ADR 0028](/project/adrs/0028-release-versioning-two-editions/)),
 co-versioned with the release tag — so you can install a pinned version without
 cloning the repo:
 
 ```bash
-helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <x.y.z> \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -n leoflow --create-namespace \
   -f values.yaml
 ```
@@ -29,16 +29,16 @@ helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <x.y.z> \
 Pass the release tag **without** the leading `v` (tag `v0.4.0` → `--version 0.4.0`):
 the chart `version`/`appVersion` move in lockstep with the tag, so this also pins
 the control-plane image. Installing from a source checkout
-(`helm install ./helm/leoflow`) is still supported for unreleased branches — see
-the [chart README](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/README.md#quick-start)
+(`helm install ./helm/dexaflow`) is still supported for unreleased branches — see
+the [chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#quick-start)
 for both paths and the full values surface.
 
 {{% alert title="Reference lives with the chart" color="info" %}}
 This operator-journey page is the entry point; the exhaustive values reference is
 maintained **alongside the chart source** so it never drifts from `values.yaml`:
 
-**[→ Helm chart README](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/README.md)**
-(including the [datastore compatibility matrix](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/README.md#datastore-compatibility)).
+**[→ Helm chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md)**
+(including the [datastore compatibility matrix](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)).
 
 A first-class values reference on this site is a TODO for a later migration phase.
 {{% /alert %}}
@@ -153,7 +153,7 @@ three failures — rather than Kubernetes' 1s/3.
 One of those values has a floor the chart enforces:
 
 ```console
-$ helm upgrade --install leoflow oci://ghcr.io/neochaotic/charts/leoflow \
+$ helm upgrade --install dexaflow oci://ghcr.io/dexadata/charts/dexaflow \
     --set probes.readiness.timeoutSeconds=1
 Error: probes.readiness.timeoutSeconds=1 is below the 3s floor. [...]
 ```
@@ -182,6 +182,31 @@ probes:
 The readiness check runs on its own dedicated database connection, separate from
 the pool serving API traffic, so a saturated control plane does not make every
 replica report itself unready at the same moment.
+
+## Memory limit for the Go runtime
+
+The Go runtime does not read the container memory limit on its own. Without a
+soft limit the garbage collector paces only on heap growth, so a burst can push
+the control plane past `resources.limits.memory` and get it OOM-killed before a
+collection runs. Set `goMemLimit.enabled` and the chart renders `GOMEMLIMIT` as
+a share of that limit, so the collector works harder near the ceiling instead:
+
+```yaml
+resources:
+  limits:
+    memory: 512Mi
+goMemLimit:
+  enabled: true
+  percent: 80   # GOMEMLIMIT=409MiB
+```
+
+It is off by default, so the rendered environment is unchanged until you turn it
+on, and it applies to both Deployments in split mode. The value is computed in
+whole MiB from any Kubernetes byte quantity (`512Mi`, `1.5Gi`, `1e9`). The render
+fails on quantities that are not bytes, such as the `m` suffix; for those leave
+the switch off and set `GOMEMLIMIT` through `extraEnv`. The remaining share is
+headroom for memory the container is charged for but the Go runtime does not
+track, such as cgo allocations and page cache.
 
 ## Related
 

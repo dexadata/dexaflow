@@ -225,7 +225,7 @@ func (c *checker) checkCorrectness(s sample, add addFunc) {
 	}
 	if !math.IsNaN(float64(s.Undispatchable)) && s.Undispatchable > 0 {
 		add("undispatchable_task",
-			fmt.Sprintf("leoflow_tasks_undispatchable_total = %.0f; a task was queued with no executor able to launch it", float64(s.Undispatchable)),
+			fmt.Sprintf("dexaflow_tasks_undispatchable_total = %.0f; a task was queued with no executor able to launch it", float64(s.Undispatchable)),
 			float64(s.Undispatchable), 0)
 	}
 }

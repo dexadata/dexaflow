@@ -102,6 +102,10 @@ type WarmPodClient interface {
 	DeleteWarmPod(ctx context.Context, name string) error
 	EnsureWarmAnchor(ctx context.Context, dagVersionID string) (uid string, err error)
 	DeleteWarmAnchor(ctx context.Context, dagVersionID string) error
+	// ListWarmAnchors returns the dag_version of every GC anchor in the
+	// namespace, so the reconciler can delete the anchor of an inactive version
+	// that never had a pod (every create refused), which the drain never visits.
+	ListWarmAnchors(ctx context.Context) ([]string, error)
 }
 
 // WarmPoolReconciler maintains the IDLE warm-worker buffer per active dag_version
@@ -249,7 +253,35 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 			r.deleteWarmAnchor(ctx, dagVersionID)
 		}
 	}
+	r.sweepOrphanAnchors(ctx, active, byVersion)
 	return nil
+}
+
+// sweepOrphanAnchors deletes the GC anchor of every dag_version that is neither
+// active nor present in the warm pod list (#1500). ensureAnchorAndCreate creates
+// the anchor before the pods, so a version whose creates were all refused (an
+// admission policy on the task namespace, say) has an anchor and no pod; the
+// drain above only visits versions with pods and would never delete it. No pod
+// references such an anchor, so the cascade is a no-op, exactly as for a version
+// drained to zero. A version that still has a pod is left to the drain and its
+// footgun guard. If the anchors cannot be listed, it takes no action this tick
+// (do-no-harm) and the next tick retries.
+func (r *WarmPoolReconciler) sweepOrphanAnchors(ctx context.Context, active map[string]bool, byVersion map[string][]WarmPodInfo) {
+	anchors, err := r.pods.ListWarmAnchors(ctx)
+	if err != nil {
+		r.logger.ErrorContext(ctx, "listing warm anchors failed; skipping the orphan anchor sweep this tick", "error", err)
+		r.record("warm_pool_anchor_list_error")
+		return
+	}
+	for _, dagVersionID := range anchors {
+		if dagVersionID == "" || active[dagVersionID] {
+			continue
+		}
+		if _, hasPods := byVersion[dagVersionID]; hasPods {
+			continue
+		}
+		r.deleteWarmAnchor(ctx, dagVersionID)
+	}
 }
 
 // unlimitedAllowance is the sentinel create allowance meaning "no per-tenant cap

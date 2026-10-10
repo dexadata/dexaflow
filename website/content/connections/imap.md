@@ -9,14 +9,14 @@ weight: 240
 description: IMAP connection
 ---
 
-Connect a task to an IMAP mailbox over a managed Leoflow Connection — to poll
+Connect a task to an IMAP mailbox over a managed Dexaflow Connection — to poll
 for incoming files or messages. The host, port, and credentials are encrypted
 at rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: imap_poll
 connectors:
   - imap
@@ -65,7 +65,7 @@ with DAG("imap_poll", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: imap_poll
 python_version: "3.11"

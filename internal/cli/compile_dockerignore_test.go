@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 func writeCtx(t *testing.T, files map[string]string) string {
@@ -90,7 +90,7 @@ func TestUserDockerignoreIsMergedNotReplaced(t *testing.T) {
 	if !strings.Contains(got, ".git") {
 		t.Errorf("our excludes were not added:\n%s", got)
 	}
-	// Ours last: later rules win in .dockerignore, and leoflow.yaml is the
+	// Ours last: later rules win in .dockerignore, and dexaflow.yaml is the
 	// authoritative statement of what may leave in the image.
 	if strings.Index(got, "big.bin") > strings.Index(got, ".git") {
 		t.Errorf("our block precedes the author's, so a stray !rule could defeat exclude_paths:\n%s", got)
@@ -141,7 +141,7 @@ func TestDbtArtifactsAreScopedToTheirProject(t *testing.T) {
 //   - `dbt_packages/` is where `dbt deps` installs; resolving on the build host
 //     and baking the result is reasonable and reproducible.
 //   - `profiles.yml` is the BYO-profiles pattern — ship your own, point
-//     DBT_PROFILES_DIR at it. The runtime generates one from a Leoflow
+//     DBT_PROFILES_DIR at it. The runtime generates one from a Dexaflow
 //     connection when it HAS one; the e2e has none.
 //
 // The claim that justified excluding profiles.yml ("the runtime always
@@ -258,7 +258,7 @@ func TestNoWarningWhenNothingCopiesIt(t *testing.T) {
 
 // TestAuthorsOwnExclusionSilencesTheWarning. Someone who excluded .env in their
 // .dockerignore — the docker-native, obvious place — must not be told to go and
-// duplicate it in leoflow.yaml.
+// duplicate it in dexaflow.yaml.
 func TestAuthorsOwnExclusionSilencesTheWarning(t *testing.T) {
 	dir := writeCtx(t, map[string]string{
 		".env": "PASSWORD=hunter2", "dag.py": "x", ".dockerignore": ".env\n",
@@ -329,7 +329,7 @@ func TestOurBlockBeatsAnEarlierNegation(t *testing.T) {
 // back naively, our leftover block looks like the author's own file, and the
 // next successful build "restores" it permanently: a stale, self-perpetuating,
 // git-committable artifact headed "removed after the build" that no longer
-// tracks leoflow.yaml.
+// tracks dexaflow.yaml.
 func TestInterruptedBlockIsStrippedNotAdopted(t *testing.T) {
 	dir := writeCtx(t, map[string]string{"dag.py": "x", ".dockerignore": "big.bin\n"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}

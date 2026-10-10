@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/logs"
-	"github.com/neochaotic/leoflow/internal/xcom"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/xcom"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -75,7 +75,7 @@ func (s *fakeStore) RecordHeartbeat(_ context.Context, id auth.AgentIdentity) er
 	return s.heartbeatErr
 }
 
-func (s *fakeStore) BindWarmAttempt(_ context.Context, runID, taskID string, tryNumber int, workerPod string) error {
+func (s *fakeStore) BindWarmAttempt(_ context.Context, runID, taskID string, tryNumber, _ int, workerPod string) error {
 	s.warmMu.Lock()
 	s.warmBindings = append(s.warmBindings, warmBindingCall{runID, taskID, tryNumber, workerPod})
 	s.warmMu.Unlock()
@@ -114,7 +114,7 @@ func ctxWithToken(t *testing.T, a *auth.JWTAuthenticator) context.Context {
 // It reuses "ti-1" as the worker id so the warm-pool tests' registry assertions
 // (reg.registered("ti-1")) read the authenticated identity.
 func warmTokenIdentity() auth.AgentIdentity {
-	return auth.AgentIdentity{Scope: auth.ScopeWarmWorker, WorkerID: "ti-1", DagVersionID: "v1", TenantID: "acme"}
+	return auth.AgentIdentity{Scope: auth.ScopeWarmWorker, WorkerID: "ti-1", DagVersionID: "dagver-1", TenantID: "acme"}
 }
 
 // ctxWithWarmToken builds an incoming context carrying a freshly minted

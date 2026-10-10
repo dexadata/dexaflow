@@ -9,7 +9,7 @@ weight: 300
 description: Microsoft Graph connection
 ---
 
-Call the Microsoft Graph API from a task via a managed Leoflow Connection and the Azure
+Call the Microsoft Graph API from a task via a managed Dexaflow Connection and the Azure
 provider's `KiotaRequestAdapterHook`. The conn_type is `msgraph`. A connection carries
 the **client id** (login), the **client secret** (password), and the **tenant id** /
 **api_version** in Extra.
@@ -17,7 +17,7 @@ the **client id** (login), the **client secret** (password), and the **tenant id
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: msgraph_users
 connectors:
   - msgraph
@@ -63,7 +63,7 @@ with DAG("msgraph_users", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: msgraph_users
 description: Call Microsoft Graph via KiotaRequestAdapterHook.
@@ -79,7 +79,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `msgraph`. Set the client id in Login, the client
    secret in Password, and the tenant id / api_version in Extra.
-2. `leoflow lite path/to/this/dag` → trigger `msgraph_users`.
+2. `dexaflow lite path/to/this/dag` → trigger `msgraph_users`.
 
 ## Security notes
 

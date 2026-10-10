@@ -21,12 +21,12 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/logs"
-	"github.com/neochaotic/leoflow/internal/xcom"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/xcom"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // The task pod is a trust boundary: it runs the tenant's own image and
@@ -126,7 +126,7 @@ func (s *poisonStore) RecordHeartbeat(context.Context, auth.AgentIdentity) error
 	return s.heartbeatErr
 }
 
-func (s *poisonStore) BindWarmAttempt(context.Context, string, string, int, string) error {
+func (s *poisonStore) BindWarmAttempt(context.Context, string, string, int, int, string) error {
 	return s.bindErr
 }
 

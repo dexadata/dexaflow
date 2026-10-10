@@ -27,14 +27,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/neochaotic/leoflow/internal/agent"
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/secrets"
-	"github.com/neochaotic/leoflow/internal/storage"
-	"github.com/neochaotic/leoflow/internal/xcom"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent"
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/xcom"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // noXCom is a no-op XComService for the secret round-trip.
@@ -225,7 +225,7 @@ func TestSecretRoundTripObserveDoesNotDenyNotLive(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "declares", domain.TaskStateSuccess); err != nil {
 		t.Fatalf("ApplyTransition to success: %v", err)
 	}
-	if live, err := exec.IsTaskInstanceLive(ctx, runUUID, "declares", 1); err != nil || live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "declares", TryNumber: 1}); err != nil || live {
 		t.Fatalf("precondition: declares must be not-live, got live=%v err=%v", live, err)
 	}
 

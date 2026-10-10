@@ -1,0 +1,12 @@
+-- Drop idx_ti_run (performance item D3). Its one column, dag_run_id, is the
+-- leading column of the task_instances_unique constraint
+-- (dag_run_id, task_id, map_index, try_number), which serves every lookup by
+-- dag_run_id, including the ON DELETE CASCADE from dag_runs. Keeping both made
+-- every task instance insert and non-HOT update maintain one more index.
+--
+-- CONCURRENTLY so the drop does not block reads and writes on task_instances.
+-- It cannot run inside a transaction, so this file holds this one statement
+-- and no BEGIN/COMMIT. If it is interrupted, version 28 is left dirty and the
+-- index may be left INVALID: re-run the statement by hand, then
+-- `migrate force 28`.
+DROP INDEX CONCURRENTLY IF EXISTS idx_ti_run;

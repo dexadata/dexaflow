@@ -13,7 +13,7 @@ the fifth conn_type).
 3. The agent fetches the URI via gRPC and exports it as
    `AIRFLOW_CONN_REDIS_TARGET`.
 4. The user task `load()` reads the env var, opens `redis.Redis.from_url`,
-   and writes 20 hash fields under `leoflow:example_load`.
+   and writes 20 hash fields under `dexaflow:example_load`.
 5. You verify the keys exist with `redis-cli`.
 
 Without a Connection, `load()` falls back to a hardcoded local URI so the
@@ -24,7 +24,7 @@ example also runs in a quick demo on a developer machine.
 ### 1. Spin up a target Redis
 
 ```sh
-docker run --rm -d --name leoflow-redis \
+docker run --rm -d --name dexaflow-redis \
   -p 56379:6379 \
   redis:7
 ```
@@ -51,7 +51,7 @@ Save. The UI never shows the password again — it is encrypted at rest.
 ### 3. Trigger the DAG
 
 ```sh
-leoflow lite path/to/this/example
+dexaflow lite path/to/this/example
 ```
 
 In the UI: open `redis_load` → **Trigger DAG**.
@@ -59,8 +59,8 @@ In the UI: open `redis_load` → **Trigger DAG**.
 ### 4. Verify
 
 ```sh
-docker exec leoflow-redis redis-cli HGETALL leoflow:example_load | head
-docker exec leoflow-redis redis-cli HLEN leoflow:example_load
+docker exec dexaflow-redis redis-cli HGETALL dexaflow:example_load | head
+docker exec dexaflow-redis redis-cli HLEN dexaflow:example_load
 ```
 
 Expected: 20 fields. `HGETALL` shows `cat_0`..`cat_19` keys with the computed
@@ -90,7 +90,7 @@ banner if the env var is missing).
 - **AIRFLOW_CONN_REDIS_TARGET not set** → the DAG falls back to the hardcoded
   URI. If that URI does not match your target, the connect fails. The log
   line tells you which path was taken.
-- **WRONGTYPE / wrong db index** — if you reuse `leoflow:example_load` for a
+- **WRONGTYPE / wrong db index** — if you reuse `dexaflow:example_load` for a
   string key in db 0, the `HSET` errors with `WRONGTYPE`. The DAG deletes
   the key first to avoid this.
 - **Password with reserved characters** (`@`, `:`, `/`, `?`, `#`) — handled

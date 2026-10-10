@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // healthServer serves the three monitor endpoints health reads, with the
@@ -77,7 +77,7 @@ func TestFetchAdminHealthNon200IsError(t *testing.T) {
 }
 
 // TestAdminHealthCommandExitsNonZero pins the post-deploy smoke-test contract:
-// an unhealthy control plane makes `leoflow admin health` return an error (a
+// an unhealthy control plane makes `dexaflow admin health` return an error (a
 // non-zero process exit) while still printing the compact report.
 func TestAdminHealthCommandExitsNonZero(t *testing.T) {
 	srv := healthServer(t, "unhealthy")

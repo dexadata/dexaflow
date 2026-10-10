@@ -1,10 +1,10 @@
-# Contributing to Leoflow
+# Contributing to Dexaflow
 
-Thank you for your interest in contributing to Leoflow! This document explains how to get involved.
+Thank you for your interest in contributing to Dexaflow! This document explains how to get involved.
 
 ## Before You Start
 
-1. Read [`README.md`](README.md) to understand what Leoflow is.
+1. Read [`README.md`](README.md) to understand what Dexaflow is.
 2. Read the [Architecture Decision Records](website/content/project/adrs/) under `website/content/project/adrs/`. These document non-negotiable design choices. Contributions that contradict an ADR will be rejected unless the ADR is first amended via a separate PR.
 3. Read [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
@@ -12,7 +12,7 @@ Thank you for your interest in contributing to Leoflow! This document explains h
 
 ### Reporting Bugs
 
-1. Search [existing issues](https://github.com/neochaotic/leoflow/issues) to confirm the bug has not been reported.
+1. Search [existing issues](https://github.com/dexadata/dexaflow/issues) to confirm the bug has not been reported.
 2. If not, open a new issue using the **Bug Report** template.
 3. Include reproduction steps, expected behavior, actual behavior, and environment details (OS, Go version, K8s version if applicable).
 
@@ -32,7 +32,7 @@ Open an issue or comment on an existing one before starting work on anything bey
 
 #### 2. Follow the Engineering Standards
 
-Leoflow has strict engineering standards documented in the ADRs:
+Dexaflow has strict engineering standards documented in the ADRs:
 
 - **[ADR 0011 — TDD Strict](website/content/project/adrs/0011-tdd-strict.md):** every production change is preceded by a failing test. Two-commit pattern preferred (`test:` followed by `feat:`).
 - **[ADR 0012 — Code Quality Standards](website/content/project/adrs/0012-code-quality-standards.md):** Go Report Card A+ as floor. GoDocs mandatory on every exported identifier. Cyclomatic complexity ≤ 15.
@@ -86,6 +86,20 @@ If the PR has no user-facing change at all (release prep, a chore, a
 dependency bump, a docs-only edit), apply the **`skip-changelog`** label to the
 PR instead. Dependabot is exempt automatically.
 
+The **docs guard** works the same way for the docs site. A PR that changes a
+chart value, the authoring schema, a CLI command, a server setting, a
+migration, the OpenAPI document, or adds a changelog fragment of kind Added,
+Changed, Deprecated or Removed updates `website/content/` in the same PR. When
+nothing in it is user-discoverable, apply the **`skip-docs`** label and add a
+line with the reason to the PR description:
+
+```
+Skip-docs: internal refactor, no setting or behaviour an operator can see
+```
+
+The label alone fails the guard. The release cut reads the reason back
+(`scripts/docs-gap.sh`), so write it for the person cutting the release.
+
 #### 5. Pull Request Process
 
 1. Fork the repository and create your branch.
@@ -110,12 +124,31 @@ Changes to the following areas require extra review and are not accepted from fi
 
 If you have a contribution in these areas, please open a discussion issue first.
 
+### Writing a Migration
+
+Migrations live in `migrations/` as `NNN_name.up.sql` and `NNN_name.down.sql`,
+numbered one past the highest file on `main`. They are embedded in the binary
+and applied by golang-migrate on start and by the chart's pre-upgrade Job.
+
+- **Every up has a down.** When a change cannot be undone (a data fix, an enum
+  value), the down file is a comment that says why it is a no-op, and the up
+  must be safe to apply again.
+- **Built-in roles change in every tenant.** A tenant created through the
+  service API copies the built-in roles and their grants from `default` once,
+  when it is created. A migration that adds, changes or revokes a built-in role
+  or one of its grants must therefore apply to every tenant's built-in roles
+  (join on `roles.is_system` across all tenants), never filter on
+  `t.name = 'default'`, and must not touch custom roles (`is_system = false`)
+  or `user_roles`. `migrations/tenant_roles_test.go` fails an up migration that
+  writes `roles` or `role_permissions` and names the default tenant
+  (#1305).
+
 ## Development Environment
 
 ```bash
 # Clone the repo
-git clone https://github.com/neochaotic/leoflow.git
-cd leoflow
+git clone https://github.com/dexadata/dexaflow.git
+cd dexaflow
 ```
 
 ### See it run first (one command)
@@ -129,16 +162,15 @@ docker compose --profile demo up --build
 ### Set up for development
 
 ```bash
-# Optional, for Claude Code users (the file is gitignored):
-cp .github/CLAUDE.md.template ./CLAUDE.md
+# Read AGENTS.md first: the standing rules for PRs, releases and CI.
 
 make setup        # Go tools, Python parser/runtime, pre-commit hook
-make build        # build bin/leoflow, bin/leoflow-server, bin/leoflow-agent
+make build        # build bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent (plus leoflow* links)
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the quality gates you must pass before pushing
 ```
 
-For an end-to-end author→run loop without Kubernetes, use `leoflow dev`
+For an end-to-end author→run loop without Kubernetes, use `dexaflow lite`
 (see [Editions & operating modes](website/content/concepts/editions.md)).
 
 ## Project Layout
@@ -157,6 +189,6 @@ By contributing, you agree that your contributions will be licensed under the [A
 
 ## Recognition
 
-All contributors are shown on the repository's [contributors page](https://github.com/neochaotic/leoflow/graphs/contributors). Significant contributions are also highlighted in release notes.
+All contributors are shown on the repository's [contributors page](https://github.com/dexadata/dexaflow/graphs/contributors). Significant contributions are also highlighted in release notes.
 
-Thank you for helping make Leoflow better!
+Thank you for helping make Dexaflow better!

@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// `leoflow uninstall` keeps the datastore and says so: "a reinstall keeps your
+// `dexaflow uninstall` keeps the datastore and says so: "a reinstall keeps your
 // data". That was free while the encryption key was a constant compiled into
 // the binary, because it came back with the reinstall. With a per-install key
 // (#486) the key lives only in config.yaml, which uninstall deletes, so the

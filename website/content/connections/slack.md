@@ -9,7 +9,7 @@ weight: 450
 description: Slack connection
 ---
 
-Send messages / alerts to Slack from a task via a managed Leoflow Connection.
+Send messages / alerts to Slack from a task via a managed Dexaflow Connection.
 Two conn types ship: `slack` (Slack **API**, a bot token) and `slackwebhook` (an
 **Incoming Webhook** URL). Use `slack` for rich API calls, `slackwebhook` for a
 fire-and-forget message to one channel.
@@ -17,7 +17,7 @@ fire-and-forget message to one channel.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: slack_alert
 connectors:
   - slack
@@ -60,7 +60,7 @@ def notify() -> None:
     print("notify: posting message via SlackHook(slack_default)")
     hook.call(
         "chat.postMessage",
-        json={"channel": "#data-alerts", "text": "Leoflow run finished ✅"},
+        json={"channel": "#data-alerts", "text": "Dexaflow run finished ✅"},
     )
 
 
@@ -69,7 +69,7 @@ with DAG("slack_alert", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: slack_alert
 description: Post a message to Slack via SlackHook.
@@ -86,7 +86,7 @@ connectors:
 1. Create a Slack app with a bot token (`chat:write` scope), invite the bot to the
    channel.
 2. **Admin → Connections → +**, type `slack`, paste the token in Password.
-3. `leoflow lite path/to/this/dag` → trigger `slack_alert` → check the channel.
+3. `dexaflow lite path/to/this/dag` → trigger `slack_alert` → check the channel.
 
 ## Security notes
 

@@ -1,6 +1,6 @@
-"""Leoflow DAG parser.
+"""Dexaflow DAG parser.
 
-Compiles an Airflow DAG (Python source) into the canonical Leoflow dag.json,
+Compiles an Airflow DAG (Python source) into the canonical Dexaflow dag.json,
 without executing user task code.
 
 The parser has no third-party runtime dependencies (ADR 0024): the Airflow

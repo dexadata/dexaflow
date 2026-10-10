@@ -12,7 +12,7 @@ description: Fan-out plus reduce as a Python list comprehension — native map-r
 > One pattern, every parallel workflow: a fan-out of independent tasks that
 > a single downstream task **reduces** into a result. Hyperparameter search,
 > k-fold cross-validation, batch inference, ETL shard aggregation —
-> Leoflow expresses them all in two lines of Python.
+> Dexaflow expresses them all in two lines of Python.
 
 ## The pattern
 
@@ -37,13 +37,13 @@ no special operator.** Just a list comprehension and a function that takes a lis
 
 At runtime:
 
-1. Leoflow fans out — every `trial(lr=…)` is a separate task instance running
+1. Dexaflow fans out — every `trial(lr=…)` is a separate task instance running
    in parallel (its own pod on Pro; its own subprocess on Lite).
-2. Each map task returns its result; Leoflow stores it as XCom keyed by
+2. Each map task returns its result; Dexaflow stores it as XCom keyed by
    `(dag_id, run_id, task_id, return_value)`.
-3. When all upstreams finish, Leoflow dispatches `select_best`. The agent
+3. When all upstreams finish, Dexaflow dispatches `select_best`. The agent
    fetches every upstream's XCom, assembles them into a JSON array (in
-   declaration order), and stamps it as `LEOFLOW_XCOM_TRIALS`.
+   declaration order), and stamps it as `DEXAFLOW_XCOM_TRIALS`.
 4. The runtime delivers the list directly to your function.
 
 ## When fan-in activates
@@ -70,7 +70,7 @@ What does **not** activate fan-in:
 | Code | What happens |
 |---|---|
 | `transform(extract())` | Single upstream. The parser captures one task_id (a 1-element list internally) — the function's parameter receives the value directly, not a list. |
-| `shard(n=0)` | Literal kwarg. Captured as `call_args.n = 0` and delivered via `LEOFLOW_CALL_ARGS_JSON`. No XCom, no upstream. |
+| `shard(n=0)` | Literal kwarg. Captured as `call_args.n = 0` and delivered via `DEXAFLOW_CALL_ARGS_JSON`. No XCom, no upstream. |
 | `start >> [a, b, c]` | Dependency edge only. No argument binding — downstream gets no list. |
 | `f(items=[1, 2, 3])` | Plain literal list. JSON-serialised into `call_args.items`, not fan-in. |
 | `aggregate([shard(0), 42, foo()])` | Mixed list (XComArg + literal). Currently silently dropped; intended to become a hard error. |
@@ -108,7 +108,7 @@ treat the whole argument as fan-in.
 ## Why this matters for ML
 
 Most ML workloads are map-reduce: independent work per shard, then one
-aggregator. Leoflow's contract makes this cheap and durable:
+aggregator. Dexaflow's contract makes this cheap and durable:
 
 | ML pattern | Map | Reduce |
 |---|---|---|
@@ -119,7 +119,7 @@ aggregator. Leoflow's contract makes this cheap and durable:
 | Batch inference | one task per partition | collect predictions to a sink |
 | Monte-Carlo simulation | one task per worker | average / sum results |
 
-The Leoflow runtime is **container-native** (pod-per-task on Pro, subprocess-per-task
+The Dexaflow runtime is **container-native** (pod-per-task on Pro, subprocess-per-task
 on Lite), so every map task gets a clean process with its own memory, deps, and
 GPU slice when you ask for one. No shared interpreter, no GIL contention, no
 "why did training 7 leak memory into training 9."
@@ -181,7 +181,7 @@ top. It uses a toy quadratic instead of a real model so it runs in
 milliseconds:
 
 ```bash
-leoflow lite                              # boot Lite
+dexaflow lite                              # boot Lite
 # UI → DAGs → ml_hparam_search → Play
 ```
 
@@ -196,7 +196,7 @@ return value.
   pressure, GPU slots). Set it on the DAG.
 - **`retries`** + **`retry_delay_seconds`** make each map task survive
   transient infrastructure flakes.
-- **Per-task `resources`** in `leoflow.yaml` give each trial its own CPU /
+- **Per-task `resources`** in `dexaflow.yaml` give each trial its own CPU /
   memory / GPU budget.
 - **`trigger_rule="all_done"`** runs the reducer even when some trials fail,
   letting you decide what `null` in `trials` means.
@@ -211,6 +211,6 @@ return value.
 
 | Example | Map | Reduce |
 |---|---|---|
-| [`examples/ml_hparam_search/`](https://github.com/neochaotic/leoflow/tree/main/examples/ml_hparam_search) | toy training × 5 LRs | best score |
-| [`examples/fan_out_aggregate/`](https://github.com/neochaotic/leoflow/tree/main/examples/fan_out_aggregate) | sum a slice of integers × 4 shards | total |
-| [`examples/montecarlo_pi/`](https://github.com/neochaotic/leoflow/tree/main/examples/montecarlo_pi) | sample inside the unit circle × 4 workers | π estimate |
+| [`examples/ml_hparam_search/`](https://github.com/dexadata/dexaflow/tree/main/examples/ml_hparam_search) | toy training × 5 LRs | best score |
+| [`examples/fan_out_aggregate/`](https://github.com/dexadata/dexaflow/tree/main/examples/fan_out_aggregate) | sum a slice of integers × 4 shards | total |
+| [`examples/montecarlo_pi/`](https://github.com/dexadata/dexaflow/tree/main/examples/montecarlo_pi) | sample inside the unit circle × 4 workers | π estimate |

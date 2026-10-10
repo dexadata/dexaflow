@@ -16,13 +16,18 @@ import (
 )
 
 // Pod label keys the informer selects and filters on. They mirror exactly the
-// keys BuildPod stamps and TaskPodPresence selects, sanitizeLabel-transformed —
+// keys BuildPod stamps and TaskPodPresence selects, labelValue-transformed;
 // reusing the same transform is load-bearing: a lookup built from a different key
 // would silently miss every pod and quietly return the storm PR-10 removes.
 const (
 	podLabelRunID     = "leoflow.io/run-id"
 	podLabelTaskID    = "leoflow.io/task-id"
 	podLabelTryNumber = "leoflow.io/try-number"
+	// podLabelAttemptEpoch is not part of any server-side selector: a pod
+	// stamped before the epoch existed has no such label and is epoch 0, and a
+	// label selector cannot say "equals 0 or absent". It is filtered in Go by
+	// podMatchesEpoch instead.
+	podLabelAttemptEpoch = "leoflow.io/attempt-epoch"
 )
 
 // errCacheNotSynced is returned by SnapshotTaskPods before the informer's initial
@@ -74,9 +79,14 @@ func NewPodInformer(clientset kubernetes.Interface, namespace string) *PodInform
 		}),
 	)
 	pods := factory.Core().V1().Pods()
+	informer := pods.Informer()
+	// A source-mode pod carries its dag.py (up to 128 KiB) in an annotation
+	// nothing here reads; keep it out of the cache (ADR 0067 §3). SetTransform
+	// only fails once the informer has started, which it has not.
+	_ = informer.SetTransform(dropSourceAnnotation) //nolint:errcheck // cannot fail before Start
 	return &PodInformer{
 		factory:   factory,
-		informer:  pods.Informer(),
+		informer:  informer,
 		lister:    pods.Lister(),
 		namespace: namespace,
 		stopCh:    make(chan struct{}),
@@ -119,26 +129,30 @@ func (p *PodInformer) Shutdown() {
 }
 
 // CachedPodActive reports whether the cache holds a pod for exactly the
-// (run, task, try) attempt that is Pending or Running — the exact predicate
-// TaskPodPresence uses, pinned to the same attempt (#723). It is the safe
+// (run, task, try, epoch) attempt that is Pending or Running: the exact
+// predicate TaskPodPresence uses, pinned to the same attempt (#723, ADR 0051
+// amendment). It is the safe
 // direction of the asymmetric-trust contract: a true return may DEFER a reap; a
 // false return is NEVER authoritative and the caller must fall through to the live
 // read. Before the cache has synced it returns false, so a cold cache degrades to
 // the live path rather than misreporting absence.
-func (p *PodInformer) CachedPodActive(runID, taskID string, tryNumber int) bool {
+func (p *PodInformer) CachedPodActive(a Attempt) bool {
 	if !p.informer.HasSynced() {
 		return false
 	}
 	selector := labels.SelectorFromSet(labels.Set{
-		podLabelRunID:     sanitizeLabel(runID),
-		podLabelTaskID:    sanitizeLabel(taskID),
-		podLabelTryNumber: strconv.Itoa(tryNumber),
+		podLabelRunID:     labelValue(a.RunID),
+		podLabelTaskID:    labelValue(a.TaskID),
+		podLabelTryNumber: strconv.Itoa(a.TryNumber),
 	})
 	pods, err := p.lister.Pods(p.namespace).List(selector)
 	if err != nil {
 		return false
 	}
 	for _, pod := range pods {
+		if !podMatchesEpoch(pod, a.AttemptEpoch) {
+			continue
+		}
 		if phase := pod.Status.Phase; phase == corev1.PodPending || phase == corev1.PodRunning {
 			return true
 		}
@@ -157,4 +171,16 @@ func (p *PodInformer) SnapshotTaskPods() ([]*corev1.Pod, error) {
 	// The cache is already scoped to the run-id label by the factory's tweak, so
 	// every pod it holds is a managed task pod.
 	return p.lister.Pods(p.namespace).List(labels.Everything())
+}
+
+// dropSourceAnnotation is the pod informer's cache transform: it removes
+// SourceAnnotation from a pod before the pod is stored, so the control plane
+// does not hold every source-mode task's dag.py in memory. The informer hands
+// the transform its own decoded copy, so editing it in place is safe. Anything
+// that is not a pod (a tombstone) passes through unchanged.
+func dropSourceAnnotation(obj any) (any, error) {
+	if pod, ok := obj.(*corev1.Pod); ok {
+		delete(pod.Annotations, SourceAnnotation)
+	}
+	return obj, nil
 }

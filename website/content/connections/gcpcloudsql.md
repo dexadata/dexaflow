@@ -10,14 +10,14 @@ description: Google Cloud SQL connection
 ---
 
 Connect to a Google Cloud SQL instance (Postgres / MySQL) from a managed
-Leoflow Connection. The instance coordinates live in **Extra**; there is no
+Dexaflow Connection. The instance coordinates live in **Extra**; there is no
 password on the Connection — auth flows through the Cloud SQL connector via the
 runtime identity (ADC).
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: cloudsql_demo
 connectors:
   - gcpcloudsql
@@ -71,7 +71,7 @@ with DAG("cloudsql_demo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: cloudsql_demo
 python_version: "3.12"

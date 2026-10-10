@@ -10,12 +10,12 @@ description: Neo4j connection
 ---
 
 Connect a task to a Neo4j graph database (the `Neo4jHook`) over a managed
-Leoflow Connection. The database name lives in the Schema field.
+Dexaflow Connection. The database name lives in the Schema field.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: neo4j_smoke
 connectors:
   - neo4j
@@ -70,7 +70,7 @@ with DAG("neo4j_smoke", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: neo4j_smoke
 python_version: "3.11"

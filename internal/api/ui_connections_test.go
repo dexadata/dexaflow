@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 type fakeConnStore struct {
@@ -375,7 +375,7 @@ func TestConnectionUpdateExtraUnmask(t *testing.T) {
 }
 
 // TestConnectionUpsertPOSTMaskedRoundTrip locks that the POST upsert path (what
-// `leoflow connections set` uses) merges a masked field against the EXISTING
+// `dexaflow connections set` uses) merges a masked field against the EXISTING
 // connection, not an empty one. A regression here silently wiped a round-tripped
 // secret extra to "{}" even though PATCH was correct (caught by the e2e).
 func TestConnectionUpsertPOSTMaskedRoundTrip(t *testing.T) {

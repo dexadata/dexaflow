@@ -6,15 +6,15 @@ aliases:
 title: On-failure alerting
 linkTitle: Alerting
 weight: 50
-description: "Notify on run failure from leoflow.yaml — Slack or a generic webhook, no extra task and no Python."
+description: "Notify on run failure from dexaflow.yaml — Slack or a generic webhook, no extra task and no Python."
 ---
 
-Leoflow can **notify you when a run fails** — Slack or a generic webhook — with no
-extra task and no Python. You declare the rules in `leoflow.yaml`; the **scheduler
+Dexaflow can **notify you when a run fails** — Slack or a generic webhook — with no
+extra task and no Python. You declare the rules in `dexaflow.yaml`; the **scheduler
 fires them in Go** the moment a DagRun reaches the terminal `failed` state.
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 alerts:
   on_failure:
     - type: slack
@@ -36,7 +36,7 @@ Slack message and the PagerDuty webhook fire.
 
 ```mermaid
 flowchart TB
-  A["leoflow.yaml<br/>alerts:"] -->|"compile<br/>(validate + overlay)"| B["dag.json<br/>(alerts baked in)"]
+  A["dexaflow.yaml<br/>alerts:"] -->|"compile<br/>(validate + overlay)"| B["dag.json<br/>(alerts baked in)"]
   B --> C["scheduler sees the run reach <code>failed</code>"]
   C -->|"off the tick, in a goroutine"| D["for each rule:<br/>resolve connection → endpoint URL,<br/>render the message, POST it"]
   D --> E["Slack / PagerDuty / Opsgenie / Teams …"]
@@ -45,7 +45,7 @@ flowchart TB
 Three guarantees hold by design:
 
 - 🔒 **The secret stays in the connection.** The webhook URL (which *is* a secret)
-  lives encrypted in a managed connection — never in `leoflow.yaml` and never in
+  lives encrypted in a managed connection — never in `dexaflow.yaml` and never in
   the compiled `dag.json`.
 - 🛟 **Best-effort.** A delivery that fails (a 500, a bad URL, a missing
   connection) is logged and dropped — it can **never** fail the run, and one bad
@@ -83,14 +83,14 @@ $ curl -X POST .../api/v2/connections -d '{
 {{% /tab %}}
 {{< /tabpane >}}
 
-> The webhook URL goes in `password` on purpose: Leoflow encrypts it at rest and
+> The webhook URL goes in `password` on purpose: Dexaflow encrypts it at rest and
 > hands it straight to the sender at failure time. `host`/`login`/`schema` are
 > ignored for alert connections.
 
 ## The message
 
 `message` is optional. When set, these placeholders are substituted at failure
-time; when omitted, Leoflow sends a default one-line summary.
+time; when omitted, Dexaflow sends a default one-line summary.
 
 | Placeholder        | Becomes                                             |
 | ------------------ | --------------------------------------------------- |
@@ -147,7 +147,7 @@ the terminal failure, in the control plane, for free.
 ## The Airflow `on_failure_callback`
 
 If you already write Airflow, you can also use its native **per-task**
-`on_failure_callback` — a Python callable set on the operator or `@task`. Leoflow
+`on_failure_callback` — a Python callable set on the operator or `@task`. Dexaflow
 runs it **in-process, inside the task's own pod**, on the task's **terminal**
 failure:
 
@@ -204,5 +204,5 @@ firing on the terminal **DagRun** failure) and Airflow's per-task
 `on_failure_callback` (above), which runs in the task's pod on its terminal
 failure. `on_success` / `on_retry` callbacks and SLA-miss alerts are not wired
 yet (a loud compile error, never a silent drop) — tracked in
-[#424](https://github.com/neochaotic/leoflow/issues/424).
+[#424](https://github.com/dexadata/dexaflow/issues/424).
 {{% /alert %}}

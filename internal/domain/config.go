@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/connectors"
+	"github.com/dexadata/dexaflow/internal/connectors"
 )
 
 // LeoflowConfig is the developer-facing project configuration parsed from
-// leoflow.yaml. It mirrors docs/api/leoflow-yaml-schema.json and is consumed
-// by `leoflow compile` to build an image and emit a DAGSpec.
+// dexaflow.yaml. It mirrors docs/api/leoflow-yaml-schema.json and is consumed
+// by `dexaflow compile` to build an image and emit a DAGSpec.
 type LeoflowConfig struct {
 	SchemaVersion string   `json:"schema_version,omitempty" yaml:"schema_version,omitempty"`
 	DagID         string   `json:"dag_id" yaml:"dag_id"`
@@ -21,7 +21,7 @@ type LeoflowConfig struct {
 	// because the config declared none. It is not part of the authoring surface
 	// and never serialized — it exists so a consumer can tell "the author chose
 	// 3.11" from "nobody said anything", which are the same string afterwards.
-	// `leoflow dev` needs the distinction: enforcing a version the CLI invented
+	// `dexaflow lite` needs the distinction: enforcing a version the CLI invented
 	// refuses to boot over a choice the user never made (#1092 follow-up).
 	PythonVersionDefaulted bool     `json:"-" yaml:"-"`
 	BaseImage              string   `json:"base_image,omitempty" yaml:"base_image,omitempty"`
@@ -41,11 +41,11 @@ type LeoflowConfig struct {
 	Registry       *RegistryConfig `json:"registry,omitempty" yaml:"registry,omitempty"`
 	Defaults       *ConfigDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
 	// Staging requests the opt-in per-DAG-run shared volume (ADR 0022). It is a
-	// Leoflow deployment concern (not an Airflow DAG attribute), so it lives in
-	// leoflow.yaml and the compiler overlays it onto the produced dag.json.
+	// Dexaflow deployment concern (not an Airflow DAG attribute), so it lives in
+	// dexaflow.yaml and the compiler overlays it onto the produced dag.json.
 	Staging *StagingConfig `json:"staging,omitempty" yaml:"staging,omitempty"`
 	// Dbt declares a dbt project as the DAG source (ADR 0042). Its presence routes
-	// `leoflow compile` to the dbt renderer instead of the Python parser.
+	// `dexaflow compile` to the dbt renderer instead of the Python parser.
 	Dbt *DbtConfig `json:"dbt,omitempty" yaml:"dbt,omitempty"`
 	// DbtGroups configures dbt projects embedded as task groups in a dag.py (ADR
 	// 0043), keyed by the name passed to `dbt_group(name)`. Schedule does not apply
@@ -57,8 +57,8 @@ type LeoflowConfig struct {
 	Tasks map[string]*TaskConfig `json:"tasks,omitempty" yaml:"tasks,omitempty"`
 	// Alerts declares native on-failure alerting (#424): the scheduler fires the
 	// listed rules when a DagRun reaches the terminal failed state, in Go, with no
-	// task pod and no Python in the hot path. A Leoflow deployment concern (not an
-	// Airflow DAG attribute), so it lives in leoflow.yaml and the compiler overlays
+	// task pod and no Python in the hot path. A Dexaflow deployment concern (not an
+	// Airflow DAG attribute), so it lives in dexaflow.yaml and the compiler overlays
 	// it onto the produced dag.json.
 	Alerts *AlertsConfig `json:"alerts,omitempty" yaml:"alerts,omitempty"`
 }
@@ -73,13 +73,13 @@ type AlertsConfig struct {
 
 // AlertRule is one channel to notify on an alert event. The endpoint and its
 // secret always come from a managed connection (Conn), never a literal URL or
-// token in leoflow.yaml — that keeps credentials out of the compiled dag.json and
+// token in dexaflow.yaml — that keeps credentials out of the compiled dag.json and
 // mirrors the env-ref secret discipline.
 type AlertRule struct {
 	// Type is the channel: "slack" (Slack incoming webhook) or "webhook" (a generic
 	// HTTP POST, e.g. PagerDuty/Opsgenie/Teams). Validated by the schema enum.
 	Type string `json:"type" yaml:"type"`
-	// Conn is the managed Leoflow connection id holding the endpoint (and secret).
+	// Conn is the managed Dexaflow connection id holding the endpoint (and secret).
 	Conn string `json:"conn" yaml:"conn"`
 	// Message is the optional notification body; it is templated at fire time with
 	// run context ({{dag}}, {{run_id}}, {{task}}, …). Empty uses a default summary.
@@ -88,7 +88,7 @@ type AlertRule struct {
 
 // DbtConfig declares a dbt project as the DAG source (ADR 0042). The compiler
 // reads the project's manifest.json and renders one task per dbt node (or per
-// group), so a dbt project becomes a Leoflow DAG with no Cosmos or Airflow.
+// group), so a dbt project becomes a Dexaflow DAG with no Cosmos or Airflow.
 type DbtConfig struct {
 	// Project is the directory containing dbt_project.yml.
 	Project string `json:"project,omitempty" yaml:"project,omitempty"`
@@ -103,7 +103,7 @@ type DbtConfig struct {
 	// "0 6 * * *"). dbt carries no schedule, so it is declared here; empty means
 	// an unscheduled DAG (run on demand).
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
-	// Connection is a managed Leoflow connection id (ADR 0043 #2). When set, the
+	// Connection is a managed Dexaflow connection id (ADR 0043 #2). When set, the
 	// dbt task generates its profiles.yml from the connection delivered to the pod
 	// instead of a profiles.yml baked into the image — use one or the other.
 	Connection string `json:"connection,omitempty" yaml:"connection,omitempty"`
@@ -112,10 +112,10 @@ type DbtConfig struct {
 	Schema string `json:"schema,omitempty" yaml:"schema,omitempty"`
 }
 
-// TaskConfig holds the leoflow.yaml per-task overrides bound by task_id (ADR
+// TaskConfig holds the dexaflow.yaml per-task overrides bound by task_id (ADR
 // 0023). Every field is optional; a set field overrides the value compiled from
 // the DAG (most specific wins: task override > DAG default_args). These are
-// Leoflow deployment concerns, not Airflow operator attributes.
+// Dexaflow deployment concerns, not Airflow operator attributes.
 type TaskConfig struct {
 	Retries                 *int              `json:"retries,omitempty" yaml:"retries,omitempty"`
 	RetryDelaySeconds       *int              `json:"retry_delay_seconds,omitempty" yaml:"retry_delay_seconds,omitempty"`
@@ -128,6 +128,9 @@ type TaskConfig struct {
 	Variables   []string   `json:"variables,omitempty" yaml:"variables,omitempty"`
 	Resources   *Resources `json:"resources,omitempty" yaml:"resources,omitempty"`
 	Execution   *Execution `json:"execution,omitempty" yaml:"execution,omitempty"`
+	// Size is the task's pool_slots (ADR 0066): how many slots of its pool it
+	// takes while queued or running. It overrides pool_slots from dag.py.
+	Size *int `json:"size,omitempty" yaml:"size,omitempty"`
 }
 
 // BuildConfig controls how the container image is built from the project.
@@ -149,10 +152,13 @@ type RegistryConfig struct {
 // ConfigDefaults holds task defaults applied to every task generated from the
 // project at compile time.
 type ConfigDefaults struct {
-	Retries                 int               `json:"retries,omitempty" yaml:"retries,omitempty"`
-	RetryDelaySeconds       int               `json:"retry_delay_seconds,omitempty" yaml:"retry_delay_seconds,omitempty"`
-	ExecutionTimeoutSeconds int               `json:"execution_timeout_seconds,omitempty" yaml:"execution_timeout_seconds,omitempty"`
-	Resources               *DefaultResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Retries                 int `json:"retries,omitempty" yaml:"retries,omitempty"`
+	RetryDelaySeconds       int `json:"retry_delay_seconds,omitempty" yaml:"retry_delay_seconds,omitempty"`
+	ExecutionTimeoutSeconds int `json:"execution_timeout_seconds,omitempty" yaml:"execution_timeout_seconds,omitempty"`
+	// Size is the default pool_slots of every task that sets none, in dag.py or
+	// in tasks.<id>.size (ADR 0066).
+	Size      *int              `json:"size,omitempty" yaml:"size,omitempty"`
+	Resources *DefaultResources `json:"resources,omitempty" yaml:"resources,omitempty"`
 	// NodeSelector is the DAG-wide pod placement fallback applied to every task
 	// that declares no execution.node_selector of its own. Like Resources it is a
 	// default, so the most-specific per-task value always wins. Consumed at
@@ -194,7 +200,7 @@ func (d *DefaultResources) AsResources() *Resources {
 //
 // Centralizing defaults here (instead of scattered `if x == ""` fallbacks at
 // each consumer) is what lets the multi-DAG workspace synthesize a working
-// config when a subdir ships no leoflow.yaml, while keeping the resolved
+// config when a subdir ships no dexaflow.yaml, while keeping the resolved
 // values debuggable from one place.
 func (c *LeoflowConfig) ApplyDefaults() {
 	if c.SchemaVersion == "" {
@@ -262,7 +268,7 @@ func (c *LeoflowConfig) EffectiveDependencies() ([]string, error) {
 	return effective, nil
 }
 
-// Validate checks the LeoflowConfig against the canonical leoflow.yaml schema
+// Validate checks the LeoflowConfig against the canonical dexaflow.yaml schema
 // and returns a joined error describing every violation, or nil when valid.
 func (c *LeoflowConfig) Validate() error {
 	s, err := schemas()
@@ -275,5 +281,11 @@ func (c *LeoflowConfig) Validate() error {
 	if err := c.validateAlertTemplates(); err != nil {
 		return err
 	}
-	return c.validateDbtProject()
+	if err := c.validateDbtProject(); err != nil {
+		return err
+	}
+	if err := c.validateBuildDockerfile(); err != nil {
+		return err
+	}
+	return c.ValidateDockerfileValues()
 }

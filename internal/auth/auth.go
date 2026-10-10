@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"slices"
 )
 
 // ErrInvalidCredentials is returned when a username/password pair is rejected.
@@ -12,6 +13,11 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 
 // ErrInvalidToken is returned when a token is malformed, expired, or unsigned by us.
 var ErrInvalidToken = errors.New("invalid token")
+
+// ErrTenantlessToken is joined with ErrInvalidToken when a token is trusted
+// from its signed claims but names no tenant: such a principal cannot be scoped
+// to any tenant's data, so it is refused rather than given a default one.
+var ErrTenantlessToken = errors.New("token names no tenant")
 
 // ErrUserNotFound is returned by UserStore.FindUserByID when no user has the
 // given id. Authenticate treats it as a signal to trust the token's signed
@@ -32,6 +38,28 @@ type User struct {
 	Email       string
 	Roles       []string
 	Permissions []Permission
+	// Scoped marks a principal authenticated by a client token that carries
+	// OAuth scopes (ADR 0067): the scopes then narrow what its roles allow.
+	// Engine tokens and sessions are not scoped; only their roles decide.
+	Scoped bool
+	// Scopes are the scopes a Scoped principal's token carries.
+	Scopes []string
+}
+
+// The scopes a trusted-issuer bearer token may carry (ADR 0067). No scope
+// implies another.
+const (
+	// ScopeRead grants the read routes.
+	ScopeRead = "dexaflow:read"
+	// ScopeRun grants run-state writes: trigger, clear, mark, pause.
+	ScopeRun = "dexaflow:run"
+	// ScopeDeploy grants registering a DAG version.
+	ScopeDeploy = "dexaflow:deploy"
+)
+
+// HasScope reports whether the principal's token carries scope.
+func (u *User) HasScope(scope string) bool {
+	return slices.Contains(u.Scopes, scope)
 }
 
 // HasPermission reports whether the user may perform action on resource. The

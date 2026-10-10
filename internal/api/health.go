@@ -8,8 +8,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/gin-gonic/gin"
-	"github.com/neochaotic/leoflow/internal/domain"
 )
 
 // HealthChecker reports dependency health for readiness checks.

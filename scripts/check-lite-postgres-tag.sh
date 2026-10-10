@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Leoflow Lite starts a Postgres container from docker-compose.dev.yaml, and
+# Dexaflow Lite starts a Postgres container from docker-compose.dev.yaml, and
 # then TELLS the user which one, in prose, from four other places:
 #
-#   internal/cli/... `leoflow lite` flag help and the resolved-backend note
+#   internal/cli/... `dexaflow lite` flag help and the resolved-backend note
 #   website/content/get-started/quickstart.md
 #   website/content/concepts/editions.md
 #   website/content/contribute/local-dev-loop.md
@@ -20,13 +20,13 @@
 # Scope is deliberately narrow. Three other Postgres tags in this tree are NOT
 # this fact and must not be dragged into it: docker-compose.yml runs 17-alpine
 # for the Pro stack, the e2e scripts run their own warehouse container for dbt,
-# and helm/leoflow ships an evaluation datastore. Nothing says those should
+# and helm/dexaflow ships an evaluation datastore. Nothing says those should
 # track Lite's, and a gate that forced them to would be inventing a policy
 # rather than catching drift.
 #
 # website/content/project/ is excluded for the same reason
 # check-python-runtime-matrix.sh excludes CHANGELOG.md: an ADR records the
-# decision of its era and is immutable (CLAUDE.md), so "correcting" one would be
+# decision of its era and is immutable (AGENTS.md), so "correcting" one would be
 # falsifying history.
 #
 # Usage: scripts/check-lite-postgres-tag.sh [--self-test]

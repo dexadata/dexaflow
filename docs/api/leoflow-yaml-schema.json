@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://leoflow.io/schemas/leoflow.yaml/v1.0",
-  "title": "Leoflow Project Configuration",
+  "title": "Dexaflow Project Configuration",
   "description": "Developer-facing configuration. Consumed by 'leoflow compile' to build a container image and generate dag.json.",
   "type": "object",
   "required": ["dag_id"],
@@ -25,7 +25,7 @@
 
     "python_version": {
       "type": "string",
-      "description": "Python line of the published task base image (ghcr.io/neochaotic/leoflow-runtime:py<version>). This enum is the single source of truth for which base images the release publishes; scripts/check-python-runtime-matrix.sh fails when the release matrix, the Makefile, runtime/Dockerfile or the configuration reference disagree with it. 3.10 is deprecated and stops being published after its 2026-10-31 upstream EOL.",
+      "description": "Python line of the published task base image (ghcr.io/dexadata/dexaflow-runtime:py<version>). This enum is the single source of truth for which base images the release publishes; scripts/check-python-runtime-matrix.sh fails when the release matrix, the Makefile, runtime/Dockerfile or the configuration reference disagree with it. 3.10 is deprecated and stops being published after its 2026-10-31 upstream EOL.",
       "enum": ["3.10", "3.11", "3.12", "3.13"],
       "default": "3.11",
       "x-leoflow-python-deprecations": {
@@ -39,7 +39,7 @@
     },
     "base_image": {
       "type": "string",
-      "description": "Override the image the DAG is built FROM. Default: the published Leoflow task base for python_version (ghcr.io/neochaotic/leoflow-runtime:py<python_version>, pinned to the CLI's release tag). Setting this makes python_version unused for the FROM, so a pin to a deprecated py<line> tag is not fixed by changing python_version — repoint this field. Pinning also freezes the interpreter and OS packages at whatever the base carried the day you pinned it (ADR 0003)."
+      "description": "Override the image the DAG is built FROM. Default: the published Dexaflow task base for python_version (ghcr.io/dexadata/dexaflow-runtime:py<python_version>, pinned to the CLI's release tag). Setting this makes python_version unused for the FROM, so a pin to a deprecated py<line> tag is not fixed by changing python_version — repoint this field. Pinning also freezes the interpreter and OS packages at whatever the base carried the day you pinned it (ADR 0003)."
     },
     "dependencies": {
       "type": "array",
@@ -72,7 +72,7 @@
     "dag_source": {
       "type": "string",
       "default": "dag.py",
-      "description": "Path to the DAG definition file relative to leoflow.yaml."
+      "description": "Path to the DAG definition file relative to dexaflow.yaml."
     },
     "include_paths": {
       "type": "array",
@@ -91,7 +91,7 @@
       "properties": {
         "dockerfile": {
           "type": "string",
-          "description": "Path to a custom Dockerfile. If set, autogeneration is skipped."
+          "description": "Path to a custom Dockerfile, relative to the directory holding dexaflow.yaml. If the file exists, autogeneration is skipped. An absolute path, or one that leaves the project (through `..` or, at build time, a symlink), is refused."
         },
         "context": {
           "type": "string",
@@ -136,6 +136,7 @@
         "retries": { "type": "integer", "minimum": 0 },
         "retry_delay_seconds": { "type": "integer", "minimum": 0 },
         "execution_timeout_seconds": { "type": "integer", "minimum": 1 },
+        "size": { "type": "integer", "minimum": 1, "maximum": 1024, "description": "Default size of every task that sets none: the number of pool slots it takes (Airflow's pool_slots, ADR 0066). A task's own pool_slots in dag.py and tasks.<id>.size both win." },
         "resources": {
           "type": "object",
           "description": "Default CPU AND memory for tasks that declare none; expanded to requests == limits so the task reaches Guaranteed QoS (#725). BOTH fields are required: that expansion is the block's only purpose, so a partial pair reaches only Burstable, and it still suppresses the per-cluster platform default the missing dimension would otherwise have come from (#802). Set both, or omit the block.",
@@ -173,7 +174,7 @@
         "granularity": { "type": "string", "enum": ["node", "level", "folder"], "default": "node", "description": "Task partition strategy (ADR 0042). tag/selector grouping is tracked in issue #398." },
         "manifest": { "type": "string", "description": "Optional pre-built manifest.json path (Pro/CI baked); empty runs dbt parse." },
         "schedule": { "type": "string", "description": "Cron expression or preset (e.g. @daily); empty means unscheduled. dbt has no schedule, so it is declared here." },
-        "connection": { "type": "string", "description": "Managed Leoflow connection id (ADR 0043); generates profiles.yml in the pod instead of a baked one. Use one or the other." },
+        "connection": { "type": "string", "description": "Managed Dexaflow connection id (ADR 0043); generates profiles.yml in the pod instead of a baked one. Use one or the other." },
         "schema": { "type": "string", "description": "Overrides the dbt target schema in the generated profile (where models materialize)." }
       },
       "additionalProperties": false
@@ -188,7 +189,7 @@
           "project": { "type": "string", "description": "Directory containing dbt_project.yml." },
           "granularity": { "type": "string", "enum": ["node", "level", "folder"], "default": "node", "description": "Task partition strategy (ADR 0042)." },
           "manifest": { "type": "string", "description": "Optional pre-built manifest.json path; empty runs dbt parse." },
-          "connection": { "type": "string", "description": "Managed Leoflow connection id (ADR 0043); generates profiles.yml in the pod." },
+          "connection": { "type": "string", "description": "Managed Dexaflow connection id (ADR 0043); generates profiles.yml in the pod." },
           "schema": { "type": "string", "description": "Overrides the dbt target schema in the generated profile." }
         },
         "additionalProperties": false
@@ -206,7 +207,7 @@
             "type": "object",
             "properties": {
               "type": { "type": "string", "enum": ["slack", "webhook"], "description": "Channel: slack (incoming webhook) or webhook (generic HTTP POST)." },
-              "conn": { "type": "string", "minLength": 1, "description": "Managed Leoflow connection id holding the endpoint and its secret. Required — no literal URLs/tokens in leoflow.yaml." },
+              "conn": { "type": "string", "minLength": 1, "description": "Managed Dexaflow connection id holding the endpoint and its secret. Required — no literal URLs/tokens in leoflow.yaml." },
               "message": { "type": "string", "description": "Optional notification body, templated with run context ({{dag}}, {{run_id}}, {{task}})." }
             },
             "required": ["type", "conn"],
@@ -226,6 +227,7 @@
           "retries": { "type": "integer", "minimum": 0 },
           "retry_delay_seconds": { "type": "integer", "minimum": 0 },
           "execution_timeout_seconds": { "type": "integer", "minimum": 1 },
+          "size": { "type": "integer", "minimum": 1, "maximum": 1024, "description": "The task's size: the number of pool slots it takes while queued or running (Airflow's pool_slots, ADR 0066). Overrides pool_slots from dag.py." },
           "env": {
             "type": "object",
             "additionalProperties": { "type": "string" },
@@ -288,8 +290,8 @@
               "topology_spread_constraints": { "type": "array", "description": "Spread task pods across failure domains; Kubernetes TopologySpreadConstraint entries." },
               "affinity": { "type": "object", "description": "Node/pod affinity and anti-affinity; a Kubernetes Affinity object." },
               "resource_claims": { "type": "array", "description": "Pod-level ResourceClaims for Dynamic Resource Allocation (DRA, GA in Kubernetes 1.34)." },
-              "labels": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Pod labels merged onto the task pod; Leoflow's leoflow.io/* labels win collisions." },
-              "annotations": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Pod annotations merged onto the task pod; Leoflow's task-instance-id annotation wins collisions." }
+              "labels": { "type": "object", "additionalProperties": { "type": "string" }, "propertyNames": { "not": { "pattern": "^leoflow\\.io/" } }, "description": "Pod labels merged onto the task pod. Keys under the leoflow.io/ prefix are reserved for Dexaflow and rejected." },
+              "annotations": { "type": "object", "additionalProperties": { "type": "string" }, "propertyNames": { "not": { "pattern": "^leoflow\\.io/" } }, "description": "Pod annotations merged onto the task pod. Keys under the leoflow.io/ prefix are reserved for Dexaflow and rejected." }
             },
             "additionalProperties": false
           }

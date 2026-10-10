@@ -1,0 +1,39 @@
+---
+aliases:
+  - /cli/leoflow_uninstall.html
+  - /reference/cli/leoflow_uninstall/
+title: "dexaflow uninstall"
+linkTitle: "uninstall"
+weight: 52
+---
+
+Remove the Dexaflow installation (~/.dexaflow).
+
+### Synopsis
+
+uninstall removes the managed Dexaflow home (~/.dexaflow): the binaries, config, managed Python, Monaco assets, and local dev state. It does NOT remove your DAG workspace or your datastore (the managed Postgres data in ~/.dexaflow/pgdata and this install's Docker volume) unless you pass --purge — so a reinstall keeps your data. It asks for confirmation unless --yes is given. (To upgrade instead, just re-run install.sh — it replaces the binaries and keeps your config.)
+
+```
+dexaflow uninstall [flags]
+```
+
+### Options
+
+```
+  -h, --help    help for uninstall
+      --purge   also remove the DAG workspace and Docker datastore volumes (destructive)
+      --yes     skip the confirmation prompt
+```
+
+### Options inherited from parent commands
+
+```
+      --config string       config file path (default ~/.dexaflow/config.yaml)
+      --log-level string    log level: debug, info, warn, error
+      --server-url string   control plane API base URL
+```
+
+### SEE ALSO
+
+* [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
+

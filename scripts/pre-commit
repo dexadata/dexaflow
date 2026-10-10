@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# Leoflow pre-commit hook (ADR 0011 + 0012).
+# Dexaflow pre-commit hook (ADR 0011 + 0012).
 # Blocks the commit when formatting, vetting, or linting fail, or when filtered
 # unit-test coverage is below the floor. The floor is the SAME fixed threshold
 # the CI enforces — a moving baseline would let coverage ratchet downward locally
 # and only fail in CI (which is exactly what happened once).
 set -euo pipefail
 
-# Coverage floor (percent). Keep in sync with .github/workflows/ci.yaml.
-# History: 75 -> 78 locked in resilience/critical-path tests; 78 -> 80 follows
-# the alpha-prep batch (#295/#296/#297/#299) that pushed the filtered total
-# above 80%. The thin margin is intentional: each new PR must come with
-# tests so we never ratchet down silently.
-COVERAGE_FLOOR=80
+# The coverage floor and its exclude list live in scripts/coverage-gate.sh,
+# which CI calls too. History: 75 -> 78 locked in resilience/critical-path
+# tests; 78 -> 80 follows the alpha-prep batch (#295/#296/#297/#299) that pushed
+# the filtered total above 80%. The thin margin is intentional: each new PR
+# must come with tests so we never ratchet down silently.
 
 echo "[pre-commit] gofmt"
 unformatted=$(gofmt -l $(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true) 2>/dev/null || true)
@@ -40,21 +39,9 @@ fi
 
 echo "[pre-commit] test + coverage gate"
 profile=$(mktemp)
-filtered=$(mktemp)
 go test -coverprofile="$profile" ./... >/dev/null
-# Exclude from the unit-coverage floor (ADR 0011): generated code, main
-# packages, version, and the thin process/lock-binding files (DB, locks, and
-# external-binary orchestration like Docker/initdb/pg_ctl) that are exercised
-# by integration/e2e tests rather than unit tests.
-exclude='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/cmd/)'
-grep -vE "$exclude" "$profile" >"$filtered"
-current=$(go tool cover -func="$filtered" | tail -1 | awk '{print $3}' | tr -d '%')
-rm -f "$profile" "$filtered"
-
-echo "  filtered coverage: ${current}% (floor ${COVERAGE_FLOOR}%)"
-if awk -v c="$current" -v f="$COVERAGE_FLOOR" 'BEGIN { exit !(c < f) }'; then
-	echo "::error:: coverage ${current}% is below floor ${COVERAGE_FLOOR}% (ADR 0011); add tests"
-	exit 1
-fi
+# The exclude list and the floor live in scripts/coverage-gate.sh, shared with CI.
+scripts/coverage-gate.sh "$profile" || { rm -f "$profile"; exit 1; }
+rm -f "$profile"
 
 echo "[pre-commit] ok"

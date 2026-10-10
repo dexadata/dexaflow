@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# End-to-end smoke test for Leoflow on a local Kubernetes cluster (k3d).
+# End-to-end smoke test for Dexaflow on a local Kubernetes cluster (k3d).
 #
 # Exercises the full pod-path: build the base + DAG images, import them into
 # k3d, run the control plane on the host against the dev Postgres/Redis
@@ -66,12 +66,12 @@ log "Scaffolding a minimal DAG project ($DAG_ID)"
 # Declare the sensor's provider so the ADR 0040 A5 compile check passes; the
 # Dockerfile below installs it into the image.
 sed -i.bak 's/^dependencies: \[\]/dependencies: [apache-airflow-providers-http]/' \
-  "$WORKDIR/$DAG_ID/leoflow.yaml" && rm -f "$WORKDIR/$DAG_ID/leoflow.yaml.bak"
+  "$WORKDIR/$DAG_ID/dexaflow.yaml" && rm -f "$WORKDIR/$DAG_ID/dexaflow.yaml.bak"
 # The config loader defaults build.platforms to linux/amd64 (the prod default);
 # on an arm64 dev/Lima host the DAG image must build for the host arch, else its
 # base-image FROM mismatches (InvalidBaseImagePlatform) and the pods ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat >> "$WORKDIR/$DAG_ID/leoflow.yaml" <<YAML
+cat >> "$WORKDIR/$DAG_ID/dexaflow.yaml" <<YAML
 build:
   platforms:
     - ${HOST_PLATFORM}
@@ -80,7 +80,7 @@ YAML
 # function). Two tasks in sequence prove pod-per-task AND cross-pod ordering:
 # each runs in its own pod whose agent reports state over gRPC.
 cat > "$WORKDIR/$DAG_ID/dag.py" <<'PY'
-"""e2edag — Leoflow pod-per-task smoke DAG."""
+"""e2edag — Dexaflow pod-per-task smoke DAG."""
 from __future__ import annotations
 
 from airflow.sdk import DAG, task
@@ -465,7 +465,7 @@ log "bash Jinja OK: greet rendered a real ds"
 log "Callback pod-path (#424): a failing @task must run its on_failure_callback IN the pod"
 CBID="cbdag"
 mkdir -p "$WORKDIR/$CBID"
-cat > "$WORKDIR/$CBID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$CBID/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: cbdag
 build:
@@ -571,7 +571,7 @@ log "callback pod-path OK: on_failure_callback ran in the pod on terminal failur
 log "system_packages + in-pod TLS (generated Dockerfile path)"
 SPID="sysdag"
 mkdir -p "$WORKDIR/$SPID"
-cat > "$WORKDIR/$SPID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$SPID/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: ${SPID}
 base_image: ${BASE_IMAGE}
@@ -680,5 +680,17 @@ echo "$splog" | grep -q "E2E_TLS_OK" \
   || fail "no outbound TLS handshake completed from the task pod (OpenSSL security level?)"
 log "system_packages installed and one real HTTPS handshake completed inside a task pod"
 echo "$splog" | grep "E2E_OPENSSL" || true
+
+# An optional extra-checks script runs here, against the live control plane and
+# the cluster, before cleanup: LEOFLOW_E2E_EXTRA_CHECKS names it, and it gets
+# BASE, TOKEN, METRICS (the server's default metrics listener; this script sets
+# no other), DAG_ID and RUN_ID. e2e-gates.yaml uses it to prove the performance
+# gates it turns on took effect at runtime (test/e2e/perf-gates-on.sh). Unset,
+# which is the default, nothing here changes.
+if [ -n "${LEOFLOW_E2E_EXTRA_CHECKS:-}" ]; then
+  log "Running the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS}"
+  BASE="$API" TOKEN="$TOKEN" METRICS="http://localhost:9090" DAG_ID="$DAG_ID" RUN_ID="$RUN_ID" \
+    bash "$LEOFLOW_E2E_EXTRA_CHECKS" || fail "the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS} failed"
+fi
 
 log "E2E passed"

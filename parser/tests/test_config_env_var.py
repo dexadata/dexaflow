@@ -1,14 +1,14 @@
 """Regression tests for the migration from in-parser PyYAML to Go-marshalled JSON.
 
 Before this migration the parser shipped a 5890-line vendored copy of PyYAML
-just to read ``leoflow.yaml`` once. The CLI (Go) now parses the YAML with
+just to read ``dexaflow.yaml`` once. The CLI (Go) now parses the YAML with
 ``gopkg.in/yaml.v3`` and hands the result to the parser as JSON via
 ``LEOFLOW_PROJECT_CONFIG_JSON`` — single source of truth, zero third-party
 Python deps.
 
 These tests are the regression contract: if anyone reintroduces a YAML read
 path or accidentally drops the env-var handshake, the failure surfaces here
-instead of as a silent breakage of every ``leoflow compile``.
+instead of as a silent breakage of every ``dexaflow compile``.
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def test_compile_dag_reads_config_from_env_var(tmp_path, monkeypatch):
     # The config path is intentionally bogus — the parser MUST NOT touch disk
     # for config when the env var is set. If it does, this test fails with a
     # FileNotFoundError.
-    spec = compile_dag(str(src), "/nonexistent/leoflow.yaml", "img:v1")
+    spec = compile_dag(str(src), "/nonexistent/dexaflow.yaml", "img:v1")
 
     assert spec["owner"] == "carried-from-env"
     assert spec["tags"] == ["from-env-marker"]
@@ -71,7 +71,7 @@ def test_compile_dag_env_var_takes_precedence_over_disk(tmp_path, monkeypatch):
     a stale on-disk yaml/json. Earlier behavior would have re-parsed the file
     and lost defaults the Go side had applied."""
     src = _write_dag(tmp_path, _TRIVIAL_DAG)
-    cfg_path = tmp_path / "leoflow.yaml"
+    cfg_path = tmp_path / "dexaflow.yaml"
     # Deliberately invalid content. If the parser reads this file the test
     # fails with a parse error.
     cfg_path.write_text("@@@ not valid yaml or json @@@\n")
@@ -120,7 +120,7 @@ def test_compile_dag_rejects_yaml_path_with_actionable_error(tmp_path, monkeypat
     the env var rather than silently dying on missing PyYAML.
     """
     src = _write_dag(tmp_path, _TRIVIAL_DAG)
-    cfg_path = tmp_path / "leoflow.yaml"
+    cfg_path = tmp_path / "dexaflow.yaml"
     cfg_path.write_text("dag_id: env_var_demo\nowner: yaml-author\n")
     monkeypatch.delenv("LEOFLOW_PROJECT_CONFIG_JSON", raising=False)
 

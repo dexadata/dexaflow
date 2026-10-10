@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // freshCAPEM mints a self-signed CA cert and returns it as PEM. We do this at

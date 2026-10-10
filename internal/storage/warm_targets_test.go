@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // TestWarmTargets locks the pure active-version -> warm-target projection (ADR
@@ -74,5 +74,32 @@ func TestWarmTargetsExcludesStagingVersion(t *testing.T) {
 	got := warmTargets(versions, exec)
 	if len(got) != 1 || got[0].DagVersionID != "dv1" {
 		t.Errorf("staging version must be excluded from warm targets, got %+v", got)
+	}
+}
+
+// TestWarmTargetsExcludesSourceModeVersion pins ADR 0067 §3: a source-mode
+// version (runtime image plus a source, with the mode on) gets no warm target,
+// since a warm pod is built before its task and carries no dag.py.
+func TestWarmTargetsExcludesSourceModeVersion(t *testing.T) {
+	const rt = "ghcr.io/dexadata/runtime@sha256:abc"
+	exec := config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8,
+		SourceMode: config.SourceModeSection{Enabled: true, Image: rt}}
+	versions := []activeWarmVersion{
+		{dagVersionID: "src", image: rt, hasSource: true},
+		{dagVersionID: "rt-no-source", image: rt},
+		{dagVersionID: "own-image", image: "etl:v1", hasSource: true},
+	}
+	got := warmTargets(versions, exec)
+	ids := map[string]bool{}
+	for _, tgt := range got {
+		ids[tgt.DagVersionID] = true
+	}
+	if ids["src"] || !ids["rt-no-source"] || !ids["own-image"] || len(got) != 2 {
+		t.Errorf("warm targets = %+v, want only rt-no-source and own-image", got)
+	}
+
+	exec.SourceMode.Enabled = false
+	if got := warmTargets(versions, exec); len(got) != 3 {
+		t.Errorf("with source mode off every version keeps its target, got %+v", got)
 	}
 }

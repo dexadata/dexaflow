@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // deprecationWrapCols is the widest RENDERED line the warning emits, indent
@@ -19,7 +19,7 @@ const deprecationWrapCols = 78
 // bodyIndent prefixes every line of the warning after the headline.
 const bodyIndent = "  "
 
-// The two leoflow.yaml fields that can put a compile on a deprecated Python
+// The two dexaflow.yaml fields that can put a compile on a deprecated Python
 // line. They are spelled exactly as the author writes them, because the warning
 // names the field it wants changed and a name that does not match the file is a
 // name the reader has to translate.
@@ -40,7 +40,7 @@ const (
 type pythonDeprecationHit struct {
 	// version is the deprecated Python line, e.g. "3.10".
 	version string
-	// field is the leoflow.yaml key that selected it: fieldPythonVersion or
+	// field is the dexaflow.yaml key that selected it: fieldPythonVersion or
 	// fieldBaseImage.
 	field string
 	// ref is the base_image value as written, empty on the python_version path.
@@ -58,7 +58,7 @@ type pythonDeprecationHit struct {
 // `python_version` is the only person who can change it, and compile is the
 // moment they make the choice, with the file open. A warning from the agent in
 // the task pod would reach the operator instead — who cannot edit the DAG's
-// leoflow.yaml — and would repeat on every task of every run of every DAG,
+// dexaflow.yaml — and would repeat on every task of every run of every DAG,
 // which is how a real warning becomes log noise people filter out. A build-time
 // warning inside runtime/Dockerfile was the third option and is weaker still:
 // it only fires for people who build the base from a source checkout, which is
@@ -95,7 +95,7 @@ func warnDeprecatedPython(w io.Writer, cfg *domain.LeoflowConfig) {
 	writeWrapped(&b, d.Reason, true)
 	writeWrapped(&b, deprecationRemedy(hit, d), true)
 	// Deliberately unchecked: a warning that can abort the compile is not a
-	// warning. A closed pipe (`leoflow compile | head`) must not turn a correct
+	// warning. A closed pipe (`dexaflow compile | head`) must not turn a correct
 	// dag.json into a non-zero exit.
 	_, _ = io.WriteString(w, b.String()) //nolint:errcheck // advisory output; a write failure must not fail the compile
 }
@@ -165,15 +165,15 @@ func deprecationHeadline(hit pythonDeprecationHit, d domain.PythonDeprecation) s
 // not mentioned there: it is unused for the FROM, so changing it does nothing.
 func deprecationRemedy(hit pythonDeprecationHit, d domain.PythonDeprecation) string {
 	if hit.field != fieldBaseImage {
-		return fmt.Sprintf("Fix: set python_version: %q in leoflow.yaml and rebuild. Existing images keep running.", d.Replacement)
+		return fmt.Sprintf("Fix: set python_version: %q in dexaflow.yaml and rebuild. Existing images keep running.", d.Replacement)
 	}
 	replacement := publishedBaseRepo + ":py" + d.Replacement + strings.TrimPrefix(hit.tag, "py"+hit.version)
 	if hit.digest != "" {
 		// The pinned digest names a py3.10 manifest; carrying it over would pull
 		// the deprecated image back in under a 3.11 tag.
-		return fmt.Sprintf("Fix: repoint base_image to %s in leoflow.yaml, re-pinning its digest, and rebuild. Existing images keep running.", replacement)
+		return fmt.Sprintf("Fix: repoint base_image to %s in dexaflow.yaml, re-pinning its digest, and rebuild. Existing images keep running.", replacement)
 	}
-	return fmt.Sprintf("Fix: repoint base_image to %s in leoflow.yaml and rebuild. Existing images keep running.", replacement)
+	return fmt.Sprintf("Fix: repoint base_image to %s in dexaflow.yaml and rebuild. Existing images keep running.", replacement)
 }
 
 // deprecatedPythonForBuild returns the deprecation-relevant facts about this

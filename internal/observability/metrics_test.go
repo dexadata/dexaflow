@@ -2,6 +2,7 @@ package observability
 
 import (
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +14,6 @@ import (
 func touchAll(m *Metrics) {
 	m.SchedulerLoopDuration.Observe(0.1)
 	m.SchedulerDecisions.WithLabelValues("schedule").Inc()
-	m.SchedulerLeader.WithLabelValues("r1").Set(1)
-	m.ActiveDAGRuns.WithLabelValues("etl", "running").Set(1)
-	m.QueuedTasks.WithLabelValues("etl").Set(1)
 	m.TaskStateTransitions.WithLabelValues("none", "scheduled", "etl").Inc()
 	m.TaskDuration.WithLabelValues("etl", "t1", "python").Observe(1)
 	m.TaskRetries.WithLabelValues("etl", "t1").Inc()
@@ -29,7 +27,6 @@ func touchAll(m *Metrics) {
 	m.HTTPRequestDuration.WithLabelValues("GET", "/api/v2/dags").Observe(0.01)
 	m.AuthFailures.WithLabelValues("bad_password").Inc()
 	m.PodsCreated.WithLabelValues("etl", "success").Inc()
-	m.PodsRunning.Set(3)
 	m.PodPendingDuration.Observe(1)
 	m.KubernetesAPICalls.WithLabelValues("create_pod", "success").Inc()
 }
@@ -40,12 +37,14 @@ func TestRecordersIncrementCounters(t *testing.T) {
 	m.RecordHTTPRequest("GET", "/api/v2/dags", 200, 5*time.Millisecond)
 	m.RecordSchedulerDecision("panic")    // backs the scheduler resilience metric
 	m.RecordUndispatchable("no_executor") // backs the undispatchable signal (#46)
+	m.RecordUnitMisfit("register")        // backs executor.unit.enforce=warn (ADR 0066)
 
 	// Each recorder must have incremented its counter to 1.
 	for name, want := range map[string]float64{
-		"leoflow_http_requests_total":        1,
-		"leoflow_scheduler_decisions_total":  1,
-		"leoflow_tasks_undispatchable_total": 1,
+		"dexaflow_http_requests_total":        1,
+		"dexaflow_scheduler_decisions_total":  1,
+		"dexaflow_tasks_undispatchable_total": 1,
+		"dexaflow_unit_misfit_total":          1,
 	} {
 		if got := counterTotal(t, reg, name); got != want {
 			t.Errorf("%s = %v, want %v", name, got, want)
@@ -85,7 +84,7 @@ func TestRecordTaskDurationObserves(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fam := range families {
-		if fam.GetName() != "leoflow_task_duration_seconds" {
+		if fam.GetName() != "dexaflow_task_duration_seconds" {
 			continue
 		}
 		if n := fam.GetMetric()[0].GetHistogram().GetSampleCount(); n != 1 {
@@ -93,7 +92,7 @@ func TestRecordTaskDurationObserves(t *testing.T) {
 		}
 		return
 	}
-	t.Error("leoflow_task_duration_seconds not recorded")
+	t.Error("dexaflow_task_duration_seconds not recorded")
 }
 
 func TestNewMetricsRegistersAllADR0010Metrics(t *testing.T) {
@@ -111,27 +110,23 @@ func TestNewMetricsRegistersAllADR0010Metrics(t *testing.T) {
 	}
 
 	want := []string{
-		"leoflow_scheduler_loop_duration_seconds",
-		"leoflow_scheduler_decisions_total",
-		"leoflow_scheduler_leader",
-		"leoflow_active_dag_runs",
-		"leoflow_queued_tasks",
-		"leoflow_task_state_transitions_total",
-		"leoflow_task_duration_seconds",
-		"leoflow_task_retries_total",
-		"leoflow_task_pod_creation_duration_seconds",
-		"leoflow_task_cold_start_seconds",
-		"leoflow_xcom_size_bytes",
-		"leoflow_xcom_push_total",
-		"leoflow_xcom_pull_total",
-		"leoflow_xcom_rejected_total",
-		"leoflow_http_requests_total",
-		"leoflow_http_request_duration_seconds",
-		"leoflow_auth_failures_total",
-		"leoflow_pods_created_total",
-		"leoflow_pods_running",
-		"leoflow_pod_pending_duration_seconds",
-		"leoflow_kubernetes_api_calls_total",
+		"dexaflow_scheduler_loop_duration_seconds",
+		"dexaflow_scheduler_decisions_total",
+		"dexaflow_task_state_transitions_total",
+		"dexaflow_task_duration_seconds",
+		"dexaflow_task_retries_total",
+		"dexaflow_task_pod_creation_duration_seconds",
+		"dexaflow_task_cold_start_seconds",
+		"dexaflow_xcom_size_bytes",
+		"dexaflow_xcom_push_total",
+		"dexaflow_xcom_pull_total",
+		"dexaflow_xcom_rejected_total",
+		"dexaflow_http_requests_total",
+		"dexaflow_http_request_duration_seconds",
+		"dexaflow_auth_failures_total",
+		"dexaflow_pods_created_total",
+		"dexaflow_pod_pending_duration_seconds",
+		"dexaflow_kubernetes_api_calls_total",
 	}
 	var missing []string
 	for _, name := range want {
@@ -142,5 +137,41 @@ func TestNewMetricsRegistersAllADR0010Metrics(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Errorf("missing metrics: %v", missing)
+	}
+}
+
+// Every metric ADR 0010 promises is also scrapeable under its pre-rename name.
+func TestEveryRegisteredMetricHasItsLegacyTwin(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	NewMetrics(reg)
+	mfs, err := WithLegacyNames(reg).Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, mf := range mfs {
+		names[mf.GetName()] = true
+	}
+	for name := range names {
+		if suffix, ok := strings.CutPrefix(name, "dexaflow_"); ok && !names["leoflow_"+suffix] {
+			t.Errorf("%s has no leoflow_%s twin", name, suffix)
+		}
+	}
+}
+
+// TestRecordInfraOverrideCountsByMark: every durable SUCCESS the reconciler
+// settles over an infra mark is counted under the mark it overrode (ADR 0052
+// amendment), so a recovered success is never silent.
+func TestRecordInfraOverrideCountsByMark(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	m.RecordInfraOverride("agent_lost")
+	m.RecordInfraOverride("agent_lost")
+	m.RecordInfraOverride("pod_lost")
+	if got := counterTotal(t, reg, "dexaflow_reconcile_infra_override_total"); got != 3 {
+		t.Errorf("dexaflow_reconcile_infra_override_total = %v, want 3", got)
+	}
+	if got := m.ReconcileInfraOverrides.WithLabelValues("agent_lost"); got == nil {
+		t.Fatal("the counter must be labeled by mark")
 	}
 }

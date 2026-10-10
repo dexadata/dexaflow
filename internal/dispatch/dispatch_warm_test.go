@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/executor"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/executor"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // fakePlacer records the assignment it was handed and returns a canned result.

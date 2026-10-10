@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 func TestDbtProfileConn(t *testing.T) {

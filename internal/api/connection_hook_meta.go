@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/connectors"
+	"github.com/dexadata/dexaflow/internal/connectors"
 )
 
 // The connection-type catalog the SPA's "Add/Edit Connection" form reads from

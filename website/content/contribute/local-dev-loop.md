@@ -7,43 +7,43 @@ aliases:
 title: The local dev loop
 linkTitle: Local dev loop
 weight: 20
-description: Two inner loops for working on Leoflow from source — the leoflow lite hot-reload loop for DAGs, and make lite-redeploy for Go changes.
+description: Two inner loops for working on Dexaflow from source — the dexaflow lite hot-reload loop for DAGs, and make lite-redeploy for Go changes.
 ---
 
-Working on Leoflow from source has **two inner loops**, and you pick by what you
+Working on Dexaflow from source has **two inner loops**, and you pick by what you
 changed:
 
 - **Iterating on a DAG** (Python/YAML) — use the
-  [`leoflow lite` hot-reload loop](#the-leoflow-lite-hot-reload-loop): save a file,
+  [`dexaflow lite` hot-reload loop](#the-dexaflow-lite-hot-reload-loop): save a file,
   the watcher recompiles and registers a new version in seconds.
 - **Iterating on the control plane, agent, or CLI** (Go) — use
   [`make lite-redeploy`](#redeploying-go-changes-make-lite-redeploy): it rebuilds all
-  three binaries, swaps them in lockstep, and reboots `leoflow lite`.
+  three binaries, swaps them in lockstep, and reboots `dexaflow lite`.
 
 Neither loop goes near `git tag` or the release pipeline — that keeps release tags
 clean.
 
-## The `leoflow lite` hot-reload loop
+## The `dexaflow lite` hot-reload loop
 
-`leoflow lite` runs the whole stack locally — control plane, the embedded Airflow
+`dexaflow lite` runs the whole stack locally — control plane, the embedded Airflow
 UI, and a real executor — against an **isolated local database**, and
 **hot-reloads on every save**. The UI is served on a Lite port (default
 **8088**), marked with the **LITE** badge, so it never collides with a demo or
 production instance.
 
-This page is the **from-source** loop for working on Leoflow itself:
+This page is the **from-source** loop for working on Dexaflow itself:
 
 ```bash
-make dev-install            # build + put leoflow / server / agent on your PATH
-leoflow lite provision          # provision local dev deps (base image, local DB)
-leoflow init dags/my_dag    # scaffold a project
-leoflow lite dags/my_dag    # hot-reload at http://localhost:8088 (marked LITE)
+make dev-install            # build + put dexaflow / server / agent on your PATH
+dexaflow lite provision          # provision local dev deps (base image, local DB)
+dexaflow init dags/my_dag    # scaffold a project
+dexaflow lite dags/my_dag    # hot-reload at http://localhost:8088 (marked LITE)
 ```
 
 {{% alert title="Login" color="info" %}}
-If you ran [`leoflow setup`](/get-started/installation/#what-leoflow-setup-does) (the
+If you ran [`dexaflow setup`](/get-started/installation/#what-dexaflow-setup-does) (the
 end-user installer does), Lite enforces a real **admin login** — recover it
-with `leoflow lite reset-password`. A bare source checkout without that
+with `dexaflow lite reset-password`. A bare source checkout without that
 config falls back to no-auth (loopback only) with a warning, for a quick loop.
 {{% /alert %}}
 
@@ -71,7 +71,7 @@ Two ways to deregister a DAG from the Lite registry:
   notices the project vanished from disk and calls the control plane's
   hard-delete endpoint (cascades versions, runs, task instances, XCom).
   Logged on stderr: `✗ removed dag "my_dag" from registry (folder gone)`.
-- **`leoflow lite forget <dag_id>`** — explicit deregister via the Lite
+- **`dexaflow lite forget <dag_id>`** — explicit deregister via the Lite
   DB. Use it to remove a DAG without touching the source files (e.g.
   paused work on an example you'll come back to). Flags: `--all`
   (deregister everything), `--dry-run` (print what would be removed).
@@ -81,7 +81,7 @@ are all dropped atomically with the `dags` row.
 {{% /alert %}}
 
 {{% alert title="Per-DAG venvs (subprocess executor)" color="info" %}}
-Each DAG gets its own virtualenv under `~/.leoflow/dev/venvs/<dag_id>/`, so
+Each DAG gets its own virtualenv under `~/.dexaflow/dev/venvs/<dag_id>/`, so
 editing one project's `dependencies:` only re-runs pip for **that** DAG —
 other DAGs' venvs are untouched. Two DAGs can pin **conflicting** versions
 of the same package without interfering. If
@@ -120,7 +120,7 @@ only the engine that hosts the local k3d cluster — never an executor.
 | Isolation | **none** (shared host venv) | real pods (limits, RBAC) |
 | Pro fidelity | low | **high** (identical path to prod) |
 | Moving parts that can break | few (just the venv) | more (cluster, scheduler, registry, PVC) |
-| Shared `/staging` volume (ADR 0022) | **not provided** (`LEOFLOW_STAGING_DIR` unset; tasks have direct host-disk access instead) | **yes** — per-run PVC at `/staging`, `LEOFLOW_STAGING_DIR` set, GC'd |
+| Shared `/staging` volume (ADR 0022) | **not provided** (`DEXAFLOW_STAGING_DIR` unset; tasks have direct host-disk access instead) | **yes** — per-run PVC at `/staging`, `DEXAFLOW_STAGING_DIR` set, GC'd |
 
 Rule of thumb: iterate on DAG logic in **`subprocess`** (instant loop), then
 validate in **`k8s`** before deploy — especially anything that uses the staging
@@ -192,9 +192,9 @@ Fix the file and save — the watcher registers the next good version and the ba
 {{% alert title="Lite vs Pro" color="info" %}}
 This banner is driven by a control-plane feed (`GET /api/v2/importErrors`) and
 works in any environment. In **Pro** you rarely see it: DAGs are
-immutable artifacts and a broken DAG fails `leoflow compile` in **CI** before it
+immutable artifacts and a broken DAG fails `dexaflow compile` in **CI** before it
 is ever deployed — CI is the safety net there. In **Lite**, where you edit live,
-the `leoflow lite` watcher publishes the error so you catch it in the UI, not
+the `dexaflow lite` watcher publishes the error so you catch it in the UI, not
 only the terminal.
 {{% /alert %}}
 
@@ -211,7 +211,7 @@ only the terminal.
 
 ### Local credentials — GCP, AWS, Azure
 
-`leoflow lite`'s subprocess executor runs each task as a **local process under your
+`dexaflow lite`'s subprocess executor runs each task as a **local process under your
 user**, inheriting your shell environment and `$HOME`. So your **local cloud
 credentials just work** — no managed Connection needed for local dev:
 
@@ -242,13 +242,13 @@ Lite keeps its own state consistent without manual cleanup:
   it comes back), so virtualenvs don't pile up on disk.
 - **Docker wedged? Lite still runs.** If Docker is present but unresponsive, Lite
   falls back to a Docker-free managed Postgres and the subprocess executor instead
-  of aborting — or force it with `leoflow lite --postgres managed`.
+  of aborting — or force it with `dexaflow lite --postgres managed`.
 
 
 
 ## Redeploying Go changes (`make lite-redeploy`)
 
-The fastest way to validate a change end-to-end against `leoflow lite` —
+The fastest way to validate a change end-to-end against `dexaflow lite` —
 without going through `git tag`, the release pipeline, install-smoke, or
 `curl | sh`. The script is `scripts/lite-redeploy.sh`, wired as a
 Makefile target.
@@ -256,7 +256,7 @@ Makefile target.
 ### When to use
 
 - Validating a Go change in the control plane, the agent, or the CLI
-  against a real `leoflow lite` boot.
+  against a real `dexaflow lite` boot.
 - Reproducing a runtime bug a user reported, without round-tripping
   through the release machinery.
 - Smoke-testing a fix BEFORE cutting a tag — keeps release tags clean.
@@ -266,22 +266,22 @@ This is **not** an install path. Real users still install via
 
 ### What it does
 
-1. **Builds** `leoflow`, `leoflow-server`, and `leoflow-agent` from the
+1. **Builds** `dexaflow`, `dexaflow-server`, and `dexaflow-agent` from the
    current working tree (no `git tag` needed).
 2. **Ad-hoc code-signs** the binaries on macOS so the OS does not
    SIGKILL them at exec (Sequoia 14+ refuses to run an unsigned binary
    that carries `com.apple.provenance` — silent failure mode with
    exit 137 and no log output).
-3. **Stops** any running `leoflow lite` (via the script's pidfile, with
-   a `pkill -f "leoflow lite"` fallback).
-4. **Swaps the binaries in both locations** `leoflow lite` resolves
+3. **Stops** any running `dexaflow lite` (via the script's pidfile, with
+   a `pkill -f "dexaflow lite"` fallback).
+4. **Swaps the binaries in both locations** `dexaflow lite` resolves
    them from — `./bin/` (the repo's local bin, preferred by
-   `resolveBinary` in `internal/cli/dev.go`) and `~/.leoflow/bin/` (the
+   `resolveBinary` in `internal/cli/dev.go`) and `~/.dexaflow/bin/` (the
    user-install location). Keeping them in lockstep is critical: if
    only one is updated the stale one silently runs and the dev loop
    becomes confusing fast (this happened — see the commit that added
    the script).
-5. **Starts** `leoflow lite --postgres managed` (a docker-free local
+5. **Starts** `dexaflow lite --postgres managed` (a docker-free local
    Postgres on a Unix socket, so the loop does not collide with any
    `postgres:16` you already have on 5432).
 6. **Polls** `/readyz` and reports the boot URL + PID + log path.
@@ -301,7 +301,7 @@ After it returns:
 tail -f /tmp/leoflow-lite.log
 
 # get / rotate the admin password
-~/.leoflow/bin/leoflow lite reset-password
+~/.dexaflow/bin/dexaflow lite reset-password
 
 # stop
 kill "$(cat /tmp/leoflow-lite.pid)"
@@ -309,18 +309,18 @@ kill "$(cat /tmp/leoflow-lite.pid)"
 
 ### The two-binary trap (why this script exists)
 
-`leoflow lite` is a thin orchestrator: it spawns `leoflow-server` as a
+`dexaflow lite` is a thin orchestrator: it spawns `dexaflow-server` as a
 subprocess. The Subprocess executor (the dev-only path that runs your
-Python tasks) in turn spawns `leoflow-agent`. So a single `leoflow lite`
+Python tasks) in turn spawns `dexaflow-agent`. So a single `dexaflow lite`
 process tree uses **all three binaries**:
 
 ```
-leoflow lite (CLI / orchestrator)
-└── leoflow-server (control plane HTTP + gRPC + scheduler)
-    └── leoflow-agent (per-task subprocess; runs the user's dag.py)
+dexaflow lite (CLI / orchestrator)
+└── dexaflow-server (control plane HTTP + gRPC + scheduler)
+    └── dexaflow-agent (per-task subprocess; runs the user's dag.py)
 ```
 
-If you rebuild only `leoflow` (the CLI) but leave a stale `leoflow-server`
+If you rebuild only `dexaflow` (the CLI) but leave a stale `dexaflow-server`
 behind, lite still boots — but the control plane that actually handles
 requests is the OLD code. Symptom: your code change "doesn't show up"
 and you waste 30 minutes second-guessing the test. The script avoids
@@ -330,7 +330,7 @@ this by rebuilding and swapping all three on every invocation.
 
 | Layer | Tool | Triggered by | Validates |
 |---|---|---|---|
-| **Local dev loop** | `make lite-redeploy` | manual `make` | a change runs against a real `leoflow lite` |
+| **Local dev loop** | `make lite-redeploy` | manual `make` | a change runs against a real `dexaflow lite` |
 | **PR CI** | `.github/workflows/ci.yaml` | `pull_request` | unit + integration + lint + e2e on the PR HEAD |
 | **Release CI** | `.github/workflows/release.yaml` | `push: tags: v*` | the published binaries install, boot, and upgrade cleanly across 7 distros |
 

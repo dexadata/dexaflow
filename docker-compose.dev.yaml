@@ -1,4 +1,4 @@
-# Local development dependencies for Leoflow.
+# Local development dependencies for Dexaflow.
 # Usage: docker compose -f docker-compose.dev.yaml up -d && make migrate-up
 services:
   postgres:

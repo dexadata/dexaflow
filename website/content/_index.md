@@ -1,26 +1,26 @@
 ---
-title: Leoflow
+title: Dexaflow
 linkTitle: Home
 description: A Go control plane with an Airflow-compatible UI and REST API — container-native orchestration with native map-reduce, and none of the Python pain.
 ---
 
-{{% blocks/cover title="Leoflow" subtitle="The orchestrator that ate Airflow's lunch" image_anchor="top" height="med" color="primary" %}}
+{{% blocks/cover title="Dexaflow" subtitle="The orchestrator that ate Airflow's lunch" image_anchor="top" height="med" color="primary" %}}
 A **Go control plane** with an Airflow-compatible UI and REST API — zero of the
 Python pain. Native map-reduce for ML/AI: fan-out + reduce as a list comprehension.
 
 <a class="btn btn-lg btn-primary me-3 mb-4" href="/get-started/quickstart/">
   Get started <i class="fas fa-arrow-alt-circle-right ms-2"></i>
 </a>
-<a class="btn btn-lg btn-secondary me-3 mb-4" href="/why-leoflow/">
-  Why Leoflow <i class="fas fa-heart ms-2"></i>
+<a class="btn btn-lg btn-secondary me-3 mb-4" href="/why-dexaflow/">
+  Why Dexaflow <i class="fas fa-heart ms-2"></i>
 </a>
-<a class="btn btn-lg btn-secondary me-3 mb-4" href="https://github.com/neochaotic/leoflow">
+<a class="btn btn-lg btn-secondary me-3 mb-4" href="https://github.com/dexadata/dexaflow">
   GitHub <i class="fab fa-github ms-2"></i>
 </a>
 {{% /blocks/cover %}}
 
 {{% blocks/lead color="dark" %}}
-A DAG is a `leoflow.yaml` plus a `dag.py` (the real Airflow SDK) that compile to
+A DAG is a `dexaflow.yaml` plus a `dag.py` (the real Airflow SDK) that compile to
 **one immutable artifact** — a `dag.json` and a container image. Parsed once, at
 compile time. No shared `/dags` filesystem, no dependency hell, no re-parsing on
 every tick.
@@ -29,7 +29,7 @@ every tick.
 {{% blocks/section color="white" type="row" %}}
 
 {{% blocks/feature icon="fa-solid fa-pen-ruler" title="Author" url="/author-dags/dag-authoring/" url_text="Author a DAG" %}}
-Write a `dag.py` on the Airflow Task SDK, declare packaging in `leoflow.yaml`, and
+Write a `dag.py` on the Airflow Task SDK, declare packaging in `dexaflow.yaml`, and
 compile it to an immutable image. Native **map-reduce** for ML/AI as a Python list
 comprehension.
 {{% /blocks/feature %}}
@@ -47,18 +47,18 @@ task pod.
 {{% /blocks/feature %}}
 
 {{% blocks/feature icon="fa-solid fa-robot" title="Automate with MCP" url="/mcp/" url_text="The MCP server" %}}
-Point an AI agent at Leoflow over the **Model Context Protocol**: *"diagnose the
+Point an AI agent at Dexaflow over the **Model Context Protocol**: *"diagnose the
 latest failed run of `sales`."* Read-only, scoped to the caller's token — its blast
 radius is your own API rights.
 {{% /blocks/feature %}}
 
 {{% blocks/feature icon="fa-solid fa-gears" title="Operate" url="/operate/first-pro-dag/" url_text="Deploy & operate" %}}
-Go from `leoflow lite` on one host to a Kubernetes control plane. CI/CD deploy,
+Go from `dexaflow lite` on one host to a Kubernetes control plane. CI/CD deploy,
 Helm, upgrades, backup/restore, scheduler resilience, and warm worker pools.
 {{% /blocks/feature %}}
 
 {{% blocks/feature icon="fa-brands fa-github" title="Contribute" url="/contribute/contributing/" url_text="Start contributing" %}}
-GitOps-first and TDD-strict. A real from-source dev loop with `leoflow lite` —
+GitOps-first and TDD-strict. A real from-source dev loop with `dexaflow lite` —
 isolated cluster, hot reload — plus the `make lite-redeploy` inner loop for Go
 changes.
 {{% /blocks/feature %}}
@@ -68,9 +68,9 @@ changes.
 {{% blocks/section color="primary" %}}
 ### Start where you are
 
-**New here?** [Quickstart](/get-started/quickstart/) gets Leoflow Lite running in
-two commands. **Evaluating?** [Why Leoflow](/why-leoflow/) and
+**New here?** [Quickstart](/get-started/quickstart/) gets Dexaflow Lite running in
+two commands. **Evaluating?** [Why Dexaflow](/why-dexaflow/) and
 [Editions & modes](/concepts/editions/) lay out the model and the Lite/Pro split.
 **Building?** The [Reference](/reference/) has the HTTP API, CLI, Go packages, and
-every `LEOFLOW_*` config key.
+every `DEXAFLOW_*` config key.
 {{% /blocks/section %}}

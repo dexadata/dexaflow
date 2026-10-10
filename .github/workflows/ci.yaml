@@ -1,18 +1,31 @@
 name: CI
 
+# release-* is the per-minor branch every patch is tagged from (ADR 0062). A
+# cherry-pick PR to it gets the same CI as a PR to main, and so does the push
+# that merges it, because cut-release.sh tags only a merge commit that is green.
 on:
   push:
-    branches: [main]
+    branches: [main, "release-*"]
   pull_request:
-    branches: [main]
+    branches: [main, "release-*"]
 
 permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
   PYTHON_VERSION: "3.11"
   GOLANGCI_LINT_VERSION: "v2.12.2"
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (pushes to main and release-*, tags, schedules, manual runs) gets a group of
+# its own, keyed by run id: a shared group would still cancel a WAITING run
+# when a third one arrives, whatever cancel-in-progress says, and
+# cut-release.sh refuses to tag a commit whose run was cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────
@@ -170,29 +183,9 @@ jobs:
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Enforce coverage floor
-        run: |
-          # Coverage floor: 80% (raised from 78 after the alpha-prep batch
-          # — #295/#296/#297/#299 — pushed the filtered total above 80%).
-          # Exclude generated code, main packages, version, and the
-          # process-orchestration of external binaries (Docker/initdb/pg_ctl)
-          # that only integration/e2e can exercise honestly, per ADR 0011.
-          #
-          # /test/ covers the load and soak harnesses (test/load/*,
-          # test/soak/*): `package main` programs that drive a real Postgres and
-          # a real control plane, which is the same category as /cmd/ and was
-          # already being counted by accident. Their pure logic IS tested
-          # (test/soak/monitor/*_test.go); what cannot be covered honestly here
-          # is their database and HTTP orchestration.
-          FLOOR=80
-          EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/cmd/|/test/)'
-          grep -vE "$EXCLUDE" coverage.out > coverage.filtered.out
-          TOTAL=$(go tool cover -func=coverage.filtered.out | tail -1 | awk '{print $3}' | sed 's/%//')
-          echo "Total coverage (filtered): ${TOTAL}% (floor: ${FLOOR}%)"
-          AWK_RESULT=$(awk -v t="$TOTAL" -v f="$FLOOR" 'BEGIN { print (t < f) }')
-          if [ "$AWK_RESULT" = "1" ]; then
-            echo "::error::Coverage ${TOTAL}% is below floor ${FLOOR}% (see ADR 0011)"
-            exit 1
-          fi
+        # The floor and the exclude list live in scripts/coverage-gate.sh,
+        # shared with the pre-commit hook so the two cannot drift (ADR 0011).
+        run: scripts/coverage-gate.sh coverage.out
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -280,7 +273,7 @@ jobs:
         run: bash test/e2e/lite-db-outage.sh
 
   # ─────────────────────────────────────────────────────────────────────
-  # End-to-end Lite happy path: `leoflow setup` → control plane with REAL auth
+  # End-to-end Lite happy path: `dexaflow setup` → control plane with REAL auth
   # → admin login returns a JWT (and a wrong password is rejected). Runs against
   # throwaway Postgres+Redis services, so the script's leoflow_dev reset is safe.
   # ─────────────────────────────────────────────────────────────────────
@@ -315,7 +308,7 @@ jobs:
   # Genuine binary-only install gate (#587). A built binary, a clean HOME, NO
   # repo on any path, and — deliberately — NO `PYTHONPATH` env. Every other
   # e2e job presets `PYTHONPATH: parser`, which masks the real "download the
-  # release and run it" path: `leoflow compile` must resolve the embedded
+  # release and run it" path: `dexaflow compile` must resolve the embedded
   # parser from the binary's own ~/.leoflow/pysrc extraction, and the binary
   # must extract the runtime sources the Lite venv builds from. No Postgres —
   # the bug was in resolution + extraction, not runtime state. ~15 s.
@@ -347,7 +340,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # The script runs `leoflow compile`, which spawns the parser via
+      # The script runs `dexaflow compile`, which spawns the parser via
       # `python3 -m leoflow_parser`. The repo ships the parser source under
       # parser/leoflow_parser; export PYTHONPATH so the import resolves on a
       # bare runner (no pip install, no venv, no extra setup-python action).
@@ -362,7 +355,7 @@ jobs:
         run: bash test/e2e/lite-multidag.sh
 
   # ─────────────────────────────────────────────────────────────────────
-  # Lite boot self-heal gate (#404). Two `leoflow lite` sessions share one
+  # Lite boot self-heal gate (#404). Two `dexaflow lite` sessions share one
   # external Postgres; the second's boot reconcile must deregister a DAG whose
   # files were removed and clear its orphan import error, while keeping a valid
   # DAG. Catches the regression where the watcher seeded its set-diff from the
@@ -633,15 +626,15 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$PWD/bin:$PATH"
-          # `leoflow setup` prints the admin password once; capture it.
-          PW=$(leoflow setup 2>&1 | tee /tmp/setup.log | grep -oiE 'password:[[:space:]]*[A-Za-z0-9]+' | head -1 | awk '{print $NF}')
+          # `dexaflow setup` prints the admin password once; capture it.
+          PW=$(dexaflow setup 2>&1 | tee /tmp/setup.log | grep -oiE 'password:[[:space:]]*[A-Za-z0-9]+' | head -1 | awk '{print $NF}')
           [ -n "$PW" ] || { echo "could not capture admin password"; cat /tmp/setup.log; exit 1; }
           # Register the typed-params fixture DAG alongside the scaffolded hello so
           # the trigger dialog has declared params to render its native form from.
-          # It lands in the workspace leoflow setup chose (~/leoflow by default).
-          mkdir -p "$HOME/leoflow/params_demo"
-          cp examples/params_demo/dag.py examples/params_demo/leoflow.yaml "$HOME/leoflow/params_demo/"
-          leoflow lite --port 18080 --postgres managed --executor subprocess \
+          # It lands in the workspace dexaflow setup chose (~/dexaflow by default).
+          mkdir -p "$HOME/dexaflow/params_demo"
+          cp examples/params_demo/dag.py examples/params_demo/dexaflow.yaml "$HOME/dexaflow/params_demo/"
+          dexaflow lite --port 18080 --postgres managed --executor subprocess \
             --server-bin "$PWD/bin/leoflow-server" --agent-bin "$PWD/bin/leoflow-agent" > /tmp/lite.log 2>&1 &
           for _ in $(seq 1 60); do curl -fsS http://localhost:18080/readyz >/dev/null 2>&1 && break; sleep 3; done
           curl -fsS http://localhost:18080/readyz >/dev/null || { echo "lite did not become ready"; tail -40 /tmp/lite.log; exit 1; }
@@ -714,6 +707,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -796,6 +790,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -875,6 +870,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -942,7 +938,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: bash test/e2e/dbt-connection-e2e.sh
 
-  # dbt-adapter-contracts (#574): the profiles.yml Leoflow emits for each cloud
+  # dbt-adapter-contracts (#574): the profiles.yml Dexaflow emits for each cloud
   # warehouse must be accepted by that warehouse's REAL dbt adapter — right field
   # names, alias resolution, required fields, auth-mode wiring — validated by
   # constructing the adapter's own Credentials from our emitted profile (no live
@@ -970,8 +966,8 @@ jobs:
       - name: Contract test (${{ matrix.adapter }})
         run: PYTHONPATH=runtime/python python -m pytest runtime/python/tests/test_dbt_adapter_contracts.py -q -k ${{ matrix.adapter }}
 
-  # deploy-e2e: the real `leoflow deploy` path on k3d with a registry the cluster
-  # pulls from (test/e2e/deploy-e2e.sh, ADR 0041). One `leoflow deploy` builds for
+  # deploy-e2e: the real `dexaflow deploy` path on k3d with a registry the cluster
+  # pulls from (test/e2e/deploy-e2e.sh, ADR 0041). One `dexaflow deploy` builds for
   # the cluster arch, pushes to a k3d-managed registry, captures the digest,
   # re-pins dag.json, registers -- then the cluster pulls the digest-pinned image
   # and runs it. Gates the build/push/digest/register glue. ~10 min.
@@ -1004,6 +1000,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -1093,13 +1090,15 @@ jobs:
       - name: Build
         run: |
           mkdir -p bin
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/leoflow ./cmd/leoflow
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/leoflow-server ./cmd/leoflow-server
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/leoflow-agent ./cmd/leoflow-agent
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dexaflow ./cmd/dexaflow
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dexaflow-server ./cmd/dexaflow-server
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/dexaflow-agent ./cmd/dexaflow-agent
+          # Pre-rename entry points, as `make build` and install.sh create them.
+          for b in "" -server -agent; do ln -sf "dexaflow$b" "bin/leoflow$b"; done
 
       - name: Check agent binary size (<20MB per ADR 0004)
         run: |
-          SIZE=$(stat -c%s bin/leoflow-agent)
+          SIZE=$(stat -c%s bin/dexaflow-agent)
           MAX=20971520  # 20 MB
           echo "leoflow-agent size: $SIZE bytes (max: $MAX)"
           if [ "$SIZE" -gt "$MAX" ]; then
@@ -1130,7 +1129,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────
   # Examples Dockerfile drift check (#318). The Dockerfile in each
-  # examples/<name>/ is generated from leoflow.yaml by
+  # examples/<name>/ is generated from dexaflow.yaml by
   # scripts/sync-example-dockerfiles.sh. If a contributor changes the
   # YAML (python_version or dependencies) and forgets to regenerate, the
   # checked-in Dockerfile lies about what the image will run. Catch
@@ -1143,7 +1142,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check Dockerfiles are in sync with leoflow.yaml
+      - name: Check Dockerfiles are in sync with dexaflow.yaml
         run: bash scripts/sync-example-dockerfiles.sh --check
 
   # ─────────────────────────────────────────────────────────────────────
@@ -1490,21 +1489,23 @@ jobs:
         run: |
           python -m pip install --quiet pytest ./runtime/python \
             "apache-airflow-task-sdk==${{ steps.sdk.outputs.version }}"
-      - name: Both imports must resolve, from the installed wheel
+      - name: The authoring imports must resolve, from the installed wheel
         run: |
           python - <<'PY'
-          import leoflow, airflow.sdk
-          print("leoflow:", leoflow.__file__)
-          assert "site-packages" in leoflow.__file__, \
-              f"leoflow resolved from the source tree, not the wheel: {leoflow.__file__}"
+          import dexaflow, leoflow, airflow.sdk
+          for mod in (dexaflow, leoflow):
+              print(mod.__name__ + ":", mod.__file__)
+              assert "site-packages" in mod.__file__, \
+                  f"{mod.__name__} resolved from the source tree, not the wheel: {mod.__file__}"
+          assert leoflow.dbt_group is dexaflow.dbt_group, "leoflow must re-export dexaflow"
           PY
-      - name: The installed wheel carries the two packages and nothing else
+      - name: The installed wheel carries the three packages and nothing else
         run: |
           python - <<'PY'
           import pathlib, sys, sysconfig
           site = pathlib.Path(sysconfig.get_paths()["purelib"])
           bad = []
-          for pkg in ("leoflow", "leoflow_runtime"):
+          for pkg in ("dexaflow", "leoflow", "leoflow_runtime"):
               d = site / pkg
               if not (d / "__init__.py").is_file():
                   sys.exit(f"{pkg} is not in the installed wheel — go:embed/hatchling dropped it")
@@ -1512,7 +1513,8 @@ jobs:
                       if f.is_file() and f.suffix != ".py" and "__pycache__" not in f.parts]
           if bad:
               sys.exit("the wheel carries non-source files: " + ", ".join(sorted(bad)))
-          print("wheel clean:", ", ".join(sorted(p.name for p in site.glob("leoflow*") if p.is_dir())))
+          names = ("dexaflow", "leoflow", "leoflow_runtime")
+          print("wheel clean:", ", ".join(n for n in names if (site / n).is_dir()))
           PY
       - name: Authoring contract
         run: python -m pytest runtime/python/tests/test_leoflow_authoring.py -q

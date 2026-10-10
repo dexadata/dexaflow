@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -34,7 +35,7 @@ import (
 //     authorization header was sent once at stream open.
 //
 // In production StreamClient and WorkClient are two dials of the same control
-// plane (see cmd/leoflow-agent), one bound to the bootstrap TokenSource and one to
+// plane (see cmd/dexaflow-agent), one bound to the bootstrap TokenSource and one to
 // AttemptTokens. They may be the same client only in tests that don't exercise the
 // credential.
 type WarmRunner struct {
@@ -78,10 +79,33 @@ type WarmRunner struct {
 	// extra-links, xcom-pushes, and reschedule files the runtime writes.
 	ScratchDir string
 
+	// AttemptHome is the read-only-root isolation mode (X3.2), set from
+	// LEOFLOW_WARM_ATTEMPT_HOME. Each attempt then gets its own HOME and XDG dirs
+	// under ScratchDir, and resetScratch also empties the writable paths a
+	// read-only root leaves: SharedTmpDir (the pod's /tmp emptyDir) except for
+	// ScratchDir itself, and SharedMemDir (/dev/shm, a pod-wide tmpfs). The sweep
+	// runs before each ack and again as soon as an attempt ends, before SlotFree,
+	// so a generated dbt profile or a planted script neither reaches the next
+	// attempt nor sits on an idle worker. Off leaves HOME, /tmp and /dev/shm
+	// exactly as before.
+	AttemptHome  bool
+	SharedTmpDir string
+	SharedMemDir string
+
 	// TerminationLogPath and HeartbeatInterval mirror the single-shot Runner's
 	// fields and are threaded into every per-attempt Runner.
 	TerminationLogPath string
 	HeartbeatInterval  time.Duration
+
+	// StreamHeartbeat is how often the worker re-sends its WorkerRegister on the
+	// open assignment stream, idle or busy, as a liveness heartbeat. The control
+	// plane allows one live registration per worker identity and judges liveness
+	// by these heartbeats, so a duplicate registration of a live worker is refused
+	// while a wedged stream can still be replaced. Zero uses
+	// DefaultHeartbeatInterval; a negative value disables it. A control plane
+	// that predates the heartbeat ignores a re-registration on an established
+	// stream, so it is safe in a mixed-version rollout.
+	StreamHeartbeat time.Duration
 
 	// Self-lifecycle bounds (ADR 0058 D9/D10/D6/H3), populated from the warm-pod env
 	// in main.go. A warm worker that exits is replaced by the reconciler
@@ -168,6 +192,14 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 
 	defer w.closeRedialConn()
 
+	// Before any attempt runs in this container: non dumpable, so an attempt
+	// cannot read the agent's tokens out of /proc, and child subreaper, so an
+	// attempt's orphans stay findable by the post-attempt sweep (X3.3, X3.4).
+	// Fail-closed: a worker that cannot isolate its attempts must not serve any.
+	if err := hardenWarmProcess(); err != nil {
+		return fmt.Errorf("hardening the warm worker process: %w", err)
+	}
+
 	reconnects := 0
 	for {
 		err := w.serve(ctx, dagVersionID)
@@ -204,10 +236,16 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 // FailedPrecondition-coded error is the not-leader rejection Run reconnects on. A
 // failed TASK is a normal outcome and never ends the loop.
 func (w *WarmRunner) serve(ctx context.Context, dagVersionID string) error {
-	stream, err := w.connect(ctx, dagVersionID)
+	raw, err := w.connect(ctx, dagVersionID)
 	if err != nil {
 		return err
 	}
+	// Every Send on this stream goes through one lock: the heartbeat goroutine
+	// sends concurrently with the serve loop's acks and slot-free signals, and a
+	// gRPC stream does not allow concurrent Sends.
+	stream := &lockedSendStream{AgentService_AwaitAssignmentClient: raw}
+	stopHeartbeat := w.startStreamHeartbeat(ctx, stream, dagVersionID)
+	defer stopHeartbeat()
 
 	// D9/D10 accounting: bound the worker by attempts served and wall-clock age.
 	// Both are checked only BETWEEN attempts (after SlotFree), so a recycle is always
@@ -314,12 +352,66 @@ func (w *WarmRunner) connect(ctx context.Context, dagVersionID string) (agentv1.
 	return stream, nil
 }
 
+// lockedSendStream serializes Send on an AwaitAssignment client stream so the
+// stream heartbeat and the serve loop can both send. Recv stays unlocked: gRPC
+// allows one sender and one receiver to run concurrently.
+type lockedSendStream struct {
+	agentv1.AgentService_AwaitAssignmentClient
+	mu sync.Mutex
+}
+
+// Send sends m on the underlying stream while holding the send lock.
+func (s *lockedSendStream) Send(m *agentv1.WorkerMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.AgentService_AwaitAssignmentClient.Send(m)
+}
+
+// startStreamHeartbeat re-sends the worker's WorkerRegister on stream every
+// StreamHeartbeat until the returned stop function is called. stop waits for the
+// goroutine to exit, so nothing is sent on the stream after serve returns. A send
+// error ends the heartbeat quietly: the serve loop sees the broken stream on its
+// own Recv and handles it there.
+func (w *WarmRunner) startStreamHeartbeat(ctx context.Context, stream *lockedSendStream, dagVersionID string) func() {
+	interval := w.StreamHeartbeat
+	if interval == 0 {
+		interval = DefaultHeartbeatInterval
+	}
+	if interval < 0 {
+		return func() {}
+	}
+	hbCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				if err := stream.Send(&agentv1.WorkerMessage{
+					Msg: &agentv1.WorkerMessage_Register{
+						Register: &agentv1.WorkerRegister{DagVersionId: dagVersionID, PodName: w.PodName},
+					},
+				}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
 // backoffSleep waits a jittered exponential backoff before reconnect n (1-based),
 // capped at maxBackoff, returning ctx.Err() if ctx is canceled first (so a SIGTERM
 // during backoff exits cleanly). The doubling loop stops once the cap is reached so
-// a large n can never overflow the shift. Full jitter (a uniform draw in [d/2, d])
-// spreads a fleet's reconnects so they do not stampede the leader in lockstep;
-// math/rand is fine here — this is backoff jitter, nothing security-relevant.
+// a large n can never overflow the shift. jitterDelay (a uniform draw in [d/2, d])
+// spreads a fleet's reconnects so they do not stampede the leader in lockstep.
 func (w *WarmRunner) backoffSleep(ctx context.Context, base, maxBackoff time.Duration, n int) error {
 	d := base
 	for i := 1; i < n && d < maxBackoff; i++ {
@@ -328,10 +420,7 @@ func (w *WarmRunner) backoffSleep(ctx context.Context, base, maxBackoff time.Dur
 	if d <= 0 || d > maxBackoff {
 		d = maxBackoff
 	}
-	if half := d / 2; half > 0 {
-		d = half + time.Duration(mathrand.Int64N(int64(half)+1)) //nolint:gosec // G404: backoff jitter, not security-relevant
-	}
-	timer := time.NewTimer(d)
+	timer := time.NewTimer(jitterDelay(d))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
@@ -470,6 +559,26 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 			"assignment", a.GetAssignmentId(), "error", aerr)
 	}
 
+	// D4 isolation, part 3: no process of this attempt may outlive it. The exec
+	// runner already killed the attempt's process group; this also catches a
+	// descendant that left the group with setsid, and confirms nothing is left
+	// before SlotFree invites the next attempt. Fail-closed: a survivor ends the
+	// worker (the reconciler replaces the pod) rather than sharing it with the
+	// next attempt (X3.3).
+	if err := sweepDescendants(); err != nil {
+		return fmt.Errorf("sweeping processes after assignment %q: %w", a.GetAssignmentId(), err)
+	}
+
+	// X3.2: sweep what the attempt left (its HOME, a generated dbt profile with a
+	// connection secret, /dev/shm) now rather than at the next ack, so it does not
+	// stay on disk while the worker idles. Fail-closed like the pre-ack reset: the
+	// attempt is already reported, so tearing the worker down loses nothing.
+	if w.AttemptHome {
+		if err := w.resetScratch(); err != nil {
+			return fmt.Errorf("sweeping after assignment %q: %w", a.GetAssignmentId(), err)
+		}
+	}
+
 	// Signal availability so the control plane may dispatch the next assignment.
 	if err := stream.Send(&agentv1.WorkerMessage{
 		Msg: &agentv1.WorkerMessage_SlotFree{SlotFree: &agentv1.SlotFree{}},
@@ -492,8 +601,49 @@ func (w *WarmRunner) resetScratch() error {
 	if err := os.RemoveAll(w.ScratchDir); err != nil {
 		return fmt.Errorf("removing scratch %q: %w", w.ScratchDir, err)
 	}
+	if w.AttemptHome && w.SharedTmpDir != "" {
+		if err := w.sweepSharedTmp(); err != nil {
+			return err
+		}
+	}
+	if w.AttemptHome && w.SharedMemDir != "" {
+		if err := sweepDir(w.SharedMemDir, ""); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(w.ScratchDir, 0o700); err != nil {
 		return fmt.Errorf("recreating scratch %q: %w", w.ScratchDir, err)
+	}
+	return nil
+}
+
+// sweepSharedTmp removes every entry of SharedTmpDir except the one holding
+// ScratchDir (X3.2). With a read-only root that emptyDir is writable, and the
+// runtime writes there by default: the image points DBT_PROFILES_DIR at
+// /tmp/leoflow/dbt, and the generated profiles.yml carries the connection
+// secret. Like resetScratch it is fail-closed.
+func (w *WarmRunner) sweepSharedTmp() error {
+	return sweepDir(w.SharedTmpDir, w.ScratchDir)
+}
+
+// sweepDir removes every entry of dir except the one that is, or contains, keep
+// (empty keeps nothing). The dir itself stays, since it is a mount point.
+func sweepDir(dir, keep string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("listing shared dir %q: %w", dir, err)
+	}
+	if keep != "" {
+		keep = filepath.Clean(keep)
+	}
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		if keep != "" && (p == keep || strings.HasPrefix(keep, p+string(filepath.Separator))) {
+			continue
+		}
+		if err := os.RemoveAll(p); err != nil {
+			return fmt.Errorf("removing %q from the shared dir: %w", p, err)
+		}
 	}
 	return nil
 }
@@ -517,7 +667,12 @@ func (w *WarmRunner) openSink(ctx context.Context) LogSink {
 // attempts), and its Client is the WorkClient bound to AttemptTokens so every
 // per-attempt RPC carries the attempt_token.
 func (w *WarmRunner) attemptRunner(sink LogSink) *Runner {
+	home := ""
+	if w.AttemptHome {
+		home = filepath.Join(w.ScratchDir, "home")
+	}
 	return &Runner{
+		HomeDir:        home,
 		Client:         w.WorkClient,
 		Cmd:            w.Cmd,
 		Sink:           sink,

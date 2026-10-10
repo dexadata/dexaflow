@@ -10,12 +10,12 @@ description: Vertica connection
 ---
 
 Connect a task to a Vertica analytics database (the `VerticaHook`) over a
-managed Leoflow Connection. The database lives in the Schema field.
+managed Dexaflow Connection. The database lives in the Schema field.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: vertica_smoke
 connectors:
   - vertica
@@ -70,7 +70,7 @@ with DAG("vertica_smoke", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: vertica_smoke
 python_version: "3.11"

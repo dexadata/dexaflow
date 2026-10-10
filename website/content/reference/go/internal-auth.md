@@ -5,7 +5,7 @@ weight: 8
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/auth"
+import "github.com/dexadata/dexaflow/internal/auth"
 ```
 
 Package auth provides JWT authentication, password hashing, the RBAC permission model, and login rate limiting for the control plane \(ADR 0008\).
@@ -73,7 +73,7 @@ var ErrUserNotFound = errors.New("user not found")
 ```
 
 <a name="HashPassword"></a>
-## func [HashPassword](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/password.go#L13>)
+## func [HashPassword](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/password.go#L13>)
 
 ```go
 func HashPassword(password string) (string, error)
@@ -82,7 +82,7 @@ func HashPassword(password string) (string, error)
 HashPassword hashes a plaintext password with bcrypt.
 
 <a name="MintUserToken"></a>
-## func [MintUserToken](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/jwt.go#L69>)
+## func [MintUserToken](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/jwt.go#L69>)
 
 ```go
 func MintUserToken(secret string, ttl time.Duration, user User) (string, error)
@@ -91,7 +91,7 @@ func MintUserToken(secret string, ttl time.Duration, user User) (string, error)
 MintUserToken signs a user JWT directly, without checking credentials against a store. It is for trusted in\-process callers only — notably \`leoflow dev\`, which runs its own control plane and must register DAGs without a login round\-trip. The token validates under Authenticate using the same secret.
 
 <a name="VerifyPassword"></a>
-## func [VerifyPassword](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/password.go#L22>)
+## func [VerifyPassword](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/password.go#L22>)
 
 ```go
 func VerifyPassword(hash, password string) bool
@@ -100,7 +100,7 @@ func VerifyPassword(hash, password string) bool
 VerifyPassword reports whether password matches the stored bcrypt hash.
 
 <a name="AgentIdentity"></a>
-## type [AgentIdentity](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/agent_token.go#L29-L47>)
+## type [AgentIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/agent_token.go#L29-L47>)
 
 AgentIdentity is the identity a verified agent token represents. By default \(Scope == ""\) it is a single task instance — the task\-scoped credential that resolves secrets. When Scope == ScopeWarmWorker it is instead a warm worker's bootstrap credential, which names its dag\_version pool \(DagVersionID\) and its worker id \(WorkerID, the token Subject\) and carries NO task claims.
 
@@ -127,7 +127,7 @@ type AgentIdentity struct {
 ```
 
 <a name="Authenticator"></a>
-## type [Authenticator](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/auth.go#L62-L65>)
+## type [Authenticator](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/auth.go#L62-L65>)
 
 Authenticator issues and validates authentication tokens. The MVP ships a JWT implementation; the interface keeps OIDC/LDAP pluggable \(ADR 0008\).
 
@@ -139,7 +139,7 @@ type Authenticator interface {
 ```
 
 <a name="Credentials"></a>
-## type [Credentials](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/auth.go#L54-L58>)
+## type [Credentials](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/auth.go#L54-L58>)
 
 Credentials are the inputs to token issuance.
 
@@ -152,7 +152,7 @@ type Credentials struct {
 ```
 
 <a name="JWTAuthenticator"></a>
-## type [JWTAuthenticator](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/jwt.go#L39-L47>)
+## type [JWTAuthenticator](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/jwt.go#L39-L47>)
 
 JWTAuthenticator issues and validates HS256 JWTs against a UserStore.
 
@@ -163,7 +163,7 @@ type JWTAuthenticator struct {
 ```
 
 <a name="NewJWTAuthenticator"></a>
-### func [NewJWTAuthenticator](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/jwt.go#L51>)
+### func [NewJWTAuthenticator](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/jwt.go#L51>)
 
 ```go
 func NewJWTAuthenticator(store UserStore, secret string, ttl time.Duration) *JWTAuthenticator
@@ -172,7 +172,7 @@ func NewJWTAuthenticator(store UserStore, secret string, ttl time.Duration) *JWT
 NewJWTAuthenticator builds a JWTAuthenticator with the given user store, HS256 secret, and token lifetime.
 
 <a name="JWTAuthenticator.Authenticate"></a>
-### func \(\*JWTAuthenticator\) [Authenticate](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/jwt.go#L103>)
+### func \(\*JWTAuthenticator\) [Authenticate](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/jwt.go#L103>)
 
 ```go
 func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*User, error)
@@ -183,7 +183,7 @@ Authenticate validates a bearer token and resolves the current principal. After 
 Two cases fall back to the signed claims instead of the reload: a nil store \(no data plane bound — the trusted in\-process minting context\) and a subject with no backing row \(a directly\-minted token, e.g. \`leoflow dev\`\). Any other store failure fails closed, so a flaky database cannot silently disable revocation.
 
 <a name="JWTAuthenticator.AuthenticateAgent"></a>
-### func \(\*JWTAuthenticator\) [AuthenticateAgent](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/agent_token.go#L162>)
+### func \(\*JWTAuthenticator\) [AuthenticateAgent](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/agent_token.go#L162>)
 
 ```go
 func (a *JWTAuthenticator) AuthenticateAgent(token string) (*AgentIdentity, error)
@@ -192,7 +192,7 @@ func (a *JWTAuthenticator) AuthenticateAgent(token string) (*AgentIdentity, erro
 AuthenticateAgent validates an agent bearer token and returns the task instance it identifies.
 
 <a name="JWTAuthenticator.IssueAgentToken"></a>
-### func \(\*JWTAuthenticator\) [IssueAgentToken](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/agent_token.go#L76>)
+### func \(\*JWTAuthenticator\) [IssueAgentToken](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/agent_token.go#L76>)
 
 ```go
 func (a *JWTAuthenticator) IssueAgentToken(id AgentIdentity, ttl time.Duration) (string, error)
@@ -203,7 +203,7 @@ IssueAgentToken mints a signed token that identifies a single task instance, val
 The token's origin \(oiat\) is set to the mint time — this is a fresh dispatch. Renewal \(RenewAgentToken\) preserves that origin instead of resetting it.
 
 <a name="JWTAuthenticator.IssueToken"></a>
-### func \(\*JWTAuthenticator\) [IssueToken](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/jwt.go#L75>)
+### func \(\*JWTAuthenticator\) [IssueToken](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/jwt.go#L75>)
 
 ```go
 func (a *JWTAuthenticator) IssueToken(ctx context.Context, creds Credentials) (string, error)
@@ -212,7 +212,7 @@ func (a *JWTAuthenticator) IssueToken(ctx context.Context, creds Credentials) (s
 IssueToken validates the credentials against the store and returns a signed JWT.
 
 <a name="JWTAuthenticator.RenewAgentToken"></a>
-### func \(\*JWTAuthenticator\) [RenewAgentToken](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/agent_token.go#L134>)
+### func \(\*JWTAuthenticator\) [RenewAgentToken](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/agent_token.go#L134>)
 
 ```go
 func (a *JWTAuthenticator) RenewAgentToken(token string, ttl, maxLifetime time.Duration) (renewed string, ok bool, err error)
@@ -225,20 +225,20 @@ The attempt's original dispatch time is preserved across every renewal \(the oia
 An invalid incoming token \(bad signature, wrong audience, expired\) returns an error and is never re\-minted.
 
 <a name="JWTAuthenticator.RenewUserToken"></a>
-### func \(\*JWTAuthenticator\) [RenewUserToken](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/jwt.go#L185>)
+### func \(\*JWTAuthenticator\) [RenewUserToken](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/jwt.go#L185>)
 
 ```go
 func (a *JWTAuthenticator) RenewUserToken(token string, ttl, maxLifetime time.Duration) (renewed string, ok bool, err error)
 ```
 
-RenewUserToken validates a still\-valid user bearer token and re\-mints it for the SAME principal \(subject, tenant, email, roles\) with a fresh short TTL, without ever changing what Authenticate verifies \(signature, issuer, leoflow\-user audience, HS256\). It is the server half of transparent CLI token renewal \(EKS validation aresta \#5\): the short access\-token TTL still bounds a stolen token, while renewal keeps a genuinely live session working so a long dev session never has to \`leoflow auth login\` again on the hour. It is modeled directly on RenewAgentToken.
+RenewUserToken validates a still\-valid user bearer token and re\-mints it for the SAME principal \(subject, tenant, email, roles\) with a fresh short TTL, without ever changing what Authenticate verifies \(signature, issuer, leoflow\-user audience, HS256\). It is the server half of transparent CLI token renewal \(EKS validation aresta \#5\): the short access\-token TTL still bounds a stolen token, while renewal keeps a genuinely live session working so a long dev session never has to \`dexaflow auth login\` again on the hour. It is modeled directly on RenewAgentToken.
 
 The session's original login time is preserved across every renewal \(the oiat claim, falling back to iat for a token minted before that claim existed\). maxLifetime is a hard ceiling on that total age: once the session has been alive longer than maxLifetime since first login, renewal is refused \(ok=false, empty token, no error\) so the user must re\-authenticate. A non\-positive maxLifetime disables the ceiling. exp is always now\+ttl — never accumulated.
 
 An invalid incoming token \(bad signature, wrong audience, expired\) returns an error and is never re\-minted. Roles are copied from the incoming token, exactly as they were signed; Authenticate still reloads authorization from the store on every request, so a renewed token confers no more than the original did.
 
 <a name="Permission"></a>
-## type [Permission](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/auth.go#L23-L26>)
+## type [Permission](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/auth.go#L23-L26>)
 
 Permission is an action on a resource \(e.g. \{Action: "read", Resource: "dag"\}\).
 
@@ -250,7 +250,7 @@ type Permission struct {
 ```
 
 <a name="RateLimiter"></a>
-## type [RateLimiter](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/ratelimit.go#L10-L16>)
+## type [RateLimiter](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L10-L16>)
 
 RateLimiter is a per\-key fixed\-window limiter used to throttle failed logins per client IP \(ADR 0008\).
 
@@ -261,7 +261,7 @@ type RateLimiter struct {
 ```
 
 <a name="NewRateLimiter"></a>
-### func [NewRateLimiter](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/ratelimit.go#L24>)
+### func [NewRateLimiter](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L24>)
 
 ```go
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter
@@ -270,7 +270,7 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter
 NewRateLimiter builds a limiter allowing limit events per window per key.
 
 <a name="RateLimiter.Allow"></a>
-### func \(\*RateLimiter\) [Allow](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/ratelimit.go#L49>)
+### func \(\*RateLimiter\) [Allow](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L49>)
 
 ```go
 func (r *RateLimiter) Allow(key string) bool
@@ -279,7 +279,7 @@ func (r *RateLimiter) Allow(key string) bool
 Allow records an event for key and reports whether it is within the limit.
 
 <a name="RateLimiter.Blocked"></a>
-### func \(\*RateLimiter\) [Blocked](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/ratelimit.go#L38>)
+### func \(\*RateLimiter\) [Blocked](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L38>)
 
 ```go
 func (r *RateLimiter) Blocked(key string) bool
@@ -288,7 +288,7 @@ func (r *RateLimiter) Blocked(key string) bool
 Blocked reports whether key has already reached its limit in the current window, WITHOUT recording an attempt \(a peek\). The login handler uses it to reject an over\-limit caller up front while calling Allow only for actual failures — so a successful login never consumes the budget and a user who mistypes a few times is not locked out the moment they finally get it right.
 
 <a name="User"></a>
-## type [User](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/auth.go#L29-L35>)
+## type [User](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/auth.go#L29-L35>)
 
 User is an authenticated principal with its tenant, roles, and permissions.
 
@@ -303,7 +303,7 @@ type User struct {
 ```
 
 <a name="User.HasPermission"></a>
-### func \(\*User\) [HasPermission](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/auth.go#L39>)
+### func \(\*User\) [HasPermission](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/auth.go#L39>)
 
 ```go
 func (u *User) HasPermission(action, resource string) bool
@@ -312,7 +312,7 @@ func (u *User) HasPermission(action, resource string) bool
 HasPermission reports whether the user may perform action on resource. The admin role, or an admin action / wildcard resource permission, grants access.
 
 <a name="UserStore"></a>
-## type [UserStore](<https://github.com/neochaotic/leoflow/blob/main/internal/auth/auth.go#L68-L76>)
+## type [UserStore](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/auth.go#L68-L76>)
 
 UserStore loads users for authentication. storage implements it.
 

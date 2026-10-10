@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 // The task pod's ServiceAccount defaults to the operator-configured one when a DAG

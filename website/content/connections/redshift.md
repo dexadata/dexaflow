@@ -10,16 +10,16 @@ description: Amazon Redshift connection
 ---
 
 Connect a task to an Amazon Redshift cluster (or Redshift Serverless) over a
-managed Leoflow Connection. Redshift speaks the Postgres wire protocol, so the
+managed Dexaflow Connection. Redshift speaks the Postgres wire protocol, so the
 Connection has the same host-bearing shape as Postgres.
 
 ## Declare the provider
 
 Each DAG image bundles only the providers it declares. Add Redshift in
-`leoflow.yaml`:
+`dexaflow.yaml`:
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: redshift_demo
 connectors:
   - redshift
@@ -80,7 +80,7 @@ with DAG("redshift_demo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: redshift_demo
 python_version: "3.12"

@@ -2,12 +2,12 @@ package api
 
 import (
 	"errors"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // TestOIDCReturningUserReconcilesToMappedRoles proves the IdP is authoritative

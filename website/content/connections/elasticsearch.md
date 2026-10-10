@@ -10,12 +10,12 @@ description: Elasticsearch connection
 ---
 
 Connect a task to an Elasticsearch cluster's SQL endpoint (the
-`ElasticsearchSQLHook`) over a managed Leoflow Connection.
+`ElasticsearchSQLHook`) over a managed Dexaflow Connection.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: elasticsearch_smoke
 connectors:
   - elasticsearch
@@ -70,7 +70,7 @@ with DAG("elasticsearch_smoke", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: elasticsearch_smoke
 python_version: "3.11"

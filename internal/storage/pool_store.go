@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 // ListPools returns a page of the tenant's named pools and the total count.
@@ -87,8 +87,10 @@ func (r *Repository) DeletePool(ctx context.Context, tenant, name string) error 
 }
 
 // PoolSlotUsage returns per-pool occupancy for the tenant, keyed by pool name (a
-// task instance with no pool is counted under the implicit default_pool). It
-// feeds the Airflow PoolResponse occupancy fields.
+// task instance with no pool is counted under the implicit default_pool). Each
+// state sums its task instances' pool_slots, so the slots match what the
+// admission gate charges (ADR 0066, #1499). It feeds the Airflow PoolResponse
+// occupancy fields.
 func (r *Repository) PoolSlotUsage(ctx context.Context, tenant string) (map[string]domain.PoolUsage, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {

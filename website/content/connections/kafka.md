@@ -9,14 +9,14 @@ weight: 270
 description: Apache Kafka connection
 ---
 
-Produce / consume Kafka from a task via a managed Leoflow Connection and the
+Produce / consume Kafka from a task via a managed Dexaflow Connection and the
 Apache Kafka provider hooks. The conn_type is `kafka` (from
 `apache-airflow-providers-apache-kafka`).
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: kafka_produce
 connectors:
   - kafka
@@ -55,7 +55,7 @@ def produce() -> None:
     hook = KafkaProducerHook(kafka_config_id="kafka_default")
     producer = hook.get_producer()
     print("produce: sending message to topic 'events'")
-    producer.produce("events", value=b"hello from leoflow")
+    producer.produce("events", value=b"hello from dexaflow")
     producer.flush()
     print("produce: ok")
 
@@ -65,7 +65,7 @@ with DAG("kafka_produce", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: kafka_produce
 description: Produce a message to Kafka via KafkaProducerHook.
@@ -80,7 +80,7 @@ connectors:
 ### Run it
 
 1. **Admin → Connections → +**, type `kafka`. Put the client config in Extra.
-2. `leoflow lite path/to/this/dag` → trigger `kafka_produce`.
+2. `dexaflow lite path/to/this/dag` → trigger `kafka_produce`.
 
 ## Security notes
 

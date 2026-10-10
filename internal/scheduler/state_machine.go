@@ -1,7 +1,7 @@
-// Package scheduler implements the Leoflow scheduling state machine and loop.
+// Package scheduler implements the Dexaflow scheduling state machine and loop.
 package scheduler
 
-import "github.com/neochaotic/leoflow/internal/domain"
+import "github.com/dexadata/dexaflow/internal/domain"
 
 // TriggerDecision is the scheduler's decision for a task given its trigger rule
 // and the states of its upstream tasks.
@@ -42,7 +42,7 @@ var dagRunTransitions = map[domain.DagRunState]map[domain.DagRunState]bool{
 }
 
 // CanTransition reports whether a task instance may move from one state to
-// another under the Leoflow state machine.
+// another under the Dexaflow state machine.
 func CanTransition(from, to domain.TaskState) bool {
 	return taskTransitions[from][to]
 }

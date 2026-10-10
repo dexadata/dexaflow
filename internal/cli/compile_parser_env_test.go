@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestRunParserSetsProjectConfigEnv pins the migration contract: when the Go
@@ -20,7 +20,7 @@ import (
 // raises a clear error pointing at the missing handshake (see
 // parser/tests/test_config_env_var.py). Future contributors who replumb the
 // parser invocation and forget to set the env var fail this test, not the
-// next user's `leoflow compile`.
+// next user's `dexaflow compile`.
 //
 // We run a tiny shell-script "parser" that prints its env vars to stdout —
 // no actual Python needed — so this test stays fast and hermetic.

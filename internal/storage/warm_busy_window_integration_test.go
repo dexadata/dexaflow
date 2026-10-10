@@ -36,7 +36,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 // fakeWarmTargetsPG is a canned executor.WarmTargetSource for the full-seam test.
@@ -80,6 +80,12 @@ func (f *fakeWarmPodsPG) EnsureWarmAnchor(_ context.Context, dagVersionID string
 
 func (f *fakeWarmPodsPG) DeleteWarmAnchor(_ context.Context, _ string) error {
 	return nil
+}
+
+// ListWarmAnchors satisfies the #1500 addition; no anchors, so the orphan sweep
+// is a no-op in this seam test.
+func (f *fakeWarmPodsPG) ListWarmAnchors(_ context.Context) ([]string, error) {
+	return nil, nil
 }
 
 // TestWarmPoolReconcileKeepsQueuedBoundWorkerIntegration is the load-bearing
@@ -148,7 +154,7 @@ func TestListBusyWarmWorkerPodsQueuedBoundIntegration(t *testing.T) {
 	reDag := fmt.Sprintf("busy_queued_redispatch_%d", stamp)
 	rePod := fmt.Sprintf("leoflow-warm-bqredis-%d", stamp)
 	reRun := seedQueuedWarmTask(t, repo, sched, exec, ctx, reDag, "load", rePod)
-	if err := exec.RequeueForRedispatch(ctx, reRun, "load", 1); err != nil {
+	if err := exec.RequeueForRedispatch(ctx, reRun, "load", 1, 0); err != nil {
 		t.Fatalf("RequeueForRedispatch: %v", err)
 	}
 

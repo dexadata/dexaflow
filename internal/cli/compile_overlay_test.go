@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // writeDagJSON writes a minimal two-task dag.json to a temp file and returns its
@@ -97,7 +97,7 @@ func TestOverlayProjectAppliesTaskOverrides(t *testing.T) {
 	}
 }
 
-// The overlay carries the leoflow.yaml per-task declared secret sets
+// The overlay carries the dexaflow.yaml per-task declared secret sets
 // (connections/variables) onto the compiled task, narrowing the DAG-level
 // declaration (ADR 0045, ADR 0055). A set list replaces the compiled value.
 func TestOverlayProjectAppliesDeclaredSecretNarrowing(t *testing.T) {
@@ -134,7 +134,7 @@ func TestOverlayProjectAppliesDeclaredSecretNarrowing(t *testing.T) {
 	}
 }
 
-// A leoflow.yaml `defaults` block with resources/node_selector is a DAG-wide
+// A dexaflow.yaml `defaults` block with resources/node_selector is a DAG-wide
 // fallback: every task that declares neither of its own inherits them, so a user
 // relying on defaults.resources reaches Guaranteed QoS (requests == limits)
 // instead of silently getting BestEffort (EKS validation aresta #6; the QoS story
@@ -254,8 +254,8 @@ func TestOverlayProjectPreservesStaging(t *testing.T) {
 	}
 }
 
-// The overlay carries the leoflow.yaml alerts: block onto the compiled dag.json
-// (#424), so the scheduler can fire it without re-reading leoflow.yaml.
+// The overlay carries the dexaflow.yaml alerts: block onto the compiled dag.json
+// (#424), so the scheduler can fire it without re-reading dexaflow.yaml.
 func TestOverlayProjectCarriesAlerts(t *testing.T) {
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{

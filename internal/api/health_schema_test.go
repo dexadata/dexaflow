@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/gin-gonic/gin"
-	"github.com/neochaotic/leoflow/internal/domain"
 )
 
 // fakeSchemaHealthCheck implements HealthChecker plus the optional SchemaChecker,

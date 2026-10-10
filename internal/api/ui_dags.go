@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // defaultDagRunsLimit is how many recent runs /ui/dags embeds per DAG when the
@@ -30,7 +30,7 @@ type dagTagDTO struct {
 }
 
 // dagWithRunsDTO is the Airflow 3.2.1 DAGWithLatestDagRunsResponse. Every
-// spec-required field is present; values Leoflow does not track yet are null
+// spec-required field is present; values Dexaflow does not track yet are null
 // (nullable fields) or sensible defaults (non-nullable), so the DAG list renders
 // without misbehaving. See docs/ui-compatibility.md.
 type dagWithRunsDTO struct {
@@ -74,7 +74,7 @@ type dagWithRunsCollectionDTO struct {
 }
 
 // defaultMaxActiveTasks mirrors Airflow's per-DAG task concurrency default;
-// Leoflow does not model it yet but the field is required.
+// Dexaflow does not model it yet but the field is required.
 const defaultMaxActiveTasks = 16
 
 func toDagWithRunsDTO(d domain.DAG, runs []domain.DagRun) dagWithRunsDTO {

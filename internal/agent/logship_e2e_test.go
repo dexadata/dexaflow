@@ -16,9 +16,9 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/neochaotic/leoflow/internal/agent"
-	"github.com/neochaotic/leoflow/internal/logs"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent"
+	"github.com/dexadata/dexaflow/internal/logs"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // logServer is a minimal StreamLogs server that persists received lines to a real
@@ -96,5 +96,56 @@ func TestLogSinkDeliversBeforeClose(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "HELLO_FROM_TASK") {
 		t.Fatalf("log line was not persisted before Close returned; file=%q", string(data))
+	}
+}
+
+// TestLogSinkSurvivesInvalidUTF8 guards the log stream against task output that
+// is not valid UTF-8 (Latin-1 text, binary data, a truncated multi-byte
+// sequence). LogLine's message is a proto string, so sending such a line as is
+// fails the marshal and gRPC ends the stream: that line, every later one and the
+// ones still queued were lost. The sink must replace the invalid bytes and keep
+// the stream alive.
+func TestLogSinkSurvivesInvalidUTF8(t *testing.T) {
+	dir := t.TempDir()
+	ref := logs.Ref{TenantID: "tn", DagID: "leoflow", RunID: "run1", TaskID: "latin1", TryNumber: 1}
+
+	lis := bufconn.Listen(1 << 20)
+	srv := grpc.NewServer()
+	agentv1.RegisterAgentServiceServer(srv, &logServer{sink: logs.NewDiskSink(dir), ref: ref})
+	go func() { _ = srv.Serve(lis) }()
+	defer srv.Stop()
+
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sink, err := agent.OpenLogSink(ctx, agentv1.NewAgentServiceClient(conn))
+	if err != nil {
+		t.Fatalf("OpenLogSink: %v", err)
+	}
+	for _, msg := range []string{"before", "bad \xff\xfe bytes", "after"} {
+		if sendErr := sink.Send(&agentv1.LogLine{Time: timestamppb.Now(), Stream: "stdout", Message: msg}); sendErr != nil {
+			t.Fatalf("Send(%q): %v", msg, sendErr)
+		}
+	}
+	if err = sink.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(dir, "tn", "leoflow", "run1", "latin1", "1.log"))
+	if err != nil {
+		t.Fatalf("read stored log: %v", err)
+	}
+	got := string(b)
+	for _, want := range []string{"before", "bad \uFFFD bytes", "after"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stored log lacks %q:\n%s", want, got)
+		}
 	}
 }

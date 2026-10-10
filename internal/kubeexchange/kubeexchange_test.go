@@ -9,9 +9,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 // TestReviewedPodFromStatus parses the bound-token TokenReview status into a
@@ -164,5 +164,44 @@ func TestPodResolverResolveAgentTaskPath(t *testing.T) {
 	}
 	if id.Scope != "" || id.TaskInstanceID != "ti-1" {
 		t.Errorf("task path identity = %+v, want scope empty + ti-1", id)
+	}
+}
+
+// TestPodResolverCarriesAttemptEpoch: the exchange mints the JWT for the exact
+// execution the executor stamped, epoch included (ADR 0051 amendment). A pod
+// annotated before the epoch existed resolves with the presence bit unset, so
+// the exchanged token is a legacy token, never one upgraded to the row's
+// current epoch.
+func TestPodResolverCarriesAttemptEpoch(t *testing.T) {
+	cases := []struct {
+		name       string
+		annotation string
+		wantHas    bool
+		wantEpoch  int
+	}{
+		{"with epoch", `{"ti":"ti-1","tenant":"acme","dag":"ETL","run":"run-1","task":"Extract","try":2,"epoch":3}`, true, 3},
+		{"epoch zero", `{"ti":"ti-1","tenant":"acme","dag":"ETL","run":"run-1","task":"Extract","try":2,"epoch":0}`, true, 0},
+		{"legacy pod", `{"ti":"ti-1","tenant":"acme","dag":"ETL","run":"run-1","task":"Extract","try":2}`, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "p", Namespace: "leoflow", UID: "uid-1",
+				Annotations: map[string]string{executor.AgentIdentityAnnotation: tc.annotation},
+			}}
+			r := NewPodResolver(fake.NewClientset(pod), "leoflow")
+			for name, resolve := range map[string]func(context.Context, agentrpc.ReviewedPod) (auth.AgentIdentity, error){
+				"ResolveTaskInstance": r.ResolveTaskInstance,
+				"ResolveAgent":        r.ResolveAgent,
+			} {
+				id, err := resolve(context.Background(), agentrpc.ReviewedPod{Namespace: "leoflow", PodName: "p", PodUID: "uid-1"})
+				if err != nil {
+					t.Fatalf("%s: %v", name, err)
+				}
+				if id.HasAttemptEpoch != tc.wantHas || id.AttemptEpoch != tc.wantEpoch {
+					t.Errorf("%s: epoch has=%v n=%d, want has=%v n=%d", name, id.HasAttemptEpoch, id.AttemptEpoch, tc.wantHas, tc.wantEpoch)
+				}
+			}
+		})
 	}
 }

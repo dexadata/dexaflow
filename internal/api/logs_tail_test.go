@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // fakeTailReader serves no stored logs and tails a fixed set of live lines.
@@ -38,7 +38,7 @@ func TestTailNdjsonEmitsStructuredEvents(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/logs?follow=true", http.NoBody)
 
-	tailNdjson(c, &fakeTailReader{ch: ch}, 1)
+	tailNdjson(c, &fakeTailReader{ch: ch}, 1, storedTail{})
 
 	body := rec.Body.String()
 	if !strings.Contains(body, `"event":"boom"`) {

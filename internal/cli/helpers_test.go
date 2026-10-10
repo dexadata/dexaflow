@@ -9,7 +9,7 @@ import (
 )
 
 // TestLoadProjectConfigAppliesDefaults verifies that loading a minimal
-// leoflow.yaml fills in every schema default via LeoflowConfig.ApplyDefaults().
+// dexaflow.yaml fills in every schema default via LeoflowConfig.ApplyDefaults().
 // This is what lets a yaml that only declares `dag_id` still produce a working
 // build (python 3.11, dag.py source, default exclude paths, etc.) and is the
 // foundation for the multi-DAG workspace contract (a subdir without a yaml
@@ -17,7 +17,7 @@ import (
 func TestLoadProjectConfigAppliesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	yaml := "dag_id: minimal\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	cfg, err := loadProjectConfig(dir)
@@ -54,7 +54,7 @@ func TestLoadProjectConfigAppliesDefaults(t *testing.T) {
 func TestDagSourcePathUsesAppliedDefault(t *testing.T) {
 	dir := t.TempDir()
 	yaml := "dag_id: minimal\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	cfg, err := loadProjectConfig(dir)
@@ -81,7 +81,7 @@ func TestLoadProjectConfigRejectsDuplicateTaskID(t *testing.T) {
 		"  transform:",
 		"    retries: 2",
 	}, "\n")
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	_, err := loadProjectConfig(dir)
@@ -90,5 +90,49 @@ func TestLoadProjectConfigRejectsDuplicateTaskID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "transform") && !strings.Contains(strings.ToLower(err.Error()), "already") {
 		t.Errorf("error %q should flag the duplicate key", err.Error())
+	}
+}
+
+// New installs get ~/dexaflow as their workspace. An install from before the
+// rename keeps using the ~/leoflow it already has, so its DAG projects are not
+// left behind; when both exist the new name wins.
+func TestDefaultWorkspaceIn(t *testing.T) {
+	mkdir := func(t *testing.T, dir string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name     string
+		existing []string
+		want     string
+	}{
+		{"fresh home", nil, "dexaflow"},
+		{"install from before the rename", []string{"leoflow"}, "leoflow"},
+		{"both exist", []string{"leoflow", "dexaflow"}, "dexaflow"},
+		{"only the new one", []string{"dexaflow"}, "dexaflow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			for _, d := range tc.existing {
+				mkdir(t, filepath.Join(home, d))
+			}
+			if got, want := defaultWorkspaceIn(home), filepath.Join(home, tc.want); got != want {
+				t.Errorf("defaultWorkspaceIn = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// A file named ~/leoflow is not a workspace.
+func TestDefaultWorkspaceInIgnoresAFileNamedLeoflow(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "leoflow"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := defaultWorkspaceIn(home), filepath.Join(home, "dexaflow"); got != want {
+		t.Errorf("defaultWorkspaceIn = %q, want %q", got, want)
 	}
 }

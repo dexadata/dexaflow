@@ -15,7 +15,7 @@
 # ONE CORRECTION TO THE RECIPE. The hand install was described as passing
 # `auth.agentTLS.enabled=false`. That value cannot install the 0.4.7 chart: the
 # chart FAILS THE RENDER on it, by design, at
-# helm/leoflow/templates/deployment.yaml:41 (added in b5aea55, present in the
+# helm/dexaflow/templates/deployment.yaml:41 (added in b5aea55, present in the
 # v0.4.7 tag). The message is explicit that the Pro edition refuses to boot
 # without a gRPC cert, so turning TLS off yields a CrashLoopBackOff rather than
 # a plaintext deployment, and the chart would rather refuse than render that.
@@ -26,7 +26,7 @@
 
 STACK_NS="${STACK_NS:-leoflow-system}"      # control plane
 STACK_TASK_NS="${STACK_TASK_NS:-leoflow}"   # task pods (chart's taskNamespace)
-STACK_SERVER_IMAGE_REPO="${STACK_SERVER_IMAGE_REPO:-ghcr.io/neochaotic/leoflow-server}"
+STACK_SERVER_IMAGE_REPO="${STACK_SERVER_IMAGE_REPO:-ghcr.io/dexadata/dexaflow-server}"
 STACK_SERVER_IMAGE_TAG="${STACK_SERVER_IMAGE_TAG:-0.4.7}"
 # The published Postgres/Redis the chart is normally pointed at. Pinned by tag
 # rather than `latest`: an experiment whose datastore version changes between
@@ -132,7 +132,7 @@ YAML
 # already earned its place once here, on agentTLS.
 stack_helm_args() { # <release> <namespace> <task namespace> <jwt secret> <bootstrap password> [extra --set args...]
   local release="$1" ns="$2" taskns="$3" jwt="$4" pw="$5"; shift 5
-  HELM_ARGS=(upgrade --install "$release" "${STACK_CHART:-./helm/leoflow}"
+  HELM_ARGS=(upgrade --install "$release" "${STACK_CHART:-./helm/dexaflow}"
     --namespace "$ns" --create-namespace
     --set "image.repository=$STACK_SERVER_IMAGE_REPO"
     --set "image.tag=$STACK_SERVER_IMAGE_TAG"
@@ -250,7 +250,7 @@ self_test() {
 
   # THE defect this argv check exists for, and it is not hypothetical: the
   # recipe this file was asked to reuse specified agentTLS.enabled=false, and
-  # helm/leoflow/templates/deployment.yaml:41 `fail`s the render on exactly
+  # helm/dexaflow/templates/deployment.yaml:41 `fail`s the render on exactly
   # that. An install carrying it never reaches a cluster, so the first sign
   # would be a failed helm at the end of a paid provision.
   case " ${HELM_ARGS[*]} " in
@@ -359,7 +359,7 @@ case "$STUB_HELM_MODE" in
 esac
 STUB
   chmod +x "$htmp/helm"
-  HELM_ARGS=(upgrade --install probe ./helm/leoflow)
+  HELM_ARGS=(upgrade --install probe ./helm/dexaflow)
 
   : > "$htmp/calls-flaky"
   if ( export PATH="$htmp:$PATH" STUB_HELM_CALLS="$htmp/calls-flaky" STUB_HELM_MODE=flaky \

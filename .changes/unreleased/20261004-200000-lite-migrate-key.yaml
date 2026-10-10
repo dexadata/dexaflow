@@ -1,0 +1,23 @@
+kind: Security
+body: |-
+  **An existing Lite install can now move off the encryption key published in
+  this repository.** Stop Lite and run `dexaflow lite migrate-key` (try
+  `--dry-run` first): it records a new per-install key next to the old one in
+  `~/.dexaflow/config.yaml` before it touches a row, re-encrypts every stored
+  connection secret in one transaction per datastore that commits only after
+  every value was verified under the new key alone, scans both the managed and
+  the Docker datastore when an install has both, and drops the old key only
+  after a re-check of every datastore. An interrupted run is finished by
+  running the same command again. `dexaflow lite` now reports, from a
+  read-only scan at boot, whether the install is still on the published key,
+  has a migration that has not finished, has secrets under the published key it
+  cannot read, or has secrets under no recorded key. The Lite server no longer
+  re-encrypts at startup, takes its keys from `config.yaml` only (an exported
+  `DEXAFLOW_SECRET_KEY` or `LEOFLOW_SECRET_KEY` is ignored), holds a lock that
+  keeps a migration and a running server apart, and exits if it loses that
+  lock. `dexaflow lite restore` now replays the datastore before it writes
+  `config.yaml`, so a failed replay keeps the current key, and keeps the
+  replaced config as `config.yaml.pre-restore` until the next successful boot.
+  The Pro boot-time rotation logs "complete" only when it moved every row.
+  (#1263, #486)
+time: 2026-10-04T20:00:00.000000000-03:00

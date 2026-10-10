@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -11,9 +12,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/oidc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
 // UIServer serves the embedded single-page app: static assets and an
@@ -52,15 +54,24 @@ type Dependencies struct {
 	// re-authenticate. Non-positive disables the ceiling.
 	TokenMaxLifetimeSecs int
 	// InstanceName is shown in the UI navbar (Airflow's instance_name). Empty
-	// falls back to "Leoflow"; `leoflow dev` sets it to mark the DEV environment.
+	// falls back to "Dexaflow"; `dexaflow lite` sets it to mark the DEV environment.
 	InstanceName string
 	// UIAutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `leoflow lite` sets it to ~5s for a snappy inner loop.
+	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
 	UIAutoRefreshIntervalSeconds int
+	// UITheme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
+	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a
+	// JSON object at boot. Nil serves null, the stock look (#1289).
+	UITheme json.RawMessage
+	// UIETagRevalidation (ui.etag_revalidation) relaxes no-store to
+	// "private, no-cache" with Vary: Authorization, Cookie on the routes that
+	// compute an ETag, so the browser can revalidate them and get a 304. False
+	// (the default) keeps no-store on every UI route.
+	UIETagRevalidation bool
 	// DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
-	// request as an admin (no login). It is for `leoflow dev` only and must never
+	// request as an admin (no login). It is for `dexaflow lite` only and must never
 	// be set in production. See DevBypassAuth.
 	DevNoAuth bool
 	// Edition marks the running edition ("pro", "lite", or empty). It gates
@@ -68,6 +79,22 @@ type Dependencies struct {
 	// Edition == "pro" (ADR 0053), otherwise the Pools screen gets the graceful
 	// empty-collection stub, matching how the scheduler's pool gate is Pro-gated.
 	Edition string
+	// PoolsReadOnly is server.pools_read_only: the pool API serves reads only and
+	// every create, resize and delete answers 403 with PoolsReadOnlyDetail, for
+	// every role including tenant admin. False keeps the write:pool-gated CRUD.
+	PoolsReadOnly bool
+	// ResourceUnit is executor.unit (ADR 0066 §3). When set, registering a DAG
+	// whose task declares more than pool_slots x unit answers 400 naming the
+	// size it needs (under enforce: warn it is accepted, logged and counted).
+	// Nil: no unit, no check.
+	ResourceUnit *domain.ResourceUnit
+	// UnitMisfits counts a task registered under executor.unit.enforce=warn
+	// although it does not fit its size. Nil: not counted.
+	UnitMisfits UnitMisfitRecorder
+	// SourceModeImage is the runtime image when execution.source_mode is on
+	// (ADR 0067 §3), "" when it is off. Registering a version on that image
+	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
+	SourceModeImage string
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository
@@ -98,7 +125,7 @@ type Dependencies struct {
 	Workspace WorkspaceFS
 
 	// MonacoDir is the directory holding the pinned Monaco bundle that
-	// `leoflow setup` fetched; the editor page is served Monaco from it. Empty or
+	// `dexaflow setup` fetched; the editor page is served Monaco from it. Empty or
 	// missing makes the page show a setup hint instead of a broken editor.
 	MonacoDir string
 
@@ -126,11 +153,36 @@ type Dependencies struct {
 	// OIDCSettings carries the role mappings, JIT policy, default_role, and
 	// break-glass allowlist the login flow and the credential gate read.
 	OIDCSettings config.OIDCSection
+	// ExternalSignInURL and ExternalSignOutURL are auth.external_signin_url and
+	// auth.external_signout_url (#1288): the operator's own sign-in and
+	// sign-out, used in place of Dexaflow's pages. Empty keeps Dexaflow's.
+	ExternalSignInURL  string
+	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).
 	OIDCUsers OIDCUserStore
 	// AuthAudit records authentication events (login, tenant-pin rejection, JIT,
 	// break-glass, logout) to the audit sink.
 	AuthAudit AuthAuditWriter
+	// TrustedIssuer, when set, enables POST /api/v2/auth/session: a token from
+	// the operator's trusted issuer opens a UI session for a linked user
+	// (#1284). TrustedIssuerUsers resolves those users (the storage repo).
+	TrustedIssuer      TrustedIssuer
+	TrustedIssuerUsers TrustedIssuerUserStore
+	// TrustedIssuerBearer, when set, also accepts the trusted issuer's tokens
+	// for a bearer audience as the Authorization bearer of any protected
+	// request (#1468). It resolves users through TrustedIssuerUsers.
+	TrustedIssuerBearer TrustedIssuerBearer
+	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
+	// (scheme://host[:port]), so another site cannot sign a browser in.
+	TrustedIssuerOrigins []string
+	// ServiceToken, when set, enables the operator service API under
+	// /api/v2/service/ (#1283), authenticated by this bearer token instead of a
+	// user session. ServiceTenants is its storage (the repo).
+	ServiceToken   string
+	ServiceTenants ServiceTenantStore
+	// ServiceAllowedTenants are the tenants the service API may link issuer
+	// users in: auth.trusted_issuer.allowed_tenants, where "*" allows all.
+	ServiceAllowedTenants []string
 	// JWTSecret is the HS256 secret the OIDC callback mints the app's _token with.
 	JWTSecret string
 	// SessionCookieInsecure drops the Secure attribute from the session and OIDC
@@ -138,6 +190,15 @@ type Dependencies struct {
 	// zero value is the hardened one: a caller that forgets the field gets Secure.
 	// See cookieSecure for why this is a setting and not derived from the request.
 	SessionCookieInsecure bool
+}
+
+// newIssuerBearerAuth wires the trusted-issuer bearer from deps, or returns nil
+// when it is off.
+func newIssuerBearerAuth(deps Dependencies) *issuerBearerAuth {
+	if deps.TrustedIssuerBearer == nil {
+		return nil
+	}
+	return &issuerBearerAuth{issuer: deps.TrustedIssuerBearer, users: deps.TrustedIssuerUsers, audit: deps.AuthAudit, logger: deps.Logger}
 }
 
 // NewServer builds the gin engine with the full middleware chain, health and
@@ -164,12 +225,13 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(RequestID())
 	r.Use(Observe(deps.Metrics, deps.Tracer))
 	r.Use(StructuredLogger(deps.Logger))
+	r.Use(RejectEncodedPathSeparators())
 	r.Use(CORS(deps.CORSOrigins))
 	r.Use(NoStoreOnVolatileRoutes())
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {
-		r.Use(JWTAuth(deps.Authenticator))
+		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps)))
 	}
 
 	r.GET("/healthz", livenessHandler)
@@ -189,17 +251,46 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// Transparent renewal (aresta #5): a still-valid bearer is re-minted with a
 	// fresh short TTL, bounded by max_lifetime. Under the public /api/v2/auth/
 	// prefix like login, it is self-gating — only a valid signed bearer can be
-	// renewed. Registered only when a renewer is wired.
+	// renewed. Registered only when a renewer is wired. Rate-limited per client
+	// IP on its own limiter (#801), never the login one, so renewal traffic
+	// cannot spend an address's password-login budget.
 	if deps.TokenRenewer != nil {
-		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
+		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
+		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
-	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure))
+	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
 	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{
-		sso:          deps.OIDCFlow != nil,
-		breakGlass:   len(deps.OIDCSettings.BreakGlassEmails) > 0,
-		autoRedirect: deps.OIDCSettings.AutoRedirect,
+		sso:            deps.OIDCFlow != nil,
+		breakGlass:     len(deps.OIDCSettings.BreakGlassEmails) > 0,
+		autoRedirect:   deps.OIDCSettings.AutoRedirect,
+		externalSignIn: deps.ExternalSignInURL,
 	}))
+	// Operator service API (#1283): registered only when a service token is
+	// configured. /api/v2/service/ is outside the user-session middleware's
+	// scope (alwaysPublic) because the group authenticates its own callers.
+	if deps.ServiceToken != "" {
+		registerService(r, deps)
+	}
+	// Trusted-issuer handoff (#1284): registered only when an issuer is
+	// configured, on its own per-IP limiter like the OIDC routes.
+	if deps.TrustedIssuer != nil {
+		issuerLimiter := auth.NewRateLimiter(30, time.Minute)
+		// Refusals, the rate limit's included, go back to the external sign-in
+		// when one is configured (see issuerSessionDeps.refuse).
+		handoff := issuerSessionDeps{
+			issuer:          deps.TrustedIssuer,
+			users:           deps.TrustedIssuerUsers,
+			origins:         deps.TrustedIssuerOrigins,
+			audit:           deps.AuthAudit,
+			jwtSecret:       deps.JWTSecret,
+			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,
+			logger:          deps.Logger,
+			insecureCookies: deps.SessionCookieInsecure,
+			signIn:          issuerSignInTarget(deps.ExternalSignInURL),
+		}
+		r.POST("/api/v2/auth/session", rateLimitByIPWith(issuerLimiter, handoff.refuseRateLimited), issuerSessionHandler(handoff))
+	}
 	// OIDC/SSO login flow (D1): registered only when a provider was discovered at
 	// boot. Both routes sit under the public /api/v2/auth/ prefix.
 	if deps.OIDCFlow != nil {
@@ -219,21 +310,23 @@ func NewServer(deps Dependencies) *gin.Engine {
 			insecureCookies: deps.SessionCookieInsecure,
 		}))
 	}
-	r.GET("/api/v2/monitor/health", monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
-	r.GET("/api/v2/monitor/executor", monitorExecutorHandler(deps.ExecutorInfo))
+	// Any signed-in user may read these; a scoped token needs dexaflow:read
+	// (ADR 0067). The MCP's health resource reads all three.
+	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
+	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.ExecutorInfo))
 
 	registerResources(r, deps)
-	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds)
+	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
-	registerUISummaries(r, deps.TaskSummary)
+	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
 	registerUITasks(r, deps.Specs)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)
 	registerUIVariables(r, deps.Variables)
 	registerUsers(r, deps.Users, deps.UserAudit)
 	registerUIConnections(r, deps.Connections, deps.ConnectionTest)
-	registerUIPools(r, deps.Pools, deps.Edition == "pro")
+	registerUIPools(r, deps.Pools, deps.Edition == "pro", deps.PoolsReadOnly)
 	registerUIFavorites(r, deps.Favorites)
 	registerImportErrors(r, deps.ImportErrors)
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // materializeWorkDir stages req.Source into a per-task-instance temp dir as a
@@ -55,7 +56,14 @@ type SubprocessExecutor struct {
 	// the agent's inherited LEOFLOW_PYTHON so the right venv runs the right
 	// DAG. Empty in Pro / k8s / cluster-mode Lite.
 	liteVenvsRoot string
-	logger        *slog.Logger
+	// pidDir holds one PID record per spawned attempt (see SetPIDDir), the
+	// source of AttemptProcessAlive, which the Lite reapers gate on.
+	pidDir string
+	// orphanGrace and orphanKillWait bound StopOrphanedTask: how long an
+	// orphaned task group gets to exit after SIGTERM, then after SIGKILL.
+	orphanGrace    time.Duration
+	orphanKillWait time.Duration
+	logger         *slog.Logger
 }
 
 // NewSubprocessExecutor builds a SubprocessExecutor running the given agent
@@ -65,9 +73,12 @@ type SubprocessExecutor struct {
 func NewSubprocessExecutor(agentPath string, logger *slog.Logger) *SubprocessExecutor {
 	logger.Warn("subprocess executor active; user code runs without isolation. Do NOT use in production")
 	return &SubprocessExecutor{
-		agentPath:     agentPath,
-		liteVenvsRoot: os.Getenv("LEOFLOW_LITE_VENVS_ROOT"),
-		logger:        logger,
+		agentPath:      agentPath,
+		liteVenvsRoot:  os.Getenv("LEOFLOW_LITE_VENVS_ROOT"),
+		pidDir:         defaultAgentPIDDir(),
+		orphanGrace:    defaultOrphanGrace,
+		orphanKillWait: defaultOrphanKillWait,
+		logger:         logger,
 	}
 }
 
@@ -89,7 +100,7 @@ func resolveLitePythonForDag(venvsRoot, dagID string) string {
 }
 
 // SetWorkDir sets the working directory the agent runs in. In a task pod the
-// image's WORKDIR holds the DAG code; on a dev host `leoflow dev` points this at
+// image's WORKDIR holds the DAG code; on a dev host `dexaflow lite` points this at
 // the project directory so the agent can import the user's dag.py. Empty keeps
 // the parent process's working directory.
 func (e *SubprocessExecutor) SetWorkDir(dir string) { e.workDir = dir }
@@ -109,6 +120,20 @@ func prependVenvBin(perDagPy, basePATH string) string {
 		return bin
 	}
 	return bin + string(os.PathListSeparator) + basePATH
+}
+
+// perDagVenvEnv is the environment that points the agent at a per-DAG venv:
+// the interpreter under both of its names, and the venv's bin ahead of PATH.
+// Both names matter: the server mirrors its own LEOFLOW_PYTHON (the boot venv)
+// onto DEXAFLOW_PYTHON at startup, the agent inherits both, and when the two
+// differ the agent keeps DEXAFLOW_PYTHON. Overriding LEOFLOW_PYTHON alone would
+// leave every DAG running in the boot venv.
+func perDagVenvEnv(perDagPy, basePATH string) []string {
+	return []string{
+		"LEOFLOW_PYTHON=" + perDagPy,
+		"DEXAFLOW_PYTHON=" + perDagPy,
+		"PATH=" + prependVenvBin(perDagPy, basePATH),
+	}
 }
 
 // agentEnv builds the environment injected into the agent process.
@@ -200,11 +225,23 @@ func (e *SubprocessExecutor) Execute(ctx context.Context, req Request) (Disposit
 		// Wire the per-DAG venv: LEOFLOW_PYTHON for `python -m ...` tasks, and the
 		// venv's bin ahead of PATH so venv console scripts (dbt, etc.) resolve for
 		// bash tasks. Last write wins in os/exec, so these beat the inherited env.
-		cmd.Env = append(cmd.Env,
-			"LEOFLOW_PYTHON="+perDagPy,
-			"PATH="+prependVenvBin(perDagPy, os.Getenv("PATH")),
-		)
+		cmd.Env = append(cmd.Env, perDagVenvEnv(perDagPy, os.Getenv("PATH"))...)
 	}
+	// The agent records its task's process group next to this server's record
+	// of the agent itself (#916): the task leads its own group and outlives an
+	// agent killed outright, and only the agent learns the group id. The
+	// directory must exist before the agent starts, since the agent may write
+	// before recordPID below runs.
+	if derr := e.ensurePIDDir(); derr != nil {
+		cleanupWorkDir()
+		_ = os.RemoveAll(dbtScratch) //nolint:errcheck // best-effort cleanup of the dbt scratch dir
+		e.logger.Error("preparing agent pid dir failed", "task", req.TaskID, "error", derr)
+		return Rejected, fmt.Errorf("preparing agent pid dir for task %s: %w", req.TaskID, derr)
+	}
+	// DEXAFLOW_ is the variable's name; the agent mirrors it onto LEOFLOW_ at
+	// startup like every other one (envcompat), and an agent that predates the
+	// record ignores it.
+	cmd.Env = append(cmd.Env, "DEXAFLOW_TASK_PGID_FILE="+e.groupPath(req.RunID, req.TaskID, req.TryNumber))
 	cmd.Dir = workDir
 	// Surface the agent's own diagnostics (it logs to stderr); otherwise an agent
 	// that fails to start or connect fails silently. The task's stdout/stderr are
@@ -217,9 +254,25 @@ func (e *SubprocessExecutor) Execute(ctx context.Context, req Request) (Disposit
 			"task", req.TaskID, "agent_path", e.agentPath, "error", err)
 		return Rejected, fmt.Errorf("starting agent subprocess for task %s: %w", req.TaskID, err)
 	}
+	pid := cmd.Process.Pid
 	e.logger.Info("agent subprocess started",
-		"task", req.TaskID, "run", req.RunID, "pid", cmd.Process.Pid)
+		"task", req.TaskID, "run", req.RunID, "pid", pid)
+	// Record the agent's PID for its attempt so the reapers can tell a live agent
+	// from a dead one, across a restart of this server too (#916, #911). An agent
+	// without a record would read dead while it runs, and the dispatch-lost reaper
+	// could re-place its attempt beside it, so a failed record stops the agent
+	// before it reports anything and fails the dispatch instead.
+	if rerr := e.recordPID(req.RunID, req.TaskID, req.TryNumber, pid); rerr != nil {
+		_ = cmd.Process.Kill() //nolint:errcheck // best-effort: Wait below collects the exit either way
+		_ = cmd.Wait()         //nolint:errcheck // the agent was killed on purpose; its exit status is noise
+		cleanupWorkDir()
+		_ = os.RemoveAll(dbtScratch) //nolint:errcheck // best-effort cleanup of the dbt scratch dir
+		e.logger.Error("recording agent pid failed; agent stopped",
+			"task", req.TaskID, "run", req.RunID, "pid", pid, "error", rerr)
+		return Rejected, fmt.Errorf("recording agent pid for task %s: %w", req.TaskID, rerr)
+	}
 	go func() {
+		defer e.forgetPID(req.RunID, req.TaskID, req.TryNumber, pid)
 		defer cleanupWorkDir()
 		defer func() { _ = os.RemoveAll(dbtScratch) }() //nolint:errcheck // best-effort cleanup of the dbt scratch dir
 		werr := cmd.Wait()

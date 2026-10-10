@@ -22,7 +22,7 @@ make soak            # the default run
 make soak-selftest   # proves the assertions can fail: must exit exactly 1
 ```
 
-Everything runs locally: one Postgres container and one `leoflow lite` process.
+Everything runs locally: one Postgres container and one `dexaflow lite` process.
 No cluster, no cloud, no paid service. See [Cost budget](#cost-budget) for the
 numbers.
 
@@ -103,7 +103,7 @@ was chosen over an alternative that is listed in [Rejected signals](#rejected-si
 | S3 | **The scheduler stopped being the scheduler** | `.scheduler.status` from `GET /api/v2/monitor/health`, which reads the advisory-lock leader liveness | not `healthy` outside a declared fault window |
 | S4 | **The scheduler kept its heartbeat but stopped creating work** | runs created per DAG in a rolling window, against the DAG's declared cron period | fewer than half the due runs |
 | S5 | **A tick started costing more than it used to** | wall time of `storage.SchedulerStore.ActiveRuns`, recorded against both the active-run count and the total historical row count | reported as a curve, not a threshold (see [Scalability](#3-scalability-the-shape-of-the-curve-not-the-size-of-n)) |
-| S6 | **The leader churned** | `leoflow_scheduler_step_downs_total`, scraped from the control plane's **metrics listener** (Lite: `--port + 1010`; the API port does not serve `/metrics` at all) | any non-zero value |
+| S6 | **The leader churned** | `dexaflow_scheduler_step_downs_total`, scraped from the control plane's **metrics listener** (Lite: `--port + 1010`; the API port does not serve `/metrics` at all) | any non-zero value |
 
 Plus four correctness invariants that carry no timing at all. These are wrong the
 instant they are non-zero, fault window or not:
@@ -141,7 +141,7 @@ stamped it running.
 
 ### Why the tick-cost probe is a probe and not a metric
 
-`leoflow_scheduler_loop_duration_seconds` is **declared** in
+`dexaflow_scheduler_loop_duration_seconds` is **declared** in
 `internal/observability/metrics.go` and is **never observed inside the scheduler
 loop**. `grep -rn SchedulerLoopDuration --include='*.go'` returns the metric
 definition, the metrics unit test, and `test/load/scheduler_ceiling`, which
@@ -168,8 +168,8 @@ include (the per-run advance and the dispatch enqueue).
 * **Wall-clock duration per DAG run.** Same problem as throughput, with the extra
   flaw that the long-running DAG dominates the distribution.
 * **Prometheus histogram quantiles from the metrics listener.** Attractive, but the two
-  histograms that would matter (`leoflow_scheduler_loop_duration_seconds`,
-  `leoflow_task_cold_start_seconds`) are not observed in Lite's hot path, so they
+  histograms that would matter (`dexaflow_scheduler_loop_duration_seconds`,
+  `dexaflow_task_cold_start_seconds`) are not observed in Lite's hot path, so they
   would report empty. The soak reads the three *counters* that are wired
   (`step_downs_total`, `tasks_undispatchable_total`, `dispatch_at_capacity_total`)
   and gets everything else from the database, which cannot lie about state.
@@ -283,7 +283,7 @@ hand it a rendered Connection.
 | Task type | Where it runs in the battery | Why |
 |---|---|---|
 | `python` | every DAG; the bulk of `soak_ingest`, `soak_fanout`, `soak_flaky`, `soak_long` | the native baseline every other measurement is compared against |
-| `bash` | `soak_chain`, five `BashOperator` hops | Leoflow compiles `BashOperator` to its own native `bash` type and renders `{{ ds }}` with its own templater, not Airflow's. A different code path from `python`, and the one that would silently regress if the templater changed |
+| `bash` | `soak_chain`, five `BashOperator` hops | Dexaflow compiles `BashOperator` to its own native `bash` type and renders `{{ ds }}` with its own templater, not Airflow's. A different code path from `python`, and the one that would silently regress if the templater changed |
 | `airflow_operator` | `soak_operators`, four tasks | the non-native path, and the one with the most moving parts |
 | `dbt_group` | **not run.** See [What this does not cover](#8-what-this-deliberately-does-not-cover) | |
 
@@ -294,7 +294,7 @@ the machine:
 
 | Task | Class | Talks to | Why this one |
 |---|---|---|---|
-| `http_get` | `airflow.providers.http.operators.http.HttpOperator` | the soak's own fixture server on 127.0.0.1 | the simplest provider round trip, and the one whose Connection is resolved from Leoflow's encrypted store into `AIRFLOW_CONN_SOAK_HTTP` |
+| `http_get` | `airflow.providers.http.operators.http.HttpOperator` | the soak's own fixture server on 127.0.0.1 | the simplest provider round trip, and the one whose Connection is resolved from Dexaflow's encrypted store into `AIRFLOW_CONN_SOAK_HTTP` |
 | `sql_upsert` | `airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator` | the soak Postgres, `soak_warehouse` database | a real write through a provider hook, with `{{ run_id }}` rendered into the statement |
 | `sql_count` | same class | same | the read-back. A silently failing write cannot pass as a green run |
 | `wait_a_moment` | `airflow.providers.http.sensors.http.HttpSensor`, `mode="reschedule"` | the fixture's poke-counter endpoint | `up_for_reschedule` is a scheduler state with its own re-dispatch path; a battery that never enters it leaves that path uncovered for the whole run |

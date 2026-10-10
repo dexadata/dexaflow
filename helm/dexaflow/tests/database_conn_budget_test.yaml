@@ -1,0 +1,162 @@
+suite: Postgres connection budget (default pool size, NOTES warning) (#1088)
+# At boot each control-plane pod opens its pool floor (database.maxIdleConns),
+# plus 2 for health checks and 1 for the scheduler's leader lock; under load it
+# grows toward database.maxOpenConns + 3. Nothing scales either by the replica
+# count. The smallest managed Postgres tiers (Cloud SQL db-f1-micro, the
+# smallest RDS and Azure Flexible sizes) cap max_connections near 25 and reserve
+# several of those: in #1088 two replicas never booted, and the error named
+# connection slots rather than the setting.
+templates:
+  - deployment.yaml
+  - secret.yaml
+  - NOTES.txt
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  # ─── Defaults: 20 open (unchanged), 2 idle (was 5) ──────────────────────
+  - it: defaults the pool to 20 open and 2 idle connections per pod
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
+            value: "20"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
+            value: "2"
+
+  # Backward compatibility: an operator who sized the pool keeps their value.
+  - it: keeps an explicit maxOpenConns and maxIdleConns untouched
+    template: deployment.yaml
+    set:
+      database.maxOpenConns: 8
+      database.maxIdleConns: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
+            value: "8"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
+            value: "5"
+
+  # ─── NOTES: boot budget warns, peak budget informs ──────────────────────
+  # 1 x (2 + 3) + 1 = 6 at boot; the peak 1 x (20 + 3) + 1 = 24 is not
+  # printed for a single pod, so a default install stays quiet.
+  - it: NOTES stay quiet at the defaults on one replica
+    template: NOTES.txt
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "Postgres connections"
+
+  # The exact install from #1088: replicaCount=2, everything else default.
+  # Boot 2 x (2 + 3) + 1 = 11 fits; peak 2 x (20 + 3) + 1 = 47 is printed as
+  # a note to size max_connections.
+  - it: NOTES print only the peak note at the defaults on two replicas
+    template: NOTES.txt
+    set:
+      replicaCount: 2
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: the control plane opens"
+      - matchRegexRaw:
+          pattern: "NOTE: under load the control plane can grow to 47 Postgres connections"
+      - matchRegexRaw:
+          pattern: "2 pod\\(s\\) x \\(database.maxOpenConns=20 \\+ 3\\) \\+ 1 migration Job"
+
+  # #1088 at the old idle floor of 5 on a larger fleet: 4 x (5 + 3) + 1 = 33.
+  - it: NOTES warn with the boot total and the setting when it exceeds a small server
+    template: NOTES.txt
+    set:
+      replicaCount: 4
+      database.maxIdleConns: 5
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: the control plane opens 33 Postgres connections at boot"
+      - matchRegexRaw:
+          pattern: "4 pod\\(s\\) x \\(database.maxIdleConns=5 \\+ 3\\) \\+ 1 migration Job"
+      - matchRegexRaw:
+          pattern: "SQLSTATE 53300"
+      - matchRegexRaw:
+          pattern: "NOTE: under load the control plane can grow to 93 Postgres connections"
+
+  # A lowered maxOpenConns keeps a multi-replica install fully quiet:
+  # boot 2 x (2 + 3) + 1 = 11, peak 2 x (6 + 3) + 1 = 19.
+  - it: NOTES stay quiet on two replicas with a lowered maxOpenConns
+    template: NOTES.txt
+    set:
+      replicaCount: 2
+      database.maxOpenConns: 6
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "Postgres connections"
+
+  # The HPA ceiling, not the floor, is what the server has to absorb:
+  # 6 x (2 + 3) + 1 = 31 at boot.
+  - it: NOTES count autoscaling.maxReplicas, not replicaCount
+    template: NOTES.txt
+    set:
+      autoscaling.enabled: true
+      autoscaling.maxReplicas: 6
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: the control plane opens 31 Postgres connections at boot"
+
+  # Without the migration Job (migrated out of band) it is not counted:
+  # 5 x (2 + 3) = 25 at boot.
+  - it: NOTES leave the migration Job out when migrations are disabled
+    template: NOTES.txt
+    set:
+      replicaCount: 5
+      migrations.enabled: false
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: the control plane opens 25 Postgres connections at boot"
+      - notMatchRegexRaw:
+          pattern: "migration Job"
+
+  # The dedicated scheduler pool counts on top of maxOpenConns. The chart cannot
+  # tell which pod runs the scheduler, so it counts it on every pod (an upper
+  # bound): 2 x (20 + 5 + 3) + 1 = 57.
+  - it: NOTES count database.schedulerMaxConns in the peak
+    template: NOTES.txt
+    set:
+      replicaCount: 2
+      database.schedulerMaxConns: 5
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - matchRegexRaw:
+          pattern: "NOTE: under load the control plane can grow to 57 Postgres connections"
+      - matchRegexRaw:
+          pattern: "2 pod\\(s\\) x \\(database.maxOpenConns=20 \\+ database.schedulerMaxConns=5 \\+ 3\\) \\+ 1 migration Job"

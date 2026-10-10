@@ -9,7 +9,7 @@ weight: 480
 description: Spark connection
 ---
 
-Submit Spark jobs from a task via a managed Leoflow Connection and the Apache
+Submit Spark jobs from a task via a managed Dexaflow Connection and the Apache
 Spark provider hooks. The provider exposes a few conn types — all from
 `apache-airflow-providers-apache-spark`:
 
@@ -23,7 +23,7 @@ Spark provider hooks. The provider exposes a few conn types — all from
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: spark_job
 connectors:
   - spark
@@ -67,7 +67,7 @@ with DAG("spark_job", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: spark_job
 description: Submit a Spark job via SparkSubmitHook.
@@ -83,7 +83,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `spark`. Set Host + Port (the master), and
    any Extra tuning.
-2. `leoflow lite path/to/this/dag` → trigger `spark_job`.
+2. `dexaflow lite path/to/this/dag` → trigger `spark_job`.
 
 {{% alert title="spark-submit needs a JVM" color="info" %}}
 `SparkSubmitHook` shells out to `spark-submit`, which needs a Spark/JVM in the

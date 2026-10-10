@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 func opSpec(class string) *domain.DAGSpec {

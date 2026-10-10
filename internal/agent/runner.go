@@ -8,16 +8,19 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
-	"github.com/neochaotic/leoflow/internal/agent/secretsource"
-	"github.com/neochaotic/leoflow/internal/taskoutcome"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent/secretsource"
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -77,6 +80,11 @@ type Runner struct {
 	// leaves TMPDIR untouched: a single-shot pod is already destroyed per task, so
 	// its /tmp needs no in-process reset.
 	TmpDir string
+	// HomeDir, when set, is exported to the task as HOME, with the XDG base dirs
+	// under it, so the child's dotfiles, caches and user site-packages land in a
+	// per-attempt directory the caller wipes between attempts. A warm worker on a
+	// read-only root sets it (X3.2); empty leaves HOME and XDG_* as inherited.
+	HomeDir string
 	// TerminationLogPath is where the agent writes its durable outcome record just
 	// before delivering the report, so a pod killed mid-report still leaves the
 	// task's true result behind for the reconciler to recover (ADR 0052). Empty
@@ -101,6 +109,10 @@ type Runner struct {
 	// afterFunc returns a channel that fires after the given delay; it exists so
 	// tests can make the report-retry backoff instant. Nil uses time.After.
 	afterFunc func(time.Duration) <-chan time.Time
+	// attemptEpoch is the execution of the try this attempt is, from its task
+	// spec, stamped on the outcome record (ADR 0052 amendment). It is reset for
+	// every attempt a warm worker runs; 0 until the spec is read.
+	attemptEpoch int64
 	// Resolver resolves a declared secret name from an external backend, pod-side
 	// (ADR 0060). Nil = no external backend configured: the resolution chain is the
 	// vault only, byte-identical to the pre-0060 env-export. SecretBackend is the
@@ -136,10 +148,12 @@ func (r *Runner) Run(ctx context.Context) error {
 // per WorkAssignment, each time in a fresh forked child with a freshly-built env.
 // It does NOT register — registration is a per-worker concern the caller owns.
 func (r *Runner) runOneAttempt(ctx context.Context) error {
+	r.attemptEpoch = 0
 	spec, err := r.Client.GetTaskSpec(ctx, &agentv1.GetTaskSpecRequest{})
 	if err != nil {
 		return fmt.Errorf("fetching task spec: %w", err)
 	}
+	r.attemptEpoch = spec.GetAttemptEpoch()
 	argv, err := BuildCommand(spec.GetOperator(), spec.GetEntrypoint(), spec.GetOperatorClass())
 	if err != nil {
 		return err
@@ -174,6 +188,7 @@ func (r *Runner) register(ctx context.Context) error {
 }
 
 func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string, error) {
+	fetcher := r.prefetchXCom(ctx, spec)
 	var xcom []string
 	for param, upstreams := range spec.GetXcomInputMapping() {
 		taskIDs := upstreams.GetTaskIds()
@@ -185,7 +200,7 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 			// Single upstream: deliver the raw return_value JSON as-is, so a task
 			// declaring `def f(x: dict)` receives the upstream's dict (not a
 			// 1-element list wrapping it). Matches Airflow's TaskFlow semantics.
-			resp, err := r.Client.FetchXCom(ctx, &agentv1.FetchXComRequest{
+			resp, err := fetcher.FetchXCom(ctx, &agentv1.FetchXComRequest{
 				UpstreamTaskId: taskIDs[0],
 				Key:            "return_value",
 			})
@@ -201,7 +216,7 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 			// Fan-in: each upstream's return_value becomes one element of a JSON
 			// array, in declaration order. An absent upstream contributes `null`
 			// so the function still receives len(upstreams) elements.
-			collected, err := fetchFanInValues(ctx, r.Client, param, taskIDs)
+			collected, err := fetchFanInValues(ctx, fetcher, param, taskIDs)
 			if err != nil {
 				return nil, err
 			}
@@ -217,7 +232,7 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 	// and never reach the agent's pipe.
 	env = append(env, "PYTHONUNBUFFERED=1", "PYTHONIOENCODING=UTF-8")
 	env = append(env, runContextEnv(spec)...)
-	byTaskEnv, err := r.xcomByTaskEnv(ctx, spec)
+	byTaskEnv, err := xcomByTaskEnv(ctx, fetcher, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +299,35 @@ func (r *Runner) outputPathEnv() ([]string, error) {
 		}
 		env = append(env, "TMPDIR="+r.TmpDir)
 	}
+	if r.HomeDir != "" {
+		homeEnv, err := attemptHomeEnv(r.HomeDir)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, homeEnv...)
+	}
+	return env, nil
+}
+
+// attemptHomeEnv creates a per-attempt HOME and its XDG base dirs and returns the
+// env that points the child at them. Appended after the task's own env, so it
+// overrides a HOME or XDG_* the image or the DAG set: on a read-only root those
+// would either be unwritable or, under /tmp, shared with the next attempt.
+func attemptHomeEnv(home string) ([]string, error) {
+	dirs := [][2]string{
+		{"HOME", home},
+		{"XDG_CONFIG_HOME", filepath.Join(home, ".config")},
+		{"XDG_CACHE_HOME", filepath.Join(home, ".cache")},
+		{"XDG_DATA_HOME", filepath.Join(home, ".local", "share")},
+		{"XDG_STATE_HOME", filepath.Join(home, ".local", "state")},
+	}
+	env := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if err := os.MkdirAll(d[1], 0o700); err != nil {
+			return nil, fmt.Errorf("creating per-attempt %s %q: %w", d[0], d[1], err)
+		}
+		env = append(env, d[0]+"="+d[1])
+	}
 	return env, nil
 }
 
@@ -300,13 +344,13 @@ const upstreamXComEnv = "LEOFLOW_UPSTREAM_XCOM"
 // ti.xcom_pull — a python @task gets its inputs via the param-keyed xcom_input_mapping
 // — so the map is built for airflow_operator tasks only, avoiding wasted fetches. An
 // upstream with no return_value is omitted (pulls as None). nil when nothing to deliver.
-func (r *Runner) xcomByTaskEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string, error) {
+func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskSpec) ([]string, error) {
 	if spec.GetOperator() != "airflow_operator" {
 		return nil, nil
 	}
 	byTask := map[string]json.RawMessage{}
 	for _, taskID := range spec.GetDependsOn() {
-		resp, err := r.Client.FetchXCom(ctx, &agentv1.FetchXComRequest{
+		resp, err := fetcher.FetchXCom(ctx, &agentv1.FetchXComRequest{
 			UpstreamTaskId: taskID,
 			Key:            "return_value",
 		})
@@ -537,7 +581,7 @@ func (r *Runner) resolveExternal(ctx context.Context, refs []secretsource.Ref) (
 // upstream's return value, or `null` if the upstream produced no XCom (Airflow
 // semantics: missing XCom is None). The function the runtime calls receives
 // this as `list[T]` — len(upstreams) elements, never fewer.
-func fetchFanInValues(ctx context.Context, client agentv1.AgentServiceClient, param string, upstreams []string) ([]byte, error) {
+func fetchFanInValues(ctx context.Context, client xcomFetcher, param string, upstreams []string) ([]byte, error) {
 	pieces := make([][]byte, 0, len(upstreams))
 	for _, upstream := range upstreams {
 		resp, err := client.FetchXCom(ctx, &agentv1.FetchXComRequest{
@@ -898,7 +942,7 @@ func (r *Runner) writeOutcome(rec taskoutcome.Record) {
 	if r.TerminationLogPath == "" {
 		return
 	}
-	enc, err := rec.Encode()
+	enc, err := rec.WithAttemptEpoch(r.attemptEpoch).Encode()
 	if err != nil {
 		slog.Warn("encoding task outcome record", "error", err)
 		return
@@ -934,10 +978,23 @@ func reportBackoff(attempt int) time.Duration {
 	return d
 }
 
+// jitterDelay spreads a backoff delay over [d/2, d] ("equal jitter"), so agents
+// that failed together retry at different moments instead of hitting a
+// recovering control plane in one synchronized burst on every attempt. It never
+// lengthens the delay, so every cap on d still holds. math/rand is fine here:
+// this is backoff jitter, nothing security-relevant.
+func jitterDelay(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(mathrand.Int64N(int64(half)+1)) //nolint:gosec // G404: backoff jitter, not security-relevant
+}
+
 // reportRequest sends a ReportState request and translates the response's
 // should_terminate signal into an error. A transient RPC failure (the api pod
 // Unavailable, a deadline) is retried until it lands, with the delay between
-// attempts following reportBackoff. Retrying is safe: the server's ReportState
+// attempts following reportBackoff, jittered (jitterDelay). Retrying is safe: the server's ReportState
 // is idempotent (a report that already applied comes back as a stale ack, not a
 // double-apply). A logical rejection or a credential rejection (Unauthenticated,
 // PermissionDenied) is returned immediately, and a canceled context (parent
@@ -989,7 +1046,7 @@ func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequ
 		if !retryableReportErr(err) {
 			return fmt.Errorf("reporting state %v: %w", req.GetState(), err)
 		}
-		delay := reportBackoff(attempt)
+		delay := jitterDelay(reportBackoff(attempt))
 		slog.Warn("report failed; retrying after backoff",
 			"state", req.GetState(), "attempt", attempt, "delay", delay, "error", err)
 		select {
@@ -1049,9 +1106,14 @@ func (r *Runner) reportReschedule(ctx context.Context, when time.Time) error {
 	})
 }
 
-// leoflowEnvPrefix marks the variables Leoflow itself owns in an inherited
+// leoflowEnvPrefix marks the variables Dexaflow itself owns in an inherited
 // environment. Everything under it is stripped unless explicitly kept.
 const leoflowEnvPrefix = "LEOFLOW_"
+
+// dexaflowEnvPrefix is the same set of variables under their name since the
+// rename. The agent mirrors one prefix onto the other at startup (envcompat), so
+// every rule here applies to both.
+const dexaflowEnvPrefix = "DEXAFLOW_"
 
 // taskVisibleLeoflowEnv is the complete set of LEOFLOW_ variables a task is
 // allowed to inherit. Everything else under the prefix is removed.
@@ -1088,13 +1150,24 @@ var taskVisibleLeoflowEnv = []string{
 	"LEOFLOW_TASK_INSTANCE_ID",
 }
 
-// stripAgentOnly removes Leoflow's own variables from an inherited environment
+// isAgentOnlyEnv reports whether name is one of the agent's own variables, under
+// either prefix, that a task must not inherit.
+func isAgentOnlyEnv(name string) bool {
+	for _, prefix := range []string{leoflowEnvPrefix, dexaflowEnvPrefix} {
+		if suffix, ok := strings.CutPrefix(name, prefix); ok {
+			return !slices.Contains(taskVisibleLeoflowEnv, leoflowEnvPrefix+suffix)
+		}
+	}
+	return false
+}
+
+// stripAgentOnly removes Dexaflow's own variables from an inherited environment
 // before it is handed to user code, keeping only those a task legitimately needs.
 func stripAgentOnly(base []string) []string {
 	out := make([]string, 0, len(base))
 	for _, kv := range base {
 		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, leoflowEnvPrefix) && !slices.Contains(taskVisibleLeoflowEnv, name) {
+		if isAgentOnlyEnv(name) {
 			continue
 		}
 		out = append(out, kv)
@@ -1129,28 +1202,81 @@ func clampExit(code int) int32 {
 	return int32(code)
 }
 
+// maxLogLineBytes bounds one log line and so the partial line a logWriter
+// buffers. The control plane accepts gRPC messages up to 4 MiB, and a LogLine
+// over that limit used to end the whole log stream; the bound leaves room for
+// the message's other fields, so every line that was deliverable before is
+// still sent whole. A longer line is sent in pieces of at most this size.
+// var (not const) so tests can lower it.
+var maxLogLineBytes = 4<<20 - 4<<10
+
 // logWriter splits written bytes into newline-delimited log lines and forwards
-// each one to the sink, tagging it with its stream name and level.
+// each one to the sink, tagging it with its stream name and level. A line longer
+// than maxLogLineBytes is split, so the buffer of a stream that never writes a
+// newline stays bounded.
 type logWriter struct {
 	sink   LogSink
 	stream string
 	level  agentv1.LogLevel
 	buf    []byte
 	line   int64
+	splits int64 // extra lines produced by splitting over-long lines
 }
 
-// Write buffers p and emits every complete line it contains.
+// Write buffers p and emits every complete line it contains, then any piece of
+// the pending partial line that reached the bound.
 func (w *logWriter) Write(p []byte) (int, error) {
-	w.buf = append(w.buf, p...)
+	n := len(p)
 	for {
-		i := bytes.IndexByte(w.buf, '\n')
+		i := bytes.IndexByte(p, '\n')
 		if i < 0 {
 			break
 		}
-		w.emit(w.buf[:i])
-		w.buf = w.buf[i+1:]
+		w.buf = append(w.buf, p[:i]...)
+		w.emitLine(w.buf)
+		w.buf = w.buf[:0]
+		p = p[i+1:]
 	}
-	return len(p), nil
+	w.buf = append(w.buf, p...)
+	for len(w.buf) > maxLogLineBytes {
+		cut := splitPoint(w.buf)
+		w.emitPiece(w.buf[:cut])
+		w.buf = append(w.buf[:0], w.buf[cut:]...)
+	}
+	return n, nil
+}
+
+// emitLine emits one complete line, in pieces when it exceeds the bound.
+func (w *logWriter) emitLine(b []byte) {
+	for len(b) > maxLogLineBytes {
+		cut := splitPoint(b)
+		w.emitPiece(b[:cut])
+		b = b[cut:]
+	}
+	w.emit(b)
+}
+
+// emitPiece emits the head of an over-long line and counts the split. The first
+// split of a stream is logged; the total is logged on flush.
+func (w *logWriter) emitPiece(b []byte) {
+	if w.splits == 0 {
+		slog.Warn("task log line exceeds the line bound; sending it in pieces",
+			"stream", w.stream, "max_bytes", maxLogLineBytes)
+	}
+	w.splits++
+	w.emit(b)
+}
+
+// splitPoint returns where to cut a line longer than the bound: at the bound,
+// moved back to the start of a rune so both pieces stay valid UTF-8 (LogLine's
+// message is a proto string). Bytes that are not UTF-8 are cut at the bound.
+func splitPoint(b []byte) int {
+	for cut := maxLogLineBytes; cut > maxLogLineBytes-utf8.UTFMax && cut > 0; cut-- {
+		if utf8.RuneStart(b[cut]) {
+			return cut
+		}
+	}
+	return maxLogLineBytes
 }
 
 // flush emits any buffered line that lacked a trailing newline.
@@ -1158,6 +1284,10 @@ func (w *logWriter) flush() {
 	if len(w.buf) > 0 {
 		w.emit(w.buf)
 		w.buf = nil
+	}
+	if w.splits > 0 {
+		slog.Warn("task log lines were split at the line bound",
+			"stream", w.stream, "extra_lines", w.splits, "max_bytes", maxLogLineBytes)
 	}
 }
 

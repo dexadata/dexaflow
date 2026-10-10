@@ -1,0 +1,104 @@
+suite: auto-generated agent TLS material (#690)
+templates:
+  - agent-tls-autogen.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+tests:
+  - it: auto-generates a kubernetes.io/tls Secret + CA ConfigMap by default (nothing supplied)
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      agentTLS.enabled: true
+      agentTLS.serverCertSecret: ""
+      agentTLS.caConfigMap: ""
+    asserts:
+      - hasDocuments:
+          count: 2
+      # doc 0 — the server cert Secret.
+      - isKind:
+          of: Secret
+        documentIndex: 0
+      - equal:
+          path: type
+          value: kubernetes.io/tls
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: leoflow-agent-tls
+        documentIndex: 0
+      - equal:
+          path: metadata.namespace
+          value: leoflow
+        documentIndex: 0
+      - isNotEmpty:
+          path: data["tls.crt"]
+        documentIndex: 0
+      - isNotEmpty:
+          path: data["tls.key"]
+        documentIndex: 0
+      - isNotEmpty:
+          path: data["ca.crt"]
+        documentIndex: 0
+      # doc 1 — the CA trust ConfigMap task pods mount.
+      - isKind:
+          of: ConfigMap
+        documentIndex: 1
+      - equal:
+          path: metadata.name
+          value: leoflow-agent-ca
+        documentIndex: 1
+      - isNotEmpty:
+          path: data["ca.crt"]
+        documentIndex: 1
+
+  - it: places the CA ConfigMap in taskNamespace (where task pods mount it), not the release namespace
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      agentTLS.enabled: true
+      agentTLS.serverCertSecret: ""
+      agentTLS.caConfigMap: ""
+      taskNamespace: leoflow-tasks
+    asserts:
+      # The Secret stays in the release namespace (the control plane mounts it there)...
+      - equal:
+          path: metadata.namespace
+          value: leoflow
+        documentIndex: 0
+      # ...while the CA ConfigMap lives in taskNamespace.
+      - equal:
+          path: metadata.namespace
+          value: leoflow-tasks
+        documentIndex: 1
+
+  - it: renders NOTHING on the BYO path (serverCertSecret + caConfigMap both set)
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      agentTLS.enabled: true
+      agentTLS.serverCertSecret: leoflow-tls
+      agentTLS.caConfigMap: leoflow-ca
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders NOTHING when autoGenerate is off and nothing is supplied (deployment guard fails instead)
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      agentTLS.enabled: true
+      agentTLS.autoGenerate: false
+      agentTLS.serverCertSecret: ""
+      agentTLS.caConfigMap: ""
+    asserts:
+      - hasDocuments:
+          count: 0

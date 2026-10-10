@@ -5,7 +5,7 @@ weight: 95
 description: Turn on OIDC login against Google Workspace, and read the audit log when it denies.
 ---
 
-Leoflow's SSO is OIDC Authorization Code + PKCE, so Google Workspace works
+Dexaflow's SSO is OIDC Authorization Code + PKCE, so Google Workspace works
 through the same settings as any other issuer. Two things about Google make it
 worth its own page: it emits **no `groups` claim** unless Directory API group
 sync is configured, and its tenant claim is `hd`, a domain rather than an opaque
@@ -45,7 +45,7 @@ auth:
     enabled: true
     issuer: https://accounts.google.com
     clientId: "<client-id>.apps.googleusercontent.com"
-    existingSecret: leoflow-google-oidc   # key: oidcClientSecret
+    existingSecret: dexaflow-google-oidc   # key: oidcClientSecret
     redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
 
     # The tenant pin. On Google the claim is hd and its value is the Workspace
@@ -66,7 +66,7 @@ auth:
 Create the secret separately so it is never in a values file:
 
 ```bash
-kubectl create secret generic leoflow-google-oidc --from-literal=oidcClientSecret='<client-secret>'
+kubectl create secret generic dexaflow-google-oidc --from-literal=oidcClientSecret='<client-secret>'
 ```
 
 With exactly one entry in `tenantClaims` and `tenantClaim: hd`, the login
@@ -76,7 +76,7 @@ accounts in that domain.
 {{% alert title="Not yet verified against a real Workspace tenant" color="info" %}}
 The `hd` parameter is covered by unit tests and by a browser test against a fake
 identity provider, but no release so far has exercised it against a real Google
-client ([#1177](https://github.com/neochaotic/leoflow/issues/1177)). If it does
+client ([#1177](https://github.com/dexadata/dexaflow/issues/1177)). If it does
 not behave as described, what you will see is the account chooser still offering
 personal accounts, which the tenant pin then rejects. It cannot admit an account
 the pin would refuse: the pin reads the verified `hd` **claim** on the returned
@@ -165,7 +165,7 @@ LIMIT 20;
 | `tenant_claim_shape` | the tenant claim is neither a string nor an array of strings | the pin cannot read it; your `tenant_claim` probably names the wrong claim |
 | `token_invalid` | verification failed for any other reason | the server log carries the underlying error |
 
-If the page instead says Leoflow could not complete the sign-in *on its side*,
+If the page instead says Dexaflow could not complete the sign-in *on its side*,
 the failure is ours and not a configuration problem: the error is in the server
 log, and a retry may well work.
 

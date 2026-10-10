@@ -1,0 +1,45 @@
+suite: external sign-in and sign-out URLs reach the chart (#1288)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders both variables when set
+    set:
+      auth.externalSigninUrl: https://portal.example.com/engine
+      auth.externalSignoutUrl: https://portal.example.com/signout
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
+            value: https://portal.example.com/engine
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
+            value: https://portal.example.com/signout
+
+  - it: renders neither when unset, keeping Dexaflow's own pages
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
+            value: ""
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
+            value: ""

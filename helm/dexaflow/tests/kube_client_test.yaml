@@ -1,0 +1,69 @@
+suite: Kubernetes client rate limits (executor.kubeClient)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  # Unset values render nothing, so the server keeps client-go's QPS 5 / burst 10
+  # on one shared client and an upgrade changes nothing.
+  - it: no kube client env by default
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
+          any: true
+
+  - it: executor.kubeClient renders the dispatch and maintenance limits
+    template: deployment.yaml
+    set:
+      executor.kubeClient.qps: 50
+      executor.kubeClient.burst: 100
+      executor.kubeClient.maintenanceQps: 20
+      executor.kubeClient.maintenanceBurst: 40
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS
+            value: "50"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST
+            value: "100"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
+            value: "20"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
+            value: "40"

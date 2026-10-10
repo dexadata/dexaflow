@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // seedQueuedWarmTask brings a fresh DAG up to a single task instance in `queued`
@@ -50,7 +50,7 @@ func seedQueuedWarmTask(t *testing.T, repo *storage.Repository, sched *storage.S
 	if err := sched.ApplyTransition(ctx, runUUID, taskID, domain.TaskStateQueued); err != nil {
 		t.Fatalf("ApplyTransition to queued: %v", err)
 	}
-	if err := exec.BindWarmAttempt(ctx, runUUID, taskID, 1, warmPod); err != nil {
+	if err := exec.BindWarmAttempt(ctx, runUUID, taskID, 1, 0, warmPod); err != nil {
 		t.Fatalf("BindWarmAttempt on a queued TI: %v", err)
 	}
 	return runUUID
@@ -68,7 +68,7 @@ func TestListWarmBoundRunningTIsIntegration(t *testing.T) {
 	liveDag := fmt.Sprintf("warm_bound_live_%d", stamp)
 	liveRun := seedRunningTask(t, repo, sched, ctx, liveDag, "load")
 	wantPod := fmt.Sprintf("leoflow-warm-live-%d", stamp)
-	if err := exec.BindWarmAttempt(ctx, liveRun, "load", 1, wantPod); err != nil {
+	if err := exec.BindWarmAttempt(ctx, liveRun, "load", 1, 0, wantPod); err != nil {
 		t.Fatalf("BindWarmAttempt (live): %v", err)
 	}
 
@@ -76,7 +76,7 @@ func TestListWarmBoundRunningTIsIntegration(t *testing.T) {
 	// even though warm_worker_id is still set).
 	termDag := fmt.Sprintf("warm_bound_term_%d", stamp)
 	termRun := seedRunningTask(t, repo, sched, ctx, termDag, "load")
-	if err := exec.BindWarmAttempt(ctx, termRun, "load", 1, fmt.Sprintf("leoflow-warm-term-%d", stamp)); err != nil {
+	if err := exec.BindWarmAttempt(ctx, termRun, "load", 1, 0, fmt.Sprintf("leoflow-warm-term-%d", stamp)); err != nil {
 		t.Fatalf("BindWarmAttempt (terminal): %v", err)
 	}
 	if err := sched.ApplyTransition(ctx, termRun, "load", domain.TaskStateFailed); err != nil {

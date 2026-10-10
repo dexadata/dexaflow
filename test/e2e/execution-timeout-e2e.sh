@@ -97,7 +97,7 @@ DAG_IMAGE="leoflow-timeout-dag:dev"
 #
 # The dags/dag_versions rows live in the SHARED dev database and outlive this
 # script, so a fixed id makes each invocation collide with the last: re-pushing
-# the same leoflow version is a 409 ("inserting version: resource already
+# the same dexaflow version is a 409 ("inserting version: resource already
 # exists"), and until that push lands the scheduler is still acting on the
 # PREVIOUS version — dispatching ITS runs at control-plane boot, before the image
 # import, into pods that carry this run's task-id labels. A fresh id makes both
@@ -108,7 +108,7 @@ DAG_PREFIX="timeoutdag"
 DAG_ID="${DAG_PREFIX}$(date +%s)"
 API="http://localhost:${HTTP_PORT}"
 NS=leoflow
-# The server's OWN database, not the Lite dev database `leoflow db migrate`
+# The server's OWN database, not the Lite dev database `dexaflow db migrate`
 # targets. This is the default `database.url` the server boots with, migrated
 # here with the golang-migrate CLI exactly as the k3d CI jobs do.
 DATABASE_URL="${DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
@@ -265,7 +265,7 @@ done
 [ -x "$ROOT/bin/leoflow" ] && [ -x "$ROOT/bin/leoflow-server" ] || fail "build first: make build"
 
 log "Migrating the SERVER's database ($DATABASE_URL)"
-# `leoflow db migrate` is hardcoded to the Lite dev database and is NOT the tool
+# `dexaflow db migrate` is hardcoded to the Lite dev database and is NOT the tool
 # for this one; the server's schema is owned by migrations/ + golang-migrate,
 # exactly as the k3d CI jobs apply it.
 migrate -path "$ROOT/migrations" -database "$DATABASE_URL" up 2>&1 | tail -5 \
@@ -277,7 +277,7 @@ mkdir -p "$PROJ"
 # Pin the DAG image to the host arch (see e2e.sh): the loader defaults to
 # linux/amd64, which fails FROM an arm64 base on a Lima/dev host → ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
-cat >"$PROJ/leoflow.yaml" <<YAML
+cat >"$PROJ/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: ${DAG_ID}
 build:
@@ -314,7 +314,7 @@ from airflow.sdk import DAG, task
 
 @task
 def sleeper() -> None:
-    # Declares execution_timeout_seconds: 10 (leoflow.yaml) and runs far past it.
+    # Declares execution_timeout_seconds: 10 (dexaflow.yaml) and runs far past it.
     # The agent's own clock must interrupt this, and the timeout must be named
     # on the task instance the API serves.
     #
@@ -411,7 +411,7 @@ purge_stale_dags "$TOKEN"
 
 log "Compiling + building the DAG image"
 "$ROOT/bin/leoflow" compile "$PROJ" --image "$DAG_IMAGE" --build --dockerfile Dockerfile \
-  -o "$PROJ/dag.json" || fail "leoflow compile failed"
+  -o "$PROJ/dag.json" || fail "dexaflow compile failed"
 jq -e --argjson want "$TASK_TIMEOUT" \
   '.tasks[] | select(.task_id=="sleeper") | select(.execution_timeout_seconds==$want)' \
   "$PROJ/dag.json" >/dev/null \
@@ -424,7 +424,7 @@ log "Importing the images into the cluster (pre-loaded: no pull at dispatch)"
 k3d_import "$CLUSTER" "$BASE_IMAGE" "$DAG_IMAGE"
 
 log "Pushing + triggering"
-"$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN" || fail "leoflow push failed"
+"$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN" || fail "dexaflow push failed"
 RUN_ID="$(curl -fsS --max-time "$CURL_MAX_TIME" -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{}' \
   "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')" || fail "triggering the run failed"

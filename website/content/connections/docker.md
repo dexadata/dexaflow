@@ -10,13 +10,13 @@ description: Docker registry connection
 ---
 
 Connect a task to a Docker registry (Docker Hub, GHCR, ECR, a private
-Harbor/Nexus) over a managed Leoflow Connection. `DockerHook` authenticates
+Harbor/Nexus) over a managed Dexaflow Connection. `DockerHook` authenticates
 to the registry so the `DockerOperator` can pull/run images.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: docker_login
 connectors:
   - docker
@@ -65,7 +65,7 @@ with DAG("docker_login", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: docker_login
 python_version: "3.12"

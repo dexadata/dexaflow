@@ -16,7 +16,7 @@ FAKE_PRIVATE_KEY = "test-private-key-material-xxxx-not-a-real-key"
 
 
 def _conn_uri(scheme, login="", password="", host="", port=None, schema="", extra=None):
-    """Build an Airflow connection URI the way Leoflow delivers it (conn_type with
+    """Build an Airflow connection URI the way Dexaflow delivers it (conn_type with
     _->-, extra as a single __extra__ JSON query param)."""
     netloc = ""
     if login or password:
@@ -339,7 +339,7 @@ def test_write_dbt_profile_missing_connection_is_loud(tmp_path):
 
 def test_write_dbt_profile_schema_override(tmp_path, monkeypatch):
     # the connection has no schema, which would default to public; an explicit
-    # schema (from leoflow.yaml) wins so models land where the team expects.
+    # schema (from dexaflow.yaml) wins so models land where the team expects.
     monkeypatch.setenv("AIRFLOW_CONN_WH", "postgres://u:p@h/db")
     write_dbt_profile("wh", "p", str(tmp_path), schema="marts")
     data = json.loads((tmp_path / "profiles.yml").read_text())

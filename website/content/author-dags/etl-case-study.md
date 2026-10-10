@@ -10,7 +10,7 @@ description: A worked 1 GB ETL that shares data between tasks through the per-ru
 ---
 
 A worked, **measured** end-to-end pipeline: generate ~1 GB, process it with DuckDB,
-and load the result into an external Postgres — all on `leoflow lite` running real
+and load the result into an external Postgres — all on `dexaflow lite` running real
 pods on a single-node k3d cluster (a "pseudo-cluster" on a laptop). Every number
 below was measured on that setup.
 
@@ -39,7 +39,7 @@ flowchart LR
 ```
 
 {{< tabpane text=true >}}
-{{% tab header="leoflow.yaml" %}}
+{{% tab header="dexaflow.yaml" %}}
 
 ```yaml
 schema_version: "1.0"
@@ -62,7 +62,7 @@ staging:
 import os, time
 from airflow.sdk import DAG, task
 
-STAGING = os.environ.get("LEOFLOW_STAGING_DIR", "/staging")
+STAGING = os.environ.get("DEXAFLOW_STAGING_DIR", "/staging")
 ROWS = 70_000_000  # ~1.1 GB as Parquet
 
 @task
@@ -166,8 +166,9 @@ ADR 0020 has the reasoning.
 
 ## The external load uses a managed Connection
 
-The `load` target is a **Leoflow Connection** (`etl_target`), created in
-Admin → Connections — encrypted at rest (ADR 0019) and **injected into the pod as
+The `load` target is a **Dexaflow Connection** (`etl_target`), created in
+Admin → Connections, encrypted at rest (ADR 0019; on Lite read
+[what that protects](/author-dags/variables-connections/#encryption-at-rest-on-lite)) and **injected into the pod as
 `AIRFLOW_CONN_ETL_TARGET` over an authenticated gRPC pull** (ADR 0021), so the
 secret never appears in the pod spec. The task log confirms it:
 

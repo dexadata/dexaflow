@@ -267,7 +267,7 @@ type DAGRunCreate struct {
 	Note        *string                 `json:"note,omitempty"`
 }
 
-// DAGUpdate defines model for DAGUpdate.
+// DAGUpdate is_paused must be present; a body without it is refused with 400. It is not listed under required so the generated Go client keeps the field a pointer.
 type DAGUpdate struct {
 	IsPaused *bool `json:"is_paused,omitempty"`
 }
@@ -331,7 +331,7 @@ type TaskInstance struct {
 	Duration *float32   `json:"duration,omitempty"`
 	EndDate  *time.Time `json:"end_date,omitempty"`
 
-	// FailureReason Leoflow extension (not part of the Airflow API). A short, human-readable cause for a terminal failure, recorded by whichever component observed it: the task's own report, the reconciler reading the pod (image pull, OOM, exit code), a reaper declaring the pod or agent lost, or the agent's classification of a failure that happened before it could register. It answers "why did this fail?" for an attempt that streamed no logs because its agent never started. Null when no cause was observed. Best-effort and diagnostic: it carries a classification, never a credential or a raw internal error.
+	// FailureReason Dexaflow extension (not part of the Airflow API). A short, human-readable cause for a terminal failure, recorded by whichever component observed it: the task's own report, the reconciler reading the pod (image pull, OOM, exit code), a reaper declaring the pod or agent lost, or the agent's classification of a failure that happened before it could register. It answers "why did this fail?" for an attempt that streamed no logs because its agent never started. Null when no cause was observed. Best-effort and diagnostic: it carries a classification, never a credential or a raw internal error.
 	//
 	// Example: the control plane rejected this pod's projected ServiceAccount token; check the control plane's RBAC for tokenreviews and the configured token audience.
 	FailureReason *string            `json:"failure_reason,omitempty"`
@@ -387,7 +387,7 @@ type UserCollection struct {
 	Users        *[]UserListItem `json:"users,omitempty"`
 }
 
-// UserListItem One account in the user list. Leoflow accounts are email-keyed and carry a set of RBAC roles, so this diverges from the Airflow FAB users API (username-keyed with first_name/last_name).
+// UserListItem One account in the user list. Dexaflow accounts are email-keyed and carry a set of RBAC roles, so this diverges from the Airflow FAB users API (username-keyed with first_name/last_name).
 type UserListItem struct {
 	CreatedAt time.Time `json:"created_at"`
 	Email     string    `json:"email"`
@@ -437,6 +437,9 @@ type XComEntry struct {
 // ConnectionID defines model for ConnectionID.
 type ConnectionID = string
 
+// Cursor defines model for Cursor.
+type Cursor = string
+
 // DagID defines model for DagID.
 type DagID = string
 
@@ -481,8 +484,11 @@ type ListDagsParams struct {
 
 // ListDagRunsParams defines parameters for ListDagRuns.
 type ListDagRunsParams struct {
-	Limit  *Limit                    `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *Offset                   `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Cursor Dexaflow extension. Opaque keyset cursor taken from the Dexaflow-Next-Cursor response header of the previous page. When set, offset is ignored and the page holds the rows after the cursor in the same order, at the cost of the first page whatever the depth. The response body is unchanged. With a state filter, offset paging filters the newest 10000 runs and counts total_entries within them, while cursor paging filters and counts every run of the DAG, so the two modes can report different totals for a DAG with more runs than that.
+	Cursor *Cursor                   `form:"cursor,omitempty" json:"cursor,omitempty"`
 	State  *[]ListDagRunsParamsState `form:"state,omitempty" json:"state,omitempty"`
 }
 
@@ -2116,6 +2122,18 @@ func NewListDagRunsRequest(server string, dagId DagID, params *ListDagRunsParams
 		if params.Offset != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -3841,11 +3859,18 @@ type UpdateDagResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DAG
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r UpdateDagResponse) GetJSON200() *DAG {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateDagResponse) GetJSON400() *Error {
+	return r.JSON400
 }
 
 // GetBody returns the raw response body bytes
@@ -5834,6 +5859,13 @@ func ParseUpdateDagResponse(rsp *http.Response) (*UpdateDagResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 

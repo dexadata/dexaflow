@@ -2,7 +2,7 @@
 #
 # Phase 1's harness checks the host contract; this image makes the contract
 # pass by construction: a fresh Python 3.12 + Go toolchain + golangci-lint
-# with no Leoflow state on disk and no leoflow_parser in site-packages.
+# with no Dexaflow state on disk and no leoflow_parser in site-packages.
 #
 # Image is ~700 MB; first build ~5 min, cached after. Re-pull strategy: the
 # image tag includes the Go + golangci-lint versions so a toolchain bump
@@ -11,7 +11,7 @@
 # Usage: built via `make chaos-dogfood-docker` (don't `docker build` directly
 #        — the Makefile passes the right build-args).
 
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.26.9
 ARG GOLANGCI_LINT_VERSION=v2.12.2
 
 FROM python:3.12-slim-bookworm AS base

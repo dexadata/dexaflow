@@ -15,9 +15,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/setup"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // devTestCmd returns a cobra command whose stdout/stderr are discarded, for
@@ -67,7 +67,7 @@ func TestMtimesChangedDetectsEdits(t *testing.T) {
 
 func TestMtimesChangedDetectsAddAndRemove(t *testing.T) {
 	dir := t.TempDir()
-	a := filepath.Join(dir, "leoflow.yaml")
+	a := filepath.Join(dir, "dexaflow.yaml")
 	b := filepath.Join(dir, "dag.py")
 	if err := os.WriteFile(a, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestWorkspaceWatchPaths(t *testing.T) {
 			{
 				Path:       filepath.Join("ws", "etl"),
 				DagID:      "etl",
-				ConfigPath: filepath.Join("ws", "etl", "leoflow.yaml"),
+				ConfigPath: filepath.Join("ws", "etl", "dexaflow.yaml"),
 				HasYAML:    true,
 				Config:     &domain.LeoflowConfig{DagSource: "dag.py"},
 			},
@@ -127,7 +127,7 @@ func TestWorkspaceWatchPaths(t *testing.T) {
 	}
 	got := workspaceWatchPaths(ws)
 	want := []string{
-		filepath.Join("ws", "etl", "leoflow.yaml"),
+		filepath.Join("ws", "etl", "dexaflow.yaml"),
 		filepath.Join("ws", "etl", "dag.py"),
 		"ws", // workspace root, so a new subdir nudges mtime
 	}
@@ -207,7 +207,7 @@ func TestDevPrintHelpers(t *testing.T) {
 
 func TestRunDevValidatesProject(t *testing.T) {
 	cmd := devTestCmd()
-	// A discoverable project (it has a dag.py) whose leoflow.yaml is invalid: an
+	// A discoverable project (it has a dag.py) whose dexaflow.yaml is invalid: an
 	// unknown alert type the schema rejects. runDev validates every project up
 	// front — prepareWorkspace is its first step — so it must refuse before it
 	// touches any infrastructure. This stays at the validation gate on purpose:
@@ -218,11 +218,11 @@ func TestRunDevValidatesProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalid := "dag_id: sales\nalerts:\n  on_failure:\n    - type: carrier-pigeon\n      conn: x\n"
-	if err := os.WriteFile(filepath.Join(dir, "leoflow.yaml"), []byte(invalid), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(invalid), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := runDev(cmd, dir, devOptions{}); err == nil {
-		t.Error("expected runDev to refuse a project with an invalid leoflow.yaml")
+		t.Error("expected runDev to refuse a project with an invalid dexaflow.yaml")
 	}
 }
 
@@ -407,8 +407,8 @@ func TestSharedServerEnvAuthModes(t *testing.T) {
 		}
 		// Logs go under the per-user ~/.leoflow, NOT a shared /tmp path that
 		// collides across users (root vs non-root permission-denied trap).
-		if !strings.Contains(env, filepath.Join(".leoflow", "dev", "logs")) {
-			t.Errorf("logs dir must be per-user under ~/.leoflow/dev/logs; got:\n%s", env)
+		if !strings.Contains(env, filepath.Join(".dexaflow", "dev", "logs")) {
+			t.Errorf("logs dir must be per-user under ~/.dexaflow/dev/logs; got:\n%s", env)
 		}
 		if strings.Contains(env, "leoflow-dev-logs") {
 			t.Errorf("logs dir must not use the shared /tmp path; got:\n%s", env)
@@ -484,7 +484,7 @@ func TestDevSubprocessSetupMissingAgent(t *testing.T) {
 	// through. Isolate all three lookup locations, not one.
 	t.Chdir(t.TempDir())          // nothing in ./bin
 	t.Setenv("PATH", t.TempDir()) // nothing on PATH
-	t.Setenv("HOME", t.TempDir()) // nothing in ~/.leoflow/bin
+	t.Setenv("HOME", t.TempDir()) // nothing in ~/.dexaflow/bin
 	cmd := devTestCmd()
 	ws := &WorkspaceSpec{Path: ".", RootCfg: &domain.LeoflowConfig{DagID: "p"}}
 	ws.RootCfg.ApplyDefaults()
@@ -554,7 +554,7 @@ func TestDevClusterSetupStubbed(t *testing.T) {
 		Projects: []Project{{
 			Path:       dir,
 			DagID:      "etl",
-			ConfigPath: filepath.Join(dir, "leoflow.yaml"),
+			ConfigPath: filepath.Join(dir, "dexaflow.yaml"),
 			HasYAML:    true,
 			Config:     cfg,
 		}},
@@ -598,7 +598,7 @@ func TestK3dImportStubbed(t *testing.T) {
 	}
 }
 
-// resolveBinary used to consult PATH before anything else, so `leoflow lite` ran
+// resolveBinary used to consult PATH before anything else, so `dexaflow lite` ran
 // whatever leoflow-server happened to be installed first — however old. A
 // validation run against v0.1.2-rc.1 spent its first boot exercising a
 // v0.1.0-rc.4 server that predated every feature under test, and only noticed
@@ -636,7 +636,7 @@ func TestResolveBinaryPrefersTheSiblingOverPATH(t *testing.T) {
 }
 
 // With no sibling present, the installer's directory is consulted before PATH:
-// `curl | sh` puts the matching trio in ~/.leoflow/bin, and those belong
+// `curl | sh` puts the matching trio in ~/.dexaflow/bin, and those belong
 // together too.
 func TestResolveBinaryPrefersInstallDirOverPATH(t *testing.T) {
 	name := "leoflow-installdir-probe"
@@ -646,7 +646,7 @@ func TestResolveBinaryPrefersInstallDirOverPATH(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	installed := filepath.Join(home, ".leoflow", "bin", name)
+	installed := filepath.Join(home, ".dexaflow", "bin", name)
 	if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +686,7 @@ func TestResolveBinaryIgnoresDirectories(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", t.TempDir())
-	if err := os.MkdirAll(filepath.Join(home, ".leoflow", "bin", name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".dexaflow", "bin", name), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := resolveBinary("", name); err == nil {
@@ -715,7 +715,7 @@ func writeFakeBinary(t *testing.T, path string) {
 	}
 }
 
-// TestDevDockerfileCopiesDbtGroupProjects: the `leoflow dev` cluster path had
+// TestDevDockerfileCopiesDbtGroupProjects: the `dexaflow lite` cluster path had
 // the same #20 gap as the compile path — it layered only the DAG source, so a
 // hybrid DAG's dbt task groups ran against project directories that were not in
 // the image. The Lite subprocess loop reads from disk and never notices, which
@@ -743,4 +743,74 @@ func TestDevDockerfileCopiesDbtGroupProjects(t *testing.T) {
 	if strings.Index(df, "COPY marketing") > strings.Index(df, "COPY transform") {
 		t.Errorf("devDockerfile() emits group COPYs out of sorted order:\n%s", df)
 	}
+}
+
+// Companion binaries are named dexaflow-* since the rename; installs and
+// builds from before it ship leoflow-*. Both must resolve, the new name wins
+// when both sit in the same place, and location still beats name: a co-versioned
+// legacy sibling is preferred over a new-name copy that is merely on PATH.
+func TestResolveCompanionAcceptsBothNames(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("legacy only", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("PATH", dir)
+		legacy := filepath.Join(dir, "leoflow-compatprobe")
+		writeFakeBinary(t, legacy)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != legacy {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, legacy)
+		}
+	})
+
+	t.Run("both in one place prefers the new name", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("PATH", dir)
+		writeFakeBinary(t, filepath.Join(dir, "leoflow-compatprobe"))
+		current := filepath.Join(dir, "dexaflow-compatprobe")
+		writeFakeBinary(t, current)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != current {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, current)
+		}
+	})
+
+	t.Run("legacy install dir beats new name on PATH", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		installed := filepath.Join(home, ".dexaflow", "bin", "leoflow-compatprobe")
+		if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFakeBinary(t, installed)
+		pathDir := t.TempDir()
+		writeFakeBinary(t, filepath.Join(pathDir, "dexaflow-compatprobe"))
+		t.Setenv("PATH", pathDir)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != installed {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, installed)
+		}
+	})
+
+	t.Run("new install dir is searched", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("PATH", t.TempDir())
+		installed := filepath.Join(home, ".dexaflow", "bin", "dexaflow-compatprobe")
+		if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFakeBinary(t, installed)
+		got, err := resolveCompanion("", "compatprobe")
+		if err != nil || got != installed {
+			t.Fatalf("resolveCompanion = %q, %v; want %q", got, err, installed)
+		}
+	})
+
+	t.Run("explicit path wins", func(t *testing.T) {
+		got, err := resolveCompanion("/custom/agent", "compatprobe")
+		if err != nil || got != "/custom/agent" {
+			t.Fatalf("resolveCompanion = %q, %v", got, err)
+		}
+	})
 }

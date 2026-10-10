@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // linesSink captures whole LogLine values so a framing test can assert message,

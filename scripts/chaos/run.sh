@@ -4,7 +4,7 @@
 # Validates the "fresh-runner contract" and runs the canonical test suites,
 # emitting a green/red report. The contract section catches contributor-machine
 # state that would otherwise mask a real bug (a pip-installed `leoflow_parser`,
-# a populated `~/.leoflow/`, etc. — F5 from PR #221 review, also #96).
+# a populated `~/.dexaflow/`, etc. — F5 from PR #221 review, also #96).
 #
 # Phase 2 (next iteration) will add:
 #   - Docker container isolation (true clean root)
@@ -77,14 +77,14 @@ cd "$REPO_ROOT"
 # ─── Section 1: fresh-runner contract ────────────────────────────────────────
 # This catches the contributor-leak surface that hid the BYO Python gap in PR
 # #221 — the maintainer's machine had `pip install leoflow_parser` so compile
-# "just worked" without `leoflow setup`. A clean CI runner does NOT have this.
+# "just worked" without `dexaflow setup`. A clean CI runner does NOT have this.
 # The harness REFUSES to declare a green report when the host fails the
 # contract; the operator fixes their env or runs Phase 2 inside Docker.
 contract_check() {
   local violations=0
-  if [[ -d "$HOME/.leoflow" ]]; then
-    echo "  - ${RED}~/.leoflow/ exists${RESET} — host has Leoflow state that may mask bugs."
-    echo "    Hint: \`leoflow uninstall\` (keeps your DAGs; removes ~/.leoflow only)."
+  if [[ -d "$HOME/.dexaflow" ]]; then
+    echo "  - ${RED}~/.dexaflow/ exists${RESET} — host has Dexaflow state that may mask bugs."
+    echo "    Hint: \`leoflow uninstall\` (keeps your DAGs; removes ~/.dexaflow only)."
     violations+=1
   fi
   if command -v python3 >/dev/null 2>&1 && python3 -c "import leoflow_parser" 2>/dev/null; then
@@ -93,7 +93,7 @@ contract_check() {
     violations+=1
   fi
   if [[ $violations -eq 0 ]]; then
-    echo "  ✓ no ~/.leoflow state"
+    echo "  ✓ no ~/.dexaflow state"
     echo "  ✓ no pip-installed leoflow_parser"
   fi
   return $violations

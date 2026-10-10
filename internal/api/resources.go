@@ -15,7 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // ErrNotFound is returned by repositories when a resource does not exist.
@@ -104,11 +105,19 @@ func setPaginationLinks(c *gin.Context, total, limit, offset int) {
 	}
 }
 
+// tenantOf returns the tenant the request's principal belongs to. It fails
+// closed: a request with no principal, or a principal that names no tenant, gets
+// the empty name, so every tenant-scoped lookup misses instead of serving the
+// default tenant's data. No tenant is named "" today: the migrations seed
+// "default" and the service API only creates names matching serviceTenantName.
+// The authenticator and JWTAuth already refuse a tenantless principal, and
+// DevBypassAuth names the default tenant explicitly, so this only matters for a
+// handler reached without either.
 func tenantOf(c *gin.Context) string {
 	if u, ok := UserFromContext(c); ok && u.TenantID != "" {
 		return u.TenantID
 	}
-	return "default"
+	return ""
 }
 
 // statusClientClosedRequest (499, nginx convention) marks a request the client
@@ -127,14 +136,15 @@ const statusClientClosedRequest = 499
 // places, and collapsing them into a single opaque message would cost real
 // diagnosability to buy no extra privacy.
 const (
-	detailNotFound     = "the requested resource does not exist"
-	detailConflict     = "the request conflicts with the current state of the resource"
-	detailClientClosed = "the client closed the request before it completed"
-	detailInvalidInput = "the request was rejected by a validation rule"
-	detailInternal     = "the request could not be completed; see the server logs"
+	detailNotFound      = "the requested resource does not exist"
+	detailConflict      = "the request conflicts with the current state of the resource"
+	detailClientClosed  = "the client closed the request before it completed"
+	detailInvalidInput  = "the request was rejected by a validation rule"
+	detailLimitExceeded = "the request would exceed a limit set for this tenant"
+	detailInternal      = "the request could not be completed; see the server logs"
 )
 
-// safeDetail returns the phrase Leoflow composed for this failure, or fallback
+// safeDetail returns the phrase Dexaflow composed for this failure, or fallback
 // when the error carries no such phrase.
 //
 // The default is deny. Only a domain.SafeError — an error someone deliberately
@@ -185,6 +195,11 @@ func handleRepoError(c *gin.Context, err error) {
 	// layer composed the phrase itself with domain.Safef.
 	case errors.Is(err, domain.ErrValidation):
 		AbortProblemCause(c, http.StatusBadRequest, "invalid request", safeDetail(err, detailInvalidInput), err)
+	// A tenant limit the operator set (max_dags, max_runs_per_day,
+	// min_schedule_interval_seconds): the request is valid but not allowed for
+	// this tenant, and the storage layer names the limit with domain.Safef.
+	case errors.Is(err, domain.ErrLimitExceeded):
+		AbortProblemCause(c, http.StatusForbidden, "limit exceeded", safeDetail(err, detailLimitExceeded), err)
 	default:
 		AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
 	}
@@ -221,13 +236,20 @@ func getDagHandler(repo DagRepository) gin.HandlerFunc {
 func patchDagHandler(repo DagRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			IsPaused bool `json:"is_paused"`
+			IsPaused *bool `json:"is_paused"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
 			return
 		}
-		d, err := repo.SetPaused(c.Request.Context(), tenantOf(c), c.Param("dag_id"), body.IsPaused)
+		// is_paused is all this route sets. A body without it must not read as
+		// false, which would unpause the DAG for a request that asked for
+		// something else.
+		if body.IsPaused == nil {
+			AbortProblem(c, http.StatusBadRequest, "bad request", "is_paused (true or false) is required")
+			return
+		}
+		d, err := repo.SetPaused(c.Request.Context(), tenantOf(c), c.Param("dag_id"), *body.IsPaused)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -356,7 +378,7 @@ func validRunState(s string) bool {
 func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// "~" is Airflow's wildcard for "all DAGs"; the UI home polls
-		// GET /api/v2/dags/~/dagRuns for a global run view. Leoflow has no
+		// GET /api/v2/dags/~/dagRuns for a global run view. Dexaflow has no
 		// cross-DAG run query yet, so degrade to an empty collection (200) rather
 		// than 404 (which would resolve "~" as a missing DAG). Real cross-DAG
 		// aggregation is a follow-up.
@@ -366,6 +388,10 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 		}
 		limit, offset := pagination(c)
 		states := c.QueryArray("state")
+		if raw := c.Query("cursor"); raw != "" {
+			listDagRunsByCursor(c, repo, raw, states, limit)
+			return
+		}
 		runs, total, err := listRunsFiltered(c, repo, states, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
@@ -376,6 +402,9 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 			out.DagRuns = append(out.DagRuns, toDagRunDTO(r))
 		}
 		setPaginationLinks(c, total, limit, offset)
+		if _, ok := repo.(DagRunPageReader); ok && len(runs) > 0 && offset+len(runs) < total {
+			setNextCursor(c, runCursor(runs[len(runs)-1]), false)
+		}
 		c.JSON(http.StatusOK, out)
 	}
 }
@@ -487,11 +516,12 @@ func validateParamValue(schema, value json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("parsing schema: %w", err)
 	}
-	comp := jsonschema.NewCompiler()
-	if aerr := comp.AddResource("param_schema.json", doc); aerr != nil {
+	comp := domain.NewTenantSchemaCompiler()
+	loc := domain.TenantSchemaURL("param_schema.json")
+	if aerr := comp.AddResource(loc, doc); aerr != nil {
 		return fmt.Errorf("loading schema: %w", aerr)
 	}
-	compiled, err := comp.Compile("param_schema.json")
+	compiled, err := comp.Compile(loc)
 	if err != nil {
 		return fmt.Errorf("compiling schema: %w", err)
 	}
@@ -676,7 +706,7 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		// termination, not a predicate change.
 		if body.OnlyRunning != nil && *body.OnlyRunning {
 			AbortProblem(c, http.StatusBadRequest, "bad request",
-				"only_running is not supported: leoflow cannot clear a running task instance. "+
+				"only_running is not supported: Dexaflow cannot clear a running task instance. "+
 					"Airflow's equivalent sets the task to RESTARTING and kills it; this server has no such path, "+
 					"and honoring only_failed=false alone would clear every task instance named by the request, "+
 					"including ones that succeeded. Wait for the task to settle, or name the task instances explicitly.")
@@ -1142,15 +1172,17 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		g.GET("", RequirePermission("read", "dag"), listDagsHandler(deps.Dags))
 		g.GET("/:dag_id", RequirePermission("read", "dag"), getDagHandler(deps.Dags))
 		g.GET("/:dag_id/details", RequirePermission("read", "dag"), dagDetailsHandler(deps.Dags, deps.DagVersions, deps.Specs))
-		g.PATCH("/:dag_id", RequirePermission("write", "dag"), patchDagHandler(deps.Dags))
+		// Pause and unpause are run control (ADR 0067). A change that lets this
+		// route set more than is_paused must revisit its scope.
+		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Dags))
 		g.DELETE("/:dag_id", RequirePermission("write", "dag"), deleteDagHandler(deps.Dags))
 	}
 	if deps.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
 		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns))
-		g.POST("", RequirePermission("execute", "dag"), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
+		g.POST("", RequireScopedPermission("execute", "dag", auth.ScopeRun), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
 		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.DagRuns))
-		g.PATCH("/:dag_run_id", RequirePermission("write", "dag_run"), patchDagRunHandler(deps.DagRuns, deps.Audit))
+		g.PATCH("/:dag_run_id", RequireScopedPermission("write", "dag_run", auth.ScopeRun), patchDagRunHandler(deps.DagRuns, deps.Audit))
 		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.DagRuns))
 	}
 	if deps.Tasks != nil {
@@ -1174,13 +1206,13 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		// Mark-success/failed: PATCH the task instance. The UI hits both the bare
 		// path and one carrying optional /{map_index} and /dry_run segments.
 		patchTI := patchTaskInstanceHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Audit)
-		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id", RequirePermission("write", "task_instance"), patchTI)
-		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action", RequirePermission("write", "task_instance"), patchTI)
+		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id", RequireScopedPermission("write", "task_instance", auth.ScopeRun), patchTI)
+		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action", RequireScopedPermission("write", "task_instance", auth.ScopeRun), patchTI)
 		r.POST("/api/v2/dags/:dag_id/clearTaskInstances",
-			RequirePermission("write", "task_instance"), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
+			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
 	}
 	if deps.Versions != nil {
-		r.POST("/api/v2/dags/:dag_id/versions", RequirePermission("write", "dag"), registerVersionHandler(deps.Versions))
+		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage))
 	}
 	if deps.Xcoms != nil {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))

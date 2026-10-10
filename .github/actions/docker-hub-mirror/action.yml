@@ -1,0 +1,51 @@
+name: Pull Docker Hub base images through mirror.gcr.io
+description: >
+  Pulls the golang and python base images the Dockerfiles build FROM out of
+  mirror.gcr.io and tags them under their Docker Hub names, so a `docker build`
+  finds them locally and does not depend on Docker Hub's anonymous rate limit
+  (429) or its auth endpoint (504). The runner's Docker daemon is left as is:
+  reconfiguring it (registry-mirrors plus a reload) broke k3d's cluster
+  creation. An image the mirror cannot serve is skipped with a warning, and the
+  build then pulls it from Docker Hub as before. The Dockerfiles keep their
+  docker.io names: users build them as is.
+inputs:
+  go-version:
+    description: Go version of the golang:<version>-bookworm build stage. Defaults to the job's GO_VERSION, then to the ARG in runtime/Dockerfile.
+    required: false
+    default: ""
+  python-versions:
+    description: Space-separated Python lines of the python:<version>-slim-trixie runtime stage. Defaults to the job's PYTHON_VERSION, then to 3.11; "none" pulls no python image.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Pull base images from mirror.gcr.io
+      shell: bash
+      env:
+        IN_GO: ${{ inputs.go-version }}
+        IN_PY: ${{ inputs.python-versions }}
+      run: |
+        set -uo pipefail
+        go_version="${IN_GO:-${GO_VERSION:-}}"
+        if [ -z "$go_version" ]; then
+          go_version="$(sed -n 's/^ARG GO_VERSION=//p' runtime/Dockerfile | head -n1)"
+        fi
+        py_versions="${IN_PY:-${PYTHON_VERSION:-3.11}}"
+        images="golang:${go_version}-bookworm"
+        if [ "$py_versions" != none ]; then
+          for py in $py_versions; do images="$images python:${py}-slim-trixie"; done
+        fi
+        for image in $images; do
+          ok=0
+          for attempt in 1 2 3; do
+            if docker pull -q "mirror.gcr.io/library/${image}" >/dev/null; then ok=1; break; fi
+            sleep $((attempt * 5))
+          done
+          if [ "$ok" = 1 ]; then
+            docker tag "mirror.gcr.io/library/${image}" "${image}"
+            echo "${image}: pulled from mirror.gcr.io"
+          else
+            echo "::warning::mirror.gcr.io could not serve ${image}; the build pulls it from Docker Hub"
+          fi
+        done

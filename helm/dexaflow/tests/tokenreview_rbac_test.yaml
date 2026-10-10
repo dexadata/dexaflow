@@ -1,0 +1,113 @@
+suite: TokenReview RBAC for the agent token-exchange transport (ADR 0055 Fix #3)
+templates:
+  - rbac.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+tests:
+  # TokenReview `create` is an authentication oracle: whoever holds it can ask the
+  # apiserver to validate any token it can get hold of. An install on the default
+  # env-var transport never calls TokenReview, so it is not granted it.
+  - it: grants no cluster-scoped TokenReview permission on the default env-var transport
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: Role
+        documentIndex: 0
+      - isKind:
+          of: RoleBinding
+        documentIndex: 1
+
+  # Without this grant the exchange fails with
+  # `tokenreviews.authentication.k8s.io is forbidden ... at the cluster scope`
+  # and EVERY task pod dies on "projected token is not valid" — the transport is
+  # server-wide, so this breaks the ordinary dedicated pod-per-task path too, not
+  # just warm pools.
+  - it: grants create on tokenreviews when the exchange transport is selected
+    set:
+      auth.agentTokenTransport: exchange
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["authentication.k8s.io"]
+            resources: ["tokenreviews"]
+            verbs: ["create"]
+      # Exactly one rule: the exchange makes exactly one apiserver call.
+      - lengthEqual:
+          path: rules
+          count: 1
+
+  # TokenReview is cluster-scoped, so its ClusterRole/ClusterRoleBinding names are
+  # global. Two Dexaflow releases in one cluster must not collide on them, so the
+  # name carries both the release name and its namespace.
+  - it: names the cluster-scoped objects per release AND namespace
+    set:
+      auth.agentTokenTransport: exchange
+    asserts:
+      - hasDocuments:
+          count: 4
+      - equal:
+          path: metadata.name
+          value: leoflow-leoflow-tokenreview
+        documentIndex: 2
+      - equal:
+          path: metadata.name
+          value: leoflow-leoflow-tokenreview
+        documentIndex: 3
+      - isKind:
+          of: ClusterRoleBinding
+        documentIndex: 3
+
+  - it: binds the TokenReview grant to the control-plane ServiceAccount in the release namespace
+    set:
+      auth.agentTokenTransport: exchange
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: roleRef.kind
+          value: ClusterRole
+      - equal:
+          path: roleRef.name
+          value: leoflow-leoflow-tokenreview
+      - equal:
+          path: subjects[0].kind
+          value: ServiceAccount
+      - equal:
+          path: subjects[0].name
+          value: leoflow
+      - equal:
+          path: subjects[0].namespace
+          value: leoflow
+
+  # ADR 0049: the agent gRPC endpoint — and with it the token exchange — runs in
+  # the scheduler process, so in split mode the grant follows the scheduler SA and
+  # the restricted api SA stays unbound.
+  - it: binds the scheduler SA (never the api SA) in split mode
+    set:
+      auth.agentTokenTransport: exchange
+      split.enabled: true
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: subjects[0].name
+          value: leoflow-scheduler
+      - equal:
+          path: subjects[0].namespace
+          value: leoflow
+
+  - it: renders nothing at all when the operator brings their own RBAC
+    set:
+      auth.agentTokenTransport: exchange
+      rbac.create: false
+    asserts:
+      - hasDocuments:
+          count: 0

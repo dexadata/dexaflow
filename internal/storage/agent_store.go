@@ -3,15 +3,19 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/dispatch"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/dispatch"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
 )
 
 // ExecutionStore resolves task execution context from Postgres. It implements
@@ -58,11 +62,23 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 	// entered reschedule so its get_first_reschedule_date returns the real value and
 	// cumulative timeout works (#380). Best-effort: empty falls back to per-poke
 	// timing, never blocks the spec. Empty on the first attempt (column is NULL).
+	//
+	// The attempt budget comes from the same row: a clear restores it to the new
+	// try number + retries (#1131), past the spec's retries + 1, and the runtime
+	// fires on_failure_callback only when try_number >= max_tries (#424). Reading
+	// the spec value there would fire the callback on every retry of a cleared
+	// task. The spec value is the fallback when the row cannot be read.
 	var firstRescheduleAt string
+	attemptBudget := maxTries(task)
 	if rid, perr := parseUUID(id.RunID); perr == nil {
-		if fr, ferr := s.q.TaskInstanceFirstRescheduleAt(ctx,
-			queries.TaskInstanceFirstRescheduleAtParams{DagRunID: rid, TaskID: id.TaskID}); ferr == nil && fr.Valid {
-			firstRescheduleAt = fr.Time.UTC().Format(time.RFC3339)
+		if row, ferr := s.q.TaskInstanceAttemptFields(ctx,
+			queries.TaskInstanceAttemptFieldsParams{DagRunID: rid, TaskID: id.TaskID}); ferr == nil {
+			if row.FirstRescheduleAt.Valid {
+				firstRescheduleAt = row.FirstRescheduleAt.Time.UTC().Format(time.RFC3339)
+			}
+			if row.MaxTries > 0 {
+				attemptBudget = int(row.MaxTries)
+			}
 		}
 	}
 	var timeout int
@@ -109,7 +125,7 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 		DataIntervalEnd:   dataIntervalEnd,
 		ParamsJSON:        paramsJSON,
 		FirstRescheduleAt: firstRescheduleAt,
-		MaxTries:          maxTries(task),
+		MaxTries:          attemptBudget,
 		OnFailureCallback: task.OnFailureCallback,
 		// Carry the declared secret set (ADR 0045, ADR 0055) so a later increment
 		// can scope delivery. Data only here — no secret is filtered by it yet.
@@ -155,11 +171,12 @@ func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity,
 	}
 	code := toInt32(exitCode)
 	params := queries.ReportTaskResultParams{
-		DagRunID:  rid,
-		TaskID:    id.TaskID,
-		Column3:   queries.TaskState(state), // sqlc names the $3::task_state cast param Column3.
-		ExitCode:  &code,
-		TryNumber: toInt32(id.TryNumber),
+		DagRunID:     rid,
+		TaskID:       id.TaskID,
+		Column3:      queries.TaskState(state), // sqlc names the $3::task_state cast param Column3.
+		ExitCode:     &code,
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	}
 	if errMsg != "" {
 		params.ErrorMessage = &errMsg
@@ -180,17 +197,28 @@ func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity,
 
 // Reschedule parks an active task instance in up_for_reschedule with its next-poke
 // time, so the scheduler re-dispatches it once reschedule_at passes (#380). Used by
-// the agent's reschedule path; a no-op if the TI is no longer active (terminal).
+// the agent's reschedule path. It is guarded on the attempt (try_number and attempt
+// epoch, ADR 0051 amendment) and the active states, so a poke from a superseded
+// attempt or onto a settled row does not apply and returns agentrpc.ErrStaleReport.
 func (s *ExecutionStore) Reschedule(ctx context.Context, id auth.AgentIdentity, at time.Time) error {
 	rid, err := parseUUID(id.RunID)
 	if err != nil {
 		return err
 	}
-	return s.q.RescheduleTaskInstance(ctx, queries.RescheduleTaskInstanceParams{
+	rows, err := s.q.RescheduleTaskInstance(ctx, queries.RescheduleTaskInstanceParams{
 		DagRunID:     rid,
 		TaskID:       id.TaskID,
 		RescheduleAt: pgtype.Timestamptz{Time: at, Valid: true},
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return agentrpc.ErrStaleReport
+	}
+	return nil
 }
 
 // RecordHeartbeat stamps last_heartbeat_at on the agent's TI so the
@@ -203,9 +231,10 @@ func (s *ExecutionStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdent
 		return err
 	}
 	rows, err := s.q.RecordTaskHeartbeat(ctx, queries.RecordTaskHeartbeatParams{
-		DagRunID:  rid,
-		TaskID:    id.TaskID,
-		TryNumber: toInt32(id.TryNumber),
+		DagRunID:     rid,
+		TaskID:       id.TaskID,
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	})
 	if err != nil {
 		return err
@@ -233,16 +262,18 @@ func (s *ExecutionStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdent
 // N1d-a2 deferral: warm_worker_id is intentionally NOT cleared when the attempt
 // settles. The consuming reaper filters on state, so a lingering value on a
 // terminal TI is harmless; a settle-time clear is left to that increment.
-func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber int, workerPod string) error {
+func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int, workerPod string) error {
 	rid, err := parseUUID(runID)
 	if err != nil {
 		return err
 	}
 	pod := workerPod
+	epoch := toInt32(attemptEpoch)
 	_, err = s.q.BindWarmAttempt(ctx, queries.BindWarmAttemptParams{
 		DagRunID:     rid,
 		TaskID:       taskID,
 		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: &epoch,
 		WarmWorkerID: &pod,
 	})
 	// Zero rows is the guard working, not a failure: the attempt already moved on
@@ -251,34 +282,36 @@ func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID stri
 	return err
 }
 
-// IsTaskInstanceLive reports whether the attempt (runID, taskID, tryNumber) is
-// still live — present and in an active (non-terminal) state — derived from the
-// same predicate RecordHeartbeat writes on, but as a pure read with no
+// IsTaskInstanceLive reports whether the attempt id names (run, task, try and
+// attempt epoch; a token without an epoch is matched on its try alone) is still
+// live (present and in an active, non-terminal state), derived from the same
+// predicate RecordHeartbeat writes on, but as a pure read with no
 // side-effect (ADR 0055). It is the read-only revocation signal the secret path
 // consults: a terminal, superseded (try_number moved on), or reaped attempt is
 // not live, so its token stops resolving secrets even while the signature holds.
 //
-// It derives ONLY from (run, task, try) + active state, exactly as the heartbeat
-// predicate does. It must never gain a run-recency / logical_date clause: a
+// It derives ONLY from (run, task, try, epoch) + active state, exactly as the
+// heartbeat predicate does. It must never gain a run-recency / logical_date clause: a
 // recency term would deny a legitimate clear-and-rerun of an old run, binding
 // credential lifetime to the run's age rather than to the attempt.
-func (s *ExecutionStore) IsTaskInstanceLive(ctx context.Context, runID, taskID string, tryNumber int) (bool, error) {
-	rid, err := parseUUID(runID)
+func (s *ExecutionStore) IsTaskInstanceLive(ctx context.Context, id auth.AgentIdentity) (bool, error) {
+	rid, err := parseUUID(id.RunID)
 	if err != nil {
 		return false, err
 	}
 	return s.q.IsTaskInstanceLive(ctx, queries.IsTaskInstanceLiveParams{
-		DagRunID:  rid,
-		TaskID:    taskID,
-		TryNumber: toInt32(tryNumber),
+		DagRunID:     rid,
+		TaskID:       id.TaskID,
+		TryNumber:    toInt32(id.TryNumber),
+		AttemptEpoch: attemptEpochArg(id),
 	})
 }
 
 // FailTask marks a task instance failed by its ID, guarded by the attempt
-// (try_number) and the active states so it never clobbers a different attempt or a
+// (try_number and attempt_epoch, from the pod's labels) and the active states so it never clobbers a different attempt or a
 // terminal row. It implements part of executor.OutcomeReporter for the pod
 // reconciler (ADR 0052).
-func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tryNumber int, reason string) error {
+func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return err
@@ -287,6 +320,7 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 	return s.q.FailTaskInstanceIfActive(ctx, queries.FailTaskInstanceIfActiveParams{
 		ID:           tid,
 		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
 		ErrorMessage: &msg,
 	})
 }
@@ -294,21 +328,68 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 // SucceedTask marks a task instance succeeded by its ID — recovering a success
 // whose report was lost (ADR 0052) — guarded by the attempt and the active states.
 // A settle on an already-terminal or superseded row is a no-op.
-func (s *ExecutionStore) SucceedTask(ctx context.Context, taskInstanceID string, tryNumber int) error {
+func (s *ExecutionStore) SucceedTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error {
+	_, err := s.SucceedTaskIfActive(ctx, taskInstanceID, tryNumber, attemptEpoch)
+	return err
+}
+
+// SucceedTaskIfActive is SucceedTask reporting whether it changed the row. A
+// false with no error means the attempt was not active: already terminal,
+// superseded, or marked by a reaper meanwhile. It implements part of
+// executor.InfraOverrideReporter.
+func (s *ExecutionStore) SucceedTaskIfActive(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return s.q.SucceedTaskInstanceIfActive(ctx, queries.SucceedTaskInstanceIfActiveParams{
-		ID:        tid,
-		TryNumber: toInt32(tryNumber),
+	n, err := s.q.SucceedTaskInstanceIfActive(ctx, queries.SucceedTaskInstanceIfActiveParams{
+		ID:           tid,
+		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// SucceedTaskOverInfraMark settles a durable SUCCESS record over a reaper's
+// provisional infra mark of the same attempt (ADR 0052 amendment, part 1).
+// It applies only while the mark is unconfirmed and inside
+// scheduler.InfraConfirmMaxWait, on a running run; otherwise it changes
+// nothing and reports false. On success it returns the mark it overrode and
+// the attempt's log location. It implements part of
+// executor.InfraOverrideReporter.
+func (s *ExecutionStore) SucceedTaskOverInfraMark(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (executor.InfraOverride, bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return executor.InfraOverride{}, false, err
+	}
+	row, err := s.q.SucceedTaskInstanceOverInfraMark(ctx, queries.SucceedTaskInstanceOverInfraMarkParams{
+		ID:                    tid,
+		TryNumber:             toInt32(tryNumber),
+		AttemptEpoch:          toInt32(attemptEpoch),
+		ConfirmMaxWaitSeconds: scheduler.InfraConfirmMaxWait.Seconds(),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return executor.InfraOverride{}, false, nil
+	}
+	if err != nil {
+		return executor.InfraOverride{}, false, fmt.Errorf("settling a success over an infra mark: %w", err)
+	}
+	return executor.InfraOverride{
+		Mark:     row.Mark,
+		TenantID: uuidToString(row.TenantID),
+		DagID:    row.DagIDText,
+		DagRunID: uuidToString(row.DagRunID),
+		TaskID:   row.TaskID,
+	}, true, nil
 }
 
 // RescheduleTask parks a task instance in up_for_reschedule with the recovered
 // next-poke time, guarded by the attempt and the active states, consuming no retry
 // budget (ADR 0052). Used by the reconciler when a reschedule report was lost.
-func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber int, at time.Time) error {
+func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, at time.Time) error {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return err
@@ -316,6 +397,7 @@ func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID stri
 	return s.q.RescheduleTaskInstanceByIDIfActive(ctx, queries.RescheduleTaskInstanceByIDIfActiveParams{
 		ID:           tid,
 		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
 		RescheduleAt: pgtype.Timestamptz{Time: at, Valid: true},
 	})
 }
@@ -330,20 +412,48 @@ func (s *ExecutionStore) RescheduleTask(ctx context.Context, taskInstanceID stri
 // TI is running or settled, or the attempt moved on), a benign no-op, not an
 // error. It bumps neither try_number nor infra_attempts — the attempt never ran,
 // this is a re-offer of the same attempt.
-func (s *ExecutionStore) RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber int) error {
+func (s *ExecutionStore) RequeueForRedispatch(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int) error {
 	rid, err := parseUUID(runID)
 	if err != nil {
 		return err
 	}
+	epoch := toInt32(attemptEpoch)
 	_, err = s.q.RequeueForRedispatch(ctx, queries.RequeueForRedispatchParams{
-		DagRunID:  rid,
-		TaskID:    taskID,
-		TryNumber: toInt32(tryNumber),
+		DagRunID:     rid,
+		TaskID:       taskID,
+		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: &epoch,
 	})
 	return err
 }
 
-// ResolveTask returns the dispatcher's execution context for a run's task.
+// attemptEpochArg is the attempt-epoch argument of the agent-path fence
+// (ADR 0051 amendment): the token's epoch, or nil for a token without the claim
+// (minted before the upgrade, or stripped by an old replica during a rolling
+// upgrade). The report and reschedule queries read nil as epoch 0 (COALESCE):
+// every row that predates the upgrade is at epoch 0 and every attempt
+// dispatched after it claims at least 1, so such a token reports only for its
+// own pre-upgrade attempt. The heartbeat and liveness queries read nil as "any
+// epoch of this try", so a live attempt is not killed for a missing claim.
+func attemptEpochArg(id auth.AgentIdentity) *int32 {
+	if !id.HasAttemptEpoch {
+		return nil
+	}
+	n := toInt32(id.AttemptEpoch)
+	return &n
+}
+
+// ErrNotDispatchable is returned by ResolveTask when the task's row is no
+// longer in a pre-dispatch state (none, scheduled or queued): it is running or
+// settled, so dispatching it again would start a second execution.
+var ErrNotDispatchable = errors.New("task instance is not in a dispatchable state")
+
+// ResolveTask returns the dispatcher's execution context for a run's task and
+// claims a fresh attempt epoch for the execution it is about to start (ADR 0051
+// amendment). Every call that succeeds moves the row's attempt_epoch forward,
+// so two dispatches of one try never share it. The agent's identity (A2) and
+// the pod's attempt-epoch label (A4) are minted from the returned value. A row past
+// dispatch is refused with ErrNotDispatchable and keeps its epoch.
 func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) (dispatch.Resolved, error) {
 	task, spec, ver, _, err := s.resolve(ctx, runID, taskID)
 	if err != nil {
@@ -353,13 +463,12 @@ func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) 
 	if err != nil {
 		return dispatch.Resolved{}, err
 	}
-	tis, err := s.q.ListTaskInstancesByRun(ctx, rid)
-	if err != nil {
-		return dispatch.Resolved{}, fmt.Errorf("listing task instances: %w", err)
+	ti, err := s.q.ClaimAttemptEpoch(ctx, queries.ClaimAttemptEpochParams{DagRunID: rid, TaskID: taskID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dispatch.Resolved{}, fmt.Errorf("task %q in run %q: %w", taskID, runID, ErrNotDispatchable)
 	}
-	ti, ok := latestTry(tis, taskID)
-	if !ok {
-		return dispatch.Resolved{}, fmt.Errorf("no task instance for task %q in run %q", taskID, runID)
+	if err != nil {
+		return dispatch.Resolved{}, fmt.Errorf("claiming attempt epoch: %w", err)
 	}
 	image := ver.ImageReference
 	if image == "" {
@@ -375,8 +484,10 @@ func (s *ExecutionStore) ResolveTask(ctx context.Context, runID, taskID string) 
 		Image:           image,
 		ImagePullPolicy: pullPolicy,
 		TryNumber:       int(ti.TryNumber),
+		AttemptEpoch:    int(ti.AttemptEpoch),
 		Staging:         spec.Staging,
-		// Materialize source on the executor side (Lite only); Pro ignores it.
+		// Lite materializes the source as dag.py; Pro ships it to the pod only in
+		// source mode (ADR 0067 §3) and otherwise ignores it.
 		Source: spec.Source,
 	}, nil
 }
@@ -417,14 +528,32 @@ func (s *ExecutionStore) resolve(ctx context.Context, runID, taskID string) (dom
 		domain.Safef(domain.ErrNotFound, "task %q not found in run %q", taskID, runID)
 }
 
-// latestTry returns the highest try_number task instance for the given task.
-func latestTry(tis []queries.TaskInstance, taskID string) (queries.TaskInstance, bool) {
-	var best queries.TaskInstance
-	found := false
-	for _, ti := range tis {
-		if ti.TaskID == taskID && (!found || ti.TryNumber > best.TryNumber) {
-			best, found = ti, true
+// SettledRuns reports which of the given (tenant, run) pairs are settled: run
+// in success or failed and no task instance outside success, failed, skipped
+// and upstream_failed. It serves the reconciler's settled-run pod collection.
+// A pair that is not two UUIDs, names no such run, or names a run of another
+// tenant is left out, so its pods are never collected early.
+func (s *ExecutionStore) SettledRuns(ctx context.Context, refs []executor.RunRef) (map[executor.RunRef]bool, error) {
+	tenants := make([]pgtype.UUID, 0, len(refs))
+	runs := make([]pgtype.UUID, 0, len(refs))
+	for _, ref := range refs {
+		tid, terr := parseUUID(ref.Tenant)
+		rid, rerr := parseUUID(ref.Run)
+		if terr == nil && rerr == nil {
+			tenants = append(tenants, tid)
+			runs = append(runs, rid)
 		}
 	}
-	return best, found
+	out := make(map[executor.RunRef]bool, len(runs))
+	if len(runs) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.ListSettledRunIDs(ctx, queries.ListSettledRunIDsParams{TenantIds: tenants, RunIds: runs})
+	if err != nil {
+		return nil, fmt.Errorf("listing settled runs: %w", err)
+	}
+	for _, row := range rows {
+		out[executor.RunRef{Tenant: uuidToString(row.TenantID), Run: uuidToString(row.ID)}] = true
+	}
+	return out, nil
 }

@@ -10,13 +10,13 @@ description: JDBC connection
 ---
 
 Connect a task to any database that ships a JDBC driver (DB2, Oracle,
-SAP HANA, Vertica, …) over a managed Leoflow Connection. `JdbcHook` runs
+SAP HANA, Vertica, …) over a managed Dexaflow Connection. `JdbcHook` runs
 queries through a JVM driver loaded via JayDeBeApi.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: jdbc_query
 connectors:
   - jdbc
@@ -80,7 +80,7 @@ with DAG("jdbc_query", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: jdbc_query
 python_version: "3.12"

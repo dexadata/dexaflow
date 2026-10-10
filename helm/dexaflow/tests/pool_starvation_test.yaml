@@ -1,0 +1,35 @@
+suite: scheduler pool starvation threshold (ADR 0066)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: renders nothing by default
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
+          any: true
+
+  - it: renders the threshold when set
+    template: deployment.yaml
+    set:
+      config.scheduler.poolStarvationThreshold: 2m
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
+            value: 2m

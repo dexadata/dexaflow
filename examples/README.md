@@ -4,9 +4,9 @@ Twenty reference projects covering every supported task type, operator pattern,
 and connector. Each directory ships:
 
 - `dag.py` — the DAG, written against the Airflow SDK 3.2.x
-- `leoflow.yaml` — Leoflow's deploy config (python version, dependencies,
+- `dexaflow.yaml` — Dexaflow's deploy config (python version, dependencies,
   per-task overrides)
-- `Dockerfile` — the DAG image (#318); kept in sync with `leoflow.yaml` by
+- `Dockerfile` — the DAG image (#318); kept in sync with `dexaflow.yaml` by
   `scripts/sync-example-dockerfiles.sh`
 
 A handful also ship `README.md` files (the connector cookbook entries plus
@@ -16,10 +16,10 @@ prose to the others).
 ## Lite — the dev loop
 
 ```sh
-leoflow lite examples/<name>/      # hot-reload at http://localhost:8088
+dexaflow lite examples/<name>/      # hot-reload at http://localhost:8088
 ```
 
-`leoflow lite` watches the workspace, synthesizes the Dockerfile if one is
+`dexaflow lite` watches the workspace, synthesizes the Dockerfile if one is
 missing (the script-generated ones in this tree mirror what `lite` would
 produce — checking them in lets a Pro operator copy the same file verbatim
 without running Lite), builds the image into the local k3d cluster (or runs
@@ -31,15 +31,15 @@ on every save.
 ```sh
 # 1. Compile + build the DAG image. The image tag must be a registry your
 #    cluster can pull from.
-leoflow compile examples/<name>/ \
+dexaflow compile examples/<name>/ \
   --image my-registry.example.com/<name>:<tag> --build --push -o dag.json
 
 # 2. Register the compiled artifact with the control plane.
-leoflow push dag.json --server $LEOFLOW_SERVER --token $LEOFLOW_TOKEN
+dexaflow push dag.json --server $DEXAFLOW_SERVER --token $DEXAFLOW_TOKEN
 
 # 3. Trigger from the UI, or:
-curl -X POST -H "Authorization: Bearer $LEOFLOW_TOKEN" -H 'Content-Type: application/json' \
-  -d '{}' "$LEOFLOW_SERVER/api/v2/dags/<name>/dagRuns"
+curl -X POST -H "Authorization: Bearer $DEXAFLOW_TOKEN" -H 'Content-Type: application/json' \
+  -d '{}' "$DEXAFLOW_SERVER/api/v2/dags/<name>/dagRuns"
 ```
 
 The Pro walkthrough — building locally vs Cloud Build, image pull secrets,
@@ -79,12 +79,12 @@ a `README.md` walking through their specific Connection wiring.
 
 ## Adding a new example
 
-1. Create `examples/<name>/dag.py` + `leoflow.yaml` (use any existing example
-   as a template; `leoflow init examples/<name>` scaffolds the pair).
+1. Create `examples/<name>/dag.py` + `dexaflow.yaml` (use any existing example
+   as a template; `dexaflow init examples/<name>` scaffolds the pair).
 2. Run `bash scripts/sync-example-dockerfiles.sh` to generate the Dockerfile.
 3. (Optional) Add a `README.md` describing what the example exercises.
 4. Add a row to the index table above.
 
 CI runs `scripts/sync-example-dockerfiles.sh --check` so a Dockerfile out of
-sync with `leoflow.yaml` fails the build — change the YAML, re-run the script,
+sync with `dexaflow.yaml` fails the build — change the YAML, re-run the script,
 commit the regenerated Dockerfile in the same change.

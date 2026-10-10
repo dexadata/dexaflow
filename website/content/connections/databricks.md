@@ -9,14 +9,14 @@ weight: 50
 description: Databricks connection
 ---
 
-Trigger Databricks jobs / SQL from a task via a managed Leoflow Connection and the
+Trigger Databricks jobs / SQL from a task via a managed Dexaflow Connection and the
 Databricks provider hooks. The conn_type is `databricks`. A connection carries the
 **workspace host** plus a **Personal Access Token** (PAT).
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: databricks_job
 connectors:
   - databricks
@@ -36,7 +36,7 @@ The PAT round-trip (reserved characters) + host + `http_path` Extra are pinned b
 
 ## dbt auth: PAT or OAuth M2M (service principal)
 
-When a dbt task uses this connection, Leoflow generates its `profiles.yml` from the
+When a dbt task uses this connection, Dexaflow generates its `profiles.yml` from the
 connection at runtime (nothing baked in the image). Two auth modes are supported:
 
 | Mode | What to set in Extra | dbt profile emitted |
@@ -82,7 +82,7 @@ with DAG("databricks_job", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: databricks_job
 description: Trigger a Databricks job via DatabricksHook.
@@ -98,7 +98,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `databricks`. Set Host (workspace URL) and
    the PAT in Password.
-2. `leoflow lite path/to/this/dag` → trigger `databricks_job`.
+2. `dexaflow lite path/to/this/dag` → trigger `databricks_job`.
 
 ## Security notes
 

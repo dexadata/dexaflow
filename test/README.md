@@ -1,6 +1,6 @@
 # The test suites, and when each one runs
 
-Leoflow has several test trees and they answer different questions. This page
+Dexaflow has several test trees and they answer different questions. This page
 says which is which, what each one proves, and when CI runs it, so a
 contributor can tell whether the suite that stayed silent was meant to speak.
 
@@ -12,6 +12,7 @@ contributor can tell whether the suite that stayed silent was meant to speak.
 | Integration (`//go:build integration`) | the SQL and the storage layer against a real Postgres | anything about Kubernetes | every pull request |
 | `test/e2e/lite-*.sh` | Lite boots, serves, and runs a DAG on the subprocess executor | the Pro or Kubernetes paths | every pull request |
 | `test/e2e/e2e.sh`, `split-two-process.sh`, `dbt-e2e.sh`, `deploy-e2e.sh` | the Kubernetes paths on k3d: pod-per-task, the two-process split, dbt, and build-then-deploy against a registry | NetworkPolicy enforcement, ReadWriteMany, QoS, or anything k3d's CNI cannot show | every pull request, **unless the gate below skips them** |
+| `test/e2e/perf-gates-on.sh`, run by `lite-login.sh` and `e2e.sh` under `e2e-gates.yaml` | that every opt-in performance gate (`scheduler.dispatch.buffer_size`, `database.scheduler_max_conns` and `statement_timeout_ms`, `executor.collect_settled_run_pods`, `observability.metrics.drop_legacy_names`, `ui.etag_revalidation`, `logs.tail.publish=on_demand`, `logs.sink.layout=segmented`) takes effect in the running control plane, on the Lite and the k3d legs | the gates' behavior under load (that is `test/load/`), and warm pools, which no e2e leg runs | pushes to `main` and `release-*`, and on demand; not on pull requests, to spare the runner queue |
 | `test/e2e/pro-netpol-rwx.sh` | real NetworkPolicy enforcement and a real RWX volume, on kind with Calico and NFS | cloud-specific behavior | on demand |
 | `test/soak/` | that a control plane dispatching for hours stays healthy, and that the cost of a tick does not track table growth | anything about a single request, and it is not an at-most-once proof (see `test/soak/README.md`) | a short harness smoke in CI; long runs are scheduled locally |
 | `test/load/` | one cost at one instant | behavior over time | on demand |

@@ -10,14 +10,14 @@ description: Power BI connection
 ---
 
 Drive Microsoft Power BI (refresh datasets, query the REST API) from a task via a
-managed Leoflow Connection and the Azure provider's `PowerBIHook`. The conn_type is
+managed Dexaflow Connection and the Azure provider's `PowerBIHook`. The conn_type is
 `powerbi`. A connection carries the **client id** (login), the **client secret**
 (password), and the **tenant id** in Extra.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: powerbi_refresh
 connectors:
   - powerbi
@@ -62,7 +62,7 @@ with DAG("powerbi_refresh", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: powerbi_refresh
 description: Refresh a Power BI dataset via PowerBIHook.
@@ -78,7 +78,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `powerbi`. Set the client id in Login, the client
    secret in Password, and the tenant id in Extra.
-2. `leoflow lite path/to/this/dag` → trigger `powerbi_refresh`.
+2. `dexaflow lite path/to/this/dag` → trigger `powerbi_refresh`.
 
 ## Security notes
 

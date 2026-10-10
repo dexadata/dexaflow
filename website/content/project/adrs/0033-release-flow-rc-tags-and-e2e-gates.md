@@ -213,5 +213,5 @@ gates run on the direct tag and catch regressions either way.
 - Memory note `alpha-release-policy`: "first `v0.1.0-alpha.1`
   cut only after user hands-on testing." This ADR formalises that ritual
   via the `-rc.N` convention.
-- [PR #251](https://github.com/neochaotic/leoflow/pull/251) — the
+- [PR #251](https://github.com/dexadata/dexaflow/pull/251) — the
   materialization fix this test guards.

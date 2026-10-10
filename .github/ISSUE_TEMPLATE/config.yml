@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question or design discussion
-    url: https://github.com/neochaotic/leoflow/discussions
+    url: https://github.com/dexadata/dexaflow/discussions
     about: For questions, ideas, and design discussions, please use Discussions.
   - name: Security vulnerability
-    url: https://github.com/neochaotic/leoflow/security/policy
+    url: https://github.com/dexadata/dexaflow/security/policy
     about: Report security issues privately per SECURITY.md — do not open a public issue.

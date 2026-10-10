@@ -11,7 +11,7 @@ type StaleReader interface {
 
 // fallbackCipher writes with one key and reads with several.
 //
-// Leoflow Lite encrypted every connection secret with a constant compiled into
+// Dexaflow Lite encrypted every connection secret with a constant compiled into
 // this repository, identical on every install on earth (#486). Moving to a
 // per-install key cannot orphan what the old one wrote: a rotation that leaves
 // existing credentials undecryptable is worse than the published key it
@@ -76,4 +76,25 @@ func (c *fallbackCipher) DecryptStale(ciphertext string) (plaintext string, stal
 	// The primary's error is returned, not the last fallback's: the primary is
 	// the key the operator configured, so its failure is the one worth reading.
 	return "", false, perr
+}
+
+// OpenWith tries each cipher in order and returns the plaintext together with
+// the index of the first cipher that opened ct, or -1 when none did. Nil
+// entries are skipped.
+//
+// A key migration needs to know WHICH key opened a value, not only that one
+// did: a value under the encrypting key stays, a value under a predecessor is
+// moved, and a value under no recorded key stops the migration. As with
+// fallbackCipher, trying keys in turn is safe only because AES-GCM is
+// authenticated.
+func OpenWith(ciphers []Cipher, ct string) (plaintext string, index int) {
+	for i, c := range ciphers {
+		if c == nil {
+			continue
+		}
+		if plain, err := c.Decrypt(ct); err == nil {
+			return plain, i
+		}
+	}
+	return "", -1
 }

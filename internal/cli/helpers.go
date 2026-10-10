@@ -12,25 +12,80 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	yaml "go.yaml.in/yaml/v3"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// projectConfigPath returns the path to leoflow.yaml inside a project directory.
+// projectConfigFile is the name of a project's config file.
+const projectConfigFile = "dexaflow.yaml"
+
+// legacyProjectConfigFile is the config file's name before the rename. It is
+// read when it is the only one present.
+const legacyProjectConfigFile = "leoflow.yaml"
+
+// projectConfigPath returns the config file a project in dir is read from:
+// dexaflow.yaml, or leoflow.yaml when that is the only one present. For a
+// directory with neither it names dexaflow.yaml, the file to create.
 func projectConfigPath(dir string) string {
-	return filepath.Join(dir, "leoflow.yaml")
+	current := filepath.Join(dir, projectConfigFile)
+	if fileExists(current) {
+		return current
+	}
+	legacy := filepath.Join(dir, legacyProjectConfigFile)
+	if fileExists(legacy) {
+		return legacy
+	}
+	return current
 }
 
-// loadProjectConfig reads and parses the leoflow.yaml in dir, then applies the
+// projectConfigNote explains which config file a project is read from when
+// the pre-rename leoflow.yaml is involved, and is "" otherwise.
+func projectConfigNote(dir string) string {
+	hasCurrent := fileExists(filepath.Join(dir, projectConfigFile))
+	hasLegacy := fileExists(filepath.Join(dir, legacyProjectConfigFile))
+	switch {
+	case hasCurrent && hasLegacy:
+		return fmt.Sprintf("%s has both dexaflow.yaml and leoflow.yaml; using dexaflow.yaml (leoflow.yaml is ignored)", dir)
+	case hasLegacy:
+		return fmt.Sprintf("%s is configured by leoflow.yaml; it keeps working, and renaming it to dexaflow.yaml uses the current name", dir)
+	}
+	return ""
+}
+
+// announcedConfigDirs remembers the projects whose config note was printed, so
+// a command that loads the same project several times says it once.
+var announcedConfigDirs sync.Map
+
+// announceProjectConfig prints projectConfigNote for dir once per process, on an
+// interactive terminal only: piped and scripted output stays as it was.
+func announceProjectConfig(dir string) {
+	note := projectConfigNote(dir)
+	if note == "" || !stderrIsTerminal() {
+		return
+	}
+	if _, seen := announcedConfigDirs.LoadOrStore(filepath.Clean(dir), true); !seen {
+		fmt.Fprintln(os.Stderr, "note: "+note)
+	}
+}
+
+// fileExists reports whether path exists and is not a directory.
+func fileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
+}
+
+// loadProjectConfig reads and parses the project config in dir, then applies the
 // canonical schema defaults so every downstream consumer sees a fully-populated
 // config (DagSource, PythonVersion, exclude paths, Build/Registry defaults).
 // Centralizing the defaults here is what lets the multi-DAG workspace synthesize
 // a working config from a sparse yaml (or none at all — see DiscoverProjects).
 func loadProjectConfig(dir string) (*domain.LeoflowConfig, error) {
+	announceProjectConfig(dir)
 	p := projectConfigPath(dir)
 	data, err := os.ReadFile(p) //nolint:gosec // G304: project path is supplied by the operator on the CLI.
 	if err != nil {
@@ -66,7 +121,7 @@ func loadProjectConfigLenient(dir string) (*domain.LeoflowConfig, error) {
 	return cfg, nil
 }
 
-// parseProjectConfig decodes leoflow.yaml twice, on purpose: once strictly to
+// parseProjectConfig decodes the project config twice, on purpose: once strictly to
 // learn whether the file carries keys the schema does not define, and once
 // leniently to produce the config regardless. Splitting the two lets one caller
 // refuse the file while another keeps working with it.
@@ -185,7 +240,7 @@ func unknownKeyError(err error) error {
 		// The one we taught ourselves, in three places, for three releases.
 		msg += ". A dag.py DAG takes its schedule from DAG(schedule=…); a pure-dbt DAG declares it under dbt.schedule. There is no top-level schedule:"
 	}
-	return fmt.Errorf("%s in leoflow.yaml", msg)
+	return fmt.Errorf("%s in dexaflow.yaml", msg)
 }
 
 var unknownFieldRe = regexp.MustCompile(`field (.+) not found in type`)
@@ -262,4 +317,31 @@ func configFilePath(cmd *cobra.Command) string {
 		return def
 	}
 	return ""
+}
+
+// stateDirIn returns the per-user state directory under the home directory
+// home: ~/.dexaflow, or a link to an existing ~/.leoflow (config.HomeDirIn).
+func stateDirIn(home string) string {
+	dir, err := config.HomeDirIn(home)
+	if err != nil {
+		return filepath.Join(home, config.HomeDirName)
+	}
+	return dir
+}
+
+// defaultWorkspaceIn returns the default workspace under the home directory
+// home: ~/dexaflow, or the ~/leoflow an install from before the rename already
+// has, so its DAG projects keep being found. ~/dexaflow wins when both exist.
+func defaultWorkspaceIn(home string) string {
+	current := filepath.Join(home, "dexaflow")
+	legacy := filepath.Join(home, "leoflow")
+	if !isDirPath(current) && isDirPath(legacy) {
+		return legacy
+	}
+	return current
+}
+
+func isDirPath(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

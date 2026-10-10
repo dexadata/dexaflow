@@ -100,7 +100,7 @@ def test_missing_sdk_helper_gives_clear_unsupported_error(monkeypatch, tmp_path)
             with DAG("g"):
                 a()
         """)
-    assert "not supported by Leoflow" in str(ei.value)
+    assert "not supported by Dexaflow" in str(ei.value)
 
 
 def test_generic_provider_operator_is_captured(monkeypatch, tmp_path):
@@ -193,7 +193,7 @@ def test_operator_non_serialisable_arg_is_loud_reject(monkeypatch, tmp_path):
 
 
 def test_operator_on_failure_callback_is_marked_not_rejected(monkeypatch, tmp_path):
-    """on_failure_callback is a callable Leoflow cannot serialise into dag.json,
+    """on_failure_callback is a callable Dexaflow cannot serialise into dag.json,
     but instead of the general non-serialisable reject (ADR 0040 A1.1) it is
     ACCEPTED and marked on the task (#424 inc 4): the runtime re-imports dag.py and
     runs it in the task process on failure. The callable itself is not carried."""
@@ -371,7 +371,7 @@ def test_operator_retries_win_over_default_args(monkeypatch, tmp_path):
 
 def test_no_scheduling_attrs_emits_no_keys(monkeypatch, tmp_path):
     """A task with no retries/timeout emits none — so the Go side's default_args /
-    leoflow.yaml defaults still apply (nil, not a forced 0)."""
+    dexaflow.yaml defaults still apply (nil, not a forced 0)."""
     spec = _compile(monkeypatch, tmp_path, """
         from airflow.providers.standard.operators.bash import BashOperator
         from airflow.sdk import DAG
@@ -503,7 +503,7 @@ def test_operator_on_failure_callback_as_list_is_marked(monkeypatch, tmp_path):
 
 
 def test_unsupported_callback_as_list_is_still_loudly_rejected(monkeypatch, tmp_path):
-    """The same predicate guards the loud reject for callbacks Leoflow does not
+    """The same predicate guards the loud reject for callbacks Dexaflow does not
     support. In list form they slipped past it and were dropped silently, which is
     worse than the unsupported case it was written for: the author is told nothing
     while the error text promises they would be (ADR 0024, #470)."""
@@ -657,13 +657,13 @@ def test_task_branch_rejected_cleanly_not_attributeerror(monkeypatch, tmp_path):
                 pick()
         """)
     msg = str(ei.value)
-    assert "not supported by Leoflow" in msg
+    assert "not supported by Dexaflow" in msg
     assert "branching" in msg
 
 
 def test_deferrable_operator_rejected_at_compile(monkeypatch, tmp_path):
     """deferrable=True is refused at compile (before the image build), not left to
-    fail inside the pod: Leoflow has no triggerer (ADR 0040 Phase C)."""
+    fail inside the pod: Dexaflow has no triggerer (ADR 0040 Phase C)."""
     with pytest.raises(ValueError) as ei:
         _compile(monkeypatch, tmp_path, """
             from airflow.sdk import DAG
@@ -685,3 +685,51 @@ def test_non_deferrable_operator_compiles(monkeypatch, tmp_path):
             S3KeySensor(task_id="wait", bucket_key="k", bucket_name="b", deferrable=False)
     """)
     assert any(t["task_id"] == "wait" for t in spec["tasks"])
+
+
+# --- pool_slots (ADR 0066) --------------------------------------------------------
+# A task's pool_slots is how many slots of its pool it takes. Airflow's default is
+# 1, which is also the engine's default, so only a larger value is emitted.
+
+def test_operator_and_task_pool_slots_are_captured(monkeypatch, tmp_path):
+    """pool_slots on an operator, on @task and from default_args reaches dag.json."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.providers.standard.operators.bash import BashOperator
+        from airflow.sdk import DAG, task
+        @task(pool_slots=4)
+        def a() -> None: ...
+        with DAG("g", default_args={"pool_slots": 2}):
+            a()
+            BashOperator(task_id="b", bash_command="true", pool_slots=3)
+            BashOperator(task_id="c", bash_command="true")
+    """)
+    assert _task(spec, "a")["pool_slots"] == 4
+    assert _task(spec, "b")["pool_slots"] == 3
+    assert _task(spec, "c")["pool_slots"] == 2
+
+
+def test_default_pool_slots_emits_no_key(monkeypatch, tmp_path):
+    """pool_slots unset or 1 emits nothing, so existing dag.json files do not change."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.providers.standard.operators.bash import BashOperator
+        from airflow.sdk import DAG
+        with DAG("g"):
+            BashOperator(task_id="b", bash_command="true")
+            BashOperator(task_id="c", bash_command="true", pool_slots=1)
+    """)
+    assert "pool_slots" not in _task(spec, "b")
+    assert "pool_slots" not in _task(spec, "c")
+
+
+def test_provider_operator_pool_slots_is_not_an_operator_arg(monkeypatch, tmp_path):
+    """On a generic provider operator pool_slots is captured as the task's weight,
+    not passed to the operator's constructor."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG
+        from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
+        with DAG("g"):
+            SQLExecuteQueryOperator(task_id="q", sql="select 1", conn_id="sf", pool_slots=2)
+    """)
+    q = _task(spec, "q")
+    assert q["pool_slots"] == 2
+    assert "pool_slots" not in q.get("operator_args", {})

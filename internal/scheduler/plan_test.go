@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 func linear() []domain.TaskSpec {
@@ -679,6 +679,21 @@ func TestPlanRunPoolFullAdmitsNone(t *testing.T) {
 	active := map[string]int{PoolKey(testTenant, "p"): 2}
 	if got := countQueued(PlanRun(poolRun(tasks, budgets, active))); got != 0 {
 		t.Errorf("promoted %d, want 0 (pool full)", got)
+	}
+}
+
+// TestPlanRunPoolShrunkBelowOccupancyAdmitsNone: a pool re-sized below what it
+// already runs (default_pool_slots lowered through the service API) admits
+// nothing and never computes negative headroom; admission resumes as running
+// tasks drain below the new size.
+func TestPlanRunPoolShrunkBelowOccupancyAdmitsNone(t *testing.T) {
+	tasks := pooledTasks(4, "p")
+	budgets := map[string]int{PoolKey(testTenant, "p"): 2}
+	if got := countQueued(PlanRun(poolRun(tasks, budgets, map[string]int{PoolKey(testTenant, "p"): 5}))); got != 0 {
+		t.Errorf("promoted %d over a shrunk pool, want 0", got)
+	}
+	if got := countQueued(PlanRun(poolRun(tasks, budgets, map[string]int{PoolKey(testTenant, "p"): 1}))); got != 1 {
+		t.Errorf("promoted %d once drained to 1 of 2, want 1", got)
 	}
 }
 

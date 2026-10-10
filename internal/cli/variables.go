@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // newVariablesCommand groups the Airflow-style Variable CRUD subcommands, the

@@ -5,10 +5,10 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Quickstart
 weight: 10
-description: Get Leoflow Lite running locally in two commands — the fastest path to a running DAG.
+description: Get Dexaflow Lite running locally in two commands — the fastest path to a running DAG.
 ---
 
-Get Leoflow **Lite** running locally in two commands. Lite is the local edition
+Get Dexaflow **Lite** running locally in two commands. Lite is the local edition
 (Pro is chart-installable and in validation — see [Operating modes](/concepts/editions/));
 run it on your machine or a trusted internal network — see [Editions](/concepts/editions/).
 
@@ -17,28 +17,28 @@ run it on your machine or a trusted internal network — see [Editions](/concept
 - **One of the following** for the datastores:
     - **Docker** running (preferred — Lite spins up `postgres:16` automatically), OR
     - **Nothing** — Lite falls back to an embedded managed Postgres downloaded
-      under `~/.leoflow` (no Docker, no system Postgres needed). See
+      under `~/.dexaflow` (no Docker, no system Postgres needed). See
       [Editions § Datastores](/concepts/editions/) for the auto-selection logic.
 - Linux or macOS (incl. WSL2). No system Python needed: Lite installs a managed
   one. See [Installation](/get-started/installation/) for details.
-- **Outbound network on the first `leoflow setup`, unless you already have
+- **Outbound network on the first `dexaflow setup`, unless you already have
   `python3.11`.** Setup needs that exact version and downloads a managed CPython
-  3.11 under `~/.leoflow/python` when it is not on your `PATH`. A newer host
+  3.11 under `~/.dexaflow/python` when it is not on your `PATH`. A newer host
   Python is not a substitute here: 3.12 and 3.13 can parse DAGs, which is why
-  `leoflow doctor` reports them as present, but setup still fetches its own 3.11.
+  `dexaflow doctor` reports them as present, but setup still fetches its own 3.11.
   Behind a proxy or offline, install `python3.11` first and setup will use it.
 
 ## 1 · Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/neochaotic/leoflow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh
 ```
 
 This installs the binaries to a directory on your `PATH` (e.g. `/usr/local/bin`)
 and runs the **setup wizard**, which asks a few questions — press Enter to accept
 each `[default]`:
 
-- **Where your DAGs live** (workspace) — default `~/leoflow`
+- **Where your DAGs live** (workspace) — default `~/dexaflow`
 - **How tasks run** — `subprocess` (each task as a process on this machine — simple,
   no Docker, recommended) or `k8s` (real pod-per-task on a local mini-Kubernetes —
   mirrors Pro, needs Docker). The wizard also accepts the friendly aliases `local`
@@ -46,10 +46,10 @@ each `[default]`:
 - **Admin email** — default `admin@leoflow.local`
 
 It then fetches a managed Python + the editor, creates your workspace, and prints
-your **admin password once** (`leoflow lite reset-password` resets it):
+your **admin password once** (`dexaflow lite reset-password` resets it):
 
 ```
-── Leoflow Lite admin (save this — it is shown only once) ──
+── Dexaflow Lite admin (save this — it is shown only once) ──
   user:     admin@leoflow.local
   password: tiger98
 ```
@@ -62,24 +62,24 @@ terminal (or `source` it); installing to `/usr/local/bin` needs no reload.
 ## 2 · Run it
 
 ```bash
-leoflow lite
+dexaflow lite
 ```
 
-That's it. With no arguments, `leoflow lite`:
+That's it. With no arguments, `dexaflow lite`:
 
 1. scaffolds a starter DAG in your workspace (if it has none yet),
-2. brings up Postgres — Docker `postgres:16` when Docker is present, else an embedded managed Postgres (no Redis required, see [Editions](/concepts/editions/#leoflow-lite)),
+2. brings up Postgres — Docker `postgres:16` when Docker is present, else an embedded managed Postgres (no Redis required, see [Editions](/concepts/editions/#dexaflow-lite)),
 3. starts the control plane and prints where to go:
 
 ```
-✓ Leoflow Lite is ready
+✓ Dexaflow Lite is ready
     open:    http://127.0.0.1:8088
     login:   admin@leoflow.local
     project: /home/you/leoflow
 ```
 
 Open that URL, log in with the password from step 1, and the DAG shows up in the
-Airflow-compatible UI. `leoflow lite` keeps running and **hot-reloads** on every
+Airflow-compatible UI. `dexaflow lite` keeps running and **hot-reloads** on every
 save — press Ctrl-C to stop.
 
 {{% alert title="Open it from another machine (internal network / VPN)" color="success" %}}
@@ -91,7 +91,7 @@ Lite is for trusted networks only — never the public internet.
 
 ## 3 · Trigger your first run
 
-`leoflow lite` scaffolds a starter DAG on first boot, so there is something to run
+`dexaflow lite` scaffolds a starter DAG on first boot, so there is something to run
 right away.
 
 1. Open **http://127.0.0.1:8088** and log in — the scaffolded DAG is listed on the
@@ -117,15 +117,15 @@ changes; run state auto-refreshes.) Details: [the Lite web editor](/author-dags/
 ## Useful commands
 
 ```bash
-leoflow doctor                       # check platform, deps, and what's achievable
-leoflow lite --host 0.0.0.0          # reachable from your internal network
-leoflow lite reset-password     # set a new admin password (after first run)
-leoflow uninstall                    # remove the install (--purge for workspace + volumes)
+dexaflow doctor                       # check platform, deps, and what's achievable
+dexaflow lite --host 0.0.0.0          # reachable from your internal network
+dexaflow lite reset-password     # set a new admin password (after first run)
+dexaflow uninstall                    # remove the install (--purge for workspace + volumes)
 ```
 
 ## Next
 
-- [DAG authoring](/author-dags/dag-authoring/) — the dialect, `leoflow.yaml`, overrides.
-- [The `leoflow lite` workflow](/contribute/local-dev-loop/) — the edit→reload loop, executors.
+- [DAG authoring](/author-dags/dag-authoring/) — the dialect, `dexaflow.yaml`, overrides.
+- [The `dexaflow lite` workflow](/contribute/local-dev-loop/) — the edit→reload loop, executors.
 - [CI/CD & deploy examples](/operate/cicd-deploy/) — ship it.
 - [Editions](/concepts/editions/) — Lite (now) vs Pro (in validation).

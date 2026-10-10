@@ -89,7 +89,7 @@ func TestDefaultConfigFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultConfigFile() error = %v", err)
 	}
-	if !strings.HasSuffix(filepath.ToSlash(p), ".leoflow/config.yaml") {
-		t.Errorf("DefaultConfigFile() = %q, want suffix .leoflow/config.yaml", p)
+	if !strings.HasSuffix(filepath.ToSlash(p), ".dexaflow/config.yaml") {
+		t.Errorf("DefaultConfigFile() = %q, want suffix .dexaflow/config.yaml", p)
 	}
 }

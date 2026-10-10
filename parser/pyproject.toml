@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "leoflow-parser"
 version = "0.1.0"
-description = "Leoflow DAG parser: compiles Airflow DAGs into Leoflow dag.json."
+description = "Dexaflow DAG parser: compiles Airflow DAGs into Dexaflow dag.json."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 # Zero third-party runtime dependencies (ADR 0024 + alpha cleanup): the
 # Airflow shim is bundled under leoflow_parser/_shim, and the per-project
-# config (leoflow.yaml) is parsed by the Go CLI and handed over as JSON via
+# config (dexaflow.yaml) is parsed by the Go CLI and handed over as JSON via
 # LEOFLOW_PROJECT_CONFIG_JSON. The parser runs on a bare CPython — no venv,
 # no pip, no Airflow, no PyYAML.
 dependencies = []

@@ -61,11 +61,11 @@ No key in the Connection. Credentials come from Application Default Credentials:
 ### Key from a Kubernetes Secret (`key_path`) — preferred when not keyless
 The key lives in a **Kubernetes Secret**, mounted read-only into every task pod;
 the connection only references the file by `key_path`. The key never enters
-Leoflow's DB/API/UI. Wire it via the chart:
+Dexaflow's DB/API/UI. Wire it via the chart:
 
 ```bash
 kubectl -n leoflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
-helm upgrade leoflow ./helm/leoflow -n leoflow --reuse-values \
+helm upgrade <release> <chart> -n leoflow --reset-then-reuse-values \
   --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/leoflow/secrets
 ```
 Then set the connection's `key_path` to `/etc/leoflow/secrets/key.json`.
@@ -81,7 +81,7 @@ The SA JSON in the connection's Extra (encrypted at rest). Convenient for
 dev/low-criticality; **not** recommended (see Security below).
 
 ### dbt (BigQuery) profile mapping
-When a **dbt** task uses this connection, Leoflow generates the BigQuery
+When a **dbt** task uses this connection, Dexaflow generates the BigQuery
 `profiles.yml` from it:
 
 | Extra | dbt profile |
@@ -101,21 +101,21 @@ expects `keyfile_dict`. Prefer keyless — it ships no downloadable key.
 | `key_secret_name` (Secret Manager) | ✅ (needs ADC) | ⚠️ needs ADC | ✅ (WI + secretAccessor) |
 | `keyfile_dict` (inline) | ✅ | ✅ | ✅ |
 
-## Security — Leoflow is not a key manager
+## Security — Dexaflow is not a key manager
 
 Credentials should come from the **runtime identity** (keyless) or from a
-**secret the platform manages**, which the connection only *references*. Leoflow
+**secret the platform manages**, which the connection only *references*. Dexaflow
 does not aspire to store cloud keys (see [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)).
 In order of preference:
 
 1. **Keyless (Workload Identity / ADC)** — recommended. No key anywhere.
 2. **Reference a platform-managed secret** — the key lives in the cluster's or
    cloud's secret store; the connection holds only a reference. The key never
-   enters Leoflow's DB/API/UI:
+   enters Dexaflow's DB/API/UI:
    - **`key_path` + a mounted Kubernetes Secret** (chart `taskSecret`);
    - **`key_secret_name` + GCP Secret Manager** (task fetches via ADC).
 3. **`keyfile_dict`** — **discouraged.** It stores the key inside the connection
-   (encrypted at rest with `LEOFLOW_SECRET_KEY`, ADR 0019; delivered only over
+   (encrypted at rest with `DEXAFLOW_SECRET_KEY`, ADR 0019; delivered only over
    the TLS agent channel, ADR 0021). It is the cloud-key analog of how
    connections store a database user/password — pragmatic and Airflow-compatible,
    but **not** the desired posture. Use only for dev / low-criticality; many orgs
@@ -123,7 +123,7 @@ In order of preference:
 
 ## Example DAG + test
 
-- Example: [examples/gcp_gcs_load](https://github.com/neochaotic/leoflow/tree/main/examples/gcp_gcs_load)
+- Example: [examples/gcp_gcs_load](https://github.com/dexadata/dexaflow/tree/main/examples/gcp_gcs_load)
   — writes + reads a GCS object in both modes, with a clean `gcp_credentials()`
   helper.
 - Delivery (chain-of-custody) is covered by an automated test that round-trips a

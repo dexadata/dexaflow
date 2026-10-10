@@ -14,8 +14,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // poisonAgent is a stub AgentService: one RPC panics (a malformed/poison request

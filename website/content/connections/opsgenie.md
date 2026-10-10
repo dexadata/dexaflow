@@ -9,14 +9,14 @@ weight: 340
 description: Opsgenie connection
 ---
 
-Send alerts to Opsgenie from a task over a managed Leoflow Connection. The
+Send alerts to Opsgenie from a task over a managed Dexaflow Connection. The
 host and API key are encrypted at rest and delivered to the task as
 `AIRFLOW_CONN_<CONN_ID>`.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: opsgenie_alert
 connectors:
   - opsgenie
@@ -58,7 +58,7 @@ def page():
     from airflow.providers.opsgenie.hooks.opsgenie import OpsgenieAlertHook
 
     hook = OpsgenieAlertHook(opsgenie_conn_id="opsgenie_default")
-    hook.create_alert(payload={"message": "Leoflow pipeline failed"})
+    hook.create_alert(payload={"message": "Dexaflow pipeline failed"})
 
 
 with DAG("opsgenie_alert", schedule=None, catchup=False, tags=["example"]):
@@ -66,7 +66,7 @@ with DAG("opsgenie_alert", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: opsgenie_alert
 python_version: "3.11"

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/alerts"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/alerts"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 )
 
 type fakeRecorder struct {

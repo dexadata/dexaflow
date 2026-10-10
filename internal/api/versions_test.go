@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 type fakeVersionRepo struct {
@@ -83,13 +83,13 @@ func TestRegisterVersionRejectsRemovedHTTPAPIType(t *testing.T) {
 
 // A spec that declares a connection (or variable) the tenant has not defined is
 // rejected by the repository as domain.ErrValidation (ADR 0055 D6). That is a
-// client-fixable input error — the author must run `leoflow connections set` or
+// client-fixable input error — the author must run `dexaflow connections set` or
 // drop the declaration — so the handler must surface it as 400, not 500. Before
 // the handleRepoError ErrValidation branch it fell through to 500, which sent
 // users to server logs instead of to their own DAG (#724).
 func TestRegisterVersionUnknownConnectionReturns400(t *testing.T) {
 	repo := &fakeVersionRepo{err: domain.Safef(domain.ErrValidation,
-		"dag %q declares unknown connection(s) %s; define them (leoflow connections set) or remove them from the DAG's connections: declaration",
+		"dag %q declares unknown connection(s) %s; define them (dexaflow connections set) or remove them from the DAG's connections: declaration",
 		"etl", "warehouse")}
 	rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions", validSpecJSON)
 	if rec.Code != http.StatusBadRequest {
@@ -107,5 +107,118 @@ func TestRegisterVersionRejectsInvalidSpec(t *testing.T) {
 	rec := authGet(versionServer(&fakeVersionRepo{}), http.MethodPost, "/api/v2/dags/etl/versions", bad)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid spec = %d, want 400", rec.Code)
+	}
+}
+
+// With an operator resource unit (ADR 0066 §3), a task whose declared
+// resources exceed pool_slots x unit is refused at registration, naming the
+// size it would need, and a task that fits is accepted.
+func TestRegisterVersionRejectsATaskLargerThanItsSize(t *testing.T) {
+	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{CPU: "250m", Memory: "512Mi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Versions:      &fakeVersionRepo{created: true},
+		ResourceUnit:  unit,
+	})
+	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
+	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", big)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "size: 8") {
+		t.Errorf("oversized task = %d %s, want 400 naming size: 8", rec.Code, rec.Body.String())
+	}
+	fits := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","pool_slots":8,"resources":{"limits":{"cpu":"2"}}}]}`
+	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", fits); rec.Code != http.StatusCreated {
+		t.Errorf("fitting task = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+// fakeUnitMisfits records the stages a tolerated misfit was counted at.
+type fakeUnitMisfits struct{ stages []string }
+
+func (f *fakeUnitMisfits) RecordUnitMisfit(stage string) { f.stages = append(f.stages, stage) }
+
+// Under executor.unit.enforce=warn a task larger than its size registers, and
+// the misfit is counted; a size above max_size is still refused (ADR 0066 §3).
+func TestRegisterVersionWarnAcceptsAMisfitAndCountsIt(t *testing.T) {
+	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{
+		CPU: "250m", Memory: "512Mi", Enforce: domain.UnitEnforceWarn, MaxSize: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	misfits := &fakeUnitMisfits{}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Versions:      &fakeVersionRepo{created: true},
+		ResourceUnit:  unit,
+		UnitMisfits:   misfits,
+	})
+	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
+	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", big); rec.Code != http.StatusCreated {
+		t.Errorf("misfit under warn = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	if len(misfits.stages) != 1 || misfits.stages[0] != "register" {
+		t.Errorf("misfits recorded = %v, want one at register", misfits.stages)
+	}
+	huge := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","pool_slots":9}]}`
+	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", huge)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "max_size") {
+		t.Errorf("size above max_size = %d %s, want 400 naming max_size", rec.Code, rec.Body.String())
+	}
+}
+
+// With source mode on (ADR 0067 §3), a version on the runtime image must carry
+// a source within the cap; a version on its own image registers as before.
+func TestRegisterVersionChecksSourceMode(t *testing.T) {
+	const rt = "ghcr.io/dexadata/runtime@sha256:abc"
+	spec := func(image, source string) string {
+		b, err := json.Marshal(domain.DAGSpec{SchemaVersion: "1.0", DagID: "etl", DagVersion: "v1", Image: image, Source: source,
+			Tasks: []domain.TaskSpec{{TaskID: "a", Type: "python", Entrypoint: "dag:a"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	server := func(mode string) *gin.Engine {
+		return NewServer(Dependencies{
+			Logger:          discardLogger(),
+			Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:     auth.NewRateLimiter(100, time.Minute),
+			CORSOrigins:     []string{"*"},
+			Versions:        &fakeVersionRepo{created: true},
+			SourceModeImage: mode,
+		})
+	}
+	oversize := strings.Repeat("x", domain.MaxSourceModeBytes+1)
+	cases := map[string]struct {
+		mode, image, source string
+		want                int
+		wantBody            string
+	}{
+		"on, runtime image with a source": {rt, rt, "print(1)\n", http.StatusCreated, ""},
+		"on, runtime image, no source":    {rt, rt, "", http.StatusBadRequest, "has no source"},
+		"on, runtime image, oversize":     {rt, rt, oversize, http.StatusBadRequest, "source mode"},
+		"on, own image, no source":        {rt, "img:v1", "", http.StatusCreated, ""},
+		"off, runtime image, no source":   {"", rt, "", http.StatusCreated, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := authGet(server(tc.mode), http.MethodPost, "/api/v2/dags/etl/versions", spec(tc.image, tc.source))
+			if rec.Code != tc.want || !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Errorf("register = %d %s, want %d mentioning %q", rec.Code, rec.Body.String(), tc.want, tc.wantBody)
+			}
+		})
 	}
 }

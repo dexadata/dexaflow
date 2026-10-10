@@ -9,7 +9,7 @@ weight: 320
 description: MySQL / MariaDB connection
 ---
 
-Connect a task to an external MySQL or MariaDB over a managed Leoflow
+Connect a task to an external MySQL or MariaDB over a managed Dexaflow
 Connection. MariaDB uses the same `mysql` protocol, so the URI shape
 and the Python driver are identical; only the `conn_type` differs
 (`mysql` vs `mariadb`).
@@ -74,9 +74,9 @@ Alternative drivers:
 
 ## Example DAG
 
-[`examples/mysql_load`](https://github.com/neochaotic/leoflow/tree/main/examples/mysql_load) reads `AIRFLOW_CONN_MY_DB`, parses it, opens
+[`examples/mysql_load`](https://github.com/dexadata/dexaflow/tree/main/examples/mysql_load) reads `AIRFLOW_CONN_MY_DB`, parses it, opens
 a `pymysql` connection, and writes 20 rows. The example's
-[README](https://github.com/neochaotic/leoflow/tree/main/examples/mysql_load/README.md)
+[README](https://github.com/dexadata/dexaflow/tree/main/examples/mysql_load/README.md)
 walks through Docker spin-up, Connection setup, and verification.
 
 ## Lite vs Pro caveats

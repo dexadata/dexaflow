@@ -79,9 +79,9 @@ planned follow-up; for now, `redis` + Extra is the supported path.
 
 ## Example DAG
 
-[`examples/redis_load`](https://github.com/neochaotic/leoflow/tree/main/examples/redis_load) writes 20 hash fields under
-`leoflow:example_load` using `redis-py`. The example's
-[README](https://github.com/neochaotic/leoflow/tree/main/examples/redis_load/README.md)
+[`examples/redis_load`](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load) writes 20 hash fields under
+`dexaflow:example_load` using `redis-py`. The example's
+[README](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load/README.md)
 walks through Connection setup and verification with `redis-cli HGETALL`.
 
 ## Lite vs Pro caveats
@@ -92,7 +92,7 @@ walks through Connection setup and verification with `redis-cli HGETALL`.
   a host-network Redis, or deploy Redis inside the cluster.
 - **Pro (Kubernetes)** typical pattern is the redis-operator or a managed
   service (ElastiCache, Memorystore). For at-rest persistence, make sure
-  Redis is configured with AOF or RDB; the Leoflow Connection itself is
+  Redis is configured with AOF or RDB; the Dexaflow Connection itself is
   metadata only.
 
 ## Tier 1 integration test
@@ -100,8 +100,8 @@ walks through Connection setup and verification with `redis-cli HGETALL`.
 Redis is included in `TestConnectionDeliveryChainOfCustodyIntegration`
 (the table-driven SQL-family test in `internal/storage/`). It runs on
 every PR with no extra service container — Redis is already a CI service
-for the Leoflow control plane (see `.github/workflows/ci.yaml`), so the
-Tier 1 cost is zero (see [#162](https://github.com/neochaotic/leoflow/issues/162)).
+for the Dexaflow control plane (see `.github/workflows/ci.yaml`), so the
+Tier 1 cost is zero (see [#162](https://github.com/dexadata/dexaflow/issues/162)).
 
 ## Troubleshooting
 

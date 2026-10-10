@@ -1,0 +1,14 @@
+kind: Changed
+body: |-
+  **Cheaper DAG version registration.** Migrations 032 to 034 index
+  `dag_versions` by `(dag_id, spec_hash)`, the lookup every bundle push runs,
+  drop the `spec_hash` index it replaces and drop the GIN index on `spec`,
+  which no query used and which every version insert had to update. Every
+  change runs `CONCURRENTLY` and does not block registration. If the migration
+  job is interrupted while building `idx_dag_versions_dag_hash`, drop the
+  INVALID index it leaves (`DROP INDEX CONCURRENTLY IF EXISTS
+  idx_dag_versions_dag_hash`), run `migrate force 31` and retry. If it is
+  interrupted in 033 or 034, re-run that file's single `DROP INDEX
+  CONCURRENTLY` statement by hand, then `migrate force 33` or `migrate force
+  34`.
+time: 2026-10-05T03:00:00.000000000-03:00

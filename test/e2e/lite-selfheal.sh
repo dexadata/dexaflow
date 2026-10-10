@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end gate for Lite's boot self-heal (#404): a reused metadata DB must not
-# leave un-removable ghosts. Two `leoflow lite` sessions share one external
+# leave un-removable ghosts. Two `dexaflow lite` sessions share one external
 # Postgres (--no-up + LEOFLOW_DATABASE_URL). Session 1 registers a valid DAG
 # (ghost), a kept DAG (keeper), and a broken DAG (import error); its files for
 # ghost+broken are then removed. Session 2's boot reconcile MUST deregister the
@@ -32,9 +32,9 @@ export LEOFLOW_SECRET_KEY="e2e-insecure-secret-key-32bytes!"
 export LEOFLOW_LOGS_DIR="$TMP/logs"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
 echo "==> resetting the database (migrated, empty)"
@@ -43,11 +43,11 @@ echo "==> resetting the database (migrated, empty)"
 echo "==> workspace: keeper (kept), ghost (removed later), broken (syntax error)"
 for d in keeper ghost; do
   mkdir -p "$WS/$d"
-  printf 'schema_version: "1.0"\ndag_id: %s\n' "$d" > "$WS/$d/leoflow.yaml"
+  printf 'schema_version: "1.0"\ndag_id: %s\n' "$d" > "$WS/$d/dexaflow.yaml"
   printf 'from airflow.providers.standard.operators.bash import BashOperator\nfrom airflow.sdk import DAG\nwith DAG("%s", schedule="@daily"):\n    BashOperator(task_id="t", bash_command="echo %s")\n' "$d" "$d" > "$WS/$d/dag.py"
 done
 mkdir -p "$WS/broken"
-printf 'schema_version: "1.0"\ndag_id: broken\n' > "$WS/broken/leoflow.yaml"
+printf 'schema_version: "1.0"\ndag_id: broken\n' > "$WS/broken/dexaflow.yaml"
 printf 'from airflow.sdk import DAG\nwith DAG("broken", schedule=None)   # missing colon -> SyntaxError\n    pass\n' > "$WS/broken/dag.py"
 
 start_lite() { # $1=logfile

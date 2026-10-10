@@ -45,15 +45,15 @@ trap cleanup EXIT
 export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 export LEOFLOW_DATABASE_URL="$DB_URL"
 export LEOFLOW_LOGS_DIR="$TMP/logs"
-# Isolate HOME so Lite reads no ~/.leoflow/config.yaml admin hash and falls back
+# Isolate HOME so Lite reads no ~/.dexaflow/config.yaml admin hash and falls back
 # to no-auth loopback, so the API is reachable without a token.
 export HOME="$TMP/home"
 mkdir -p "$HOME"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
 echo "==> building the callback receiver (/callback -> capture)"
@@ -102,7 +102,7 @@ echo "==> resetting the database (migrated, empty)"
 
 echo "==> workspace: a @task that raises, with an on_failure_callback that POSTs proof"
 mkdir -p "$WS/cbdag"
-cat > "$WS/cbdag/leoflow.yaml" <<YAML
+cat > "$WS/cbdag/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: cbdag
 YAML

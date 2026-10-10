@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // newAdminDagsCommand groups the DAG pause/unpause operator commands.

@@ -4,8 +4,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/logs"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/logs"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 type capLogWriter struct{ events []logs.Event }

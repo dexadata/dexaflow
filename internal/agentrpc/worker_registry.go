@@ -1,10 +1,11 @@
 package agentrpc
 
 import (
+	"errors"
 	"sync"
 	"time"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // ReclaimReason names why an assignment was reclaimed (ADR 0058 N1b, H1).
@@ -35,6 +36,9 @@ type ReclaimEvent struct {
 	RunID        string
 	TaskID       string
 	TryNumber    int
+	// AttemptEpoch is the execution of TryNumber the assignment was dispatched as
+	// (ADR 0051 amendment), so the re-place is fenced to exactly that attempt.
+	AttemptEpoch int
 }
 
 // WarmBinding is the durable binding an ack (started=true) establishes: the warm
@@ -47,7 +51,10 @@ type WarmBinding struct {
 	RunID     string
 	TaskID    string
 	TryNumber int
-	PodName   string
+	// AttemptEpoch is the execution of TryNumber this binding is for (ADR 0051
+	// amendment), so an ack never binds a worker onto a later attempt.
+	AttemptEpoch int
+	PodName      string
 }
 
 // registeredWorker is one warm worker's registry entry. send is the handler's
@@ -63,7 +70,34 @@ type registeredWorker struct {
 	// busy is set once the worker acks an assignment as started; it is cleared
 	// when the worker signals SlotFree.
 	busy bool
+	// streamDone is closed when the stream that registered this entry has ended
+	// (the handler passes its stream context's Done channel). nil means the
+	// registry has no such signal and judges the entry by heartbeats alone.
+	streamDone <-chan struct{}
+	// lastSeen is when this entry's stream last showed it was alive: its
+	// registration, or any later worker message (Touch).
+	lastSeen time.Time
+	// superseded is closed when a new registration replaces this entry because
+	// it went stale, so the handler serving the stale stream ends it instead of
+	// keeping a second connection open for the same identity.
+	superseded chan struct{}
 }
+
+// workerLivenessGrace is how long a registered worker's stream may stay silent
+// before a new registration under the same identity may replace it. A warm
+// worker sends a heartbeat on its assignment stream every 15 seconds (the
+// agent's DefaultHeartbeatInterval, reused for the stream heartbeat), so the
+// grace is four missed heartbeats: long enough that a slow or briefly stalled
+// worker is never displaced, short enough that a stream that is wedged but not
+// yet torn down by the transport does not lock its identity out for long. It
+// only matters while the old stream is still open: a reconnect after the old
+// stream has ended is accepted at once.
+const workerLivenessGrace = 60 * time.Second
+
+// ErrWorkerAlreadyRegistered is returned by Register when the identity already
+// has a live registration: its stream is still connected and has heartbeated
+// within workerLivenessGrace.
+var ErrWorkerAlreadyRegistered = errors.New("warm worker identity already has a live registration")
 
 // leaseState tracks one in-flight assignment awaiting an ack. It carries the
 // assignment's attempt identity (runID, taskID, tryNumber) so a started ack can
@@ -74,7 +108,9 @@ type leaseState struct {
 	runID      string
 	taskID     string
 	tryNumber  int
-	timer      *time.Timer
+	// attemptEpoch is the epoch the dispatcher claimed for this assignment.
+	attemptEpoch int
+	timer        *time.Timer
 }
 
 // WorkerRegistry is the concurrency-safe home of the warm-worker fleet and the
@@ -96,6 +132,8 @@ type WorkerRegistry struct {
 	// leaseFor computes an assignment's ack deadline. Injectable so tests drive
 	// reclaim deterministically with a tiny lease.
 	leaseFor func(*agentv1.WorkAssignment) time.Duration
+	// now is the clock the liveness grace is measured on. Injectable for tests.
+	now func() time.Time
 }
 
 // NewWorkerRegistry builds a registry whose reclaim events are delivered to
@@ -109,26 +147,75 @@ func NewWorkerRegistry(onReclaim func(ReclaimEvent)) *WorkerRegistry {
 		leaseFor: func(a *agentv1.WorkAssignment) time.Duration {
 			return time.Duration(a.GetLeaseSeconds()) * time.Second
 		},
+		now: time.Now,
 	}
 }
 
 // Register records a warm worker under its authenticated identity, ready to take
 // work for dagVersion. podName is the worker's own pod name, carried so a started
-// ack can bind the attempt to it. Idempotent: a reconnect with the same identity replaces
-// the prior entry (never adds a second), and the fresh entry starts free. It
-// returns the entry so the caller can Deregister exactly the entry it created.
-func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send chan *agentv1.WorkAssignment) *registeredWorker {
+// ack can bind the attempt to it. streamDone is closed when the registering
+// stream ends (nil when the caller has no such signal). It returns the entry so
+// the caller can Deregister exactly the entry it created.
+//
+// One live registration per identity: while an earlier registration's stream is
+// still connected and has heartbeated within workerLivenessGrace, a second
+// Register is refused with ErrWorkerAlreadyRegistered and the live entry is left
+// untouched. A reconnect is accepted once the earlier stream has ended (its
+// streamDone is closed, or it already deregistered), or once it has been silent
+// for longer than the grace; in the stale case the old entry's superseded
+// channel is closed so its handler ends. The fresh entry starts free.
+func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send chan *agentv1.WorkAssignment, streamDone <-chan struct{}) (*registeredWorker, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := r.now()
 	if old, ok := r.workers[identity]; ok {
+		if r.liveLocked(old, now) {
+			return nil, ErrWorkerAlreadyRegistered
+		}
 		// Drop the superseded entry from the free set; any lease still bound to it
 		// keeps its own timer and reclaims independently.
 		r.removeFreeLocked(old)
+		close(old.superseded)
 	}
-	w := &registeredWorker{identity: identity, dagVersion: dagVersion, podName: podName, send: send}
+	w := &registeredWorker{
+		identity:   identity,
+		dagVersion: dagVersion,
+		podName:    podName,
+		send:       send,
+		streamDone: streamDone,
+		lastSeen:   now,
+		superseded: make(chan struct{}),
+	}
 	r.workers[identity] = w
 	r.addFreeLocked(w)
-	return w
+	return w, nil
+}
+
+// Touch records that w's stream is alive (any worker message, including the
+// periodic heartbeat). It is a no-op unless the registry still points at exactly
+// this entry, so a superseded stream cannot keep its replacement alive.
+func (r *WorkerRegistry) Touch(w *registeredWorker) {
+	if w == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.workers[w.identity] == w {
+		w.lastSeen = r.now()
+	}
+}
+
+// liveLocked reports whether w still holds its identity's registration: its
+// stream has not ended and it was seen within workerLivenessGrace. Requires r.mu.
+func (r *WorkerRegistry) liveLocked(w *registeredWorker, now time.Time) bool {
+	if w.streamDone != nil {
+		select {
+		case <-w.streamDone:
+			return false
+		default:
+		}
+	}
+	return now.Sub(w.lastSeen) <= workerLivenessGrace
 }
 
 // Deregister removes a worker's entry, but only if the registry still points at
@@ -159,6 +246,7 @@ func (r *WorkerRegistry) Deregister(w *registeredWorker) {
 				RunID:        ls.runID,
 				TaskID:       ls.taskID,
 				TryNumber:    ls.tryNumber,
+				AttemptEpoch: ls.attemptEpoch,
 			})
 		}
 	}
@@ -192,11 +280,12 @@ func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bo
 	}
 	aid := a.GetAssignmentId()
 	ls := &leaseState{
-		worker:     w,
-		dagVersion: dagVersion,
-		runID:      a.GetDagRunId(),
-		taskID:     a.GetTaskId(),
-		tryNumber:  int(a.GetTryNumber()),
+		worker:       w,
+		dagVersion:   dagVersion,
+		runID:        a.GetDagRunId(),
+		taskID:       a.GetTaskId(),
+		tryNumber:    int(a.GetTryNumber()),
+		attemptEpoch: int(a.GetAttemptEpoch()),
 	}
 	ls.timer = time.AfterFunc(r.leaseFor(a), func() { r.onLeaseExpire(aid) })
 	r.leases[aid] = ls
@@ -222,10 +311,11 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 	if started {
 		ls.worker.busy = true
 		binding := &WarmBinding{
-			RunID:     ls.runID,
-			TaskID:    ls.taskID,
-			TryNumber: ls.tryNumber,
-			PodName:   ls.worker.podName,
+			RunID:        ls.runID,
+			TaskID:       ls.taskID,
+			TryNumber:    ls.tryNumber,
+			AttemptEpoch: ls.attemptEpoch,
+			PodName:      ls.worker.podName,
 		}
 		r.mu.Unlock()
 		return binding, true
@@ -237,6 +327,7 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 		RunID:        ls.runID,
 		TaskID:       ls.taskID,
 		TryNumber:    ls.tryNumber,
+		AttemptEpoch: ls.attemptEpoch,
 	}
 	r.mu.Unlock()
 	r.emitReclaim(ev)
@@ -284,6 +375,7 @@ func (r *WorkerRegistry) onLeaseExpire(assignmentID string) {
 		RunID:        ls.runID,
 		TaskID:       ls.taskID,
 		TryNumber:    ls.tryNumber,
+		AttemptEpoch: ls.attemptEpoch,
 	}
 	r.mu.Unlock()
 	r.emitReclaim(ev)
@@ -358,6 +450,24 @@ func (r *WorkerRegistry) dagVersionOf(identity string) string {
 	defer r.mu.Unlock()
 	if w, ok := r.workers[identity]; ok {
 		return w.dagVersion
+	}
+	return ""
+}
+
+func (r *WorkerRegistry) lastSeenOf(identity string) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if w, ok := r.workers[identity]; ok {
+		return w.lastSeen
+	}
+	return time.Time{}
+}
+
+func (r *WorkerRegistry) podNameOf(identity string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if w, ok := r.workers[identity]; ok {
+		return w.podName
 	}
 	return ""
 }

@@ -186,7 +186,7 @@ type GetUserByOIDCSubjectRow struct {
 	IsActive bool        `json:"is_active"`
 }
 
-// Resolve an OIDC identity to a Leoflow user by its immutable (provider,
+// Resolve an OIDC identity to a Dexaflow user by its immutable (provider,
 // subject) pair (the trusted link key). Returns the tenant name (not the uuid)
 // so the reconstructed principal matches the login path's User.TenantID, plus
 // the active flag the login gates on. Never selects password_hash.
@@ -233,6 +233,55 @@ func (q *Queries) GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const getUserPrincipalByID = `-- name: GetUserPrincipalByID :one
+SELECT u.id, t.name AS tenant, u.email, u.is_active,
+       ARRAY(
+           SELECT r.name
+           FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+           WHERE ur.user_id = u.id
+       )::text[] AS roles,
+       COALESCE((
+           SELECT json_agg(json_build_array(dp.action, dp.resource))
+           FROM (
+               SELECT DISTINCT p.action, p.resource
+               FROM user_roles ur
+               JOIN role_permissions rp ON rp.role_id = ur.role_id
+               JOIN permissions p ON p.id = rp.permission_id
+               WHERE ur.user_id = u.id
+           ) dp
+       ), '[]'::json)::json AS permissions
+FROM users u
+JOIN tenants t ON t.id = u.tenant_id
+WHERE u.id = $1
+`
+
+type GetUserPrincipalByIDRow struct {
+	ID          pgtype.UUID `json:"id"`
+	Tenant      string      `json:"tenant"`
+	Email       string      `json:"email"`
+	IsActive    bool        `json:"is_active"`
+	Roles       []string    `json:"roles"`
+	Permissions []byte      `json:"permissions"`
+}
+
+// The per-request authz reload in ONE round trip: what GetUserByID,
+// GetUserRoles and GetUserPermissions return, folded into a single statement.
+// Permissions are a JSON array of distinct [action, resource] pairs.
+func (q *Queries) GetUserPrincipalByID(ctx context.Context, id pgtype.UUID) (GetUserPrincipalByIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserPrincipalByID, id)
+	var i GetUserPrincipalByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Tenant,
+		&i.Email,
+		&i.IsActive,
+		&i.Roles,
+		&i.Permissions,
+	)
+	return i, err
 }
 
 const getUserRoles = `-- name: GetUserRoles :many

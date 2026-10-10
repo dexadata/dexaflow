@@ -5,10 +5,10 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Installation
 weight: 30
-description: Install the leoflow CLI and provision the managed Python runtime.
+description: Install the dexaflow CLI and provision the managed Python runtime.
 ---
 
-Leoflow ships in **two editions** — pick the install path that matches the one
+Dexaflow ships in **two editions** — pick the install path that matches the one
 you want:
 
 | Edition | Where it runs | Who it's for | Install path |
@@ -25,21 +25,21 @@ expectations; Lite bundles everything in one host process.
 
 ## Install Lite
 
-One command installs Leoflow Lite and bootstraps everything it needs — **no
+One command installs Dexaflow Lite and bootstraps everything it needs — **no
 sudo, no system Python, no package manager**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/neochaotic/leoflow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh
 ```
 
 That script downloads the release archive for your OS/architecture, verifies
 its SHA-256 against the signed checksums, installs the binaries to
-`~/.leoflow/bin`, and then runs [`leoflow setup`](#what-leoflow-setup-does).
+`~/.dexaflow/bin`, and then runs [`dexaflow setup`](#what-dexaflow-setup-does).
 
 ### What you need
 
 Almost nothing. The control plane, CLI, and agent are **static Go binaries**,
-and `leoflow setup` provisions a Python 3.11 itself if you don't have one.
+and `dexaflow setup` provisions a Python 3.11 itself if you don't have one.
 
 There are **two execution paths** — and **no Docker executor**, on purpose
 ([ADR 0015](/project/adrs/0015-kubernetes-only-execution/)):
@@ -53,32 +53,32 @@ gate. So:
 | **kubernetes** | + Docker (to host a local **k3d** cluster; k3d/kubectl fetched on demand) | real pods | production parity, the staging volume, resource limits |
 
 Docker, when present, is only the engine that **hosts the local k3d cluster** —
-it is never an executor itself. `leoflow setup` **detects what's present and
+it is never an executor itself. `dexaflow setup` **detects what's present and
 picks the highest path available**; without Docker it uses subprocess. Run
-[`leoflow doctor`](#leoflow-doctor) anytime to see where you stand, and see
+[`dexaflow doctor`](#dexaflow-doctor) anytime to see where you stand, and see
 [Choosing an executor](/contribute/local-dev-loop/#choosing-an-executor) for the trade-offs.
 
-### What `leoflow setup` does
+### What `dexaflow setup` does
 
 `setup` is idempotent — re-running is safe. It:
 
 1. **Ensures Python 3.11.** Uses a system `python3.11` if one is on `PATH`;
    otherwise downloads a pinned, checksum-verified [relocatable
    CPython](https://github.com/astral-sh/python-build-standalone) into
-   `~/.leoflow/python`. No sudo, no system install.
+   `~/.dexaflow/python`. No sudo, no system install.
 2. **Extracts the DAG parser and task runtime** (embedded in the binary) to
-   `~/.leoflow/pysrc`.
-3. **Points `parser_cmd` at the parser** in `~/.leoflow/config.yaml`. The parser is
+   `~/.dexaflow/pysrc`.
+3. **Points `parser_cmd` at the parser** in `~/.dexaflow/config.yaml`. The parser is
    pure Python with its dependencies vendored (the Airflow shim and PyYAML — ADR
    0024), so there is **no parser venv, no pip, and no Apache Airflow install** — it
    runs on the interpreter from step 1 directly.
-4. **Creates your workspace** (default `~/leoflow`, override with `--workspace`)
+4. **Creates your workspace** (default `~/dexaflow`, override with `--workspace`)
    for your DAG projects, and asks (on a terminal) for the workspace, executor
    (`subprocess` for local use, `k8s` for a dev mini-cluster — changeable later),
    and UI port. Run non-interactively (e.g. `curl | sh`) it uses sensible defaults.
 5. **Creates the Lite admin** (`admin@leoflow.local`) with a generated,
    human-friendly password, **shown once** at the end (only its hash is stored).
-   Recover it with `leoflow lite reset-password`.
+   Recover it with `dexaflow lite reset-password`.
 
 {{% alert title="Lite is for trusted networks" color="warning" %}}
 The admin password is short by design and there is no SSO/RBAC — run Lite
@@ -86,24 +86,24 @@ on **localhost, an internal network, or a VPN**, never exposed publicly.
 Production-grade deploys are Pro's job. See [Editions](/concepts/editions/).
 {{% /alert %}}
 
-Everything Leoflow manages lives under `~/.leoflow`; your DAG source lives in
+Everything Dexaflow manages lives under `~/.dexaflow`; your DAG source lives in
 the workspace — the two are kept separate.
 
 ```bash
-leoflow setup                      # interactive on a terminal; defaults otherwise (safe to re-run)
-leoflow setup --dry-run            # show the plan, change nothing
-leoflow setup --workspace ~/work   # choose where your DAG projects live
+dexaflow setup                      # interactive on a terminal; defaults otherwise (safe to re-run)
+dexaflow setup --dry-run            # show the plan, change nothing
+dexaflow setup --workspace ~/work   # choose where your DAG projects live
 ```
 
 {{% alert title="There is no scanned `dags/` folder" color="info" %}}
-Unlike Airflow, Leoflow has no monolithic DAGs directory. Each DAG is its
-own project (`dag.py` + `leoflow.yaml`); you point `leoflow lite <path>` at
+Unlike Airflow, Dexaflow has no monolithic DAGs directory. Each DAG is its
+own project (`dag.py` + `dexaflow.yaml`); you point `dexaflow lite <path>` at
 it. The workspace is just a convenient home for those projects.
 {{% /alert %}}
 
 ### Platforms
 
-Leoflow ships **Linux and macOS** binaries for **amd64 and arm64**. Because
+Dexaflow ships **Linux and macOS** binaries for **amd64 and arm64**. Because
 the install never touches your system package manager, the Linux
 **distribution does not matter** — only the C library and CPU architecture do:
 
@@ -111,9 +111,9 @@ the install never touches your system package manager, the Linux
   and **musl** (Alpine) are both supported; `setup` detects musl and fetches
   the matching CPython build.
 - **Windows:** use **WSL2** (it's a glibc Linux). Keep your project in the WSL
-  **native filesystem** (`~/...`), not under `/mnt/c` — `leoflow lite`'s
+  **native filesystem** (`~/...`), not under `/mnt/c` — `dexaflow lite`'s
   hot-reload uses inotify, which is unreliable on the Windows 9p mount.
-  `leoflow doctor` warns when your project is under `/mnt`.
+  `dexaflow doctor` warns when your project is under `/mnt`.
 
 ### Verifying the download
 
@@ -125,18 +125,18 @@ automatically. To verify the signature yourself:
 cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/neochaotic/leoflow' \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 ```
 
-### `leoflow doctor`
+### `dexaflow doctor`
 
 A read-only diagnostic — it changes nothing:
 
 ```console
-$ leoflow doctor
-leoflow doctor
+$ dexaflow doctor
+dexaflow doctor
 
   platform      linux/amd64 (glibc)
   python 3.11   found (/usr/bin/python3.11)
@@ -148,7 +148,7 @@ leoflow doctor
     subprocess  always available (dev-only, no isolation)
     kubernetes  available (Docker present; k3d/kubectl fetched on demand)
 
-  next: run `leoflow setup` to bootstrap the managed runtime.
+  next: run `dexaflow setup` to bootstrap the managed runtime.
 ```
 
 ### Confirming the installed version
@@ -156,34 +156,34 @@ leoflow doctor
 Each binary reports its own build, so you can confirm what landed on `PATH`:
 
 ```console
-$ leoflow --version          # root CLI (leoflow version also prints commit + build date)
-$ leoflow-server --version   # control plane
-$ leoflow-agent --version    # in-pod agent
-$ leoflow-mcp --version      # MCP server (see the MCP guide)
+$ dexaflow --version          # root CLI (dexaflow version also prints commit + build date)
+$ dexaflow-server --version   # control plane
+$ dexaflow-agent --version    # in-pod agent
+$ dexaflow-mcp --version      # MCP server (see the MCP guide)
 ```
 
 ### Installer options
 
 | Variable | Effect |
 |---|---|
-| `LEOFLOW_VERSION=v0.4.0-rc.2` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/neochaotic/leoflow/releases) for the current tag. |
-| `LEOFLOW_NO_SETUP=1` | install binaries only; run `leoflow setup` yourself later |
-| `LEOFLOW_INSTALL_DIR=~/.leoflow/bin` | where to put the binaries |
+| `DEXAFLOW_VERSION=v0.5.1` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/dexaflow/releases) for the current tag. |
+| `DEXAFLOW_NO_SETUP=1` | install binaries only; run `dexaflow setup` yourself later |
+| `DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin` | where to put the binaries |
 
 ### Building Lite from source
 
 If you have a Go toolchain and prefer to build it yourself:
 
 ```bash
-go install github.com/neochaotic/leoflow/cmd/leoflow@latest
-go install github.com/neochaotic/leoflow/cmd/leoflow-server@latest
-go install github.com/neochaotic/leoflow/cmd/leoflow-agent@latest
+go install github.com/dexadata/dexaflow/cmd/dexaflow@latest
+go install github.com/dexadata/dexaflow/cmd/dexaflow-server@latest
+go install github.com/dexadata/dexaflow/cmd/dexaflow-agent@latest
 # ensure $(go env GOPATH)/bin is on your PATH, then:
-leoflow setup
+dexaflow setup
 ```
 
-The subsequent `leoflow setup` provisions the same managed runtime the
-install-script path uses (managed CPython under `~/.leoflow/`).
+The subsequent `dexaflow setup` provisions the same managed runtime the
+install-script path uses (managed CPython under `~/.dexaflow/`).
 
 ### Uninstalling Lite
 
@@ -191,23 +191,23 @@ Use the built-in command — it removes the install directory and (with
 `--purge`) your workspace too:
 
 ```bash
-leoflow uninstall              # removes ~/.leoflow (binaries, managed Python, parser, config)
-leoflow uninstall --purge      # also removes ~/leoflow (your DAGs!)
+dexaflow uninstall              # removes ~/.dexaflow (binaries, managed Python, parser, config)
+dexaflow uninstall --purge      # also removes your workspace (your DAGs!)
 ```
 
-If the `leoflow` binary is gone or broken, fall back to the same paths by
+If the `dexaflow` binary is gone or broken, fall back to the same paths by
 hand:
 
 ```bash
-rm -rf ~/.leoflow              # what `leoflow uninstall` would have removed
-rm -rf ~/leoflow               # what `--purge` adds (your workspace)
+rm -rf ~/.dexaflow              # what `dexaflow uninstall` would have removed
+rm -rf ~/dexaflow              # what `--purge` adds (your workspace)
 ```
 
 ---
 
 ## Install Pro
 
-Pro installs the **control plane into Kubernetes** via the Leoflow Helm
+Pro installs the **control plane into Kubernetes** via the Dexaflow Helm
 chart. Task pods are scheduled into the cluster by the same control plane —
 no host-side process supervisor, no managed Python sidecar. DAGs ship as
 **container images** built in CI ([CI/CD & deploy examples](/operate/cicd-deploy/)).
@@ -225,7 +225,7 @@ gRPC channel stays **mandatory**, the chart just mints a stable self-signed CA
 external Postgres and Redis and go:
 
 ```bash
-helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <VERSION> \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
@@ -240,7 +240,7 @@ Using RDS or Cloud SQL? Their certificates are signed by a CA the system trust
 store does not carry, so read [private CA](#if-your-postgres-uses-a-private-ca-rds-cloud-sql)
 below before running this.
 `--version` takes the chart version — the
-[latest release](https://github.com/neochaotic/leoflow/releases) tag with the
+[latest release](https://github.com/dexadata/dexaflow/releases) tag with the
 leading `v` stripped (per SemVer2).
 
 #### If your Postgres uses a private CA (RDS, Cloud SQL)
@@ -259,7 +259,7 @@ Publish the provider's CA bundle as a ConfigMap with the key `ca.crt`, point
 kubectl create namespace leoflow
 kubectl -n leoflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
 
-helm install leoflow oci://ghcr.io/neochaotic/charts/leoflow --version <VERSION> \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n leoflow --create-namespace \
   --set database.caConfigMap=rds-ca \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
@@ -300,15 +300,15 @@ Installing the chart straight from a checkout of **`main`** is the
 changes that have merged to `main` but not yet been cut into a release. The
 OCI-chart and auto-generated-TLS features are live in released charts too, so
 this is only needed when you want `main`. Same required values, from the
-`helm/leoflow` directory in the repo:
+`helm/dexaflow` directory in the repo:
 
 ```bash
-git clone --depth 1 https://github.com/neochaotic/leoflow   # current main
-cd leoflow
+git clone --depth 1 https://github.com/dexadata/dexaflow   # current main
+cd dexaflow
 
-helm install lf ./helm/leoflow -n leoflow --create-namespace \
-  --set image.tag=v0.4.0-rc.2 \
-  --set migrations.image.tag=v0.4.0-rc.2 \
+helm install lf ./helm/dexaflow -n leoflow --create-namespace \
+  --set image.tag=v0.5.1 \
+  --set migrations.image.tag=v0.5.1 \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
@@ -318,8 +318,8 @@ helm install lf ./helm/leoflow -n leoflow --create-namespace \
 
 The chart auto-generates the agent TLS cert regardless of image version, so
 this works on `main` today. Pin `--set image.tag` / `--set migrations.image.tag`
-to a published release tag (`v0.4.0-rc.2` shown — see the
-[releases](https://github.com/neochaotic/leoflow/releases)); from a source
+to a published release tag (`v0.5.1` shown; see the
+[releases](https://github.com/dexadata/dexaflow/releases)); from a source
 checkout the image tags are not baked in, so set them explicitly. Add
 `--branch <TAG>` to the clone to install the chart at a specific tag instead of
 `main`.
@@ -328,7 +328,7 @@ What this installs (one Deployment, one Service, RBAC for the pod-per-task
 executor, a pre-install/upgrade migrations Job; optional Ingress, PDB, HPA,
 ServiceMonitor, NetworkPolicy):
 
-- **`leoflow-server`** Deployment listening on HTTP `8080`, metrics `9090`,
+- **`dexaflow-server`** Deployment listening on HTTP `8080`, metrics `9090`,
   and agent gRPC `9091`.
 - A pre-install/pre-upgrade **Job** running `golang-migrate` against
   `database.url` before the server starts.
@@ -358,7 +358,7 @@ agent TLS, above).
 
 Managed services are first-class — RDS / Cloud SQL / Azure Database for
 Postgres on the SQL side; ElastiCache / Memorystore / Azure Cache for Redis.
-See the chart's [Datastore compatibility](https://github.com/neochaotic/leoflow/blob/main/helm/leoflow/README.md#datastore-compatibility)
+See the chart's [Datastore compatibility](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility)
 table for tested versions; managed providers that present a per-instance or
 provider-specific CA expose a `caConfigMap` knob (Postgres and Redis sides
 respectively) for verified TLS.
@@ -380,8 +380,8 @@ starts. Two fixes:
 For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
 job. The supported PoC path is to install plain Postgres + Redis
-manifests alongside the chart, then point Leoflow at the in-cluster
-Services. Recipe: [`helm/leoflow/examples/README.md`](https://github.com/neochaotic/leoflow/tree/main/helm/leoflow/examples/README.md).
+manifests alongside the chart, then point Dexaflow at the in-cluster
+Services. Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md).
 **Not for production.**
 {{% /alert %}}
 
@@ -433,8 +433,14 @@ deploy, layer on:
   populate `networkPolicy.egress` with your own data-store and apiserver rules
   (DNS is always allowed regardless). Its ingress, meanwhile, is port-scoped but
   not source-scoped until you set `networkPolicy.ingressFrom`: with the default
-  empty list the policy renders ports 8080/9091 with no `from`, so any pod in any
-  namespace may reach them. It renders nothing for task pods.
+  empty list the policy renders ports 8080/9091 with no `from`, so anything may
+  reach them: every pod in every namespace, node and host traffic, and
+  off-cluster clients where the CNI keeps the client IP. To admit only the
+  release namespace, set `networkPolicy.ingressFrom` to `[{podSelector: {}}]`,
+  and add a `namespaceSelector` matching `kubernetes.io/metadata.name` of
+  `taskNamespace` when task pods run in another namespace, since they dial the
+  gRPC port back. Do not use `[{namespaceSelector: {}}]` for this: an empty
+  namespace selector matches every namespace. It renders nothing for task pods.
 - **`taskNetworkPolicy.enabled` is the task-pod policy, and it defaults to
   `false`.** This is the one that governs the pods running untrusted,
   author-supplied DAG code: it denies all ingress and allows egress only to DNS,
@@ -477,7 +483,7 @@ deploy, layer on:
 
 {{% alert title="`secretScoping: enforce` denies secrets to a DAG that declares none" color="warning" %}}
 Under `enforce` a task receives **only** the Variables and Connections its
-`leoflow.yaml` declares — and a DAG that declares **nothing** therefore receives
+`dexaflow.yaml` declares — and a DAG that declares **nothing** therefore receives
 **nothing**, not everything. The declaration schema is new, so most existing DAGs
 declare nothing and would break on the flip. Land it the way any breaking
 security change lands: leave `permissive` on while your DAGs adopt
@@ -486,7 +492,7 @@ then flip. Note what the observation period can and cannot tell you — the
 scope-warning trail covers only DAGs whose declarations still resolve, so it
 sees neither a DAG that declares nothing nor one whose declared names have since
 been deleted from the vault
-([#800](https://github.com/neochaotic/leoflow/issues/800)).
+([#800](https://github.com/dexadata/dexaflow/issues/800)).
 {{% /alert %}}
 
 {{% alert title="The agent channel is server TLS, not mutual mTLS" color="info" %}}
@@ -515,14 +521,14 @@ expectations, rollback — lives in [Upgrades](/operate/upgrades/).
 
 ### Verifying the chart and images
 
-Both the **chart** and the **images** (`leoflow-server`, `leoflow-migrate`,
-plus `leoflow` and `leoflow-agent` binaries) are published by
+Both the **chart** and the **images** (`dexaflow-server`, `dexaflow-migrate`,
+plus `dexaflow` and `dexaflow-agent` binaries) are published by
 `.github/workflows/release.yaml` and **cosign-signed** (keyless):
 
 ```bash
 # Verify the server image at a release tag.
-cosign verify ghcr.io/neochaotic/leoflow-server:v0.4.0-rc.2 \
-  --certificate-identity-regexp 'https://github.com/neochaotic/leoflow' \
+cosign verify ghcr.io/dexadata/dexaflow-server:v0.5.1 \
+  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -548,7 +554,7 @@ data outlive the chart — drop them out of band when you're done.
 ## Next
 
 - [Quickstart](/get-started/quickstart/) — run your first DAG.
-- [The `leoflow lite` workflow](/contribute/local-dev-loop/) — the hot-reload inner loop
+- [The `dexaflow lite` workflow](/contribute/local-dev-loop/) — the hot-reload inner loop
   (Lite).
 - [Helm chart](/operate/helm-chart/) — full Pro values reference.
 - [CI/CD & deploy examples](/operate/cicd-deploy/) — packaging DAGs as images for Pro.

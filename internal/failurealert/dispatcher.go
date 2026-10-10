@@ -10,9 +10,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/neochaotic/leoflow/internal/alerts"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/alerts"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 )
 
 // Endpoint is a resolved alert channel: the URL to POST to and any headers the

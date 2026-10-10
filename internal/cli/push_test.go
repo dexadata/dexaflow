@@ -68,7 +68,7 @@ func TestPushCommandUsesConfigTokenWhenFlagAbsent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// A config produced by `leoflow auth login`: it carries both server_url and token.
+	// A config produced by `dexaflow auth login`: it carries both server_url and token.
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte("server_url: "+srv.URL+"\ntoken: jwt-saved\n"), 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)

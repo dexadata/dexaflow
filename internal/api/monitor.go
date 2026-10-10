@@ -22,7 +22,7 @@ type Heartbeater interface {
 
 // componentHealth resolves a component's status string and heartbeat timestamp.
 // Without a heartbeater (component not wired) it reports healthy with now, since
-// in Leoflow's single process its role is served by this very request.
+// in Dexaflow's single process its role is served by this very request.
 func componentHealth(hb Heartbeater) (status, heartbeat string) {
 	if hb == nil {
 		return healthStatusHealthy, time.Now().UTC().Format(time.RFC3339)
@@ -48,7 +48,7 @@ func componentHealth(hb Heartbeater) (status, heartbeat string) {
 // whether the database is fine must not be the one surface that says it is.
 //
 // The scheduler status is a real heartbeat (sched, when wired, reports its last
-// loop tick — a stalled leader goes unhealthy). Leoflow's single Go control plane
+// loop tick — a stalled leader goes unhealthy). Dexaflow's single Go control plane
 // subsumes the triggerer and DAG-processor roles (no separate Python daemons):
 // triggering is folded into the scheduler and DAG "processing" is GitOps
 // compile-time, so those mirror the scheduler heartbeat. See docs/ui-compatibility.md.

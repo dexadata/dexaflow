@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // EmbedGroup namespaces a rendered dbt group's tasks and wires its external edges:

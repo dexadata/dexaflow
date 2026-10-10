@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestExcludePathsNegationIsDroppedAndSaidSo covers #1081. expandPattern's

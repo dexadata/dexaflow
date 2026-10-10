@@ -3,7 +3,7 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 var allTaskStates = []domain.TaskState{

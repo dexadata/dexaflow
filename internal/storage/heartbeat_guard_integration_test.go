@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestRecordHeartbeatLiveAttemptStampsNoError: the ordinary path — a running,

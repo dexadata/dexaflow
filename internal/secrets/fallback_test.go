@@ -3,7 +3,7 @@ package secrets_test
 import (
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/secrets"
 )
 
 // The Lite fixed key was published in this repository, so every install shared

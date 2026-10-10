@@ -106,7 +106,7 @@ for v in published:
 				f"- **python {v} reaches upstream EOL on {eol} ({when})** and is still listed as "
 				f"supported in `{schema_rel}`.\n"
 				f"  `docker-library/python` stops rebuilding the line the day after, so "
-				f"`ghcr.io/neochaotic/leoflow-runtime:py{v}` freezes and accumulates unfixed OS CVEs. "
+				f"`ghcr.io/dexadata/dexaflow-runtime:py{v}` freezes and accumulates unfixed OS CVEs. "
 				f"Users pin `base_image`, so our choice becomes theirs.\n"
 				f"  Decide now: add `x-leoflow-python-deprecations` for `{v}` with a removal date, "
 				f"announce it in the CHANGELOG, and keep publishing until then."

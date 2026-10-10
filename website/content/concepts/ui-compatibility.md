@@ -11,9 +11,9 @@ description: "What the Airflow-compatible UI supports, and where it intentionall
 {{% alert title="Status update — superseded by the implementation" color="success" %}}
 This began as a **Phase 5 investigation (2026-05-22)** arguing the *naive* goal
 (unmodified Airflow UI on `/api/v2` alone) was not viable. **That realistic path
-was taken and it works:** Leoflow serves the unmodified Apache Airflow 3.2.1
+was taken and it works:** Dexaflow serves the unmodified Apache Airflow 3.2.1
 React SPA **and** implements the internal `/ui/*` API (ADR 0017 / ADR 0018). The
-grid, graph, dashboard, and run views run against Leoflow today (Demo + Lite,
+grid, graph, dashboard, and run views run against Dexaflow today (Demo + Lite,
 browser-verified). The standing risk below is real and accepted: `/ui/*` is
 internal/unstable (AIP-84), so a new Airflow UI version can break a screen — we
 pin to 3.2.1 and guard with a browser contract sweep.
@@ -43,13 +43,13 @@ endpoints whose shapes are tuned for the frontend and change between Airflow
 releases by design (AIP-84 explicitly trades backward-compatibility away so the
 UI can iterate).
 
-### Consequence for Leoflow
+### Consequence for Dexaflow
 
-Leoflow implements a subset of the **public `/api/v2/`**. It does **not**
+Dexaflow implements a subset of the **public `/api/v2/`**. It does **not**
 implement `/ui/*`. Therefore:
 
-- Pointing the **unmodified** Airflow 3.2.x UI at Leoflow's `/api/v2/` **will not
-  work** — the UI calls `/ui/*` endpoints Leoflow doesn't serve.
+- Pointing the **unmodified** Airflow 3.2.x UI at Dexaflow's `/api/v2/` **will not
+  work** — the UI calls `/ui/*` endpoints Dexaflow doesn't serve.
 - Implementing `/ui/*` to satisfy the UI means matching an **internal, unstable**
   API and re-chasing it on every Airflow minor release. That is a brittle,
   perpetual maintenance burden — the opposite of a stable compatibility target.
@@ -59,7 +59,7 @@ works") reflects the **2.x** architecture. It does not hold for 3.x.
 
 ## Realistic paths
 
-1. **Custom minimal UI (recommended).** Build a small React app against Leoflow's
+1. **Custom minimal UI (recommended).** Build a small React app against Dexaflow's
    own stable `/api/v2/`. This is already on the post-MVP roadmap ("Custom UI
    (replacing the Airflow UI)"). It avoids chasing an internal API and gives us a
    stable contract we control. Best long-term fit with the GitOps/immutable
@@ -68,14 +68,14 @@ works") reflects the **2.x** architecture. It does not hold for 3.x.
    implement exactly the `/ui/*` endpoints that version calls, pinned to 3.2.1.
    Delivers the familiar Airflow UI now, but is brittle and version-locked.
 3. **Defer the UI.** For the MVP, the operator surface is the embedded **Scalar
-   API reference** (`/docs`) plus the `leoflow runs` / `leoflow` CLI. The visual
+   API reference** (`/docs`) plus the `dexaflow runs` / `dexaflow` CLI. The visual
    UI lands later via path 1 or 2.
 
 ## Public `/api/v2/` compatibility audit
 
 Independent of the UI, the **public** API should stay Airflow-3-shaped for
 external clients (Airflow operators, scripts, the `airflow` CLI's API mode). What
-Leoflow exposes today aligns well on shape:
+Dexaflow exposes today aligns well on shape:
 
 - ✅ Airflow-3 field naming: `logical_date` (not `execution_date`), `dag_run_id`,
   `task_instances`, `total_entries` pagination, the `__type` schedule field.
@@ -87,13 +87,13 @@ Leoflow exposes today aligns well on shape:
   `/variables`, `/connections`, `/pools`, `/assets`, `/monitor/health`,
   `/version`. These are needed for full external-client parity but not for the
   current execution surface.
-- ⚠️ `/dags/{id}/versions` is **Leoflow-specific** (DAG-as-image versioning), not
+- ⚠️ `/dags/{id}/versions` is **Dexaflow-specific** (DAG-as-image versioning), not
   an Airflow endpoint.
 
 ## Decision: path 2 — serve the unmodified 3.2.1 UI, implement a pinned `/ui/*`
 
 We pursue **path 2**: serve the **unmodified** Apache Airflow **3.2.1** React UI
-assets and implement, in the Leoflow control plane, the `/ui/*` (and the few
+assets and implement, in the Dexaflow control plane, the `/ui/*` (and the few
 extra `/api/v2/*`) endpoints that exact version calls — **pinned to 3.2.1**. We
 accept the version-lock and the re-chase-on-upgrade cost; in return we get the
 familiar Airflow UI without forking it.
@@ -117,7 +117,7 @@ Rather than leave dead buttons, we minimize the uncovered surface from the
 backend, in three tiers:
 
 1. **`/ui/auth/menus` (curated)** — the UI renders only the menu sections this
-   endpoint authorizes. By returning only Leoflow-backed capabilities we make the
+   endpoint authorizes. By returning only Dexaflow-backed capabilities we make the
    UI **hide** unsupported sections (Assets, Connections, Variables, Pools,
    Backfills, Admin, …) entirely. No dead button, no SPA change.
 2. **`/ui/config` (feature flags)** — disables UI features we do not back.
@@ -125,7 +125,7 @@ backend, in three tiers:
    schema-valid **empty** payload (empty list / zeroed stats) so advanced views
    render an empty state instead of erroring; unsupported **write** actions
    return `501` with a `detail` hint the UI surfaces as a toast
-   ("Not available in Leoflow yet").
+   ("Not available in Dexaflow yet").
 
 ## The `/ui/*` surface (Airflow 3.2.1, from `_private_ui.yaml`)
 
@@ -155,7 +155,7 @@ backend, in three tiers:
 | Degrade | `GET /ui/teams` | empty |
 | Degrade | `GET /ui/connections/hook_meta` | empty |
 
-Logs, trigger, clear, and pause are served by the public `/api/v2/*` Leoflow
+Logs, trigger, clear, and pause are served by the public `/api/v2/*` Dexaflow
 already exposes; the UI calls those directly.
 
 ## Serving & auth architecture
@@ -163,18 +163,18 @@ already exposes; the UI calls those directly.
 ```
 browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
         ──▶ /ui/*    ─┐
-        ──▶ /api/v2/* ─┼─▶ leoflow-server   (reverse proxy serves assets + routes API)
+        ──▶ /api/v2/* ─┼─▶ dexaflow-server   (reverse proxy serves assets + routes API)
                        ─┘
 ```
 
-- A reverse proxy (or a static-file route in leoflow-server) serves the pinned
+- A reverse proxy (or a static-file route in dexaflow-server) serves the pinned
   3.2.1 SPA bundle and routes `/ui/*` and `/api/v2/*` to the control plane.
 - **Auth (dual-path — corrected 2026-05-22).** The earlier assumption that the UI
   logs in via `POST /ui/auth/token` was **wrong**: the spec's `GenerateTokenBody`
   carries **no credentials** (only an optional `token_type`), so `/ui/auth/token`
   re-mints a token for an **already-authenticated** principal — it is not the
   login endpoint. Credential login (username/password) is the **simple-auth-manager
-  `POST /auth/token`**. Leoflow therefore implements **both**:
+  `POST /auth/token`**. Dexaflow therefore implements **both**:
   - `POST /auth/token` — credential login → JWT (the real login; already existed).
   - `POST /ui/auth/token` — re-mint for an authed bearer → `{access_token,
     token_type, expires_in_seconds}`; 401 without a bearer.
@@ -182,7 +182,7 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
     capture which endpoint the 3.2.1 login form actually POSTs on submit. Record
     the finding here before closing the PR. The unused path stays as a graceful
     fallback (do not remove until 5.3 or Phase 6). The JWT is sent as
-    `Authorization: Bearer` on subsequent calls; Leoflow's existing JWT issuance
+    `Authorization: Bearer` on subsequent calls; Dexaflow's existing JWT issuance
     backs both, secret shared via configuration.
 
 ## Learnings log
@@ -208,7 +208,7 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
     flags, are the lever that hides sections.
   - `/ui/auth/token` is a re-mint, not login (see Serving & auth above).
 - **Strategic note:** the pinned `/ui/*` is tactical for MVP velocity; a custom
-  Leoflow UI on the stable `/api/v2/` is the long-term destination. See ADR 0018.
+  Dexaflow UI on the stable `/api/v2/` is the long-term destination. See ADR 0018.
 - **2026-05-22 (Phase 5.2 — DAG list, grid, graph).** Implemented the read views:
   - `GET /ui/dags` (DAGWithLatestDagRunsResponse, 30+ required fields),
     `GET /ui/dags/{id}/latest_run` (DAGRunLightResponse|null — 200 null, not 404),
@@ -221,7 +221,7 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
     returns `application/x-ndjson`, one `GridTISummaries` per run. (The 5.2 prompt's
     "run_id→task_id→state map" was wrong; spec wins.)
   - **Impedance gaps mapped, not faked away:** `DAGRunLightResponse.id` is an
-    integer in the spec but Leoflow keys runs by `(dag_id, run_id)` — `id` is a
+    integer in the spec but Dexaflow keys runs by `(dag_id, run_id)` — `id` is a
     stable FNV hash of run_id, a display key only; `run_after` maps to logical
     date (no separate field); `has_missed_deadline`, task groups, dynamic mapping,
     bundle/fileloc/parse metadata are absent → null/false/defaults. Topology comes
@@ -248,11 +248,11 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
     `/ui/auth/token`). Upstream that 307-redirects into the simple-auth-manager
     login SPA, which POSTs `{username,password}` to **`POST /auth/token`** and
     stores the returned JWT in a cookie named **`_token`** (path `/`) that the
-    rest of the UI reads. Leoflow now: serves a minimal login page at
+    rest of the UI reads. Dexaflow now: serves a minimal login page at
     `/api/v2/auth/login` honoring that contract (no second SPA embedded), makes
     `/api/v2/auth/` public, and **accepts the `_token` cookie** as a fallback to
     the `Authorization` header across `/api/v2` and `/ui`. `/api/v2/auth/logout`
-    clears the cookie. Leoflow departs from upstream on one point: **the cookie
+    clears the cookie. Dexaflow departs from upstream on one point: **the cookie
     is set by the response, not by the page.** `POST /auth/token` sets it
     server-side, `HttpOnly`, exactly as the SSO callback does, and still returns
     `access_token` in the body for API clients. A page-set cookie is one a script
@@ -275,7 +275,7 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
       real implementations tracked in issues **#26–#32**.
     - Inline http_api tasks succeeded but their logs 404'd: the distroless
       container's nonroot user could not create `/var/log/leoflow`. Fixed by
-      pointing `LEOFLOW_LOGS_DIR` at a writable path in the demo compose. Logs now
+      pointing `DEXAFLOW_LOGS_DIR` at a writable path in the demo compose. Logs now
       persist and render (e.g. `inline http_api GET … -> success`).
     - Note: **http_api** ran inline (ADR 0015; removed, ADR 0047/0048); python/bash tasks need a
       Kubernetes worker pod, which the compose demo does not provide.

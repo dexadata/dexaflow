@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // Ephemeral models are inlined by dbt (no table), so they must not become tasks;

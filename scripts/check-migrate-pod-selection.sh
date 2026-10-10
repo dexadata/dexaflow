@@ -27,14 +27,14 @@
 # maps were individually "correct" for ~246 cases while their relationship was
 # wrong. This renders the chart and compares the real maps, so a future edit to
 # EITHER side — the Job's pod labels or any control-plane selector — is caught by
-# the same gate. helm/leoflow/tests/migrate_pod_selection_test.yaml pins the
+# the same gate. helm/dexaflow/tests/migrate_pod_selection_test.yaml pins the
 # shapes; this asserts the property.
 #
 # Usage: scripts/check-migrate-pod-selection.sh [--self-test]
 #        scripts/check-migrate-pod-selection.sh <rendered.yaml> [<mode-label>]
 set -euo pipefail
 
-CHART="helm/leoflow"
+CHART="helm/dexaflow"
 # The chart refuses to render without these; they are fixtures, not credentials.
 BASE_VALUES=(
 	--set 'database.url=postgres://leoflow:p@db:5432/leoflow?sslmode=disable'

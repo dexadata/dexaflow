@@ -172,7 +172,7 @@ func decodeRun(ctx context.Context, url, token string) (state, id string, err er
 	return r.State, r.DagRunID, nil
 }
 
-// newRunsLogsCommand builds `leoflow runs logs <dag_id> <run_id> <task_id>`:
+// newRunsLogsCommand builds `dexaflow runs logs <dag_id> <run_id> <task_id>`:
 // read one task attempt's logs from the CLI. The logs already exist end to end —
 // the agent captures stdout/stderr, the control plane persists and serves them
 // at the Airflow-compatible taskInstances logs route — but until now only the

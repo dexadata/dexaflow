@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/secrets"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // openRepo connects to the migrated test database or skips. It returns the
@@ -73,6 +73,41 @@ func TestGetCurrentSpecIntegration(t *testing.T) {
 
 	if _, err := repo.GetCurrentSpec(ctx, "default", "does-not-exist"); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("missing dag = %v, want ErrNotFound", err)
+	}
+}
+
+// TestGetCurrentSpecFollowsNewVersionIntegration pins that serving the current
+// spec from the version cache never hides a newly registered version: the
+// cache is keyed by the immutable version id, and the current id is read from
+// dags on every call.
+func TestGetCurrentSpecFollowsNewVersionIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	dagID := fmt.Sprintf("uiq_spec_next_%d", time.Now().UnixNano())
+	registerSpec(t, repo, ctx, dagID, []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython}})
+	for range 2 {
+		got, err := repo.GetCurrentSpec(ctx, "default", dagID)
+		if err != nil || len(got.Tasks) != 1 {
+			t.Fatalf("first version: tasks=%d err=%v", len(got.Tasks), err)
+		}
+	}
+
+	next := domain.DAGSpec{SchemaVersion: "1.0", DagID: dagID, DagVersion: "v2", Image: "img:v2", Tasks: []domain.TaskSpec{
+		{TaskID: "a", Type: domain.TaskTypePython},
+		{TaskID: "b", Type: domain.TaskTypePython, DependsOn: []string{"a"}},
+	}}
+	hash, err := next.CanonicalHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created, rerr := repo.RegisterDagVersion(ctx, "default", next, hash); rerr != nil || !created {
+		t.Fatalf("register v2: created=%v err=%v", created, rerr)
+	}
+	got, err := repo.GetCurrentSpec(ctx, "default", dagID)
+	if err != nil {
+		t.Fatalf("GetCurrentSpec after v2: %v", err)
+	}
+	if len(got.Tasks) != 2 || got.Image != "img:v2" {
+		t.Errorf("GetCurrentSpec after v2 = %d tasks, image %q; want the new version", len(got.Tasks), got.Image)
 	}
 }
 

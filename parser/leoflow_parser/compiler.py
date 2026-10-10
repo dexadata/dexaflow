@@ -1,7 +1,7 @@
-"""Compile an Airflow DAG into the canonical Leoflow dag.json.
+"""Compile an Airflow DAG into the canonical Dexaflow dag.json.
 
 The compiler imports the DAG module through Airflow's DagBag (which never runs
-task bodies), inspects ``dag.task_dict``, and maps each operator to a Leoflow
+task bodies), inspects ``dag.task_dict``, and maps each operator to a Dexaflow
 task. It supports Python (including TaskFlow ``@task``), Bash, and HTTP tasks.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 # Per-project config arrives from the Go CLI via this env var. The CLI parses
-# leoflow.yaml with gopkg.in/yaml.v3 and hands the resolved (defaults
+# dexaflow.yaml with gopkg.in/yaml.v3 and hands the resolved (defaults
 # applied) struct here as JSON — so the parser has zero third-party deps and
 # the Go side stays the single source of truth for the config schema.
 _CONFIG_ENV = "LEOFLOW_PROJECT_CONFIG_JSON"
@@ -111,13 +111,13 @@ def _load_config(path: str) -> dict[str, Any]:
         return data or {}
     if not path:
         raise ValueError(
-            f"no project config available: set {_CONFIG_ENV} (the Leoflow CLI "
+            f"no project config available: set {_CONFIG_ENV} (the Dexaflow CLI "
             "does this automatically) or pass a JSON config file path"
         )
     if not os.path.isfile(path):
         raise ValueError(
             f"no project config available: {_CONFIG_ENV} is unset and "
-            f"{path!r} does not exist. The Leoflow CLI normally sets the "
+            f"{path!r} does not exist. The Dexaflow CLI normally sets the "
             "env var; if you are invoking the parser directly, set it or "
             "pass a path to a JSON config file."
         )
@@ -126,7 +126,7 @@ def _load_config(path: str) -> dict[str, Any]:
         raise ValueError(
             f"YAML config files are no longer parsed in-process (PyYAML was "
             f"removed at the alpha cut). Set {_CONFIG_ENV} to the JSON "
-            f"output of `leoflow compile` config resolution, or convert "
+            f"output of `dexaflow compile` config resolution, or convert "
             f"{path!r} to JSON."
         )
     with open(path, encoding="utf-8") as handle:
@@ -151,7 +151,7 @@ def _load_dag(source: str, dag_id: str | None):
     if dag_id:
         raise ValueError(f"DAG {dag_id!r} not found in {source}; found {sorted(dags)}")
     if len(dags) > 1:
-        raise ValueError(f"multiple DAGs in {source}; set dag_id in leoflow.yaml")
+        raise ValueError(f"multiple DAGs in {source}; set dag_id in dexaflow.yaml")
     return next(iter(dags.values()))
 
 
@@ -212,7 +212,7 @@ def _load_dags_shim(source: str):
 
 
 def _unsupported(detail: str) -> str:
-    return (f"{detail}: not supported by Leoflow "
+    return (f"{detail}: not supported by Dexaflow "
             f"(supported: Bash, Http, Python/@task; no dynamic task mapping or task groups)")
 
 
@@ -242,7 +242,7 @@ def _removed_core_operator_hint(name: str) -> str:
     return (
         f"{name!r} was removed from Airflow core in 3.0 and relocated to the "
         f"standard provider. Import from {canonical!r} instead "
-        f"(the apache-airflow-providers-standard package). Leoflow targets "
+        f"(the apache-airflow-providers-standard package). Dexaflow targets "
         f"Airflow 3, so the pre-3 core-operator spelling is not accepted."
     )
 
@@ -260,7 +260,7 @@ def _is_provider_module(name: str | None) -> bool:
 
 def _provider_import_hint(name: str) -> str:
     """Actionable message for a provider hook/operator imported at the DAG module
-    top level. Leoflow parses DAGs without providers installed, so the import
+    top level. Dexaflow parses DAGs without providers installed, so the import
     fails here even when the provider IS declared — the fix is to import it inside
     the @task body (which the parser never executes) and declare it so it lands in
     the task runtime. ADR 0038 #2.
@@ -271,9 +271,9 @@ def _provider_import_hint(name: str) -> str:
     provider, curated or not."""
     return (
         f"{name!r} is an Airflow provider imported at the DAG module top level, "
-        f"which Leoflow cannot resolve while parsing (providers are not installed "
+        f"which Dexaflow cannot resolve while parsing (providers are not installed "
         f"in the parser). Import the hook/operator INSIDE your @task function, and "
-        f"declare the provider in leoflow.yaml via `connectors:` (short names like "
+        f"declare the provider in dexaflow.yaml via `connectors:` (short names like "
         f"postgres, http) or `dependencies:` (an explicit pip package) so it is "
         f"installed in the task runtime."
     )
@@ -324,14 +324,14 @@ def _reject_deferrable(task) -> None:
     image build — rather than letting it fail inside the pod after ``execute()``
     raises TaskDeferred (the runtime keeps its own reject as defense-in-depth).
     Explicit-kwarg only: an operator whose deferrable defaults through Airflow
-    config carries no kwarg here, so this never fires on it. Leoflow has no
+    config carries no kwarg here, so this never fires on it. Dexaflow has no
     triggerer, so deferral is not supported; the fix is a synchronous poke or a
     reschedule-mode sensor.
     """
     args = getattr(task, "__leoflow_args__", None) or {}
     if getattr(task, "deferrable", None) is True or args.get("deferrable") is True:
         raise ValueError(
-            f"task {task.task_id!r} sets deferrable=True, which Leoflow does not "
+            f"task {task.task_id!r} sets deferrable=True, which Dexaflow does not "
             "support (no triggerer). Set deferrable=False so the operator runs "
             "synchronously in the pod (poke-style), or use a reschedule-mode "
             "sensor for a long wait."
@@ -375,7 +375,7 @@ def _map_task(task, source: str, dag=None) -> dict[str, Any]:
     return entry
 
 
-# _ON_FAILURE_CALLBACK is the one Airflow callback kwarg Leoflow runs (#424); the
+# _ON_FAILURE_CALLBACK is the one Airflow callback kwarg Dexaflow runs (#424); the
 # others stay a loud reject until wired.
 _ON_FAILURE_CALLBACK = "on_failure_callback"
 
@@ -384,7 +384,7 @@ _ON_FAILURE_CALLBACK = "on_failure_callback"
 # via _apply_scheduling_attrs. _split_operator_args skips them so they are not
 # mistaken for the operator's own args (and a timedelta does not trip its reject).
 _SCHEDULING_ATTR_NAMES = frozenset(
-    {"trigger_rule", "retries", "retry_delay", "execution_timeout"}
+    {"trigger_rule", "retries", "retry_delay", "execution_timeout", "pool_slots"}
 )
 
 # Task types whose runtime path is Python with a real try/except, so an
@@ -435,8 +435,8 @@ def _check_callbacks(task, task_type: str, entry: dict) -> None:
     for name in ("on_success_callback", "on_retry_callback"):
         if _has_callback(task, name):
             raise ValueError(
-                f"{name} on task {task.task_id!r} is not supported by Leoflow yet — "
-                "refusing to silently drop it. Use an alerts: block in leoflow.yaml, "
+                f"{name} on task {task.task_id!r} is not supported by Dexaflow yet — "
+                "refusing to silently drop it. Use an alerts: block in dexaflow.yaml, "
                 "or a downstream @task with a trigger_rule.")
     if not _has_callback(task, _ON_FAILURE_CALLBACK):
         return
@@ -448,7 +448,7 @@ def _check_callbacks(task, task_type: str, entry: dict) -> None:
         f"on_failure_callback on task {task.task_id!r} (type {task_type}) cannot run: "
         "only a Python-executed task runs it in-process (a provider operator or a "
         "@task). For HTTP use HttpOperator (a provider operator, which runs it); "
-        "otherwise use an alerts: block in leoflow.yaml, or a downstream @task with "
+        "otherwise use an alerts: block in dexaflow.yaml, or a downstream @task with "
         "trigger_rule='one_failed'.")
 
 
@@ -487,7 +487,7 @@ def _split_operator_args(task) -> tuple[dict[str, list[str]], dict[str, Any]]:
         #
         # Both shapes, because Airflow 3 normalises the attribute to a list. Testing
         # only `callable` sent the list form on to the serialiser, which rejected it
-        # as "a list Leoflow cannot carry" — an error naming the wrong cause for a
+        # as "a list Dexaflow cannot carry" — an error naming the wrong cause for a
         # construct that is in fact supported (#470).
         if name == _ON_FAILURE_CALLBACK and _is_callback(value):
             continue
@@ -505,7 +505,7 @@ def _split_operator_args(task) -> tuple[dict[str, list[str]], dict[str, Any]]:
             continue
         raise ValueError(
             f"operator argument {name!r} on task {task.task_id} is a "
-            f"{type(value).__name__}, which Leoflow cannot carry in dag.json; "
+            f"{type(value).__name__}, which Dexaflow cannot carry in dag.json; "
             f"pass a JSON-serialisable value or an upstream task's output, or "
             f"move the logic into a @task")
     return xcom, operator_args
@@ -533,7 +533,7 @@ def _operator_type(task) -> str:
         if marker in name:
             raise ValueError(
                 f"unsupported operator {name!r} on task {task.task_id!r}: "
-                f"{feature} is not supported by Leoflow yet — refusing to "
+                f"{feature} is not supported by Dexaflow yet — refusing to "
                 "silently mistranslate. See docs/dag-authoring.md for the "
                 "current supported operator list."
             )
@@ -575,7 +575,7 @@ def _sched_attr(task, dag, name: str):
     """Resolve an Airflow scheduling attribute (retries/retry_delay/execution_timeout)
     the way Airflow does: the value set on the operator wins; otherwise the DAG's
     default_args supplies it (#434). Returns None when neither sets it, so the task
-    emits no key and the Go side's leoflow.yaml defaults still apply."""
+    emits no key and the Go side's dexaflow.yaml defaults still apply."""
     value = getattr(task, name, None)
     if value is None and dag is not None:
         value = (getattr(dag, "default_args", None) or {}).get(name)
@@ -592,8 +592,8 @@ def _seconds(value) -> int | None:
 
 
 def _apply_scheduling_attrs(task, dag, entry: dict[str, Any]) -> None:
-    """Capture retries / retry_delay / execution_timeout (operator or default_args)
-    onto the task entry, converting durations to seconds. Silently dropping these —
+    """Capture retries / retry_delay / execution_timeout / pool_slots (operator or
+    default_args) onto the task entry, converting durations to seconds. Silently dropping these —
     the pre-#434 behavior — made a migrated DAG's retries=3 run once with no retry."""
     retries = _sched_attr(task, dag, "retries")
     if retries is not None:
@@ -604,6 +604,12 @@ def _apply_scheduling_attrs(task, dag, entry: dict[str, Any]) -> None:
     execution_timeout = _seconds(_sched_attr(task, dag, "execution_timeout"))
     if execution_timeout is not None:
         entry["execution_timeout_seconds"] = execution_timeout
+    # pool_slots (ADR 0066): how many slots of its pool the task takes. 1 is
+    # both Airflow's and the engine's default, so only a larger value is emitted
+    # and a dag.json that does not use it stays byte-identical.
+    pool_slots = _sched_attr(task, dag, "pool_slots")
+    if pool_slots is not None and int(pool_slots) != 1:
+        entry["pool_slots"] = int(pool_slots)
 
 
 def _python_entrypoint(task, source: str) -> str:

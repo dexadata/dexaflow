@@ -14,13 +14,15 @@ type fakePodLostStore struct {
 	marked     []string
 	markErr    error
 	markNoop   bool // when true, MarkTaskPodLost reports 0 rows updated (a late terminal report won the race)
+	listGrace  []time.Duration
 }
 
-func (f *fakePodLostStore) ListRunningTasks(context.Context) ([]PodLostCandidate, error) {
+func (f *fakePodLostStore) ListRunningTasks(_ context.Context, grace time.Duration) ([]PodLostCandidate, error) {
+	f.listGrace = append(f.listGrace, grace)
 	return f.candidates, f.listErr
 }
 
-func (f *fakePodLostStore) MarkTaskPodLost(_ context.Context, id string) (bool, error) {
+func (f *fakePodLostStore) MarkTaskPodLost(_ context.Context, id string, _, _ int) (bool, error) {
 	if f.markErr != nil {
 		return false, f.markErr
 	}
@@ -92,6 +94,19 @@ func TestPodLostReaper(t *testing.T) {
 		}
 		if len(store.marked) != 0 {
 			t.Fatalf("a running TI with a live pod must not be reaped, got %v", store.marked)
+		}
+	})
+
+	// The store applies the grace period before its LIMIT, so attempts still
+	// inside it never crowd out the ones the reaper can act on.
+	t.Run("the grace period is handed to the store", func(t *testing.T) {
+		store := &fakePodLostStore{}
+		pods := &fakePodManager{active: map[string]bool{}}
+		if err := newReaper(store, pods).run(context.Background()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if len(store.listGrace) != 1 || store.listGrace[0] != grace {
+			t.Fatalf("ListRunningTasks grace = %v, want [%v]", store.listGrace, grace)
 		}
 	})
 

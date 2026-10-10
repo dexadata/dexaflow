@@ -14,9 +14,6 @@ type Metrics struct {
 	// Scheduler
 	SchedulerLoopDuration prometheus.Histogram
 	SchedulerDecisions    *prometheus.CounterVec
-	SchedulerLeader       *prometheus.GaugeVec
-	ActiveDAGRuns         *prometheus.GaugeVec
-	QueuedTasks           *prometheus.GaugeVec
 	TasksUndispatchable   *prometheus.CounterVec
 	SchedulerStepDowns    *prometheus.CounterVec // #311 leader churn observability
 	SchedulerReacquire    prometheus.Histogram   // #311 step-down → re-acquire latency
@@ -40,9 +37,15 @@ type Metrics struct {
 	HTTPRequestDuration *prometheus.HistogramVec
 	AuthFailures        *prometheus.CounterVec
 
+	// Agent credentials: task tokens authenticated without an attempt_epoch
+	// claim, accepted under the epoch-0 rule (ADR 0051 amendment).
+	AgentLegacyAttemptTokens prometheus.Counter
+	// Reconciler: durable SUCCESS records settled over a reaper's provisional
+	// infra mark, by the mark overridden (ADR 0052 amendment).
+	ReconcileInfraOverrides *prometheus.CounterVec
+
 	// Executor (Kubernetes)
 	PodsCreated        *prometheus.CounterVec
-	PodsRunning        prometheus.Gauge
 	PodPendingDuration prometheus.Histogram
 	KubernetesAPICalls *prometheus.CounterVec
 
@@ -52,6 +55,10 @@ type Metrics struct {
 	DispatchAtCapacity  prometheus.Counter
 	DispatchLatency     prometheus.Histogram
 	DispatchInnerErrors prometheus.Counter
+	// UnitMisfits counts tasks let through under executor.unit.enforce=warn
+	// although they do not fit their size, by stage (register, dispatch;
+	// ADR 0066 §3).
+	UnitMisfits *prometheus.CounterVec
 
 	// Redis observability — port of the #311 step-down pattern for Redis (Pro
 	// only; Lite uses Postgres + in-process tailer per ADR 0026, so these
@@ -75,24 +82,21 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	sizeBuckets := prometheus.ExponentialBuckets(64, 4, 8)
 	return &Metrics{
 		SchedulerLoopDuration: f.NewHistogram(prometheus.HistogramOpts{
-			Name: "leoflow_scheduler_loop_duration_seconds", Help: "Duration of one scheduler loop iteration.",
+			Name: "dexaflow_scheduler_loop_duration_seconds", Help: "Duration of one scheduler loop iteration.",
 		}),
 		SchedulerDecisions: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_scheduler_decisions_total", Help: "Scheduler decisions by type.",
+			Name: "dexaflow_scheduler_decisions_total", Help: "Scheduler decisions by type.",
 		}, []string{"decision_type"}),
 		TasksUndispatchable: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_tasks_undispatchable_total", Help: "Tasks queued with no executor to launch them, by reason.",
+			Name: "dexaflow_tasks_undispatchable_total", Help: "Tasks queued with no executor to launch them, by reason.",
 		}, []string{"reason"}),
-		SchedulerLeader: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "leoflow_scheduler_leader", Help: "1 when this replica is the scheduler leader.",
-		}, []string{"replica_id"}),
 		SchedulerStepDowns: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_scheduler_step_downs_total",
+			Name: "dexaflow_scheduler_step_downs_total",
 			Help: "Scheduler leadership step-downs by reason (lock_released, check_timeout, shutdown). " +
 				"Operators alert on rate(...[5m]); a sudden uptick usually indicates a Postgres connection-stability issue (#311).",
 		}, []string{"reason"}),
 		SchedulerReacquire: f.NewHistogram(prometheus.HistogramOpts{
-			Name: "leoflow_scheduler_reacquire_seconds",
+			Name: "dexaflow_scheduler_reacquire_seconds",
 			Help: "Wall-clock seconds between a leader step-down and the same replica reacquiring leadership. " +
 				"A growing P99 signals leader churn that affects scheduling latency (#311).",
 			// Buckets span ~10ms (transient blip) to ~5min (extended outage); the
@@ -100,108 +104,116 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			// reportable distribution.
 			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300},
 		}),
-		ActiveDAGRuns: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "leoflow_active_dag_runs", Help: "Active dag runs by dag and state.",
-		}, []string{"dag_id", "state"}),
-		QueuedTasks: f.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "leoflow_queued_tasks", Help: "Queued task instances by dag.",
-		}, []string{"dag_id"}),
 		AlertsDispatched: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_alerts_dispatched_total",
+			Name: "dexaflow_alerts_dispatched_total",
 			Help: "Native on-failure alerts dispatched, by channel type and outcome (sent, failed). " +
 				"Operators alert on rate of result=\"failed\" to catch a broken alert path (#424).",
 		}, []string{"dag_id", "type", "result"}),
 
 		TaskStateTransitions: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_task_state_transitions_total", Help: "Task state transitions.",
+			Name: "dexaflow_task_state_transitions_total", Help: "Task state transitions.",
 		}, []string{"from_state", "to_state", "dag_id"}),
 		TaskDuration: f.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "leoflow_task_duration_seconds", Help: "Task execution duration.",
+			Name: "dexaflow_task_duration_seconds", Help: "Task execution duration.",
 		}, []string{"dag_id", "task_id", "task_type"}),
 		TaskRetries: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_task_retries_total", Help: "Task retries.",
+			Name: "dexaflow_task_retries_total", Help: "Task retries.",
 		}, []string{"dag_id", "task_id"}),
 		TaskPodCreationDuration: f.NewHistogram(prometheus.HistogramOpts{
-			Name: "leoflow_task_pod_creation_duration_seconds", Help: "Time to create a task pod.",
+			Name: "dexaflow_task_pod_creation_duration_seconds", Help: "Time to create a task pod.",
 		}),
 		TaskColdStart: f.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "leoflow_task_cold_start_seconds", Help: "Task cold start time.",
+			Name: "dexaflow_task_cold_start_seconds", Help: "Task cold start time.",
 		}, []string{"dag_id"}),
 
 		XComSize: f.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "leoflow_xcom_size_bytes", Help: "XCom payload size in bytes.", Buckets: sizeBuckets,
+			Name: "dexaflow_xcom_size_bytes", Help: "XCom payload size in bytes.", Buckets: sizeBuckets,
 		}, []string{"dag_id"}),
 		XComPush: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_xcom_push_total", Help: "XCom pushes.",
+			Name: "dexaflow_xcom_push_total", Help: "XCom pushes.",
 		}, []string{"dag_id"}),
 		XComPull: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_xcom_pull_total", Help: "XCom pulls.",
+			Name: "dexaflow_xcom_pull_total", Help: "XCom pulls.",
 		}, []string{"dag_id"}),
 		XComRejected: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_xcom_rejected_total", Help: "Rejected XCom writes by reason.",
+			Name: "dexaflow_xcom_rejected_total", Help: "Rejected XCom writes by reason.",
 		}, []string{"reason"}),
 
 		HTTPRequests: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_http_requests_total", Help: "HTTP requests.",
+			Name: "dexaflow_http_requests_total", Help: "HTTP requests.",
 		}, []string{"method", "path", "status"}),
 		HTTPRequestDuration: f.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "leoflow_http_request_duration_seconds", Help: "HTTP request duration.",
+			Name: "dexaflow_http_request_duration_seconds", Help: "HTTP request duration.",
 		}, []string{"method", "path"}),
 		AuthFailures: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_auth_failures_total", Help: "Authentication failures by reason.",
+			Name: "dexaflow_auth_failures_total", Help: "Authentication failures by reason.",
 		}, []string{"reason"}),
 
-		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_pods_created_total", Help: "Pods created by dag and result.",
-		}, []string{"dag_id", "result"}),
-		PodsRunning: f.NewGauge(prometheus.GaugeOpts{
-			Name: "leoflow_pods_running", Help: "Currently running pods.",
+		AgentLegacyAttemptTokens: f.NewCounter(prometheus.CounterOpts{
+			Name: "dexaflow_agent_legacy_attempt_token_total",
+			Help: "Agent RPCs authenticated by a task token without the attempt_epoch claim: one minted before the upgrade, " +
+				"or one an old replica renewed or exchanged during a rolling upgrade. Reports from such a token are read as epoch 0. " +
+				"It falls to zero once the rollout has finished and every pre-upgrade attempt has finished; a later release rejects such tokens.",
 		}),
+
+		ReconcileInfraOverrides: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_reconcile_infra_override_total",
+			Help: "Durable SUCCESS records the reconciler settled over a reaper's provisional infra mark (agent_lost, pod_lost, dispatch_lost), " +
+				"by the mark overridden: a task that finished while the control plane lost track of it, recovered instead of re-run.",
+		}, []string{"mark"}),
+
+		PodsCreated: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_pods_created_total", Help: "Pods created by dag and result.",
+		}, []string{"dag_id", "result"}),
 		PodPendingDuration: f.NewHistogram(prometheus.HistogramOpts{
-			Name: "leoflow_pod_pending_duration_seconds", Help: "Pod pending duration.",
+			Name: "dexaflow_pod_pending_duration_seconds", Help: "Pod pending duration.",
 		}),
 		KubernetesAPICalls: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_kubernetes_api_calls_total", Help: "Kubernetes API calls.",
+			Name: "dexaflow_kubernetes_api_calls_total", Help: "Kubernetes API calls.",
 		}, []string{"operation", "result"}),
 
 		DispatchQueueDepth: f.NewGauge(prometheus.GaugeOpts{
-			Name: "leoflow_dispatch_queue_depth", Help: "Number of dispatch requests currently buffered.",
+			Name: "dexaflow_dispatch_queue_depth", Help: "Number of dispatch requests currently buffered.",
 		}),
 		DispatchAtCapacity: f.NewCounter(prometheus.CounterOpts{
-			Name: "leoflow_dispatch_at_capacity_total", Help: "Dispatch requests rejected because the buffer was full.",
+			Name: "dexaflow_dispatch_at_capacity_total", Help: "Dispatch requests rejected because the buffer was full.",
 		}),
 		DispatchLatency: f.NewHistogram(prometheus.HistogramOpts{
-			Name: "leoflow_dispatch_latency_seconds", Help: "End-to-end latency of one buffered dispatch (enqueue to worker completion).",
+			Name: "dexaflow_dispatch_latency_seconds", Help: "End-to-end latency of one buffered dispatch (enqueue to worker completion).",
 		}),
 		DispatchInnerErrors: f.NewCounter(prometheus.CounterOpts{
-			Name: "leoflow_dispatch_inner_errors_total", Help: "Errors returned by the inner dispatcher inside a worker.",
+			Name: "dexaflow_dispatch_inner_errors_total", Help: "Errors returned by the inner dispatcher inside a worker.",
 		}),
+		UnitMisfits: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_unit_misfit_total",
+			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, dispatch).",
+		}, []string{"stage"}),
 
 		RedisCommandFailures: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_redis_command_failures_total",
+			Name: "dexaflow_redis_command_failures_total",
 			Help: "Redis command failures classified by reason (timeout, connection_refused, auth, canceled, other). " +
 				"Alert on rate(...[5m]) to surface a degrading client-side path before user-visible XCom errors (#312 sibling).",
 		}, []string{"reason"}),
 		RedisDialFailures: f.NewCounterVec(prometheus.CounterOpts{
-			Name: "leoflow_redis_dial_failures_total",
+			Name: "dexaflow_redis_dial_failures_total",
 			Help: "Failures at TCP/TLS dial time to Redis, classified by reason (tls_handshake, connection_refused, dns, timeout, other).",
 		}, []string{"reason"}),
 		RedisDialDuration: f.NewHistogram(prometheus.HistogramOpts{
-			Name:    "leoflow_redis_dial_duration_seconds",
+			Name:    "dexaflow_redis_dial_duration_seconds",
 			Help:    "Wall-clock time per Redis dial — TCP connect + (when rediss://) TLS handshake.",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
 		}),
 		RedisPoolActive: f.NewGauge(prometheus.GaugeOpts{
-			Name: "leoflow_redis_pool_active_conns", Help: "Redis pool: connections currently checked out for a command.",
+			Name: "dexaflow_redis_pool_active_conns", Help: "Redis pool: connections currently checked out for a command.",
 		}),
 		RedisPoolIdle: f.NewGauge(prometheus.GaugeOpts{
-			Name: "leoflow_redis_pool_idle_conns", Help: "Redis pool: idle connections available for the next command.",
+			Name: "dexaflow_redis_pool_idle_conns", Help: "Redis pool: idle connections available for the next command.",
 		}),
 		RedisPoolTotalConns: f.NewGauge(prometheus.GaugeOpts{
-			Name: "leoflow_redis_pool_total_conns", Help: "Redis pool: total connections (active + idle). Saturating against PoolSize is the leading indicator of throughput issues.",
+			Name: "dexaflow_redis_pool_total_conns", Help: "Redis pool: total connections (active + idle). Saturating against PoolSize is the leading indicator of throughput issues.",
 		}),
 		RedisPoolTimeouts: f.NewCounter(prometheus.CounterOpts{
-			Name: "leoflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
+			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
 	}
 }
@@ -227,7 +239,7 @@ func (m *Metrics) ObserveRedisDialDuration(d time.Duration) {
 	m.RedisDialDuration.Observe(d.Seconds())
 }
 
-// UpdateRedisPoolStats refreshes the three pool gauges. The cmd/leoflow-server
+// UpdateRedisPoolStats refreshes the three pool gauges. The cmd/dexaflow-server
 // goroutine that calls this scrapes go-redis's PoolStats every N seconds.
 func (m *Metrics) UpdateRedisPoolStats(active, idle, total uint32) {
 	m.RedisPoolActive.Set(float64(active))
@@ -309,6 +321,22 @@ func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 	m.DispatchLatency.Observe(seconds)
 }
 
+// RecordLegacyAttemptToken counts one agent RPC authenticated by a task token
+// without an attempt_epoch claim (ADR 0051 amendment). It satisfies
+// agentrpc.LegacyTokenRecorder.
+func (m *Metrics) RecordLegacyAttemptToken() { m.AgentLegacyAttemptTokens.Inc() }
+
+// RecordInfraOverride counts one durable SUCCESS settled over an infra mark.
+// It satisfies executor.InfraOverrideRecorder.
+func (m *Metrics) RecordInfraOverride(mark string) {
+	m.ReconcileInfraOverrides.WithLabelValues(mark).Inc()
+}
+
 // RecordDispatchInnerError counts one error returned by the inner dispatcher
 // inside a worker — typically a Kubernetes API failure or pod-create rejection.
 func (m *Metrics) RecordDispatchInnerError() { m.DispatchInnerErrors.Inc() }
+
+// RecordUnitMisfit counts one task let through under executor.unit.enforce=warn
+// although it does not fit its size. It satisfies dispatch.UnitMisfitRecorder
+// and api.UnitMisfitRecorder.
+func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues(stage).Inc() }

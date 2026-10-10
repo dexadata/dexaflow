@@ -1,7 +1,7 @@
 """Broad scenario coverage for the shim-backed compiler (ADR 0024).
 
 Supported scenarios assert the resulting structure; unsupported scenarios assert
-a clear "not supported by Leoflow" error. Parity of the supported cases with real
+a clear "not supported by Dexaflow" error. Parity of the supported cases with real
 Airflow was verified against `LEOFLOW_PARSER_BACKEND=airflow` (schedule forms,
 trigger rules, classic PythonOperator, dag= kwarg, dedup, fan-in).
 """
@@ -118,12 +118,15 @@ def test_dag_id_selection_with_multiple_dags(monkeypatch, tmp_path):
     assert spec["dag_id"] == "second"
 
 
-def test_dbt_group_mixed_with_operators(monkeypatch, tmp_path):
+@pytest.mark.parametrize("package", ["dexaflow", "leoflow"])
+def test_dbt_group_mixed_with_operators(monkeypatch, tmp_path, package):
     # A dbt_group() placeholder coexists with real operators in one DAG (ADR 0043):
     # it registers like a task, participates in >> wiring, and compiles to a
     # `dbt_group` task the Go compiler later expands into one task per dbt node.
-    spec = _compile(monkeypatch, tmp_path, """
-        from leoflow import dbt_group
+    # The authoring package is `dexaflow`; DAGs written before the rename import
+    # it as `leoflow`, which must keep compiling identically.
+    spec = _compile(monkeypatch, tmp_path, f"""
+        from {package} import dbt_group
         from airflow.providers.standard.operators.python import PythonOperator
         from airflow.sdk import DAG
         def work(): ...
@@ -175,7 +178,7 @@ def test_dbt_group_mixed_with_operators(monkeypatch, tmp_path):
 def test_unsupported_constructs_error_clearly(monkeypatch, tmp_path, body):
     with pytest.raises(ValueError) as ei:
         _compile(monkeypatch, tmp_path, body)
-    assert "not supported by Leoflow" in str(ei.value)
+    assert "not supported by Dexaflow" in str(ei.value)
 
 
 def test_unsupported_trigger_rule_errors(monkeypatch, tmp_path):

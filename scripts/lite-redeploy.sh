@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# lite-redeploy.sh — local Mac/Linux dev loop for `leoflow lite`.
+# lite-redeploy.sh — local Mac/Linux dev loop for `dexaflow lite`.
 #
 # Rebuilds leoflow / leoflow-server / leoflow-agent from the current source,
 # stops the running lite (if any), swaps the binaries in BOTH places lite
-# resolves them from (./bin and ~/.leoflow/bin — see resolveBinary in
-# internal/cli/dev.go), and restarts `leoflow lite --postgres managed`. Polls
+# resolves them from (./bin and ~/.dexaflow/bin — see resolveBinary in
+# internal/cli/dev.go), and restarts `dexaflow lite --postgres managed`. Polls
 # /readyz and prints the URL + a tail of the boot log.
 #
-# Why both dirs? `leoflow lite` shells out to `leoflow-server` and resolves it
+# Why both dirs? `dexaflow lite` shells out to `leoflow-server` and resolves it
 # via: explicit flag → PATH → ./bin/leoflow-server. Same for leoflow-agent
 # (subprocess executor's agent_path). If only one is updated, the OTHER stale
 # binary silently runs and the loop debugging gets confusing.
@@ -29,9 +29,9 @@ cd "$(git rev-parse --show-toplevel)"
 
 echo "==> building binaries (linux/darwin native)…"
 mkdir -p "$BUILD_DIR" bin
-go build -trimpath -o "$BUILD_DIR/leoflow" ./cmd/leoflow &
-go build -trimpath -o "$BUILD_DIR/leoflow-server" ./cmd/leoflow-server &
-go build -trimpath -o "$BUILD_DIR/leoflow-agent" ./cmd/leoflow-agent &
+go build -trimpath -o "$BUILD_DIR/leoflow" ./cmd/dexaflow &
+go build -trimpath -o "$BUILD_DIR/leoflow-server" ./cmd/dexaflow-server &
+go build -trimpath -o "$BUILD_DIR/leoflow-agent" ./cmd/dexaflow-agent &
 wait
 
 # macOS Sequoia (14+) refuses to run a freshly-produced binary that lacks
@@ -51,14 +51,14 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   kill "$(cat "$PID_FILE")" || true
   sleep 2
 fi
-# Also catch a manually-started one.
-pkill -f "leoflow lite" 2>/dev/null || true
+# Also catch a manually-started one, under either name.
+pkill -f "(dexaflow|leoflow) lite" 2>/dev/null || true
 sleep 1
 
 echo "==> swapping binaries…"
 # Both locations lite resolves from. Keep them in lockstep so the dev loop
 # is unambiguous regardless of which dir was picked.
-for dst in bin "$HOME/.leoflow/bin"; do
+for dst in bin "$HOME/.dexaflow/bin"; do
   mkdir -p "$dst"
   cp "$BUILD_DIR/leoflow"         "$dst/leoflow"
   cp "$BUILD_DIR/leoflow-server"  "$dst/leoflow-server"
@@ -75,7 +75,7 @@ for dst in bin "$HOME/.leoflow/bin"; do
 done
 
 echo "==> starting lite (port $PORT, log-level $LOG_LEVEL)…"
-nohup ./bin/leoflow lite --postgres managed --port "$PORT" --log-level "$LOG_LEVEL" \
+nohup ./bin/dexaflow lite --postgres managed --port "$PORT" --log-level "$LOG_LEVEL" \
   >"$LOG_FILE" 2>&1 &
 echo $! >"$PID_FILE"
 LITE_PID="$(cat "$PID_FILE")"
@@ -99,7 +99,7 @@ fi
 cat <<EOF
 
 ============================================================
-  leoflow lite is up.
+  dexaflow lite is up.
   URL:    http://localhost:$PORT
   PID:    $LITE_PID  (cat $PID_FILE)
   log:    tail -f $LOG_FILE

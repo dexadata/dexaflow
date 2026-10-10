@@ -13,11 +13,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/dexadata/dexaflow/migrations"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage"
-	"github.com/neochaotic/leoflow/migrations"
 )
 
 // TestSchemaReadyAgainstLiveDatabase exercises the readiness schema assertion

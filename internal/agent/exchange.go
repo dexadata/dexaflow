@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // ExchangeToken performs the one-time bootstrap token exchange (ADR 0055 Fix #3):

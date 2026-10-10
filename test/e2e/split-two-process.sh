@@ -83,7 +83,7 @@ case "$(uname -m)" in
   arm64|aarch64) HOST_PLATFORM="linux/arm64" ;;
   *)             HOST_PLATFORM="linux/amd64" ;;
 esac
-cat >> "$WORKDIR/$DAG_ID/leoflow.yaml" <<YAML
+cat >> "$WORKDIR/$DAG_ID/dexaflow.yaml" <<YAML
 build:
   platforms:
     - ${HOST_PLATFORM}

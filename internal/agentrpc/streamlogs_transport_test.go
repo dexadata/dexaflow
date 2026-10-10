@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/agent"
-	"github.com/neochaotic/leoflow/internal/logs"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/agent"
+	"github.com/dexadata/dexaflow/internal/logs"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc"
 )
 

@@ -2,14 +2,14 @@
 
 ## Reporting a Vulnerability
 
-The Leoflow team takes security issues seriously. We appreciate your efforts to disclose vulnerabilities responsibly.
+The Dexaflow team takes security issues seriously. We appreciate your efforts to disclose vulnerabilities responsibly.
 
 **Please do NOT open public GitHub issues for security vulnerabilities.**
 
 ### How to Report
 
 **Use GitHub's private vulnerability reporting:**
-[**Report a vulnerability**](https://github.com/neochaotic/leoflow/security/advisories/new)
+[**Report a vulnerability**](https://github.com/dexadata/dexaflow/security/advisories/new)
 
 The report is visible only to the maintainer until an advisory is published. No
 account beyond GitHub is needed, and it threads the discussion, the fix and the
@@ -66,7 +66,7 @@ on the disclosure.
 
 ### Supported Versions
 
-**Only the latest release.** Leoflow is pre-1.0 and ships patches on a single
+**Only the latest release.** Dexaflow is pre-1.0 and ships patches on a single
 line (v0.1.0 → v0.1.1 → v0.1.2); there is no previous minor to support, and
 under SemVer's 0.x contract a breaking change may land between any two releases
 (ADR 0037). Backporting to an older tag is not offered.

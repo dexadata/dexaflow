@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestTriggerDagRunPersistsConf pins that a conf object in the trigger request

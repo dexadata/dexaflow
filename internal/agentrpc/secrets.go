@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/auth"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // SecretsStore returns a tenant's Variables and Connections for delivery to a
@@ -73,8 +73,12 @@ const (
 // a terminal, superseded, or reaped attempt is not live, so its token stops
 // resolving secrets. The predicate derives ONLY from (run, task, try) + active
 // state — never run recency — so a clear-and-rerun of an old run stays live.
+//
+// The attempt is the caller's whole identity: (run, task, try) and its attempt
+// epoch (ADR 0051 amendment), so an infra-replaced attempt that shares its
+// replacement's try is not live either.
 type TaskLivenessChecker interface {
-	IsTaskInstanceLive(ctx context.Context, runID, taskID string, tryNumber int) (bool, error)
+	IsTaskInstanceLive(ctx context.Context, id auth.AgentIdentity) (bool, error)
 }
 
 // SecretLivenessAuditor records a structured audit event when the secret-path
@@ -176,7 +180,7 @@ func (s *Server) checkLiveness(ctx context.Context, id *auth.AgentIdentity, kind
 	if s.liveness == nil {
 		return nil // gate not configured — delivery unchanged
 	}
-	live, err := s.liveness.IsTaskInstanceLive(ctx, id.RunID, id.TaskID, id.TryNumber)
+	live, err := s.liveness.IsTaskInstanceLive(ctx, *id)
 	if err != nil {
 		// Inconclusive: cannot conclude not-live. Never deny, never warn-as-not-live.
 		slog.Warn("secret-path liveness check inconclusive; delivering (transient error, token TTL bounds exposure)",

@@ -9,14 +9,14 @@ weight: 460
 description: SMTP connection
 ---
 
-Connect a task to an SMTP mail relay over a managed Leoflow Connection. The
+Connect a task to an SMTP mail relay over a managed Dexaflow Connection. The
 host, port, credentials, and an Extra blob (`from_email`, `timeout`) are
 encrypted at rest and delivered to the task as `AIRFLOW_CONN_<CONN_ID>`.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: smtp_notify
 connectors:
   - smtp
@@ -60,7 +60,7 @@ def send():
     with SmtpHook(smtp_conn_id="smtp_default") as hook:
         hook.send_email_smtp(
             to="ops@example.com",
-            subject="Leoflow run complete",
+            subject="Dexaflow run complete",
             html_content="<p>The pipeline finished.</p>",
         )
 
@@ -70,7 +70,7 @@ with DAG("smtp_notify", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: smtp_notify
 python_version: "3.11"

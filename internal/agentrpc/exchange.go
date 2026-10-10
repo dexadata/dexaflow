@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/auth"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 // ReviewedPod is the pod a validated projected ServiceAccount token identifies.

@@ -9,7 +9,7 @@ weight: 140
 description: Google Looker connection
 ---
 
-Run Looker queries and trigger PDTs from a task via a managed Leoflow Connection and the
+Run Looker queries and trigger PDTs from a task via a managed Dexaflow Connection and the
 Google provider's `LookerHook`. The conn_type is `gcp_looker`. A connection has **no
 password** — the API3 `client_id` and `client_secret` live in **Extra**.
 
@@ -19,7 +19,7 @@ password** — the API3 `client_id` and `client_secret` live in **Extra**.
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: looker_pdt
 connectors:
   - gcp_looker
@@ -64,7 +64,7 @@ with DAG("looker_pdt", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: looker_pdt
 description: Build a Looker PDT via LookerHook.
@@ -80,7 +80,7 @@ connectors:
 
 1. **Admin → Connections → +**, type `gcp_looker`. Set the instance URL in Host and the
    API3 `client_id` / `client_secret` in Extra.
-2. `leoflow lite path/to/this/dag` → trigger `looker_pdt`.
+2. `dexaflow lite path/to/this/dag` → trigger `looker_pdt`.
 
 ## Security notes
 

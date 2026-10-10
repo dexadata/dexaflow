@@ -11,7 +11,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // resourceLogTail bounds a log resource read; a task log an agent fetches
@@ -203,6 +203,9 @@ func (h *handlers) readRunDetail(ctx context.Context, req *mcpsdk.ReadResourceRe
 		"state":    stateString(r.State),
 		"run_type": runTypeString(r.RunType),
 	}
+	if u := h.links.run(p[0], p[1]); u != "" {
+		detail["web_url"] = u
+	}
 	if r.StartDate != nil {
 		detail["start_date"] = r.StartDate
 	}
@@ -217,6 +220,7 @@ type taskInstanceSummary struct {
 	State           string  `json:"state"`
 	TryNumber       int     `json:"try_number"`
 	DurationSeconds float32 `json:"duration_seconds,omitempty"`
+	WebURL          string  `json:"web_url,omitempty"`
 }
 
 func (h *handlers) readTaskInstances(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
@@ -246,6 +250,7 @@ func (h *handlers) readTaskInstances(ctx context.Context, req *mcpsdk.ReadResour
 			State:           stateString(ti.State),
 			TryNumber:       deref(ti.TryNumber),
 			DurationSeconds: deref(ti.Duration),
+			WebURL:          h.links.task(p[0], p[1], deref(ti.TaskId), deref(ti.TryNumber)),
 		})
 	}
 	return jsonResource(req.Params.URI, map[string]any{"task_instances": out, "total_entries": len(out)})

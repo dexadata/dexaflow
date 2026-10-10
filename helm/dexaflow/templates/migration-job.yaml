@@ -1,0 +1,121 @@
+{{- if .Values.migrations.enabled -}}
+{{/*
+Runs golang-migrate before the server starts, as a pre-install/pre-upgrade hook.
+The default image (ghcr.io/dexadata/dexaflow-migrate, built from
+deploy/Dockerfile.migrate via `make migrate-image`) bundles the Dexaflow
+migrations at .Values.migrations.path. Override migrations.image to use your own,
+or set migrations.enabled=false to migrate out of band.
+*/}}
+{{- $migrateTag := .Values.migrations.image.tag | default .Chart.AppVersion -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "leoflow.fullname" . }}-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      # NOT leoflow.selectorLabels (#1055). A Service selector matches every pod
+      # whose labels CONTAIN it, and for the default "all" role the control-plane
+      # Service's selector IS that set — so on `helm upgrade`, where the Service
+      # is already live when the pre-upgrade hook runs, this pod joined the
+      # Service's EndpointSlice and the PodDisruptionBudget's healthy count,
+      # Ready from the first instant because a Job pod has no readinessProbe. A
+      # distinguishing label alone would not help: a superset still matches. What
+      # that cost, and why the traffic half stayed invisible, is written out on
+      # leoflow.migrateName.
+      labels:
+        {{- include "leoflow.migratePodLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      # The migrate binary talks only to Postgres via LEOFLOW_DATABASE_URL and
+      # never calls the Kubernetes API, so it has no use for a projected
+      # ServiceAccount token. Declining the automount keeps this pod from being
+      # handed the namespace default SA's credential. Mirrors the task pod in
+      # internal/executor/kubernetes.go.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.migrations.podSecurityContext | nindent 8 }}
+      # Pod placement is INHERITED from the top-level values rather than given
+      # its own knobs (#1056). An operator who set `tolerations` said "Dexaflow
+      # runs on this pool", and the migration Job is Dexaflow — it was the one
+      # workload in the chart ignoring the values every other workload honours,
+      # and it is the workload that runs FIRST. On a tainted or dedicated pool
+      # the hook was unschedulable: the pod sat Pending, Helm waited out the hook
+      # timeout, and the install failed with a message that never mentioned
+      # scheduling.
+      #
+      # No `migrations.nodeSelector` etc.: a Job-specific pool is surface nobody
+      # has asked for, and this chart is busy removing values that are declared
+      # and unread rather than adding more.
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.migrations.image.repository }}:{{ $migrateTag }}"
+          imagePullPolicy: {{ .Values.migrations.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.migrations.securityContext | nindent 12 }}
+          args:
+            - "-path={{ .Values.migrations.path }}"
+            - "-database=$(LEOFLOW_DATABASE_URL)"
+            - "up"
+          env:
+            - name: LEOFLOW_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret | default (include "leoflow.secretName" .) }}
+                  key: databaseUrl
+          {{- with .Values.migrations.resources }}
+          # Requests, not just limits, and not omitted (#1053). Without them this
+          # pod is BestEffort, which costs two things a cluster test never shows:
+          # a namespace ResourceQuota on requests.cpu/requests.memory rejects it
+          # at admission — and since this is a pre-install hook, `helm install`
+          # fails outright — and BestEffort is first out under node pressure, so
+          # an eviction mid-`up` leaves schema_migrations.dirty and backoffLimit
+          # retries into "Dirty database version N. Fix and force version." on a
+          # cluster whose control plane has not started yet.
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.database.caConfigMap }}
+          # The same CA bundle the control plane gets (#1052). Both consume the
+          # SAME databaseUrl secret, so a DSN carrying
+          # `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` — which is
+          # the recipe values.yaml documents for managed Postgres — needs the file
+          # here too. Without it the server came up and this Job failed, and only
+          # against a real managed database: with no sslrootcert lib/pq falls back
+          # to the system trust store, which is why every in-cluster CI Postgres
+          # passed.
+          volumeMounts:
+            - name: db-ca
+              mountPath: /etc/leoflow/db-ca
+              readOnly: true
+          {{- end }}
+      {{- if .Values.database.caConfigMap }}
+      volumes:
+        - name: db-ca
+          configMap:
+            name: {{ .Values.database.caConfigMap }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+      {{- end }}
+{{- end -}}

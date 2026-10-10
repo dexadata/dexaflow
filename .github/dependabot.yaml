@@ -33,7 +33,7 @@ updates:
   # Scoped to the images that ship: the two deploy images and the task runtime
   # base. examples/*/Dockerfile is deliberately excluded — 24 demo images would
   # produce weekly PR noise for artifacts nobody deploys, and each is generated
-  # from its leoflow.yaml by scripts/sync-example-dockerfiles.sh anyway.
+  # from its dexaflow.yaml by scripts/sync-example-dockerfiles.sh anyway.
   - package-ecosystem: docker
     directories:
       - "/deploy"

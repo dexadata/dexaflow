@@ -35,7 +35,7 @@ func TestResolveWorkspace_EmptyWorkspaceReturnsNoProjectsButValidRoot(t *testing
 }
 
 // TestResolveWorkspace_SingleSubdirProject confirms the multi-DAG happy path:
-// one subdir with leoflow.yaml + dag.py shows up as the only project, with the
+// one subdir with dexaflow.yaml + dag.py shows up as the only project, with the
 // expected dag_id and resolved config path.
 func TestResolveWorkspace_SingleSubdirProject(t *testing.T) {
 	ws := t.TempDir()
@@ -43,7 +43,7 @@ func TestResolveWorkspace_SingleSubdirProject(t *testing.T) {
 	if err := os.MkdirAll(dag, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dag, "leoflow.yaml"), []byte("dag_id: sales\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dag, "dexaflow.yaml"), []byte("dag_id: sales\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dag, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
@@ -84,7 +84,7 @@ func TestResolveWorkspace_RootCfgUnionsDependencies(t *testing.T) {
 			t.Fatal(err)
 		}
 		yaml := "dag_id: " + p.dir + "\ndependencies:\n" + p.deps
-		if err := os.WriteFile(filepath.Join(full, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
@@ -149,7 +149,7 @@ func TestResolveWorkspace_DependencyConflictIsError(t *testing.T) {
 			t.Fatal(err)
 		}
 		yaml := "dag_id: " + p.dir + "\ndependencies:\n  - " + p.dep + "\n"
-		if err := os.WriteFile(filepath.Join(full, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
@@ -186,7 +186,7 @@ func TestResolveWorkspace_DependencyCaseInsensitive(t *testing.T) {
 			t.Fatal(err)
 		}
 		yaml := "dag_id: " + p.dir + "\ndependencies:\n  - " + p.dep + "\n"
-		if err := os.WriteFile(filepath.Join(full, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
@@ -222,7 +222,7 @@ func TestResolveWorkspace_RootCfgPicksHighestPythonVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 		yaml := "dag_id: " + p.dir + "\npython_version: \"" + p.py + "\"\n"
-		if err := os.WriteFile(filepath.Join(full, "leoflow.yaml"), []byte(yaml), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
@@ -250,7 +250,7 @@ func TestResolveWorkspace_PropagatesDiscoveryErrors(t *testing.T) {
 		if err := os.MkdirAll(full, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(full, "leoflow.yaml"), []byte("dag_id: shared\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte("dag_id: shared\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
@@ -267,7 +267,7 @@ func TestResolveWorkspace_PropagatesDiscoveryErrors(t *testing.T) {
 }
 
 // TestResolveWorkspace_WatchedPathsCoverEveryProject is the contract the lite
-// watcher relies on: every project's leoflow.yaml AND dag.py must appear in
+// watcher relies on: every project's dexaflow.yaml AND dag.py must appear in
 // WatchedPaths so a save in any of them triggers a reload. Without a yaml the
 // project still contributes its dag.py.
 func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
@@ -275,7 +275,7 @@ func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
 	// one project with yaml
 	withYaml := filepath.Join(ws, "with_yaml")
 	_ = os.MkdirAll(withYaml, 0o755)
-	_ = os.WriteFile(filepath.Join(withYaml, "leoflow.yaml"), []byte("dag_id: with_yaml\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(withYaml, "dexaflow.yaml"), []byte("dag_id: with_yaml\n"), 0o600)
 	_ = os.WriteFile(filepath.Join(withYaml, "dag.py"), []byte("x=1\n"), 0o600)
 	// one project without yaml
 	withoutYaml := filepath.Join(ws, "without_yaml")
@@ -287,9 +287,9 @@ func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
 	want := map[string]bool{
-		filepath.Join(withYaml, "leoflow.yaml"): true,
-		filepath.Join(withYaml, "dag.py"):       true,
-		filepath.Join(withoutYaml, "dag.py"):    true,
+		filepath.Join(withYaml, "dexaflow.yaml"): true,
+		filepath.Join(withYaml, "dag.py"):        true,
+		filepath.Join(withoutYaml, "dag.py"):     true,
 	}
 	paths := got.WatchedPaths()
 	for _, p := range paths {
@@ -308,7 +308,7 @@ func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
 //
 // This used to branch on Config.Dbt != nil while projectAt branches on the DAG
 // source existing, and the two disagree in exactly this shape. The consequence
-// was not abstract: `leoflow dev` printed "delete dag.py", the user deleted it,
+// was not abstract: `dexaflow lite` printed "delete dag.py", the user deleted it,
 // and nothing reloaded — no watched path's mtime moved, and the import-error
 // banner is only cleared by a successful reload, so the UI stayed red while the
 // project was already fixed.
@@ -320,7 +320,7 @@ func TestWatchedPathsCoverTheRefusedShape(t *testing.T) {
 	}
 	yaml := "dag_id: mixed\ndbt:\n  project: .\n  manifest: manifest.json\n"
 	for name, body := range map[string]string{
-		"leoflow.yaml":    yaml,
+		"dexaflow.yaml":   yaml,
 		"dag.py":          "x=1\n",
 		"dbt_project.yml": "name: mixed\n",
 	} {
@@ -335,7 +335,7 @@ func TestWatchedPathsCoverTheRefusedShape(t *testing.T) {
 	}
 	paths := got.WatchedPaths()
 	for _, want := range []string{
-		filepath.Join(mixed, "leoflow.yaml"),
+		filepath.Join(mixed, "dexaflow.yaml"),
 		filepath.Join(mixed, "dag.py"),
 		filepath.Join(mixed, "dbt_project.yml"),
 	} {

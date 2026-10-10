@@ -7,17 +7,19 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/secrets"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 const defaultMaxActiveRuns = 16
@@ -35,7 +37,23 @@ type Repository struct {
 	pool        txBeginner
 	cipher      secrets.Cipher
 	extCoverage externalSecretCoverage
+	xcomValues  XComValueDeleter
+	specs       *specCache
+	// tenants caches tenant name -> id (see tenantID). Bounded by the number
+	// of tenants that exist, since only successful lookups are stored.
+	tenants *sync.Map
 }
+
+// XComValueDeleter deletes a stored XCom value by its backend key. xcom.Backend
+// satisfies it (Redis in production, xcom_store under Lite).
+type XComValueDeleter interface {
+	Delete(ctx context.Context, key string) error
+}
+
+// SetXComBackend attaches the XCom value store, so a clear deletes the values of
+// the attempts it clears and not only their index rows (#1131). Without it a
+// clear removes only the index rows.
+func (r *Repository) SetXComBackend(b XComValueDeleter) { r.xcomValues = b }
 
 // externalSecretCoverage reports whether a declared name is served by a
 // configured external secret backend (operator config, ADR 0060). The D6
@@ -49,7 +67,7 @@ type externalSecretCoverage interface {
 
 // NewRepository builds a Repository backed by the given Postgres connection.
 func NewRepository(pg *Postgres) *Repository {
-	return &Repository{q: pg.Queries, pool: pg.Pool}
+	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
 }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
@@ -98,10 +116,27 @@ func mapConflict(err error) error {
 	return err
 }
 
+// tenantID resolves a tenant name to its id. Nearly every repository method
+// starts with it, so a resolved id is cached for the life of the process: a
+// tenant is never renamed or deleted (no query does either), so name -> id
+// cannot change. A miss is not cached, so a tenant created later is found.
+// The one way the mapping changes under a running process is outside it:
+// restoring a backup whose tenants carry different ids. Restart the control
+// plane after such a restore, or every query keeps using the old ids.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
+	if r.tenants != nil {
+		if id, ok := r.tenants.Load(name); ok {
+			if uid, ok := id.(pgtype.UUID); ok {
+				return uid, nil
+			}
+		}
+	}
 	t, err := r.q.GetTenantByName(ctx, name)
 	if err != nil {
 		return pgtype.UUID{}, mapNotFound(err)
+	}
+	if r.tenants != nil {
+		r.tenants.Store(name, t.ID)
 	}
 	return t.ID, nil
 }
@@ -147,29 +182,27 @@ func (r *Repository) FindUserByID(ctx context.Context, id string) (*auth.User, b
 	if err != nil {
 		return nil, false, auth.ErrUserNotFound
 	}
-	row, err := r.q.GetUserByID(ctx, uid)
+	// One round trip: this runs on every authenticated request, so the user,
+	// its roles and its permissions come back from a single statement.
+	row, err := r.q.GetUserPrincipalByID(ctx, uid)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, auth.ErrUserNotFound
 		}
 		return nil, false, fmt.Errorf("loading user by id: %w", err)
 	}
-	roles, err := r.q.GetUserRoles(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading roles: %w", err)
+	var perms [][2]string
+	if err := json.Unmarshal(row.Permissions, &perms); err != nil {
+		return nil, false, fmt.Errorf("decoding permissions: %w", err)
 	}
-	perms, err := r.q.GetUserPermissions(ctx, row.ID)
-	if err != nil {
-		return nil, false, fmt.Errorf("loading permissions: %w", err)
-	}
-	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: roles}
+	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: row.Roles}
 	for _, p := range perms {
-		user.Permissions = append(user.Permissions, auth.Permission{Action: p.Action, Resource: p.Resource})
+		user.Permissions = append(user.Permissions, auth.Permission{Action: p[0], Resource: p[1]})
 	}
 	return user, row.IsActive, nil
 }
 
-// FindUserByOIDCSubject resolves an OIDC identity to a Leoflow user by its
+// FindUserByOIDCSubject resolves an OIDC identity to a Dexaflow user by its
 // immutable (provider, subject) pair — the trusted link key for a returning SSO
 // login. Like FindUserByID it loads the current tenant, roles, and permissions
 // plus the active flag, so the caller reconstructs the same principal the
@@ -432,6 +465,41 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 	return out, int(total), nil
 }
 
+// ListDagRunsAfter returns up to limit of a DAG's runs strictly before the
+// cursor, newest first, and the number of runs matching states (all runs when
+// states is empty). It is the keyset form of ListDagRuns: the same order, but a
+// deep page is an index range scan instead of a scan past every skipped row.
+func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string, states []string, after domain.PageCursor, limit int) ([]domain.DagRun, int, error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListDagRunsByDagAfter(ctx, queries.ListDagRunsByDagAfterParams{
+		DagID: dag.ID, States: states, AfterLogicalDate: pgtype.Timestamptz{Time: after.At, Valid: true},
+		AfterRunID: after.Key, RowLimit: toInt32(limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing dag runs: %w", err)
+	}
+	var total int64
+	if len(states) == 0 {
+		total, err = r.q.CountDagRunsByDag(ctx, dag.ID)
+	} else {
+		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{DagID: dag.ID, States: states})
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
+	}
+	out := make([]domain.DagRun, 0, len(rows))
+	for _, run := range rows {
+		out = append(out, mapDagRunWithVersion(queries.GetDagRunWithVersionRow(run), dagID))
+	}
+	return out, int(total), nil
+}
+
 // GetDagRun returns a single run by its run id.
 func (r *Repository) GetDagRun(ctx context.Context, tenant, dagID, runID string) (domain.DagRun, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
@@ -471,7 +539,8 @@ func (r *Repository) DeleteDagRun(ctx context.Context, tenant, dagID, runID stri
 // match the scheduler path (see `Scheduler.hasHeadroom`). The check
 // races with concurrent inserts, but the small overshoot window is
 // bounded by the number of concurrent writers and lets us avoid an
-// advisory lock on the hot path.
+// advisory lock on the hot path. The tenant's max_runs_per_day, when set, is
+// charged exactly (createRunWithinDailyLimit).
 func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run domain.DagRun) (domain.DagRun, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -493,19 +562,34 @@ func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run
 	if len(conf) == 0 || string(conf) == "null" {
 		conf = []byte("{}")
 	}
-	created, err := r.q.CreateDagRun(ctx, queries.CreateDagRunParams{
-		TenantID:     dag.TenantID,
-		DagID:        dag.ID,
-		DagVersionID: dag.CurrentVersionID,
-		RunID:        run.RunID,
-		LogicalDate:  pgtype.Timestamptz{Time: run.LogicalDate, Valid: true},
-		State:        queries.DagRunState(run.State),
-		Trigger:      queries.DagRunTrigger(run.RunType),
-		Note:         strPtr(run.Note),
-		Conf:         conf,
+	var created queries.DagRun
+	err = createRunWithinDailyLimit(ctx, r.q, r.pool, dag.TenantID, runCreation{
+		insert: func(q *queries.Queries) (bool, error) {
+			var ierr error
+			created, ierr = q.CreateDagRun(ctx, queries.CreateDagRunParams{
+				TenantID:     dag.TenantID,
+				DagID:        dag.ID,
+				DagVersionID: dag.CurrentVersionID,
+				RunID:        run.RunID,
+				LogicalDate:  pgtype.Timestamptz{Time: run.LogicalDate, Valid: true},
+				State:        queries.DagRunState(run.State),
+				Trigger:      queries.DagRunTrigger(run.RunType),
+				Note:         strPtr(run.Note),
+				Conf:         conf,
+			})
+			if ierr != nil {
+				return false, fmt.Errorf("creating dag run: %w", mapConflict(ierr))
+			}
+			return true, nil
+		},
+		exists: func(q *queries.Queries) (bool, error) {
+			return q.DagRunExistsByDagID(ctx, queries.DagRunExistsByDagIDParams{TenantID: dag.TenantID, DagID: dag.DagID, RunID: run.RunID})
+		},
+		// The answer a duplicate run id gets from the insert (dag_runs_unique).
+		existsErr: fmt.Errorf("creating dag run: %w", domain.ErrConflict),
 	})
 	if err != nil {
-		return domain.DagRun{}, fmt.Errorf("creating dag run: %w", mapConflict(err))
+		return domain.DagRun{}, err
 	}
 	// The trigger's audit entry is written by the API handler, where the acting
 	// user is known (so the Audit Log shows the owner).
@@ -588,6 +672,12 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 //
 // opts carries the two independent run-level decisions — whether to re-open the
 // run, and which version the re-run executes (see domain.ClearOptions).
+//
+// Each cleared task instance gets its retry budget back and starts without the
+// XCom of the attempt it replaces (#1131). The whole clear is one transaction,
+// and the stored XCom values are deleted before it commits: a backend failure
+// rolls the clear back rather than re-queueing a task whose previous values are
+// still readable.
 func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runID string, taskIDs []string, onlyFailed bool, opts domain.ClearOptions) (int, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -597,59 +687,120 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
-	cleared, err := r.resetTaskInstances(ctx, run.ID, taskIDs, onlyFailed)
+	budget, err := r.loadClearRetryBudget(ctx, dag, run, opts)
 	if err != nil {
-		return cleared, err
+		return 0, err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("beginning clear tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	cleared, err := resetTaskInstances(ctx, qtx, run.ID, taskIDs, onlyFailed, budget)
+	if err != nil {
+		return 0, err
+	}
+	if err := r.deleteClearedXCom(ctx, qtx, run.ID, cleared); err != nil {
+		return 0, err
 	}
 	if opts.ResetDagRun {
-		if opts.RunOnLatestVersion {
-			// Re-bind the run to the DAG's current version so a clear after a
-			// code/yaml fix re-runs against the newest image + config (ADR 0020).
-			// In dev the current version is the last hot-reload; in prod, the last
-			// deploy. When the version is unchanged this is equivalent to a plain
-			// state reset.
-			if err := r.q.ResetDagRunToVersion(ctx, queries.ResetDagRunToVersionParams{
-				ID:           run.ID,
-				DagVersionID: dag.CurrentVersionID,
-			}); err != nil {
-				return cleared, fmt.Errorf("re-binding dag run to current version: %w", err)
-			}
-		} else if err := r.q.ReopenDagRunKeepingVersion(ctx, run.ID); err != nil {
-			// The run is re-opened but keeps its pinned version, so the re-run
-			// executes the image that produced the original attempt.
-			return cleared, fmt.Errorf("re-opening dag run: %w", err)
+		if err := reopenClearedRun(ctx, qtx, dag, run, opts); err != nil {
+			return 0, err
 		}
 	}
-	return cleared, nil
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing clear tx: %w", err)
+	}
+	return len(cleared), nil
+}
+
+// reopenClearedRun re-opens a cleared run so the scheduler looks at it again,
+// re-binding it to the DAG's current version when opts asks for that.
+func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, opts domain.ClearOptions) error {
+	if opts.RunOnLatestVersion {
+		// Re-bind the run to the DAG's current version so a clear after a
+		// code/yaml fix re-runs against the newest image + config (ADR 0020).
+		// In dev the current version is the last hot-reload; in prod, the last
+		// deploy. When the version is unchanged this is equivalent to a plain
+		// state reset.
+		if err := q.ResetDagRunToVersion(ctx, queries.ResetDagRunToVersionParams{
+			ID:           run.ID,
+			DagVersionID: dag.CurrentVersionID,
+		}); err != nil {
+			return fmt.Errorf("re-binding dag run to current version: %w", err)
+		}
+		return nil
+	}
+	// The run is re-opened but keeps its pinned version, so the re-run
+	// executes the image that produced the original attempt.
+	if err := q.ReopenDagRunKeepingVersion(ctx, run.ID); err != nil {
+		return fmt.Errorf("re-opening dag run: %w", err)
+	}
+	return nil
+}
+
+// deleteClearedXCom removes the XCom of the cleared task instances: their index
+// rows inside the clear transaction, then their stored values. XCom carries no
+// try number, so without this the new attempt's downstream reads the previous
+// attempt's values for every key the new attempt does not overwrite (#1131).
+// Airflow likewise never lets an attempt see another attempt's XCom.
+func (r *Repository) deleteClearedXCom(ctx context.Context, q *queries.Queries, runID pgtype.UUID, taskIDs []string) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	keys, err := q.DeleteXComIndexForTasks(ctx, queries.DeleteXComIndexForTasksParams{DagRunID: runID, TaskIds: taskIDs})
+	if err != nil {
+		return fmt.Errorf("deleting the cleared tasks' xcom index: %w", err)
+	}
+	if r.xcomValues == nil {
+		return nil
+	}
+	for _, key := range keys {
+		if err := r.xcomValues.Delete(ctx, key); err != nil {
+			return fmt.Errorf("deleting the cleared tasks' xcom value %q: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // resetTaskInstances applies the clear semantics: a specific task list, or (with
-// an empty list and onlyFailed) every failed task in the run.
-func (r *Repository) resetTaskInstances(ctx context.Context, runID pgtype.UUID, taskIDs []string, onlyFailed bool) (int, error) {
+// an empty list and onlyFailed) every failed task in the run. Each reset restores
+// the task's retry budget from budget. It returns the ids of the task instances
+// it reset.
+func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UUID, taskIDs []string, onlyFailed bool, budget clearRetryBudget) ([]string, error) {
 	if len(taskIDs) == 0 {
 		if !onlyFailed {
-			return 0, nil
+			return nil, nil
 		}
-		n, err := r.q.ResetAllFailedTaskInstances(ctx, runID)
+		ids, err := q.ResetAllFailedTaskInstances(ctx, queries.ResetAllFailedTaskInstancesParams{
+			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
+		})
 		if err != nil {
-			return 0, fmt.Errorf("clearing failed tasks: %w", err)
+			return nil, fmt.Errorf("clearing failed tasks: %w", err)
 		}
-		return int(n), nil
+		return ids, nil
 	}
-	cleared := 0
+	cleared := make([]string, 0, len(taskIDs))
 	for _, taskID := range taskIDs {
 		if onlyFailed {
-			n, err := r.q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{DagRunID: runID, TaskID: taskID})
+			n, err := q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{
+				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
+			})
 			if err != nil {
-				return cleared, fmt.Errorf("clearing failed task %q: %w", taskID, err)
+				return nil, fmt.Errorf("clearing failed task %q: %w", taskID, err)
 			}
-			cleared += int(n)
+			if n > 0 {
+				cleared = append(cleared, taskID)
+			}
 			continue
 		}
-		if err := r.q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{DagRunID: runID, TaskID: taskID}); err != nil {
-			return cleared, fmt.Errorf("clearing task %q: %w", taskID, err)
+		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
+			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
+		}); err != nil {
+			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
-		cleared++
+		cleared = append(cleared, taskID)
 	}
 	return cleared, nil
 }
@@ -866,7 +1017,10 @@ func (r *Repository) RecordSecretLivenessDenial(ctx context.Context, tenantID, d
 }
 
 // SetTaskInstanceState sets a task instance's state directly, backing the UI's
-// "mark success"/"mark failed" actions. It does not run the task.
+// "mark success"/"mark failed" actions. It does not run the task. A user's
+// state is a verdict, so it clears an infra failure kind and confirms the row:
+// a reaped task marked failed is neither re-placed nor overridden by a late
+// SUCCESS record (ADR 0052 amendment).
 func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, runID, taskID, state string) error {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -876,7 +1030,7 @@ func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, ru
 	if err != nil {
 		return mapNotFound(err)
 	}
-	if err := r.q.UpdateTaskInstanceStateByRunTask(ctx, queries.UpdateTaskInstanceStateByRunTaskParams{
+	if err := r.q.SetTaskInstanceStateByUser(ctx, queries.SetTaskInstanceStateByUserParams{
 		State: queries.TaskState(state), DagRunID: run.ID, TaskID: taskID,
 	}); err != nil {
 		return fmt.Errorf("setting task %q state: %w", taskID, err)
@@ -977,13 +1131,20 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 	if err != nil {
 		return domain.DAGSpec{}, err
 	}
-	raw, err := r.q.GetCurrentDagSpec(ctx, queries.GetCurrentDagSpecParams{TenantID: tid, DagID: dagID})
+	// Only the current version id is read here; the spec itself comes from the
+	// shared cache keyed by that immutable id, so a grid or graph poll neither
+	// ships the spec JSON over the wire nor decodes it again. The returned spec
+	// is shared and must not be mutated (see specCache).
+	dag, err := r.q.GetDagByDagID(ctx, queries.GetDagByDagIDParams{TenantID: tid, DagID: dagID})
 	if err != nil {
 		return domain.DAGSpec{}, mapNotFound(err)
 	}
-	var spec domain.DAGSpec
-	if err := json.Unmarshal(raw, &spec); err != nil {
-		return domain.DAGSpec{}, fmt.Errorf("decoding current spec: %w", err)
+	if !dag.CurrentVersionID.Valid {
+		return domain.DAGSpec{}, domain.ErrNotFound
+	}
+	_, spec, err := r.specs.getCurrent(ctx, r.q, currentSpecKey{tenant: tid, dagID: dagID}, dag.CurrentVersionID)
+	if err != nil {
+		return domain.DAGSpec{}, fmt.Errorf("loading current spec: %w", err)
 	}
 	return spec, nil
 }
@@ -1001,6 +1162,11 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 	// pre-declaration DAG is ever rejected.
 	if verr := r.validateDeclaredSecrets(ctx, tid, spec); verr != nil {
 		return false, verr
+	}
+	// The tenant's limits (max_dags, min_schedule_interval_seconds), also
+	// before any write.
+	if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
+		return false, lerr
 	}
 	maxRuns := spec.MaxActiveRuns
 	if maxRuns == 0 {
@@ -1090,7 +1256,7 @@ func (r *Repository) validateDeclaredSecrets(ctx context.Context, tid pgtype.UUI
 		}
 		if unknown := unknownDeclaredNames(varNames, existing, coveredVar); len(unknown) > 0 {
 			return domain.Safef(domain.ErrValidation,
-				"dag %q declares unknown variable(s) %s; define them (leoflow variables set) or remove them from the DAG's variables: declaration",
+				"dag %q declares unknown variable(s) %s; define them (dexaflow variables set) or remove them from the DAG's variables: declaration",
 				spec.DagID, strings.Join(unknown, ", "))
 		}
 	}
@@ -1102,7 +1268,7 @@ func (r *Repository) validateDeclaredSecrets(ctx context.Context, tid pgtype.UUI
 		}
 		if unknown := unknownDeclaredNames(connNames, existing, coveredConn); len(unknown) > 0 {
 			return domain.Safef(domain.ErrValidation,
-				"dag %q declares unknown connection(s) %s; define them (leoflow connections set) or remove them from the DAG's connections: declaration",
+				"dag %q declares unknown connection(s) %s; define them (dexaflow connections set) or remove them from the DAG's connections: declaration",
 				spec.DagID, strings.Join(unknown, ", "))
 		}
 	}
@@ -1194,7 +1360,7 @@ func (r *Repository) BootstrapAdmin(ctx context.Context, tenant, email, password
 // would leave an account the (tenant_id, email) UNIQUE makes impossible to
 // recreate — every retry would 409 forever with no recovery path.
 //
-// This backs `leoflow auth create-user` (ADR 0008) and is purely additive: it
+// This backs `dexaflow auth create-user` (ADR 0008) and is purely additive: it
 // does not touch the bootstrap/reconcile path.
 func (r *Repository) CreateUser(ctx context.Context, tenant, email, password string, roles []string) (domain.User, error) {
 	tid, err := r.tenantID(ctx, tenant)
@@ -1276,7 +1442,7 @@ func (r *Repository) ListUsers(ctx context.Context, tenant string, limit, offset
 }
 
 // SetUserPassword sets a user's bcrypt hash by email, returning whether a user
-// was updated (false when no such user exists). Used by `leoflow lite
+// was updated (false when no such user exists). Used by `dexaflow lite
 // reset-password`.
 func (r *Repository) SetUserPassword(ctx context.Context, tenant, email, hash string) (bool, error) {
 	n, err := r.q.UpdateUserPassword(ctx, queries.UpdateUserPasswordParams{
@@ -1296,7 +1462,7 @@ func (r *Repository) SetUserPassword(ctx context.Context, tenant, email, hash st
 // having to wipe Docker volumes. The only sanctioned way to change the password,
 // `reset-password`, also writes the config, so the two never drift. Returns true
 // only when the admin was newly created (false when an existing one was
-// reconciled). See cmd/leoflow-server bootstrapAdmin.
+// reconciled). See cmd/dexaflow-server bootstrapAdmin.
 func (r *Repository) BootstrapAdminHash(ctx context.Context, tenant, email, hash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
@@ -1368,15 +1534,54 @@ func (r *Repository) ListAuditLogs(ctx context.Context, tenant, dagID string, li
 	}
 	out := make([]domain.AuditLogEntry, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.AuditLogEntry{
-			ID:           row.ID,
-			When:         timeVal(row.OccurredAt),
-			Action:       row.Action,
-			ResourceType: strOrEmpty(row.ResourceType),
-			ResourceID:   strOrEmpty(row.ResourceID),
-			Owner:        row.Owner,
-			Extra:        string(row.Metadata),
-		})
+		out = append(out, mapAuditLogEntry(row))
+	}
+	return out, int(total), nil
+}
+
+func mapAuditLogEntry(row queries.ListAuditLogsRow) domain.AuditLogEntry {
+	return domain.AuditLogEntry{
+		ID:           row.ID,
+		When:         timeVal(row.OccurredAt),
+		Action:       row.Action,
+		ResourceType: strOrEmpty(row.ResourceType),
+		ResourceID:   strOrEmpty(row.ResourceID),
+		Owner:        row.Owner,
+		Extra:        string(row.Metadata),
+	}
+}
+
+// ListAuditLogsAfter returns up to limit of the tenant's audit entries
+// strictly before the cursor, newest first, optionally filtered to one DAG, and
+// the number of entries matching the filter. It is the keyset form of
+// ListAuditLogs; the cursor key is the entry id.
+func (r *Repository) ListAuditLogsAfter(ctx context.Context, tenant, dagID string, after domain.PageCursor, limit int) ([]domain.AuditLogEntry, int, error) {
+	afterID, err := strconv.ParseInt(after.Key, 10, 64)
+	if err != nil {
+		return nil, 0, domain.Safef(domain.ErrValidation, "invalid audit log cursor")
+	}
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return nil, 0, err
+	}
+	var dagFilter *string
+	if dagID != "" {
+		dagFilter = &dagID
+	}
+	rows, err := r.q.ListAuditLogsAfter(ctx, queries.ListAuditLogsAfterParams{
+		TenantID: tid, DagID: dagFilter, AfterOccurredAt: pgtype.Timestamptz{Time: after.At, Valid: true},
+		AfterID: afterID, RowLimit: toInt32(limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing audit logs: %w", err)
+	}
+	total, err := r.q.CountAuditLogs(ctx, queries.CountAuditLogsParams{TenantID: tid, DagID: dagFilter})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting audit logs: %w", err)
+	}
+	out := make([]domain.AuditLogEntry, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapAuditLogEntry(queries.ListAuditLogsRow(row)))
 	}
 	return out, int(total), nil
 }
@@ -1388,7 +1593,14 @@ func (r *Repository) DeleteDag(ctx context.Context, tenant, dagID string) error 
 	if err != nil {
 		return err
 	}
-	rows, err := r.q.DeleteDag(ctx, queries.DeleteDagParams{TenantID: tid, DagID: dagID})
+	// The cascade covers every version, run and task instance of the DAG, so
+	// it runs without the API statement timeout.
+	var rows int64
+	err = withoutStatementTimeout(ctx, r.pool, r.q, func(q *queries.Queries) error {
+		var derr error
+		rows, derr = q.DeleteDag(ctx, queries.DeleteDagParams{TenantID: tid, DagID: dagID})
+		return derr
+	})
 	if err != nil {
 		return fmt.Errorf("deleting dag: %w", err)
 	}
@@ -1940,7 +2152,13 @@ func (r *Repository) ClearDagHistory(ctx context.Context, tenant, dagID string) 
 	if err != nil {
 		return err
 	}
-	if _, err := r.q.ClearDagRuns(ctx, dag.ID); err != nil {
+	// Like DeleteDag, the cascade covers every run and task instance of the
+	// DAG, so it runs without the API statement timeout.
+	err = withoutStatementTimeout(ctx, r.pool, r.q, func(q *queries.Queries) error {
+		_, cerr := q.ClearDagRuns(ctx, dag.ID)
+		return cerr
+	})
+	if err != nil {
 		return fmt.Errorf("clearing dag history: %w", err)
 	}
 	return nil
@@ -1985,4 +2203,101 @@ func (r *Repository) ClearImportError(ctx context.Context, tenant, filename stri
 		return fmt.Errorf("clearing import error: %w", err)
 	}
 	return nil
+}
+
+// EnsureTenant creates the tenant name with the built-in roles, their
+// permissions and the default pool copied from the "default" tenant, all in
+// one transaction (#1283). It is idempotent: for an existing tenant it fills in
+// anything missing and reports created=false. A positive defaultPoolSlots sizes
+// the tenant's default pool to that many slots, on creation or later; a
+// non-positive value leaves an existing pool alone and gives a new one the
+// default tenant's size. limits sets the tenant limits it carries and leaves
+// the others as they are (a new tenant starts with none).
+func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string, defaultPoolSlots int, limits domain.TenantLimitsUpdate) (created bool, err error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("beginning ensure-tenant tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	n, err := qtx.InsertTenantIfMissing(ctx, queries.InsertTenantIfMissingParams{Name: name, DisplayName: strPtr(displayName)})
+	if err != nil {
+		return false, fmt.Errorf("inserting tenant: %w", err)
+	}
+	t, err := qtx.GetTenantByName(ctx, name)
+	if err != nil {
+		return false, fmt.Errorf("loading tenant: %w", err)
+	}
+	if err := qtx.CopyDefaultSystemRoles(ctx, t.ID); err != nil {
+		return false, fmt.Errorf("seeding roles: %w", err)
+	}
+	if err := qtx.CopyDefaultRolePermissions(ctx, t.ID); err != nil {
+		return false, fmt.Errorf("seeding role permissions: %w", err)
+	}
+	if err := ensureDefaultPool(ctx, qtx, t.ID, defaultPoolSlots); err != nil {
+		return false, err
+	}
+	if err := applyTenantLimits(ctx, qtx, t.ID, limits); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("committing ensure-tenant tx: %w", err)
+	}
+	return n > 0, nil
+}
+
+// ensureDefaultPool gives the tenant its default pool: sized to slots when
+// slots is positive, otherwise copied from the default tenant if missing (a
+// non-positive slots means "not given"). The caller bounds slots to the int32
+// column; toInt32 saturates rather than wrapping if it ever does not.
+func ensureDefaultPool(ctx context.Context, q *queries.Queries, tenantID pgtype.UUID, slots int) error {
+	if slots <= 0 {
+		if err := q.InsertDefaultPool(ctx, tenantID); err != nil {
+			return fmt.Errorf("seeding default pool: %w", err)
+		}
+		return nil
+	}
+	if err := q.UpsertDefaultPoolSlots(ctx, queries.UpsertDefaultPoolSlotsParams{
+		TenantID: tenantID, Name: domain.DefaultPoolName, Slots: toInt32(slots),
+	}); err != nil {
+		return fmt.Errorf("sizing default pool: %w", err)
+	}
+	return nil
+}
+
+// TenantRolePermissions lists a tenant's built-in role grants as
+// "role:action:resource", so a caller can compare two tenants' ladders.
+func (r *Repository) TenantRolePermissions(ctx context.Context, tenant string) ([]string, error) {
+	return r.q.ListTenantRolePermissions(ctx, tenant)
+}
+
+// TenantHasDefaultPool reports whether the tenant has its default pool.
+func (r *Repository) TenantHasDefaultPool(ctx context.Context, tenant string) (bool, error) {
+	return r.q.TenantHasDefaultPool(ctx, tenant)
+}
+
+// EnsureIssuerUser makes sure a passwordless user linked to (provider,
+// subject) exists in tenant with exactly roles (#1283). A new user is created
+// with them; an existing one keeps its id and gets its roles reconciled. A
+// subject already linked in another tenant is domain.ErrConflict, an unknown
+// tenant domain.ErrNotFound and an unknown role domain.ErrValidation.
+func (r *Repository) EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error) {
+	existing, _, err := r.FindUserByOIDCSubject(ctx, provider, subject)
+	switch {
+	case errors.Is(err, auth.ErrUserNotFound):
+		if _, terr := r.tenantID(ctx, tenant); terr != nil {
+			return nil, false, terr
+		}
+		u, cerr := r.CreateOIDCUser(ctx, tenant, email, provider, subject, roles)
+		return u, cerr == nil, cerr
+	case err != nil:
+		return nil, false, err
+	case existing.TenantID != tenant:
+		return nil, false, domain.Safef(domain.ErrConflict, "subject is already linked in another tenant")
+	}
+	if err := r.ReconcileUserRoles(ctx, existing.ID, roles); err != nil {
+		return nil, false, err
+	}
+	existing.Roles = roles
+	return existing, false, nil
 }

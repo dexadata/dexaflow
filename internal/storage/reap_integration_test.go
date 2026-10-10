@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
-	"github.com/neochaotic/leoflow/internal/scheduler"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestReapRunOrphanedRunIntegration pins the end-to-end contract of the orphan
@@ -58,8 +58,12 @@ func TestReapRunOrphanedRunIntegration(t *testing.T) {
 		t.Fatalf("a run with all TIs settled but state=running must be a candidate; got %+v", cands)
 	}
 
-	if err := sched.ReapRun(ctx, runUUID); err != nil {
+	reaped, err := sched.ReapRun(ctx, runUUID, time.Now())
+	if err != nil {
 		t.Fatalf("ReapRun: %v", err)
+	}
+	if !reaped {
+		t.Fatalf("ReapRun on a stuck run must report the reap")
 	}
 
 	// After reap, the run is gone from the active set: the scheduler view of
@@ -90,8 +94,8 @@ func TestReapRunOrphanedRunIntegration(t *testing.T) {
 	// repository never overwrites state set by a competing finalizer (defense in
 	// depth — the run is no longer `running` after the first reap, but the
 	// idempotency is part of the contract).
-	if err := sched.ReapRun(ctx, runUUID); err != nil {
-		t.Errorf("second ReapRun should be a no-op, got %v", err)
+	if again, err := sched.ReapRun(ctx, runUUID, time.Now()); err != nil || again {
+		t.Errorf("second ReapRun should be a no-op, got reaped=%v err=%v", again, err)
 	}
 }
 
@@ -173,8 +177,8 @@ func TestReapRunIgnoresTerminalRunIntegration(t *testing.T) {
 
 	// Try to reap: the WHERE state='running' guard short-circuits, so nothing
 	// changes. The note field stays untouched and the state stays success.
-	if err := sched.ReapRun(ctx, runUUID); err != nil {
-		t.Fatalf("ReapRun on terminal: %v", err)
+	if reaped, err := sched.ReapRun(ctx, runUUID, time.Now()); err != nil || reaped {
+		t.Fatalf("ReapRun on terminal must be a no-op, got reaped=%v err=%v", reaped, err)
 	}
 	runs, err := repo.LatestRunsForDags(ctx, "default", []string{dagID}, 1)
 	if err != nil {

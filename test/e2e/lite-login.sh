@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end happy path for Leoflow Lite: setup (as the installer runs it) →
+# End-to-end happy path for Dexaflow Lite: setup (as the installer runs it) →
 # control plane with REAL auth → admin login. Asserts the login the wizard
 # provisions actually works, and that a wrong password is rejected.
 #
@@ -19,8 +19,8 @@ cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; chmo
 trap cleanup EXIT
 
 echo "==> building binaries"
-go build -o "$HOME_DIR/leoflow" ./cmd/leoflow
-go build -o "$HOME_DIR/leoflow-server" ./cmd/leoflow-server
+go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow
+go build -o "$HOME_DIR/leoflow-server" ./cmd/dexaflow-server
 
 # A fake python3.11 on PATH so `setup` uses it instead of downloading a CPython
 # (the parser is not exercised by this login test).
@@ -32,10 +32,10 @@ export PATH="$HOME_DIR/bin:$PATH"
 echo "==> resetting the leoflow_dev database (migrated, empty)"
 "$HOME_DIR/leoflow" db reset --yes >/dev/null
 
-echo "==> leoflow setup (installer path) — generates the admin, prints the password once"
+echo "==> dexaflow setup (installer path) — generates the admin, prints the password once"
 SETUP_OUT="$(HOME="$HOME_DIR" "$HOME_DIR/leoflow" setup --workspace "$HOME_DIR/ws" </dev/null 2>&1)"
 PW="$(printf '%s\n' "$SETUP_OUT" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
-HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.leoflow/config.yaml")"
+HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
 [ -n "$PW" ]   || fail "setup did not print a generated password"
 [ -n "$HASH" ] || fail "setup did not store an admin_password_hash"
 pass "setup generated an admin password (shown once) and stored only the hash"
@@ -149,6 +149,17 @@ pass "Monaco assets served from the bundle dir"
 code="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/api/v2/ide/tree")"
 [ "$code" = "401" ] || [ "$code" = "403" ] || fail "unauthenticated /api/v2/ide/tree returned $code (want 401/403)"
 pass "files API requires auth"
+
+# An optional extra-checks script runs here, against the live control plane and
+# before it is stopped: LEOFLOW_E2E_EXTRA_CHECKS names it, and it gets BASE,
+# TOKEN, METRICS and SERVER_LOG. e2e-gates.yaml uses it to prove the performance
+# gates it turns on took effect at runtime (test/e2e/perf-gates-on.sh). Unset,
+# which is the default, nothing here changes.
+if [ -n "${LEOFLOW_E2E_EXTRA_CHECKS:-}" ]; then
+  echo "==> running the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS}"
+  BASE="$BASE" TOKEN="$TOKEN" METRICS="http://127.0.0.1:19098" SERVER_LOG="$HOME_DIR/server.log" \
+    bash "$LEOFLOW_E2E_EXTRA_CHECKS" || fail "the extra checks in ${LEOFLOW_E2E_EXTRA_CHECKS} failed"
+fi
 
 echo
 echo "  ✅ Lite happy path verified: setup → control plane → login → web editor."

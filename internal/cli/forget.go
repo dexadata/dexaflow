@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // newForgetCommand removes a DAG (and, via ON DELETE CASCADE, its versions,
@@ -26,13 +26,13 @@ func newForgetCommand() *cobra.Command {
 		Use:   "forget [dag_id]",
 		Short: "Remove a DAG (and all its history) from the Lite registry without touching the source files.",
 		Long: "forget hard-deletes a DAG from the Lite registry. The dag.py and " +
-			"leoflow.yaml on disk are untouched — only the database rows go. " +
+			"dexaflow.yaml on disk are untouched — only the database rows go. " +
 			"FK cascade handles versions, runs, task instances, and XCom. The " +
 			"watcher will re-discover the project on the next tick if its files " +
 			"are still present, so use this when you want to deregister AND " +
 			"plan to delete the source files yourself, OR when you want a " +
 			"clean re-registration after a manual database edit.\n\n" +
-			"Run it as the same user as `leoflow lite` (no sudo). The Lite " +
+			"Run it as the same user as `dexaflow lite` (no sudo). The Lite " +
 			"Postgres must be reachable.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if all {
@@ -63,7 +63,7 @@ func runForget(cmd *cobra.Command, ids []string, all, dryRun bool) error {
 	ctx := cmdContext(cmd)
 	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: devDSNs().database})
 	if err != nil {
-		return fmt.Errorf("connecting to the Lite database (is Postgres up? start `leoflow lite`): %w", err)
+		return fmt.Errorf("connecting to the Lite database (is Postgres up? start `dexaflow lite`): %w", err)
 	}
 	defer pg.Close()
 

@@ -40,7 +40,7 @@ from airflow.sdk import DAG  # noqa: E402
 
 _SHIM = (
     pathlib.Path(__file__).resolve().parents[3]
-    / "parser" / "leoflow_parser" / "_shim" / "leoflow" / "__init__.py"
+    / "parser" / "leoflow_parser" / "_shim" / "dexaflow" / "__init__.py"
 )
 
 
@@ -95,7 +95,7 @@ def test_runtime_package_exports_match_the_parser_shim():
 
     Compared by AST so the guard needs neither the parser nor its shim importable.
     """
-    import leoflow
+    import dexaflow
 
     def public_names(path: pathlib.Path) -> set[str]:
         # Signatures, not just names: a `granularity=` added to one twin and not
@@ -111,8 +111,26 @@ def test_runtime_package_exports_match_the_parser_shim():
             if isinstance(n, ast.ClassDef) and not n.name.startswith("_")
         }
 
-    runtime_names = public_names(pathlib.Path(leoflow.__file__))
+    runtime_names = public_names(pathlib.Path(dexaflow.__file__))
     assert runtime_names == public_names(_SHIM), (
-        "the runtime `leoflow` package and the parser shim must export the same "
+        "the runtime `dexaflow` package and the parser shim must export the same "
         "public names; a DAG that parses must also import inside the task pod"
     )
+
+
+@pytest.mark.parametrize("package", ["dexaflow", "leoflow"])
+def test_both_package_names_import_dbt_group(package):
+    """`dexaflow` is the authoring package; DAGs written before the rename import
+    `leoflow`, and they run in the same task image."""
+    module = __import__(package)
+    assert callable(module.dbt_group)
+
+
+def test_leoflow_is_the_same_package():
+    """Not a copy: the old name re-exports the new one, so a placeholder made
+    through either import is the same type the compiler and runner look for."""
+    import dexaflow
+    import leoflow
+
+    assert leoflow.dbt_group is dexaflow.dbt_group
+    assert leoflow._DbtGroup is dexaflow._DbtGroup

@@ -1,0 +1,83 @@
+suite: Ingress conditional rendering + host/path mapping
+templates:
+  - ingress.yaml
+release:
+  name: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+tests:
+  - it: not rendered when ingress.enabled is false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders with default hosts when ingress.enabled is true
+    set:
+      ingress.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Ingress
+      - equal:
+          path: spec.rules[0].host
+          value: leoflow.local
+      - equal:
+          path: spec.rules[0].http.paths[0].path
+          value: /
+      - equal:
+          path: spec.rules[0].http.paths[0].pathType
+          value: Prefix
+      # Backend service name is the chart's fullname; port is the named `http`
+      # port from service.yaml (the http listener of the leoflow-server).
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.name
+          value: http
+
+  - it: ingressClassName threads through when set
+    set:
+      ingress.enabled: true
+      ingress.className: nginx
+    asserts:
+      - equal:
+          path: spec.ingressClassName
+          value: nginx
+
+  - it: TLS block threads through when configured
+    set:
+      ingress.enabled: true
+      ingress.tls:
+        - hosts: [leoflow.example.com]
+          secretName: leoflow-tls
+    asserts:
+      - equal:
+          path: spec.tls[0].hosts[0]
+          value: leoflow.example.com
+      - equal:
+          path: spec.tls[0].secretName
+          value: leoflow-tls
+
+  - it: multiple hosts each render as separate rules
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - host: a.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+        - host: b.example.com
+          paths:
+            - path: /api
+              pathType: Prefix
+    asserts:
+      - equal:
+          path: spec.rules[0].host
+          value: a.example.com
+      - equal:
+          path: spec.rules[1].host
+          value: b.example.com
+      - equal:
+          path: spec.rules[1].http.paths[0].path
+          value: /api

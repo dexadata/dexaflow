@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // TestBootstrapAdminConcurrentIntegration reproduces the split-topology race

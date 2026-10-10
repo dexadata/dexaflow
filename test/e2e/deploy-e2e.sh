@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# End-to-end smoke test for `leoflow deploy` (ADR 0041) on a local k3d cluster.
+# End-to-end smoke test for `dexaflow deploy` (ADR 0041) on a local k3d cluster.
 #
 # Unlike e2e.sh (which `k3d image import`s the DAG image), this exercises the
-# REAL deploy path: a k3d-managed registry the cluster pulls from, `leoflow auth
-# login` to persist a token, then a single `leoflow deploy` that compiles, builds
+# REAL deploy path: a k3d-managed registry the cluster pulls from, `dexaflow auth
+# login` to persist a token, then a single `dexaflow deploy` that compiles, builds
 # for the cluster arch, PUSHES to the registry, captures the image digest,
 # re-pins dag.json by digest, and registers it. It then triggers a run and
 # asserts the task reaches 'success' — i.e. the cluster pulled the digest-pinned
@@ -98,7 +98,7 @@ sleep 5
 log "Scaffolding a DAG project with a registry: block ($DAG_ID, platform $PLATFORM)"
 "$ROOT/bin/leoflow" init "$WORKDIR/$DAG_ID" >/dev/null
 cat > "$WORKDIR/$DAG_ID/dag.py" <<'PY'
-"""deploydag — leoflow deploy smoke DAG."""
+"""deploydag — dexaflow deploy smoke DAG."""
 from __future__ import annotations
 
 from airflow.sdk import DAG, task
@@ -106,7 +106,7 @@ from airflow.sdk import DAG, task
 
 @task
 def hello() -> None:
-    print("hello from leoflow deploy e2e")
+    print("hello from dexaflow deploy e2e")
 
 
 with DAG("deploydag", schedule="@daily", catchup=False, tags=["deploy-e2e"]):
@@ -120,9 +120,9 @@ FROM ${BASE_IMAGE}
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
 DOCKER
-# leoflow.yaml: registry: makes deploy mandatory-registry happy; build.platforms
+# dexaflow.yaml: registry: makes deploy mandatory-registry happy; build.platforms
 # matches the cluster arch.
-cat > "$WORKDIR/$DAG_ID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$DAG_ID/dexaflow.yaml" <<YAML
 dag_id: ${DAG_ID}
 python_version: "${PY_VERSION}"
 build:
@@ -133,11 +133,11 @@ registry:
   image_name: ${DAG_ID}
 YAML
 
-log "leoflow auth login (persists token to \$CFG)"
+log "dexaflow auth login (persists token to \$CFG)"
 "$ROOT/bin/leoflow" auth login --server "$API" \
   --username admin@leoflow.local --password admin --config "$CFG"
 
-log "leoflow deploy — compile → build($PLATFORM) → push($REG_HOST) → digest re-pin → register"
+log "dexaflow deploy — compile → build($PLATFORM) → push($REG_HOST) → digest re-pin → register"
 # Unique version per run so a re-run against the shared dev DB does not collide
 # with a prior run's registered version (dag_versions is unique per dag+version).
 "$ROOT/bin/leoflow" deploy "$WORKDIR/$DAG_ID" --yes --config "$CFG" \
@@ -177,14 +177,14 @@ hlog=""
 for try in 0 1 2; do
   body="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
     "$API/api/v2/dags/$DAG_ID/dagRuns/$RUN_ID/taskInstances/hello/logs/$try" 2>/dev/null || true)"
-  if echo "$body" | grep -q "hello from leoflow deploy e2e"; then hlog="$body"; break; fi
+  if echo "$body" | grep -q "hello from dexaflow deploy e2e"; then hlog="$body"; break; fi
 done
 [ -n "$hlog" ] || fail "no 'hello' log shipped — the deployed image did not run"
 
 # ---------------------------------------------------------------------------
 # The TWO-STEP path, with a non-default tag strategy.
 #
-# Everything above drives a single `leoflow deploy`, which compiles, builds,
+# Everything above drives a single `dexaflow deploy`, which compiles, builds,
 # pushes and registers in one process. That is one of the two ways this is used
 # and it is the one that cannot expose a disagreement, because only one tag
 # resolver ever runs.
@@ -228,7 +228,7 @@ FROM ${BASE_IMAGE}
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
 DOCKER2
-cat > "$WORKDIR/$TWO_STEP_ID/leoflow.yaml" <<YAML
+cat > "$WORKDIR/$TWO_STEP_ID/dexaflow.yaml" <<YAML
 dag_id: ${TWO_STEP_ID}
 python_version: "${PY_VERSION}"
 build:

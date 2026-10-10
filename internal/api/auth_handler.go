@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // TokenRenewer re-mints a still-valid user bearer with a fresh short TTL, bounded
@@ -58,11 +58,22 @@ func (b *breakGlass) allows(email string) bool {
 // rate limit), on a limiter separate from the /auth/token one so OIDC traffic and
 // password-login lockouts never contaminate each other's budget.
 func rateLimitByIP(limiter *auth.RateLimiter) gin.HandlerFunc {
+	return rateLimitByIPWith(limiter, func(c *gin.Context) {
+		AbortProblem(c, http.StatusTooManyRequests, "rate limited", rateLimitedDetail)
+	})
+}
+
+// rateLimitedDetail is what a caller over a per-IP limit is told.
+const rateLimitedDetail = "too many requests; wait about a minute and try again"
+
+// rateLimitByIPWith is rateLimitByIP with the refusal left to the route:
+// blocked answers a caller over the limit and must abort the chain.
+func rateLimitByIPWith(limiter *auth.RateLimiter, blocked gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		if limiter.Blocked(ip) {
-			AbortProblem(c, http.StatusTooManyRequests, "rate limited",
-				"too many requests; wait about a minute and try again")
+			blocked(c)
+			c.Abort() // a refusal must stop the chain even if blocked forgets to
 			return
 		}
 		limiter.Allow(ip)
@@ -169,8 +180,16 @@ func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSe
 	}
 }
 
+// renewRateLimitPerMinute caps POST /api/v2/auth/token/renew per client IP
+// (#801). A client renews about once per token TTL, so the budget is far above
+// legitimate traffic even for many users behind one proxy, while still bounding
+// how fast one address can drive the store reload each renewal performs. It
+// counts on its own limiter: sharing the login limiter would let renewal traffic
+// lock an address out of password login.
+const renewRateLimitPerMinute = 60
+
 // renewTokenHandler re-mints the caller's still-valid user bearer into a fresh
-// access token, so a long CLI/dev session never has to `leoflow auth login` again
+// access token, so a long CLI/dev session never has to `dexaflow auth login` again
 // on the hour (EKS validation aresta #5). It is the server half of transparent
 // renewal: the short access-token TTL is unchanged (a stolen token still lapses
 // quickly), while max_lifetime bounds how long a session may keep renewing before

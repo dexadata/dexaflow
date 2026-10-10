@@ -14,7 +14,7 @@
 # coupling at boot, so an install that changed only one would CrashLoopBackOff
 # rather than run:
 #
-#   helm/leoflow/templates/deployment.yaml:199-201
+#   helm/dexaflow/templates/deployment.yaml:199-201
 #     "execution.warmPoolsEnabled requires auth.agentTokenTransport=exchange
 #      AND auth.secretLivenessMode=enforce"
 #
@@ -111,7 +111,7 @@ ARMS="A Aprime B"
 
 # The CLI that builds and pushes the DAG image. Built from this tree rather than
 # downloaded: the experiment is about this source, not about a released binary.
-WP_CLI="${WP_CLI:-$EXP_REPO_ROOT/.bin/leoflow}"
+WP_CLI="${WP_CLI:-$EXP_REPO_ROOT/.bin/dexaflow}"
 WP_DAG_VERSION="${WP_DAG_VERSION:-gcpexp1}"
 WP_JWT=""
 WP_PW=""
@@ -135,7 +135,7 @@ arm_values() { # <arm>  -> three --set arguments
 
 # arm_is_renderable encodes the chart's own refusal, so a bad arm definition is
 # caught by the self-test instead of by a failed helm upgrade on a paid cluster.
-# The rule is at helm/leoflow/templates/deployment.yaml:199-201.
+# The rule is at helm/dexaflow/templates/deployment.yaml:199-201.
 arm_is_renderable() { # <warm> <transport> <liveness>
   local warm="$1" transport="$2" liveness="$3"
   [ "$warm" != "true" ] && return 0
@@ -250,13 +250,13 @@ PY
   # the day the chart's coupling changes, this fails here rather than during a
   # paid run. Skipped loudly when helm is absent, because a gate that silently
   # stops running is the defect it was meant to prevent.
-  if command -v helm >/dev/null 2>&1 && [ -d "$EXP_REPO_ROOT/helm/leoflow" ]; then
+  if command -v helm >/dev/null 2>&1 && [ -d "$EXP_REPO_ROOT/helm/dexaflow" ]; then
     local w t l expect got
     for w in true false; do
       for t in envvar exchange; do
         for l in observe enforce; do
           if arm_is_renderable "$w" "$t" "$l"; then expect=RENDERS; else expect=REFUSED; fi
-          if helm template leoflow "$EXP_REPO_ROOT/helm/leoflow" \
+          if helm template leoflow "$EXP_REPO_ROOT/helm/dexaflow" \
                --set "database.url=postgres://x" --set "redis.url=redis://x" \
                --set-string auth.jwtSecret=a --set-string bootstrap.password=b \
                --set "execution.warmPoolsEnabled=$w" \
@@ -491,7 +491,7 @@ run_experiment() {
   # produced linux/amd64 and pushed it to Artifact Registry:
   #   us-central1-docker.pkg.dev/<project>/leoflow-validate/gcp-probe:gcpexp1
   #   sha256:ee3708486dc3ed224bb91d615f30c36ef0f81397e35b4256c90fde3d6ad22f92
-  # The platform pin in test/gcp/dags/gcp_probe/leoflow.yaml is what makes that
+  # The platform pin in test/gcp/dags/gcp_probe/dexaflow.yaml is what makes that
   # work; without it the image is arm64 and every task pod fails with an exec
   # format error AFTER the cluster has been paid for.
   #
@@ -518,7 +518,7 @@ run_experiment() {
   # GetUserByEmail with whatever `username` carries
   # (internal/storage/repository.go), and the bootstrap admin is created as
   # LEOFLOW_BOOTSTRAP_EMAIL or admin@leoflow.local
-  # (cmd/leoflow-server/main.go). This passed "admin" and got a 401 that the
+  # (cmd/dexaflow-server/main.go). This passed "admin" and got a 401 that the
   # first real run spent a cluster to discover.
   local admin_login="${WP_ADMIN_LOGIN:-admin@leoflow.local}"
   # Stderr is KEPT. It was sent to /dev/null on the one call whose failure is
@@ -586,18 +586,18 @@ run_experiment() {
 wp_build_and_push() { # <out dir>
   local out="$1"
   exp_require docker
-  [ -x "$WP_CLI" ] || exp_die "no leoflow CLI at $WP_CLI. Build one: go build -o $WP_CLI ./cmd/leoflow"
+  [ -x "$WP_CLI" ] || exp_die "no dexaflow CLI at $WP_CLI. Build one: go build -o $WP_CLI ./cmd/dexaflow"
   mkdir -p "$out/dag-project"
   cp "$EXP_REPO_ROOT"/test/gcp/dags/gcp_probe/* "$out/dag-project/"
   # The registry URL carries ${GCP_PROJECT} in the committed file precisely so
   # no account identifier is in git. Substituted here, into the run directory,
   # which is gitignored.
-  python3 - "$out/dag-project/leoflow.yaml" "$GCP_PROJECT" <<'SUBST'
+  python3 - "$out/dag-project/dexaflow.yaml" "$GCP_PROJECT" <<'SUBST'
 import sys
 p, proj = sys.argv[1], sys.argv[2]
 src = open(p).read()
 if "${GCP_PROJECT}" not in src:
-    sys.exit("leoflow.yaml no longer carries ${GCP_PROJECT}; refusing to guess the registry")
+    sys.exit("dexaflow.yaml no longer carries ${GCP_PROJECT}; refusing to guess the registry")
 open(p, "w").write(src.replace("${GCP_PROJECT}", proj))
 SUBST
   gcloud auth configure-docker "${AR_HOST:-us-central1-docker.pkg.dev}" --quiet >/dev/null 2>&1 \
@@ -854,7 +854,7 @@ cat <<ARMS
 
   Turning warm pools on is not a one-flag change. The chart refuses to render
   without agentTokenTransport=exchange AND secretLivenessMode=enforce
-  (helm/leoflow/templates/deployment.yaml:199-201), and the server enforces the
+  (helm/dexaflow/templates/deployment.yaml:199-201), and the server enforces the
   same coupling at boot. Any two-arm comparison across that bundle cannot
   attribute a difference to warm pools, which is why arm A' exists.
 

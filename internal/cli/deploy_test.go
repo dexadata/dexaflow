@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
@@ -125,7 +125,7 @@ func TestDeployRunsPastGuardThenFailsAtCompile(t *testing.T) {
 	if _, _, err := run(t, "init", dir); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	f := filepath.Join(dir, "leoflow.yaml")
+	f := filepath.Join(dir, "dexaflow.yaml")
 	data, _ := os.ReadFile(f)
 	withRegistry := string(data) + "\nregistry:\n  url: ghcr.io/org\n  image_name: etl\n"
 	if err := os.WriteFile(f, []byte(withRegistry), 0o600); err != nil {
@@ -321,7 +321,7 @@ func TestRequireRegistryRejectsUnconfigured(t *testing.T) {
 		t.Fatal("expected requireRegistry to reject a config with no registry URL")
 	}
 	msg := err.Error()
-	for _, want := range []string{"registry", "leoflow.yaml", "docker login"} {
+	for _, want := range []string{"registry", "dexaflow.yaml", "docker login"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message missing %q; got:\n%s", want, msg)
 		}

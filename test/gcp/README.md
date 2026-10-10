@@ -8,7 +8,7 @@ what genuinely needs a real cluster.
 
 | Experiment | Why local cannot answer it |
 |---|---|
-| `pod-per-task` | The soak runs `leoflow lite --executor subprocess`. The **entire Kubernetes executor path** is therefore unmeasured: pod-per-task, image pulls, the pod informer, the reaper acting on pods. That is the path production runs. |
+| `pod-per-task` | The soak runs `dexaflow lite --executor subprocess`. The **entire Kubernetes executor path** is therefore unmeasured: pod-per-task, image pulls, the pod informer, the reaper acting on pods. That is the path production runs. |
 | `warm-pool-ab` | Warm pools exist only on Kubernetes (`internal/executor`), and Lite's subprocess executor has no pool at all. |
 | `netpol` | k3d **accepts NetworkPolicy and ignores it**, so #1089's standing rows pass vacuously. Dataplane V2 enforces, which is the whole point. |
 
@@ -439,7 +439,7 @@ passes with the CNI doing nothing at all.
 
 Turning warm pools on is not one flag. The chart refuses to render without
 `auth.agentTokenTransport=exchange` **and** `auth.secretLivenessMode=enforce`
-(`helm/leoflow/templates/deployment.yaml:199-201`), and the server enforces the
+(`helm/dexaflow/templates/deployment.yaml:199-201`), and the server enforces the
 same coupling at boot, so an install that moved one would CrashLoopBackOff. The
 reason is a real invariant (ADR 0058 D2): a warm pod outlives the attempt it was
 created for, so a credential that outlives an attempt would let a superseded
@@ -473,7 +473,7 @@ direction invalidates: a cluster that got faster flatters whichever arm ran last
 
 ## What is still not here
 
-- **The DAG build-and-push pipeline.** `leoflow deploy` against
+- **The DAG build-and-push pipeline.** `dexaflow deploy` against
   `test/gcp/dags/gcp_probe/` with a token from the bootstrap admin. Until it
   exists, `warm-pool-ab.sh` cannot run and `pod-per-task.sh` measures only the
   Kubernetes half.

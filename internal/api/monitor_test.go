@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/gin-gonic/gin"
-	"github.com/neochaotic/leoflow/internal/domain"
 )
 
 type fakeHeartbeater struct {

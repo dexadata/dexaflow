@@ -7,6 +7,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // Warm-worker pod labels (ADR 0058 N1b2b). The warm-pool reconciler lists and
@@ -116,6 +118,20 @@ type WarmPodSpec struct {
 	// PodSecurity carries the same container/pod hardening choices as a task pod.
 	PodSecurity PodSecurity
 
+	// Resources sizes the warm container. With an operator resource unit it is
+	// one unit (ADR 0066 §3), and only tasks of that size are placed on the
+	// worker. Nil leaves the container unsized, as before.
+	Resources *domain.Resources
+
+	// ReadOnlyRootFilesystem is the warm isolation mode (X3.2,
+	// execution.warm_read_only_root_filesystem). It forces a read-only root on the
+	// warm container whatever PodSecurity says, mounts the writable /tmp emptyDir,
+	// and tells the agent (warmAttemptHomeEnv) to give each attempt its own HOME
+	// and XDG dirs inside the scratch it wipes, and to sweep /tmp and /dev/shm
+	// around every attempt. On a writable root a file one attempt plants on the image would be
+	// executed by the next attempt on this worker.
+	ReadOnlyRootFilesystem bool
+
 	// AnchorName / AnchorUID identify the per-dag-version GC-anchor ConfigMap this
 	// warm pod is owned by (ADR 0058 D11). When BOTH are set, BuildWarmPod stamps an
 	// ownerReference to the anchor, so on control-plane loss / namespace teardown the
@@ -126,7 +142,8 @@ type WarmPodSpec struct {
 	AnchorUID  types.UID
 
 	// Labels / Annotations are operator-declared metadata overlaid onto the pod;
-	// Leoflow's own warm-worker labels always win a collision (see mergeMetadata).
+	// keys under domain.ReservedMetadataPrefix are dropped and Dexaflow's own
+	// warm-worker labels always win a collision (see mergeMetadata).
 	Labels      map[string]string
 	Annotations map[string]string
 }
@@ -154,6 +171,9 @@ type WarmPodSpec struct {
 // stamps an ownerReference to that anchor ConfigMap so the pod is cascade-GC'd on
 // external teardown; without an anchor it builds a bare pod, unchanged.
 func BuildWarmPod(spec WarmPodSpec) *corev1.Pod {
+	if spec.ReadOnlyRootFilesystem {
+		spec.PodSecurity.ReadOnlyRootFilesystem = true
+	}
 	pullPolicy := corev1.PullIfNotPresent
 	if spec.ImagePullPolicy != "" {
 		pullPolicy = corev1.PullPolicy(spec.ImagePullPolicy)
@@ -181,8 +201,12 @@ func BuildWarmPod(spec WarmPodSpec) *corev1.Pod {
 			}},
 		},
 	}
-	mergeMetadata(pod.Labels, spec.Labels)
-	mergeMetadata(pod.Annotations, spec.Annotations)
+	if spec.Resources != nil {
+		pod.Spec.Containers[0].Resources = buildResources(*spec.Resources)
+	}
+	dropped := mergeMetadata(pod.Labels, spec.Labels)
+	dropped = append(dropped, mergeMetadata(pod.Annotations, spec.Annotations)...)
+	logDroppedMetadata(dropped, "tenant", spec.TenantID, "dag_version", spec.DagVersionID, "pod", pod.Name)
 	if spec.ServiceAccount != "" {
 		// Run the warm worker as the operator's default task ServiceAccount so a task
 		// placed on it resolves keyless secrets exactly as a dedicated pod does (#2).
@@ -322,8 +346,16 @@ func warmPodEnv(spec WarmPodSpec) []corev1.EnvVar {
 	if spec.PodSecurity.ReadOnlyRootFilesystem {
 		env = append(env, corev1.EnvVar{Name: "TMPDIR", Value: writableTmpMountPath})
 	}
+	if spec.ReadOnlyRootFilesystem {
+		env = append(env, corev1.EnvVar{Name: warmAttemptHomeEnv, Value: "1"})
+	}
 	return env
 }
+
+// warmAttemptHomeEnv tells the warm agent its root filesystem is read only by
+// design (X3.2), so it must give each attempt a HOME and XDG dirs inside its
+// wiped scratch and sweep the shared /tmp and /dev/shm around every attempt.
+const warmAttemptHomeEnv = "LEOFLOW_WARM_ATTEMPT_HOME"
 
 // mountWarmAgentTLSCA mounts the CA ConfigMap (when configured) into the warm pod
 // so the agent can verify the control plane's TLS cert, mirroring the task pod's

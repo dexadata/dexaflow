@@ -1,11 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────
-# AI Agent context files
-# These files contain agent-specific guidance and may include personal,
-# experimental, or evolving instructions. They are not part of the public
+# Agent context files
+# AGENTS.md at the root is committed: it carries the standing repository rules.
+# Tool-specific context files stay local and are not part of the public
 # repository contract.
 # ─────────────────────────────────────────────────────────────────────────
 CLAUDE.md
-AGENTS.md
+CLAUDE.local.md
+.github/CLAUDE.md.template
 GEMINI.md
 COPILOT.md
 .cursorrules
@@ -20,11 +21,16 @@ COPILOT.md
 # ─────────────────────────────────────────────────────────────────────────
 # Compiled binaries
 bin/
+.bin/
 dist/
 /leoflow-mcp
 /leoflow
 /leoflow-server
 /leoflow-agent
+/dexaflow-mcp
+/dexaflow
+/dexaflow-server
+/dexaflow-agent
 *.exe
 *.exe~
 *.dll
@@ -113,7 +119,7 @@ share/python-wheels/
 .minio-data/
 
 # Local helm overrides
-helm/leoflow/values.local.yaml
+helm/dexaflow/values.local.yaml
 
 # ─────────────────────────────────────────────────────────────────────────
 # Editor / IDE
@@ -184,7 +190,7 @@ docs/openapi.yaml
 docs/cli/
 docs/go/
 # Helm chart README mirrored into the docs site by .github/workflows/docs.yml
-# (source-of-truth at helm/leoflow/README.md, auto-generated from values.yaml
+# (source-of-truth at helm/dexaflow/README.md, auto-generated from values.yaml
 # by helm-docs). #183.
 docs/helm-chart.md
 

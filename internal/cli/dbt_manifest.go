@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // loadDbtManifest returns the dbt manifest.json bytes. A pinned dbt.manifest is used
@@ -45,7 +45,7 @@ func loadDbtManifest(cmd *cobra.Command, dir string, c *domain.DbtConfig, localW
 	dbtBin := dbtParseBin(dagID)
 	if dbtBin == "dbt" {
 		if _, lerr := exec.LookPath("dbt"); lerr != nil {
-			return nil, fmt.Errorf("dbt is not on PATH: install dbt-core and your adapter (e.g. `pip install dbt-postgres`), or set dbt.manifest in leoflow.yaml to a pre-built manifest.json")
+			return nil, fmt.Errorf("dbt is not on PATH: install dbt-core and your adapter (e.g. `pip install dbt-postgres`), or set dbt.manifest in dexaflow.yaml to a pre-built manifest.json")
 		}
 	}
 	pc := exec.CommandContext(cmdContext(cmd), dbtBin, "parse") //nolint:gosec // dbtBin is the resolved venv or PATH dbt

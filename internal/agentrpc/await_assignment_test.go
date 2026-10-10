@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/auth"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -175,6 +175,34 @@ func TestAwaitAssignmentRegistersWorker(t *testing.T) {
 	stream.pushErr(io.EOF) // clean shutdown
 }
 
+// A warm-worker credential is minted for exactly one dag_version pool (one
+// tenant's DAG version). Registering for any other pool would let it receive
+// that pool's assignments, and with them another tenant's task secrets, so the
+// payload's dag_version_id must match the token's.
+func TestAwaitAssignmentRejectsRegisterForAnotherPool(t *testing.T) {
+	srv, a, reg := newWarmServer(t, nil)
+	stream := newFakeAwaitStream(ctxWithWarmToken(t, a)) // token pool: dagver-1
+	stream.pushMsg(regMsg("dagver-other-tenant"))
+	done := make(chan error, 1)
+	go func() { done <- srv.AwaitAssignment(stream) }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(2 * time.Second):
+		stream.pushErr(io.EOF)
+		t.Fatal("register for another pool was accepted: the stream stayed open")
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("register for another pool: got %v, want PermissionDenied", err)
+	}
+	if reg.registered("ti-1") {
+		t.Fatal("a worker registering for another pool must not be registered")
+	}
+	if reg.Assign("dagver-other-tenant", &agentv1.WorkAssignment{AssignmentId: "x"}) {
+		t.Fatal("the other pool must have no worker to assign to")
+	}
+}
+
 // ─── (d) Assign pushes a WorkAssignment the stream receives ─────────────────
 
 func TestAwaitAssignmentDeliversAssignment(t *testing.T) {
@@ -209,7 +237,7 @@ func TestAckStartedWithinLeaseMarksBusyNoReclaim(t *testing.T) {
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return time.Hour } // long lease
 
 	send := make(chan *agentv1.WorkAssignment, 1)
-	reg.Register("w1", "v1", "pod-1", send)
+	mustRegister(t, reg, "w1", "v1", "pod-1", send)
 	// The assignment carries the attempt identity (run/task/try); the lease must
 	// carry it through so a started ack can return it as the binding to persist.
 	if !reg.Assign("v1", &agentv1.WorkAssignment{
@@ -244,7 +272,7 @@ func TestLeaseExpiryReclaims(t *testing.T) {
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return 5 * time.Millisecond }
 
 	send := make(chan *agentv1.WorkAssignment, 1)
-	reg.Register("w1", "v1", "pod-1", send)
+	mustRegister(t, reg, "w1", "v1", "pod-1", send)
 	reg.Assign("v1", &agentv1.WorkAssignment{AssignmentId: "as-1", DagVersionId: "v1"})
 	<-send
 
@@ -266,7 +294,7 @@ func TestAckRefusedReclaims(t *testing.T) {
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return time.Hour }
 
 	send := make(chan *agentv1.WorkAssignment, 1)
-	reg.Register("w1", "v1", "pod-1", send)
+	mustRegister(t, reg, "w1", "v1", "pod-1", send)
 	reg.Assign("v1", &agentv1.WorkAssignment{AssignmentId: "as-1", DagVersionId: "v1"})
 	<-send
 	binding, ok := reg.Ack("as-1", false)
@@ -300,7 +328,7 @@ func TestLeaseExpiryReturnsWorkerToFree(t *testing.T) {
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return 5 * time.Millisecond }
 
 	send := make(chan *agentv1.WorkAssignment, 2)
-	reg.Register("w1", "v1", "pod-1", send)
+	mustRegister(t, reg, "w1", "v1", "pod-1", send)
 	if !reg.Assign("v1", &agentv1.WorkAssignment{AssignmentId: "as-1", DagVersionId: "v1"}) {
 		t.Fatal("first Assign should succeed")
 	}
@@ -346,7 +374,7 @@ func TestReclaimEventCarriesAttemptIdentity(t *testing.T) {
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return 5 * time.Millisecond }
 
 	send := make(chan *agentv1.WorkAssignment, 1)
-	reg.Register("w1", "v1", "pod-1", send)
+	mustRegister(t, reg, "w1", "v1", "pod-1", send)
 	reg.Assign("v1", &agentv1.WorkAssignment{
 		AssignmentId: "as-1", DagVersionId: "v1", DagRunId: "run-7", TaskId: "extract", TryNumber: 4,
 	})
@@ -370,7 +398,7 @@ func TestReclaimRefusedCarriesAttemptIdentity(t *testing.T) {
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return time.Hour }
 
 	send := make(chan *agentv1.WorkAssignment, 1)
-	reg.Register("w1", "v1", "pod-1", send)
+	mustRegister(t, reg, "w1", "v1", "pod-1", send)
 	reg.Assign("v1", &agentv1.WorkAssignment{
 		AssignmentId: "as-1", DagVersionId: "v1", DagRunId: "run-7", TaskId: "load", TryNumber: 2,
 	})
@@ -405,25 +433,111 @@ func TestAwaitAssignmentDeregistersOnStreamClose(t *testing.T) {
 	awaitEventually(t, func() bool { return !reg.registered("ti-1") })
 }
 
-// ─── (i) reconnect same identity => single entry ────────────────────────────
+// ─── (i) one live registration per identity ────────────────────────────────
 
-func TestAwaitAssignmentReconnectSameIdentitySingleEntry(t *testing.T) {
+// A second stream under the SAME authenticated identity is refused while the
+// first is still connected, and the first keeps the registration. Once the first
+// stream has ended, a reconnect under that identity registers normally.
+func TestAwaitAssignmentRefusesDuplicateWhileLiveThenAcceptsReconnect(t *testing.T) {
 	srv, a, reg := newWarmServer(t, nil)
 
 	s1 := newFakeAwaitStream(ctxWithWarmToken(t, a))
-	s1.pushMsg(regMsg("v1"))
-	go func() { _ = srv.AwaitAssignment(s1) }()
-	awaitEventually(t, func() bool { return reg.dagVersionOf("ti-1") == "v1" })
+	s1.pushMsg(regMsgPod("dagver-1", "pod-a"))
+	done1 := make(chan error, 1)
+	go func() { done1 <- srv.AwaitAssignment(s1) }()
+	awaitEventually(t, func() bool { return reg.podNameOf("ti-1") == "pod-a" })
 
-	// A reconnect with the SAME authenticated identity but a new registration.
 	s2 := newFakeAwaitStream(ctxWithWarmToken(t, a))
-	s2.pushMsg(regMsg("v2"))
-	go func() { _ = srv.AwaitAssignment(s2) }()
-	awaitEventually(t, func() bool { return reg.dagVersionOf("ti-1") == "v2" })
+	s2.pushMsg(regMsgPod("dagver-1", "pod-b"))
+	done2 := make(chan error, 1)
+	go func() { done2 <- srv.AwaitAssignment(s2) }()
+	select {
+	case err := <-done2:
+		if status.Code(err) != codes.AlreadyExists {
+			t.Fatalf("duplicate registration while live: got %v, want AlreadyExists", err)
+		}
+	case <-time.After(2 * time.Second):
+		s2.pushErr(io.EOF)
+		t.Fatal("a duplicate registration while the first stream is live was accepted")
+	}
+	if got := reg.podNameOf("ti-1"); got != "pod-a" || reg.size() != 1 {
+		t.Fatalf("after refused duplicate: pod = %q size = %d, want pod-a and 1", got, reg.size())
+	}
 
+	// The first stream ends; the identity may now reconnect.
+	s1.pushErr(io.EOF)
+	if err := <-done1; err != nil {
+		t.Fatalf("clean close of the first stream: %v", err)
+	}
+	s3 := newFakeAwaitStream(ctxWithWarmToken(t, a))
+	s3.pushMsg(regMsgPod("dagver-1", "pod-c"))
+	go func() { _ = srv.AwaitAssignment(s3) }()
+	awaitEventually(t, func() bool { return reg.podNameOf("ti-1") == "pod-c" })
 	if reg.size() != 1 {
 		t.Fatalf("reconnect same identity: registry size = %d, want 1", reg.size())
 	}
+	s3.pushErr(io.EOF)
+}
+
+// A worker re-sends WorkerRegister on its established stream as a liveness
+// heartbeat; the handler refreshes the entry so the registration stays live
+// beyond the grace and a duplicate is still refused.
+func TestAwaitAssignmentHeartbeatKeepsRegistrationLive(t *testing.T) {
+	srv, a, reg := newWarmServer(t, nil)
+	clk := &registryClock{now: time.Unix(1_700_000_000, 0)}
+	reg.now = clk.Now
+
+	s1 := newFakeAwaitStream(ctxWithWarmToken(t, a))
+	s1.pushMsg(regMsgPod("dagver-1", "pod-a"))
+	go func() { _ = srv.AwaitAssignment(s1) }()
+	awaitEventually(t, func() bool { return reg.registered("ti-1") })
+
+	clk.Advance(workerLivenessGrace - time.Second)
+	s1.pushMsg(regMsgPod("dagver-1", "pod-a")) // heartbeat
+	awaitEventually(t, func() bool { return reg.lastSeenOf("ti-1").Equal(clk.Now()) })
+	clk.Advance(2 * time.Second) // past the grace measured from registration, not from the heartbeat
+
+	s2 := newFakeAwaitStream(ctxWithWarmToken(t, a))
+	s2.pushMsg(regMsgPod("dagver-1", "pod-b"))
+	if err := srv.AwaitAssignment(s2); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("duplicate against a heartbeating stream: got %v, want AlreadyExists", err)
+	}
+	s1.pushErr(io.EOF)
+}
+
+// A stream that stopped heartbeating is replaced after the grace, and its
+// handler ends promptly with Aborted instead of lingering as a second
+// connection for the same identity.
+func TestAwaitAssignmentStaleStreamSupersededAfterGrace(t *testing.T) {
+	srv, a, reg := newWarmServer(t, nil)
+	clk := &registryClock{now: time.Unix(1_700_000_000, 0)}
+	reg.now = clk.Now
+
+	s1 := newFakeAwaitStream(ctxWithWarmToken(t, a))
+	s1.pushMsg(regMsgPod("dagver-1", "pod-a"))
+	done1 := make(chan error, 1)
+	go func() { done1 <- srv.AwaitAssignment(s1) }()
+	awaitEventually(t, func() bool { return reg.registered("ti-1") })
+
+	clk.Advance(workerLivenessGrace + time.Second)
+	s2 := newFakeAwaitStream(ctxWithWarmToken(t, a))
+	s2.pushMsg(regMsgPod("dagver-1", "pod-b"))
+	go func() { _ = srv.AwaitAssignment(s2) }()
+	awaitEventually(t, func() bool { return reg.podNameOf("ti-1") == "pod-b" })
+
+	select {
+	case err := <-done1:
+		if status.Code(err) != codes.Aborted {
+			t.Fatalf("superseded stream: got %v, want Aborted", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the superseded stream's handler did not end")
+	}
+	if !reg.registered("ti-1") || reg.size() != 1 {
+		t.Fatal("the superseded handler's exit evicted the replacement")
+	}
+	s1.pushErr(io.EOF) // unblock the receive goroutine
+	s2.pushErr(io.EOF)
 }
 
 // ─── (j) started ack => handler persists the durable binding ────────────────

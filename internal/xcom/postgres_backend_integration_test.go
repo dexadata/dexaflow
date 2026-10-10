@@ -90,3 +90,36 @@ func TestPostgresBackendExpiryIntegration(t *testing.T) {
 		t.Errorf("DeleteExpired removed %d rows, want >= 1", n)
 	}
 }
+
+// TestPostgresBackendFetchManyIntegration reads several keys in one query and
+// leaves out expired and absent ones.
+func TestPostgresBackendFetchManyIntegration(t *testing.T) {
+	b, _ := openPGBackend(t)
+	ctx := context.Background()
+	prefix := fmt.Sprintf("xcom:itest:%d", time.Now().UnixNano())
+	live, expired, absent := prefix+":a", prefix+":b", prefix+":c"
+	t.Cleanup(func() { _ = b.Delete(ctx, live); _ = b.Delete(ctx, expired) })
+	if err := b.Push(ctx, live, Entry{Value: []byte(`1`), ContentType: "application/json", SizeBytes: 1, CreatedAt: time.Now()}, time.Hour); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if err := b.Push(ctx, expired, Entry{Value: []byte(`2`), CreatedAt: time.Now()}, time.Hour); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	b.now = func() time.Time { return time.Now().Add(-2 * time.Hour) }
+	if err := b.Push(ctx, expired, Entry{Value: []byte(`2`), CreatedAt: time.Now()}, time.Hour); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	entries, found, err := b.FetchMany(ctx, []string{live, expired, absent, live})
+	if err != nil {
+		t.Fatalf("FetchMany: %v", err)
+	}
+	want := []bool{true, false, false, true}
+	for i := range want {
+		if found[i] != want[i] {
+			t.Errorf("found[%d] = %v, want %v", i, found[i], want[i])
+		}
+	}
+	if string(entries[0].Value) != `1` || string(entries[3].Value) != `1` {
+		t.Errorf("values = %q, %q, want 1", entries[0].Value, entries[3].Value)
+	}
+}

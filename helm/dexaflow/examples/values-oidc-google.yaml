@@ -1,0 +1,135 @@
+# values-oidc-google.yaml, SSO with Google Workspace.
+#
+# Use with:  helm install leoflow leoflow/leoflow -n leoflow -f values-oidc-google.yaml
+#
+# Google Workspace is the example because it is the awkward one: its tenant claim
+# is `hd`, whose value is a DOMAIN, and a domain is dotted. viper's config key
+# delimiter is also ".", which is why auth.oidc.tenantClaims cannot travel as an
+# environment variable and why the chart writes it into a mounted ConfigMap
+# instead (#826, #1143). Entra is the same file with `tenantClaim: tid` and a GUID
+# on the left-hand side of tenantClaims.
+#
+# On the Google Cloud console side, before installing:
+#   1. APIs & Services → Credentials → Create OAuth client ID → Web application.
+#   2. Authorized redirect URI: exactly the `redirectUrl` below. It is the URL the
+#      BROWSER is sent to, so it is the ingress hostname, never a Service name.
+#   3. Copy the client id and client secret into the two fields below (or, better,
+#      put the secret in a Secret of your own and name it in oidc.existingSecret).
+#
+# Google does not emit group memberships in the ID token without Directory API
+# setup, so this file maps roles by tenant rather than by group: every verified
+# user from the domain lands on `defaultRole`. Swap to auth.oidc.roleMappings once
+# your IdP actually emits a groups claim.
+
+# External datastores are mandatory for Pro (the embedded ones are Lite-only).
+database:
+  url: "postgres://leoflow:CHANGEME@postgres:5432/leoflow?sslmode=require"
+redis:
+  url: "redis://redis:6379/0"
+
+agentTLS:
+  enabled: true
+  serverCertSecret: "leoflow-agent-tls"
+  caConfigMap: "leoflow-agent-ca"
+
+auth:
+  # SSO does NOT replace the JWT signing secret: OIDC is the login flow, and the
+  # token it mints for the browser (and every agent token) is still signed with
+  # this key. An SSO-only install needs it exactly as much as a password install.
+  jwtSecret: "CHANGEME-jwt-signing-secret"
+
+  oidc:
+    enabled: true
+
+    issuer: "https://accounts.google.com"
+    clientId: "1234567890-abcdefghijklmnop.apps.googleusercontent.com"
+    # Prefer an out-of-band Secret in anything that is not a scratch cluster:
+    #   kubectl -n leoflow create secret generic leoflow-idp \
+    #     --from-literal=oidcClientSecret='GOCSPX-...'
+    #   then: existingSecret: leoflow-idp   (and drop clientSecret below)
+    clientSecret: "GOCSPX-CHANGEME"
+    existingSecret: ""
+
+    # Must match the Authorized redirect URI registered above, character for
+    # character, including the scheme and any trailing path.
+    redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
+
+    # The tenant pin. `hd` is the Google Workspace domain of the signed-in user,
+    # and it is present ONLY for Workspace accounts, a personal @gmail.com
+    # account has no hd claim at all, so this pin also excludes those by
+    # construction. Every domain you accept needs a line in tenantClaims; a value
+    # that is not a key here is rejected 403 and never falls back to `default`.
+    tenantClaim: "hd"
+    #
+    # The VALUE must name a tenant that already exists. `default` is created by
+    # the first migration and is the only one anything in this project creates:
+    # there is no API, CLI or chart setting that adds another. Mapping a domain
+    # to a name that does not exist boots green and then denies every login from
+    # it behind the same generic 403 as everything else (audited
+    # role_check_failed while defaultRole below is set, jit_failed if it is not).
+    # So map to `default` unless you created the tenant yourself.
+    tenantClaims:
+      "example.com": "default"
+      # A second Workspace domain. Both may map to the same tenant:
+      # "acme.example.co.uk": "default"
+
+    # Layered ON TOP of the pin, and checked only after it and email_verified have
+    # passed. Redundant with a single-domain tenantClaims, and cheap insurance
+    # against a later edit that adds a domain to the pin and forgets this file.
+    allowedEmailDomains:
+      - "example.com"
+
+    # THE LOCK-OUT ESCAPE HATCH. With SSO on, every local password login is
+    # rejected except the addresses listed here. Leave it empty and a Google
+    # outage, an expired client secret, or one wrong key above locks out
+    # everybody, including whoever has to fix it.
+    #
+    # The address must belong to an account that ALREADY EXISTS with a password:
+    # the list is an allowlist, not an account. On a fresh install the only such
+    # account is the bootstrap admin, whose address is admin@leoflow.local (the
+    # chart does not set LEOFLOW_BOOTSTRAP_EMAIL), created by the bootstrap
+    # password at the bottom of this file. Listing an address with no user row
+    # leaves the escape hatch pointing at nothing while looking configured.
+    #
+    # Keep it OFF the domain your users sign in with: an address that has a local
+    # password account cannot also be JIT-provisioned from Google. It collides on
+    # the users table's unique (tenant, email) and the SSO login is denied
+    # jit_failed.
+    breakGlassEmails:
+      - "admin@leoflow.local"
+
+    # Google emits no groups claim by default, so roleMappings would match nothing
+    # and every user would resolve to zero roles, a successful login into a UI
+    # that shows them nothing. Grant a read-only role instead, and tighten later.
+    defaultRole: "viewer"
+    roleMappings: {}
+
+    # Create the Dexaflow user row on first login. There is no alternative today:
+    # a login is matched by (provider, subject) and nothing else writes those
+    # columns, so with this off every first SSO login is denied no_user_jit_off.
+    # Safe here BECAUSE the two gates above are narrow: only a verified
+    # example.com Workspace account reaches this point, and it gets `viewer`,
+    # nothing more.
+    jitProvisioning: true
+
+# The break-glass account above has to exist before SSO becomes the only other
+# way in. On a first install this is what creates it, as admin@leoflow.local; on
+# an install that already has an admin, leave it empty.
+bootstrap:
+  password: "CHANGEME-break-glass-admin-password"
+
+# The redirectUrl above has to resolve from a browser, which means an Ingress (or
+# an equivalent LoadBalancer/Gateway in front of the Service) terminating TLS on
+# that exact hostname.
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: leoflow.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: leoflow-ingress-tls
+      hosts:
+        - leoflow.example.com

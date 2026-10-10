@@ -5,11 +5,11 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: "Backup & restore"
 weight: 50
-description: "Back up and restore Leoflow state — metadata, secrets, and logs."
+description: "Back up and restore Dexaflow state — metadata, secrets, and logs."
 ---
 
 Lite ships two commands that snapshot and re-load the whole install in one
-portable file: `leoflow lite backup` and `leoflow lite restore`. Use them to
+portable file: `dexaflow lite backup` and `dexaflow lite restore`. Use them to
 migrate to another machine, survive an OS reinstall, or roll back a botched
 upgrade.
 
@@ -27,17 +27,17 @@ A backup archive (`leoflow-backup-<timestamp>.tar.gz`) contains:
 | File / dir | Contents |
 |---|---|
 | `MANIFEST.json` | Format version, `leoflow_version`, embedded schema version, Postgres version, `created_at` |
-| `config.yaml` | The admin email + password hash, JWT signing secret, parser command, workspace path |
+| `config.yaml` | The admin email + password hash, JWT signing secret, the key that decrypts your stored connection secrets (`secret_key`), parser command, workspace path |
 | `setup.json` | Setup metadata (Python interpreter, OS/arch) |
 | `datastore.sql` | A logical `pg_dump` (--clean --if-exists, plain SQL) of the managed Postgres — DAGs, runs, task instances, XCom, Variables, Connections |
-| `workspace/` | Your project tree (DAGs, `leoflow.yaml`, etc.). VCS dirs and virtualenvs are excluded (see below) |
+| `workspace/` | Your project tree (DAGs, `dexaflow.yaml`, etc.). VCS dirs and virtualenvs are excluded (see below) |
 
 What is **not** included:
 
-- `~/.leoflow/python/` (managed CPython) — re-fetched by `leoflow setup` on the
+- `~/.dexaflow/python/` (managed CPython) — re-fetched by `dexaflow setup` on the
   target machine if needed.
-- `~/.leoflow/postgres/` (managed PG binaries) — same.
-- `~/.leoflow/venv/` (parser/runtime venv) — re-installed lazily.
+- `~/.dexaflow/postgres/` (managed PG binaries) — same.
+- `~/.dexaflow/venv/` (parser/runtime venv) — re-installed lazily.
 - VCS metadata (`.git`, `.hg`, `.svn`).
 - Build artifacts (`.venv`, `venv`, `__pycache__`, `.pytest_cache`,
   `node_modules`, `.tox`, `.mypy_cache`).
@@ -50,24 +50,24 @@ user committed locally but did not push.
 
 ```sh
 # Default: leoflow-backup-<UTC-timestamp>.tar.gz in the current directory.
-leoflow lite backup
+dexaflow lite backup
 
 # Custom output path:
-leoflow lite backup --output ~/snapshots/before-upgrade.tar.gz
+dexaflow lite backup --output ~/snapshots/before-upgrade.tar.gz
 ```
 
 `backup` requires Lite to be running (it talks to the managed Postgres via
-its socket to capture a consistent dump). Run `leoflow lite` in another
+its socket to capture a consistent dump). Run `dexaflow lite` in another
 terminal first.
 
 ## Restore
 
 ```sh
-# Refuses to overwrite an existing ~/.leoflow install:
-leoflow lite restore --input ~/snapshots/before-upgrade.tar.gz
+# Refuses to overwrite an existing ~/.dexaflow install:
+dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz
 
-# Use --force to overwrite explicitly (e.g. after `leoflow uninstall`):
-leoflow lite restore --input ~/snapshots/before-upgrade.tar.gz --force
+# Use --force to overwrite explicitly (e.g. after `dexaflow uninstall`):
+dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz --force
 ```
 
 The restore command refuses, with a clear error, when:
@@ -76,7 +76,7 @@ The restore command refuses, with a clear error, when:
    the restore is the inverse of the upgrade-time drift detector (see
    [Upgrades](/operate/upgrades/)). Loading rows into a DB the binary cannot read
    would corrupt them.
-2. **`~/.leoflow/` already holds an install** and `--force` is not set.
+2. **`~/.dexaflow/` already holds an install** and `--force` is not set.
    Pass `--force` only after confirming you want to overwrite.
 3. **The archive's `MANIFEST.json` is missing** or carries a `manifest_version`
    newer than this binary understands.
@@ -84,33 +84,55 @@ The restore command refuses, with a clear error, when:
 `--force` does **not** silence the schema-drift refusal. Corruption is not
 opt-in.
 
+The datastore is replayed **first**, and `config.yaml` is written only once
+the replay succeeded. A replay that fails (disk full, a schema mismatch)
+leaves your current `config.yaml` in place, so the key that opens the
+unchanged datastore is still recorded. The config a restore replaces is kept
+as `~/.dexaflow/config.yaml.pre-restore` (mode `0600`) and the restore prints
+its path. It is removed only once a scan that covers every datastore on disk
+finds every stored secret under the keys the restored config records:
+
+- With one datastore, the next `dexaflow lite` that starts and whose boot scan
+  is clean removes it. A boot that finds secrets the restored keys do not open
+  keeps it, since it may hold the key they need.
+- With both a managed and a Docker datastore, a boot scans only the one it runs
+  against, so it keeps the file and says so. A `dexaflow lite migrate-key` that
+  finishes cleanly scans both and removes it.
+
+The archive's `config.yaml` is written as it is. A restore never adds or
+removes an encryption key on Lite's behalf: an archive taken before an install
+had a key of its own restores as an install on the key published in this
+repository, and `dexaflow lite` says so and names
+[`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/).
+Run it to finish the move.
+
 ## Worked example: migrate to a new machine
 
 ```sh
 # On the source machine (Lite running):
-leoflow lite backup --output /tmp/snap.tar.gz
+dexaflow lite backup --output /tmp/snap.tar.gz
 scp /tmp/snap.tar.gz user@new-host:~/
 
 # On the new machine, after `curl ... install.sh`:
-leoflow setup           # provisions managed Python + binaries
-leoflow lite restore --input ~/snap.tar.gz
-leoflow lite            # boots with the restored datastore + workspace
+dexaflow setup           # provisions managed Python + binaries
+dexaflow lite restore --input ~/snap.tar.gz
+dexaflow lite            # boots with the restored datastore + workspace
 ```
 
 ## Worked example: roll back a botched upgrade
 
 ```sh
 # Before upgrading: take a snapshot.
-leoflow lite backup --output ~/snap-before-upgrade.tar.gz
+dexaflow lite backup --output ~/snap-before-upgrade.tar.gz
 
-# Upgrade (re-run install.sh, restart leoflow lite). Something breaks.
+# Upgrade (re-run install.sh, restart dexaflow lite). Something breaks.
 
 # Wipe and restore. --purge removes the new install completely; restore
-# refuses without it because ~/.leoflow is non-empty after the upgrade.
-leoflow uninstall --purge
+# refuses without it because ~/.dexaflow is non-empty after the upgrade.
+dexaflow uninstall --purge
 # Re-install the previous version's binaries via install.sh's pin, then:
-leoflow lite restore --input ~/snap-before-upgrade.tar.gz
-leoflow lite
+dexaflow lite restore --input ~/snap-before-upgrade.tar.gz
+dexaflow lite
 ```
 
 ## Pro (Pro)
@@ -125,6 +147,11 @@ via standard tooling:
   archive (S3, GCS).
 - Persistent volumes: capture via Velero or your cluster's volume snapshot
   controller.
+
+After restoring a backup into a running installation, restart the control
+plane pods (`kubectl rollout restart deployment`). Each pod caches tenant ids
+for its lifetime, and a restored database whose tenants carry different ids
+would otherwise be queried with the old ones.
 
 The PR that hardens the Helm chart (#96) will add a `BACKUP.md` to the
 chart README pointing at the upstream guidance.

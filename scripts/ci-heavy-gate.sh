@@ -66,7 +66,7 @@ self_test() {
 
 	_eq "$(printf '%s\n' 'README.md' 'website/content/x.md' | decide)" "skip" "docs only skips"
 	_eq "$(printf '%s\n' 'internal/executor/reconcile.go' | decide)" "run" "a Go change runs"
-	_eq "$(printf '%s\n' 'helm/leoflow/values.yaml' | decide)" "run" "a chart change runs"
+	_eq "$(printf '%s\n' 'helm/dexaflow/values.yaml' | decide)" "run" "a chart change runs"
 
 	# The #1200 regression: every pull request carries a fragment now, so a
 	# docs-only one that does NOT skip means the gate spares nobody.

@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Leoflow Public API
+  title: Dexaflow Public API
   description: |
     Airflow-3.2.x-compatible subset of the public API.
-    This is the surface consumed by the Airflow UI when configured to talk to a Leoflow Control Plane.
+    This is the surface consumed by the Airflow UI when configured to talk to a Dexaflow Control Plane.
   version: "1.0.0"
   license:
     name: Apache 2.0
@@ -372,6 +372,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DAG" }
+        "400":
+          description: The body does not set is_paused, the only field this route changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v2/dags/{dag_id}/dagVersions:
     parameters:
@@ -417,6 +422,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Cursor"
         - name: state
           in: query
           schema:
@@ -666,6 +672,19 @@ components:
       name: offset
       in: query
       schema: { type: integer, minimum: 0, default: 0 }
+    Cursor:
+      name: cursor
+      in: query
+      description: >-
+        Dexaflow extension. Opaque keyset cursor taken from the
+        Dexaflow-Next-Cursor response header of the previous page. When set,
+        offset is ignored and the page holds the rows after the cursor in the
+        same order, at the cost of the first page whatever the depth. The
+        response body is unchanged. With a state filter, offset paging filters
+        the newest 10000 runs and counts total_entries within them, while
+        cursor paging filters and counts every run of the DAG, so the two
+        modes can report different totals for a DAG with more runs than that.
+      schema: { type: string }
     DagID:
       name: dag_id
       in: path
@@ -776,7 +795,7 @@ components:
       type: object
       required: [id, email, roles, is_active, created_at]
       description: >-
-        One account in the user list. Leoflow accounts are email-keyed and carry
+        One account in the user list. Dexaflow accounts are email-keyed and carry
         a set of RBAC roles, so this diverges from the Airflow FAB users API
         (username-keyed with first_name/last_name).
       properties:
@@ -977,6 +996,10 @@ components:
 
     DAGUpdate:
       type: object
+      description: >-
+        is_paused must be present; a body without it is refused with 400. It
+        is not listed under required so the generated Go client keeps the
+        field a pointer.
       properties:
         is_paused: { type: boolean }
 
@@ -1039,7 +1062,7 @@ components:
           type: string
           nullable: true
           description: >-
-            Leoflow extension (not part of the Airflow API). A short,
+            Dexaflow extension (not part of the Airflow API). A short,
             human-readable cause for a terminal failure, recorded by whichever
             component observed it: the task's own report, the reconciler reading
             the pod (image pull, OOM, exit code), a reaper declaring the pod or

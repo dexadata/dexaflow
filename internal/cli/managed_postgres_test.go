@@ -40,7 +40,7 @@ func TestCheckSocketPathLen(t *testing.T) {
 // TestPGLocaleEnvForcesValidLocale guards the initdb locale regression: a macOS
 // SSH session forwards LC_CTYPE=UTF-8, which is NOT a valid locale on Linux and
 // made `initdb` fail ("invalid locale settings"), breaking the managed-PG default
-// on a fresh `leoflow lite`. pgLocaleEnv must strip any inherited LANG/LC_* and
+// on a fresh `dexaflow lite`. pgLocaleEnv must strip any inherited LANG/LC_* and
 // force a deterministic, valid LANG=C / LC_ALL=C, while preserving other vars.
 func TestPGLocaleEnvForcesValidLocale(t *testing.T) {
 	got := pgLocaleEnv([]string{"PATH=/usr/bin", "LC_CTYPE=UTF-8", "LANG=C.UTF-8", "LC_ALL=", "HOME=/h"})
@@ -77,10 +77,10 @@ func TestManagedPGPaths(t *testing.T) {
 	if herr != nil {
 		t.Fatalf("UserHomeDir: %v", herr)
 	}
-	if want := filepath.Join(home, ".leoflow", "postgres", "bin"); binDir != want {
+	if want := filepath.Join(home, ".dexaflow", "postgres", "bin"); binDir != want {
 		t.Errorf("binDir = %q, want %q", binDir, want)
 	}
-	if want := filepath.Join(home, ".leoflow", "pgdata"); dataDir != want {
+	if want := filepath.Join(home, ".dexaflow", "pgdata"); dataDir != want {
 		t.Errorf("dataDir = %q, want %q", dataDir, want)
 	}
 }

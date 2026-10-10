@@ -16,20 +16,20 @@ import (
 // (a foreign Postgres, another install) Lite picks the next free one.
 const defaultDevDBPort = 5432
 
-// leoflowHome returns the per-user Leoflow home (~/.leoflow) — the install
+// leoflowHome returns the per-user Dexaflow home (~/.dexaflow) — the install
 // identity that scopes the datastore to this user.
 func leoflowHome() (string, error) {
 	h, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolving home dir: %w", err)
 	}
-	return filepath.Join(h, ".leoflow"), nil
+	return stateDirIn(h), nil
 }
 
 // projectName derives a stable, per-install docker compose project name from the
-// Leoflow home path: leoflow-<12 hex>. It is DERIVED (a pure function of the
+// Dexaflow home path: leoflow-<12 hex>. It is DERIVED (a pure function of the
 // path), never stored — so it is recomputed identically on every run and after a
-// reinstall at the same HOME, which is what lets `leoflow lite` reconnect to the
+// reinstall at the same HOME, which is what lets `dexaflow lite` reconnect to the
 // same Docker volume (the datastore's identity) instead of orphaning it. Two
 // users (different HOME) get different names, so their datastores never share or
 // clobber, and `uninstall` targets exactly this install's container and volume.
@@ -38,7 +38,7 @@ func projectName(leoflowRoot string) string {
 	return "leoflow-" + hex.EncodeToString(sum[:])[:12]
 }
 
-// devProjectName is projectName for the current user's Leoflow home.
+// devProjectName is projectName for the current user's Dexaflow home.
 func devProjectName() string {
 	root, err := leoflowHome()
 	if err != nil {
@@ -115,7 +115,7 @@ func devDBPort(devDir string) int {
 
 // readPort reads a positive integer port from a file, if present and valid.
 func readPort(path string) (int, bool) {
-	b, err := os.ReadFile(path) //nolint:gosec // path derived from the per-user Leoflow home
+	b, err := os.ReadFile(path) //nolint:gosec // path derived from the per-user Dexaflow home
 	if err != nil {
 		return 0, false
 	}

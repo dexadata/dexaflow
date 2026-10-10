@@ -13,13 +13,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/setup"
+	"github.com/dexadata/dexaflow/internal/setup"
 )
 
 // Datastore backends for Lite's Postgres. The default is "auto": Docker Postgres
 // when Docker is present (the realistic case, since the k3d executor needs Docker
-// too), else a managed relocatable PostgreSQL under ~/.leoflow on a Unix socket —
-// so `leoflow lite` runs on a Docker-free host with nothing to install. Either can
+// too), else a managed relocatable PostgreSQL under ~/.dexaflow on a Unix socket —
+// so `dexaflow lite` runs on a Docker-free host with nothing to install. Either can
 // be forced explicitly.
 const (
 	datastoreAuto    = "auto"
@@ -78,18 +78,18 @@ func datastoreNote(mode string, dockerPresent bool) string {
 	case dockerPresent:
 		return "▸ Docker detected but not responding — using a managed Postgres (no Docker). Fix Docker, or pass --postgres docker to force it."
 	default:
-		return "▸ no Docker detected — using a managed Postgres (downloaded under ~/.leoflow, no Docker). Install Docker for the postgres:16 container instead."
+		return "▸ no Docker detected — using a managed Postgres (downloaded under ~/.dexaflow, no Docker). Install Docker for the postgres:16 container instead."
 	}
 }
 
 // managedPGPaths returns the managed Postgres bin dir and data dir, both per-user
-// under ~/.leoflow (so root and an unprivileged user never share a cluster).
+// under ~/.dexaflow (so root and an unprivileged user never share a cluster).
 func managedPGPaths() (binDir, dataDir string, err error) {
 	h, herr := os.UserHomeDir()
 	if herr != nil {
 		return "", "", fmt.Errorf("resolving home dir: %w", herr)
 	}
-	root := filepath.Join(h, ".leoflow")
+	root := stateDirIn(h)
 	return filepath.Join(root, "postgres", "bin"), filepath.Join(root, "pgdata"), nil
 }
 
@@ -99,25 +99,30 @@ func managedPGPaths() (binDir, dataDir string, err error) {
 // through the per-user socket and never collide with, or connect to, a foreign
 // Postgres bound to localhost:5432. Idempotent: an already-running cluster is
 // left as is. trust auth is safe here: the socket lives in the user's own
-// ~/.leoflow, the same single-user threat model as the Docker datastore.
-func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
+// ~/.dexaflow, the same single-user threat model as the Docker datastore.
+//
+// started reports whether THIS call started the cluster. Only then may the
+// caller stop it: a cluster found running may belong to a running
+// `dexaflow lite migrate-key`, whose session a stop would kill (ADR 0065
+// section 3, "leave the cluster as found").
+func startManagedPostgres(ctx context.Context, cmd *cobra.Command) (started bool, err error) {
 	out := cmd.OutOrStdout()
 	h, herr := os.UserHomeDir()
 	if herr != nil {
-		return fmt.Errorf("resolving home dir: %w", herr)
+		return false, fmt.Errorf("resolving home dir: %w", herr)
 	}
-	root := filepath.Join(h, ".leoflow")
-	binDir, err := setup.EnsurePostgres(ctx, setup.EnsureOpts{
+	root := stateDirIn(h)
+	binDir, eerr := setup.EnsurePostgres(ctx, setup.EnsureOpts{
 		Home: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Libc: detectLibc(),
 		Stat: os.Stat,
 		Logf: func(format string, a ...any) { devPrintf(out, "  "+format+"\n", a...) },
 	})
-	if err != nil {
-		return fmt.Errorf("installing managed Postgres: %w", err)
+	if eerr != nil {
+		return false, fmt.Errorf("installing managed Postgres: %w", eerr)
 	}
 	dataDir := filepath.Join(root, "pgdata")
 	if serr := checkSocketPathLen(dataDir); serr != nil {
-		return serr
+		return false, serr
 	}
 	// Pre-flight: the relocatable Postgres dynamically links a chain of system
 	// libraries it does not bundle (ICU, Kerberos, zstd, lz4, libxml2, …). On a
@@ -126,8 +131,8 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 	// widest dependency set, wider than initdb — and fail with an actionable
 	// message before the confusing startup error.
 	if verr := exec.CommandContext(ctx, filepath.Join(binDir, "postgres"), "--version").Run(); verr != nil { //nolint:gosec // managed binary + fixed arg
-		return fmt.Errorf("the managed Postgres can't run on this host — it needs system libraries (ICU, Kerberos) that are missing here (common on Alpine/musl and slim containers): %w\n"+
-			"  use `leoflow lite --postgres docker` (recommended; works everywhere).\n"+
+		return false, fmt.Errorf("the managed Postgres can't run on this host: it needs system libraries (ICU, Kerberos) that are missing here (common on Alpine/musl and slim containers): %w\n"+
+			"  use `dexaflow lite --postgres docker` (recommended; works everywhere).\n"+
 			"  installing the libs may help if the versions match (Debian/Ubuntu: `apt-get install libicu-dev libgssapi-krb5-2`; Alpine: `apk add icu-libs krb5-libs` — but the bundled build may need exact versions)", verr)
 	}
 
@@ -136,7 +141,7 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 	// Postgres on 5432 is never mistaken for ours.
 	if exec.CommandContext(ctx, filepath.Join(binDir, "pg_isready"), "-h", dataDir, "-p", "5432").Run() == nil { //nolint:gosec // managed binary + fixed args
 		devPrintln(out, "▸ managed Postgres already running")
-		return nil
+		return false, nil
 	}
 	if _, serr := os.Stat(filepath.Join(dataDir, "PG_VERSION")); os.IsNotExist(serr) {
 		devPrintln(out, "▸ initializing managed Postgres data dir …")
@@ -149,7 +154,7 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 		id.Env = pgLocaleEnv(os.Environ())
 		id.Stdout, id.Stderr = io.Discard, cmd.ErrOrStderr()
 		if rerr := id.Run(); rerr != nil {
-			return fmt.Errorf("initdb failed%s: %w", managedPGHint, rerr)
+			return false, fmt.Errorf("initdb failed%s: %w", managedPGHint, rerr)
 		}
 		// Pin the socket-only listener in postgresql.conf rather than via pg_ctl -o:
 		// the conf parser quotes paths natively, so a data dir with spaces works and
@@ -157,20 +162,20 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 		confPath := filepath.Join(dataDir, "postgresql.conf")
 		cf, oerr := os.OpenFile(confPath, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // path derived from our per-user data dir
 		if oerr != nil {
-			return fmt.Errorf("opening %s: %w", confPath, oerr)
+			return false, fmt.Errorf("opening %s: %w", confPath, oerr)
 		}
 		if _, werr := cf.WriteString(managedPGConfLines(dataDir)); werr != nil {
 			_ = cf.Close() //nolint:errcheck // already returning an error
-			return fmt.Errorf("writing managed Postgres config: %w", werr)
+			return false, fmt.Errorf("writing managed Postgres config: %w", werr)
 		}
 		if cerr := cf.Close(); cerr != nil {
-			return fmt.Errorf("closing %s: %w", confPath, cerr)
+			return false, fmt.Errorf("closing %s: %w", confPath, cerr)
 		}
 	}
 	devPrintln(out, "▸ starting managed Postgres (no Docker) …")
 	logFile := filepath.Join(root, "dev", "postgres.log")
 	if mkErr := os.MkdirAll(filepath.Dir(logFile), 0o750); mkErr != nil {
-		return fmt.Errorf("creating postgres log dir: %w", mkErr)
+		return false, fmt.Errorf("creating postgres log dir: %w", mkErr)
 	}
 	// Socket-only listener (no TCP) is configured in postgresql.conf at initdb
 	// time, so pg_ctl needs no -o options carrying the data-dir path.
@@ -179,9 +184,9 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) error {
 	start.Env = pgLocaleEnv(os.Environ())
 	start.Stdout, start.Stderr = io.Discard, cmd.ErrOrStderr()
 	if rerr := start.Run(); rerr != nil {
-		return fmt.Errorf("starting managed Postgres (see %s)%s: %w", logFile, managedPGHint, rerr)
+		return false, fmt.Errorf("starting managed Postgres (see %s)%s: %w", logFile, managedPGHint, rerr)
 	}
-	return nil
+	return true, nil
 }
 
 // stopManagedPostgres stops the managed cluster (best-effort), leaving its data
@@ -200,10 +205,18 @@ func stopManagedPostgres(cmd *cobra.Command) {
 	_ = c.Run() //nolint:errcheck // best-effort stop on shutdown
 }
 
+// managedCleanup returns stop when this run started the cluster, else a no-op.
+func managedCleanup(started bool, stop func()) func() {
+	if !started {
+		return func() {}
+	}
+	return stop
+}
+
 // managedPGHint is appended to managed-Postgres startup failures: if the
 // relocatable build can't run on this host (very old glibc, musl, locale), the
 // Docker datastore is the escape hatch.
-const managedPGHint = " — if the managed Postgres can't run on this host (very old glibc, musl, or a locale issue), use `leoflow lite --postgres docker`"
+const managedPGHint = " — if the managed Postgres can't run on this host (very old glibc, musl, or a locale issue), use `dexaflow lite --postgres docker`"
 
 // maxUnixSocketPath is a conservative cap on the managed Postgres socket path.
 // The OS sun_path limit is ~104 (macOS) to ~108 (Linux); we guard below it so a
@@ -215,7 +228,7 @@ const maxUnixSocketPath = 100
 // the socket file is .s.PGSQL.5432). The data dir is single-quoted, so a path
 // with spaces is parsed correctly (unlike a space-split pg_ctl -o string).
 func managedPGConfLines(dataDir string) string {
-	return "\n# Leoflow Lite: socket-only datastore (no TCP), socket in the data dir.\n" +
+	return "\n# Dexaflow Lite: socket-only datastore (no TCP), socket in the data dir.\n" +
 		"listen_addresses = ''\n" +
 		"unix_socket_directories = '" + dataDir + "'\n" +
 		"port = 5432\n"
@@ -229,7 +242,7 @@ func checkSocketPathLen(dataDir string) error {
 	if len(sock) > maxUnixSocketPath {
 		return fmt.Errorf("managed Postgres socket path is too long (%d > %d chars): %s\n"+
 			"  your home directory is too deeply nested for a Unix socket.\n"+
-			"  use `leoflow lite --postgres docker`, or set a shorter HOME",
+			"  use `dexaflow lite --postgres docker`, or set a shorter HOME",
 			len(sock), maxUnixSocketPath, sock)
 	}
 	return nil

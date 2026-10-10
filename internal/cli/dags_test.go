@@ -49,7 +49,7 @@ func TestDeleteDag(t *testing.T) {
 }
 
 // TestDagsDeleteUsesConfigToken pins the same contract as the runs commands:
-// after `leoflow auth login` the persisted JWT must be sent, so deleting a DAG
+// after `dexaflow auth login` the persisted JWT must be sent, so deleting a DAG
 // does not fail with "missing bearer token".
 func TestDagsDeleteUsesConfigToken(t *testing.T) {
 	var gotAuth string

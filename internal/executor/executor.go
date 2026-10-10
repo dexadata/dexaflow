@@ -4,7 +4,7 @@ package executor
 import (
 	"context"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // PodSecurity holds the task-pod hardening knobs whose defaults are behavioral
@@ -14,7 +14,7 @@ import (
 type PodSecurity struct {
 	// RunAsNonRoot refuses to start a task container whose image resolves to
 	// UID 0. It completes the `restricted` set and is on by default: the images
-	// Leoflow ships now satisfy it. runtime/Dockerfile runs as the numeric
+	// Dexaflow ships now satisfy it. runtime/Dockerfile runs as the numeric
 	// non-root UID 65532 (`USER 65532:65532` — a name the kubelet cannot resolve
 	// is what previously blocked this), and every examples/*/image inherits it.
 	// When set, BuildPod also stamps a pod-level fsGroup (nonRootFSGroup) so the
@@ -39,6 +39,10 @@ type Request struct {
 	RunID          string
 	TaskID         string
 	TryNumber      int
+	// AttemptEpoch is the execution of TryNumber the dispatcher claimed for this
+	// request (ADR 0051 amendment). It is stamped into the pod's identity
+	// annotation so the exchanged token names this execution.
+	AttemptEpoch int
 
 	Image           string
 	ImagePullPolicy string
@@ -72,9 +76,14 @@ type Request struct {
 	// materializes it to a per-TI temp dir so `python -m leoflow_runtime
 	// dag:<task>` can importlib it from there — this is how multi-DAG Lite setups
 	// avoid the ModuleNotFoundError that hit Lima 2026-06-01 when the agent's
-	// global workdir didn't carry the user's dag.py. Empty for Pro (the
-	// container image already carries the source); ignored by the K8s executor.
+	// global workdir didn't carry the user's dag.py. The K8s executor ignores it
+	// unless SourceMode is set (the container image carries the source).
 	Source string
+	// SourceMode tells the K8s executor to ship Source into the pod as dag.py
+	// (ADR 0067 §3). The dispatcher sets it only for a version on the operator's
+	// runtime image that carries a source. Ignored by the subprocess executor,
+	// which always materializes Source.
+	SourceMode bool
 
 	// Agent connection details injected into the worker environment.
 	ControlPlaneAddr string
@@ -121,7 +130,7 @@ type Request struct {
 	// TaskSecretName, when set, is a Kubernetes Secret mounted read-only into the
 	// task pod at TaskSecretMountPath. It carries a credential a task references by
 	// path (e.g. a GCP service-account key via the connection's key_path), keeping
-	// the key in the cluster's secret store rather than in Leoflow (ADR 0035).
+	// the key in the cluster's secret store rather than in Dexaflow (ADR 0035).
 	TaskSecretName      string
 	TaskSecretMountPath string
 

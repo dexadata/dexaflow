@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/executor"
 )
 
 func TestWarmSACompatible(t *testing.T) {

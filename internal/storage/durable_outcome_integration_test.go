@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // outcomeTIID reads a task instance's UUID directly, for a TI in any state (the
@@ -52,7 +52,7 @@ func TestReconcilerRecoversLostSuccessIntegration(t *testing.T) {
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 	tiID := outcomeTIID(t, ctx, runUUID, "load")
 
-	if err := exec.SucceedTask(ctx, tiID, 1); err != nil {
+	if err := exec.SucceedTask(ctx, tiID, 1, 0); err != nil {
 		t.Fatalf("SucceedTask: %v", err)
 	}
 	if st := taskInstanceState(t, sched, ctx, runUUID, "load"); st != domain.TaskStateSuccess {
@@ -85,7 +85,7 @@ func TestReconcilerSucceedIgnoresStaleTryNumberIntegration(t *testing.T) {
 	}
 
 	// The reconciler acts on attempt 1's lingering pod — a stale success settle.
-	if err := exec.SucceedTask(ctx, tiID, 1); err != nil {
+	if err := exec.SucceedTask(ctx, tiID, 1, 0); err != nil {
 		t.Fatalf("SucceedTask (stale): %v", err)
 	}
 	if st := taskInstanceState(t, sched, ctx, runUUID, "load"); st != domain.TaskStateQueued {
@@ -104,7 +104,7 @@ func TestReconcilerSucceedDoesNotClobberTerminalIntegration(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "load", domain.TaskStateFailed); err != nil {
 		t.Fatalf("ApplyTransition to failed: %v", err)
 	}
-	if err := exec.SucceedTask(ctx, tiID, 1); err != nil {
+	if err := exec.SucceedTask(ctx, tiID, 1, 0); err != nil {
 		t.Fatalf("SucceedTask: %v", err)
 	}
 	if st := taskInstanceState(t, sched, ctx, runUUID, "load"); st != domain.TaskStateFailed {
@@ -132,7 +132,7 @@ func TestReconcilerFailIgnoresStaleTryNumberIntegration(t *testing.T) {
 		t.Fatalf("ApplyTransition to queued: %v", err)
 	}
 
-	if err := exec.FailTask(ctx, tiID, 1, "stale pod failure"); err != nil {
+	if err := exec.FailTask(ctx, tiID, 1, 0, "stale pod failure"); err != nil {
 		t.Fatalf("FailTask (stale): %v", err)
 	}
 	if st := taskInstanceState(t, sched, ctx, runUUID, "load"); st != domain.TaskStateQueued {
@@ -149,7 +149,7 @@ func TestReconcilerRescheduleByIDIntegration(t *testing.T) {
 	tiID := outcomeTIID(t, ctx, runUUID, "sensor")
 
 	at := time.Now().UTC().Add(5 * time.Minute)
-	if err := exec.RescheduleTask(ctx, tiID, 1, at); err != nil {
+	if err := exec.RescheduleTask(ctx, tiID, 1, 0, at); err != nil {
 		t.Fatalf("RescheduleTask: %v", err)
 	}
 	if st := taskInstanceState(t, sched, ctx, runUUID, "sensor"); st != domain.TaskStateUpForReschedule {

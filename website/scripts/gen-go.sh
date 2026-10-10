@@ -38,7 +38,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 echo "gen-go: running gomarkdoc over ${#PKGS[@]} packages"
 go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest \
   --output "${TMP_DIR}/{{.Dir}}.md" \
-  --repository.url https://github.com/neochaotic/leoflow \
+  --repository.url https://github.com/dexadata/dexaflow \
   --repository.default-branch main \
   "${PKGS[@]}"
 

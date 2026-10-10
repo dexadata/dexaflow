@@ -10,15 +10,15 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
-// newLoginCommand builds `leoflow auth login`: it exchanges credentials for a
+// newLoginCommand builds `dexaflow auth login`: it exchanges credentials for a
 // JWT at a control plane (typically Pro) and persists the token (and server URL)
 // to the config file, so subsequent `push`/`deploy` calls need no auth flags.
 // This is what makes the pipeline-less Lite->Pro loop fluid (login once, deploy
 // many) — ADR 0041. It is distinct from `docker login` (registry auth), which
-// Leoflow never handles. It is a sibling of `auth create-token`, which prints a
+// Dexaflow never handles. It is a sibling of `auth create-token`, which prints a
 // token for CI rather than persisting an interactive session.
 func newLoginCommand() *cobra.Command {
 	var serverURL, username, password string
@@ -66,7 +66,7 @@ func newLoginCommand() *cobra.Command {
 }
 
 // sessionConfigPath resolves the config file `login` writes to: the --config
-// flag when set, otherwise the default ~/.leoflow/config.yaml. Unlike
+// flag when set, otherwise the default ~/.dexaflow/config.yaml. Unlike
 // configFilePath, it returns the default path even when the file does not yet
 // exist, because login is allowed to create it.
 func sessionConfigPath(cmd *cobra.Command) (string, error) {
@@ -168,7 +168,7 @@ func promptValue(in io.Reader, out io.Writer, label string) (string, error) {
 }
 
 // promptPassword reads a password without echoing it when in is a terminal;
-// otherwise (a pipe, e.g. `echo pw | leoflow auth login`) it falls back to a
+// otherwise (a pipe, e.g. `echo pw | dexaflow auth login`) it falls back to a
 // plain line read so the value can still be supplied non-interactively.
 func promptPassword(in io.Reader, out io.Writer) (string, error) {
 	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {

@@ -389,7 +389,7 @@ func TestValidateRejectsDevNoAuthOnNonLoopback(t *testing.T) {
 }
 
 // TestLoadServerReadsUIAutoRefreshIntervalFromEnv pins the bug that broke #247:
-// `leoflow lite` exports LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS=1 so the SPA
+// `dexaflow lite` exports LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS=1 so the SPA
 // polls fast in the dev loop, but the server returned 30 (the handler fallback)
 // because `ui.auto_refresh_interval_seconds` was missing from serverDefaults —
 // without an entry there, viper's AutomaticEnv never bound the env key, so the
@@ -509,6 +509,41 @@ func TestValidateLogsBackend(t *testing.T) {
 	}
 }
 
+// TestLoadServerLogsSinkLayout pins the object-log layout gate: it defaults to
+// the single-object layout every reader understands, binds from both the
+// DEXAFLOW_* and the legacy LEOFLOW_* variable, and rejects an unknown value.
+func TestLoadServerLogsSinkLayout(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Logs.Sink.Layout != "single" {
+		t.Errorf("Logs.Sink.Layout = %q, want \"single\" by default", c.Logs.Sink.Layout)
+	}
+	for _, env := range []string{"DEXAFLOW_LOGS_SINK_LAYOUT", "LEOFLOW_LOGS_SINK_LAYOUT"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "segmented")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			if c.Logs.Sink.Layout != "segmented" {
+				t.Errorf("Logs.Sink.Layout = %q, want \"segmented\" from %s", c.Logs.Sink.Layout, env)
+			}
+		})
+	}
+	bad := &ServerConfig{}
+	bad.Auth.Provider = AuthProviderJWT
+	bad.Auth.JWT.Secret = "set"
+	bad.Server.HTTPAddr = "0.0.0.0:8080"
+	bad.Logs.Backend = "s3"
+	bad.Logs.Sink.Bucket = "b"
+	bad.Logs.Sink.Layout = "striped"
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate() accepted an unknown logs.sink.layout")
+	}
+}
+
 // TestLoadServerDottedOIDCMapKeys locks the fix for #826: a MAP KEY containing
 // dots (Google Workspace `hd` = a domain; a dotted IdP group name) must survive
 // config decoding. viper's key delimiter is ".", so without the empty-map
@@ -546,5 +581,384 @@ auth:
 	}
 	if got := c.Auth.OIDC.RoleMappings["app.admins"]; got != "admin" {
 		t.Errorf("role_mappings[app.admins] = %q, want admin (dotted group was split)", got)
+	}
+}
+
+// TestLoadServerReadsUIHomeLinkFromEnv locks that both home-link keys bind
+// from the environment. Viper's AutomaticEnv only binds keys it has a default
+// for, so a missing default would drop LEOFLOW_UI_HOME_LINK_* silently, the
+// failure TestLoadServerReadsUIAutoRefreshIntervalFromEnv already caught once.
+func TestLoadServerReadsUIHomeLinkFromEnv(t *testing.T) {
+	t.Setenv("LEOFLOW_UI_HOME_LINK_LABEL", "Back to portal")
+	t.Setenv("LEOFLOW_UI_HOME_LINK_URL", "https://portal.example.com/team")
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.UI.HomeLink.Label != "Back to portal" || c.UI.HomeLink.URL != "https://portal.example.com/team" {
+		t.Errorf("UI.HomeLink = %+v, want the values from the environment", c.UI.HomeLink)
+	}
+}
+
+// TestLoadServerHomeLinkIsOffByDefault locks the default: no link unless the
+// operator sets one.
+func TestLoadServerHomeLinkIsOffByDefault(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.UI.HomeLink != (HomeLinkSection{}) {
+		t.Errorf("UI.HomeLink = %+v, want empty by default", c.UI.HomeLink)
+	}
+}
+
+// TestValidateUIHomeLink covers the boot checks: the link needs both a label
+// and an absolute http(s) URL, so a typo fails boot instead of rendering a
+// dead or script-bearing link.
+func TestValidateUIHomeLink(t *testing.T) {
+	cases := []struct {
+		name    string
+		link    HomeLinkSection
+		wantErr string
+	}{
+		{"unset", HomeLinkSection{}, ""},
+		{"https", HomeLinkSection{Label: "Portal", URL: "https://portal.example.com"}, ""},
+		{"http", HomeLinkSection{Label: "Portal", URL: "http://portal.internal:8080/x"}, ""},
+		{"label without url", HomeLinkSection{Label: "Portal"}, "ui.home_link.url"},
+		{"url without label", HomeLinkSection{URL: "https://portal.example.com"}, "ui.home_link.label"},
+		{"blank label", HomeLinkSection{Label: "  ", URL: "https://portal.example.com"}, "ui.home_link.label"},
+		{"javascript scheme", HomeLinkSection{Label: "Portal", URL: "javascript:alert(1)"}, "http:// or https://"},
+		{"relative", HomeLinkSection{Label: "Portal", URL: "/portal"}, "http:// or https://"},
+		{"no host", HomeLinkSection{Label: "Portal", URL: "https:///path"}, "host"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.UI.HomeLink = tc.link
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadServerReadsUIBrandingFromEnv locks that the branding keys (#1289)
+// bind from the environment, the list one comma-split like trusted_proxies.
+func TestLoadServerReadsUIBrandingFromEnv(t *testing.T) {
+	t.Setenv("LEOFLOW_UI_THEME", `{"tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}`)
+	t.Setenv("LEOFLOW_UI_FAVICON_URL", "https://cdn.example.com/favicon.png")
+	t.Setenv("LEOFLOW_UI_STYLESHEET_URLS", "https://fonts.example.com/a.css,https://cdn.example.com/b.css")
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if !strings.Contains(c.UI.Theme, `"brand"`) {
+		t.Errorf("UI.Theme = %q, want the JSON from the environment", c.UI.Theme)
+	}
+	if c.UI.FaviconURL != "https://cdn.example.com/favicon.png" {
+		t.Errorf("UI.FaviconURL = %q", c.UI.FaviconURL)
+	}
+	want := []string{"https://fonts.example.com/a.css", "https://cdn.example.com/b.css"}
+	if len(c.UI.StylesheetURLs) != 2 || c.UI.StylesheetURLs[0] != want[0] || c.UI.StylesheetURLs[1] != want[1] {
+		t.Errorf("UI.StylesheetURLs = %v, want %v", c.UI.StylesheetURLs, want)
+	}
+}
+
+// TestLoadServerBrandingIsOffByDefault locks that a default install keeps the
+// stock look: no theme, favicon or extra stylesheet.
+func TestLoadServerBrandingIsOffByDefault(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.UI.Theme != "" || c.UI.FaviconURL != "" || len(c.UI.StylesheetURLs) != 0 {
+		t.Errorf("branding defaults = theme %q favicon %q stylesheets %v, want all empty",
+			c.UI.Theme, c.UI.FaviconURL, c.UI.StylesheetURLs)
+	}
+}
+
+// TestValidateUIBranding covers the boot checks: the theme is a JSON object
+// with only the keys the Airflow 3.2.1 UI reads, and every URL is http(s) or
+// root-relative, so a typo fails boot instead of shipping a broken look and
+// no javascript: or data: URL reaches the page.
+func TestValidateUIBranding(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*UISection)
+		wantErr string
+	}{
+		{"unset", func(*UISection) {}, ""},
+		{"full theme", func(u *UISection) {
+			u.Theme = `{"tokens":{"colors":{}},"globalCss":{"body":{"fontFamily":"Outfit"}},"icon":"https://x.example/i.svg","icon_dark_mode":"/static/i-dark.svg"}`
+		}, ""},
+		{"theme not json", func(u *UISection) { u.Theme = `{tokens:` }, "ui.theme"},
+		{"theme not an object", func(u *UISection) { u.Theme = `["tokens"]` }, "ui.theme"},
+		{"theme unknown key", func(u *UISection) { u.Theme = `{"tokenz":{}}` }, "tokenz"},
+		{"theme icon javascript", func(u *UISection) { u.Theme = `{"icon":"javascript:alert(1)"}` }, "ui.theme icon"},
+		{"theme icon not a string", func(u *UISection) { u.Theme = `{"icon":3}` }, "ui.theme icon"},
+		{"favicon https", func(u *UISection) { u.FaviconURL = "https://cdn.example.com/f.png" }, ""},
+		{"favicon root-relative", func(u *UISection) { u.FaviconURL = "/brand/f.png" }, ""},
+		{"favicon data", func(u *UISection) { u.FaviconURL = "data:image/png;base64,AAAA" }, "ui.favicon_url"},
+		{"favicon protocol-relative", func(u *UISection) { u.FaviconURL = "//evil.example/f.png" }, "ui.favicon_url"},
+		{"stylesheet javascript", func(u *UISection) { u.StylesheetURLs = []string{"https://ok.example/a.css", "javascript:x"} }, "ui.stylesheet_urls"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			tc.mutate(&c.UI)
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadServerReadsExternalAuthURLsFromEnv locks that both #1288 keys bind
+// from the environment and default to empty (Dexaflow's own pages).
+func TestLoadServerReadsExternalAuthURLsFromEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Auth.ExternalSignInURL != "" || c.Auth.ExternalSignOutURL != "" {
+		t.Fatalf("defaults = %q / %q, want empty", c.Auth.ExternalSignInURL, c.Auth.ExternalSignOutURL)
+	}
+
+	t.Setenv("LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL", "https://portal.example.com/engine")
+	t.Setenv("LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL", "https://portal.example.com/signout")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Auth.ExternalSignInURL != "https://portal.example.com/engine" || c.Auth.ExternalSignOutURL != "https://portal.example.com/signout" {
+		t.Errorf("Auth external URLs = %q / %q, want the values from the environment", c.Auth.ExternalSignInURL, c.Auth.ExternalSignOutURL)
+	}
+}
+
+// TestValidateExternalAuthURLs covers the boot checks: absolute http(s) URLs
+// with a host, so neither setting can become a script URL or a relative
+// redirect back into Dexaflow that loops.
+func TestValidateExternalAuthURLs(t *testing.T) {
+	cases := []struct {
+		name            string
+		signIn, signOut string
+		wantErr         string
+	}{
+		{"unset", "", "", ""},
+		{"both https", "https://portal.example.com/engine", "https://portal.example.com/signout", ""},
+		{"loopback http", "http://localhost:3000/engine", "", ""},
+		{"relative sign-in", "/api/v2/auth/login", "", "auth.external_signin_url"},
+		{"javascript sign-out", "", "javascript:alert(1)", "auth.external_signout_url"},
+		{"no host", "https:///engine", "", "auth.external_signin_url"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.ExternalSignInURL, c.Auth.ExternalSignOutURL = tc.signIn, tc.signOut
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadServerReadsTrustedIssuerFromEnv locks that every #1284 key binds
+// from the environment, the tenant list comma-split, and that the section is
+// empty by default (no handoff endpoint).
+func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Auth.TrustedIssuer.Issuer != "" || c.Auth.TrustedIssuer.TenantClaim != "tenant_id" {
+		t.Fatalf("defaults = %+v, want no issuer and tenant_claim tenant_id", c.Auth.TrustedIssuer)
+	}
+
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_NAME", "portal")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ISSUER", "https://portal.example.com")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL", "https://portal.example.com/jwks")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE", "leoflow-engine")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM", "org")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS", "acme,globex")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS", "300")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS", "https://portal.example.com,http://localhost:3000")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES", "leoflow-mcp,other-mcp")
+	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS", "600")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	want := TrustedIssuerSection{
+		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
+		Audience: "leoflow-engine", TenantClaim: "org", AllowedTenants: []string{"acme", "globex"}, MaxLifetimeSeconds: 300,
+	}
+	got := c.Auth.TrustedIssuer
+	if got.Name != want.Name || got.Issuer != want.Issuer || got.JWKSURL != want.JWKSURL || got.Audience != want.Audience ||
+		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 ||
+		strings.Join(got.AllowedOrigins, ",") != "https://portal.example.com,http://localhost:3000" ||
+		strings.Join(got.BearerAudiences, ",") != "leoflow-mcp,other-mcp" || got.BearerMaxLifetimeSeconds != 600 {
+		t.Errorf("TrustedIssuer = %+v, want %+v", got, want)
+	}
+}
+
+// TestValidateTrustedIssuer covers the boot checks. A half-configured issuer
+// fails boot with every missing key named at once, so first-time setup is one
+// edit, not a chain of restarts.
+func TestValidateTrustedIssuer(t *testing.T) {
+	full := TrustedIssuerSection{
+		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
+		Audience: "leoflow-engine", TenantClaim: "tenant_id", AllowedTenants: []string{"*"},
+		AllowedOrigins: []string{"https://portal.example.com"},
+	}
+	cases := []struct {
+		name    string
+		mutate  func(*TrustedIssuerSection)
+		wantErr []string
+	}{
+		{"unset", func(s *TrustedIssuerSection) { *s = TrustedIssuerSection{TenantClaim: "tenant_id"} }, nil},
+		{"complete", func(*TrustedIssuerSection) {}, nil},
+		{"loopback http jwks", func(s *TrustedIssuerSection) { s.JWKSURL = "http://localhost:9000/jwks" }, nil},
+		{"only an issuer", func(s *TrustedIssuerSection) {
+			*s = TrustedIssuerSection{Issuer: "https://portal.example.com", TenantClaim: "tenant_id"}
+		}, []string{"auth.trusted_issuer.name", "auth.trusted_issuer.jwks_url", "auth.trusted_issuer.audience", "auth.trusted_issuer.allowed_tenants", "auth.trusted_issuer.allowed_origins"}},
+		{"no origins", func(s *TrustedIssuerSection) { s.AllowedOrigins = nil }, []string{"auth.trusted_issuer.allowed_origins"}},
+		{"origin with a path", func(s *TrustedIssuerSection) { s.AllowedOrigins = []string{"https://portal.example.com/engine"} }, []string{"auth.trusted_issuer.allowed_origins"}},
+		{"wildcard origin", func(s *TrustedIssuerSection) { s.AllowedOrigins = []string{"*"} }, []string{"auth.trusted_issuer.allowed_origins"}},
+		{"bad name", func(s *TrustedIssuerSection) { s.Name = "Portal One" }, []string{"auth.trusted_issuer.name"}},
+		{"plain http jwks", func(s *TrustedIssuerSection) { s.JWKSURL = "http://portal.example.com/jwks" }, []string{"auth.trusted_issuer.jwks_url"}},
+		{"lifetime too long", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 7200 }, []string{"auth.trusted_issuer.max_lifetime_seconds"}},
+		{"lifetime above the cap", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 601 }, []string{"auth.trusted_issuer.max_lifetime_seconds"}},
+		{"lifetime at the cap", func(s *TrustedIssuerSection) { s.MaxLifetimeSeconds = 600 }, nil},
+		{"empty tenant claim", func(s *TrustedIssuerSection) { s.TenantClaim = "" }, []string{"auth.trusted_issuer.tenant_claim"}},
+		{"bearer audience", func(s *TrustedIssuerSection) { s.BearerAudiences = []string{"leoflow-mcp"} }, nil},
+		{"bearer audience is the handoff audience", func(s *TrustedIssuerSection) {
+			s.BearerAudiences = []string{"leoflow-mcp", "leoflow-engine"}
+		}, []string{"auth.trusted_issuer.bearer_audiences"}},
+		{"empty bearer audience", func(s *TrustedIssuerSection) { s.BearerAudiences = []string{""} }, []string{"auth.trusted_issuer.bearer_audiences"}},
+		{"bearer lifetime at the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3600 }, nil},
+		{"bearer lifetime above the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3601 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
+		{"negative bearer lifetime", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = -1 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.TrustedIssuer = full
+			tc.mutate(&c.Auth.TrustedIssuer)
+			err := c.Validate()
+			if len(tc.wantErr) == 0 {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate() = nil, want an error naming %v", tc.wantErr)
+			}
+			for _, key := range tc.wantErr {
+				if !strings.Contains(err.Error(), key) {
+					t.Errorf("Validate() = %v, want it to name %q", err, key)
+				}
+			}
+		})
+	}
+}
+
+// TestLoadServerReadsServiceTokenFromEnv locks the #1283 key: off by default,
+// bound from the environment like the JWT secret.
+func TestLoadServerReadsServiceTokenFromEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Auth.ServiceToken != "" {
+		t.Fatalf("default service token = %q (%v), want empty", c.Auth.ServiceToken, err)
+	}
+	t.Setenv("LEOFLOW_AUTH_SERVICE_TOKEN", "a-service-token-of-at-least-32-chars")
+	c, err = LoadServer("", nil)
+	if err != nil || c.Auth.ServiceToken != "a-service-token-of-at-least-32-chars" {
+		t.Errorf("service token = %q (%v), want the value from the environment", c.Auth.ServiceToken, err)
+	}
+}
+
+// TestValidateServiceToken refuses a short service token: it is a bearer
+// credential that can create tenants and users.
+func TestValidateServiceToken(t *testing.T) {
+	cases := map[string]struct {
+		token   string
+		wantErr bool
+	}{
+		"unset":  {"", false},
+		"long":   {strings.Repeat("x", 32), false},
+		"short":  {"too-short", true},
+		"spaces": {strings.Repeat(" ", 40), true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.ServiceToken = tc.token
+			err := c.Validate()
+			if (err != nil) != tc.wantErr || (err != nil && !strings.Contains(err.Error(), "auth.service_token")) {
+				t.Errorf("Validate() = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadServerLogsTailPublish pins the live-tail publish gate: it defaults to
+// "always" (every line published, as before), binds from the DEXAFLOW_* and the
+// legacy LEOFLOW_* variable and from a legacy leoflow.yaml, and rejects an
+// unknown value.
+func TestLoadServerLogsTailPublish(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Logs.Tail.Publish != "always" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"always\" by default", c.Logs.Tail.Publish)
+	}
+	for _, env := range []string{"DEXAFLOW_LOGS_TAIL_PUBLISH", "LEOFLOW_LOGS_TAIL_PUBLISH"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "on_demand")
+			fromEnv, lerr := LoadServer("", nil)
+			if lerr != nil {
+				t.Fatalf("LoadServer: %v", lerr)
+			}
+			if fromEnv.Logs.Tail.Publish != "on_demand" {
+				t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from %s", fromEnv.Logs.Tail.Publish, env)
+			}
+		})
+	}
+	file := filepath.Join(t.TempDir(), "leoflow.yaml")
+	if werr := os.WriteFile(file, []byte("logs:\n  tail:\n    publish: on_demand\n"), 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+	c, err = LoadServer(file, nil)
+	if err != nil {
+		t.Fatalf("LoadServer(leoflow.yaml): %v", err)
+	}
+	if c.Logs.Tail.Publish != "on_demand" {
+		t.Errorf("Logs.Tail.Publish = %q, want \"on_demand\" from leoflow.yaml", c.Logs.Tail.Publish)
+	}
+	bad := &ServerConfig{}
+	bad.Auth.Provider = AuthProviderJWT
+	bad.Auth.JWT.Secret = "set"
+	bad.Server.HTTPAddr = "0.0.0.0:8080"
+	bad.Logs.Tail.Publish = "sometimes"
+	if err := bad.Validate(); err == nil {
+		t.Error("Validate() accepted an unknown logs.tail.publish")
 	}
 }

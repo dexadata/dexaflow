@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end gate for the managed-Postgres re-extract idempotency fix (#729).
 #
-# `leoflow lite --postgres managed` downloads a relocatable PostgreSQL under
-# ~/.leoflow/postgres and extracts it. A re-run over an EXISTING install used to
+# `dexaflow lite --postgres managed` downloads a relocatable PostgreSQL under
+# ~/.dexaflow/postgres and extracts it. A re-run over an EXISTING install used to
 # break two ways:
 #   1. extractSymlink ended with os.Symlink, which fails EEXIST when the link
 #      target already exists (the regular-file branch overwrites via O_TRUNC), so
@@ -30,9 +30,9 @@ PORT="${LEOFLOW_E2E_PORT:-18098}"
 BASE="http://127.0.0.1:${PORT}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
-HOME_DIR="$TMP/home"          # sandbox ~/.leoflow so we never touch the real one
+HOME_DIR="$TMP/home"          # sandbox ~/.dexaflow so we never touch the real one
 WS="$TMP/ws"                  # empty workspace: no DAGs => no venv installs
-LEO_HOME="$HOME_DIR/.leoflow"
+LEO_HOME="$HOME_DIR/.dexaflow"
 PG_DIR="$LEO_HOME/postgres"
 LITE_PID=""
 
@@ -57,9 +57,9 @@ export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 mkdir -p "$HOME_DIR" "$WS" "$TMP/logs"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
 start_lite() { # $1=logfile

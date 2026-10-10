@@ -54,7 +54,7 @@ func marshalManifest(m backupManifest) ([]byte, error) {
 //     DB with rows the binary cannot read. Refuse loudly, mirror the upgrade
 //     drift detector in #136. Force does NOT silence this — corruption is
 //     not opt-in.
-//  2. **Destructive overwrite**: if ~/.leoflow already holds an install,
+//  2. **Destructive overwrite**: if ~/.dexaflow already holds an install,
 //     restoring would clobber the user's existing data. Refuse unless the
 //     operator passed --force, the explicit "I know" override.
 //  3. Otherwise, allow.
@@ -66,13 +66,13 @@ func decideRestoreSafe(manifestSchema, embeddedSchema uint, homeAlreadyHasData, 
 	if manifestSchema > embeddedSchema {
 		return fmt.Errorf(
 			"backup was taken on a newer schema (version %d) than this binary supports (%d); "+
-				"upgrade leoflow before restoring this archive",
+				"upgrade dexaflow before restoring this archive",
 			manifestSchema, embeddedSchema,
 		)
 	}
 	if homeAlreadyHasData && !force {
 		return fmt.Errorf(
-			"refusing: restore would overwrite an existing install at ~/.leoflow; " +
+			"refusing: restore would overwrite an existing install at ~/.dexaflow; " +
 				"pass --force to confirm, or move/back-up the existing install first",
 		)
 	}
@@ -90,7 +90,7 @@ func unmarshalManifest(data []byte) (backupManifest, error) {
 		return backupManifest{}, fmt.Errorf("backup manifest has no manifest_version field; archive is corrupt or pre-v1")
 	}
 	if m.ManifestVersion > backupManifestVersion {
-		return backupManifest{}, fmt.Errorf("backup manifest_version %d is newer than this binary supports (%d); upgrade leoflow",
+		return backupManifest{}, fmt.Errorf("backup manifest_version %d is newer than this binary supports (%d); upgrade dexaflow",
 			m.ManifestVersion, backupManifestVersion)
 	}
 	return m, nil

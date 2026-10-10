@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // newAdminUsersCommand groups the account-inspection operator commands. Like
@@ -25,7 +25,7 @@ func newAdminUsersCommand() *cobra.Command {
 	return cmd
 }
 
-// newAdminUsersListCommand builds `leoflow admin users list`: a single page of
+// newAdminUsersListCommand builds `dexaflow admin users list`: a single page of
 // the account list, bounded by --limit/--offset — the "who has access?" query.
 // A Lite control plane returns an empty collection, which lists as no users
 // rather than an error.

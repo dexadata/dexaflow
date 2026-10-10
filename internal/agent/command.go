@@ -1,6 +1,6 @@
 // Package agent contains the worker-side logic that runs inside the task
 // container: building the user process command, injecting XCom inputs, reading
-// the return value, and retry backoff. The gRPC client lives in cmd/leoflow-agent.
+// the return value, and retry backoff. The gRPC client lives in cmd/dexaflow-agent.
 package agent
 
 import (

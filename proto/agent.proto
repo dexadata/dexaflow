@@ -1,12 +1,12 @@
 // proto/agent.proto
-// Communication protocol between the Leoflow Control Plane and the worker Agent.
+// Communication protocol between the Dexaflow Control Plane and the worker Agent.
 // The Agent runs as PID 1 inside every task pod and connects back to the Control Plane on startup.
 
 syntax = "proto3";
 
 package leoflow.agent.v1;
 
-option go_package = "github.com/neochaotic/leoflow/proto/agent/v1;agentv1";
+option go_package = "github.com/dexadata/dexaflow/proto/agent/v1;agentv1";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
@@ -33,6 +33,11 @@ service AgentService {
 
     // Agent pulls XCom values declared as inputs.
     rpc FetchXCom (FetchXComRequest) returns (FetchXComResponse);
+
+    // Agent pulls several XCom values in one call. Each item is authorized and
+    // scoped exactly like FetchXCom. An older control plane answers Unimplemented
+    // and the agent falls back to FetchXCom per value.
+    rpc FetchXComBatch (FetchXComBatchRequest) returns (FetchXComBatchResponse);
 
     // Agent pushes an XCom value (typically the task return value).
     rpc PushXCom (PushXComRequest) returns (PushXComResponse);
@@ -138,8 +143,9 @@ message TaskSpec {
     string first_reschedule_at = 21;                 // For a reschedule-mode sensor re-dispatched after poking not-ready (#380): the time it FIRST entered reschedule, RFC3339. Stamped as LEOFLOW_FIRST_RESCHEDULE_AT so get_first_reschedule_date returns the real value and the sensor honors its cumulative timeout. Empty on the first attempt.
     int32 max_tries = 22;                            // The task's total attempt budget (retries + 1). The agent stamps LEOFLOW_MAX_TRIES so the runtime fires on_failure_callback only on the terminal attempt (try_number == max_tries), never on an intermediate retry (#424).
     bool on_failure_callback = 23;                   // The task declares an Airflow on_failure_callback (#424). The agent stamps LEOFLOW_ON_FAILURE_CALLBACK=1 so the runtime re-imports dag.py and runs it in-process on the task's final failure. The callable itself is not carried.
-    repeated string declared_variables = 24;         // The variable names this task declared (leoflow.yaml). The agent asks a pod-side external secret resolver only for declared names, so declaration stays the scope authority for externally-sourced secrets too (ADR 0060 / ADR 0055).
-    repeated string declared_connections = 25;       // The connection ids this task declared (leoflow.yaml). Same role as declared_variables for connections.
+    repeated string declared_variables = 24;         // The variable names this task declared (dexaflow.yaml). The agent asks a pod-side external secret resolver only for declared names, so declaration stays the scope authority for externally-sourced secrets too (ADR 0060 / ADR 0055).
+    repeated string declared_connections = 25;       // The connection ids this task declared (dexaflow.yaml). Same role as declared_variables for connections.
+    int64 attempt_epoch = 26;                         // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one
@@ -161,6 +167,25 @@ message FetchXComResponse {
     string content_type = 2;                      // 'application/json' by default
     int32 size_bytes = 3;
     google.protobuf.Timestamp created_at = 4;
+}
+
+message FetchXComBatchRequest {
+    repeated FetchXComRequest items = 1;          // at most 256 items
+}
+
+message FetchXComBatchItem {
+    string upstream_task_id = 1;
+    string key = 2;                               // the resolved key ('return_value' when the request left it empty)
+    bool found = 3;                               // false when the value is absent or expired (FetchXCom's NotFound)
+    bool deferred = 4;                            // true when the value did not fit the response size budget; fetch it with FetchXCom
+    bytes value = 5;                              // JSON-encoded payload, set only when found and not deferred
+    string content_type = 6;
+    int32 size_bytes = 7;
+    google.protobuf.Timestamp created_at = 8;
+}
+
+message FetchXComBatchResponse {
+    repeated FetchXComBatchItem items = 1;        // one per request item, in request order
 }
 
 message PushXComRequest {
@@ -240,6 +265,7 @@ message WorkAssignment {
     int32 try_number = 5;
     string dag_version_id = 6;  // the pool identity this assignment belongs to
     int64 lease_seconds = 7;    // ack deadline: unacked within it => the attempt is reclaimed
+    int64 attempt_epoch = 8;    // the execution of try_number this assignment is (ADR 0051 amendment); also carried in attempt_token, which is what the control plane fences on
 }
 
 // WorkerMessage is everything a warm worker sends UP the AwaitAssignment stream:

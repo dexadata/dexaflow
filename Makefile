@@ -1,4 +1,4 @@
-# Leoflow Makefile
+# Dexaflow Makefile
 # All targets assume execution from the repository root.
 
 SHELL := /usr/bin/env bash
@@ -24,16 +24,16 @@ UI_ASSETS_DIR      := internal/ui/assets
 
 # ─── Paths ───
 BIN_DIR       := bin
-CLI_BINARY    := $(BIN_DIR)/leoflow
-SERVER_BINARY := $(BIN_DIR)/leoflow-server
-AGENT_BINARY  := $(BIN_DIR)/leoflow-agent
-MCP_BINARY    := $(BIN_DIR)/leoflow-mcp
+CLI_BINARY    := $(BIN_DIR)/dexaflow
+SERVER_BINARY := $(BIN_DIR)/dexaflow-server
+AGENT_BINARY  := $(BIN_DIR)/dexaflow-agent
+MCP_BINARY    := $(BIN_DIR)/dexaflow-mcp
 
 # ─── Build metadata (embedded via internal/version) ───
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-VERSION_PKG := github.com/neochaotic/leoflow/internal/version
+VERSION_PKG := github.com/dexadata/dexaflow/internal/version
 LDFLAGS := -s -w \
 	-X '$(VERSION_PKG).version=$(VERSION)' \
 	-X '$(VERSION_PKG).gitCommit=$(GIT_COMMIT)' \
@@ -68,17 +68,19 @@ setup: ## Install Go tools (incl. changie), Python parser, and the pre-commit ho
 .PHONY: build
 build: ## Build all binaries into ./bin
 	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(CLI_BINARY) ./cmd/leoflow
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(SERVER_BINARY) ./cmd/leoflow-server
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(AGENT_BINARY) ./cmd/leoflow-agent
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(MCP_BINARY) ./cmd/leoflow-mcp
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(CLI_BINARY) ./cmd/dexaflow
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(SERVER_BINARY) ./cmd/dexaflow-server
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(AGENT_BINARY) ./cmd/dexaflow-agent
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(MCP_BINARY) ./cmd/dexaflow-mcp
+	@# Pre-rename entry points: scripts and installs that call bin/leoflow* keep working.
+	@for b in "" -server -agent -mcp; do ln -sf "dexaflow$$b" "$(BIN_DIR)/leoflow$$b"; done
 
 .PHONY: chaos-dogfood
 chaos-dogfood: ## Pre-Lima gate (#231) — Phase 1: run all suites on the host + emit a green/red report
 	@bash scripts/chaos/run.sh
 
 CHAOS_IMAGE          ?= leoflow-chaos:local
-CHAOS_GO_VERSION     ?= 1.26.6
+CHAOS_GO_VERSION     ?= 1.26.9
 CHAOS_LINT_VERSION   ?= v2.12.2
 
 .PHONY: chaos-dogfood-docker
@@ -100,7 +102,7 @@ chaos-dogfood-docker: ## Pre-Lima gate (#231) — Phase 2a: same harness inside 
 
 .PHONY: dev-install
 dev-install: ## Install the leoflow toolchain on PATH so `leoflow dev` runs from any project
-	go install -trimpath -ldflags="$(LDFLAGS)" ./cmd/leoflow ./cmd/leoflow-server ./cmd/leoflow-agent
+	go install -trimpath -ldflags="$(LDFLAGS)" ./cmd/dexaflow ./cmd/dexaflow-server ./cmd/dexaflow-agent
 
 .PHONY: lite-redeploy
 lite-redeploy: ## Local dev loop: rebuild + (re)start `leoflow lite` with the just-built binaries
@@ -128,11 +130,11 @@ fetch-airflow-ui: ## Extract the pinned Airflow UI SPA into internal/ui/assets (
 	@echo "NOTE: the bundle is unverified until walked in a real browser (see docs/ui-compatibility.md)."
 
 .PHONY: rebrand-ui
-rebrand-ui: ## Rewrite the embedded SPA's Docs/GitHub nav links from Airflow to Leoflow
+rebrand-ui: ## Rewrite the embedded SPA's Docs/GitHub nav links from Airflow (or an earlier rebrand) to Dexaflow
 	@for js in $(UI_ASSETS_DIR)/assets/index-*.js ; do \
-		perl -i -pe 's{https://github\.com/apache/airflow}{https://github.com/neochaotic/leoflow}g; s{`https://airflow\.apache\.org/docs/`,key:`documentation`}{`https://dexaflow.dexadata.ai/`,key:`documentation`}g; s{`https://airflow\.apache\.org/`,rel:`noopener}{`https://dexaflow.dexadata.ai/`,rel:`noopener}g;' "$$js" ; \
+		perl -i -pe 's{https://github\.com/(apache/airflow|neochaotic/leoflow|dexadata/leoflow)\b}{https://github.com/dexadata/dexaflow}g; s{`https://(airflow\.apache\.org/docs/|neochaotic\.github\.io/leoflow/)`,key:`documentation`}{`https://dexaflow.dexadata.ai/`,key:`documentation`}g; s{`https://(airflow\.apache\.org/|neochaotic\.github\.io/leoflow/)`,rel:`noopener}{`https://dexaflow.dexadata.ai/`,rel:`noopener}g;' "$$js" ; \
 	done
-	@echo "rebranded nav Docs/GitHub links to Leoflow (templated provider docs left pointing at Airflow)"
+	@echo "rebranded nav Docs/GitHub links to Dexaflow (templated provider docs left pointing at Airflow)"
 
 .PHONY: e2e-lite
 e2e-lite: ## End-to-end Lite happy path (setup -> control plane -> login); needs local Postgres+Redis (DESTRUCTIVE: resets leoflow_dev)
@@ -168,10 +170,14 @@ chaos-runtime: ## Runtime fault-injection chaos e2e (#231 Phase 2): kill schedul
 soak: ## Long-running resilience soak (test/soak): 30 min by default, local Postgres + Lite, asserts invariants continuously. Bounded and safe to leave unattended.
 	bash test/soak/soak.sh
 
+# The ceiling must stay above the 10m attempt token TTL (boot refuses
+# otherwise), and the soak_token body must outlast ceiling + TTL (11m + 10m =
+# 21m), or the last renewed token is still valid when the task ends. 25m of body
+# plus the reap leaves the run settled well inside 40m (#1461).
 .PHONY: soak-credential-ceiling
 soak-credential-ceiling: ## Prove the credential-renewal ceiling is enforced: lowers it below soak_token's runtime and REQUIRES the task to fail for that reason.
-	@SOAK_CREDENTIAL_CEILING=4m SOAK_TOKEN_SECONDS=540 \
-	  bash test/soak/soak.sh --duration 20m --mode credential-ceiling \
+	@SOAK_CREDENTIAL_CEILING=11m SOAK_TOKEN_SECONDS=1500 \
+	  bash test/soak/soak.sh --duration 40m --mode credential-ceiling \
 	    --label credential-ceiling --out .soak/credential-ceiling
 
 .PHONY: soak-selftest
@@ -282,9 +288,9 @@ ci-local: ## Run every CI gate locally — pre-push tripwire so a PR does not ar
 		|| (echo "skip govulncheck (run: go install golang.org/x/vuln/cmd/govulncheck@latest)"; exit 0)
 	@echo "▸ helm unittest (chart contracts)"
 	@command -v helm >/dev/null && command -v helm-unittest >/dev/null \
-		&& (cd helm/leoflow && helm unittest .) \
+		&& (cd helm/dexaflow && helm unittest .) \
 		|| (command -v helm >/dev/null && helm plugin list 2>/dev/null | grep -q unittest \
-			&& (cd helm/leoflow && helm unittest .) \
+			&& (cd helm/dexaflow && helm unittest .) \
 			|| echo "skip helm unittest (install: helm plugin install https://github.com/helm-unittest/helm-unittest)")
 	@echo "▸ python parser tests"
 	@command -v python3 >/dev/null && (cd parser && python3 -m pytest -q) || echo "skip pytest (no python3)"

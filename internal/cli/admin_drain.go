@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiclient "github.com/neochaotic/leoflow/pkg/client"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // drainDefaultTimeout bounds how long drain waits for active runs to finish
@@ -26,7 +26,7 @@ type drainOptions struct {
 	wait         bool
 }
 
-// newAdminDrainCommand builds `leoflow admin drain`: safely quiesce the control
+// newAdminDrainCommand builds `dexaflow admin drain`: safely quiesce the control
 // plane before maintenance or an upgrade. It pauses every DAG (no new runs),
 // then polls active runs until none remain or --timeout elapses; on timeout it
 // reports what is still running and exits non-zero.

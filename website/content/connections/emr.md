@@ -9,14 +9,14 @@ weight: 120
 description: Amazon EMR connection
 ---
 
-Submit and monitor Amazon EMR steps / job runs from a managed Leoflow
+Submit and monitor Amazon EMR steps / job runs from a managed Dexaflow
 Connection. EMR carries no host and no password — only the AWS region lives in
 **Extra**, and auth is keyless IAM.
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: emr_demo
 connectors:
   - emr
@@ -71,7 +71,7 @@ with DAG("emr_demo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: emr_demo
 python_version: "3.12"

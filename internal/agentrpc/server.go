@@ -10,13 +10,14 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/logs"
-	"github.com/neochaotic/leoflow/internal/xcom"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/logs"
+	"github.com/dexadata/dexaflow/internal/xcom"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -122,7 +123,7 @@ type Store interface {
 	// attempt is never bound (a benign no-op, not an error). Called only on a warm
 	// ack — with warm pools off no assignment is ever acked, so it is never called
 	// and warm_worker_id stays NULL.
-	BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber int, workerPod string) error
+	BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int, workerPod string) error
 }
 
 // XComService stores and retrieves XCom values for the agent.
@@ -149,6 +150,7 @@ type Server struct {
 	xcom                 XComService
 	logs                 LogSink
 	tail                 LogPublisher
+	tailOnDemand         bool
 	secrets              SecretsStore
 	secretAudit          SecretScopeAuditor
 	liveness             TaskLivenessChecker
@@ -192,12 +194,20 @@ type Server struct {
 	// indefinitely on a peer must select on this. nil (the default) keeps streams
 	// open until the peer ends them.
 	shutdown <-chan struct{}
+	// legacyTokens meters task tokens without an attempt_epoch claim (unset or
+	// nil recorder: off). Atomic because it is attached after Serve starts.
+	legacyTokens atomic.Pointer[legacyRecorderBox]
+	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
+	// PushXCom and FetchXCom do not reload the full task spec on every call.
+	attemptSpecs *attemptSpecCache
 }
 
 // NewServer builds an AgentService server backed by the given authenticator,
 // store, and XCom service.
 func NewServer(authn Authenticator, store Store, xcomSvc XComService) *Server {
-	return &Server{auth: authn, store: store, xcom: xcomSvc, now: time.Now}
+	s := &Server{auth: authn, store: store, xcom: xcomSvc, now: time.Now}
+	s.attemptSpecs = newAttemptSpecCache(attemptSpecCacheSize, attemptSpecCacheTTL, func() time.Time { return s.now() })
+	return s
 }
 
 // SetTokenRenewal wires per-attempt token renewal (ADR 0055 Fix #4): on a
@@ -232,6 +242,17 @@ func (s *Server) SetLogSink(sink LogSink) { s.logs = sink }
 // StreamLogs publishes each line for the UI's live tail.
 func (s *Server) SetLogPublisher(p LogPublisher) { s.tail = p }
 
+// SetTailPublishOnDemand selects logs.tail.publish: false (the default,
+// "always") publishes every line as it arrives; true ("on_demand") publishes
+// only while a probe finds a follower, replaying the lines held since the last
+// probe that found none (see tailGate).
+func (s *Server) SetTailPublishOnDemand(on bool) { s.tailOnDemand = on }
+
+// tailGateFor builds the live-tail gate for one attempt's log stream.
+func (s *Server) tailGateFor(ref logs.Ref) *tailGate {
+	return newTailGate(s.tail, ref, time.Now, s.tailOnDemand)
+}
+
 // Register acknowledges an agent's startup and returns the server clock.
 func (s *Server) Register(ctx context.Context, _ *agentv1.RegisterRequest) (*agentv1.RegisterResponse, error) {
 	id, err := s.identify(ctx)
@@ -257,6 +278,7 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 	if err != nil {
 		return nil, internalStatus("loading task spec", err, attemptAttrs(id)...)
 	}
+	s.attemptSpecs.put(*id, attemptSpecOf(spec))
 	return &agentv1.TaskSpec{
 		TenantId:                id.TenantID,
 		DagId:                   id.DagID,
@@ -264,6 +286,7 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 		RunId:                   id.RunID,
 		TaskId:                  id.TaskID,
 		TryNumber:               clampInt32(id.TryNumber),
+		AttemptEpoch:            int64(id.AttemptEpoch),
 		Operator:                spec.Operator,
 		Entrypoint:              spec.Entrypoint,
 		Environment:             spec.Environment,
@@ -294,11 +317,22 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
 	}
+	// Any report but running ends this attempt, so its cached XCom spec goes. A
+	// later RPC of the same attempt (a retried report) just reloads it.
+	if req.GetState() != agentv1.TaskState_TASK_STATE_RUNNING {
+		s.attemptSpecs.drop(*id)
+	}
 	// A reschedule-mode sensor reports up_for_reschedule + its next-poke time; route
 	// it to the dedicated store path that persists reschedule_at, instead of the
 	// generic state write (#380).
 	if req.GetState() == agentv1.TaskState_TASK_STATE_UP_FOR_RESCHEDULE {
 		if rerr := s.store.Reschedule(ctx, *id, req.GetRescheduleAt().AsTime()); rerr != nil {
+			// The poke came from a superseded attempt (or onto a settled row): the
+			// same "moved on" answer a stale state report gets (ADR 0051 amendment).
+			if errors.Is(rerr, ErrStaleReport) {
+				slog.Warn("ignoring stale reschedule report; signaling terminate", attemptAttrs(id)...)
+				return &agentv1.ReportStateResponse{Acknowledged: true, ShouldTerminate: true}, nil
+			}
 			return nil, internalStatus("recording reschedule", rerr, attemptAttrs(id)...)
 		}
 		return &agentv1.ReportStateResponse{Acknowledged: true}, nil
@@ -416,7 +450,7 @@ func (s *Server) PushXCom(ctx context.Context, req *agentv1.PushXComRequest) (*a
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
 	}
-	spec, err := s.store.TaskSpec(ctx, *id)
+	spec, err := s.xcomSpec(ctx, id)
 	if err != nil {
 		return nil, internalStatus("loading task spec", err, attemptAttrs(id)...)
 	}
@@ -444,7 +478,7 @@ func (s *Server) FetchXCom(ctx context.Context, req *agentv1.FetchXComRequest) (
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
 	}
-	spec, err := s.store.TaskSpec(ctx, *id)
+	spec, err := s.xcomSpec(ctx, id)
 	if err != nil {
 		return nil, internalStatus("loading task spec", err, attemptAttrs(id)...)
 	}
@@ -500,8 +534,13 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 		return status.Error(codes.Unavailable, "control plane shutting down; log stream not accepted")
 	default:
 	}
+	// The stream is stored under this execution's attempt epoch, so a second
+	// execution of the same try no longer overwrites it (ADR 0051 amendment,
+	// #863). A token without the claim writes the epoch-0 key, where every
+	// pre-upgrade log already lives.
 	w, oerr := s.logs.Open(logs.Ref{
 		TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber,
+		AttemptEpoch: id.AttemptEpoch,
 	})
 	if oerr != nil {
 		// The agent is told WHICH step failed — without that it sees only a bare
@@ -531,11 +570,8 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 	ref := logs.Ref{TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber}
 	publish := func(string) {}
 	if s.tail != nil {
-		publish = func(line string) {
-			if perr := s.tail.Publish(stream.Context(), ref, line); perr != nil {
-				slog.Warn("publishing log tail", "task", id.TaskID, "error", perr)
-			}
-		}
+		gate := s.tailGateFor(ref)
+		publish = func(line string) { gate.publish(stream.Context(), line) }
 	}
 	return writeLines(s.shutdown, w, stream.Recv, publish, attemptAttrs(id))
 }
@@ -611,6 +647,20 @@ func writeLines(shutdown <-chan struct{}, w logs.LogWriter, recv func() (*agentv
 // writeLine stores one received line and publishes it for live tailing. attrs
 // carries the attempt identity onto the cause log line of a redacted failure.
 func writeLine(w logs.LogWriter, line *agentv1.LogLine, publish func(string), attrs []any) error {
+	// The agent stamps every line with the time it read it. A stamp the
+	// Timestamp type itself calls invalid (outside years 1 to 9999, a range
+	// inside what time.MarshalJSON accepts, so a valid stamp always encodes) is
+	// refused as the peer's error, as the sink refused it before it took
+	// pre-encoded lines: EncodeLine would store the line under the current time
+	// rather than raw, but nothing of ours sends such a stamp, and the attempt
+	// token the sender holds is no reason to store what it composed. A line
+	// with no stamp at all keeps the Unix epoch it always had.
+	if ts := line.GetTime(); ts != nil {
+		if cause := ts.CheckValid(); cause != nil {
+			slog.Warn("refusing a log line whose timestamp is invalid", causeArgs(cause, attrs)...)
+			return status.Error(codes.InvalidArgument, "log line time is outside the range a timestamp can hold")
+		}
+	}
 	msg := line.GetMessage()
 	// The agent derives the wire level from the source stream (stdout=info,
 	// stderr=error), which mis-colors an error printed to stdout or an info
@@ -623,12 +673,20 @@ func writeLine(w logs.LogWriter, line *agentv1.LogLine, publish func(string), at
 		Stream:  line.GetStream(),
 		Message: msg,
 	}
-	if werr := w.WriteEvent(ev); werr != nil {
+	// Encode once: the same JSON line is stored and published. The full event
+	// (level/stream/ts), not just the text, so a live NDJSON follower can color
+	// lines exactly like the stored drill-down.
+	encoded := logs.EncodeLine(ev)
+	var werr error
+	if lw, ok := w.(logs.LineWriter); ok {
+		werr = lw.WriteLine(encoded)
+	} else {
+		werr = w.WriteEvent(ev)
+	}
+	if werr != nil {
 		return internalStatus("writing log line", werr, attrs...)
 	}
-	// Publish the full event (level/stream/ts), not just the text, so a live
-	// NDJSON follower can color lines exactly like the stored drill-down.
-	publish(logs.EncodeLine(ev))
+	publish(encoded)
 	return nil
 }
 

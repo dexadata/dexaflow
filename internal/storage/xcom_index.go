@@ -7,20 +7,21 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
-	"github.com/neochaotic/leoflow/internal/xcom"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/xcom"
 )
 
 // XComIndex is the Postgres-backed XCom metadata index. It implements
 // xcom.Index, recording each pushed value so the API can find and list it.
 type XComIndex struct {
-	q *queries.Queries
+	q    *queries.Queries
+	pool txBeginner
 }
 
 // NewXComIndex builds an XComIndex over the given Postgres connection.
 func NewXComIndex(pg *Postgres) *XComIndex {
-	return &XComIndex{q: pg.Queries}
+	return &XComIndex{q: pg.Queries, pool: pg.Pool}
 }
 
 // RecordXCom upserts the metadata for a pushed XCom value.
@@ -46,9 +47,13 @@ func (x *XComIndex) RecordXCom(ctx context.Context, e xcom.IndexEntry) error {
 }
 
 // PurgeExpired deletes xcom_index rows past their expiry. Redis expires the
-// values natively; this reclaims the metadata rows.
+// values natively; this reclaims the metadata rows. A backlog of expired rows
+// can take longer than the API statement timeout, which the janitor shares
+// when the scheduler has no pool of its own, so it runs without it.
 func (x *XComIndex) PurgeExpired(ctx context.Context) error {
-	return x.q.DeleteExpiredXComIndex(ctx)
+	return withoutStatementTimeout(ctx, x.pool, x.q, func(q *queries.Queries) error {
+		return q.DeleteExpiredXComIndex(ctx)
+	})
 }
 
 // XComReader reads XCom values for the API: it resolves the Redis key from the

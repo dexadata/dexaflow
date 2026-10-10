@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 func TestLoginPersistsTokenAndServer(t *testing.T) {
@@ -130,7 +130,7 @@ func TestPromptValueHandlesEOFWithoutNewline(t *testing.T) {
 
 func TestPromptPasswordFallsBackToPlainReadOffTTY(t *testing.T) {
 	// A piped (non-terminal) reader falls back to a plain line read, so a
-	// password can be supplied non-interactively (echo pw | leoflow auth login).
+	// password can be supplied non-interactively (echo pw | dexaflow auth login).
 	var out strings.Builder
 	got, err := promptPassword(strings.NewReader("s3cret\n"), &out)
 	if err != nil {

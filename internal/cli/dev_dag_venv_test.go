@@ -173,8 +173,11 @@ func TestEnsureDagVenvSkipsAllGatesWhenAlreadyFresh(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("the python stub recorded no args: %v", rerr)
 	}
-	if !strings.Contains(string(argv), "import leoflow_runtime, leoflow") {
-		t.Errorf("importability gate probed %q, want it to import leoflow_runtime AND leoflow", strings.TrimSpace(string(argv)))
+	// dexaflow too: a venv built before the rename has leoflow_runtime and
+	// leoflow but no dexaflow, so `from dexaflow import dbt_group` would fail
+	// in every python task while the gate reported the venv fresh.
+	if !strings.Contains(string(argv), "import leoflow_runtime, leoflow, dexaflow") {
+		t.Errorf("importability gate probed %q, want it to import leoflow_runtime, leoflow AND dexaflow", strings.TrimSpace(string(argv)))
 	}
 }
 

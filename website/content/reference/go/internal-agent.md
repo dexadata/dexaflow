@@ -5,10 +5,10 @@ weight: 5
 ---
 
 ```go
-import "github.com/neochaotic/leoflow/internal/agent"
+import "github.com/dexadata/dexaflow/internal/agent"
 ```
 
-Package agent contains the worker\-side logic that runs inside the task container: building the user process command, injecting XCom inputs, reading the return value, and retry backoff. The gRPC client lives in cmd/leoflow\-agent.
+Package agent contains the worker\-side logic that runs inside the task container: building the user process command, injecting XCom inputs, reading the return value, and retry backoff. The gRPC client lives in cmd/dexaflow\-agent.
 
 ## Index
 
@@ -52,7 +52,7 @@ const DefaultHeartbeatInterval = 15 * time.Second
 ```
 
 <a name="AttemptTokenTTL"></a>
-## func [AttemptTokenTTL](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/ttl.go#L28>)
+## func [AttemptTokenTTL](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/ttl.go#L28>)
 
 ```go
 func AttemptTokenTTL(interval time.Duration) time.Duration
@@ -61,7 +61,7 @@ func AttemptTokenTTL(interval time.Duration) time.Duration
 AttemptTokenTTL derives the short per\-attempt agent\-token TTL from the heartbeat interval: max\(floor, beats × interval\). The result always exceeds a single interval, so one missed beat never lapses a live credential, while the floor keeps the TTL short enough to bound an exfiltrated token. A non\-positive interval \(heartbeats disabled\) yields the floor.
 
 <a name="Backoff"></a>
-## func [Backoff](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/command.go#L105>)
+## func [Backoff](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L105>)
 
 ```go
 func Backoff(attempt int) (delay time.Duration, ok bool)
@@ -70,7 +70,7 @@ func Backoff(attempt int) (delay time.Duration, ok bool)
 Backoff returns the delay before retry attempt n \(1\-based: 1s, 2s, 4s, 8s, 16s\). ok is false once the maximum number of attempts is exceeded.
 
 <a name="BuildCommand"></a>
-## func [BuildCommand](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/command.go#L34>)
+## func [BuildCommand](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L34>)
 
 ```go
 func BuildCommand(operator, entrypoint, operatorClass string) ([]string, error)
@@ -79,7 +79,7 @@ func BuildCommand(operator, entrypoint, operatorClass string) ([]string, error)
 BuildCommand returns the argv to execute the user's task for the given operator. operatorClass is the dotted Airflow operator/sensor class, used only for airflow\_operator tasks \(ADR 0040\); it is ignored for the other operators.
 
 <a name="ClassifyBootstrapFailure"></a>
-## func [ClassifyBootstrapFailure](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/bootstrap.go#L59>)
+## func [ClassifyBootstrapFailure](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/bootstrap.go#L59>)
 
 ```go
 func ClassifyBootstrapFailure(stage BootstrapStage, err error) string
@@ -90,7 +90,7 @@ ClassifyBootstrapFailure maps a pre\-registration startup failure to a short, op
 It reads only the gRPC status CODE and the stage — never the error's message — so the result is always one of the constants above. That is what makes the reason safe to persist and serve: the control plane deliberately does not echo token details back to the agent, and this classifier must not reintroduce a channel that does.
 
 <a name="ExchangeToken"></a>
-## func [ExchangeToken](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/exchange.go#L22>)
+## func [ExchangeToken](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/exchange.go#L22>)
 
 ```go
 func ExchangeToken(ctx context.Context, client agentv1.AgentServiceClient, tokens *TokenSource) error
@@ -101,7 +101,7 @@ ExchangeToken performs the one\-time bootstrap token exchange \(ADR 0055 Fix \#3
 It fails the startup on any error: the agent must never proceed with a bootstrap credential the control plane rejected, nor with an empty token.
 
 <a name="NewReturnValuePath"></a>
-## func [NewReturnValuePath](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/command.go#L23>)
+## func [NewReturnValuePath](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L23>)
 
 ```go
 func NewReturnValuePath() (path string, cleanup func() error, err error)
@@ -110,7 +110,7 @@ func NewReturnValuePath() (path string, cleanup func() error, err error)
 NewReturnValuePath returns a unique, agent\-owned path for this task's return value, plus a cleanup. The agent runs one task per process, so a per\-process temp dir keeps concurrent tasks and other users from ever sharing a single /tmp/leoflow\_return\_value.json \(which collided — permission denied across uids, clobbered across parallel tasks\). The runtime is pointed here via the LEOFLOW\_RETURN\_VALUE\_PATH env the runner injects.
 
 <a name="ReadReturnValue"></a>
-## func [ReadReturnValue](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/command.go#L92>)
+## func [ReadReturnValue](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L92>)
 
 ```go
 func ReadReturnValue(path string) (value []byte, ok bool, err error)
@@ -119,7 +119,7 @@ func ReadReturnValue(path string) (value []byte, ok bool, err error)
 ReadReturnValue reads the optional return\-value file. ok is false \(no error\) when the file does not exist.
 
 <a name="ReadTokenFile"></a>
-## func [ReadTokenFile](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/exchange.go#L38>)
+## func [ReadTokenFile](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/exchange.go#L38>)
 
 ```go
 func ReadTokenFile(path string) (string, error)
@@ -128,7 +128,7 @@ func ReadTokenFile(path string) (string, error)
 ReadTokenFile reads a projected token from path and trims surrounding whitespace \(the kubelet writes the token without a trailing newline, but trim defensively so the bearer matches exactly what the apiserver signed\).
 
 <a name="ReportBootstrapFailure"></a>
-## func [ReportBootstrapFailure](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/bootstrap.go#L96>)
+## func [ReportBootstrapFailure](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/bootstrap.go#L96>)
 
 ```go
 func ReportBootstrapFailure(path string, stage BootstrapStage, err error)
@@ -139,7 +139,7 @@ ReportBootstrapFailure records a classified pre\-registration failure on the con
 It is best\-effort and never fails the caller: the agent is already exiting, and a lost diagnostic must not change the exit path. An empty path \(outside a pod\) is a no\-op.
 
 <a name="ResolverFromEnv"></a>
-## func [ResolverFromEnv](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/secret_resolver.go#L67>)
+## func [ResolverFromEnv](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/secret_resolver.go#L67>)
 
 ```go
 func ResolverFromEnv(getenv func(string) string) (secretsource.SecretResolver, secretsource.Backend, error)
@@ -148,7 +148,7 @@ func ResolverFromEnv(getenv func(string) string) (secretsource.SecretResolver, s
 ResolverFromEnv builds the external\-secrets resolver \+ its routing Backend from the operator\-injected LEOFLOW\_SECRETS\_\* pod env \(operator\-only: the dispatch filter, \#828, keeps an author's task env from setting LEOFLOW\_ keys\). It returns a nil resolver when no backend is configured — the chain then stays vault\-only, byte\-identical to the pre\-0060 env\-export. A malformed config fails closed \(returned error\) rather than silently disabling external secrets.
 
 <a name="XComEnvVar"></a>
-## func [XComEnvVar](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/command.go#L86>)
+## func [XComEnvVar](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L86>)
 
 ```go
 func XComEnvVar(name string, value []byte) string
@@ -157,7 +157,7 @@ func XComEnvVar(name string, value []byte) string
 XComEnvVar formats an XCom input as a LEOFLOW\_XCOM\_\<NAME\>=\<json\> env entry.
 
 <a name="BootstrapStage"></a>
-## type [BootstrapStage](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/bootstrap.go#L16>)
+## type [BootstrapStage](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/bootstrap.go#L16>)
 
 BootstrapStage names the startup step a pre\-registration failure happened in. The stage narrows the classification: the same transport error means something different while reading a token file than while exchanging one.
 
@@ -179,7 +179,7 @@ const (
 ```
 
 <a name="CommandRunner"></a>
-## type [CommandRunner](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/runner.go#L28-L30>)
+## type [CommandRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L28-L30>)
 
 CommandRunner executes the user task process, writing its stdout and stderr to the supplied writers and returning the process exit code.
 
@@ -190,7 +190,7 @@ type CommandRunner interface {
 ```
 
 <a name="NewExecRunner"></a>
-### func [NewExecRunner](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/exec.go#L48>)
+### func [NewExecRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/exec.go#L48>)
 
 ```go
 func NewExecRunner() CommandRunner
@@ -199,7 +199,7 @@ func NewExecRunner() CommandRunner
 NewExecRunner returns a CommandRunner that executes tasks as child processes.
 
 <a name="LogSink"></a>
-## type [LogSink](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/runner.go#L39-L42>)
+## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L39-L42>)
 
 LogSink receives log lines produced by the user task. Sends are best\-effort.
 
@@ -211,7 +211,7 @@ type LogSink interface {
 ```
 
 <a name="OpenLogSink"></a>
-### func [OpenLogSink](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/dial.go#L89>)
+### func [OpenLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/dial.go#L89>)
 
 ```go
 func OpenLogSink(ctx context.Context, client agentv1.AgentServiceClient) (LogSink, error)
@@ -220,7 +220,7 @@ func OpenLogSink(ctx context.Context, client agentv1.AgentServiceClient) (LogSin
 OpenLogSink starts the StreamLogs RPC and returns a sink that forwards lines to it. It is the agent's first RPC, so it uses WaitForReady: with the lazy connection of grpc.NewClient the channel may not be established yet, and without this the stream would fail fast on a cold connection \(the "opening log stream" EOF in \#36\) rather than waiting for the control plane to be reachable.
 
 <a name="NoopLogSink"></a>
-## type [NoopLogSink](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/runner.go#L47>)
+## type [NoopLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L47>)
 
 NoopLogSink discards log lines. The agent falls back to it when the control plane log stream is unavailable \(e.g. StreamLogs not yet implemented\), so a task still runs even though its logs are not shipped this run.
 
@@ -229,7 +229,7 @@ type NoopLogSink struct{}
 ```
 
 <a name="NoopLogSink.Close"></a>
-### func \(NoopLogSink\) [Close](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/runner.go#L53>)
+### func \(NoopLogSink\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L53>)
 
 ```go
 func (NoopLogSink) Close() error
@@ -238,7 +238,7 @@ func (NoopLogSink) Close() error
 Close is a no\-op.
 
 <a name="NoopLogSink.Send"></a>
-### func \(NoopLogSink\) [Send](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/runner.go#L50>)
+### func \(NoopLogSink\) [Send](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L50>)
 
 ```go
 func (NoopLogSink) Send(*agentv1.LogLine) error
@@ -247,7 +247,7 @@ func (NoopLogSink) Send(*agentv1.LogLine) error
 Send discards the line.
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/runner.go#L59-L111>)
+## type [Runner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L59-L111>)
 
 Runner orchestrates a single task execution inside the worker container: it registers with the control plane, fetches the task spec and XCom inputs, runs the user process while streaming logs, pushes the return value, and reports the terminal state.
 
@@ -307,7 +307,7 @@ type Runner struct {
 ```
 
 <a name="Runner.Run"></a>
-### func \(\*Runner\) [Run](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/runner.go#L126>)
+### func \(\*Runner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L126>)
 
 ```go
 func (r *Runner) Run(ctx context.Context) error
@@ -316,7 +316,7 @@ func (r *Runner) Run(ctx context.Context) error
 Run executes the task lifecycle and returns an error if the task failed. In single\-shot mode the agent registers once and serves exactly one attempt, so Run is register followed by runOneAttempt. The warm worker \(warm.go\) reuses runOneAttempt directly, registering separately and driving many attempts.
 
 <a name="TokenSource"></a>
-## type [TokenSource](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/auth.go#L20-L23>)
+## type [TokenSource](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/auth.go#L20-L23>)
 
 TokenSource holds the agent's current bearer token behind a lock so the heartbeat loop can atomically swap it \(token renewal, ADR 0055 Fix \#4\) while the gRPC per\-RPC credential reads it on every outbound call. Reads and swaps may race across goroutines, so both go through the mutex.
 
@@ -327,7 +327,7 @@ type TokenSource struct {
 ```
 
 <a name="Dial"></a>
-### func [Dial](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/dial.go#L42>)
+### func [Dial](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/dial.go#L42>)
 
 ```go
 func Dial(addr, token string, allowInsecure bool, caFile string) (agentv1.AgentServiceClient, *grpc.ClientConn, *TokenSource, error)
@@ -338,7 +338,7 @@ Dial connects to the control plane's AgentService, attaching the bearer token to
 It also returns the \*TokenSource backing the per\-RPC credential: the heartbeat loop swaps a renewed token into it \(ADR 0055 Fix \#4\) and the interceptor picks the new bearer up on the next call.
 
 <a name="NewTokenSource"></a>
-### func [NewTokenSource](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/auth.go#L26>)
+### func [NewTokenSource](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/auth.go#L26>)
 
 ```go
 func NewTokenSource(token string) *TokenSource
@@ -347,7 +347,7 @@ func NewTokenSource(token string) *TokenSource
 NewTokenSource seeds a TokenSource with the dispatch token.
 
 <a name="TokenSource.Set"></a>
-### func \(\*TokenSource\) [Set](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/auth.go#L40>)
+### func \(\*TokenSource\) [Set](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/auth.go#L40>)
 
 ```go
 func (s *TokenSource) Set(token string)
@@ -356,7 +356,7 @@ func (s *TokenSource) Set(token string)
 Set atomically swaps the bearer used by subsequent RPCs. An empty token is ignored so a "no renewal this beat" response never blanks a working credential.
 
 <a name="TokenSource.Token"></a>
-### func \(\*TokenSource\) [Token](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/auth.go#L31>)
+### func \(\*TokenSource\) [Token](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/auth.go#L31>)
 
 ```go
 func (s *TokenSource) Token() string
@@ -365,7 +365,7 @@ func (s *TokenSource) Token() string
 Token returns the current bearer.
 
 <a name="WarmRunner"></a>
-## type [WarmRunner](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/warm.go#L40-L133>)
+## type [WarmRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L40-L133>)
 
 WarmRunner is the client side of the warm\-worker transport \(ADR 0058 D4\): a long\-lived process that registers once, opens the AwaitAssignment bidi stream, and serves MANY task attempts — one at a time — each in a fresh forked child.
 
@@ -374,7 +374,7 @@ Two identities are kept deliberately separate:
 - StreamClient carries the worker's BOOTSTRAP identity. Register and the AwaitAssignment control stream run on it and never adopt an attempt token, so the pod's membership in the pool is stable for the worker's whole life.
 - WorkClient carries each attempt's PER\-ATTEMPT identity. Its per\-RPC credential reads AttemptTokens, which the loop swaps to the assignment's attempt\_token before running. Because attempts are strictly sequential, no two attempts' RPCs are ever in flight at once, so the swap is race\-free; and because the swap only touches AttemptTokens \(a different TokenSource / dial from the stream\), it never disturbs the already\-open bootstrap stream, whose authorization header was sent once at stream open.
 
-In production StreamClient and WorkClient are two dials of the same control plane \(see cmd/leoflow\-agent\), one bound to the bootstrap TokenSource and one to AttemptTokens. They may be the same client only in tests that don't exercise the credential.
+In production StreamClient and WorkClient are two dials of the same control plane \(see cmd/dexaflow\-agent\), one bound to the bootstrap TokenSource and one to AttemptTokens. They may be the same client only in tests that don't exercise the credential.
 
 ```go
 type WarmRunner struct {
@@ -471,7 +471,7 @@ type WarmRunner struct {
 ```
 
 <a name="WarmRunner.Run"></a>
-### func \(\*WarmRunner\) [Run](<https://github.com/neochaotic/leoflow/blob/main/internal/agent/warm.go#L155>)
+### func \(\*WarmRunner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L155>)
 
 ```go
 func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error

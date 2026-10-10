@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // #1066 gave `dependencies` and `system_packages` a line-break guard because a
@@ -504,5 +504,22 @@ func TestTheHeredocRefusalExplainsAHeredoc(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "expands $VAR") {
 		t.Errorf("the refusal blames the operand lexer, which does not touch `<`: %v", err)
+	}
+}
+
+// The renderer's own FROM assertion refuses the lexer's characters too (#1271),
+// so a caller that reaches generatedDockerfile without Validate still cannot
+// render a FROM that pulls a different image than the one named.
+func TestFromRefusesWhatTheOperandLexerRewrites(t *testing.T) {
+	for _, bad := range []string{"alpine:3$X", "alpine:3'.20'", `alpine:3\.20`, `alpine"`} {
+		if _, err := fromOperand("base_image", bad); err == nil {
+			t.Errorf("fromOperand accepted %q, which the FROM lexer rewrites", bad)
+		}
+		cfg := &domain.LeoflowConfig{DagID: "d"}
+		cfg.ApplyDefaults()
+		cfg.BaseImage = bad
+		if df, err := generatedDockerfile(cfg, "dag.py"); err == nil {
+			t.Errorf("base_image %q was rendered:\n%s", bad, df)
+		}
 	}
 }

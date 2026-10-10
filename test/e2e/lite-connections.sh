@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end gate for the `leoflow connections` and `leoflow variables` CLI groups
+# End-to-end gate for the `dexaflow connections` and `dexaflow variables` CLI groups
 # (#881) on the LITE edition (no-auth loopback). The unit tests prove the flag ->
 # request mapping against an httptest server; what they cannot prove is the CLI
 # talking to the REAL control plane and — the load-bearing claim — that the same
@@ -65,9 +65,9 @@ export LEOFLOW_LOGS_DIR="$TMP/logs"
 export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
 echo "==> resetting the database"
@@ -215,5 +215,5 @@ CLEANED=1  # everything already removed
 pass "connections/variables delete removed every planted record"
 
 echo
-echo "  ✅ leoflow connections + variables verified end to end: CLI upsert/list/get/delete,"
+echo "  ✅ dexaflow connections + variables verified end to end: CLI upsert/list/get/delete,"
 echo "     secrets never printed, and the UI-data endpoints mask extra/value and omit password."

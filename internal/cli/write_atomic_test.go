@@ -78,7 +78,7 @@ func TestWriteLiteConfigNeverWritesAnEmptyKey(t *testing.T) {
 
 // A temp file plus rename creates a NEW inode, owned by whoever runs the
 // command, where os.WriteFile rewrote the same inode and kept its owner. The
-// installer prints `sudo leoflow lite reset-password`, so a root-run rewrite of
+// installer prints `sudo dexaflow lite reset-password`, so a root-run rewrite of
 // a user's config is a documented path: leaving it root-owned locks the user
 // out of their own install and orphans every connection.
 //
@@ -111,5 +111,47 @@ func TestWriteFileAtomicKeepsTheOwner(t *testing.T) {
 	if afterStat.Uid != beforeStat.Uid || afterStat.Gid != beforeStat.Gid {
 		t.Errorf("owner changed across the rewrite: %d:%d -> %d:%d",
 			beforeStat.Uid, beforeStat.Gid, afterStat.Uid, afterStat.Gid)
+	}
+}
+
+// The rename is durable only once the directory is fsynced (gap 3), and the
+// crash-injection tests stop the process between each of these stages, so they
+// happen in this order and each one is reported.
+func TestWriteFileAtomicStagesInOrder(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	var stages []string
+	err := writeFileAtomicWith(path, []byte("x: 1\n"), atomicOpts{hook: func(s string) { stages = append(stages, s) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{atomicTempWritten, atomicRenamed, atomicDirSynced}
+	if strings.Join(stages, ",") != strings.Join(want, ",") {
+		t.Errorf("stages %v, want %v", stages, want)
+	}
+}
+
+// A new file (the pre-image) takes its owner from the file it copies, not from
+// whoever runs the command, so `sudo` does not leave a root-owned copy.
+func TestWriteFileAtomicOwnerFrom(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(src, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(src, 4321, 4322); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "config.yaml.pre-migrate-key")
+	if err := writeFileAtomicWith(dst, []byte("x\n"), atomicOpts{ownerFrom: src}); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(dst)
+	st, _ := fi.Sys().(*syscall.Stat_t)
+	if st.Uid != 4321 || st.Gid != 4322 || fi.Mode().Perm() != 0o600 {
+		t.Errorf("pre-image %d:%d %v, want 4321:4322 0600", st.Uid, st.Gid, fi.Mode().Perm())
 	}
 }

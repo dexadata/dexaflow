@@ -9,7 +9,7 @@ weight: 20
 description: How a DAG, its runs, and its tasks fit together — pause semantics, and why each DAG is its own container image.
 ---
 
-Leoflow keeps Airflow's vocabulary so the UI and mental model are familiar. If you
+Dexaflow keeps Airflow's vocabulary so the UI and mental model are familiar. If you
 just need the term definitions, see the [Glossary](/reference/glossary/); this page
 covers how the pieces behave at runtime.
 
@@ -52,7 +52,7 @@ suspend it.
 ## Why "DAG = image"
 
 Airflow's pod-per-task model is right; its Python control plane is the bottleneck.
-Leoflow keeps the model, rewrites the control plane in Go, and makes **each DAG its
+Dexaflow keeps the model, rewrites the control plane in Go, and makes **each DAG its
 own container image** — no shared `/dags` filesystem, no dependency hell. See
 [ADR 0001](/project/adrs/0001-why-leoflow/) and
 [ADR 0003](/project/adrs/0003-dag-as-image/).
@@ -67,13 +67,13 @@ especially for audit and compliance — those per-task properties are the featur
 not overhead.
 
 The trade is a **cold start per task** (image pull, schedule, container start, the
-agent handshake). For a DAG of many short tasks that overhead can dominate. Leoflow
+agent handshake). For a DAG of many short tasks that overhead can dominate. Dexaflow
 gives you three levers so you don't over-pay — pick by the situation, not by
 reaching for a generic "pack tasks together" switch (there isn't one — see below):
 
 | Situation | Lever | What it does |
 |---|---|---|
-| **Iterating on DAG logic locally** | `leoflow lite --executor subprocess` | Runs tasks as host processes — **no pods, no image build** — the fast inner loop. (`--executor auto`, the default, uses a real k3d pod-per-task when Docker is present, for fidelity.) Dev-only, unsandboxed. |
+| **Iterating on DAG logic locally** | `dexaflow lite --executor subprocess` | Runs tasks as host processes — **no pods, no image build** — the fast inner loop. (`--executor auto`, the default, uses a real k3d pod-per-task when Docker is present, for fidelity.) Dev-only, unsandboxed. |
 | **A dbt project with many models** | [`dbt_group()`](/author-dags/dbt/) with `granularity: level` or `folder` | Packs the project's models into **grouped tasks** (each group is one `dbt build` = one pod) that dbt orchestrates internally, so *N* models needn't be *N* pods. The default `granularity: node` is one pod per model. |
 | **Amortizing cold start across attempts** | [Warm worker pools](/operate/warm-pools/) (Pro, operator-set) | Reuse **one pod across many attempts of the same DAG version** ([ADR 0058](/project/adrs/0058-warm-worker-pools/)). An operator knob, not a DAG attribute — by design; it never groups *different* tasks. |
 

@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/agentrpc"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/neochaotic/leoflow/internal/agentrpc"
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
-	agentv1 "github.com/neochaotic/leoflow/proto/agent/v1"
 	"google.golang.org/grpc"
 )
 
@@ -27,7 +27,7 @@ func (stubStore) ReportState(context.Context, auth.AgentIdentity, domain.TaskSta
 }
 func (stubStore) Reschedule(context.Context, auth.AgentIdentity, time.Time) error { return nil }
 func (stubStore) RecordHeartbeat(context.Context, auth.AgentIdentity) error       { return nil }
-func (stubStore) BindWarmAttempt(context.Context, string, string, int, string) error {
+func (stubStore) BindWarmAttempt(context.Context, string, string, int, int, string) error {
 	return nil
 }
 

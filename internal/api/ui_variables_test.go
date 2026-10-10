@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 type fakeVariableStore struct {
@@ -221,7 +221,7 @@ func TestVariableCreateMaskedFailsClosed(t *testing.T) {
 }
 
 // TestVariableUpsertPOSTMaskedRoundTrip locks that the POST upsert path (what
-// `leoflow variables set` uses) preserves an existing sensitive value when the
+// `dexaflow variables set` uses) preserves an existing sensitive value when the
 // masked value is written back, rather than treating it as a fresh create and
 // clearing it.
 func TestVariableUpsertPOSTMaskedRoundTrip(t *testing.T) {

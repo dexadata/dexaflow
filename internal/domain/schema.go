@@ -30,9 +30,9 @@ func loadSchemas() (compiledSchemas, error) {
 	if err != nil {
 		return compiledSchemas{}, fmt.Errorf("compiling dag schema: %w", err)
 	}
-	leoflow, err := compileSchema("leoflow.yaml", leoflowSchemaJSON)
+	leoflow, err := compileSchema("dexaflow.yaml", leoflowSchemaJSON)
 	if err != nil {
-		return compiledSchemas{}, fmt.Errorf("compiling leoflow schema: %w", err)
+		return compiledSchemas{}, fmt.Errorf("compiling project schema: %w", err)
 	}
 	return compiledSchemas{dag: dag, leoflow: leoflow}, nil
 }
@@ -49,11 +49,12 @@ func validateParamSpec(name string, schema, def []byte) error {
 	if err != nil {
 		return fmt.Errorf("param %q: parsing schema: %w", name, err)
 	}
-	c := jsonschema.NewCompiler()
-	if aerr := c.AddResource("param.json", doc); aerr != nil {
+	c := NewTenantSchemaCompiler()
+	loc := TenantSchemaURL("param.json")
+	if aerr := c.AddResource(loc, doc); aerr != nil {
 		return fmt.Errorf("param %q: loading schema: %w", name, aerr)
 	}
-	compiled, cerr := c.Compile("param.json")
+	compiled, cerr := c.Compile(loc)
 	if cerr != nil {
 		return fmt.Errorf("param %q: invalid schema: %w", name, cerr)
 	}

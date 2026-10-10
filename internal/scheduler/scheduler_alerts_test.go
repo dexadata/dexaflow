@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // recordingAlerter signals each AlertRunFailed call over a buffered channel so a

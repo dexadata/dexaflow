@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestClassRefModulePathIsNeverNull is the fix for the OpenMetadata integration.

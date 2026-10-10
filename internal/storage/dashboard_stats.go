@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/neochaotic/leoflow/internal/domain"
-	"github.com/neochaotic/leoflow/internal/storage/queries"
+	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
 // DagStats returns the home dashboard's DAG counters: the total active DAG count
@@ -41,7 +41,7 @@ func (r *Repository) DagStats(ctx context.Context, tenant string) (domain.DagSta
 }
 
 // HistoricalMetrics returns run- and task-instance state counts for runs whose
-// logical date falls within [since, until], keyed by Leoflow state name.
+// logical date falls within [since, until], keyed by Dexaflow state name.
 func (r *Repository) HistoricalMetrics(ctx context.Context, tenant string, since, until time.Time) (domain.HistoricalMetrics, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {

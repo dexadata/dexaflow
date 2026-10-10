@@ -9,11 +9,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // ImportErrorStore reads and writes DAG parse/compile errors that back Airflow's
-// "Import Errors" banner on the home dashboard. The `leoflow dev` watcher writes
+// "Import Errors" banner on the home dashboard. The `dexaflow lite` watcher writes
 // an entry on a failed compile and clears it on the next good compile; the
 // public GET /api/v2/importErrors feed is what the UI polls.
 type ImportErrorStore interface {
@@ -23,7 +24,7 @@ type ImportErrorStore interface {
 }
 
 // importErrorDTO is the Airflow 3.2.1 ImportErrorResponse. import_error_id is an
-// integer in Airflow; Leoflow keys rows by UUID, so the DTO derives a stable
+// integer in Airflow; Dexaflow keys rows by UUID, so the DTO derives a stable
 // integer id from the filename for the UI's list key.
 type importErrorDTO struct {
 	ImportErrorID uint32  `json:"import_error_id"`
@@ -48,7 +49,7 @@ func toImportErrorDTO(e domain.ImportError) importErrorDTO {
 	}
 }
 
-// importErrorBody is the push payload used by the dev watcher (Leoflow extension).
+// importErrorBody is the push payload used by the dev watcher (Dexaflow extension).
 type importErrorBody struct {
 	Filename   string `json:"filename"`
 	StackTrace string `json:"stack_trace"`
@@ -113,14 +114,14 @@ func clearImportErrorHandler(store ImportErrorStore) gin.HandlerFunc {
 
 // registerImportErrors mounts the import-error feed. With no store it serves a
 // schema-valid empty collection (the UI degrades gracefully). With a store, the
-// public GET feed is real and the write verbs (Leoflow extensions, used by the
+// public GET feed is real and the write verbs (Dexaflow extensions, used by the
 // dev watcher) upsert/clear entries by filename.
 func registerImportErrors(r gin.IRouter, store ImportErrorStore) {
 	if store == nil {
 		r.GET("/api/v2/importErrors", apiEmptyCollection("import_errors"))
 		return
 	}
-	r.GET("/api/v2/importErrors", listImportErrorsHandler(store))
+	r.GET("/api/v2/importErrors", RequireScope(auth.ScopeRead), listImportErrorsHandler(store))
 	r.PUT("/api/v2/importErrors", RequirePermission("write", "dag"), setImportErrorHandler(store))
 	r.DELETE("/api/v2/importErrors", RequirePermission("write", "dag"), clearImportErrorHandler(store))
 }

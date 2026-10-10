@@ -1,0 +1,129 @@
+suite: pod-per-task executor RBAC (Role + RoleBinding in taskNamespace)
+templates:
+  - rbac.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+tests:
+  - it: renders Role + RoleBinding by default (rbac.create defaults to true)
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: renders nothing when rbac.create is false
+    set:
+      rbac.create: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: Role grants the exact verbs the pod-per-task executor needs (no more, no less)
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Role
+      # `pods`: create, get, list, watch, delete, and patch, which a reap's
+      # teardown uses to stop a started pod in place (activeDeadlineSeconds=1)
+      # so its outcome record survives (ADR 0052 amendment). NOT `update`, and
+      # NOT `deletecollection` unless executor.collectSettledRunPods is on.
+      - contains:
+          path: rules[0].verbs
+          content: create
+      - contains:
+          path: rules[0].verbs
+          content: get
+      - contains:
+          path: rules[0].verbs
+          content: list
+      - contains:
+          path: rules[0].verbs
+          content: watch
+      - contains:
+          path: rules[0].verbs
+          content: delete
+      - notContains:
+          path: rules[0].verbs
+          content: deletecollection
+      - notContains:
+          path: rules[0].verbs
+          content: update
+      - contains:
+          path: rules[0].verbs
+          content: patch
+      - equal:
+          path: rules[0].resources[0]
+          value: pods
+      # `pods/log` — get only (log streaming).
+      - equal:
+          path: rules[1].resources[0]
+          value: pods/log
+      - contains:
+          path: rules[1].verbs
+          content: get
+
+  - it: Role lives in taskNamespace (not the release namespace) — they CAN differ
+    documentIndex: 0
+    set:
+      taskNamespace: tasks-elsewhere
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: tasks-elsewhere
+
+  - it: RoleBinding subject points back to the control-plane ServiceAccount in the release namespace
+    documentIndex: 1
+    set:
+      taskNamespace: tasks-elsewhere
+    asserts:
+      - isKind:
+          of: RoleBinding
+      # Role lives in taskNamespace, but the SA it binds to lives in the
+      # release namespace (where the leoflow-server Deployment runs).
+      - equal:
+          path: metadata.namespace
+          value: tasks-elsewhere
+      - equal:
+          path: subjects[0].namespace
+          value: leoflow
+      - equal:
+          path: subjects[0].kind
+          value: ServiceAccount
+      - equal:
+          path: roleRef.kind
+          value: Role
+
+  # The executor provisions and garbage-collects the per-run staging PVC
+  # (internal/executor/staging.go), so the Role has to allow it. It did not:
+  # every DAG opting into staging (ADR 0022) failed with a 403 on PVC create,
+  # in any cluster where RBAC is actually enforced.
+  - it: grants the PVC verbs the staging volume needs
+    template: rbac.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Role
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["persistentvolumeclaims"]
+            verbs: ["create", "delete"]
+
+  - it: Role grants deletecollection on pods only with executor.collectSettledRunPods
+    documentIndex: 0
+    set:
+      executor.collectSettledRunPods: true
+    asserts:
+      - equal:
+          path: rules[0].resources[0]
+          value: pods
+      - contains:
+          path: rules[0].verbs
+          content: deletecollection
+      - contains:
+          path: rules[0].verbs
+          content: delete

@@ -1,0 +1,139 @@
+{{- if .Values.rbac.create -}}
+{{/*
+The pod-per-task executor creates, lists, and deletes task pods in taskNamespace,
+reads their logs, and provisions the per-run staging PVC. The Role lives in
+taskNamespace (which may differ from the release namespace); the RoleBinding
+grants it to the control plane's ServiceAccount.
+
+Every rule below corresponds to a call the executor actually makes. Nothing here
+is speculative, and nothing the executor calls is missing — scripts/rbac-covers-executor.sh
+checks that both ways on every CI run, because this file and the code drifted
+apart once already: the staging PVC calls shipped without their permission and
+every DAG using ADR 0022's staging volume 403'd.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "leoflow.fullname" . }}-executor
+  namespace: {{ .Values.taskNamespace }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+rules:
+  # patch: a reap stops a started task pod in place by lowering its
+  # activeDeadlineSeconds to 1, so the pod object and its outcome record survive
+  # for the reconciler (ADR 0052 amendment). Without it the teardown falls back
+  # to delete. The Role can already create arbitrary pods here, so the verb adds
+  # no meaningful privilege.
+  # deletecollection is granted only with the opt-in settled-run collection
+  # (executor.collectSettledRunPods): one call per settled run, limited by label
+  # to that run and by field selector to finished pods.
+  - apiGroups: [""]
+    resources: ["pods"]
+    {{- if .Values.executor.collectSettledRunPods }}
+    verbs: ["create", "get", "list", "watch", "patch", "delete", "deletecollection"]
+    {{- else }}
+    verbs: ["create", "get", "list", "watch", "patch", "delete"]
+    {{- end }}
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # The per-run staging volume (ADR 0022): ensureStagingClaim creates the PVC on
+  # first use and the GC deletes it when the run ends. Create is idempotent by
+  # tolerating AlreadyExists rather than reading first, so no `get` is needed.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["create", "delete"]
+  # The warm-pool GC anchor (ADR 0058 D11): a per-dag-version ConfigMap that owns
+  # the version's warm pods via an ownerReference, so on control-plane loss /
+  # namespace teardown the pods are cascade-GC'd — the one orphan class the
+  # reconciler-as-deleter cannot cover. EnsureWarmAnchor creates it (idempotent,
+  # tolerating AlreadyExists) and GETs it to read the UID stamped on the owned
+  # pods; the reconciler deletes it only once the version has fully drained.
+  # It LISTs the anchors (label leoflow.io/warm-anchor=true) to also delete the
+  # anchor of an inactive version whose pods were never created (#1500).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "leoflow.fullname" . }}-executor
+  namespace: {{ .Values.taskNamespace }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "leoflow.fullname" . }}-executor
+{{- /*
+ADR 0049: in split mode ONLY the scheduler SA is granted the executor Role — the
+scheduler is what creates task pods. The api SA is deliberately left unbound so a
+compromised/SSRF'd API cannot reach the apiserver. Non-split binds the single
+"all" SA, unchanged. (A template comment, not a "#" line, so the non-split
+rendered output stays byte-identical to the pre-0049 chart.)
+*/}}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "leoflow.roleServiceAccountName" (dict "ctx" . "role" (ternary "scheduler" "all" .Values.split.enabled)) }}
+    namespace: {{ .Release.Namespace }}
+{{- if eq .Values.auth.agentTokenTransport "exchange" }}
+---
+{{/*
+The exchange transport (ADR 0055) replaces the plaintext bearer on the task Pod
+object with a projected ServiceAccount token: the agent presents that token, and
+the control plane asks the apiserver — via TokenReview — which pod it belongs to
+before minting the task-scoped JWT. TokenReview is a CLUSTER-SCOPED API, so the
+namespaced Role above cannot carry it; without this ClusterRole the review is
+refused ("tokenreviews.authentication.k8s.io is forbidden ... at the cluster
+scope") and every task pod dies on an invalid projected token. Note the blast
+radius: the transport is a SERVER-WIDE setting, so that failure hits the ordinary
+dedicated pod-per-task path too, not only warm pools — even though warm pools
+(ADR 0058 D2) are what force the transport on.
+
+Rendered only on the exchange transport, deliberately. `create` on tokenreviews
+is an authentication oracle — the holder can ask the apiserver to validate any
+token it gets hold of and learn the identity behind it — and an install on the
+default env-var transport never issues the call. Granting it unconditionally
+would hand every Dexaflow install a cluster-scoped permission that the vast
+majority never use, which is the kind of standing over-grant a cluster admin has
+to justify at review time. Gating it on the value that makes the call means the
+permission and its only consumer are turned on by the same flip, in the same
+upgrade: `--set auth.agentTokenTransport=exchange` is sufficient on its own.
+The one failure mode this leaves — the transport switched outside the chart, so
+the grant never renders — is exactly what the transport value exists to remove.
+
+One rule, one verb: the exchange makes exactly one apiserver call.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "leoflow.tokenReviewName" . }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "leoflow.tokenReviewName" . }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "leoflow.tokenReviewName" . }}
+{{- /*
+ADR 0049: the agent gRPC endpoint — and with it the token exchange — runs in the
+scheduler process, so in split mode the grant follows the scheduler SA and the
+restricted api SA stays unbound, exactly as for the executor Role above.
+*/}}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "leoflow.roleServiceAccountName" (dict "ctx" . "role" (ternary "scheduler" "all" .Values.split.enabled)) }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end -}}

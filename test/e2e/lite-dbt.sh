@@ -44,12 +44,12 @@ export LEOFLOW_LOGS_DIR="$TMP/logs"
 export PYTHONPATH="${PYTHONPATH:-$ROOT/parser}"
 
 echo "==> building binaries"
-go build -o "$TMP/leoflow" ./cmd/leoflow
-go build -o "$TMP/leoflow-server" ./cmd/leoflow-server
-go build -o "$TMP/leoflow-agent" ./cmd/leoflow-agent
+go build -o "$TMP/leoflow" ./cmd/dexaflow
+go build -o "$TMP/leoflow-server" ./cmd/dexaflow-server
+go build -o "$TMP/leoflow-agent" ./cmd/dexaflow-agent
 export PATH="$TMP:$PATH"
 
-echo "==> a duckdb dbt project with NO profiles.yml (zero-config), plus leoflow.yaml"
+echo "==> a duckdb dbt project with NO profiles.yml (zero-config), plus dexaflow.yaml"
 mkdir -p "$PROJ/models" "$PROJ/seeds"
 cat >"$PROJ/dbt_project.yml" <<'YAML'
 name: 'shop'
@@ -62,7 +62,7 @@ YAML
 printf 'id,v\n1,10\n2,20\n3,30\n' >"$PROJ/seeds/raw.csv"
 echo "select id, v from {{ ref('raw') }}" >"$PROJ/models/stg.sql"
 echo "select id, sum(v) as total from {{ ref('stg') }} group by id" >"$PROJ/models/mart.sql"
-cat >"$PROJ/leoflow.yaml" <<YAML
+cat >"$PROJ/dexaflow.yaml" <<YAML
 schema_version: "1.0"
 dag_id: ${DAG_ID}
 dbt:

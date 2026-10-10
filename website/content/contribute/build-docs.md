@@ -2,7 +2,7 @@
 title: Build the docs
 linkTitle: Build the docs
 weight: 30
-description: Build and preview the Leoflow documentation site locally — Hugo + Docsy.
+description: Build and preview the Dexaflow documentation site locally — Hugo + Docsy.
 ---
 
 The documentation site is built with [Hugo](https://gohugo.io/) (extended) and the
@@ -52,7 +52,7 @@ Each script is idempotent and documents itself in a header comment. What they do
 
 | Script | Source | Output | Notes |
 |---|---|---|---|
-| `gen-cli.sh` | `go run ./cmd/leoflow gen-docs` (Cobra) | `content/reference/cli/*.md` | Adds Hugo front matter; rewrites `.md` cross-links to pretty URLs. |
+| `gen-cli.sh` | `go run ./cmd/dexaflow gen-docs` (Cobra) | `content/reference/cli/*.md` | Adds Hugo front matter; rewrites `.md` cross-links to pretty URLs. |
 | `gen-go.sh` | `gomarkdoc` over a fixed package set | `content/reference/go/*.md` | Flattens one page per package; adds front matter. |
 | `gen-openapi.sh` | `docs/api/openapi.yaml` | `static/openapi.yaml` | Read by `static/api-reference.html` (the embedded Scalar page). |
 | `gen-python.sh` | `runtime/python` docstrings via `pdoc` | `static/python-api/` | A self-contained sidecar subsite, linked (not embedded) from `reference/python-api`. |
@@ -120,5 +120,5 @@ regenerate. When you move or rename a page, update `link-map.csv` and rerun it.
 scratch, which drops the alias block. Rerun `build_redirects.py` after either one.
 CI runs the generators but not `build_redirects.py`, so the old `/cli/*.html` and
 `/go/*.html` URLs do not currently redirect on the published site. That gap is
-[#1122](https://github.com/neochaotic/leoflow/issues/1122).
+[#1122](https://github.com/dexadata/dexaflow/issues/1122).
 {{% /alert %}}

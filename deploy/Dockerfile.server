@@ -1,4 +1,4 @@
-# Multi-stage build for the Leoflow control plane.
+# Multi-stage build for the Dexaflow control plane.
 #
 # The binary embeds the pinned Airflow 3.2.1 SPA (ADR 0017), so this single image
 # serves both the /api/v2 + /ui APIs and the UI. Build from the repository root:
@@ -12,7 +12,7 @@
 # stdlib CVE surface is keyed to the toolchain recorded in the binary's build
 # info, so a floating pin means the image the security gate scans and the image
 # the release publishes can differ for reasons no commit explains.
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.26.9
 FROM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src
 
@@ -26,13 +26,13 @@ ARG VERSION=dev
 ARG GIT_COMMIT=none
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w \
-      -X 'github.com/neochaotic/leoflow/internal/version.version=${VERSION}' \
-      -X 'github.com/neochaotic/leoflow/internal/version.gitCommit=${GIT_COMMIT}'" \
-    -o /out/leoflow-server ./cmd/leoflow-server
+      -X 'github.com/dexadata/dexaflow/internal/version.version=${VERSION}' \
+      -X 'github.com/dexadata/dexaflow/internal/version.gitCommit=${GIT_COMMIT}'" \
+    -o /out/dexaflow-server ./cmd/dexaflow-server
 
 # Minimal, non-root runtime.
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/leoflow-server /leoflow-server
+FROM gcr.io/distroless/static-debian13:nonroot
+COPY --from=build /out/dexaflow-server /dexaflow-server
 EXPOSE 8080 9090
 USER nonroot:nonroot
-ENTRYPOINT ["/leoflow-server"]
+ENTRYPOINT ["/dexaflow-server"]

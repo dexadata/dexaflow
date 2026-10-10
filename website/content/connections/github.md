@@ -10,13 +10,13 @@ description: GitHub connection
 ---
 
 Connect a task to the GitHub API to read repos, manage issues/PRs, or
-trigger workflows over a managed Leoflow Connection. `GithubHook`
+trigger workflows over a managed Dexaflow Connection. `GithubHook`
 authenticates with a personal access token (PAT).
 
 ## Declare the provider
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 dag_id: github_repo
 connectors:
   - github
@@ -64,7 +64,7 @@ with DAG("github_repo", schedule=None, catchup=False, tags=["example"]):
 ```
 
 ```yaml
-# leoflow.yaml
+# dexaflow.yaml
 schema_version: "1.0"
 dag_id: github_repo
 python_version: "3.12"

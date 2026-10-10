@@ -14,8 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/neochaotic/leoflow/internal/config"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // deployOptions holds the resolved flags for a deploy run.
@@ -31,7 +31,7 @@ type deployOptions struct {
 	yes        bool
 }
 
-// newDeployCommand builds `leoflow deploy [path]`: the pipeline-less promotion of
+// newDeployCommand builds `dexaflow deploy [path]`: the pipeline-less promotion of
 // a DAG to a Pro control plane (ADR 0041). It reuses the compile/build/push
 // primitives, then re-pins the image by digest and registers the dag.json — one
 // verb for what is otherwise compile --build --push + push by hand.
@@ -46,7 +46,7 @@ func newDeployCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&o.all, "all", false, "deploy every DAG project in the workspace")
-	cmd.Flags().BoolVar(&o.skipBuild, "skip-build", false, "reuse the existing image (skip docker build/push) but still recompile dag.json from leoflow.yaml/dag.py")
+	cmd.Flags().BoolVar(&o.skipBuild, "skip-build", false, "reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py")
 	cmd.Flags().BoolVar(&o.trigger, "trigger", false, "trigger a run immediately after registering")
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt (for automation)")
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL (default: config server_url)")
@@ -153,7 +153,7 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
 	}
 	return fmt.Errorf(`deploy requires a container registry, but none is configured.
   A Pro deploy pushes the DAG image to a registry your cluster can pull from
-  (Lite runs locally and needs none). Add to leoflow.yaml:
+  (Lite runs locally and needs none). Add to dexaflow.yaml:
 
       registry:
         url: ghcr.io/<your-org>     # or ECR / Artifact Registry / ACR / private
@@ -190,7 +190,7 @@ func deployImageRef(cfg *domain.LeoflowConfig, version, sha string) string {
 
 // resolveServerToken applies the deploy auth precedence: --server/--token, then
 // LEOFLOW_* env (via the token flag default), then the persisted config written
-// by `leoflow auth login`.
+// by `dexaflow auth login`.
 //
 // When the token comes from that persisted session file (not a --token flag or
 // LEOFLOW_TOKEN env, which are caller- or CI-managed), it is transparently

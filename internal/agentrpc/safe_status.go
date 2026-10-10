@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/neochaotic/leoflow/internal/auth"
-	"github.com/neochaotic/leoflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,7 +25,7 @@ import (
 // failures the handlers themselves see.
 const detailInternal = "the request could not be completed; see the control-plane logs"
 
-// safeMessage returns the phrase Leoflow composed for this failure, or fallback
+// safeMessage returns the phrase Dexaflow composed for this failure, or fallback
 // when the error carries no such phrase.
 //
 // The default is deny. Only a domain.SafeError — an error someone deliberately
@@ -73,7 +73,7 @@ func peerStatus(op string, cause error, attrs ...any) error {
 }
 
 // redactedStatus is the message both build: the operation, then either the
-// phrase Leoflow composed for this failure or the constant.
+// phrase Dexaflow composed for this failure or the constant.
 func redactedStatus(op string, cause error) error {
 	return status.Error(codes.Internal, op+": "+safeMessage(cause, detailInternal))
 }
@@ -103,5 +103,6 @@ func attemptAttrs(id *auth.AgentIdentity) []any {
 	return []any{
 		"ti", id.TaskInstanceID, "tenant", id.TenantID, "dag", id.DagID,
 		"run", id.RunID, "task", id.TaskID, "try", id.TryNumber,
+		"epoch", id.AttemptEpoch, "has_epoch", id.HasAttemptEpoch,
 	}
 }
