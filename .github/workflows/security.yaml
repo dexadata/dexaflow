@@ -328,6 +328,9 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: none
 
       # No build-args: the Dockerfile's own GO_VERSION default is the pin, and
       # scripts/check-migrate-cli-build-tags.sh asserts it equals this
