@@ -44,6 +44,10 @@ type Dependencies struct {
 	// CIDR so per-client rate-limiting and audit see the real client.
 	TrustedProxies []string
 	TokenTTLSecs   int
+	// GzipResponses (server.gzip_responses) gzips JSON and NDJSON responses of
+	// 1 KB or more for clients that accept it; streams are never compressed.
+	// False (the default) sends every body as identity.
+	GzipResponses bool
 	// MaxPageLimit (server.max_page_limit) caps the limit of every list
 	// endpoint and the dag_runs_limit of /ui/dags. Non-positive (the default)
 	// leaves them uncapped.
@@ -234,6 +238,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(NoStoreOnVolatileRoutes())
 	if deps.MaxPageLimit > 0 {
 		r.Use(maxPageLimit(deps.MaxPageLimit))
+	}
+	if deps.GzipResponses {
+		r.Use(GzipJSON())
 	}
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
