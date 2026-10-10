@@ -109,7 +109,7 @@ The label alone fails the guard. The release cut reads the reason back
 4. Push and open a PR using the template.
 5. Fill in the PR description completely. Linked issue, what changed, what was tested, screenshots if UI is affected.
 6. Wait for CI. If any check fails, fix and push again.
-7. Address review feedback. We aim to review within 3 business days.
+7. Address review feedback. We aim for a first response within 7 days; ping on the PR if it is quiet.
 8. Maintainers will squash-merge or rebase-merge based on the change.
 
 ## Security-Sensitive Changes
@@ -180,9 +180,10 @@ See [`README.md`](README.md) for the high-level layout. Detailed module document
 
 ## Communication
 
+See [`SUPPORT.md`](SUPPORT.md) for where to ask questions, report bugs, and report security issues.
+
 - GitHub Issues for bugs and feature requests
 - GitHub Discussions for design questions and general help
-- The OpenSSF Slack `#leoflow` channel for real-time discussion (link in README)
 
 ## License
 
