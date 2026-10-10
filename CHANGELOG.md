@@ -6,6 +6,275 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **An optional cap on list page sizes.** Every list endpoint accepted any
+  `limit`, and `/ui/dags` any `dag_runs_limit`, so one request could ask the
+  database for an unbounded page. `server.max_page_limit`
+  (`DEXAFLOW_SERVER_MAX_PAGE_LIMIT`, or the legacy `LEOFLOW_` name) serves a
+  larger request as that many rows, like Airflow's `[api] maximum_page_limit`.
+  The default `0` keeps today's behavior: no cap. A negative value fails boot.
+
+  Unrelated to the setting, the grid's run columns and the DAG header's latest
+  run no longer count every run of the DAG on each request: they never used the
+  total.
+- **Opt-in gzip for API and UI JSON.** Every JSON and NDJSON response went out
+  uncompressed: a `/ui/dags` page of 100 DAGs with their recent runs is about
+  210 KB per poll. With `server.gzip_responses: true`
+  (`DEXAFLOW_SERVER_GZIP_RESPONSES`, or the legacy `LEOFLOW_` name) the server
+  gzips JSON and NDJSON bodies of 1 KB or more on `/api/v2/*` and `/ui/*` for
+  clients that accept it; that page shrinks to about 18 KB for under 1 ms of
+  CPU. Log routes and anything that streams (a live log tail flushes before
+  1 KB) are never compressed, so lines still arrive as they are written.
+  Routes that return secrets, tokens or code (variables, connections, XComs,
+  auth and the UI session token, IDE files, DAG sources, a single task
+  instance) are never compressed either, as a BREACH mitigation. Only full
+  `200` and `201` bodies are compressed, every eligible response carries
+  `Vary: Accept-Encoding`, and `gzip;q=0` is honored. The default keeps every body uncompressed.
+- **Optional read and idle timeouts for the HTTP listeners.** The API and
+  metrics listeners only bounded reading request headers, so a client could
+  hold a connection by trickling a request body, and idle keep-alive
+  connections were never closed. `server.read_timeout` and
+  `server.idle_timeout` (`DEXAFLOW_SERVER_READ_TIMEOUT`,
+  `DEXAFLOW_SERVER_IDLE_TIMEOUT`, or the legacy `LEOFLOW_` names; Go durations
+  such as `60s`) set them. The read timeout covers reading the request only:
+  live log tails and other long responses keep streaming, and no write timeout
+  is set. Set it above your slowest legitimate upload; a read timeout shorter
+  than 10 seconds also bounds reading the headers. Both default to `0s`, no
+  limit, as before; an idle timeout of `0s` stays off even when a read timeout
+  is set.
+- Trace sampling is configurable. `observability.otel.sample_ratio` (default `1`, every request traced) keeps that share of request traces (an incoming `traceparent` header is not propagated, so every request is sampled on its own), and `observability.otel.skip_probe_spans` (default `false`) stops recording spans for `/healthz`, `/readyz` and `/static/*`. Both also read the legacy `LEOFLOW_*` names.
+- **A trusted issuer's tokens can authenticate API requests as a bearer.** Set
+  `auth.trusted_issuer.bearer_audiences` (Helm:
+  `auth.trustedIssuer.bearerAudiences`) and a token the trusted issuer signed
+  for one of those audiences is accepted in the `Authorization: Bearer` header
+  of any `/api/v2` request, reused until it expires, so a remote MCP client
+  behind your platform needs no engine signing secret (ADR 0050 D9). The user
+  linked to the token's subject is reloaded on every request with the roles
+  Dexaflow holds, so deactivating it ends access at once. Lifetime is capped by
+  `bearer_max_lifetime_seconds` (900 unless set, at most 3600). A handoff
+  token is never a bearer, nor the reverse. The issuer's JWKS is downloaded
+  again at most once every 30 seconds, so forged tokens cannot make Dexaflow
+  call the issuer on every request, and an unreachable JWKS answers 503. Off
+  by default. (#1468)
+- **The HTTP MCP server can tell OAuth clients where to sign in.** With
+  `--resource` and `--authorization-servers` (`DEXAFLOW_MCP_RESOURCE`,
+  `DEXAFLOW_MCP_AUTHORIZATION_SERVERS`, and optionally `DEXAFLOW_MCP_SCOPES`),
+  `dexaflow-mcp --transport http` serves OAuth protected resource metadata
+  (RFC 9728) under `/.well-known/oauth-protected-resource` and answers a
+  request to `/mcp` without a bearer with `401` and a `WWW-Authenticate`
+  header pointing at it, as the MCP authorization specification requires.
+  MCP clients that sign in with OAuth, such as claude.ai connectors and
+  ChatGPT, can then connect. Off unless both flags are set. (#1470)
+- **MCP answers can link straight into the UI.** With `--ui-base-url`
+  (`DEXAFLOW_MCP_UI_BASE_URL`) set to the Dexaflow UI's address,
+  `dexaflow-mcp` adds a `web_url` to every DAG, run, task and log line in its
+  tool and resource results, and tells models on initialize to link what they
+  mention with it. Two read-only prompts are new:
+  `diagnose_latest_failure` (optional `dag_id`) finds the most recent failed
+  run and asks for its diagnosis, and `pipeline_health_today` summarizes
+  today's runs by state and lists the failures. (#1471)
+- **Trusted-issuer bearer tokens can be limited by scope.** A bearer token's
+  `scope` claim narrows what it may do: `dexaflow:read` for reads,
+  `dexaflow:run` to trigger, clear, mark and pause, and `dexaflow:deploy` to
+  register a DAG version. The role check still applies. A token without a
+  `scope` claim may only read, and every other write is refused to bearer
+  tokens, as is every route that checks no permission of its own. Dexaflow
+  tokens and browser sessions are unchanged. (#1473, ADR 0067)
+- **The MCP server can trigger, clear, pause and unpause, behind a flag.** With
+  `--run-control` (`DEXAFLOW_MCP_RUN_CONTROL=true`), `dexaflow-mcp` registers
+  `trigger_run`, `clear_task`, `pause_dag`, `unpause_dag` and `apply_plan`,
+  each acting with the caller's token. A clear over more than one task
+  instance, or an unpause of a scheduled DAG, only returns a plan; `apply_plan`
+  carries it out after the user agrees, within 10 minutes, for the same caller,
+  and only if nothing changed since. The http transport needs
+  `--plan-key-file`, shared by every replica. Off by default. (#1474, ADR 0067)
+- **Pro can run a DAG from its source, with no image build.** With `execution.source_mode.enabled` and an `execution.source_mode.image` pinned by a full `@sha256:` digest (also read from the legacy `LEOFLOW_EXECUTION_SOURCE_MODE_*` variables), a version whose image is that runtime image runs from the `dag.py` it was registered with: the task pod gets the source in an annotation, projected read only as `dag.py` through a downward API volume, and runs from there. Registering such a version answers `400` when its source is empty or over 128 KiB. A version registered on that image before the mode was turned on is checked again at dispatch, and an attempt over the cap fails once with the same message. The control-plane pod cache drops the source annotation; exclude it in your log shipper too. Source-mode versions never use warm workers. Off by default; every other version runs as before. See the Source mode operate page. (ADR 0067, #1475)
+- **The MCP server ships as a signed image.** Every release now publishes `ghcr.io/dexadata/dexaflow-mcp`, tagged `<version>` and `v<version>` for amd64 and arm64 and signed with cosign keyless like the server image, so a platform that runs `dexaflow-mcp --transport http` beside the control plane can pin it by digest instead of building its own. The release gate verifies its signature. See Published images.
+
+### Changed
+
+- **A refused trusted-issuer sign-in now returns the browser to your external
+  sign-in page instead of a raw JSON error.** With `auth.external_signin_url`
+  set, every refusal of `POST /api/v2/auth/session` (origin not allowed, missing
+  or rejected token, unlinked, inactive or mismatched user, rate limit, server
+  error) answers `303 See Other` to that URL with a stable `error` code appended
+  to its query, such as `error=user_not_linked`, so your page can explain what
+  went wrong. Nothing else from the request goes into the URL, the audit event
+  and server log are unchanged, and a client whose `Accept` asks for JSON and
+  not HTML still gets the problem response. Without the URL, responses are
+  exactly as before.
+- **The control-plane container now runs with a read-only root filesystem.**
+  The chart sets `securityContext.readOnlyRootFilesystem: true` and mounts an
+  `emptyDir` at `/tmp` for the Go temp dir, which with the logs volume is all
+  the server writes. Set `securityContext.readOnlyRootFilesystem: false` if you
+  add a sidecar or plugin that writes elsewhere in the image (#1225).
+
+### Fixed
+
+- **A warm pool's GC anchor no longer leaks when its workers were never created.** The reconciler creates a dag_version's anchor ConfigMap (`leoflow-pool-<dag_version>`) before its warm workers, and only drained versions that still had a warm pod. When every create was refused (an admission policy or webhook on the task namespace, for example) the version had an anchor and no pod, so once it went inactive its anchor stayed forever. The reconciler now also lists the anchors and deletes the one of any version that is neither active nor has a warm pod left; no pod references it, so nothing is cascaded. If the anchors cannot be listed it does nothing that tick and records `warm_pool_anchor_list_error`. The chart's executor Role now grants `list` on ConfigMaps for this; an install with its own RBAC needs the same grant, or the sweep stays off and only that error is recorded. (#1500)
+- **Lite now stops an attempt that outlives `auth.max_attempt_credential_lifetime`.**
+  With the subprocess executor an attempt past the ceiling was only failed as
+  `credential_ceiling` once its task process exited, so a task that never exits
+  kept running with a credential that was no longer renewed, and the try log
+  showed `task succeeded` right before the `killed: credential_ceiling` line.
+  The Lite reaper now fails a live attempt that has been `running` longer than
+  the ceiling as `credential_ceiling` (a task failure, so its retry policy
+  applies) and then stops its task: `SIGTERM` to the task's process group, up to
+  10 s, then `SIGKILL`. This is the Lite counterpart of the task pod's
+  `activeDeadlineSeconds` floor. The `killed: credential_ceiling` line is written
+  once the task and its agent are gone, so it is the last line of the try log.
+  A task that ends on its own first keeps the outcome it reported, and a
+  non-positive ceiling still disables the check. (#1511)
+- **`PATCH /api/v2/dags/{id}` no longer unpauses a DAG when the body omits
+  `is_paused`.** The route only pauses and unpauses, but a body without the
+  field (`{}`, `{"is_paused": null}`, or another field alone) was read as
+  `is_paused: false` and unpaused the DAG, which for a scheduled DAG can start
+  a catch-up. Such a body is now refused with `400`, which the OpenAPI spec
+  documents. (#1473)
+- **The pools API and the Pools screen count slots, not tasks.** Since tasks
+  can take more than one slot (ADR 0066), the admission gate charges each
+  queued or running task its `pool_slots`, but `/api/v2/pools` still counted
+  task instances: a pool of 8 slots holding two running tasks of size 4 showed
+  2 occupied and 6 open while the gate admitted nothing more. `occupied_slots`,
+  `open_slots`, `running_slots`, `queued_slots`, `scheduled_slots` and
+  `deferred_slots` now sum each task's size, so that pool shows 8 occupied and
+  0 open. Each task instance records its size in a new column, written when the
+  run starts and refreshed by a clear from the version the re-run executes
+  (migration 042, `task_instances.pool_slots`, `INTEGER NOT NULL DEFAULT 1`
+  with a `>= 1` check). The default is a constant, so Postgres adds the column
+  without rewriting the table; the check is validated after the column is
+  added, without blocking reads or writes. Task instances created before the
+  upgrade, or by a server of the previous release during a rolling upgrade,
+  count as 1 slot each, so the sized tasks of a run that started before the
+  upgrade are under-reported until they settle or are cleared; the gate itself
+  is unaffected. (#1499)
+- **The Helm chart's same-namespace example for `networkPolicy.ingressFrom`
+  allowed every namespace.** It suggested `[{namespaceSelector: {}}]`, and an
+  empty namespace selector matches all namespaces. The values documentation now
+  gives `[{podSelector: {}}]`, plus a namespace selector for `taskNamespace` when
+  task pods run elsewhere, and says that an empty list allows traffic from
+  anywhere (#1076).
+
+### Security
+
+- **Token renewal is rate-limited, and its session ceiling has a chart value
+  (#801).** `POST /api/v2/auth/token/renew` had no rate limiter, unlike login
+  and the OIDC routes, so one address could drive the user reload every renewal
+  performs as fast as it liked. It now answers `429` past 60 requests a minute
+  per client IP, on a limiter of its own: renewal traffic never spends the
+  password-login budget of the address. A client renews about once per token
+  TTL, so normal use stays far below the limit. `auth.jwt.max_lifetime_seconds`,
+  the ceiling on how long a renewed session may live, is now reachable from the
+  chart as `auth.sessionMaxLifetimeSeconds` (default `86400`, `0` disables the
+  ceiling) instead of only through `extraEnv`. Renewal already refused a
+  deactivated or deleted user since 0.4.5; that is
+  unchanged.
+- **`dexaflow validate` and plain `dexaflow compile` now refuse a value the
+  generated Dockerfile cannot carry.** The checks that refuse a line break, a
+  vertical tab or a form feed in `base_image`, `dag_source`, `dbt.project`,
+  `dbt_groups.*.project`, `include_paths`, `exclude_paths`, `dependencies` and
+  `system_packages`, whitespace in `base_image`, and `'`, `"`, `\`, `$`, `<` or a
+  leading `--` in a copied path ran only while `compile --build` was rendering the
+  Dockerfile. `validate` and `compile` without `--build` called such a project
+  valid, and the refusal first appeared on the machine about to build the image.
+  They are now part of validating `dexaflow.yaml` (or a legacy `leoflow.yaml`),
+  so every command that reads it refuses the project and names the field, and
+  both Dockerfile generators run the same check. A project carrying one of these
+  values now fails `validate`, `compile` and the `dexaflow lite` boot, even when
+  it ships its own Dockerfile or runs only on Lite, where it used to pass; rename
+  the path or value to upgrade. (#1268)
+- **`dexaflow lite reset-password` now signs out the browser sessions signed
+  before it (#413).** Lite sessions are tokens checked by signature, not by
+  password, so a browser holding a session from before the reset stayed signed
+  in. The command now also rotates the per-install session secret in
+  `~/.dexaflow/config.yaml` (or a pre-rename `~/.leoflow/config.yaml`); the
+  connection encryption key is carried forward untouched. When Lite is stopped
+  the old sessions are gone at once; when it is running the command says so and
+  asks you to restart `dexaflow lite`, because a running server keeps the secret
+  it started with. The file watcher's own token follows the server and needs
+  nothing. An install with no `config.yaml` has no per-install secret to rotate,
+  and the command says that its sessions were not signed out.
+- **`base_image` now refuses `'`, `"`, `\` and `$`.** Docker runs the `FROM`
+  operand through the same lexer as a `COPY` path, which strips quotes, eats
+  backslashes and expands `$VAR`. Measured with a real build,
+  `ghcr.io/example/runtime:v1$SUFFIX` pulled `ghcr.io/example/runtime:v1` behind
+  only an undeclared-argument warning, and `runtime:v'1'` or `runtime:v\1`
+  pulled `runtime:v1` with no warning at all, so the DAG image was built on a
+  different base than the one named, and that base runs every task. No image
+  reference can contain these characters, so `dexaflow validate`, `compile` and
+  the Dockerfile generators now refuse them and name `base_image`. (#1271)
+- **The docs now say what connection encryption protects on Lite (#486).**
+  The Variables and Connections pages said "encrypted at rest" without
+  qualification. On Lite the per-install key lives in `~/.dexaflow/config.yaml`
+  next to the datastore, so it protects a copy of the datastore on its own but
+  not a copy of the whole home directory or a `dexaflow lite backup` archive,
+  and an install created before 0.5.0 stays on the key published in this
+  repository until `dexaflow lite migrate-key` moves it. The pages now say so
+  and link to the migration. No behavior changes.
+- **`build.dockerfile` can no longer point outside the project.** The value was
+  joined onto the project directory as written, so `../../other/Dockerfile`
+  built the image from a file outside the project, which nobody reviewed with
+  `dexaflow.yaml`, and skipped every check the generated Dockerfile gets: the
+  one documented way around them. `dexaflow validate` and `compile` now refuse
+  an absolute `build.dockerfile` or one that escapes the project through `..`,
+  naming the entry, as `include_paths` and `dbt.project` already did, and
+  `compile --build` also refuses one that a symlink leads out of the project.
+  A relative path inside the project, a symlink that stays inside it, and a
+  project directory reached through a symlink keep working, and a missing file
+  still falls back to the generated Dockerfile. The `--dockerfile` flag is not
+  affected. (#1272)
+- **Builds use Go 1.26.9 and `golang.org/x/net` v0.60.0.** Go 1.26.6's
+  `net/http` and x/net v0.58.0's HTTP/2 carry advisories that govulncheck
+  reaches through the agent gRPC server, the API server and the HTTP clients,
+  and the image scans flag them in the server and migrate images.
+- **A missing UI asset no longer writes request headers to the INFO log.** Every
+  404 under the public `/static/` path logged the client's `Referer` and
+  `User-Agent` at INFO, so an anonymous client could fill the server log with
+  text of its choosing. The line is now DEBUG and carries only the requested
+  path (#506).
+- **IDE errors no longer show host paths.** A failed read, write, delete or
+  tree listing in the browser IDE returned the filesystem error to the caller,
+  absolute workspace path included. The response now carries a fixed message
+  and the full error goes to the request log. A path refused as unsafe still
+  echoes the caller's own relative path (#1072).
+- **A task can no longer have its own text served as the platform's failure
+  reason by writing an unmarked outcome record.** The task runs in the agent's
+  container and can write the termination message the reconciler reads, so any
+  string it put in a failure record's `reason` was shown as the platform's own
+  `failure_reason`, indistinguishable from an agent diagnosis. The agent now
+  marks the reasons it classifies, and a failure record whose reason lacks the
+  mark still settles the task as failed but is described from the exit code
+  (or the pod's OOMKilled), with the task's text appended quoted and labeled,
+  for example `task failed (exit 3) [task-provided: "..."]`. The mark is a
+  declaration of authorship, not an authentication: a task that writes the mark
+  itself is still believed, as documented in ADR 0052. During a rolling upgrade,
+  a timeout or bootstrap diagnosis written by an older agent is shown with the
+  same task-provided label. (#948)
+- **A task that sets its own placement or pod metadata never runs on a warm
+  worker.** Warm workers are created before any task is known and carry none of
+  a task's `execution` block, but the dispatcher placed any task on them except
+  staging tasks and tasks pinning another ServiceAccount. A task that set
+  `runtime_class_name` (for example gVisor) ran unsandboxed on a plain warm pod,
+  and one that set `node_selector`, `tolerations`, `affinity`,
+  `topology_spread_constraints`, `priority_class_name`,
+  `termination_grace_period_seconds`, `resource_claims`, `labels` or
+  `annotations` ran on the wrong node, without its device, or outside the
+  NetworkPolicy its labels select, with no error. Such a task now always takes a
+  dedicated pod, which applies those fields. Only installs with warm pools on are
+  affected; tasks without an `execution` block keep using warm workers.
+- **A warm worker identity now holds only one assignment stream at a time.**
+  A second registration under a worker identity whose stream was still
+  connected used to replace it, so anything holding a copy of that worker's
+  credential could take over its assignments, and with them the attempt
+  tokens meant for the real worker. The control plane now refuses a second
+  registration with `AlreadyExists` while the first stream is connected and
+  heartbeating; warm workers send that heartbeat on their stream every 15
+  seconds. A reconnect after the previous stream ended is accepted as before,
+  and a stream silent for 60 seconds is replaced and closed. Tests now also pin
+  that the warm pod mounts its bootstrap token read only, in the warm container
+  only, and that the task process never inherits its location (#1546).
+
 ## [0.5.2] - 2026-10-08
 
 ### Added

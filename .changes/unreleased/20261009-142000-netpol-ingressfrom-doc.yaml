@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **The Helm chart's same-namespace example for `networkPolicy.ingressFrom`
-  allowed every namespace.** It suggested `[{namespaceSelector: {}}]`, and an
-  empty namespace selector matches all namespaces. The values documentation now
-  gives `[{podSelector: {}}]`, plus a namespace selector for `taskNamespace` when
-  task pods run elsewhere, and says that an empty list allows traffic from
-  anywhere (#1076).
-time: 2026-10-09T14:20:00.000000000-03:00

@@ -1,4 +1,0 @@
-kind: Added
-body: |-
-  Trace sampling is configurable. `observability.otel.sample_ratio` (default `1`, every request traced) keeps that share of request traces (an incoming `traceparent` header is not propagated, so every request is sampled on its own), and `observability.otel.skip_probe_spans` (default `false`) stops recording spans for `/healthz`, `/readyz` and `/static/*`. Both also read the legacy `LEOFLOW_*` names.
-time: 2026-10-02T18:00:00.000000000-03:00
