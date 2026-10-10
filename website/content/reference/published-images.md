@@ -4,7 +4,7 @@ weight: 65
 description: "Every container image and chart Dexaflow publishes, how each is tagged, and which tags are immutable."
 ---
 
-Every release publishes three images and one chart to GitHub Container Registry.
+Every release publishes four images and one chart to GitHub Container Registry.
 This page says what each one is, who pulls it, and how it is tagged, because the
 tag is the part people get wrong.
 
@@ -15,11 +15,13 @@ tag is the part people get wrong.
 | `ghcr.io/dexadata/dexaflow-server` | the control plane: API, scheduler, UI | the Helm chart, and `docker compose` for the demo |
 | `ghcr.io/dexadata/dexaflow-migrate` | schema migrations, run as a Helm pre-install and pre-upgrade hook | the chart's migration Job |
 | `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line | your DAG image's `FROM`, at `dexaflow compile --build` |
+| `ghcr.io/dexadata/dexaflow-mcp` | the [MCP server](/mcp/), for running it as a service with `--transport http` | your own Deployment or `docker run` |
 | `oci://ghcr.io/dexadata/charts/dexaflow` | the Helm chart | `helm install` / `helm upgrade` |
 
 ### Names from before the rename
 
-Every image is also published under its pre-rename name, from the same build:
+Every image except `dexaflow-mcp`, which never shipped under the old name, is also
+published under its pre-rename name, from the same build:
 `leoflow-server`, `leoflow-migrate` and `leoflow-runtime` carry the same tags and
 the same digests as their `dexaflow-*` names, so values files, Dockerfiles and
 `FROM` lines that name `leoflow-*` keep receiving new releases.
@@ -38,11 +40,12 @@ thing.)
 | --- | --- | --- |
 | `dexaflow-server` | `0.4.8` **and** `v0.4.8` | no, both point at the same digests |
 | `dexaflow-migrate` | `0.4.8` **and** `v0.4.8` | no |
+| `dexaflow-mcp` | `0.4.8` **and** `v0.4.8` | no |
 | `dexaflow-runtime` | `py3.11-v0.4.8` | no |
 | `dexaflow-runtime` | `py3.11` | **yes**, republished by every release |
 | the chart | `0.4.8` | no |
 
-The server and migrate images carry both the bare and the `v`-prefixed tag, and
+The server, migrate and MCP images carry both the bare and the `v`-prefixed tag, and
 both resolve to identical digests, so either spelling works.
 
 {{% alert title="py3.11 moves, py3.11-v0.4.8 does not" color="warning" %}}
@@ -78,8 +81,9 @@ the supported lines and the deprecation schedule.
 ## Verifying what you pulled
 
 Artifacts on the GitHub release are checksummed (SHA-256) and the checksums
-file is signed with cosign, keyless. The `dexaflow-server` manifests are signed
-by digest, so both tag shapes are covered:
+file is signed with cosign, keyless. The `dexaflow-server` and `dexaflow-mcp`
+manifests are signed by digest, so both tag shapes are covered (the same command
+verifies `dexaflow-mcp`):
 
 ```bash
 cosign verify ghcr.io/dexadata/dexaflow-server:0.4.8 \
