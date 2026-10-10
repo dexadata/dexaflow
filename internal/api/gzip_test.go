@@ -170,6 +170,8 @@ func TestGzipJSONSkipsSecretBearingRoutes(t *testing.T) {
 		"/api/v2/ide/file",
 		"/api/v2/dagSources/etl",
 		"/api/v2/dags/etl/dagRuns/r1/taskInstances/extract",
+		"/api/v2/dags/etl/spec",
+		"/api/v2/dags/etl/tasks/extract",
 	}
 	for _, p := range paths {
 		r.GET(p, func(c *gin.Context) { c.JSON(http.StatusOK, bigJSON) })

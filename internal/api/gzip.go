@@ -87,7 +87,8 @@ var secretBearingPrefixes = []string{
 // secretBearingPath reports whether a path returns secrets, tokens, code or
 // XCom values, which may hold either. A single task instance (and anything
 // below it) carries rendered fields taken from the spec, so it counts too; the
-// taskInstances list does not.
+// taskInstances list does not. The DAG spec and a single task's detail carry
+// the DAG source, task env and call arguments, so they count as code.
 func secretBearingPath(p string) bool {
 	for _, prefix := range secretBearingPrefixes {
 		if strings.HasPrefix(p, prefix) {
@@ -96,6 +97,14 @@ func secretBearingPath(p string) bool {
 	}
 	if strings.Contains(strings.ToLower(p), "xcom") {
 		return true
+	}
+	if dagScoped, ok := strings.CutPrefix(p, "/api/v2/dags/"); ok {
+		if strings.HasSuffix(dagScoped, "/spec") {
+			return true
+		}
+		if _, task, found := strings.Cut(dagScoped, "/tasks/"); found && task != "" {
+			return true
+		}
 	}
 	_, rest, found := strings.Cut(p, "/taskInstances/")
 	return found && rest != ""
