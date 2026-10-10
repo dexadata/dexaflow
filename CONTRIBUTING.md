@@ -6,7 +6,8 @@ Thank you for your interest in contributing to Dexaflow! This document explains 
 
 1. Read [`README.md`](README.md) to understand what Dexaflow is.
 2. Read the [Architecture Decision Records](website/content/project/adrs/) under `website/content/project/adrs/`. These document non-negotiable design choices. Contributions that contradict an ADR will be rejected unless the ADR is first amended via a separate PR.
-3. Read [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+3. Read [`AGENTS.md`](AGENTS.md): the standing rules for every change, and a map to the rules of each area (directories such as `migrations/` carry their own `AGENTS.md`) and to the step by step recipes.
+4. Read [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## How to Contribute
 

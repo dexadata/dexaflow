@@ -3,10 +3,11 @@
 Standing rules for everyone who changes this repository: maintainers, contributors
 and automated agents alike. Read this file before opening a pull request or cutting
 a release. The project principles, code conventions and testing discipline are in
-section 3; the architecture is described on the
-[docs site](https://dexaflow.dexadata.ai/concepts/architecture/), and the release
-mechanics live in [`RELEASING.md`](RELEASING.md). When this file and an ADR
-disagree, the ADR wins and this file gets fixed.
+section 3, and section 4 maps where everything else is documented. When this
+file and an ADR disagree, the ADR wins and this file gets fixed.
+
+Directories with rules of their own carry their own `AGENTS.md`; when you change
+files there, that file applies on top of this one.
 
 ## 1. Release candidate reviews
 
@@ -181,3 +182,32 @@ The Actions queue has few runners, so every wasted run delays everyone.
   behavior changes, search for the sentences that described the old behavior.
 - **Read the exit code you think you read.** `cmd | head` reports the status of
   `head`; an empty filter output is not a pass.
+
+## 4. Where things are documented
+
+This file stays short and points; detail lives next to what it describes
+([ADR 0069](https://dexaflow.dexadata.ai/project/adrs/0069-contributor-context/)).
+
+| You need | Read |
+|---|---|
+| What Dexaflow is and how it is built | [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/), [core concepts](https://dexaflow.dexadata.ai/concepts/core-concepts/), [glossary](https://dexaflow.dexadata.ai/reference/glossary/) |
+| Why a design is the way it is | [ADRs](https://dexaflow.dexadata.ai/project/adrs/), then the `// Package` comment of the Go package |
+| Rules for one area | [`migrations/AGENTS.md`](migrations/AGENTS.md), [`internal/api/AGENTS.md`](internal/api/AGENTS.md), [`helm/AGENTS.md`](helm/AGENTS.md), [`scripts/AGENTS.md`](scripts/AGENTS.md), [`website/AGENTS.md`](website/AGENTS.md) |
+| Steps for a recurring change | [Recipes](https://dexaflow.dexadata.ai/contribute/recipes/): add a migration, record a change, backport to a release branch |
+| A large change before coding it | [Specs](https://dexaflow.dexadata.ai/project/specs/) and their template |
+| Setting up and running locally | [`CONTRIBUTING.md`](CONTRIBUTING.md), [local dev loop](https://dexaflow.dexadata.ai/contribute/local-dev-loop/) |
+| Cutting a release | [`RELEASING.md`](RELEASING.md) and section 1 above |
+| What a release may contain | [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/) |
+| Reporting or fixing a vulnerability | [`SECURITY.md`](SECURITY.md) |
+
+### Public and local context
+
+- Everything a contributor needs to make a correct change is committed, in
+  English, and written for people, in the places above.
+- Files that configure one editor or assistant (`CLAUDE.md`, `GEMINI.md`,
+  `.cursor/`, `.claude/` and the like) and personal notes (`.local/`) stay out
+  of the repository; `.gitignore` lists them and
+  `scripts/check-no-tool-context.sh` fails CI if one is tracked. A local tool
+  file loads this one and adds only what is specific to the tool or the person.
+- When a review or an incident teaches something the next contributor would
+  need, add it to the nearest `AGENTS.md` or recipe in the same PR.
