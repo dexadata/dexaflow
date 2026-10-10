@@ -155,6 +155,12 @@ Dockerfile format and Docker's own operand lexer give some characters a meaning
 no quoting can take away. The refusal always names the field and the value, since
 a stray control character in YAML is invisible in the source.
 
+The check is part of validating `dexaflow.yaml`, so every command that reads the
+file runs it: `dexaflow validate`, `dexaflow compile` with or without `--build`,
+`dexaflow deploy` and `dexaflow lite`. It used to run only while `--build` was
+rendering the Dockerfile, so `validate` called such a project valid and the
+refusal first appeared on the machine about to build the image.
+
 **Refused everywhere: a line break, a vertical tab or a form feed.** These end a
 Dockerfile instruction or split it into new words, so a value carrying one closes
 the instruction it sits in and whatever follows becomes an instruction of its own.
@@ -179,11 +185,19 @@ of the generated Dockerfile and then fails on the missing terminator.
 apostrophe in a directory name is not exotic. Such a project used to build, but
 it was copying the wrong path into the image the whole time: `raw/$schema`
 expanded to whatever the base image set, and `sql\queries` copied `sqlqueries`.
-The build fails now and names the field, which is the point.
+`dexaflow validate` and `dexaflow compile` now fail and name the field, which is
+the point.
 
-**Refused in `base_image`: any whitespace.** An image reference cannot contain
-one, `FROM` has no quoting, and the rest of the line would be read as the
-`FROM <image> AS <stage>` form.
+**Refused in `base_image`: any whitespace, and `'`, `"`, `\` and `$`.** An image
+reference cannot contain any of them. `FROM` has no quoting, so whitespace makes
+the rest of the line read as the `FROM <image> AS <stage>` form. And `FROM`'s
+operand goes through the same lexer as a `COPY` path, so the other four rewrite
+the reference: `runtime:v1$SUFFIX` pulls `runtime:v1` (with only a warning
+about an undeclared build argument), `runtime:v'1'` and `runtime:v\1` pull
+`runtime:v1` with no warning at all, and a stray `"` fails the build. The build
+would run your tasks on a different image than the one `base_image` names.
+Everything a reference can legally hold (a registry host and port, a path, a
+tag, a `@sha256:` digest) is accepted unchanged.
 
 **Refused in a `COPY` path: a leading `--`,** which Docker reads as one of
 `COPY`'s own flags rather than as a path.
@@ -307,6 +321,7 @@ roadmap item.
 | `include_paths` | `["."]` | Extra paths copied into the image **alongside** `dag_source` — a helper module, a config file, a fixtures directory. Entries are relative to the project directory; an absolute one, or one escaping the context (`../x`), is refused at compile with the entry named, because Docker cannot `COPY` it and failing at build time would name a Docker error instead. The default `["."]` means *no extra paths*, not "everything": it is what every existing project carries, so it must not change what their images contain. Entries already copied (the DAG source, a dbt group directory) are skipped rather than duplicated. Only the **generated** Dockerfile honours it — a project-supplied Dockerfile copies whatever its own `COPY` lines say. Included paths are scanned by the credential warning like everything else that ships. |
 | `exclude_paths` | `[".git", "__pycache__", "*.pyc", ".venv", "venv"]` | Kept out of the image. On `--build` these become a `.dockerignore` in the build context for the duration of the build — merged with yours if you have one, and removed afterwards. Each entry is expanded to the forms Docker actually honours, because a bare name in a `.dockerignore` matches only at the context root: a plain directory name becomes four patterns (`p`, `**/p`, `p/**`, `**/p/**`) so that both the directory and its contents are pruned at any depth; an entry whose last segment contains a glob becomes `p` and `**/p` only, since a glob names files rather than a directory to descend into; and an entry containing a `/` is already anchored, so it becomes `p` and `p/**`. An entry starting with `!` or `#` contributes nothing: it is dropped rather than expanded, so a negation belongs in your own `.dockerignore` (which is merged, never rewritten) and not here. A dropped `!` is **reported by name** at build time — leoflow's block is appended after your own lines, so a negation emitted there could resurrect a path one of your earlier lines excluded. Add anything holding credentials: the image is pushed to a registry and pulled by every pod that runs the DAG. **Not** used by workspace discovery, which has its own hardcoded skip list. |
 | `build.context` | `"."` | **Not implemented.** Declared and defaulted, but the build always uses the DAG directory. Tracked in [#1062](https://github.com/dexadata/dexaflow/issues/1062). |
+| `build.dockerfile` | *unset* | A Dockerfile the project ships, used as-is instead of the generated one when the file exists (a missing file falls back to the generated Dockerfile). It is relative to the directory holding `dexaflow.yaml` and must stay inside it: an absolute path, or one escaping the project (`../x`), is refused by `dexaflow validate` and `compile`, and `compile --build` refuses one that a symlink leads out of the project. A Dockerfile outside the project is not reviewed with it, and it skips every check described in [Values that reach the generated Dockerfile](#values-that-reach-the-generated-dockerfile). The `--dockerfile` flag is not confined: it is the operator's own choice on the command line, and it wins over this field. |
 | `build.platforms` | `["linux/amd64"]` | Multi-arch via `["linux/amd64","linux/arm64"]`. |
 | `registry.auth_method` | `"docker_config"` | Credential source for `compile --push`. |
 | `registry.tag_strategy` | `"version"` | How `dag_version` is mapped to image tag. |
@@ -417,7 +432,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_SERVICE_TOKEN` | _(empty)_ | both | Turns on the [operator service API](#operator-service-api) under `/api/v2/service/` and is its bearer credential. At least 32 characters; boot fails on a shorter one. Keep it in a Secret. Empty leaves the API off and its routes absent. Helm: `auth.serviceToken`, or `auth.serviceTokenExistingSecret` naming a Secret with key `serviceToken`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER` | _(empty)_ | both | Turns on the [trusted-issuer handoff](#trusted-issuer-handoff): a platform that already authenticates its users opens a UI session for them by posting a token its own issuer signed. The exact `iss` of those tokens. Empty disables it and the endpoint does not exist. Helm: `auth.trustedIssuer.issuer`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME` | _(empty)_ | both | Name of the trusted issuer, 1-40 lowercase letters, digits or `-`. Users the issuer may sign in are linked under `issuer:<name>`, so keep it stable once users exist. Helm: `auth.trustedIssuer.name`. |
-| `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key, so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL` | _(empty)_ | both | Where the issuer publishes its public signing keys (RS256, ES256 or PS256). `https`, or `http` on a loopback host. Fetched on first use and refreshed when a token names an unknown key (at most once every 30 seconds), so key rotation needs no restart and an outage of the issuer does not block boot. Helm: `auth.trustedIssuer.jwksUrl`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` | _(empty)_ | both | The `aud` the issuer's tokens must carry for this Dexaflow. Helm: `auth.trustedIssuer.audience`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM` | `tenant_id` | both | The string claim that names the Dexaflow tenant. Helm: `auth.trustedIssuer.tenantClaim`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS` | _(empty)_ | both | Comma-separated tenants the issuer may sign in to; `*` allows every tenant, for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`. |
@@ -778,15 +793,57 @@ so deactivating or unlinking the user ends its access on the next request,
 whatever the token's expiry.
 
 Anything wrong answers `401`, the same as a bad Dexaflow token; the reason
-stays in the server log. A token that verified but names no active linked user
-in its tenant is also recorded in the audit trail as `issuer.bearer.failure`.
-The bearer is read from the `Authorization` header only, never from the
-session cookie, and a handoff token is never accepted as a bearer, nor a bearer
-as a handoff.
+stays in the server log. A token that does not name the issuer and a bearer
+audience is refused before any signature check. When the token could not be
+checked at all, because the issuer's JWKS or Dexaflow's user store is
+unreachable, the answer is `503`, so the client retries instead of signing in
+again. A token that verified but names no active linked user in its tenant is
+also recorded in the audit trail as `issuer.bearer.failure`. The bearer is read
+from the `Authorization` header only, never from the session cookie, and a
+handoff token is never accepted as a bearer, nor a bearer as a handoff.
+
+Dexaflow caches the issuer's keys and downloads the JWKS again only when a
+token names a key it does not hold, at most once every 30 seconds, for the
+handoff and the bearer together. A forged token therefore cannot make
+Dexaflow call your issuer on every request. After you rotate keys, tokens
+signed with the new key can be refused for up to 30 seconds; publish the new
+key in the JWKS before you sign with it.
 
 Keep bearer tokens short-lived. Dexaflow cannot revoke one before it expires,
 only the user behind it; an MCP gateway that mints one per client for a few
 minutes and caches it is the intended shape.
+
+#### Scopes
+
+A bearer token's `scope` claim, a space-separated string as in RFC 9068,
+narrows what it may do ([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/)),
+so a user can grant a client less than their own rights:
+
+| Scope | Grants |
+|---|---|
+| `dexaflow:read` | Every route that needs a `read` permission, plus the control-plane health and version (`/api/v2/monitor/health`, `/api/v2/monitor/executor`, `/api/v2/version`) and the import errors feed. |
+| `dexaflow:run` | Triggering a run, setting a run's state, clearing or marking task instances, and pausing or unpausing a DAG. |
+| `dexaflow:deploy` | Registering a DAG version (`POST /api/v2/dags/{id}/versions`). |
+
+- The scope check runs after the role check, and both must pass. A viewer's
+  token with `dexaflow:run` still cannot trigger.
+- No scope implies another. A client that runs and reads needs both.
+- A token **without** a `scope` claim may only read. A claim that is not a
+  string is refused with `401`.
+- Every other write (connections, variables, pools, users, deleting a DAG or
+  a run, the IDE) is refused to a bearer token whatever its scopes. Use the UI
+  or a Dexaflow token for those.
+- Routes that check no permission of their own (the UI's dashboard and
+  menus, `/ui/auth/me`, and the screens Dexaflow only stubs) are refused to a
+  bearer token whatever its scopes, so a route added without a permission
+  check never ignores a token's scopes.
+- A refusal is `403` with a detail that names the missing scope.
+- Pausing and unpausing is `PATCH /api/v2/dags/{id}` with
+  `{"is_paused": true}` or `false`. A body without `is_paused` is refused
+  with `400` rather than read as an unpause.
+
+Dexaflow tokens and the sessions the browser handoff opens carry no scopes;
+only their roles decide.
 
 ### Operator service API
 

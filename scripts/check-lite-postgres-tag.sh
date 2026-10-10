@@ -26,7 +26,7 @@
 #
 # website/content/project/ is excluded for the same reason
 # check-python-runtime-matrix.sh excludes CHANGELOG.md: an ADR records the
-# decision of its era and is immutable (CLAUDE.md), so "correcting" one would be
+# decision of its era and is immutable (AGENTS.md), so "correcting" one would be
 # falsifying history.
 #
 # Usage: scripts/check-lite-postgres-tag.sh [--self-test]
