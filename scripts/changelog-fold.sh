@@ -227,6 +227,27 @@ self_test() {
 	declared="$(awk '/^kinds:/{k=1;next} k&&/^  - label:/{printf "%s%s", sep, $3; sep=","} k&&/^[^ -]/{exit}' "$ROOT/.changie.yaml")"
 	_eq "$declared" "$KINDS" "KINDS matches the kinds declared in .changie.yaml"
 
+	# 10. The cut runs this script by path with a version, never merge_unreleased
+	#     alone, and the v0.5.3-rc.1 cut died on a bad substitution in the code
+	#     after the merge. So drive the whole entry point: a copy of this script
+	#     in a scratch repo, one fragment, and a changie stub that renders it.
+	mkdir -p "$tmp/repo/scripts" "$tmp/repo/.changes/unreleased" "$tmp/bin"
+	cp "${BASH_SOURCE[0]}" "$tmp/repo/scripts/changelog-fold.sh"
+	printf '%s\n' '# Changelog' '' '## [Unreleased]' '' '## [1.0.0] - 2026-01-01' '' '- old' > "$tmp/repo/CHANGELOG.md"
+	printf '%s\n' 'kind: Fixed' 'body: stub entry (#3)' > "$tmp/repo/.changes/unreleased/one.yaml"
+	printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "### Fixed" "- stub entry (#3)"' > "$tmp/bin/changie"
+	chmod +x "$tmp/bin/changie"
+	local rc=0
+	PATH="$tmp/bin:$PATH" bash "$tmp/repo/scripts/changelog-fold.sh" --dry-run 9.9.9 > "$tmp/dry.out" 2>&1 || rc=$?
+	_eq "$rc" "0" "a dry run with a version exits 0"
+	_eq "$(grep -c '^- stub entry (#3)$' "$tmp/dry.out")" "1" "the dry run prints the folded entry"
+	_eq "$(ls "$tmp/repo/.changes/unreleased" | wc -l | tr -d ' ')" "1" "the dry run keeps the fragment"
+	rc=0
+	PATH="$tmp/bin:$PATH" bash "$tmp/repo/scripts/changelog-fold.sh" 9.9.9 > "$tmp/fold.out" 2>&1 || rc=$?
+	_eq "$rc" "0" "a fold with a version exits 0"
+	_eq "$(grep -c '^- stub entry (#3)$' "$tmp/repo/CHANGELOG.md")" "1" "the fold writes the entry into CHANGELOG.md"
+	_eq "$(ls "$tmp/repo/.changes/unreleased" | wc -l | tr -d ' ')" "0" "the fold removes the fragment"
+
 	if [ "$fail" -eq 0 ]; then echo "self-test: PASS"; return 0; else echo "self-test: FAIL"; return 1; fi
 }
 
