@@ -9,7 +9,7 @@ import (
 
 // TestEmbeddedSchemasMatchDocs guards against drift between the schemas
 // embedded in this package and the canonical sources under docs/api, which
-// CLAUDE.md designates as the single source of truth.
+// are the single source of truth.
 func TestEmbeddedSchemasMatchDocs(t *testing.T) {
 	cases := map[string][]byte{
 		"dag-schema.json":          dagSchemaJSON,

@@ -359,6 +359,13 @@ more than one slot out forever: once it has waited past
 `scheduler.pool_starvation_threshold` (60s by default), the pool holds new
 admissions until it fits. Tasks of size 1 never reserve a pool.
 
+The Pools screen and `/api/v2/pools` count slots the same way: two tasks of
+size 4 running in a pool of 8 show 8 occupied slots and 0 open, and each
+state's count (`running_slots`, `queued_slots`, `scheduled_slots`,
+`deferred_slots`) is the sum of its tasks' sizes. A task's size is recorded
+when its run starts, and a clear takes the size of the version the re-run
+executes.
+
 ```yaml
 defaults:
   size: 1          # every task that sets none

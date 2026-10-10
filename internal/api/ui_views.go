@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/ui"
 	"github.com/dexadata/dexaflow/internal/version"
@@ -163,7 +164,7 @@ func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 // registerUIViews mounts the read-only /ui view endpoints (and the UI-support
 // /api/v2/version) whose repositories are configured.
 func registerUIViews(r gin.IRouter, deps Dependencies) {
-	r.GET("/api/v2/version", versionHandler())
+	r.GET("/api/v2/version", RequireScope(auth.ScopeRead), versionHandler())
 	if deps.DagRuns != nil {
 		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.DagRuns))
 		r.GET("/ui/dags/:dag_id/latest_run", RequirePermission("read", "dag_run"), latestRunHandler(deps.DagRuns))

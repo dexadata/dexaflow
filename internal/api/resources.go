@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -235,13 +236,20 @@ func getDagHandler(repo DagRepository) gin.HandlerFunc {
 func patchDagHandler(repo DagRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			IsPaused bool `json:"is_paused"`
+			IsPaused *bool `json:"is_paused"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
 			return
 		}
-		d, err := repo.SetPaused(c.Request.Context(), tenantOf(c), c.Param("dag_id"), body.IsPaused)
+		// is_paused is all this route sets. A body without it must not read as
+		// false, which would unpause the DAG for a request that asked for
+		// something else.
+		if body.IsPaused == nil {
+			AbortProblem(c, http.StatusBadRequest, "bad request", "is_paused (true or false) is required")
+			return
+		}
+		d, err := repo.SetPaused(c.Request.Context(), tenantOf(c), c.Param("dag_id"), *body.IsPaused)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -1164,15 +1172,17 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		g.GET("", RequirePermission("read", "dag"), listDagsHandler(deps.Dags))
 		g.GET("/:dag_id", RequirePermission("read", "dag"), getDagHandler(deps.Dags))
 		g.GET("/:dag_id/details", RequirePermission("read", "dag"), dagDetailsHandler(deps.Dags, deps.DagVersions, deps.Specs))
-		g.PATCH("/:dag_id", RequirePermission("write", "dag"), patchDagHandler(deps.Dags))
+		// Pause and unpause are run control (ADR 0067). A change that lets this
+		// route set more than is_paused must revisit its scope.
+		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Dags))
 		g.DELETE("/:dag_id", RequirePermission("write", "dag"), deleteDagHandler(deps.Dags))
 	}
 	if deps.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
 		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns))
-		g.POST("", RequirePermission("execute", "dag"), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
+		g.POST("", RequireScopedPermission("execute", "dag", auth.ScopeRun), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
 		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.DagRuns))
-		g.PATCH("/:dag_run_id", RequirePermission("write", "dag_run"), patchDagRunHandler(deps.DagRuns, deps.Audit))
+		g.PATCH("/:dag_run_id", RequireScopedPermission("write", "dag_run", auth.ScopeRun), patchDagRunHandler(deps.DagRuns, deps.Audit))
 		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.DagRuns))
 	}
 	if deps.Tasks != nil {
@@ -1196,13 +1206,13 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		// Mark-success/failed: PATCH the task instance. The UI hits both the bare
 		// path and one carrying optional /{map_index} and /dry_run segments.
 		patchTI := patchTaskInstanceHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Audit)
-		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id", RequirePermission("write", "task_instance"), patchTI)
-		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action", RequirePermission("write", "task_instance"), patchTI)
+		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id", RequireScopedPermission("write", "task_instance", auth.ScopeRun), patchTI)
+		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action", RequireScopedPermission("write", "task_instance", auth.ScopeRun), patchTI)
 		r.POST("/api/v2/dags/:dag_id/clearTaskInstances",
-			RequirePermission("write", "task_instance"), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
+			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
 	}
 	if deps.Versions != nil {
-		r.POST("/api/v2/dags/:dag_id/versions", RequirePermission("write", "dag"), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}))
+		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage))
 	}
 	if deps.Xcoms != nil {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))

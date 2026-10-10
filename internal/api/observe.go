@@ -27,20 +27,31 @@ func Observe(metrics Metrics, tracer trace.Tracer) gin.HandlerFunc {
 		if route == "" {
 			route = "unmatched"
 		}
-		ctx, span := tracer.Start(c.Request.Context(), c.Request.Method+" "+route)
-		span.SetAttributes(
-			attribute.String("http.method", c.Request.Method),
-			attribute.String("http.route", route),
-		)
+		// The attributes go in at start so a sampler can decide on the route.
+		ctx, span := tracer.Start(c.Request.Context(), c.Request.Method+" "+route,
+			trace.WithAttributes(
+				attribute.String("http.method", c.Request.Method),
+				attribute.String("http.route", route),
+			))
 		c.Request = c.Request.WithContext(ctx)
 
 		c.Next()
 
 		status := c.Writer.Status()
 		span.SetAttributes(attribute.Int("http.status_code", status))
+		// A refusal answered with a redirect (the trusted-issuer handoff sends a
+		// refused browser to the external sign-in) is recorded under the status
+		// it stands for, so the route's 4xx/5xx rate and alerts still see it and
+		// it is not counted as a successful 303. The span keeps the real status
+		// and carries the refusal next to it.
+		outcome := status
+		if refused := c.GetInt(contextKeyRefusalStatus); refused != 0 {
+			outcome = refused
+			span.SetAttributes(attribute.Int("dexaflow.refusal_status", refused))
+		}
 		span.End()
 		if metrics != nil {
-			metrics.RecordHTTPRequest(c.Request.Method, route, status, time.Since(start))
+			metrics.RecordHTTPRequest(c.Request.Method, route, outcome, time.Since(start))
 		}
 	}
 }

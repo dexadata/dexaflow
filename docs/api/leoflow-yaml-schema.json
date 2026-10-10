@@ -91,7 +91,7 @@
       "properties": {
         "dockerfile": {
           "type": "string",
-          "description": "Path to a custom Dockerfile. If set, autogeneration is skipped."
+          "description": "Path to a custom Dockerfile, relative to the directory holding dexaflow.yaml. If the file exists, autogeneration is skipped. An absolute path, or one that leaves the project (through `..` or, at build time, a symlink), is refused."
         },
         "context": {
           "type": "string",
