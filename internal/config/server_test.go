@@ -962,3 +962,17 @@ func TestLoadServerLogsTailPublish(t *testing.T) {
 		t.Error("Validate() accepted an unknown logs.tail.publish")
 	}
 }
+
+// TestServerConfigValidateRefusesNegativeMaxPageLimit pins that a negative
+// server.max_page_limit fails boot instead of silently meaning "no cap".
+func TestServerConfigValidateRefusesNegativeMaxPageLimit(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Auth.JWT.Secret = "set"
+	c.Server.MaxPageLimit = -1
+	if err := c.Validate(); err == nil {
+		t.Error("Validate() = nil with server.max_page_limit -1, want error")
+	}
+}
