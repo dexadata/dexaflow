@@ -152,8 +152,12 @@ func recordMatchesPod(rec taskoutcome.Record, pod *corev1.Pod) bool {
 // the agent clamps to 255; 128+signal is a shell convention and only appears
 // when a shell sits between. So the exit code cannot be pattern-matched for
 // this, and the pod's own Reason is the only reliable signal.
+//
+// Only an agent-authored reason counts as a classification here (#948): an
+// unmarked one is the task's own text, so it does not hide an OOMKilled pod
+// either, and it is shown only labeled (withTaskProvided).
 func failedReason(rec taskoutcome.Record, pod *corev1.Pod) string {
-	if rec.Reason == "" && podWasOOMKilled(pod) {
+	if agentReason(rec) == "" && podWasOOMKilled(pod) {
 		// The RECORD's exit code, not the container's, and the difference is the
 		// whole reason this takes an argument. On the path that reaches here the
 		// agent survived its child and exited on its own, so the CONTAINER's exit
@@ -165,10 +169,11 @@ func failedReason(rec taskoutcome.Record, pod *corev1.Pod) string {
 		// podFailureReason is right to use the container's, because there the
 		// container IS the corpse. This caller inherited that line without
 		// inheriting the conditions that make it true.
+		code := containerExitCode(pod)
 		if rec.ExitCode != nil {
-			return oomReason(*rec.ExitCode)
+			code = *rec.ExitCode
 		}
-		return oomReason(containerExitCode(pod))
+		return withTaskProvided(oomReason(code), taskProvidedReason(rec))
 	}
 	return recordFailureReason(rec)
 }
@@ -219,14 +224,67 @@ func taskTerminated(pod *corev1.Pod) *corev1.ContainerStateTerminated {
 // own process can write before it is killed, the kubelet's ceiling there is
 // ~4 KiB — seventeen times taskoutcome.MaxReasonLen — and Decode imposes no
 // length limit of its own.
+//
+// That same file is why only an AGENT-AUTHORED reason is served as the
+// platform's own (#948). A reason in a record without the agent's marker is
+// text the task may have written, and serving it bare would have the platform
+// vouch for any string a task chose, such as a claim that the control plane
+// rejected the pod's token. Such a record still settles the outcome (the
+// durable-outcome recovery does not depend on who wrote the reason), but the
+// reason renders from the exit code, with the task's text appended only
+// labeled as task-provided. A record from an agent that predates the marker
+// is indistinguishable from that, and is treated the same way.
 func recordFailureReason(rec taskoutcome.Record) string {
-	if rec.Reason != "" {
-		return boundReason(rec.Reason)
+	if reason := agentReason(rec); reason != "" {
+		return boundReason(reason)
 	}
+	base := "task failed"
 	if rec.ExitCode != nil {
-		return fmt.Sprintf("task failed (exit %d)", *rec.ExitCode)
+		base = fmt.Sprintf("task failed (exit %d)", *rec.ExitCode)
 	}
-	return "task failed"
+	return withTaskProvided(base, taskProvidedReason(rec))
+}
+
+// agentReason is the record's reason when the agent declared itself its
+// author, and empty otherwise.
+func agentReason(rec taskoutcome.Record) string {
+	if rec.AgentAuthored() {
+		return rec.Reason
+	}
+	return ""
+}
+
+// taskProvidedReason is the record's reason when the agent did NOT declare
+// itself its author: text that may come from the task.
+func taskProvidedReason(rec taskoutcome.Record) string {
+	if rec.AgentAuthored() {
+		return ""
+	}
+	return rec.Reason
+}
+
+// withTaskProvided appends a task's own text to a reason the platform built,
+// labeled so it cannot pass for the platform's words. The text is quoted, so a
+// newline or a forged closing bracket cannot leave the label. The task's text is
+// cut to the room the cap leaves after the label, so the label always closes;
+// with no room left the platform's reason is served alone.
+func withTaskProvided(platform, task string) string {
+	if task == "" {
+		return platform
+	}
+	room := taskoutcome.MaxReasonLen - len(platform) - len(" [task-provided: ]")
+	if room < len(`""`)+1 {
+		return platform
+	}
+	cut := taskoutcome.TruncateReason(task, room)
+	// Quoting can expand the text with escapes, so cut until it fits.
+	for cut != "" && len(strconv.Quote(cut)) > room {
+		cut = taskoutcome.TruncateReason(cut, len(cut)-1)
+	}
+	if cut == "" {
+		return platform
+	}
+	return platform + " [task-provided: " + strconv.Quote(cut) + "]"
 }
 
 // podFailureReason describes a failed pod from what Kubernetes observed, for the
