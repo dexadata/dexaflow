@@ -11,13 +11,15 @@ name: E2E performance gates
 # took effect: a gate that silently did not apply fails the job
 # (test/e2e/perf-gates-on.sh and the steps after each leg).
 #
-# Not on pull requests: the runner queue is saturated and the k3d leg costs
-# about fifteen minutes. Pushes to main and release-* carry it, and it can be
-# started by hand. cut-release.sh judges every workflow run of the commit it
-# tags, so on release-* this is one of the runs a patch cut waits for.
+# Nightly on main and on rc tags, not per push: the runner queue is saturated
+# and the k3d leg costs about fifteen minutes. On a release-X.Y branch, start it
+# by hand (workflow_dispatch) on the commit to be cut, since a scheduled run
+# only covers the default branch and the rc tag's run comes after the cut.
 on:
+  schedule:
+    - cron: "0 4 * * *"
   push:
-    branches: [main, "release-*"]
+    tags: ["v*-rc.*"]
   workflow_dispatch:
 
 permissions:
@@ -222,6 +224,7 @@ jobs:
       SERVER_LOG: ${{ github.workspace }}/e2e-gates-server.log
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/docker-hub-mirror
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}

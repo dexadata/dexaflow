@@ -372,6 +372,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DAG" }
+        "400":
+          description: The body does not set is_paused, the only field this route changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v2/dags/{dag_id}/dagVersions:
     parameters:
@@ -991,6 +996,10 @@ components:
 
     DAGUpdate:
       type: object
+      description: >-
+        is_paused must be present; a body without it is refused with 400. It
+        is not listed under required so the generated Go client keeps the
+        field a pointer.
       properties:
         is_paused: { type: boolean }
 

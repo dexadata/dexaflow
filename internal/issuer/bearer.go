@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // ErrBearerDisabled is a bearer presented while Config.BearerAudiences is
@@ -51,8 +53,30 @@ func (v *Verifier) VerifyBearer(ctx context.Context, raw string) (*Identity, err
 	if slices.Contains(tok.Audience, v.cfg.Audience) || !slices.ContainsFunc(tok.Audience, v.bearerAudience) {
 		return nil, fmt.Errorf("%w: audience %v is not a bearer audience", ErrInvalidToken, tok.Audience)
 	}
-	id, _, err := v.identity(tok, v.cfg.BearerMaxLifetime)
-	return id, err
+	id, claims, err := v.identity(tok, v.cfg.BearerMaxLifetime)
+	if err != nil {
+		return nil, err
+	}
+	if id.Scopes, err = bearerScopes(claims); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+// bearerScopes reads the OAuth scope claim, a space-separated string (RFC
+// 9068). A token without one may only read (ADR 0067), so tokens minted
+// before scopes existed keep reading and nothing more; an issuer opts in to
+// anything else explicitly. A claim of another type is refused.
+func bearerScopes(claims map[string]any) ([]string, error) {
+	raw, present := claims["scope"]
+	if !present {
+		return []string{auth.ScopeRead}, nil
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return nil, fmt.Errorf("%w: scope claim is %T, want a space-separated string", ErrInvalidToken, raw)
+	}
+	return append([]string{}, strings.Fields(s)...), nil
 }
 
 // precheckBearer reads raw's payload without verifying it and refuses a

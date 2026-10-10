@@ -167,7 +167,8 @@ ADR 0020 has the reasoning.
 ## The external load uses a managed Connection
 
 The `load` target is a **Dexaflow Connection** (`etl_target`), created in
-Admin → Connections — encrypted at rest (ADR 0019) and **injected into the pod as
+Admin → Connections, encrypted at rest (ADR 0019; on Lite read
+[what that protects](/author-dags/variables-connections/#encryption-at-rest-on-lite)) and **injected into the pod as
 `AIRFLOW_CONN_ETL_TARGET` over an authenticated gRPC pull** (ADR 0021), so the
 secret never appears in the pod spec. The task log confirms it:
 
