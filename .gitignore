@@ -7,6 +7,8 @@
 CLAUDE.md
 CLAUDE.local.md
 .github/CLAUDE.md.template
+.github/copilot-instructions.md
+.local/
 GEMINI.md
 COPILOT.md
 .cursorrules
