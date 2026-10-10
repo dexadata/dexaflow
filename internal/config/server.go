@@ -466,6 +466,17 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// ReadTimeout bounds reading a whole request, headers and body, on the API
+	// and metrics listeners: a slow client cannot hold a connection open by
+	// trickling a body. Set it above the slowest legitimate upload. It never
+	// limits a response: net/http lifts the read deadline once the body is
+	// read, so live log tails are unaffected. 0 (the default, ADR 0062 gate)
+	// means no limit, as before.
+	ReadTimeout time.Duration `mapstructure:"read_timeout"`
+	// IdleTimeout closes a keep-alive connection that has been idle this long.
+	// 0 (the default) keeps idle connections open, as before, even when
+	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
+	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
 	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
 	// only: create, resize and delete answer 403 for every role, tenant admin
 	// included. It is for an engine shared by many tenants, where the platform
@@ -1102,6 +1113,9 @@ var serverDefaults = map[string]any{
 	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
+	"server.read_timeout": "0s",
+	"server.idle_timeout": "0s",
 	// Trace sampling gates (ADR 0062): the defaults trace every request.
 	"observability.otel.sample_ratio":     1.0,
 	"observability.otel.skip_probe_spans": false,
@@ -1807,6 +1821,12 @@ func isLoopbackHost(host string) bool {
 // validateRole rejects an unknown server.role (ADR 0049). Empty is valid (defaults
 // to "all"). A typo like "worker" is a loud boot failure, not a silent monolith.
 func (c *ServerConfig) validateRole() error {
+	// The listener timeouts are validated with the role: both shape how this
+	// process serves HTTP. A negative duration is a typo, not "off".
+	if c.Server.ReadTimeout < 0 || c.Server.IdleTimeout < 0 {
+		return fmt.Errorf("server.read_timeout (%v) and server.idle_timeout (%v) must not be negative; 0 disables them",
+			c.Server.ReadTimeout, c.Server.IdleTimeout)
+	}
 	switch c.Server.Role {
 	case "", RoleAll, RoleAPI, RoleScheduler:
 		return nil
