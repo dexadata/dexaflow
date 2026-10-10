@@ -96,6 +96,16 @@ The HTTP transport serves `POST /mcp` (plus `GET /healthz`) and is **stateless**
 identity is a **per-request bearer**, never an ambient process token (ADR 0050 D9).
 A request without an `Authorization: Bearer <jwt>` header is refused — the server
 never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mode.
+
+Each release also publishes the server as a signed image,
+`ghcr.io/dexadata/dexaflow-mcp:v<version>` (see
+[Published images](/reference/published-images/)), whose entrypoint is
+`dexaflow-mcp`. Pin it by digest and pass the same flags as arguments:
+
+```bash
+docker run --rm -p 9099:9099 ghcr.io/dexadata/dexaflow-mcp:v<version>@sha256:<digest> \
+  --transport http --listen :9099 --server https://leoflow.internal
+```
 {{% /tab %}}
 {{< /tabpane >}}
 
