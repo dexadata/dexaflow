@@ -466,6 +466,11 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// MaxPageLimit caps the `limit` a list endpoint accepts, and the
+	// `dag_runs_limit` of /ui/dags; a larger value is served as the cap, like
+	// Airflow's [api] maximum_page_limit. 0 (the default, ADR 0062 gate) keeps
+	// today's behavior: no cap.
+	MaxPageLimit int `mapstructure:"max_page_limit"`
 	// ReadTimeout bounds reading a whole request, headers and body, on the API
 	// and metrics listeners: a slow client cannot hold a connection open by
 	// trickling a body. Set it above the slowest legitimate upload. It never
@@ -1113,6 +1118,8 @@ var serverDefaults = map[string]any{
 	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
+	"server.max_page_limit": 0,
 	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
 	"server.read_timeout": "0s",
 	"server.idle_timeout": "0s",
@@ -1241,6 +1248,18 @@ const (
 	AgentTokenTransportExchange = "exchange"
 )
 
+// validateNonNegative refuses settings where a negative value would silently
+// read as "off" instead of failing boot.
+func (c *ServerConfig) validateNonNegative() error {
+	if c.Server.MaxPageLimit < 0 {
+		return fmt.Errorf("server.max_page_limit must not be negative (got %d); 0 leaves list pages uncapped", c.Server.MaxPageLimit)
+	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
+	return nil
+}
+
 // Validate reports configuration errors that must abort startup.
 func (c *ServerConfig) Validate() error {
 	if err := c.validateRole(); err != nil {
@@ -1252,8 +1271,8 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateLogs(); err != nil {
 		return err
 	}
-	if c.Scheduler.PoolStarvationThreshold < 0 {
-		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	if err := c.validateNonNegative(); err != nil {
+		return err
 	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err

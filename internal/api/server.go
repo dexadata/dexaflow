@@ -44,6 +44,10 @@ type Dependencies struct {
 	// CIDR so per-client rate-limiting and audit see the real client.
 	TrustedProxies []string
 	TokenTTLSecs   int
+	// MaxPageLimit (server.max_page_limit) caps the limit of every list
+	// endpoint and the dag_runs_limit of /ui/dags. Non-positive (the default)
+	// leaves them uncapped.
+	MaxPageLimit int
 	// TokenRenewer re-mints a still-valid user bearer with a fresh short TTL so a
 	// long CLI/dev session need not re-login every TokenTTLSecs (aresta #5). Nil
 	// leaves the renew route unregistered (renewal simply unavailable). In practice
@@ -228,6 +232,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(RejectEncodedPathSeparators())
 	r.Use(CORS(deps.CORSOrigins))
 	r.Use(NoStoreOnVolatileRoutes())
+	if deps.MaxPageLimit > 0 {
+		r.Use(maxPageLimit(deps.MaxPageLimit))
+	}
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {
