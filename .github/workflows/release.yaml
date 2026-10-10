@@ -547,7 +547,7 @@ jobs:
   # Verifying the `:v<tag>` manifest is sufficient: it and the un-prefixed
   # `:<version>` manifest resolve to the same digest, and both were signed.
   verify-server-signature:
-    name: Verify dexaflow-server image signature
+    name: Verify dexaflow-server and dexaflow-mcp image signatures
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -577,6 +577,19 @@ jobs:
           # second retry policy that drifts from it. verify fetches the Sigstore
           # TUF root and talks to Rekor and Fulcio, none of which we control, and
           # an unretried flake here retracts the release to a draft (#983).
+          ./scripts/cosign-retry.sh verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
+            "${IMAGE}"
+
+      - name: cosign verify dexaflow-mcp
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-mcp:${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Signed by the same docker_signs block as the server image, so the
+          # same identity pins apply.
           ./scripts/cosign-retry.sh verify \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
