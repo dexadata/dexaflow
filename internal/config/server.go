@@ -466,6 +466,15 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// GzipResponses gzips JSON and NDJSON responses of 1 KB or more on the API
+	// and UI surfaces for clients that accept it. Log routes and anything that
+	// flushes (live tails, SSE) stay uncompressed. Routes that return secrets,
+	// tokens or code (variables, connections, XComs, auth and the UI session
+	// token, IDE files, DAG sources, a single task instance) also stay uncompressed:
+	// compressing a secret next to reflected input lets its length leak the
+	// secret (BREACH). Other JSON can still echo request input next to private
+	// data, which is the trade-off of turning this on. Off by default (ADR 0062).
+	GzipResponses bool `mapstructure:"gzip_responses"`
 	// MaxPageLimit caps the `limit` a list endpoint accepts, and the
 	// `dag_runs_limit` of /ui/dags; a larger value is served as the cap, like
 	// Airflow's [api] maximum_page_limit. 0 (the default, ADR 0062 gate) keeps
@@ -1118,6 +1127,8 @@ var serverDefaults = map[string]any{
 	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): false sends every API body uncompressed, as before.
+	"server.gzip_responses": false,
 	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
 	"server.max_page_limit": 0,
 	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
