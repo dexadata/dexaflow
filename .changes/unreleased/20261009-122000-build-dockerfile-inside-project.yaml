@@ -1,0 +1,15 @@
+kind: Security
+body: |-
+  **`build.dockerfile` can no longer point outside the project.** The value was
+  joined onto the project directory as written, so `../../other/Dockerfile`
+  built the image from a file outside the project, which nobody reviewed with
+  `dexaflow.yaml`, and skipped every check the generated Dockerfile gets: the
+  one documented way around them. `dexaflow validate` and `compile` now refuse
+  an absolute `build.dockerfile` or one that escapes the project through `..`,
+  naming the entry, as `include_paths` and `dbt.project` already did, and
+  `compile --build` also refuses one that a symlink leads out of the project.
+  A relative path inside the project, a symlink that stays inside it, and a
+  project directory reached through a symlink keep working, and a missing file
+  still falls back to the generated Dockerfile. The `--dockerfile` flag is not
+  affected. (#1272)
+time: 2026-10-09T12:20:00.000000000-03:00

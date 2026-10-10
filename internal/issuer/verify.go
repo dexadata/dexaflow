@@ -82,6 +82,9 @@ type Identity struct {
 	Subject string
 	Email   string
 	Tenant  string
+	// Scopes are a bearer token's OAuth scopes (ADR 0067); nil for a handoff
+	// token, whose session is not scoped.
+	Scopes []string
 }
 
 // Verifier checks tokens against one trusted issuer.

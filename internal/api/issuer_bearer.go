@@ -64,7 +64,12 @@ func (a *issuerBearerAuth) authenticate(ctx context.Context, raw string) (*auth.
 		}
 		return nil, fmt.Errorf("%w: %s", auth.ErrInvalidToken, reason)
 	}
-	return user, nil
+	// The token's scopes narrow this request only (ADR 0067). Copy the row so
+	// they never ride back into whatever the store hands out next.
+	scoped := *user
+	scoped.Scoped = true
+	scoped.Scopes = id.Scopes
+	return &scoped, nil
 }
 
 // linkedUser finds the active user an issuer identity is linked to, in the
