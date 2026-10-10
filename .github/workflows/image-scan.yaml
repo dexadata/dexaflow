@@ -123,7 +123,6 @@ jobs:
       issues: write            # create/update the single tracking issue
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/docker-hub-mirror
 
       # Which Python lines we publish is decided in ONE place (#1031): the
       # `python_version` enum in the authoring schema. A base image we publish
@@ -171,6 +170,10 @@ jobs:
       # One DB pull for every scan below.
       - name: Warm the vulnerability database
         run: trivy image --download-db-only
+
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: ${{ env.PY_LINES }}
 
       - name: Build images
         run: |
