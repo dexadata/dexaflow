@@ -1,8 +1,0 @@
-kind: Changed
-body: |-
-  **The control-plane container now runs with a read-only root filesystem.**
-  The chart sets `securityContext.readOnlyRootFilesystem: true` and mounts an
-  `emptyDir` at `/tmp` for the Go temp dir, which with the logs volume is all
-  the server writes. Set `securityContext.readOnlyRootFilesystem: false` if you
-  add a sidecar or plugin that writes elsewhere in the image (#1225).
-time: 2026-10-09T14:30:00.000000000-03:00
