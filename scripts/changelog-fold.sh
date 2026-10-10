@@ -264,6 +264,7 @@ dry_run=0
 if [ "${1:-}" = "--dry-run" ]; then dry_run=1; shift; fi
 
 rendered=""
+fragments=()
 case "${1:-}" in
 	--render)
 		rendered="${2:-}"
@@ -332,13 +333,13 @@ if [ "$dry_run" -eq 1 ]; then
 	cat "$merged"
 	rm -f "$merged"
 	printf 'dry run: %s fragment(s) would be folded and removed; nothing was changed.\n' \
-		"${#fragments[@]:-0}" >&2
+		"${#fragments[@]}" >&2
 	exit 0
 fi
 
 mv "$merged" "$CHANGELOG"
 
-if [ "${#fragments[@]:-0}" -gt 0 ]; then
+if [ "${#fragments[@]}" -gt 0 ]; then
 	rm -f "${fragments[@]}"
 	echo "OK: folded ${#fragments[@]} fragment(s) into [Unreleased] and removed them."
 else
