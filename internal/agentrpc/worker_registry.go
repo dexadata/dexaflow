@@ -129,6 +129,9 @@ type WorkerRegistry struct {
 	leases  map[string]*leaseState
 
 	onReclaim func(ReclaimEvent)
+	// onClaim, when set, runs after a started ack's binding is persisted, so the
+	// pool reconciler can refill the idle buffer at once (event-driven refill).
+	onClaim func()
 	// leaseFor computes an assignment's ack deadline. Injectable so tests drive
 	// reclaim deterministically with a tiny lease.
 	leaseFor func(*agentv1.WorkAssignment) time.Duration
@@ -148,6 +151,25 @@ func NewWorkerRegistry(onReclaim func(ReclaimEvent)) *WorkerRegistry {
 			return time.Duration(a.GetLeaseSeconds()) * time.Second
 		},
 		now: time.Now,
+	}
+}
+
+// SetOnClaim sets the hook run each time a warm worker is claimed by a started
+// attempt (after the binding that makes it count as busy is persisted). It must
+// not block; nil disables it. Safe to call while the registry serves workers.
+func (r *WorkerRegistry) SetOnClaim(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onClaim = fn
+}
+
+// claimed runs the onClaim hook, if any, outside the registry lock.
+func (r *WorkerRegistry) claimed() {
+	r.mu.Lock()
+	fn := r.onClaim
+	r.mu.Unlock()
+	if fn != nil {
+		fn()
 	}
 }
 

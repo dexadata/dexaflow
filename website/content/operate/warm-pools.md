@@ -205,7 +205,18 @@ flowchart TB
 1. **Provision.** The reconciler keeps `EffectiveMinIdle` warm pods per DAG version
    ready (the DAG's declared warmth, clamped by the operator's floor and per-version
    cap). With the default `minIdleWorkers: 0`, that target is zero until an attempt
-   demands a pod.
+   demands a pod. By default the reconciler checks every 30 seconds. With
+   `warmPoolEventRefill: true` it also reacts at once when a warm pod is deleted,
+   fails, or is claimed by an attempt, reads the fleet from a pod informer instead
+   of listing pods each time, and creates replacements in parallel; before it
+   deletes any GC anchor (a drained version's, or an orphan's) it still confirms
+   with a live list. Event-driven reconciles run at most once a second. A create
+   counts against its version's target and its tenant's `maxWarmPodsPerTenant`
+   until the informer shows that exact pod, and the reconciler re-reads the
+   fleet live when a create was never observed and at least every 5 minutes.
+   After a live read it keeps reading live until the informer holds (or saw
+   deleted) every pod that read returned, so a lagging or stale cache, a hung
+   watch included, cannot overshoot either bound.
 2. **AwaitAssignment.** Each warm pod opens a long-lived bidirectional gRPC stream
    (`AwaitAssignment`) and **registers** under its authenticated identity, naming
    its `dag_version` and pod name. Work assignments flow down the stream; acks and
@@ -526,6 +537,7 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `maxWorkerLifetime` | `MAX_WORKER_LIFETIME` | duration | `1h` | Wall-clock ceiling on a worker before it drains + recycles, independent of attempt count. Must be > 0. |
 | `workerIdleTtl` | `WORKER_IDLE_TTL` | duration | `5m` | How long an idle worker is kept before recycle. Must be > 0. |
 | `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; promised idle floors are always honored. Must be ≥ 1. |
+| `warmPoolEventRefill` | `WARM_POOL_EVENT_REFILL` | bool | `false` | Event-driven refill from a warm-pod informer, with parallel creates (up to 4). Off = the 30s polling reconciler with a pod list per tick. |
 | `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` and `/dev/shm` emptied around each attempt (see [isolation](#isolation-between-attempts)). Applies to warm pods created after it is turned on. Dedicated task pods are not affected. |
 
 Durations accept Go duration strings (`"90s"`, `"5m"`, `"1h"`). When

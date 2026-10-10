@@ -523,6 +523,12 @@ spec:
               value: {{ .ctx.Values.execution.workerIdleTtl | quote }}
             - name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
               value: {{ .ctx.Values.execution.maxWarmPodsPerTenant | quote }}
+            {{- if .ctx.Values.execution.warmPoolEventRefill }}
+            # Stamped only when on, so enabling warm pools alone renders the same
+            # env it did before this knob existed (the server default is false).
+            - name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+              value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
+            {{- end }}
             {{- if .ctx.Values.execution.warmReadOnlyRootFilesystem }}
             # Stamped only when on, so enabling warm pools alone renders the same
             # env it did before this knob existed (the server default is false).
