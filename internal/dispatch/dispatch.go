@@ -340,7 +340,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// resolution). Such a task takes the dedicated path below, which sets its own SA —
 	// the same degrade-not-strand exclusion as staging (ADR 0058 D5).
 	// With a resource unit a warm pod is one unit, so only a task of size 1
-	// that declares no resources fits on it (ADR 0066 §3).
+	// that declares no resources fits on it (ADR 0066 §3). A task that declares
+	// its own placement or pod metadata (node selector, runtime class, labels,
+	// ...) takes the dedicated path too (warmPlacementCompatible).
 	// A source-mode attempt never goes warm either (ADR 0067 §3): a warm pod is
 	// built before its task is known, so it cannot carry the task's dag.py.
 	if d.placer != nil && !sourceMode && d.warmEligible(r, task) {
@@ -435,12 +437,36 @@ func (d *Dispatcher) checkUnit(runID, dagID string, task domain.TaskSpec) error 
 }
 
 // warmEligible reports whether an attempt may go to a warm worker: no
-// staging, the warm ServiceAccount, and, with a resource unit, a size-1 task
-// without resources, since a warm pod is one unit.
+// staging, the warm ServiceAccount, none of its own placement or pod metadata,
+// and, with a resource unit, a size-1 task without resources, since a warm pod
+// is one unit.
 func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
 	return (r.Staging == nil || !r.Staging.Enabled) &&
 		warmSACompatible(task, d.defaultTaskServiceAccount) &&
+		warmPlacementCompatible(task) &&
 		d.defaults.Unit.WarmEligible(task)
+}
+
+// warmPlacementCompatible reports whether a task can run on a warm worker as it
+// would on its dedicated pod. A warm worker is created before any task is known,
+// so it carries none of the placement fields and pod metadata BuildPod applies
+// from a task's execution block: node selector, tolerations, affinity, topology
+// spread, priority and runtime class, termination grace, DRA claims, labels and
+// annotations. Placed on a warm worker, such a task would run on the wrong
+// node, outside the sandbox its runtime class asks for (gVisor), without its
+// device, or outside the NetworkPolicy its labels select, with no error. It
+// takes the dedicated path instead, like staging and a pinned ServiceAccount.
+// The image pull policy is the one field left out: it only matters before the
+// container starts, and the warm image is the dag_version's.
+func warmPlacementCompatible(task domain.TaskSpec) bool {
+	e := task.Execution
+	if e == nil {
+		return true
+	}
+	return len(e.NodeSelector) == 0 && len(e.Tolerations) == 0 && len(e.Affinity) == 0 &&
+		len(e.TopologySpreadConstraints) == 0 && e.PriorityClassName == "" &&
+		e.RuntimeClassName == nil && e.TerminationGracePeriodSeconds == nil &&
+		len(e.ResourceClaims) == 0 && len(e.Labels) == 0 && len(e.Annotations) == 0
 }
 
 // taskResources picks the task pod's resources. With a resource unit the unit

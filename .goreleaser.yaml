@@ -141,6 +141,33 @@ dockers:
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
 
+  # The MCP server (cmd/dexaflow-mcp), so a platform that runs it beside the
+  # control plane pins a signed image by digest instead of building its own.
+  # New name only: it never shipped as leoflow-mcp.
+  - id: mcp-amd64
+    ids: [dexaflow-mcp]
+    goarch: amd64
+    dockerfile: deploy/Dockerfile.mcp.release
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
+  - id: mcp-arm64
+    ids: [dexaflow-mcp]
+    goarch: arm64
+    dockerfile: deploy/Dockerfile.mcp.release
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
 docker_manifests:
   - name_template: "ghcr.io/dexadata/dexaflow-server:{{ .Version }}"
     image_templates:
@@ -161,8 +188,16 @@ docker_manifests:
     image_templates:
       - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-amd64"
       - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-arm64"
 
-# Cosign keyless signing of the control-plane image. `artifacts: manifests`
+# Cosign keyless signing of the control-plane and MCP images. `artifacts: manifests`
 # signs each multi-arch manifest (`:{{ .Version }}` and `:v{{ .Version }}`) by
 # its digest — the reference an operator actually pulls — so both tag shapes are
 # covered. GoReleaser resolves the pushed manifest digest and substitutes it for
