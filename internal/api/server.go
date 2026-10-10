@@ -324,8 +324,10 @@ func NewServer(deps Dependencies) *gin.Engine {
 			insecureCookies: deps.SessionCookieInsecure,
 		}))
 	}
-	r.GET("/api/v2/monitor/health", monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
-	r.GET("/api/v2/monitor/executor", monitorExecutorHandler(deps.ExecutorInfo))
+	// Any signed-in user may read these; a scoped token needs dexaflow:read
+	// (ADR 0067). The MCP's health resource reads all three.
+	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
+	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.ExecutorInfo))
 
 	registerResources(r, deps)
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)

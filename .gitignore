@@ -1,10 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────
 # Agent context files
-# AGENTS.md and CLAUDE.md at the root are committed: they carry the standing
-# repository rules. Personal, experimental, or evolving instructions go in the
-# local files below, which are not part of the public repository contract.
+# AGENTS.md at the root is committed: it carries the standing repository rules.
+# Tool-specific context files stay local and are not part of the public
+# repository contract.
 # ─────────────────────────────────────────────────────────────────────────
+CLAUDE.md
 CLAUDE.local.md
+.github/CLAUDE.md.template
 GEMINI.md
 COPILOT.md
 .cursorrules
