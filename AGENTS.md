@@ -2,10 +2,11 @@
 
 Standing rules for everyone who changes this repository: maintainers, contributors
 and automated agents alike. Read this file before opening a pull request or cutting
-a release. Codebase context (architecture, tech stack, code conventions, testing
-discipline) lives in [`.github/CLAUDE.md.template`](.github/CLAUDE.md.template);
-the release mechanics live in [`RELEASING.md`](RELEASING.md). When this file and
-an ADR disagree, the ADR wins and this file gets fixed.
+a release. The project principles, code conventions and testing discipline are in
+section 3; the architecture is described on the
+[docs site](https://dexaflow.dexadata.ai/concepts/architecture/), and the release
+mechanics live in [`RELEASING.md`](RELEASING.md). When this file and an ADR
+disagree, the ADR wins and this file gets fixed.
 
 ## 1. Release candidate reviews
 
@@ -106,3 +107,69 @@ The Actions queue has few runners, so every wasted run delays everyone.
 - Follow the PR template (`.github/PULL_REQUEST_TEMPLATE.md`): one logical change
   per PR, a changelog fragment (`make changelog`) or the `skip-changelog` label,
   docs updated or `skip-docs` with its reason.
+
+## 3. Principles and conventions
+
+### Project principles
+
+1. **English everywhere.** Code, comments, commit messages, documentation and
+   identifiers are in English.
+2. **Strict TDD.** Production code is written in response to a failing test:
+   write the test, run it, see it fail, implement, see it pass, refactor. See
+   [ADR 0011](https://dexaflow.dexadata.ai/project/adrs/0011-tdd-strict/).
+3. **Go Report Card A+ is the quality floor.** Every commit keeps gofmt, govet,
+   gocyclo (max 15), GoDocs on all exports, ineffassign, misspell and license at
+   100%, plus the golangci-lint stack in `.golangci.yaml` (ADR 0012).
+4. **GoDocs on every exported identifier,** starting with the identifier name and
+   ending with a period.
+5. **No Python in the hot path.** Python runs only in the DAG parser sidecar and
+   inside user task containers.
+6. **DAGs are immutable artifacts:** a `dag.json` and a container image, versioned
+   together, never mutated after compilation.
+7. **Each DAG has its own container image.** No shared `/dags` filesystem and no
+   monolithic worker image.
+8. **The Airflow UI is a hard compatibility target.** The HTTP API at `/api/v2/`
+   matches Airflow 3.2.x semantics; internal models can be richer, but the public
+   API speaks Airflow's vocabulary. Never break that surface.
+9. **Enterprise architecture, simple implementations.** Schemas, interfaces and
+   middleware are built for production from day one; implementations start simple.
+10. **Observability is not optional.** Prometheus metrics, OpenTelemetry tracing
+    and structured logs ship with every feature.
+11. **Supply chain security is built in.** govulncheck, gosec, Trivy and CodeQL run
+    on every PR (ADR 0014). A new dependency is a new supply chain surface: it must
+    be clean under `make vuln` and tracked by Dependabot.
+12. **`dexaflow.yaml` is the authoring standard.** The compiler generates the
+    Dockerfile. A hand-written Dockerfile is a supported escape hatch (ADR 0003),
+    never the default in examples, docs or tests.
+13. **ADRs are immutable once accepted.** Read the ADRs of an area before changing
+    it; a new decision gets a new ADR.
+
+### Code conventions
+
+- **Package names:** lowercase, one word, no underscores.
+- **Errors:** wrap with context (`fmt.Errorf("doing X: %w", err)`); never swallow
+  an error.
+- **Logging:** `log/slog` with structured fields; no `fmt.Println` in production
+  code.
+- **Context:** every function that does I/O takes `context.Context` first.
+- **Tests:** integration tests carry the `//go:build integration` tag; coverage
+  floors are enforced in CI (ADR 0011).
+- **No global state** except metrics registries and configuration
+  (`internal/config`).
+- **Interfaces live near their consumers,** in the package that uses them.
+
+### Testing discipline
+
+- **Show the result.** `make lint` and `go test ./...` run before a change is
+  called done, and the output is what proves it.
+- **Test the documented path.** A test that bypasses the path users take (a
+  hand-written Dockerfile, an overridden environment variable, a fixture that
+  never imports `dag.py`) proves nothing about that path.
+- **Mutation-test every new assertion.** Revert the fix, watch the test fail,
+  restore it, and check that the mutation actually applied.
+- **Lock the wiring, not the leaf.** Drive the real entry point and assert on its
+  output; bugs cluster where a correct helper gets a wrong input.
+- **A comment that describes behavior the code does not have is a bug.** When
+  behavior changes, search for the sentences that described the old behavior.
+- **Read the exit code you think you read.** `cmd | head` reports the status of
+  `head`; an empty filter output is not a pass.

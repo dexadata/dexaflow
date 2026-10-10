@@ -55,6 +55,11 @@ type isolationFixture struct {
 	aMarker string
 	// bMarkers are strings only tenant B's data holds; none may reach A.
 	bMarkers []string
+	// sessB is tenant B's admin, for the cases that need something only B
+	// can make (a plan); repo and tenantB read B's state back directly.
+	sessB   *mcpsdk.ClientSession
+	repo    *storage.Repository
+	tenantB string
 }
 
 func newIsolationFixture(t *testing.T) *isolationFixture {
@@ -116,7 +121,54 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		t.Fatal(err)
 	}
 	f.sess = connectMCP(t, apiSrv.URL, token)
+
+	userB, err := repo.CreateUser(ctx, tenantB, fmt.Sprintf("admin-%d@b.example", n), "pw-not-used-here", []string{"admin"})
+	if err != nil {
+		t.Fatalf("create tenant B admin: %v", err)
+	}
+	tokenB, err := auth.MintUserToken(isolationSecret, time.Hour, auth.User{ID: userB.ID, TenantID: tenantB, Email: userB.Email, Roles: userB.Roles})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sessB, f.repo, f.tenantB = connectMCP(t, apiSrv.URL, tokenB), repo, tenantB
 	return f
+}
+
+// bState renders what tenant A's run control must never change in tenant B:
+// its own DAG's paused flag and run count, and the task instances of both of
+// its r1 runs.
+func (f *isolationFixture) bState(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	dag, err := f.repo.GetDag(ctx, f.tenantB, f.bOnly)
+	if err != nil {
+		t.Fatalf("read tenant B's DAG: %v", err)
+	}
+	_, runs, err := f.repo.ListDagRuns(ctx, f.tenantB, f.bOnly, 100, 0)
+	if err != nil {
+		t.Fatalf("read tenant B's runs: %v", err)
+	}
+	state := fmt.Sprintf("paused=%v runs=%d", dag.IsPaused, runs)
+	for _, dagID := range []string{f.shared, f.bOnly} {
+		tis, _, err := f.repo.ListTaskInstances(ctx, f.tenantB, dagID, "r1", 100, 0)
+		if err != nil {
+			t.Fatalf("read tenant B's task instances: %v", err)
+		}
+		for _, ti := range tis {
+			state += fmt.Sprintf(" %s/%s=%s#%d", dagID, ti.TaskID, ti.State, ti.TryNumber)
+		}
+	}
+	return state
+}
+
+// assertBUnchanged runs act, then fails if tenant B's state moved.
+func (f *isolationFixture) assertBUnchanged(t *testing.T, act func()) {
+	t.Helper()
+	before := f.bState(t)
+	act()
+	if after := f.bState(t); after != before {
+		t.Errorf("tenant B changed:\n before %s\n after  %s", before, after)
+	}
 }
 
 // isolationSeed writes one tenant's data straight through the repository, the
@@ -411,6 +463,53 @@ func isolationCases() map[string]func(*testing.T, *isolationFixture) {
 				t.Errorf("pipeline_health_today is not tenant A's runs alone:\n%s", o.text)
 			}
 		},
+		// Run control: tenant A's token aimed at tenant B's ids is refused,
+		// and tenant B's state does not move.
+		"trigger_run": func(t *testing.T, f *isolationFixture) {
+			f.assertBUnchanged(t, func() {
+				f.assertNothing(t, f.callTool(t, "trigger_run", map[string]any{"dag_id": f.bOnly}))
+			})
+		},
+		"pause_dag": func(t *testing.T, f *isolationFixture) {
+			f.assertBUnchanged(t, func() {
+				f.assertNothing(t, f.callTool(t, "pause_dag", map[string]any{"dag_id": f.bOnly}))
+			})
+		},
+		"unpause_dag": func(t *testing.T, f *isolationFixture) {
+			f.assertBUnchanged(t, func() {
+				f.assertNothing(t, f.callTool(t, "unpause_dag", map[string]any{"dag_id": f.bOnly}))
+			})
+		},
+		"clear_task": func(t *testing.T, f *isolationFixture) {
+			f.assertBUnchanged(t, func() {
+				// The control plane previews a clear of a DAG the caller's
+				// tenant does not own as an empty set, not a 404.
+				f.assertEmpty(t, f.callTool(t, "clear_task", map[string]any{"dag_id": f.bOnly, "run_id": "r1", "only_failed": false}), "Nothing to clear")
+				// The shared DAG id resolves to tenant A's DAG, which has no
+				// bTask: nothing to clear, and B's failed bTask stays failed.
+				f.assertEmpty(t, f.callTool(t, "clear_task", map[string]any{"dag_id": f.shared, "run_id": "r1", "task_ids": []string{f.bTask}}), "Nothing to clear")
+			})
+		},
+		"apply_plan": func(t *testing.T, f *isolationFixture) {
+			// Tenant B plans a clear of its own two failed task instances;
+			// tenant A, handed the plan_id, cannot apply it.
+			res, err := f.sessB.CallTool(context.Background(), &mcpsdk.CallToolParams{
+				Name: "clear_task", Arguments: map[string]any{"dag_id": f.shared, "run_id": "r1"},
+			})
+			if err != nil || res.IsError {
+				t.Fatalf("tenant B's clear_task = %+v, %v; want a plan", res, err)
+			}
+			var planned struct {
+				PlanID string `json:"plan_id"`
+			}
+			b, _ := json.Marshal(res.StructuredContent)
+			if err := json.Unmarshal(b, &planned); err != nil || planned.PlanID == "" {
+				t.Fatalf("tenant B's clear_task returned no plan_id: %s", b)
+			}
+			f.assertBUnchanged(t, func() {
+				f.assertNothing(t, f.callTool(t, "apply_plan", map[string]any{"plan_id": planned.PlanID}))
+			})
+		},
 		"dag://spec/{dag_id}": func(t *testing.T, f *isolationFixture) {
 			o := f.readResource(t, "dag://spec/"+f.shared)
 			f.assertNoLeak(t, o)
@@ -457,8 +556,12 @@ const promptCase = "prompt:"
 // isolationServerOptions turns on every option that registers more, so all
 // of it is enumerated by TestMCPTenantIsolation.
 func isolationServerOptions() []mcp.Option {
-	return []mcp.Option{mcp.WithUIBaseURL("https://ui.example")}
+	return []mcp.Option{mcp.WithUIBaseURL("https://ui.example"), mcp.WithRunControl([]byte(isolationPlanKey))}
 }
+
+// isolationPlanKey signs run control plans; both tenants' sessions share it,
+// as every replica of a shared engine does.
+const isolationPlanKey = "tenant-isolation-plan-key-0123456789"
 
 // registeredNames lists every tool name, resource URI, resource template and
 // prompt (as promptCase + name) the server advertises to a client.
