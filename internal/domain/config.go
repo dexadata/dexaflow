@@ -281,5 +281,11 @@ func (c *LeoflowConfig) Validate() error {
 	if err := c.validateAlertTemplates(); err != nil {
 		return err
 	}
-	return c.validateDbtProject()
+	if err := c.validateDbtProject(); err != nil {
+		return err
+	}
+	if err := c.validateBuildDockerfile(); err != nil {
+		return err
+	}
+	return c.ValidateDockerfileValues()
 }

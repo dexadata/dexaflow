@@ -182,7 +182,8 @@ and so was never requested at all.
 {{% /alert %}}
 
 Set `connection:` to a Dexaflow connection id. Dexaflow delivers the connection to
-the pod (encrypted at rest, decrypted in-pod) and the runtime **generates
+the pod (encrypted at rest, decrypted in-pod; on Lite read
+[what that protects](/author-dags/variables-connections/#encryption-at-rest-on-lite)) and the runtime **generates
 `profiles.yml`** before dbt runs — **no credential is ever baked into the image**.
 
 ```yaml
