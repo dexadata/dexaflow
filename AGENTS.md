@@ -28,7 +28,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    (`make test-integration`), and the fixes of the previous patches still holding.
 4. **End to end.** The E2E suites ran green on the candidate's commit: E2E Lite,
    the k3d e2es (`make rc-smoke`), and the performance gates workflow
-   (`.github/workflows/e2e-gates.yaml`).
+   (`.github/workflows/e2e-gates.yaml`). That workflow and the soak smoke run
+   nightly on `main` and on rc tags only, so start both by hand
+   (`workflow_dispatch`) on the `release-X.Y` commit before the cut.
 5. **UI with Playwright.** When the candidate changes anything the browser shows
    (embedded UI assets, `/api/v2/` responses the UI reads, sign-in, login or SSO),
    the Playwright flows (`test/e2e/ui-smoke.js`, `make e2e-sso`,

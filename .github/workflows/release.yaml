@@ -43,11 +43,11 @@ jobs:
           cosign-release: v2.4.3
 
       # ── syft for SBOM generation ──
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       # ── QEMU + Buildx so the arm64 control-plane image builds on the amd64 runner ──
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -140,7 +140,7 @@ jobs:
           cosign-release: v2.4.3
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -241,7 +241,7 @@ jobs:
           cosign-release: v2.4.3
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -547,7 +547,7 @@ jobs:
   # Verifying the `:v<tag>` manifest is sufficient: it and the un-prefixed
   # `:<version>` manifest resolve to the same digest, and both were signed.
   verify-server-signature:
-    name: Verify dexaflow-server image signature
+    name: Verify dexaflow-server and dexaflow-mcp image signatures
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -577,6 +577,19 @@ jobs:
           # second retry policy that drifts from it. verify fetches the Sigstore
           # TUF root and talks to Rekor and Fulcio, none of which we control, and
           # an unretried flake here retracts the release to a draft (#983).
+          ./scripts/cosign-retry.sh verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
+            "${IMAGE}"
+
+      - name: cosign verify dexaflow-mcp
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-mcp:${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Signed by the same docker_signs block as the server image, so the
+          # same identity pins apply.
           ./scripts/cosign-retry.sh verify \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \

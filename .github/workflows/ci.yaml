@@ -707,6 +707,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -789,6 +790,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -868,6 +870,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -997,6 +1000,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.

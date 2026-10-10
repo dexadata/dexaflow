@@ -307,3 +307,60 @@ func TestClearedAttemptSpecCarriesTheRestoredBudget(t *testing.T) {
 		t.Errorf("TaskSpec.MaxTries after clear = %d, want the row's max_tries %d (try %d); the runtime would treat a retriable failure as final", spec.MaxTries, maxTries, try)
 	}
 }
+
+// TestClearPoolSlotsFollowTheVersionThatWillRun (#1499): a cleared task
+// instance takes the pool_slots of the version its re-run executes, the size
+// the admission gate charges it, so the pools API keeps agreeing with the gate
+// after a run_on_latest_version clear re-binds the run to a version that
+// resized the task. A pinned clear keeps the run's own size, and a task the
+// executing version no longer declares keeps the size it had. Proven on all
+// three reset statements.
+func TestClearPoolSlotsFollowTheVersionThatWillRun(t *testing.T) {
+	cases := []struct {
+		name   string
+		latest bool
+		v2     []domain.TaskSpec
+		want   int
+	}{
+		{name: "pinned keeps the run's version", latest: false,
+			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, PoolSlots: 4}}, want: 2},
+		{name: "run_on_latest_version takes the current version", latest: true,
+			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, PoolSlots: 4}}, want: 4},
+		{name: "a task the current version dropped keeps its size", latest: true,
+			v2: []domain.TaskSpec{{TaskID: "other", Type: domain.TaskTypePython, PoolSlots: 4}}, want: 2},
+	}
+	for _, c := range cases {
+		for _, mode := range clearModes {
+			t.Run(c.name+"/"+mode.name, func(t *testing.T) {
+				repo, sched, pg, ctx := openInfra(t)
+				dagID := fmt.Sprintf("clear_pool_slots_%d", time.Now().UnixNano())
+				v1 := []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, PoolSlots: 2}}
+				runUUID := seedClearRun(t, repo, sched, ctx,
+					domain.DAGSpec{DagID: dagID, DagVersion: "v1", Image: "img:v1", Tasks: v1}, v1)
+				if got := taskPoolSlots(t, pg, ctx, runUUID); got != 2 {
+					t.Fatalf("precondition: materialized pool_slots = %d, want 2", got)
+				}
+				registerClearSpec(t, repo, ctx, domain.DAGSpec{DagID: dagID, DagVersion: "v2", Image: "img:v2", Tasks: c.v2})
+
+				opts := domain.ClearOptions{ResetDagRun: true, RunOnLatestVersion: c.latest}
+				if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", mode.taskIDs, mode.onlyFailed, opts); err != nil {
+					t.Fatalf("ClearTaskInstances: %v", err)
+				}
+				if got := taskPoolSlots(t, pg, ctx, runUUID); got != c.want {
+					t.Errorf("pool_slots = %d, want %d", got, c.want)
+				}
+			})
+		}
+	}
+}
+
+// taskPoolSlots reads task "t"'s pool_slots.
+func taskPoolSlots(t *testing.T, pg *storage.Postgres, ctx context.Context, runUUID string) int {
+	t.Helper()
+	var n int
+	if err := pg.Pool.QueryRow(ctx,
+		"SELECT pool_slots FROM task_instances WHERE dag_run_id=$1::uuid AND task_id='t'", runUUID).Scan(&n); err != nil {
+		t.Fatalf("select pool_slots: %v", err)
+	}
+	return n
+}
