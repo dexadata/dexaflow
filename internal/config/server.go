@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -212,6 +213,27 @@ type ExecutorSection struct {
 	// KubeClient sets the client-side rate limits of the control plane's
 	// Kubernetes clients.
 	KubeClient KubeClientSection `mapstructure:"kube_client"`
+	// Unit is the resource unit one pool slot stands for (ADR 0066). Unset (the
+	// default) changes nothing. Set, every task pod is sized pool_slots x unit
+	// where the task leaves cpu or memory out, and a task that declares more
+	// than that is refused at registration and at dispatch.
+	Unit ExecutorUnitSection `mapstructure:"unit"`
+}
+
+// ExecutorUnitSection is executor.unit: the CPU and memory of one pool slot,
+// as Kubernetes quantities (both or neither), how a task that does not fit its
+// size is treated (refuse or warn), and the largest pool_slots a task may have
+// while the unit is set.
+type ExecutorUnitSection struct {
+	CPU     string `mapstructure:"cpu"`
+	Memory  string `mapstructure:"memory"`
+	Enforce string `mapstructure:"enforce"`
+	MaxSize int    `mapstructure:"max_size"`
+}
+
+// ResourceUnitConfig is the section as the domain parser takes it.
+func (u ExecutorUnitSection) ResourceUnitConfig() domain.ResourceUnitConfig {
+	return domain.ResourceUnitConfig{CPU: u.CPU, Memory: u.Memory, Enforce: u.Enforce, MaxSize: u.MaxSize}
 }
 
 // KubeClientSection sets the client-side rate limits (client-go token buckets)
@@ -281,6 +303,9 @@ type ExecutionSection struct {
 	// is gated at boot on the security prerequisites (token-exchange transport +
 	// liveness enforcement) because a warm pod reuses one credential across attempts.
 	WarmPoolsEnabled bool `mapstructure:"warm_pools_enabled"`
+	// SourceMode runs a version on the operator's runtime image from the dag.py
+	// it was registered with, with no image build (ADR 0067 §3). Off by default.
+	SourceMode SourceModeSection `mapstructure:"source_mode"`
 	// MaxAttemptsPerWorker caps how many attempts a warm worker serves before it is
 	// drained and recycled (ADR 0058 D9). Bounds credential-leak and stale-image
 	// exposure by forcing a fresh pod periodically. Default 50.
@@ -441,6 +466,15 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
+	// only: create, resize and delete answer 403 for every role, tenant admin
+	// included. It is for an engine shared by many tenants, where the platform
+	// operator sizes each tenant's pools out of band and a tenant must not be
+	// able to raise its own slot budget. It also makes the scheduler admit a task
+	// naming a pool its tenant has not defined against default_pool, since a
+	// tenant cannot create pools then. Default false keeps pools writable under
+	// write:pool and undefined pools unlimited, today's behavior.
+	PoolsReadOnly bool `mapstructure:"pools_read_only"`
 }
 
 // Server roles (ADR 0049).
@@ -547,6 +581,15 @@ type TrustedIssuerSection struct {
 	// post a handoff. Any other Origin, or none, is refused, so another site
 	// cannot sign a visitor in (login CSRF). Required.
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	// BearerAudiences turns on the bearer mode (#1468): a token whose `aud` is
+	// one of these is accepted as the bearer of any /api/v2 request, reused
+	// within its lifetime, the way a remote MCP client authenticates (ADR 0050
+	// D9). Each must differ from Audience, so a handoff token is never a
+	// bearer. Empty (the default) leaves the mode off.
+	BearerAudiences []string `mapstructure:"bearer_audiences"`
+	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
+	// 900-second default; at most 3600.
+	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
 }
 
 // Enabled reports whether a trusted issuer is configured.
@@ -617,9 +660,15 @@ type AuthSection struct {
 	// "90m"). With warm pools enabled it is also the per-attempt watchdog that
 	// keeps a wedged attempt from pinning a warm slot (a warm pod has no pod-level
 	// deadline; the worker lifetime cap drains between attempts, never
-	// mid-attempt). A non-positive value disables the renewal ceiling, the pod
-	// deadline floor and that watchdog together — a wedged task then has no
-	// wall-clock bound of its own — so boot logs a WARN naming the key.
+	// mid-attempt). An attempt whose agent goes silent after running past the
+	// ceiling is failed by the heartbeat reaper as a task failure with the
+	// credential_ceiling reason (its retry policy applies), never re-placed as an
+	// agent_lost infra loss with a fresh credential (#1461). In Lite, which has no
+	// pod deadline, the reaper also fails an attempt still running past the
+	// ceiling with that reason and stops its task (#1511). A non-positive value
+	// disables the renewal ceiling, the pod deadline floor, that watchdog and the
+	// credential_ceiling failure together (a wedged task then has no
+	// wall-clock bound of its own), so boot logs a WARN naming the key.
 	MaxAttemptCredentialLifetime time.Duration `mapstructure:"max_attempt_credential_lifetime"`
 	// AgentTokenTransport selects how the in-pod agent obtains its control-plane
 	// bearer credential (ADR 0055 Fix #3): "envvar" (the default) sets the token as
@@ -764,6 +813,11 @@ type SchedulerSection struct {
 	Enabled        bool            `mapstructure:"enabled"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
 	Alerts         AlertsSection   `mapstructure:"alerts"`
+	// PoolStarvationThreshold is how long a task held only by its pool waits
+	// before the pool is reserved for it, so tasks of fewer slots cannot keep
+	// a larger one out forever (ADR 0066 §4). 0 disables reservations. Pro only:
+	// Lite has no pools.
+	PoolStarvationThreshold time.Duration `mapstructure:"pool_starvation_threshold"`
 }
 
 // AlertsSection guards the destinations of native on-failure alerts (#424).
@@ -821,6 +875,14 @@ type MetricsSection struct {
 type OTelSection struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Endpoint string `mapstructure:"endpoint"`
+	// SampleRatio is the share of request traces kept (1 keeps every trace).
+	// No propagator is installed, so an incoming traceparent is ignored and
+	// every request starts a new root trace; spans within a request follow
+	// its root's decision.
+	SampleRatio float64 `mapstructure:"sample_ratio"`
+	// SkipProbeSpans drops spans for /healthz, /readyz and /static/*. Off by
+	// default (ADR 0062), so every request is traced as before.
+	SkipProbeSpans bool `mapstructure:"skip_probe_spans"`
 }
 
 // serverDefaults lists every leaf key with its default so that AutomaticEnv and
@@ -840,7 +902,10 @@ var serverDefaults = map[string]any{
 	// comma-separated env var into a list, so the env-only Helm override path
 	// works without a config file — this is what the chart renders (#725). Empty
 	// (the default) trusts no proxy.
-	"server.trusted_proxies":  []string{},
+	"server.trusted_proxies": []string{},
+	// Off by default: pools stay writable through the tenant-facing API under
+	// write:pool. Registered so AutomaticEnv binds the Helm-rendered env var.
+	"server.pools_read_only":  false,
 	"database.url":            "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable",
 	"database.max_open_conns": 25,
 	"database.max_idle_conns": 5,
@@ -915,10 +980,11 @@ var serverDefaults = map[string]any{
 	// here the chart renders the variable and the server ignores it: a setting
 	// that looks configured and is not. TestDocumentedEnvVarsBind caught this
 	// once before, and the rebase onto the session-cookie fix dropped it again.
-	"auth.oidc.auto_redirect":      false,
-	"auth.oidc.clock_skew_seconds": 60,
-	"scheduler.loop_interval_ms":   1000,
-	"scheduler.enabled":            true,
+	"auth.oidc.auto_redirect":             false,
+	"auth.oidc.clock_skew_seconds":        60,
+	"scheduler.loop_interval_ms":          1000,
+	"scheduler.enabled":                   true,
+	"scheduler.pool_starvation_threshold": "60s",
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
@@ -958,8 +1024,14 @@ var serverDefaults = map[string]any{
 	// _MEMORY (the env-only Helm override path, #725). Empty leaves the L0 default
 	// unset, so a task inherits no platform resource default unless the operator
 	// configures one. Scalars (Kubernetes quantities, e.g. "250m"/"256Mi").
-	"executor.defaults.resources_cpu":                  "",
-	"executor.defaults.resources_memory":               "",
+	"executor.defaults.resources_cpu":    "",
+	"executor.defaults.resources_memory": "",
+	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_UNIT_CPU / _MEMORY. Empty
+	// (both) means no resource unit (ADR 0066).
+	"executor.unit.cpu":                                "",
+	"executor.unit.memory":                             "",
+	"executor.unit.enforce":                            domain.UnitEnforceRefuse,
+	"executor.unit.max_size":                           domain.DefaultUnitMaxSize,
 	"executor.defaults.run_tasks_as_non_root":          true,
 	"executor.defaults.read_only_task_root_filesystem": false,
 	// Warm worker pools (ADR 0058). Ships a byte-for-byte no-op: warm pools OFF =
@@ -1006,19 +1078,21 @@ var serverDefaults = map[string]any{
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `dexaflow lite` (which exports the env var to
 	// poll every 1s) was actually running at the 30s production default.
-	"ui.auto_refresh_interval_seconds":         0,
-	"auth.dev_no_auth":                         false,
-	"auth.service_token":                       "",
-	"auth.trusted_issuer.name":                 "",
-	"auth.trusted_issuer.issuer":               "",
-	"auth.trusted_issuer.jwks_url":             "",
-	"auth.trusted_issuer.audience":             "",
-	"auth.trusted_issuer.tenant_claim":         "tenant_id",
-	"auth.trusted_issuer.allowed_tenants":      []string{},
-	"auth.trusted_issuer.max_lifetime_seconds": 0,
-	"auth.trusted_issuer.allowed_origins":      []string{},
-	"auth.external_signin_url":                 "",
-	"auth.external_signout_url":                "",
+	"ui.auto_refresh_interval_seconds":                0,
+	"auth.dev_no_auth":                                false,
+	"auth.service_token":                              "",
+	"auth.trusted_issuer.name":                        "",
+	"auth.trusted_issuer.issuer":                      "",
+	"auth.trusted_issuer.jwks_url":                    "",
+	"auth.trusted_issuer.audience":                    "",
+	"auth.trusted_issuer.tenant_claim":                "tenant_id",
+	"auth.trusted_issuer.allowed_tenants":             []string{},
+	"auth.trusted_issuer.max_lifetime_seconds":        0,
+	"auth.trusted_issuer.allowed_origins":             []string{},
+	"auth.trusted_issuer.bearer_audiences":            []string{},
+	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
+	"auth.external_signin_url":                        "",
+	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
@@ -1028,12 +1102,17 @@ var serverDefaults = map[string]any{
 	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Trace sampling gates (ADR 0062): the defaults trace every request.
+	"observability.otel.sample_ratio":     1.0,
+	"observability.otel.skip_probe_spans": false,
 	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
 	"observability.metrics.drop_legacy_names": false,
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
 	"execution.warm_read_only_root_filesystem": false,
+	"execution.source_mode.enabled":            false,
+	"execution.source_mode.image":              "",
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -1159,10 +1238,16 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateLogs(); err != nil {
 		return err
 	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err
 	}
 	if err := c.validateExecution(); err != nil {
+		return err
+	}
+	if err := c.validateExecutorUnit(); err != nil {
 		return err
 	}
 	if err := c.validatePlatformIntegration(); err != nil {
@@ -1253,7 +1338,46 @@ func (c *ServerConfig) validateSecretPolicies() error {
 	return nil
 }
 
+// SourceModeSection is execution.source_mode (ADR 0067 §3).
+type SourceModeSection struct {
+	// Enabled turns source mode on. Default false: Pro ignores a version's source.
+	// Bind via DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED (legacy
+	// LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED).
+	Enabled bool `mapstructure:"enabled"`
+	// Image is the runtime image, pinned by a full sha256 digest, that
+	// source-mode versions name as their image. Bind via
+	// DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE (legacy LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE).
+	Image string `mapstructure:"image"`
+}
+
+// RuntimeImage returns the runtime image when source mode is on, and "" when
+// it is off, the form the dispatcher and the register check take.
+func (s SourceModeSection) RuntimeImage() string {
+	if !s.Enabled {
+		return ""
+	}
+	return s.Image
+}
+
+// validateSourceMode requires a runtime image pinned by a full sha256 digest
+// when source mode is on, so every source-mode task runs the exact image the
+// operator vetted.
+func (c *ServerConfig) validateSourceMode() error {
+	m := c.Execution.SourceMode
+	if !m.Enabled {
+		return nil
+	}
+	if m.Image == "" {
+		return errors.New("execution.source_mode.image is required when execution.source_mode.enabled (ADR 0067)")
+	}
+	if !domain.IsDigestPinned(m.Image) {
+		return fmt.Errorf("execution.source_mode.image must be pinned by digest (image@sha256:<64 hex>), got %q (ADR 0067)", m.Image)
+	}
+	return nil
+}
+
 // validateExecution enforces the warm-pool boot gate (ADR 0058 N1a), fail-closed.
+// It first checks execution.source_mode, which does not depend on warm pools.
 // The whole block is gated on WarmPoolsEnabled: with warm pools OFF (the default)
 // none of these fields is validated, so an operator who never turns warm pools on
 // is unaffected. With warm pools ON it rejects, rather than silently correcting:
@@ -1278,6 +1402,9 @@ func (c *ServerConfig) validateSecretPolicies() error {
 // (execution_timeout / the warm-worker watchdog <= the ceiling), enforced on the
 // execution path, not here.
 func (c *ServerConfig) validateExecution() error {
+	if err := c.validateSourceMode(); err != nil {
+		return err
+	}
 	if !c.Execution.WarmPoolsEnabled {
 		return nil
 	}
@@ -1301,6 +1428,15 @@ func (c *ServerConfig) validateExecution() error {
 		return fmt.Errorf("execution.max_warm_pods_per_tenant must be >= 1 when execution.warm_pools_enabled (got %d): a zero aggregate tenant cap would forbid every warm worker (M4)", c.Execution.MaxWarmPodsPerTenant)
 	}
 	return nil
+}
+
+// validateExecutorUnit checks executor.unit (ADR 0066): unset, or both
+// quantities valid and positive, enforce refuse or warn, max_size positive.
+// It combines with warm pools: a warm pod is then one unit and serves only
+// size-1 tasks that declare no resources.
+func (c *ServerConfig) validateExecutorUnit() error {
+	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	return err
 }
 
 // validateProvider rejects an unknown auth.provider, failing closed at boot
@@ -1497,6 +1633,8 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{len(s.AllowedTenants) > 0, `auth.trusted_issuer.allowed_tenants (tenant names, or "*" for all)`},
 		{s.MaxLifetimeSeconds >= 0 && s.MaxLifetimeSeconds <= 600, "auth.trusted_issuer.max_lifetime_seconds (0 to 600)"},
 		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
+		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
+		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -1508,6 +1646,18 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		return fmt.Errorf("auth.trusted_issuer is incomplete or invalid; set: %s", strings.Join(problems, ", "))
 	}
 	return nil
+}
+
+// bearerAudiencesValid reports whether every bearer audience is set and none
+// is the handoff audience: a token for both would be a one-use handoff and a
+// reusable bearer at once.
+func bearerAudiencesValid(s TrustedIssuerSection) bool {
+	for _, aud := range s.BearerAudiences {
+		if aud == "" || aud == s.Audience {
+			return false
+		}
+	}
+	return true
 }
 
 // validateHomeLink checks ui.home_link (#1290): both fields or neither, and an

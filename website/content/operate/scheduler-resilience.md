@@ -344,8 +344,9 @@ cannot be probed, so the reapers keep deferring.
 What this does **not** cover, plainly:
 
 - **An agent that is alive but wedged** (the process exists, its heartbeat
-  stopped) is never reaped by Lite. Stop the process yourself; the next cycle
-  then reaps the TI as `agent_lost`.
+  stopped) is not reaped by Lite before the credential ceiling (see
+  [below](#an-attempt-that-outlives-the-credential-ceiling-fails)). Stop the
+  process yourself; the next cycle then reaps the TI as `agent_lost`.
 - **PID reuse.** If the agent died while the server was down and the OS hands
   its PID to an unrelated process, that attempt reads alive and is deferred
   until that process exits. This can only delay a reap, never cause a false
@@ -365,7 +366,9 @@ What this does **not** cover, plainly:
   is also silent past the agent-lost threshold or still `queued` past the
   dispatch-lost threshold.
 - **A task that hangs inside a live agent** is the agent's own
-  `execution_timeout_seconds` to stop, exactly as on Kubernetes.
+  `execution_timeout_seconds` to stop, exactly as on Kubernetes. Past
+  `auth.max_attempt_credential_lifetime` the reaper stops it in any case, the
+  way the pod's `activeDeadlineSeconds` floor does on Kubernetes.
 
 ## Tuning the thresholds
 
@@ -378,6 +381,65 @@ TTL; boot fails naming the key if it does not. Setting it non-positive is
 accepted but disables the renewal ceiling, the task-pod `activeDeadlineSeconds`
 floor and the warm-pool attempt watchdog together, so boot logs a `WARN` naming
 the key.
+
+### An attempt that outlives the credential ceiling fails
+
+Past `auth.max_attempt_credential_lifetime` the control plane stops renewing an
+attempt's credential, the last renewed token runs out one attempt token TTL
+(10 min) later, and the agent's heartbeats stop. On Kubernetes the pod
+`activeDeadlineSeconds` floor or the warm-pool attempt watchdog usually ends
+the attempt at the ceiling itself, and its heartbeats stop the same way. The
+heartbeat reaper then sees a silent attempt. If the attempt went silent past
+the ceiling, that is, its last heartbeat came after it had been `running` for
+the ceiling less two heartbeat intervals (30 s), the reaper fails it with
+`credential_ceiling: attempt outlived auth.max_attempt_credential_lifetime`
+instead of `agent_lost`. The two intervals cover the last renewal, which can
+land up to one interval before the ceiling. The pod deadline counts from pod
+start, before `running`, so an attempt it ends is normally settled as a task
+failure by the pod reconciler, which reads the failed pod, before the reaper
+looks at it. A `credential_ceiling` failure is a **task failure**: the task's
+retry policy decides what happens next, exactly as for a task that exited non-zero. It is
+not an infra mark, so the planner does not re-place it with a new epoch and a
+fresh credential, it is never provisional, and a durable SUCCESS record does
+not override it.
+
+Before this, the silence read as a lost agent, and since `agent_lost` re-places
+off the retry budget, a task longer than the ceiling plus the token TTL was
+re-run from the start each time instead of failing
+([#1461](https://github.com/dexadata/dexaflow/issues/1461)). An attempt that
+finishes before the ceiling plus the token TTL is unaffected, and an attempt
+that goes silent before it reaches the ceiling is still `agent_lost`, even
+when the reaper only gets to it after the ceiling: a node that dies at minute
+59 of a 60 minute ceiling is re-placed as a lost agent. The reaper judges by
+the attempt's last heartbeat measured from its `running` transition, not by
+the time of the reap. The settling gate, the destructive gate, the attempt pin
+and the pod teardown are the same as for `agent_lost`. A non-positive ceiling disables the check along with the rest of the ceiling.
+
+**In Lite the reaper also ends the attempt at the ceiling**
+([#1511](https://github.com/dexadata/dexaflow/issues/1511)). There is no pod
+deadline in Lite, so before this an attempt past the ceiling was failed only
+once its task process exited on its own: a task that never exits kept running
+with a credential that was no longer renewed, and the try log could show
+`task succeeded` right before `killed: credential_ceiling`. Now, on every reaper
+pass, a `running` attempt that entered `running` longer ago than the ceiling and
+whose agent or task process is still alive is failed with the same
+`credential_ceiling` reason (a task failure, so its retry policy applies), and
+then its task is stopped: `SIGTERM` to the task's whole process group, up to
+10 s to exit, then `SIGKILL` and up to 5 s more, the same escalation used for
+an orphaned task. The age counts from the `running` transition, which comes
+after the dispatch the credential ceiling counts from, so the credential has
+always stopped renewing by then. The attempt is marked first, through the same
+guarded write as above (`running` only, pinned to the attempt), so whichever of
+the mark and the agent's own terminal report lands first decides the outcome
+and the other changes nothing. Once marked, the agent's next heartbeat or
+report is told to terminate. The `killed: credential_ceiling` line is written
+after the task and its agent have exited, so it is the last line of the try
+log. Like the orphan stop, the server only signals a task group it recorded and
+can verify; it never signals the agent itself. Unlike Kubernetes, where a
+declared `execution_timeout` longer than the ceiling sets the pod deadline, Lite
+stops the attempt at the ceiling regardless: past it the attempt could not
+report its result anyway, and Lite has no durable outcome record to recover it
+from. This runs on Linux and macOS, where a task group can be probed.
 
 The defaults are conservative on purpose: too-tight thresholds risk reaping a
 legitimately slow dispatch (Kubernetes pod-pull latency under contention) or a
@@ -484,7 +546,19 @@ durable DB transition, each reaper tears the pod down:
   `reap teardown: task pod is already in a terminal phase` at INFO to see which
   pods were left behind; a failed *delete* is the `*_pod_delete_error` decision
   below, which is a different thing.
-- A pod in phase `Unknown` **is** deleted. It may still be running a container,
+- **A started pod is stopped in place, not deleted.** The teardown lowers its
+  `activeDeadlineSeconds` to 1 second (the deadline counts from the pod's start,
+  so it has always elapsed). The kubelet stops the containers with the pod's
+  normal termination grace, the pod goes `Failed` with reason
+  `DeadlineExceeded`, and the pod object stays, with the task container's
+  outcome record. The reaped attempt stops running user code exactly as before
+  (#474); if it had in fact finished, the reconciler can still read its SUCCESS
+  record. A pod that never started (no start time) has no container and no
+  record, and a `Pending` pod can still start the task, so it is deleted. The
+  executor Role needs `patch` on pods for this; if the patch is refused (a
+  hand-maintained Role, an admission webhook rejecting pod updates), the
+  teardown deletes the pod as before and meters `reap_teardown_delete_fallback`.
+- A pod in phase `Unknown` **is** torn down. It may still be running a container,
   which is the case teardown exists for, and the reconciler treats `Unknown` as
   non-terminal — it neither settles nor collects it — so nothing else would.
 - Belt and suspenders: the control plane also answers a **stale** agent
@@ -541,6 +615,10 @@ your Prometheus dashboard:
 | Metric label | Meaning |
 |---|---|
 | `agent_lost` | TI failed by the heartbeat reaper |
+| `agent_lost_credential_ceiling` | TI failed by the heartbeat reaper as `credential_ceiling`: its agent went silent after the attempt ran past `auth.max_attempt_credential_lifetime`. A task failure under the retry policy, not re-placed ([#1461](https://github.com/dexadata/dexaflow/issues/1461)) |
+| `credential_ceiling_stopped` | Lite only: a `running` attempt with a live agent or task was still running past `auth.max_attempt_credential_lifetime`; it was failed as `credential_ceiling` and its task stopped ([#1511](https://github.com/dexadata/dexaflow/issues/1511)) |
+| `credential_ceiling_stop_error` | Lite only: such an attempt was failed, but its task could not be stopped (no verifiable task group record, or the signal failed); stop the process by hand |
+| `credential_ceiling_noop`, `credential_ceiling_error`, `credential_ceiling_gate_skip`, `credential_ceiling_process_query_error` | Lite only: the attempt's own report settled it first, the mark failed (retried next cycle), the destructive gate closed, or its process liveness could not be read (deferred) |
 | `dispatch_lost` | TI failed by the dispatch-lost reaper |
 | `dispatch_lost_deferred` | Dispatch-lost skipped because the TI's pod is live (slow start, [#461](https://github.com/dexadata/dexaflow/issues/461)) — a healthy signal, not a fault |
 | `pod_lost` | TI failed by the pod-lost reaper (no pod at all for the attempt) |
@@ -550,6 +628,7 @@ your Prometheus dashboard:
 | `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved, fresh activity landed, or a TI was being written); nothing was written and no pod was torn down |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
+| `reap_teardown_delete_fallback` | A reap could not stop a started pod in place (the `patch` was refused) and deleted it instead, losing its outcome record; grant `patch` on pods to the executor Role |
 | `dexaflow_reconcile_infra_override_total{mark}` (its own counter) | A durable SUCCESS record was settled over a provisional infra mark: the task finished while the control plane lost track of it, and was recovered instead of re-run. Expected after a control plane outage; a steady rate means the reapers fire on healthy tasks |
 | `infra_confirm_valve_open` | The planner acted on a provisional infra mark that the reconciler did not confirm within 2 min; the reconciler is not sweeping or cannot read pods. **Alert on this** |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |

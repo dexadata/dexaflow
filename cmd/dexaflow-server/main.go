@@ -124,11 +124,13 @@ func run() error {
 	}
 
 	tel, shutdownTel, err := observability.Setup(ctx, observability.Config{
-		ServiceName:  "leoflow-server",
-		LogLevel:     cfg.Observability.LogLevel,
-		LogFormat:    cfg.Observability.LogFormat,
-		OTelEnabled:  cfg.Observability.OTel.Enabled,
-		OTelEndpoint: cfg.Observability.OTel.Endpoint,
+		ServiceName:    "leoflow-server",
+		LogLevel:       cfg.Observability.LogLevel,
+		LogFormat:      cfg.Observability.LogFormat,
+		OTelEnabled:    cfg.Observability.OTel.Enabled,
+		OTelEndpoint:   cfg.Observability.OTel.Endpoint,
+		SampleRatio:    cfg.Observability.OTel.SampleRatio,
+		SkipProbeSpans: cfg.Observability.OTel.SkipProbeSpans,
 	})
 	if err != nil {
 		return fmt.Errorf("observability setup: %w", err)
@@ -1355,7 +1357,12 @@ func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.Trusted
 	if !s.Enabled() {
 		return nil
 	}
-	return issuer.New(ctx, issuer.Config{
+	return issuer.New(ctx, trustedIssuerConfig(s))
+}
+
+// trustedIssuerConfig maps auth.trusted_issuer onto the verifier's config.
+func trustedIssuerConfig(s config.TrustedIssuerSection) issuer.Config {
+	return issuer.Config{
 		Name:           s.Name,
 		Issuer:         s.Issuer,
 		JWKSURL:        s.JWKSURL,
@@ -1363,7 +1370,21 @@ func newTrustedIssuer(ctx context.Context, cfg *config.ServerConfig) api.Trusted
 		TenantClaim:    s.TenantClaim,
 		AllowedTenants: s.AllowedTenants,
 		MaxLifetime:    time.Duration(s.MaxLifetimeSeconds) * time.Second,
-	})
+
+		BearerAudiences:   s.BearerAudiences,
+		BearerMaxLifetime: time.Duration(s.BearerMaxLifetimeSeconds) * time.Second,
+	}
+}
+
+// issuerBearer returns the trusted issuer as the verifier of request bearers
+// when auth.trusted_issuer.bearer_audiences is set (#1468), or nil, which
+// leaves the bearer mode off.
+func issuerBearer(ti api.TrustedIssuer) api.TrustedIssuerBearer {
+	v, ok := ti.(*issuer.Verifier)
+	if !ok || !v.BearerEnabled() {
+		return nil
+	}
+	return v
 }
 
 // newUIServer builds the embedded UI server from cfg and returns it with the
@@ -1420,6 +1441,10 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		UIETagRevalidation:           cfg.UI.ETagRevalidation,
 		DevNoAuth:                    cfg.Auth.DevNoAuth,
 		Edition:                      cfg.UI.Edition,
+		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
+		ResourceUnit:                 resourceUnit(cfg),
+		UnitMisfits:                  unitMisfits(tel.Metrics),
+		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -1464,6 +1489,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
+		TrustedIssuerBearer: issuerBearer(trustedIssuer),
 		// Operator service API (#1283): off unless auth.service_token is set.
 		ServiceToken:   cfg.Auth.ServiceToken,
 		ServiceTenants: repo,
@@ -2183,6 +2210,7 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 // AwaitAssignment and is exchange/liveness-gated upstream (N1b1/N1b2a).
 func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, controlAddr string) executor.WarmPodSpecFunc {
 	defaults := platformDefaults(cfg.Executor.Defaults)
+	warmResources := resourceUnit(cfg).WarmResources()
 	useExchange := cfg.Auth.AgentTokenTransport == config.AgentTokenTransportExchange
 	return func(t executor.WarmTarget) (executor.WarmPodSpec, error) {
 		spec := executor.WarmPodSpec{
@@ -2193,6 +2221,9 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			AgentTLSCAConfigMap: cfg.Executor.AgentTLSCAConfigMap,
 			ServiceAccount:      cfg.Executor.TaskServiceAccount,
 			PodSecurity:         defaults.PodSecurity,
+			// With executor.unit a warm pod is one unit, and the dispatcher only
+			// places size-1 tasks without resources on it (ADR 0066 §3).
+			Resources: warmResources,
 			// Self-lifecycle caps (ADR 0058 D9/D10/D6/H3). The attempt watchdog is
 			// anchored to the credential ceiling: an attempt can never validly outlive
 			// its per-attempt credential, so max_attempt_credential_lifetime is the
@@ -2290,6 +2321,17 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
 	if cfg.UI.Edition == "pro" {
 		sched.EnablePools()
+		// A task held by its pool past the threshold reserves the pool, so
+		// smaller tasks cannot starve it (ADR 0066 §4).
+		sched.SetPoolStarvationThreshold(cfg.Scheduler.PoolStarvationThreshold)
+		if cfg.Server.PoolsReadOnly {
+			// Tenants cannot create pools, so an undefined pool name must not be
+			// a way around default_pool (#646).
+			sched.ConfineUndefinedPools()
+			logger.Info("pools read-only: tasks naming an undefined pool draw on default_pool")
+		}
+	} else if cfg.Server.PoolsReadOnly {
+		logger.Warn("server.pools_read_only has no effect: pools are a Pro edition feature")
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
@@ -2557,7 +2599,7 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 	if ms, ok := logSink.(logs.MarkerSink); ok {
 		markers = ms
 	}
-	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger)
+	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger, cfg.Auth.MaxAttemptCredentialLifetime)
 	startLiteMaintenance(ctx, reaper, sched.IsLeading, logger)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
 	return true, closer
@@ -2579,16 +2621,24 @@ type liteLeadership interface {
 // a pod (procs): Lite cannot stop an abandoned agent the way a pod delete does,
 // and the infra re-place after either reap keeps the try number, so failing an
 // attempt whose agent is still alive could run user code twice (#911). Both
-// therefore reap only an attempt whose agent process is gone.
+// therefore reap only an attempt whose agent process is gone. The exception is
+// an attempt still running past credentialCeiling: procs (the subprocess
+// executor) can stop its task, so agent-lost fails it as credential_ceiling, a
+// task failure that is never re-placed, and stops it, the Lite counterpart of
+// a task pod's activeDeadlineSeconds (#1511).
 //
 // The reaper sits behind the same leader-settling gate as the pod path, measured
 // from leadership: a Lite restart leaves detached agents alive with a stale
 // heartbeat, and they get the grace to re-heartbeat before anything is judged.
 // There is no informer and no reconciler, so those two conditions stay
 // satisfied. markers, when non-nil, receives the agent-lost log marker (#861).
-func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger) *executor.Reaper {
+func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger, credentialCeiling time.Duration) *executor.Reaper {
 	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
 	reaper.SetProcessLiveness(procs)
+	// An attempt that outlived auth.max_attempt_credential_lifetime fails for
+	// that reason instead of being re-placed as agent_lost (#1461), and one still
+	// running past it is stopped (#1511).
+	reaper.SetAttemptLifetimeCeiling(credentialCeiling)
 	if markers != nil {
 		reaper.SetLogSink(markers)
 	}
@@ -2619,6 +2669,11 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	controlAddr := resolveAgentControlAddr(cfg)
 	podExec := executor.NewKubernetesExecutor(cs, cfg.Executor.TaskNamespace)
 	podExec.SetStagingStore(store) // record per-run staging volumes in the metadatabase (ADR 0022)
+	// Meter a reap teardown that could not stop a started pod in place and
+	// deleted it instead (ADR 0052 amendment).
+	if metrics != nil {
+		podExec.SetTeardownRecorder(metrics)
+	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
 	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
 	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)
@@ -2629,7 +2684,12 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// const the control-plane TokenReviewer validates against; expiration floors in
 	// BuildPod.
 	dispatcher.SetAgentTokenTransport(cfg.Auth.AgentTokenTransport, executor.DefaultAgentTokenAudience, 0)
-	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
+	k8sDefaults := platformDefaults(cfg.Executor.Defaults)
+	k8sDefaults.Unit = resourceUnit(cfg)
+	dispatcher.SetPlatformDefaults(k8sDefaults)
+	if metrics != nil {
+		dispatcher.SetUnitMisfitRecorder(metrics)
+	}
 	// Deadline floor for task pods that declare no execution timeout: the agent's
 	// reports retry for as long as the control plane is unreachable, so a pod
 	// with no deadline of its own would outlive a total outage indefinitely. The
@@ -2641,6 +2701,9 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// stays vault-only). The D6 registration relaxation is wired separately in run()
 	// where the Repository is in scope.
 	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
+	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
+	// its registered dag.py. "" (the default) keeps it off.
+	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
 	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
 	// SAME registry the gRPC handler serves. nil when warm pools are off.
 	setWarmPlacer(dispatcher, warmPools)
@@ -2683,6 +2746,10 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		reapPods = executor.NewKubernetesExecutor(mcs, cfg.Executor.TaskNamespace)
 	}
 	reaper := executor.NewReaper(store, reapPods, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), sched.SteppingDown)
+	// The same ceiling that floors the task pod's deadline and sets the warm
+	// attempt watchdog: a silent attempt older than it fails for the credential
+	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
+	reaper.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
 	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
@@ -2766,6 +2833,27 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 // AsyncDispatchStore: the type assertion there would otherwise fall back to
 // failing every worker-side dispatch error at once, silently.
 var _ scheduler.AsyncDispatchStore = (*storage.SchedulerStore)(nil)
+
+// resourceUnit is the parsed executor.unit (ADR 0066), nil when unset. The
+// config was validated at boot (ServerConfig.Validate parses the same values
+// and fails startup on an error), so a parse error cannot reach here; nil is
+// the safe reading of one anyway.
+func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
+	unit, err := domain.ParseResourceUnit(cfg.Executor.Unit.ResourceUnitConfig())
+	if err != nil {
+		return nil
+	}
+	return unit
+}
+
+// unitMisfits is the API's misfit counter, nil (not a typed nil) without
+// metrics so the handler's nil check holds.
+func unitMisfits(m *observability.Metrics) api.UnitMisfitRecorder {
+	if m == nil {
+		return nil
+	}
+	return m
+}
 
 // platformDefaults maps the executor.defaults config (L0 task defaults, ADR
 // 0023) into the dispatcher's PlatformDefaults. Resources are set only when a

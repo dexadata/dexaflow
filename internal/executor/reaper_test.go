@@ -62,6 +62,10 @@ func (f *fakeReaperStore) MarkTaskAgentLost(_ context.Context, tiID string, _, _
 	f.agentMarked = append(f.agentMarked, tiID)
 	return true, nil
 }
+func (f *fakeReaperStore) MarkTaskCredentialCeiling(_ context.Context, tiID string, _, _ int) (bool, error) {
+	f.agentMarked = append(f.agentMarked, tiID)
+	return true, nil
+}
 func (f *fakeReaperStore) ListStaleQueuedCandidates(context.Context) ([]StaleQueuedCandidate, error) {
 	return f.queuedCands, nil
 }

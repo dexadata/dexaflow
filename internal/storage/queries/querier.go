@@ -103,14 +103,16 @@ type Querier interface {
 	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error)
 	// try_number starts at 1 to match Airflow (1-based attempts): the first run's
 	// logs live at .../1.log, which is where the UI's log view looks. Retries bump
-	// it via ResetForRetry.
+	// it via ResetForRetry. pool_slots is the task's EffectivePoolSlots (#1499).
 	CreateTaskInstance(ctx context.Context, arg CreateTaskInstanceParams) (TaskInstance, error)
 	// Batched form of CreateTaskInstance: materializes every task of one run in a
 	// single COPY instead of T INSERT round-trips. The caller supplies one param row
 	// per task with try_number pinned to 1 (matching CreateTaskInstance's literal)
 	// and pool carried through so cross-DAG pool occupancy is attributed correctly;
-	// columns omitted from the list take their table defaults, so the rows are
-	// byte-identical to the loop — only the statement count changes (T INSERTs → 1 COPY).
+	// pool_slots carries the task's EffectivePoolSlots so that occupancy is
+	// weighted like the admission gate's (#1499). Columns omitted from the list
+	// take their table defaults, so the rows are byte-identical to the loop: only
+	// the statement count changes (T INSERTs → 1 COPY).
 	CreateTaskInstances(ctx context.Context, arg []CreateTaskInstancesParams) (int64, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (pgtype.UUID, error)
 	// Whether run_id of the DAG dag_id in tenant tenant_id exists: the read behind
@@ -153,6 +155,16 @@ type Querier interface {
 	// reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 	// reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
 	FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error
+	// A dispatch the executor refused (ADR 0066 section 3: the task is larger than
+	// its size, or above executor.unit.max_size) fails the task for good. The
+	// verdict is permanent, so no retry can change it: the retry budget is spent by
+	// lowering max_tries to the current try, which makes the planner's
+	// try_number < max_tries check false without counting a try that never ran. A
+	// clear restores the budget from the task as usual (#1131), so an operator who
+	// fixes the DAG or the unit can run it again. Guarded to the dispatch states:
+	// the sync path refuses a scheduled task, the buffered path a scheduled or
+	// queued one, and a row that moved on is left alone.
+	FailDispatchRefused(ctx context.Context, arg FailDispatchRefusedParams) error
 	// Settle a task instance failed from the pod reconciler, guarded by id,
 	// try_number and attempt_epoch (ADR 0052, ADR 0051 amendment): try_number bumps
 	// IN PLACE on retry (same row id), and an infra re-place or reschedule keeps the
@@ -498,6 +510,14 @@ type Querier interface {
 	// listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
 	// computed for a superseded attempt never fails its replacement.
 	MarkTaskAgentLost(ctx context.Context, arg MarkTaskAgentLostParams) (int64, error)
+	// Fails a TI whose agent went silent after the attempt outlived
+	// auth.max_attempt_credential_lifetime (#1461). Renewal stops at the ceiling,
+	// so the silence is the credential lapsing, not a lost agent: this is a TASK
+	// failure (last_failure_kind NULL, the retry policy applies), never an infra
+	// mark the planner would re-place with a fresh credential. Same guards as
+	// MarkTaskAgentLost: state='running' (a late report wins) and the listed
+	// attempt, (try_number, attempt_epoch) (ADR 0051 amendment).
+	MarkTaskCredentialCeiling(ctx context.Context, arg MarkTaskCredentialCeilingParams) (int64, error)
 	// Fails a TI whose asynchronous dispatch (BufferedDispatcher worker) errored
 	// inside the inner dispatcher. Targets the active row by (dag_run_id,
 	// task_id) and the active states (scheduled/queued) — a TI that already
@@ -531,10 +551,12 @@ type Querier interface {
 	// cross-DAG admission budget (ADR 0053 Stage 3). Keyed by (tenant_id, name) so a
 	// pool name is scoped to its tenant. Pro-only: Lite never calls this.
 	PoolBudgets(ctx context.Context) ([]PoolBudgetsRow, error)
-	// Per-pool occupancy for a tenant: how many of the tenant's task instances sit in
-	// each non-terminal state, grouped by the instance's pool (a NULL pool is the
-	// implicit default_pool). Feeds the Airflow PoolResponse occupancy fields; the
-	// gate itself counts queued+running as the occupied slots.
+	// Per-pool occupancy for a tenant: how many slots the tenant's task instances
+	// take in each non-terminal state, grouped by the instance's pool (a NULL pool
+	// is the implicit default_pool). Each instance weighs its pool_slots, the size
+	// the admission gate charges it (ADR 0066, #1499), not 1. Feeds the Airflow
+	// PoolResponse occupancy fields; the gate itself counts queued+running as the
+	// occupied slots.
 	PoolSlotUsage(ctx context.Context, tenantID pgtype.UUID) ([]PoolSlotUsageRow, error)
 	// A pod CREATE was refused by cluster backpressure — a ResourceQuota 403 or an
 	// API Priority & Fairness 429 (ADR 0053). Back off the next attempt to $3 WITHOUT
@@ -852,7 +874,7 @@ type Querier interface {
 	// self-referential, so an already-stamped row is never re-stamped.
 	UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) error
 	// Sets the limits given and keeps the others: a NULL argument leaves that
-	// column as it is, 0 makes the limit unlimited (migration 040).
+	// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
 	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error)
 	// Tri-state write (#887): COALESCE(EXCLUDED.col, connections.col) preserves the

@@ -10,12 +10,14 @@ import (
 // with no pods there is nothing for the reapers to read or delete, but the agent
 // is a host process whose liveness can be checked by PID.
 //
-// The reapers consult it ONLY to defer. A Lite reaper does not stop a live
-// agent the way a pod delete does (it only stops the orphaned task of a dead
-// one, see OrphanStopper), so it must never fail an attempt whose agent
-// is still alive: the infra re-place that follows keeps the try number, so a
+// The reapers consult it to defer. A Lite reaper does not stop a live agent the
+// way a pod delete does (it stops the orphaned task of a dead one, see
+// OrphanStopper), so it must never fail an attempt whose agent is still alive
+// as an infra loss: the infra re-place that follows keeps the try number, so a
 // second agent would start on the same attempt while the first one could still
-// get its RUNNING report accepted and run user code (#911).
+// get its RUNNING report accepted and run user code (#911). The one exception is
+// an attempt past the credential ceiling (see AttemptStopper), which is failed
+// as a task failure, never re-placed, and whose task is then stopped.
 type ProcessLiveness interface {
 	// AttemptProcessAlive reports whether the agent process spawned for the
 	// (run, task, try) attempt is alive. false with a nil error means no live
@@ -38,12 +40,30 @@ type OrphanStopper interface {
 	StopOrphanedTask(ctx context.Context, runID, taskID string, tryNumber int) (bool, error)
 }
 
+// AttemptStopper is implemented by a ProcessLiveness that can stop the task of
+// an attempt whose agent is still alive (Lite: the subprocess executor signals
+// the task's recorded process group). The agent-lost reaper uses it for an
+// attempt still running past the credential ceiling
+// (auth.max_attempt_credential_lifetime), the Lite counterpart of a task pod's
+// activeDeadlineSeconds (#1511): it fails the attempt as credential_ceiling
+// first, then stops its task. A ProcessLiveness without it (or none, the pod
+// path) leaves that attempt to the pod deadline and the silent-agent path.
+type AttemptStopper interface {
+	// StopAttempt stops the attempt's task (SIGTERM, a grace, then SIGKILL to
+	// its whole process group) and reports true once nothing of it is left.
+	// false with a nil error means nothing could be verified and nothing was
+	// signaled.
+	StopAttempt(ctx context.Context, runID, taskID string, tryNumber int) (bool, error)
+}
+
 // SetProcessLiveness wires the subprocess liveness seam into the two reapers
 // that act on an attempt whose agent may still be running: agent-lost and
 // dispatch-lost. Each defers while the attempt's agent process is alive or its
 // liveness cannot be read. It also turns on agent-lost's Lite-only judgement
-// of a TI that never heartbeated (see runNeverHeartbeated). Nil (the Kubernetes path, which gates on pods) leaves
-// both reapers unchanged.
+// of a TI that never heartbeated (see runNeverHeartbeated), and, when p is an
+// AttemptStopper and a credential ceiling is set, the stop of an attempt still
+// running past that ceiling (see runPastCeiling). Nil (the Kubernetes path,
+// which gates on pods) leaves both reapers unchanged.
 func (r *Reaper) SetProcessLiveness(p ProcessLiveness) {
 	r.agentLost.procs = p
 	r.dispatchLost.procs = p

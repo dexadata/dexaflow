@@ -14,6 +14,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
@@ -78,6 +79,22 @@ type Dependencies struct {
 	// Edition == "pro" (ADR 0053), otherwise the Pools screen gets the graceful
 	// empty-collection stub, matching how the scheduler's pool gate is Pro-gated.
 	Edition string
+	// PoolsReadOnly is server.pools_read_only: the pool API serves reads only and
+	// every create, resize and delete answers 403 with PoolsReadOnlyDetail, for
+	// every role including tenant admin. False keeps the write:pool-gated CRUD.
+	PoolsReadOnly bool
+	// ResourceUnit is executor.unit (ADR 0066 §3). When set, registering a DAG
+	// whose task declares more than pool_slots x unit answers 400 naming the
+	// size it needs (under enforce: warn it is accepted, logged and counted).
+	// Nil: no unit, no check.
+	ResourceUnit *domain.ResourceUnit
+	// UnitMisfits counts a task registered under executor.unit.enforce=warn
+	// although it does not fit its size. Nil: not counted.
+	UnitMisfits UnitMisfitRecorder
+	// SourceModeImage is the runtime image when execution.source_mode is on
+	// (ADR 0067 §3), "" when it is off. Registering a version on that image
+	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
+	SourceModeImage string
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository
@@ -151,6 +168,10 @@ type Dependencies struct {
 	// (#1284). TrustedIssuerUsers resolves those users (the storage repo).
 	TrustedIssuer      TrustedIssuer
 	TrustedIssuerUsers TrustedIssuerUserStore
+	// TrustedIssuerBearer, when set, also accepts the trusted issuer's tokens
+	// for a bearer audience as the Authorization bearer of any protected
+	// request (#1468). It resolves users through TrustedIssuerUsers.
+	TrustedIssuerBearer TrustedIssuerBearer
 	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
 	// (scheme://host[:port]), so another site cannot sign a browser in.
 	TrustedIssuerOrigins []string
@@ -169,6 +190,15 @@ type Dependencies struct {
 	// zero value is the hardened one: a caller that forgets the field gets Secure.
 	// See cookieSecure for why this is a setting and not derived from the request.
 	SessionCookieInsecure bool
+}
+
+// newIssuerBearerAuth wires the trusted-issuer bearer from deps, or returns nil
+// when it is off.
+func newIssuerBearerAuth(deps Dependencies) *issuerBearerAuth {
+	if deps.TrustedIssuerBearer == nil {
+		return nil
+	}
+	return &issuerBearerAuth{issuer: deps.TrustedIssuerBearer, users: deps.TrustedIssuerUsers, audit: deps.AuthAudit, logger: deps.Logger}
 }
 
 // NewServer builds the gin engine with the full middleware chain, health and
@@ -195,12 +225,13 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(RequestID())
 	r.Use(Observe(deps.Metrics, deps.Tracer))
 	r.Use(StructuredLogger(deps.Logger))
+	r.Use(RejectEncodedPathSeparators())
 	r.Use(CORS(deps.CORSOrigins))
 	r.Use(NoStoreOnVolatileRoutes())
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {
-		r.Use(JWTAuth(deps.Authenticator))
+		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps)))
 	}
 
 	r.GET("/healthz", livenessHandler)
@@ -220,9 +251,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// Transparent renewal (aresta #5): a still-valid bearer is re-minted with a
 	// fresh short TTL, bounded by max_lifetime. Under the public /api/v2/auth/
 	// prefix like login, it is self-gating — only a valid signed bearer can be
-	// renewed. Registered only when a renewer is wired.
+	// renewed. Registered only when a renewer is wired. Rate-limited per client
+	// IP on its own limiter (#801), never the login one, so renewal traffic
+	// cannot spend an address's password-login budget.
 	if deps.TokenRenewer != nil {
-		r.POST("/api/v2/auth/token/renew", renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
+		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
+		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.SessionCookieInsecure, deps.ExternalSignOutURL))
@@ -242,7 +276,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// configured, on its own per-IP limiter like the OIDC routes.
 	if deps.TrustedIssuer != nil {
 		issuerLimiter := auth.NewRateLimiter(30, time.Minute)
-		r.POST("/api/v2/auth/session", rateLimitByIP(issuerLimiter), issuerSessionHandler(issuerSessionDeps{
+		// Refusals, the rate limit's included, go back to the external sign-in
+		// when one is configured (see issuerSessionDeps.refuse).
+		handoff := issuerSessionDeps{
 			issuer:          deps.TrustedIssuer,
 			users:           deps.TrustedIssuerUsers,
 			origins:         deps.TrustedIssuerOrigins,
@@ -251,7 +287,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 			tokenTTL:        time.Duration(deps.TokenTTLSecs) * time.Second,
 			logger:          deps.Logger,
 			insecureCookies: deps.SessionCookieInsecure,
-		}))
+			signIn:          issuerSignInTarget(deps.ExternalSignInURL),
+		}
+		r.POST("/api/v2/auth/session", rateLimitByIPWith(issuerLimiter, handoff.refuseRateLimited), issuerSessionHandler(handoff))
 	}
 	// OIDC/SSO login flow (D1): registered only when a provider was discovered at
 	// boot. Both routes sit under the public /api/v2/auth/ prefix.
@@ -272,8 +310,10 @@ func NewServer(deps Dependencies) *gin.Engine {
 			insecureCookies: deps.SessionCookieInsecure,
 		}))
 	}
-	r.GET("/api/v2/monitor/health", monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
-	r.GET("/api/v2/monitor/executor", monitorExecutorHandler(deps.ExecutorInfo))
+	// Any signed-in user may read these; a scoped token needs dexaflow:read
+	// (ADR 0067). The MCP's health resource reads all three.
+	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
+	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.ExecutorInfo))
 
 	registerResources(r, deps)
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
@@ -286,7 +326,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIVariables(r, deps.Variables)
 	registerUsers(r, deps.Users, deps.UserAudit)
 	registerUIConnections(r, deps.Connections, deps.ConnectionTest)
-	registerUIPools(r, deps.Pools, deps.Edition == "pro")
+	registerUIPools(r, deps.Pools, deps.Edition == "pro", deps.PoolsReadOnly)
 	registerUIFavorites(r, deps.Favorites)
 	registerImportErrors(r, deps.ImportErrors)
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)

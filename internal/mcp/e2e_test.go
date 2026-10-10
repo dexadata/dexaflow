@@ -13,6 +13,7 @@ package mcp_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,8 @@ func seededControlPlane(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"dags":[{"dag_id":"etl","is_paused":false}],"total_entries":1}`))
 		case "/api/v2/dags/etl/dagRuns/r1":
 			_, _ = w.Write([]byte(`{"dag_id":"etl","dag_run_id":"r1","state":"failed","run_type":"manual"}`))
+		case "/api/v2/dags/etl/dagRuns":
+			_, _ = w.Write([]byte(`{"dag_runs":[{"dag_id":"etl","dag_run_id":"r1","state":"failed","end_date":"2026-10-08T10:00:00Z"}],"total_entries":1}`))
 		case "/api/v2/dags/etl/dagRuns/r1/taskInstances":
 			_, _ = w.Write([]byte(`{"task_instances":[` +
 				`{"task_id":"extract","state":"success","try_number":1},` +
@@ -266,5 +269,94 @@ func TestMCPBinaryHTTPTransport(t *testing.T) {
 	mu.Unlock()
 	if seen != "Bearer usertok" {
 		t.Errorf("caller token did not reach the control plane via the http binary; saw %q", seen)
+	}
+}
+
+// TestMCPBinaryUIBaseURL: --ui-base-url reaches the server through the real
+// binary (#1471): results carry web_url, initialize carries the instructions,
+// and the diagnose_latest_failure prompt renders. A bad base URL is refused at
+// startup rather than producing broken links.
+func TestMCPBinaryUIBaseURL(t *testing.T) {
+	cp := seededControlPlane(t)
+	defer cp.Close()
+	bin := buildMCPBinary(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "--server", cp.URL, "--ui-base-url", "https://flow.example.com/")
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "e2e-client", Version: "0"}, nil)
+	sess, err := client.Connect(ctx, &mcpsdk.CommandTransport{Command: cmd}, nil)
+	if err != nil {
+		t.Fatalf("connecting to leoflow-mcp binary: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	if !strings.Contains(sess.InitializeResult().Instructions, "web_url") {
+		t.Errorf("initialize instructions missing: %q", sess.InitializeResult().Instructions)
+	}
+	res, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{Name: "list_dags", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool list_dags: %v", err)
+	}
+	if got := textOf(res.Content); !strings.Contains(got, `"web_url":"https://flow.example.com/dags/etl"`) {
+		t.Errorf("list_dags output missing web_url; got: %s", got)
+	}
+	pr, err := sess.GetPrompt(ctx, &mcpsdk.GetPromptParams{Name: "diagnose_latest_failure", Arguments: map[string]string{"dag_id": "etl"}})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	if got := textOf([]mcpsdk.Content{pr.Messages[0].Content}); !strings.Contains(got, `diagnose_run with dag_id "etl" and run_id "r1"`) {
+		t.Errorf("prompt does not name the diagnose_run call; got: %s", got)
+	}
+
+	bad := exec.CommandContext(ctx, bin, "--server", cp.URL, "--ui-base-url", "flow.example.com")
+	err = bad.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+		t.Errorf("bad --ui-base-url: err = %v, want exit code 2", err)
+	}
+}
+
+// TestMCPBinaryRunControlFlag: --run-control registers the run control tools
+// through the real binary, they are absent without it, and the HTTP transport
+// refuses to start run control without a shared plan key (ADR 0067).
+func TestMCPBinaryRunControlFlag(t *testing.T) {
+	cp := seededControlPlane(t)
+	defer cp.Close()
+	bin := buildMCPBinary(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	toolNames := func(args ...string) map[string]bool {
+		cmd := exec.CommandContext(ctx, bin, append([]string{"--server", cp.URL}, args...)...)
+		client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "e2e-client", Version: "0"}, nil)
+		sess, err := client.Connect(ctx, &mcpsdk.CommandTransport{Command: cmd}, nil)
+		if err != nil {
+			t.Fatalf("connecting to leoflow-mcp binary %v: %v", args, err)
+		}
+		defer func() { _ = sess.Close() }()
+		res, err := sess.ListTools(ctx, nil)
+		if err != nil {
+			t.Fatalf("ListTools: %v", err)
+		}
+		out := map[string]bool{}
+		for _, tl := range res.Tools {
+			out[tl.Name] = true
+		}
+		return out
+	}
+	if off := toolNames(); off["trigger_run"] || off["apply_plan"] {
+		t.Errorf("run control tools registered without --run-control: %v", off)
+	}
+	if on := toolNames("--run-control"); !on["trigger_run"] || !on["clear_task"] || !on["apply_plan"] {
+		t.Errorf("run control tools missing with --run-control: %v", on)
+	}
+
+	keyless := exec.CommandContext(ctx, bin, "--server", cp.URL, "--transport", "http", "--listen", freePort(t), "--run-control")
+	var exit *exec.ExitError
+	if err := keyless.Run(); !errors.As(err, &exit) || exit.ExitCode() != 2 {
+		t.Errorf("http run control without --plan-key-file: err = %v, want exit code 2", err)
 	}
 }

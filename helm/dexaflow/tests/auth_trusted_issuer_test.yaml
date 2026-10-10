@@ -32,6 +32,23 @@ tests:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS, value: "acme,globex"}}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS, value: "300"}}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS, value: "https://portal.example.com"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS, value: "0"}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES, value: ""}}
+
+  - it: renders the bearer mode when audiences are set (#1468)
+    set:
+      auth.trustedIssuer.issuer: https://portal.example.com
+      auth.trustedIssuer.name: portal
+      auth.trustedIssuer.jwksUrl: https://portal.example.com/jwks
+      auth.trustedIssuer.audience: leoflow-engine
+      auth.trustedIssuer.allowedTenants: ["*"]
+      auth.trustedIssuer.allowedOrigins: ["https://portal.example.com"]
+      auth.trustedIssuer.bearerAudiences: ["leoflow-mcp", "other-mcp"]
+      auth.trustedIssuer.bearerMaxLifetimeSeconds: 300
+    template: deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES, value: "leoflow-mcp,other-mcp"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS, value: "300"}}
 
   - it: renders none of them when no issuer is set
     template: deployment.yaml

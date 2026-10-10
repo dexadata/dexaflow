@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -120,7 +121,7 @@ func registerImportErrors(r gin.IRouter, store ImportErrorStore) {
 		r.GET("/api/v2/importErrors", apiEmptyCollection("import_errors"))
 		return
 	}
-	r.GET("/api/v2/importErrors", listImportErrorsHandler(store))
+	r.GET("/api/v2/importErrors", RequireScope(auth.ScopeRead), listImportErrorsHandler(store))
 	r.PUT("/api/v2/importErrors", RequirePermission("write", "dag"), setImportErrorHandler(store))
 	r.DELETE("/api/v2/importErrors", RequirePermission("write", "dag"), clearImportErrorHandler(store))
 }

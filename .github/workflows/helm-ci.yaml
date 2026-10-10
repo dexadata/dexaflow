@@ -163,6 +163,9 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: none
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -379,11 +382,20 @@ jobs:
           # the HEAD upgrade below then applies every new migration to it.
           kubectl -n leoflow exec deploy/postgres -- psql -v ON_ERROR_STOP=1 \
             -U leoflow -d leoflow -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
-          # No pinned version: the newest chart in the registry IS the previous
-          # release from this PR's point of view, and a pin here would go stale
-          # silently the first time nobody remembered to bump it.
-          repo="oci://ghcr.io/${{ github.repository_owner }}/charts/leoflow"
-          prev="$(helm show chart "$repo" | awk '/^version:/{print $2}')"
+          # No pinned version, which would go stale silently the first time
+          # nobody remembered to bump it: the previous release is the newest
+          # final chart of HEAD's own minor (#1403). Not the newest chart in the
+          # registry: once main publishes 0.6.x, a release-0.5 run would install
+          # 0.6.x and then "upgrade" it to 0.5.x, a downgrade the 0.5.x migrate
+          # image refuses.
+          owner="${{ github.repository_owner }}"
+          owner="${owner,,}"
+          repo="oci://ghcr.io/${owner}/charts/leoflow"
+          token="$(curl -fsSL "https://ghcr.io/token?scope=repository:${owner}/charts/leoflow:pull" | jq -r .token)"
+          head_version="$(awk '/^version:/{print $2}' helm/dexaflow/Chart.yaml)"
+          prev="$(curl -fsSL -H "Authorization: Bearer ${token}" \
+            "https://ghcr.io/v2/${owner}/charts/leoflow/tags/list?n=1000" \
+            | jq -r '.tags[]' | scripts/prev-chart-version.sh "${head_version}")"
           echo "installing last released chart ${prev}, then upgrading to HEAD"
           # Released images on purpose: the point is a realistic previous release,
           # not HEAD's binaries wearing an old chart. Same in-cluster addresses

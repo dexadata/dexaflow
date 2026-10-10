@@ -261,6 +261,50 @@ The unsupported set, with the things Airflow users most often expect to
   level — use `dexaflow.yaml`'s `tasks.<id>:` override block instead,
   which is checked at compile time.
 
+### Run parameters and their schemas
+
+`params=` on the DAG declares the parameters a run accepts, as in Airflow. A
+bare value is a default; a `Param` adds a JSON Schema built from its keyword
+arguments, and a `Param` without a default is required:
+
+```python
+from airflow.sdk import DAG, Param
+
+with DAG(
+    "my_pipeline",
+    params={
+        "limit": Param(100, type="integer", minimum=1),
+        "region": Param(type="string", enum=["us", "eu"]),
+    },
+):
+    ...
+```
+
+The control plane checks the schemas when the DAG is registered and validates
+a run's `conf` against them when the run is triggered. A task's `xcom_schema`
+in `dag.json` works the same way for the value the task pushes. These schemas
+may `$ref` only into themselves (`#/$defs/...`) and the standard JSON Schema
+meta-schemas. Since 0.5.1 any other reference, such as a `file://` URL or a
+relative path, is refused with a schema error at registration, at trigger or
+at the push, so inline what a schema needs instead of pointing at a file.
+
+### Clearing a task
+
+Clearing a task (the UI's Clear, or
+`POST /api/v2/dags/{dag_id}/clearTaskInstances`) runs it again as a new try
+with a full retry budget, as Apache Airflow does:
+
+- the budget is the `retries` of the DAG version the re-run executes, so a task
+  with `retries: 3` gets three retries after a clear, whatever it spent before;
+- its infra re-placements are reset, so it can survive a lost agent again;
+- the XCom values of the attempts it clears are deleted, so a downstream task
+  cannot read a value the new attempt did not write;
+- `on_failure_callback` fires only on the final attempt.
+
+The clear is one transaction: if the XCom values cannot be deleted, nothing is
+cleared and the request fails. Before 0.5.1 a clear kept the spent retries,
+and the UI could show "try 4 of 3".
+
 ## dexaflow.yaml — deploy config
 
 These are Dexaflow concerns, **not** Airflow operator attributes (you cannot invent
@@ -305,11 +349,52 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 - **`staging` is DAG-level only** — one RWX volume is shared atomically by the
   whole run, so it cannot be per-task.
 
+### Task size (`size`, ADR 0066)
+
+`size` is how many slots of its pool a task takes while it is queued or
+running: Airflow's `pool_slots`. It defaults to 1, so a pool of 8 slots runs
+eight tasks of size 1, or two of size 4. A task that does not fit waits until
+enough slots free up; it never fails for it. Smaller tasks cannot keep a task of
+more than one slot out forever: once it has waited past
+`scheduler.pool_starvation_threshold` (60s by default), the pool holds new
+admissions until it fits. Tasks of size 1 never reserve a pool.
+
+The Pools screen and `/api/v2/pools` count slots the same way: two tasks of
+size 4 running in a pool of 8 show 8 occupied slots and 0 open, and each
+state's count (`running_slots`, `queued_slots`, `scheduled_slots`,
+`deferred_slots`) is the sum of its tasks' sizes. A task's size is recorded
+when its run starts, and a clear takes the size of the version the re-run
+executes.
+
+```yaml
+defaults:
+  size: 1          # every task that sets none
+tasks:
+  train:
+    size: 4        # this task takes 4 slots
+```
+
+`@task(pool_slots=4)` or an operator's `pool_slots=4` in `dag.py` sets the same
+thing. Most specific wins: `tasks.<id>.size` > `pool_slots` in `dag.py` >
+`defaults.size` > 1. Pools are enforced on Pro only; Lite ignores the size.
+
+When the operator sets a resource unit (`executor.unit`, for example 250m CPU
+and 512Mi memory per slot), the size also sizes the pod: a task of size 4 gets
+1 CPU and 2Gi wherever it does not set cpu or memory itself, and a task whose
+own `resources` ask for more than size x unit is refused when the DAG is
+registered, with the size it would need.
+
 ### Guardrails (fail loudly, never silently)
 
 - A `tasks:` entry naming a `task_id` absent from the DAG → **compile error**.
 - A duplicate `task_id` key in the YAML → **parse error**.
 - Across a monorepo, a duplicate `dag_id` is a CI-gate concern (one image per DAG).
+- A task's `execution.labels` or `execution.annotations` key under the
+  `leoflow.io/` prefix → **validation error**. That prefix belongs to Dexaflow's
+  own pod metadata, which other components identify task and warm-worker pods
+  by; use a prefix of your own (for example `team.example.com/owner`). A DAG
+  version registered before this rule still runs, with those keys dropped from
+  its pods.
 
 ## The development → deploy lifecycle
 

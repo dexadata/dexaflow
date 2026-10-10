@@ -19,15 +19,20 @@ metadata:
   labels:
     {{- include "leoflow.labels" . | nindent 4 }}
 rules:
+  # patch: a reap stops a started task pod in place by lowering its
+  # activeDeadlineSeconds to 1, so the pod object and its outcome record survive
+  # for the reconciler (ADR 0052 amendment). Without it the teardown falls back
+  # to delete. The Role can already create arbitrary pods here, so the verb adds
+  # no meaningful privilege.
   # deletecollection is granted only with the opt-in settled-run collection
   # (executor.collectSettledRunPods): one call per settled run, limited by label
   # to that run and by field selector to finished pods.
   - apiGroups: [""]
     resources: ["pods"]
     {{- if .Values.executor.collectSettledRunPods }}
-    verbs: ["create", "get", "list", "watch", "delete", "deletecollection"]
+    verbs: ["create", "get", "list", "watch", "patch", "delete", "deletecollection"]
     {{- else }}
-    verbs: ["create", "get", "list", "watch", "delete"]
+    verbs: ["create", "get", "list", "watch", "patch", "delete"]
     {{- end }}
   - apiGroups: [""]
     resources: ["pods/log"]
@@ -44,9 +49,11 @@ rules:
   # reconciler-as-deleter cannot cover. EnsureWarmAnchor creates it (idempotent,
   # tolerating AlreadyExists) and GETs it to read the UID stamped on the owned
   # pods; the reconciler deletes it only once the version has fully drained.
+  # It LISTs the anchors (label leoflow.io/warm-anchor=true) to also delete the
+  # anchor of an inactive version whose pods were never created (#1500).
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["create", "get", "delete"]
+    verbs: ["create", "get", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

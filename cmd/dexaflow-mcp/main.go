@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,13 +49,33 @@ func run() int {
 	// carry nothing else.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 
-	var server, transport, listen string
+	var server, transport, listen, resource, authServers, scopes string
 	flag.StringVar(&server, "server", envOr("LEOFLOW_SERVER_URL", "http://localhost:8080"),
 		"control plane base URL")
 	flag.StringVar(&transport, "transport", envOr("LEOFLOW_MCP_TRANSPORT", "stdio"),
 		"transport: stdio | http")
 	flag.StringVar(&listen, "listen", envOr("LEOFLOW_MCP_LISTEN", ":9099"),
 		"listen address for the http transport")
+	var uiBaseURL string
+	flag.StringVar(&uiBaseURL, "ui-base-url", os.Getenv("LEOFLOW_MCP_UI_BASE_URL"),
+		"URL of the Dexaflow UI; when set, results carry web_url links into it")
+	runControlDefault, err := runControlFromEnv(os.Getenv)
+	if err != nil {
+		slog.Error("run control", "error", err)
+		return 2
+	}
+	var runControl bool
+	var planKeyFile string
+	flag.BoolVar(&runControl, "run-control", runControlDefault,
+		"register the run control tools: trigger_run, clear_task, pause_dag, unpause_dag, apply_plan (ADR 0067)")
+	flag.StringVar(&planKeyFile, "plan-key-file", os.Getenv("LEOFLOW_MCP_PLAN_KEY_FILE"),
+		"file holding the key (at least 32 bytes) that signs run control plans; --run-control on the http transport needs it, the same file on every replica")
+	flag.StringVar(&resource, "resource", os.Getenv("LEOFLOW_MCP_RESOURCE"),
+		"http transport: this endpoint's URL as clients reach it; with --authorization-servers, serves OAuth protected resource metadata (RFC 9728)")
+	flag.StringVar(&authServers, "authorization-servers", os.Getenv("LEOFLOW_MCP_AUTHORIZATION_SERVERS"),
+		"http transport: comma-separated issuer URLs of the OAuth authorization servers for --resource")
+	flag.StringVar(&scopes, "scopes", os.Getenv("LEOFLOW_MCP_SCOPES"),
+		"http transport: comma-separated scopes advertised in the protected resource metadata")
 	flag.Parse()
 
 	if transport != "stdio" && transport != "http" {
@@ -61,6 +83,10 @@ func run() int {
 		return 2
 	}
 	httpMode := transport == "http"
+	if err = mcp.ValidateUIBaseURL(uiBaseURL); err != nil {
+		slog.Error("invalid --ui-base-url", "error", err)
+		return 2
+	}
 
 	// stdio: the process token IS the caller's identity. http: identity is the
 	// per-request bearer (ADR 0050 D9), so the base client holds NO ambient token
@@ -74,10 +100,24 @@ func run() int {
 		slog.Error("building control-plane client", "error", err)
 		return 1
 	}
-	srv := mcp.NewServer(apiClient, server, version, httpMode)
+	opts := []mcp.Option{mcp.WithUIBaseURL(uiBaseURL)}
+	if runControl {
+		opt, err := runControlOption(httpMode, planKeyFile)
+		if err != nil {
+			slog.Error("run control", "error", err)
+			return 2
+		}
+		opts = append(opts, opt)
+	}
+	srv := mcp.NewServer(apiClient, server, version, httpMode, opts...)
 
 	if httpMode {
-		return runHTTP(srv, listen, server)
+		pr, err := protectedResource(resource, authServers, scopes)
+		if err != nil {
+			slog.Error("invalid protected resource metadata", "error", err)
+			return 2
+		}
+		return runHTTP(mcp.HTTPHandler(srv, pr), listen, server)
 	}
 	slog.Info("leoflow-mcp starting", "server", server, "transport", "stdio", "version", version)
 	if err := srv.Run(context.Background(), &mcpsdk.StdioTransport{}); err != nil {
@@ -87,22 +127,15 @@ func run() int {
 	return 0
 }
 
-// runHTTP serves the MCP over Streamable HTTP at POST /mcp. Stateless: no session
-// state is kept, so a request is authorized purely by its own bearer and the
-// service scales active-active. A stray GET/DELETE returns 405 (spec-compliant in
-// stateless mode). Shuts down gracefully on SIGINT/SIGTERM.
-func runHTTP(srv *mcpsdk.Server, listen, server string) int {
-	handler := mcpsdk.NewStreamableHTTPHandler(
-		func(*http.Request) *mcpsdk.Server { return srv },
-		&mcpsdk.StreamableHTTPOptions{Stateless: true},
-	)
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", handler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
+// runHTTP serves handler (mcp.HTTPHandler: the MCP over Streamable HTTP at
+// POST /mcp). Stateless: no session state is kept, so a request is authorized
+// purely by its own bearer and the service scales active-active. A stray
+// GET/DELETE returns 405 (spec-compliant in stateless mode). Shuts down
+// gracefully on SIGINT/SIGTERM.
+func runHTTP(handler http.Handler, listen, server string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	httpSrv := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	httpSrv := &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		// Fresh deadline for the drain — ctx is already canceled (that's what woke
@@ -122,9 +155,63 @@ func runHTTP(srv *mcpsdk.Server, listen, server string) int {
 	return 0
 }
 
+// protectedResource builds the transport's OAuth protected resource metadata
+// (#1470) from the flags, comma-separated lists split and trimmed. All empty
+// leaves it off.
+func protectedResource(resource, authServers, scopes string) (mcp.ProtectedResource, error) {
+	pr := mcp.ProtectedResource{Resource: resource, AuthorizationServers: splitList(authServers), Scopes: splitList(scopes)}
+	return pr, pr.Validate()
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return def
+}
+
+// runControlFromEnv reads DEXAFLOW_MCP_RUN_CONTROL, or the pre-rename
+// LEOFLOW_MCP_RUN_CONTROL when it is unset, with the usual boolean spellings
+// (strconv.ParseBool). A value it cannot read is an error, not "off", so a
+// typo is noticed at start-up.
+func runControlFromEnv(getenv func(string) string) (bool, error) {
+	for _, name := range []string{"DEXAFLOW_MCP_RUN_CONTROL", "LEOFLOW_MCP_RUN_CONTROL"} {
+		v := getenv(name)
+		if v == "" {
+			continue
+		}
+		on, err := strconv.ParseBool(v)
+		if err != nil {
+			return false, fmt.Errorf("%s=%q: want true or false (also 1/0, t/f)", name, v)
+		}
+		return on, nil
+	}
+	return false, nil
+}
+
+// runControlOption loads the plan key for run control. The http transport
+// runs active-active, so its replicas must share a key from a file; stdio has
+// one local caller, so a random key is enough unless a file is given.
+func runControlOption(httpMode bool, planKeyFile string) (mcp.Option, error) {
+	if planKeyFile == "" {
+		if httpMode {
+			return nil, errors.New("--run-control on the http transport needs --plan-key-file")
+		}
+		return mcp.WithRunControl(nil), nil
+	}
+	key, err := mcp.LoadPlanKey(planKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	return mcp.WithRunControl(key), nil
 }

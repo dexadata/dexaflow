@@ -285,6 +285,10 @@ type activeWarmVersion struct {
 	// a warm worker carries no per-run /staging mount, so its attempts must run on
 	// dedicated pods. Kept on the pure input so the exclusion is unit-testable.
 	staging bool
+	// hasSource marks a version that carries its dag.py. On the runtime image
+	// with source mode on it runs in source mode and is excluded from warm pools
+	// (ADR 0067 §3): a warm pod cannot carry the task's source.
+	hasSource bool
 }
 
 // warmTargets dedupes the active versions (many runs share one immutable
@@ -302,6 +306,10 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection) []e
 		seen[v.dagVersionID] = true
 		if v.staging {
 			// ADR 0058 D5: staging versions never get a warm pool.
+			continue
+		}
+		if domain.SourceModeApplies(exec.SourceMode.RuntimeImage(), v.image, v.hasSource) {
+			// ADR 0067 §3: source-mode versions always run on cold pods.
 			continue
 		}
 		out = append(out, executor.WarmTarget{
@@ -350,7 +358,8 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			tenantID:     uuidToString(run.TenantID),
 			// ADR 0058 D5: a staging version is excluded from warm pools by
 			// warmTargets. Defense-in-depth alongside the dispatch-path guard.
-			staging: spec.Staging != nil && spec.Staging.Enabled,
+			staging:   spec.Staging != nil && spec.Staging.Enabled,
+			hasSource: spec.Source != "",
 		})
 	}
 	return warmTargets(versions, s.warmExec), nil
@@ -373,6 +382,14 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 	if err != nil {
 		return fmt.Errorf("loading run: %w", err)
 	}
+	if _, err := s.q.CreateTaskInstances(ctx, taskInstanceRows(run.TenantID, rid, tasks)); err != nil {
+		return fmt.Errorf("creating task instances for run %q: %w", runID, err)
+	}
+	return nil
+}
+
+// taskInstanceRows builds the COPY rows MaterializeTasks writes, one per task.
+func taskInstanceRows(tenantID, runID pgtype.UUID, tasks []domain.TaskSpec) []queries.CreateTaskInstancesParams {
 	rows := make([]queries.CreateTaskInstancesParams, len(tasks))
 	for i, t := range tasks {
 		maxTries := int32(1)
@@ -380,8 +397,8 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 			maxTries = toInt32(*t.Retries + 1)
 		}
 		rows[i] = queries.CreateTaskInstancesParams{
-			TenantID: run.TenantID,
-			DagRunID: rid,
+			TenantID: tenantID,
+			DagRunID: runID,
 			TaskID:   t.TaskID,
 			Operator: string(t.Type),
 			MaxTries: maxTries,
@@ -392,12 +409,12 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 			// pool occupancy is attributed correctly (Wave-2 review HIGH-1).
 			Pool:      poolOrNil(t.Pool),
 			TryNumber: 1,
+			// The size the admission gate charges the task (ADR 0066), so
+			// PoolSlotUsage sums slots rather than counting instances (#1499).
+			PoolSlots: toInt32(t.EffectivePoolSlots()),
 		}
 	}
-	if _, err := s.q.CreateTaskInstances(ctx, rows); err != nil {
-		return fmt.Errorf("creating task instances for run %q: %w", runID, err)
-	}
-	return nil
+	return rows
 }
 
 // poolOrNil maps an unset task pool to a NULL column so a task with no declared
@@ -618,6 +635,22 @@ func (s *SchedulerStore) FailDispatchExhausted(ctx context.Context, runID, taskI
 		return err
 	}
 	return s.q.FailDispatchExhausted(ctx, queries.FailDispatchExhaustedParams{
+		DagRunID:     rid,
+		TaskID:       taskID,
+		ErrorMessage: &reason,
+	})
+}
+
+// FailDispatchRefused fails a task whose dispatch the executor refused (ADR
+// 0066 section 3) and spends its retry budget, so a permanent refusal is not
+// dispatched and refused again once per retry. It serves both the sync path
+// (a scheduled task) and the buffered path (a scheduled or queued one).
+func (s *SchedulerStore) FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return err
+	}
+	return s.q.FailDispatchRefused(ctx, queries.FailDispatchRefusedParams{
 		DagRunID:     rid,
 		TaskID:       taskID,
 		ErrorMessage: &reason,
@@ -892,6 +925,10 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 		if r.LastHeartbeatAt.Valid {
 			last = r.LastHeartbeatAt.Time.UTC()
 		}
+		var started time.Time
+		if r.StartedAt.Valid {
+			started = r.StartedAt.Time.UTC()
+		}
 		out = append(out, executor.AgentLostCandidate{
 			TaskInstanceID: uuidToString(r.TaskInstanceID),
 			TenantID:       uuidToString(r.TenantID),
@@ -900,6 +937,7 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
 			AttemptEpoch:   int(r.AttemptEpoch),
+			StartedAt:      started,
 			LastHeartbeat:  last,
 		})
 	}
@@ -941,6 +979,26 @@ func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID s
 	})
 	if err != nil {
 		return false, fmt.Errorf("marking task agent-lost: %w", err)
+	}
+	return n == 1, nil
+}
+
+// MarkTaskCredentialCeiling fails one running TI whose attempt outlived
+// auth.max_attempt_credential_lifetime (#1461) as a task failure with the
+// credential_ceiling reason: no infra kind, so the planner applies the task's
+// retry policy instead of re-placing it, and no provisional mark, since there is
+// no infra guess for the reconciler to confirm. Guarded and pinned to the listed
+// attempt exactly like MarkTaskAgentLost.
+func (s *SchedulerStore) MarkTaskCredentialCeiling(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := s.q.MarkTaskCredentialCeiling(ctx, queries.MarkTaskCredentialCeilingParams{
+		ID: tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("marking task credential-ceiling: %w", err)
 	}
 	return n == 1, nil
 }

@@ -354,6 +354,7 @@ type TaskInstance struct {
 	ReleasedAt        pgtype.Timestamptz `json:"released_at"`
 	AttemptEpoch      int32              `json:"attempt_epoch"`
 	InfraConfirmedAt  pgtype.Timestamptz `json:"infra_confirmed_at"`
+	PoolSlots         int32              `json:"pool_slots"`
 }
 
 type TaskInstanceHistory struct {
@@ -397,6 +398,7 @@ type Tenant struct {
 	MinScheduleIntervalSeconds int32              `json:"min_schedule_interval_seconds"`
 	RunsDay                    pgtype.Date        `json:"runs_day"`
 	RunsDayCount               int32              `json:"runs_day_count"`
+	MaxTaskPoolSlots           int32              `json:"max_task_pool_slots"`
 }
 
 type User struct {

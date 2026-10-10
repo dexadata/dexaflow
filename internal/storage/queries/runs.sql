@@ -219,9 +219,9 @@ WHERE id = sqlc.arg(id);
 -- name: CreateTaskInstance :one
 -- try_number starts at 1 to match Airflow (1-based attempts): the first run's
 -- logs live at .../1.log, which is where the UI's log view looks. Retries bump
--- it via ResetForRetry.
-INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
+-- it via ResetForRetry. pool_slots is the task's EffectivePoolSlots (#1499).
+INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number, pool_slots)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
 RETURNING *;
 
 -- name: CreateTaskInstances :copyfrom
@@ -229,10 +229,12 @@ RETURNING *;
 -- single COPY instead of T INSERT round-trips. The caller supplies one param row
 -- per task with try_number pinned to 1 (matching CreateTaskInstance's literal)
 -- and pool carried through so cross-DAG pool occupancy is attributed correctly;
--- columns omitted from the list take their table defaults, so the rows are
--- byte-identical to the loop — only the statement count changes (T INSERTs → 1 COPY).
-INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+-- pool_slots carries the task's EffectivePoolSlots so that occupancy is
+-- weighted like the admission gate's (#1499). Columns omitted from the list
+-- take their table defaults, so the rows are byte-identical to the loop: only
+-- the statement count changes (T INSERTs → 1 COPY).
+INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number, pool_slots)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: ListTaskInstancesByRun :many
 SELECT * FROM task_instances
@@ -506,6 +508,13 @@ SET state = 'none',
     max_tries = COALESCE(
         ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         GREATEST(ti.max_tries, ti.try_number + 1)),
+    -- The size the admission gate charges the re-run is the executing version's
+    -- (#1499, ADR 0066), so PoolSlotUsage sums the same weight; spec_pool_slots
+    -- is parallel to spec_task_ids, and a task the version no longer declares
+    -- keeps the size it had.
+    pool_slots = COALESCE(
+        (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        ti.pool_slots),
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
 
@@ -967,6 +976,13 @@ SET state = 'none',
     max_tries = COALESCE(
         ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         GREATEST(ti.max_tries, ti.try_number + 1)),
+    -- The size the admission gate charges the re-run is the executing version's
+    -- (#1499, ADR 0066), so PoolSlotUsage sums the same weight; spec_pool_slots
+    -- is parallel to spec_task_ids, and a task the version no longer declares
+    -- keeps the size it had.
+    pool_slots = COALESCE(
+        (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        ti.pool_slots),
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
@@ -1031,6 +1047,13 @@ SET state = 'none',
     max_tries = COALESCE(
         ti.try_number + 1 + (sqlc.arg(spec_retries)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         GREATEST(ti.max_tries, ti.try_number + 1)),
+    -- The size the admission gate charges the re-run is the executing version's
+    -- (#1499, ADR 0066), so PoolSlotUsage sums the same weight; spec_pool_slots
+    -- is parallel to spec_task_ids, and a task the version no longer declares
+    -- keeps the size it had.
+    pool_slots = COALESCE(
+        (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
+        ti.pool_slots),
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -1270,7 +1293,10 @@ SELECT ti.id AS task_instance_id,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
-       ti.last_heartbeat_at AS last_heartbeat_at
+       ti.last_heartbeat_at AS last_heartbeat_at,
+       -- started_at lets the reaper tell an attempt that outlived
+       -- auth.max_attempt_credential_lifetime from a lost agent (#1461).
+       ti.started_at AS started_at
 FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
@@ -1308,6 +1334,25 @@ SET state = 'failed',
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
     error_message = 'agent_lost: no heartbeat within the threshold — see #128'
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'running';
+
+-- name: MarkTaskCredentialCeiling :execrows
+-- Fails a TI whose agent went silent after the attempt outlived
+-- auth.max_attempt_credential_lifetime (#1461). Renewal stops at the ceiling,
+-- so the silence is the credential lapsing, not a lost agent: this is a TASK
+-- failure (last_failure_kind NULL, the retry policy applies), never an infra
+-- mark the planner would re-place with a fresh credential. Same guards as
+-- MarkTaskAgentLost: state='running' (a late report wins) and the listed
+-- attempt, (try_number, attempt_epoch) (ADR 0051 amendment).
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = NULL,
+    infra_confirmed_at = NULL,
+    error_message = 'credential_ceiling: attempt outlived auth.max_attempt_credential_lifetime'
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
@@ -1533,6 +1578,22 @@ UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
     next_dispatch_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
+
+-- name: FailDispatchRefused :exec
+-- A dispatch the executor refused (ADR 0066 section 3: the task is larger than
+-- its size, or above executor.unit.max_size) fails the task for good. The
+-- verdict is permanent, so no retry can change it: the retry budget is spent by
+-- lowering max_tries to the current try, which makes the planner's
+-- try_number < max_tries check false without counting a try that never ran. A
+-- clear restores the budget from the task as usual (#1131), so an operator who
+-- fixes the DAG or the unit can run it again. Guarded to the dispatch states:
+-- the sync path refuses a scheduled task, the buffered path a scheduled or
+-- queued one, and a row that moved on is left alone.
+UPDATE task_instances
+SET state = 'failed', ended_at = now(), error_message = $3,
+    next_dispatch_at = NULL,
+    max_tries = LEAST(max_tries, try_number)
+WHERE dag_run_id = $1 AND task_id = $2 AND state IN ('scheduled', 'queued');
 
 -- name: ListSettledRunIDs :many
 -- Of the given (tenant, run) pairs, the settled runs: run in success or failed

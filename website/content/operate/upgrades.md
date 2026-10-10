@@ -214,12 +214,11 @@ directly, expect both names.
 
 ### What the 0.5.1 migrations do
 
-0.5.0 left the schema at migration 026. 0.5.1 applies 027 to 039, and 040 as
-well when #1421 is in the release. Nine of them change indexes or the page
-layout of `task_instances`, which is what makes this upgrade different from
-the column additions earlier releases shipped: eight are `CREATE INDEX
-CONCURRENTLY` or `DROP INDEX CONCURRENTLY` statements and one changes the
-table's `fillfactor`.
+0.5.0 left the schema at migration 026. 0.5.1 applies 027 to 040. Nine of
+them change indexes or the page layout of `task_instances`, which is what makes
+this upgrade different from the column additions earlier releases shipped:
+eight are `CREATE INDEX CONCURRENTLY` or `DROP INDEX CONCURRENTLY` statements
+and one changes the table's `fillfactor`.
 
 | Migration | What it does | Shape |
 |---|---|---|
@@ -236,7 +235,7 @@ table's `fillfactor`.
 | `037_reconcile_tenant_system_roles` | A data migration: makes every tenant's built-in roles and their grants equal to the `default` tenant's (#1371; the changelog entry says what it overwrites). Idempotent, and its down is a no-op. | DML, one transaction |
 | `038_attempt_epoch` | Adds `attempt_epoch` to `task_instances` and `task_instance_history`, default 0 (#1392). | `ALTER TABLE` in a transaction, `lock_timeout` 5 s |
 | `039_infra_confirmed_at` | Adds `task_instances.infra_confirmed_at` and then, in a second transaction, stamps the infra failures that already exist as confirmed (#1406). | `ALTER TABLE` with `lock_timeout` 5 s, then an `UPDATE` |
-| `040_tenant_limits` (when #1421 is in the release) | Adds the per-tenant limit columns and the daily run counter to `tenants`; every default means unlimited. | `ALTER TABLE` in a transaction |
+| `040_tenant_limits` | Adds the per-tenant limit columns and the daily run counter to `tenants`; every default means unlimited. | `ALTER TABLE` in a transaction |
 
 **Where they run.** On Pro, the chart's pre-install/pre-upgrade hook Job
 (named `<release>-migrate`, or `<release>-dexaflow-migrate` when the release
@@ -430,13 +429,13 @@ instead of 1.3 ms for 710 running task instances among 5 million rows, in
 the audit's measurement). Prefer `helm rollback` to a `helm upgrade` that
 points at chart 0.5.0: a rollback runs no pre-upgrade hook, while that
 upgrade runs 0.5.0's migration Job, whose image carries files up to 026 only
-and fails on a database at 039 with `no migration found for version 39`. If
+and fails on a database at 040 with `no migration found for version 40`. If
 you must use `helm upgrade`, pass `--set migrations.enabled=false` or run the
 down migration first. What the section above says about a rollback (the logs
 0.5.1 wrote, the tasks 0.5.1 dispatched) applies either way.
 
 **Lite.** `dexaflow lite` 0.5.0 refuses to start against a database above 026
-(`database is at schema version 39 but this binary only knows up to 26`), and
+(`database is at schema version 40 but this binary only knows up to 26`), and
 no `dexaflow` command runs a down migration. The supported path is the
 snapshot from [How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended):
 `dexaflow uninstall --purge`, reinstall 0.5.0, `dexaflow lite restore`. The
@@ -446,7 +445,7 @@ backup page has the
 **Restoring the 0.5.0 schema.** Where you need the exact 0.5.0 schema back
 (Lite without a snapshot, or Pro before a `helm upgrade` to 0.5.0 with the
 hook on), run the down migrations from the highest migration your 0.5.1 build
-carries (039 today, 040 when #1421 is in the release) to 026, with the CLI or
+carries (040) to 026, with the CLI or
 the 0.5.1 migrate image, which carry the down files; the 0.5.0 image does not:
 
 ```sh
@@ -461,7 +460,7 @@ tables the way the upgrade did, and it can be interrupted the same way (see
 the end of the previous section). It drops the three indexes 0.5.1 added,
 resets the `fillfactor` (pages already written keep their free space), and
 drops `released_at`, `attempt_epoch` on both tables, `infra_confirmed_at`
-and, with 040, the tenant limit columns, so limits an operator set are lost
+and the tenant limit columns of 040, so limits an operator set are lost
 and tenants are unlimited again. 037's down is a no-op: the reconciled role
 grants stay. The rows in every table are preserved: the 0.5.1 audit ran 027
 to 035 up, down to 026 and up again on a seeded database with both Postgres
@@ -527,6 +526,45 @@ section). These changes are not, and an operator sees them on upgrade:
   its missed slots after the upgrade, bounded per tick and by
   `max_active_runs`; pause it or set `catchup: false` first if you do not want
   that.
+- **A token that names no tenant is refused** (#1363): the authenticator
+  answers `401` at login, on every request and on renewal when a token
+  trusted from its signed claims (the local dev token, or a server with no
+  user store) carries no tenant, instead of serving the `default` tenant's
+  data. Users loaded from the database always carry their tenant and are not
+  affected. If you mint tokens yourself, include the `tenant_id`
+  claim.
+- **DAG JSON Schemas resolve only their own references** (#1385): a param
+  schema and a task's `xcom_schema` may `$ref` into themselves
+  (`#/$defs/...`) and the standard JSON Schema meta-schemas, nothing else. A
+  `file://` reference, or a relative one, now fails the registration, the
+  trigger or the XCom push with a schema error instead of reading a file on
+  the control plane. See
+  [Run parameters](/author-dags/dag-authoring/#run-parameters-and-their-schemas).
+- **Clearing a task restores its retries** (#1412): a clear sets the task's
+  retry budget from the `retries` of the version the re-run executes, resets
+  its infra re-placements, and deletes the XCom of the attempts it clears, all
+  in one transaction. A cleared task with `retries: 3` gets three retries
+  again instead of none, and `on_failure_callback` fires only on its final
+  attempt. See [Clearing a task](/author-dags/dag-authoring/#clearing-a-task).
+- **A very long log line is split instead of ending the log** (#1338): a line
+  longer than just under 4 MiB (progress bars, binary dumps) is sent in pieces
+  cut on a UTF-8 boundary, with a warning naming the number of extra lines.
+  Before, it ended the attempt's log stream and every later line was lost.
+- **The chart opens fewer idle Postgres connections** (#1426): the chart's
+  `database.maxIdleConns` default drops from 5 to 2, which is what each pod
+  opens at boot, so two replicas fit a small managed Postgres; the
+  `database.maxOpenConns` ceiling stays at 20. When the estimated boot or peak
+  connection demand passes 20, `helm install` and `helm upgrade` print it in
+  their notes; a default single replica install prints nothing.
+  If you pinned `database.maxIdleConns` yourself, your value is kept. See
+  [Troubleshooting](/operate/troubleshooting/) for SQLSTATE 53300.
+- **Python 3.10 and 3.11 task images ship a newer setuptools** (#1410): 80.10.2
+  instead of 79.0.1, to clear two HIGH image findings. A task whose
+  dependencies import `pkg_resources` now logs one `UserWarning` line, and a
+  warnings filter that turns `UserWarning` into an error fails on it.
+- **Offset pages of DAG runs are stable** (#1352): runs that share a logical
+  date are now ordered by run id as well, so paging with `offset` no longer
+  repeats or skips one of them. The response body is unchanged.
 
 ### New opt-in settings in 0.5.1
 
@@ -549,6 +587,16 @@ each, and the Helm value where one exists.
 | `execution.warm_read_only_root_filesystem` (Helm `execution.warmReadOnlyRootFilesystem`) | `false` | A read-only root filesystem and a per-attempt `HOME` for warm workers, so nothing one attempt writes reaches the next; a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. See [Isolation between attempts](/operate/warm-pools/#isolation-between-attempts). | #1313 |
 | Helm `goMemLimit.enabled` (`goMemLimit.percent`) | `false` (`80`) | Renders `GOMEMLIMIT` as a share of `resources.limits.memory`, so the GC works harder near the container limit instead of the pod being OOM-killed. See [Memory limit for the Go runtime](/operate/helm-chart/#memory-limit-for-the-go-runtime). | #1340 |
 
+0.5.1 also adds features that change nothing until you use them:
+
+| Feature | How to use it | PR |
+|---|---|---|
+| Keyset paging for DAG runs and the event log | Pass the opaque `cursor` query parameter instead of `offset`; each page with a successor names the next cursor in the `Dexaflow-Next-Cursor` response header. See [Paging](/reference/api/#paging). | #1352 |
+| Read-only pools for tenants | `server.pools_read_only` (Helm `config.poolsReadOnly`): tenant roles can no longer write pools, and a task that names a pool its tenant has not defined is confined to the tenant's `default_pool`. | #1383 |
+| A tenant's default pool size | `default_pool_slots` on `PUT /api/v2/service/tenants/{tenant}` sizes a new tenant's `default_pool` and re-sizes it on a later call. | #1364 |
+| Per-tenant limits | `max_dags` and the other limit fields on `PUT /api/v2/service/tenants/{tenant}` cap what a tenant registers and schedules; existing tenants stay unlimited (migration 040). See [Operator service API](/reference/configuration/#operator-service-api). | #1421 |
+| A guard against private alert destinations | `scheduler.alerts.block_private_destinations`, with `scheduler.alerts.allowed_cidrs` for ranges you trust. See [Alert destinations](/reference/configuration/#alert-destinations). | #1362 |
+
 The segmented layout has one requirement. The sink finds where an
 attempt's log ends by asking the store for a segment that should not exist,
 so the store must answer a missing key with not-found; on S3 that takes
@@ -563,6 +611,68 @@ sooner when the lines held since the last check reach half of its 1024-line
 or 1 MiB bound, so a follower of a chatty task receives every line that
 arrived after it subscribed (#1442). Both settings are new in 0.5.1 and off
 by default; an install that does not set them sees no change.
+
+### Upgrading to 0.5.2
+
+0.5.2 applies one migration, `041_tenant_max_task_pool_slots`. It adds
+`tenants.max_task_pool_slots` (`INTEGER NOT NULL DEFAULT 0`, with a `>= 0`
+check). The default is a constant, so Postgres records it without rewriting the
+table, and existing tenants get `0`, which is unlimited. On a database with
+about one million task instances the migration took under 100 ms in the
+release review, and its down about 20 ms.
+
+**Rolling back 0.5.2 to 0.5.1.** On Pro, `helm rollback <release> <revision>`
+is supported and leaves the schema at 041: the 0.5.1 control plane boots
+against it with the warning `database schema is ahead of this binary;
+proceeding` and never reads the new column. As with 0.5.1, prefer it to a
+`helm upgrade` that points at chart 0.5.1, whose migration Job fails with
+`no migration found for version 41`; if you must use that upgrade, pass
+`--set migrations.enabled=false` or run the down migration first. On Lite,
+`dexaflow lite` 0.5.1 refuses a database above 040, so the way back is the
+snapshot from [How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+or the down migration with the 0.5.2 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 40
+```
+
+The down drops the column, so any `max_task_pool_slots` an operator set is lost
+and every tenant is unlimited again. Rows in every table are preserved.
+
+### What changes in 0.5.2 without a flag
+
+- **A DAG can no longer set `leoflow.io/` labels or annotations on its pods**
+  (#1376). `dexaflow.yaml` validation, `dexaflow compile` and registration
+  reject such a key, and the executor drops and logs any that reach it from a
+  DAG registered earlier. Move a custom key to a prefix of your own before you
+  upgrade.
+- **An attempt that outlives `auth.max_attempt_credential_lifetime` fails
+  instead of re-running** (#1461). Before, it was failed as `agent_lost` and
+  re-placed with a fresh credential without using a retry; now it fails with
+  `credential_ceiling: ...` as a task failure and its retry policy applies.
+  Only tasks that run past the ceiling plus the 10 minute token TTL see this.
+- **Migrated Airflow DAGs with `pool_slots` above 1 become weighted** (#1467).
+  The next push of such a DAG makes each of those tasks take that many slots
+  of its pool, so a pool sized for task count admits fewer of them at once.
+  DAGs that do not set `pool_slots` plan exactly as before. Pro only.
+- **Error messages no longer leak local detail.** A failed alert names its
+  endpoint by scheme and host only, without the webhook URL (#1370), and a
+  tenant schema error no longer names the server's working directory (#1402).
+
+### New opt-in settings in 0.5.2
+
+Every setting below is off or neutral by default; the
+[configuration reference](/reference/configuration/) has the full entry for
+each. Together they implement
+[ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/), weighted
+pool slots and a resource unit (#1466).
+
+| Setting | Default | What it does when set | PR |
+|---|---|---|---|
+| `size` in `dexaflow.yaml` (`tasks.<id>.size`, `defaults.size`), or `pool_slots` in `dag.py` | `1` | How many slots of its pool a task takes while queued or running. A task that does not fit waits for enough free slots and never fails for it. | #1467 |
+| `executor.unit.cpu` and `executor.unit.memory` (Helm `executor.unit`), with `executor.unit.enforce` and `executor.unit.max_size` | unset, `refuse`, `64` | Sizes a task pod as `pool_slots x unit` and refuses a task that declares more. Roll it out with `enforce: warn` first and watch `dexaflow_unit_misfit_total`. | #1481 |
+| `scheduler.pool_starvation_threshold` (Helm `config.scheduler.poolStarvationThreshold`) | `60s` | Reserves a pool for a task of more than one slot that has waited longer than this, so smaller tasks cannot keep it out. Pools without sized tasks are never reserved. `0s` disables it. | #1482 |
+| `max_task_pool_slots` on `PUT /api/v2/service/tenants/{tenant}` | `0` (unlimited) | Refuses at registration, with a 403, a task whose size is above the tenant's limit. Uses migration 041. | #1483 |
 
 ## Related issues
 

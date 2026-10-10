@@ -144,6 +144,20 @@ executor:
     maintenanceQps: 0
     # -- Token-bucket burst of the maintenance client. 0 = server default (10). Ignored while maintenanceQps is 0.
     maintenanceBurst: 0
+  # Resource unit of one pool slot (ADR 0066). Empty (default) changes nothing.
+  # Set both and every task pod is sized pool_slots x unit wherever the task
+  # leaves cpu or memory out, and a task that declares more than that is refused
+  # at registration and at dispatch. With warm pools on, a warm pod is one unit
+  # and only takes size-1 tasks that declare no resources.
+  unit:
+    # -- CPU of one pool slot (e.g. `250m`). Empty = no unit. Set together with `memory`.
+    cpu: ""
+    # -- Memory of one pool slot (e.g. `512Mi`). Empty = no unit. Set together with `cpu`.
+    memory: ""
+    # -- `refuse` fails a task larger than its size; `warn` runs it with its own resources, logs it and counts it in `dexaflow_unit_misfit_total`. Roll a unit out with `warn` first.
+    enforce: refuse
+    # -- Largest pool_slots a task may have while a unit is set, whatever its pool.
+    maxSize: 64
   # -- Collect a settled run's finished task pods as soon as every outcome is
   # recorded, in one DeleteCollection by the run's label, instead of one delete
   # per pod after the 10 minute grace period. Off by default, so finished pods
@@ -203,6 +217,8 @@ config:
       bufferSize: 0
       # -- Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Ignored while `bufferSize` is 0; 0 with a buffer means 1.
       workers: 0
+    # -- How long a task held only by its pool waits before the pool is reserved for it (`scheduler.pool_starvation_threshold`, ADR 0066), so smaller tasks cannot keep a larger one out forever. A duration such as `2m`; `0s` disables it. Empty renders nothing and keeps the server default of 60s.
+    poolStarvationThreshold: ""
   cors:
     # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
     allowedOrigins: []
@@ -213,6 +229,8 @@ config:
     blockPrivateDestinations: false
     # -- CIDRs or single addresses exempted from `blockPrivateDestinations` (`scheduler.alerts.allowed_cidrs`), e.g. an on-premises chat server. Rendered as a comma-joined `LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS`. An invalid entry fails server startup.
     allowedCIDRs: []
+  # -- Make the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer 403 for every role, tenant `admin` included; list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools, so no tenant can raise its own slot budget. It also makes a task naming a pool its tenant has not defined draw on `default_pool` instead of running unlimited. False (the default) renders nothing and keeps pools writable under `write:pool`.
+  poolsReadOnly: false
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
 
@@ -261,7 +279,7 @@ logs:
     bucket: ""
     # -- Optional key prefix under which attempt objects are laid out (`{prefix}/{tenant}/{dag}/{run}/{task}/{try}.log`).
     prefix: ""
-    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found.
+    # -- How new attempts are written: `single` (default) keeps one object per attempt at `{try}.log`, rewritten on every flush; `segmented` writes numbered segments under `{try}.log.d/` (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads only the open segment. Both layouts are always readable; enable `segmented` only once every replica runs a version that reads it. Before downgrading to an older version, switch back to `single`; attempts already written as segments stay unreadable by older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so a missing segment answers not-found; the server checks this at startup and refuses to start when a missing key is not answered with not-found.
     layout: single
     # -- [s3] Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores.
     region: ""
@@ -323,12 +341,18 @@ auth:
     maxLifetimeSeconds: 0
     # -- Origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. Any other `Origin`, or none, is refused, so another site cannot sign a visitor in as someone else. Required when `issuer` is set.
     allowedOrigins: []
+    # -- Audiences whose tokens from the issuer are accepted as the `Authorization: Bearer` of any `/api/v2` request, reused until they expire (#1468), for remote MCP clients behind your platform (`leoflow-mcp` by convention). Each must differ from `audience`. Empty (the default) leaves the bearer mode off.
+    bearerAudiences: []
+    # -- Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600.
+    bearerMaxLifetimeSeconds: 0
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
   existingSecret: ""
   # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
   tokenTtlSeconds: 3600
+  # -- Ceiling, in seconds, on the total age of a renewed user session, measured from first login and kept across every `POST /api/v2/auth/token/renew` (#801). Past it, renewal is refused and the user logs in again. `tokenTtlSeconds` is what bounds a stolen token; this only caps how long a live session may keep refreshing. `0` disables the ceiling. Sets `auth.jwt.max_lifetime_seconds`.
+  sessionMaxLifetimeSeconds: 86400
   # -- Bearer token for the operator service API under `/api/v2/service/` (#1283), which creates tenants (with the built-in roles and default pool) and links passwordless users to `trustedIssuer`. At least 32 characters; generate with `openssl rand -base64 48`. Stored in the chart Secret. It is a root-level credential: whoever holds it can create tenants and grant any role, admin included, in every tenant `trustedIssuer.allowedTenants` covers. Rotate it by changing the Secret and restarting. Empty (the default) leaves the service API off.
   serviceToken: ""
   # -- Name of an existing Secret with key `serviceToken`, used instead of `serviceToken`.
@@ -692,7 +716,7 @@ taskNetworkPolicy:
 networkPolicy:
   # -- Enable NetworkPolicy gating ingress + egress on the control-plane pods. Requires a CNI that enforces policies (Calico/Cilium/etc.).
   enabled: false
-  # -- NetworkPolicy `from` rules for HTTP + gRPC ingress (task pods dial back). Empty = allow from any pod in any namespace. Tighten with e.g. `[{namespaceSelector: {}}]` for same-namespace only.
+  # -- NetworkPolicy `from` rules for HTTP + gRPC ingress (task pods dial back). Empty = allow from anywhere: every pod in every namespace, node and host traffic, and off-cluster clients where the CNI keeps the client IP. For pods of the release namespace only, use `[{podSelector: {}}]`. Task pods must still reach the gRPC port, so when `taskNamespace` differs from the release namespace add `{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: <taskNamespace>}}}`. Do not use `[{namespaceSelector: {}}]` for this: an empty namespaceSelector matches every namespace (#1076).
   ingressFrom: []
   # -- NetworkPolicy `from` rules for the metrics port (Prometheus scrape). **Narrow this**: the default below allows any namespace, and the metrics listener is unauthenticated and labels its series with `dag_id` and `task_id`. Replace it with your Prometheus namespace, e.g. `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}]`. An empty list means no rule at all, which an Ingress-typed policy denies — that was the old default, and it made `networkPolicy.enabled` plus `metrics.serviceMonitor.enabled` a scrape target that never answered and failed nothing at install (#1067). Stated as a real value rather than left to a comment about what empty means, because a magic empty is how #1067 happened.
   metricsFrom:
@@ -751,7 +775,11 @@ podSecurityContext:
     type: RuntimeDefault
 securityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false
+  # Read-only since v0.5.3 (#1225). The control plane writes only to the logs
+  # volume and to the Go temp dir; the chart mounts an emptyDir at /tmp for the
+  # latter, so the root filesystem needs no writes. Set false only if you add a
+  # sidecar or plugin that writes elsewhere in the image.
+  readOnlyRootFilesystem: true
   runAsNonRoot: true
   runAsUser: 65532
   capabilities:

@@ -79,9 +79,14 @@ func NewPodInformer(clientset kubernetes.Interface, namespace string) *PodInform
 		}),
 	)
 	pods := factory.Core().V1().Pods()
+	informer := pods.Informer()
+	// A source-mode pod carries its dag.py (up to 128 KiB) in an annotation
+	// nothing here reads; keep it out of the cache (ADR 0067 §3). SetTransform
+	// only fails once the informer has started, which it has not.
+	_ = informer.SetTransform(dropSourceAnnotation) //nolint:errcheck // cannot fail before Start
 	return &PodInformer{
 		factory:   factory,
-		informer:  pods.Informer(),
+		informer:  informer,
 		lister:    pods.Lister(),
 		namespace: namespace,
 		stopCh:    make(chan struct{}),
@@ -166,4 +171,16 @@ func (p *PodInformer) SnapshotTaskPods() ([]*corev1.Pod, error) {
 	// The cache is already scoped to the run-id label by the factory's tweak, so
 	// every pod it holds is a managed task pod.
 	return p.lister.Pods(p.namespace).List(labels.Everything())
+}
+
+// dropSourceAnnotation is the pod informer's cache transform: it removes
+// SourceAnnotation from a pod before the pod is stored, so the control plane
+// does not hold every source-mode task's dag.py in memory. The informer hands
+// the transform its own decoded copy, so editing it in place is safe. Anything
+// that is not a pod (a tombstone) passes through unchanged.
+func dropSourceAnnotation(obj any) (any, error) {
+	if pod, ok := obj.(*corev1.Pod); ok {
+		delete(pod.Annotations, SourceAnnotation)
+	}
+	return obj, nil
 }

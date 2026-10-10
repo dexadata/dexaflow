@@ -94,6 +94,7 @@ type tenantLimitsBody struct {
 	MaxDags                    *int `json:"max_dags"`
 	MaxRunsPerDay              *int `json:"max_runs_per_day"`
 	MinScheduleIntervalSeconds *int `json:"min_schedule_interval_seconds"`
+	MaxTaskPoolSlots           *int `json:"max_task_pool_slots"`
 }
 
 // fields pairs each limit with its JSON name, in a fixed order.
@@ -108,6 +109,7 @@ func (b tenantLimitsBody) fields() []struct {
 		{"max_dags", b.MaxDags},
 		{"max_runs_per_day", b.MaxRunsPerDay},
 		{"min_schedule_interval_seconds", b.MinScheduleIntervalSeconds},
+		{"max_task_pool_slots", b.MaxTaskPoolSlots},
 	}
 }
 
@@ -134,12 +136,14 @@ func (b tenantLimitsBody) audit(meta map[string]string) {
 func (b tenantLimitsBody) update() domain.TenantLimitsUpdate {
 	return domain.TenantLimitsUpdate{
 		MaxDags: b.MaxDags, MaxRunsPerDay: b.MaxRunsPerDay, MinScheduleIntervalSeconds: b.MinScheduleIntervalSeconds,
+		MaxTaskPoolSlots: b.MaxTaskPoolSlots,
 	}
 }
 
 // ensureTenantHandler implements PUT /api/v2/service/tenants/{tenant} with an
 // optional {"display_name": "...", "default_pool_slots": N, "max_dags": N,
-// "max_runs_per_day": N, "min_schedule_interval_seconds": N}: 201 when the
+// "max_runs_per_day": N, "min_schedule_interval_seconds": N,
+// "max_task_pool_slots": N}: 201 when the
 // tenant is new, 200 when it already existed. Either way it ends with the
 // built-in roles and default pool; default_pool_slots, when given, sizes that
 // pool, otherwise a new tenant gets the default tenant's size. Each limit

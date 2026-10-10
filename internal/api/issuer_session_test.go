@@ -16,17 +16,27 @@ import (
 	"github.com/dexadata/dexaflow/internal/issuer"
 )
 
-// fakeTrustedIssuer accepts the token "good" as the configured identity.
+// fakeTrustedIssuer accepts the token "good" as the configured identity. The
+// tokens "replayed", "lifetime" and "foreign-tenant" fail with the verifier's
+// matching error; any other token is invalid.
 type fakeTrustedIssuer struct{ id issuer.Identity }
 
 func (fakeTrustedIssuer) Provider() string { return "issuer:portal" }
 
 func (f fakeTrustedIssuer) Verify(_ context.Context, raw string) (*issuer.Identity, error) {
-	if raw != "good" {
+	switch raw {
+	case "good":
+		id := f.id
+		return &id, nil
+	case "replayed":
+		return nil, issuer.ErrReplayed
+	case "lifetime":
+		return nil, issuer.ErrLifetime
+	case "foreign-tenant":
+		return nil, issuer.ErrTenantNotAllowed
+	default:
 		return nil, issuer.ErrInvalidToken
 	}
-	id := f.id
-	return &id, nil
 }
 
 // fakeIssuerUsers resolves exactly one linked user.

@@ -96,6 +96,16 @@ The HTTP transport serves `POST /mcp` (plus `GET /healthz`) and is **stateless**
 identity is a **per-request bearer**, never an ambient process token (ADR 0050 D9).
 A request without an `Authorization: Bearer <jwt>` header is refused — the server
 never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mode.
+
+Each release also publishes the server as a signed image,
+`ghcr.io/dexadata/dexaflow-mcp:v<version>` (see
+[Published images](/reference/published-images/)), whose entrypoint is
+`dexaflow-mcp`. Pin it by digest and pass the same flags as arguments:
+
+```bash
+docker run --rm -p 9099:9099 ghcr.io/dexadata/dexaflow-mcp:v<version>@sha256:<digest> \
+  --transport http --listen :9099 --server https://leoflow.internal
+```
 {{% /tab %}}
 {{< /tabpane >}}
 
@@ -106,8 +116,51 @@ never falls back to a process credential. `DEXAFLOW_TOKEN` is ignored in this mo
 | `--server` | `DEXAFLOW_SERVER_URL` | `http://localhost:8080` | Control-plane base URL (`/api/v2` origin). For Lite, use `http://localhost:8088`. |
 | `--transport` | `DEXAFLOW_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
 | `--listen` | `DEXAFLOW_MCP_LISTEN` | `:9099` | Listen address for the `http` transport. |
+| `--run-control` | `DEXAFLOW_MCP_RUN_CONTROL` | off | Register the [run control tools](#run-control). The env variable takes `true`/`false`, `1`/`0` or `t`/`f` in any case; any other value stops the server (exit 2). |
+| `--plan-key-file` | `DEXAFLOW_MCP_PLAN_KEY_FILE` | — | File holding the key, at least 32 bytes, that signs run control plans. Required with `--run-control` on the `http` transport, and the same file on every replica. On stdio a random key is used when unset. |
+| `--ui-base-url` | `DEXAFLOW_MCP_UI_BASE_URL` | — | Address of the Dexaflow UI, such as `https://flow.example.com`. When set, results carry `web_url` links into it (see [Links into the UI](#links-into-the-ui)). Must be an absolute `http` or `https` URL without a query or fragment. |
+| `--resource` | `DEXAFLOW_MCP_RESOURCE` | — | `http` only. This endpoint's URL as clients reach it, such as `https://dexaflow.example.com/mcp`. With `--authorization-servers`, turns on [OAuth sign-in discovery](#oauth-sign-in-discovery). `https`, or `http` on a loopback host; no query or fragment. |
+| `--authorization-servers` | `DEXAFLOW_MCP_AUTHORIZATION_SERVERS` | — | `http` only. Comma-separated issuer URLs of the OAuth authorization servers that mint tokens for `--resource`. Required with it. |
+| `--scopes` | `DEXAFLOW_MCP_SCOPES` | — | `http` only. Comma-separated scopes advertised as `scopes_supported`. Omitted when empty. |
 | — | `DEXAFLOW_TOKEN` | — | Bearer JWT for the **stdio** transport (ignored on `http`). |
 | `--version` | — | — | Print the version and exit. |
+
+### OAuth sign-in discovery
+
+MCP clients that sign in with OAuth, as the MCP authorization specification
+describes (claude.ai connectors and ChatGPT among them), find the
+authorization server from the MCP server itself. With `--resource` and
+`--authorization-servers` set, the `http` transport:
+
+- serves the protected resource metadata ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728))
+  at the path derived from the resource (`/.well-known/oauth-protected-resource/mcp`
+  for a resource ending in `/mcp`) and at `/.well-known/oauth-protected-resource`:
+
+  ```json
+  {
+    "resource": "https://dexaflow.example.com/mcp",
+    "authorization_servers": ["https://auth.example.com"],
+    "scopes_supported": ["dexaflow:read"],
+    "bearer_methods_supported": ["header"]
+  }
+  ```
+
+- answers a request to `/mcp` without a bearer with `401` and
+  `WWW-Authenticate: Bearer resource_metadata="<metadata URL>"`, which starts
+  the client's sign-in.
+
+```bash
+dexaflow-mcp --transport http --server https://dexaflow.internal \
+  --resource https://dexaflow.example.com/mcp \
+  --authorization-servers https://auth.example.com \
+  --scopes dexaflow:read
+```
+
+Dexaflow is not the authorization server. It points clients at yours, and the
+tokens they bring are verified by `/api/v2` on every call like any other
+bearer, so they must be ones the control plane accepts, such as tokens of
+your [trusted issuer](/reference/configuration/#trusted-issuer-handoff) for
+one of its bearer audiences. Without these flags nothing changes.
 
 ## Auth: getting a token
 
@@ -136,6 +189,55 @@ leads with a few high-value ones. All are **read-only**.
 | `diagnose_run` | Diagnose one DAG run in a single call — its state, which task instances failed, a truncated tail of each failed task's log, the tasks each failure blocks downstream, and any dbt models involved. Replaces chaining list-runs → get-run → list-tasks → get-logs. | `dag_id`, `run_id`, `log_tail_lines` (default 40, max 200) |
 | `search_logs` | Search one task attempt's log for a case-insensitive substring, returning matching lines with line numbers instead of the whole log. | `dag_id`, `run_id`, `task_id`, `try_number` (default 1), `query`, `max_matches` (default 20, max 100) |
 
+## Run control
+
+With `--run-control`, the server also registers tools that change state
+([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/)). Without the
+flag they do not exist at all. Each call uses the caller's token, so the control
+plane's roles decide, and for a trusted-issuer bearer token, its `dexaflow:run`
+scope too.
+
+| Tool | What it does | Plan first when |
+|---|---|---|
+| `trigger_run` | Starts a run now (`dag_id`, optional `conf` and `note`). | never |
+| `clear_task` | Clears task instances of a run so they run again: `dag_id`, `run_id`, optional `task_ids`, `include_downstream`, `include_upstream`, `only_failed` (default true) and `run_on_latest_version`. It previews the clear first. | the clear touches more than one task instance |
+| `pause_dag` | Pauses a DAG. | never |
+| `unpause_dag` | Unpauses a DAG. | the DAG has a schedule, since unpausing starts runs |
+| `apply_plan` | Carries out a plan (`plan_id`). | — |
+
+A call that needs a plan changes nothing. It returns what would happen and a
+`plan_id`, and the model is told to show it to the user and to call
+`apply_plan` only if they agree.
+
+- **A plan carries the exact operation**, signed with the plan key. The model
+  cannot change it, only hand it back.
+- **A plan lasts 10 minutes** and is bound to the caller. Over HTTP that is
+  the bearer's issuer (`iss`), subject (`sub`), tenant (`tenant_id`, `tenant`
+  or `tid`), client (`azp`, else `client_id`) and scope set, so another user,
+  tenant, client or narrower token cannot apply it. A token without `iss`,
+  `sub` or a tenant cannot plan. A refreshed token, or one whose roles or
+  email changed, still applies the plan; the control plane checks the
+  caller's permissions on the apply call itself.
+- **Apply checks again before acting.** If the task instances are no longer in
+  the states the plan showed, or the DAG's paused flag or schedule changed,
+  `apply_plan` refuses and asks for a new plan. A plan therefore applies once.
+- **A clear over more than 200 task instances is refused.** Narrow it with
+  `task_ids` or use the UI.
+- **A clear runs only what its preview showed.** The clear that follows a
+  preview names the previewed tasks and expands no further, so a task that
+  fails in between is not cleared unseen.
+
+Generate the plan key once and give every replica the same file:
+
+```bash
+openssl rand -base64 48 > plan.key
+chmod 600 plan.key
+dexaflow-mcp --transport http --run-control --plan-key-file plan.key
+```
+
+Changing the key invalidates the plans made in the last 10 minutes, nothing
+else.
+
 ## Resources
 
 Addressable, read-only resources — the agent picks the URI; the control plane
@@ -152,6 +254,44 @@ construction (untrusted content, ADR 0050 D10).
 | `dag://source/{dag_id}` | The DAG's `dag.py` source, sanitized and size-capped. |
 | `dag://spec/{dag_id}` | The compiled `dag.json` artifact (the structured task graph). |
 | `health://control-plane` | Control-plane health: component status, executor capability, and version. |
+
+## Prompts
+
+Prompts are ready-made requests a client offers its user, often as a slash command.
+Both are **read-only**: they read the control plane with the caller's token to find
+the runs to look at, then ask the model to make the tool calls they name.
+
+| Prompt | What it asks for | Arguments |
+|---|---|---|
+| `diagnose_latest_failure` | Finds the most recent failed run (by end time) and asks the model to call `diagnose_run` on it, then `search_logs` if a log tail does not show the cause, and to explain the root cause and a fix. | `dag_id` (optional; omit to search every DAG) |
+| `pipeline_health_today` | Counts today's runs (since midnight UTC) by state, lists the failed ones, and asks the model to read `health://control-plane`, call `diagnose_run` on each failure, and summarize. | none |
+
+The control plane has no cross-DAG run query, so without a `dag_id` the prompts
+read the first page of DAGs (up to 200) and a page of runs for each. When there are
+more DAGs, the prompt says how many it did not check.
+
+A prompt reaches the model as the user's own message, so it repeats a DAG or
+run id only when the id is plain: 1 to 128 ASCII letters, digits or `_.:+@~=-`,
+which covers generated run ids such as `manual__2026-10-08T12:00:00+00:00`. Any
+other id (a run id with spaces or quotes, say, which whoever triggered the run
+chose) is withheld, even from links. The prompt then links the DAG and asks the
+model to get the ids from the user.
+
+## Links into the UI
+
+With `--ui-base-url` set, results carry a `web_url` that opens the entity in the
+Dexaflow UI. Without it the field is absent.
+
+| Where | `web_url` opens |
+|---|---|
+| `list_dags`, `dag://list` | the DAG: `<base>/dags/<dag_id>` |
+| `diagnose_run`, `run://detail/...` | the run: `<base>/dags/<dag_id>/runs/<run_id>` |
+| `diagnose_run` failed tasks, `task://instances/...` | the task attempt: `.../runs/<run_id>/tasks/<task_id>?try_number=<n>` |
+| `search_logs` matches | the log line: the task attempt link plus `#<index>`, the line's 0-based position in the UI log viewer |
+
+On initialize, the server's instructions tell the model to link the DAGs, runs,
+tasks and log lines it mentions with `web_url`, and never to build UI links itself.
+Text resources (`log://`, `dag://source/`) carry no link.
 
 ## Wiring an MCP client (Claude Desktop)
 

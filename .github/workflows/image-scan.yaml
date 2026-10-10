@@ -95,7 +95,7 @@ env:
   TRIVY_VERSION: "0.72.0"
   # Matches ci.yaml, so the agent baked into the scanned runtime image is built
   # with the toolchain that ships.
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
   GATE_SEVERITY: "CRITICAL,HIGH"
   ISSUE_TITLE: "Container image CVEs: fixable findings in published images"
 
@@ -170,6 +170,10 @@ jobs:
       # One DB pull for every scan below.
       - name: Warm the vulnerability database
         run: trivy image --download-db-only
+
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: ${{ env.PY_LINES }}
 
       - name: Build images
         run: |

@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.26.6"
+  GO_VERSION: "1.26.9"
   PYTHON_VERSION: "3.11"
   GOLANGCI_LINT_VERSION: "v2.12.2"
 
@@ -183,29 +183,9 @@ jobs:
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Enforce coverage floor
-        run: |
-          # Coverage floor: 80% (raised from 78 after the alpha-prep batch
-          # — #295/#296/#297/#299 — pushed the filtered total above 80%).
-          # Exclude generated code, main packages, version, and the
-          # process-orchestration of external binaries (Docker/initdb/pg_ctl)
-          # that only integration/e2e can exercise honestly, per ADR 0011.
-          #
-          # /test/ covers the load and soak harnesses (test/load/*,
-          # test/soak/*): `package main` programs that drive a real Postgres and
-          # a real control plane, which is the same category as /cmd/ and was
-          # already being counted by accident. Their pure logic IS tested
-          # (test/soak/monitor/*_test.go); what cannot be covered honestly here
-          # is their database and HTTP orchestration.
-          FLOOR=80
-          EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/cmd/|/test/)'
-          grep -vE "$EXCLUDE" coverage.out > coverage.filtered.out
-          TOTAL=$(go tool cover -func=coverage.filtered.out | tail -1 | awk '{print $3}' | sed 's/%//')
-          echo "Total coverage (filtered): ${TOTAL}% (floor: ${FLOOR}%)"
-          AWK_RESULT=$(awk -v t="$TOTAL" -v f="$FLOOR" 'BEGIN { print (t < f) }')
-          if [ "$AWK_RESULT" = "1" ]; then
-            echo "::error::Coverage ${TOTAL}% is below floor ${FLOOR}% (see ADR 0011)"
-            exit 1
-          fi
+        # The floor and the exclude list live in scripts/coverage-gate.sh,
+        # shared with the pre-commit hook so the two cannot drift (ADR 0011).
+        run: scripts/coverage-gate.sh coverage.out
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -727,6 +707,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -809,6 +790,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -888,6 +870,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -1017,6 +1000,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
