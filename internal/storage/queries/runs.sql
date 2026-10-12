@@ -4,7 +4,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetDagRun :one
-SELECT * FROM dag_runs WHERE dag_id = $1 AND run_id = $2;
+-- tenant_id is a predicate here, not only a property of the caller's resolved
+-- dag id (#508): a dag id of another tenant finds no run.
+SELECT * FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3;
 
 -- name: GetDagRunWithVersion :one
 -- The run plus the LABEL of the version it is pinned to. The API needs the label
@@ -21,16 +23,16 @@ SELECT * FROM dag_runs WHERE dag_id = $1 AND run_id = $2;
 SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = $1 AND r.run_id = $2;
+WHERE r.tenant_id = $1 AND r.dag_id = $2 AND r.run_id = $3;
 
 -- name: ListDagRunsByDagWithVersion :many
 -- See GetDagRunWithVersion. One join rather than a lookup per row.
 SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = $1
+WHERE r.tenant_id = $1 AND r.dag_id = $2
 ORDER BY r.logical_date DESC, r.run_id DESC
-LIMIT $2 OFFSET $3;
+LIMIT $3 OFFSET $4;
 
 -- name: ListDagRunsByDagAfter :many
 -- Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
@@ -40,7 +42,7 @@ LIMIT $2 OFFSET $3;
 SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = sqlc.arg(dag_id)
+WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id)
   AND (cardinality(sqlc.arg(states)::text[]) = 0 OR r.state::text = ANY(sqlc.arg(states)::text[]))
   AND (r.logical_date, r.run_id) < (sqlc.arg(after_logical_date)::timestamptz, sqlc.arg(after_run_id)::text)
 ORDER BY r.logical_date DESC, r.run_id DESC
@@ -48,26 +50,33 @@ LIMIT sqlc.arg(row_limit);
 
 -- name: CountDagRunsByDagStates :one
 SELECT count(*) FROM dag_runs
-WHERE dag_id = sqlc.arg(dag_id) AND state::text = ANY(sqlc.arg(states)::text[]);
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_id = sqlc.arg(dag_id) AND state::text = ANY(sqlc.arg(states)::text[]);
 
 -- name: DeleteDagRun :execrows
 -- Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
-DELETE FROM dag_runs WHERE dag_id = $1 AND run_id = $2;
+DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3;
 
 -- name: ListDagRunsByDag :many
 SELECT * FROM dag_runs
-WHERE dag_id = $1
+WHERE tenant_id = $1 AND dag_id = $2
 ORDER BY logical_date DESC
-LIMIT $2 OFFSET $3;
+LIMIT $3 OFFSET $4;
 
 -- name: CountDagRunsByDag :one
-SELECT count(*) FROM dag_runs WHERE dag_id = $1;
+-- The tenant is checked on the parent dag, once, rather than on every run row:
+-- a per-row tenant_id filter would turn the index-only count over
+-- idx_dag_runs_dag_logical into a heap visit per run. A dag_runs row always
+-- carries its dag's tenant, so a dag id of another tenant counts zero either
+-- way (#508).
+SELECT count(*) FROM dag_runs
+WHERE dag_runs.dag_id = $1
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = $1 AND d.tenant_id = $2);
 
 -- name: CountActiveDagRunsByDagID :one
 -- Counts queued+running runs for a single DAG; used by the manual-trigger
 -- path to enforce max_active_runs (#200) before insert.
 SELECT count(*) FROM dag_runs
-WHERE dag_id = $1 AND state IN ('queued', 'running');
+WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running');
 
 -- name: ListStaleQueuedTaskInstances :many
 -- Lists every TI currently in `queued` alongside its queued_at timestamp for
@@ -238,7 +247,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: ListTaskInstancesByRun :many
 SELECT * FROM task_instances
-WHERE dag_run_id = $1
+WHERE tenant_id = $1 AND dag_run_id = $2
 ORDER BY task_id;
 
 -- name: ListTaskInstancesByRuns :many
@@ -280,7 +289,7 @@ SELECT
     h.note
 FROM task_instance_history h
 JOIN task_instances ti ON ti.id = h.task_instance_id
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
   AND h.try_number <> ti.try_number
 UNION ALL
 SELECT
@@ -302,7 +311,7 @@ SELECT
     ti.node_name,
     ti.note
 FROM task_instances ti
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
 ORDER BY try_number;
 
 -- name: TryAttemptEpochBounds :one
@@ -319,18 +328,18 @@ SELECT
         SELECT max(h.attempt_epoch)
         FROM task_instance_history h
         JOIN task_instances lt ON lt.id = h.task_instance_id
-        WHERE lt.dag_run_id = sqlc.arg(dag_run_id) AND lt.task_id = sqlc.arg(task_id)
+        WHERE lt.tenant_id = sqlc.arg(tenant_id) AND lt.dag_run_id = sqlc.arg(dag_run_id) AND lt.task_id = sqlc.arg(task_id)
           AND h.try_number < sqlc.arg(try_number)
     ), 0)::int AS low,
     COALESCE((
         SELECT cur.attempt_epoch FROM task_instances cur
-        WHERE cur.dag_run_id = sqlc.arg(dag_run_id) AND cur.task_id = sqlc.arg(task_id)
+        WHERE cur.tenant_id = sqlc.arg(tenant_id) AND cur.dag_run_id = sqlc.arg(dag_run_id) AND cur.task_id = sqlc.arg(task_id)
           AND cur.try_number = sqlc.arg(try_number)
     ), (
         SELECT h.attempt_epoch
         FROM task_instance_history h
         JOIN task_instances ht ON ht.id = h.task_instance_id
-        WHERE ht.dag_run_id = sqlc.arg(dag_run_id) AND ht.task_id = sqlc.arg(task_id)
+        WHERE ht.tenant_id = sqlc.arg(tenant_id) AND ht.dag_run_id = sqlc.arg(dag_run_id) AND ht.task_id = sqlc.arg(task_id)
           AND h.try_number = sqlc.arg(try_number)
     ), 0)::int AS high;
 
@@ -862,7 +871,7 @@ SELECT t.id AS tenant_id, dr.id AS dag_run_id
 FROM dag_runs dr
 JOIN dags d ON d.id = dr.dag_id
 JOIN tenants t ON t.id = d.tenant_id
-WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3;
+WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3 AND dr.tenant_id = t.id;
 
 -- name: LatestRunsForDags :many
 SELECT d.dag_id AS dag_id_text,

@@ -178,13 +178,18 @@ func (q *Queries) ConfirmInfraFailure(ctx context.Context, arg ConfirmInfraFailu
 
 const countActiveDagRunsByDagID = `-- name: CountActiveDagRunsByDagID :one
 SELECT count(*) FROM dag_runs
-WHERE dag_id = $1 AND state IN ('queued', 'running')
+WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running')
 `
+
+type CountActiveDagRunsByDagIDParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+}
 
 // Counts queued+running runs for a single DAG; used by the manual-trigger
 // path to enforce max_active_runs (#200) before insert.
-func (q *Queries) CountActiveDagRunsByDagID(ctx context.Context, dagID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveDagRunsByDagID, dagID)
+func (q *Queries) CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveDagRunsByDagID, arg.TenantID, arg.DagID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -230,11 +235,23 @@ func (q *Queries) CountDagRunStatesInWindow(ctx context.Context, arg CountDagRun
 }
 
 const countDagRunsByDag = `-- name: CountDagRunsByDag :one
-SELECT count(*) FROM dag_runs WHERE dag_id = $1
+SELECT count(*) FROM dag_runs
+WHERE dag_runs.dag_id = $1
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = $1 AND d.tenant_id = $2)
 `
 
-func (q *Queries) CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countDagRunsByDag, dagID)
+type CountDagRunsByDagParams struct {
+	DagID    pgtype.UUID `json:"dag_id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// The tenant is checked on the parent dag, once, rather than on every run row:
+// a per-row tenant_id filter would turn the index-only count over
+// idx_dag_runs_dag_logical into a heap visit per run. A dag_runs row always
+// carries its dag's tenant, so a dag id of another tenant counts zero either
+// way (#508).
+func (q *Queries) CountDagRunsByDag(ctx context.Context, arg CountDagRunsByDagParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDagRunsByDag, arg.DagID, arg.TenantID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -242,16 +259,17 @@ func (q *Queries) CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int
 
 const countDagRunsByDagStates = `-- name: CountDagRunsByDagStates :one
 SELECT count(*) FROM dag_runs
-WHERE dag_id = $1 AND state::text = ANY($2::text[])
+WHERE tenant_id = $1 AND dag_id = $2 AND state::text = ANY($3::text[])
 `
 
 type CountDagRunsByDagStatesParams struct {
-	DagID  pgtype.UUID `json:"dag_id"`
-	States []string    `json:"states"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+	States   []string    `json:"states"`
 }
 
 func (q *Queries) CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countDagRunsByDagStates, arg.DagID, arg.States)
+	row := q.db.QueryRow(ctx, countDagRunsByDagStates, arg.TenantID, arg.DagID, arg.States)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -532,17 +550,18 @@ func (q *Queries) DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDag
 }
 
 const deleteDagRun = `-- name: DeleteDagRun :execrows
-DELETE FROM dag_runs WHERE dag_id = $1 AND run_id = $2
+DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3
 `
 
 type DeleteDagRunParams struct {
-	DagID pgtype.UUID `json:"dag_id"`
-	RunID string      `json:"run_id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+	RunID    string      `json:"run_id"`
 }
 
 // Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
 func (q *Queries) DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteDagRun, arg.DagID, arg.RunID)
+	result, err := q.db.Exec(ctx, deleteDagRun, arg.TenantID, arg.DagID, arg.RunID)
 	if err != nil {
 		return 0, err
 	}
@@ -654,16 +673,19 @@ func (q *Queries) FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInst
 }
 
 const getDagRun = `-- name: GetDagRun :one
-SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs WHERE dag_id = $1 AND run_id = $2
+SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3
 `
 
 type GetDagRunParams struct {
-	DagID pgtype.UUID `json:"dag_id"`
-	RunID string      `json:"run_id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+	RunID    string      `json:"run_id"`
 }
 
+// tenant_id is a predicate here, not only a property of the caller's resolved
+// dag id (#508): a dag id of another tenant finds no run.
 func (q *Queries) GetDagRun(ctx context.Context, arg GetDagRunParams) (DagRun, error) {
-	row := q.db.QueryRow(ctx, getDagRun, arg.DagID, arg.RunID)
+	row := q.db.QueryRow(ctx, getDagRun, arg.TenantID, arg.DagID, arg.RunID)
 	var i DagRun
 	err := row.Scan(
 		&i.ID,
@@ -724,12 +746,13 @@ const getDagRunWithVersion = `-- name: GetDagRunWithVersion :one
 SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = $1 AND r.run_id = $2
+WHERE r.tenant_id = $1 AND r.dag_id = $2 AND r.run_id = $3
 `
 
 type GetDagRunWithVersionParams struct {
-	DagID pgtype.UUID `json:"dag_id"`
-	RunID string      `json:"run_id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+	RunID    string      `json:"run_id"`
 }
 
 type GetDagRunWithVersionRow struct {
@@ -767,7 +790,7 @@ type GetDagRunWithVersionRow struct {
 // is written this way so that a future ON DELETE SET NULL degrades to a null
 // label instead of dropping the run from the UI.
 func (q *Queries) GetDagRunWithVersion(ctx context.Context, arg GetDagRunWithVersionParams) (GetDagRunWithVersionRow, error) {
-	row := q.db.QueryRow(ctx, getDagRunWithVersion, arg.DagID, arg.RunID)
+	row := q.db.QueryRow(ctx, getDagRunWithVersion, arg.TenantID, arg.DagID, arg.RunID)
 	var i GetDagRunWithVersionRow
 	err := row.Scan(
 		&i.ID,
@@ -1088,19 +1111,25 @@ func (q *Queries) ListBusyWarmWorkerPods(ctx context.Context) ([]*string, error)
 
 const listDagRunsByDag = `-- name: ListDagRunsByDag :many
 SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs
-WHERE dag_id = $1
+WHERE tenant_id = $1 AND dag_id = $2
 ORDER BY logical_date DESC
-LIMIT $2 OFFSET $3
+LIMIT $3 OFFSET $4
 `
 
 type ListDagRunsByDagParams struct {
-	DagID  pgtype.UUID `json:"dag_id"`
-	Limit  int32       `json:"limit"`
-	Offset int32       `json:"offset"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+	Limit    int32       `json:"limit"`
+	Offset   int32       `json:"offset"`
 }
 
 func (q *Queries) ListDagRunsByDag(ctx context.Context, arg ListDagRunsByDagParams) ([]DagRun, error) {
-	rows, err := q.db.Query(ctx, listDagRunsByDag, arg.DagID, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, listDagRunsByDag,
+		arg.TenantID,
+		arg.DagID,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1143,14 +1172,15 @@ const listDagRunsByDagAfter = `-- name: ListDagRunsByDagAfter :many
 SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = $1
-  AND (cardinality($2::text[]) = 0 OR r.state::text = ANY($2::text[]))
-  AND (r.logical_date, r.run_id) < ($3::timestamptz, $4::text)
+WHERE r.tenant_id = $1 AND r.dag_id = $2
+  AND (cardinality($3::text[]) = 0 OR r.state::text = ANY($3::text[]))
+  AND (r.logical_date, r.run_id) < ($4::timestamptz, $5::text)
 ORDER BY r.logical_date DESC, r.run_id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListDagRunsByDagAfterParams struct {
+	TenantID         pgtype.UUID        `json:"tenant_id"`
 	DagID            pgtype.UUID        `json:"dag_id"`
 	States           []string           `json:"states"`
 	AfterLogicalDate pgtype.Timestamptz `json:"after_logical_date"`
@@ -1187,6 +1217,7 @@ type ListDagRunsByDagAfterRow struct {
 // empty states array keeps every state.
 func (q *Queries) ListDagRunsByDagAfter(ctx context.Context, arg ListDagRunsByDagAfterParams) ([]ListDagRunsByDagAfterRow, error) {
 	rows, err := q.db.Query(ctx, listDagRunsByDagAfter,
+		arg.TenantID,
 		arg.DagID,
 		arg.States,
 		arg.AfterLogicalDate,
@@ -1236,15 +1267,16 @@ const listDagRunsByDagWithVersion = `-- name: ListDagRunsByDagWithVersion :many
 SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = $1
+WHERE r.tenant_id = $1 AND r.dag_id = $2
 ORDER BY r.logical_date DESC, r.run_id DESC
-LIMIT $2 OFFSET $3
+LIMIT $3 OFFSET $4
 `
 
 type ListDagRunsByDagWithVersionParams struct {
-	DagID  pgtype.UUID `json:"dag_id"`
-	Limit  int32       `json:"limit"`
-	Offset int32       `json:"offset"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+	Limit    int32       `json:"limit"`
+	Offset   int32       `json:"offset"`
 }
 
 type ListDagRunsByDagWithVersionRow struct {
@@ -1272,7 +1304,12 @@ type ListDagRunsByDagWithVersionRow struct {
 
 // See GetDagRunWithVersion. One join rather than a lookup per row.
 func (q *Queries) ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error) {
-	rows, err := q.db.Query(ctx, listDagRunsByDagWithVersion, arg.DagID, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, listDagRunsByDagWithVersion,
+		arg.TenantID,
+		arg.DagID,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1718,7 +1755,7 @@ SELECT
     h.note
 FROM task_instance_history h
 JOIN task_instances ti ON ti.id = h.task_instance_id
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
   AND h.try_number <> ti.try_number
 UNION ALL
 SELECT
@@ -1740,11 +1777,12 @@ SELECT
     ti.node_name,
     ti.note
 FROM task_instances ti
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
 ORDER BY try_number
 `
 
 type ListTaskInstanceAttemptsParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
 	DagRunID pgtype.UUID `json:"dag_run_id"`
 	TaskID   string      `json:"task_id"`
 }
@@ -1779,7 +1817,7 @@ type ListTaskInstanceAttemptsRow struct {
 // (operator, max_tries, map_index) copied from the current TI; archived rows
 // get them via the JOIN.
 func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error) {
-	rows, err := q.db.Query(ctx, listTaskInstanceAttempts, arg.DagRunID, arg.TaskID)
+	rows, err := q.db.Query(ctx, listTaskInstanceAttempts, arg.TenantID, arg.DagRunID, arg.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -1818,12 +1856,17 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
 SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots FROM task_instances
-WHERE dag_run_id = $1
+WHERE tenant_id = $1 AND dag_run_id = $2
 ORDER BY task_id
 `
 
-func (q *Queries) ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error) {
-	rows, err := q.db.Query(ctx, listTaskInstancesByRun, dagRunID)
+type ListTaskInstancesByRunParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+}
+
+func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstancesByRunParams) ([]TaskInstance, error) {
+	rows, err := q.db.Query(ctx, listTaskInstancesByRun, arg.TenantID, arg.DagRunID)
 	if err != nil {
 		return nil, err
 	}
@@ -3244,7 +3287,7 @@ SELECT t.id AS tenant_id, dr.id AS dag_run_id
 FROM dag_runs dr
 JOIN dags d ON d.id = dr.dag_id
 JOIN tenants t ON t.id = d.tenant_id
-WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3
+WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3 AND dr.tenant_id = t.id
 `
 
 type ResolveRunRefParams struct {
@@ -3508,23 +3551,24 @@ SELECT
         SELECT max(h.attempt_epoch)
         FROM task_instance_history h
         JOIN task_instances lt ON lt.id = h.task_instance_id
-        WHERE lt.dag_run_id = $1 AND lt.task_id = $2
-          AND h.try_number < $3
+        WHERE lt.tenant_id = $1 AND lt.dag_run_id = $2 AND lt.task_id = $3
+          AND h.try_number < $4
     ), 0)::int AS low,
     COALESCE((
         SELECT cur.attempt_epoch FROM task_instances cur
-        WHERE cur.dag_run_id = $1 AND cur.task_id = $2
-          AND cur.try_number = $3
+        WHERE cur.tenant_id = $1 AND cur.dag_run_id = $2 AND cur.task_id = $3
+          AND cur.try_number = $4
     ), (
         SELECT h.attempt_epoch
         FROM task_instance_history h
         JOIN task_instances ht ON ht.id = h.task_instance_id
-        WHERE ht.dag_run_id = $1 AND ht.task_id = $2
-          AND h.try_number = $3
+        WHERE ht.tenant_id = $1 AND ht.dag_run_id = $2 AND ht.task_id = $3
+          AND h.try_number = $4
     ), 0)::int AS high
 `
 
 type TryAttemptEpochBoundsParams struct {
+	TenantID  pgtype.UUID `json:"tenant_id"`
 	DagRunID  pgtype.UUID `json:"dag_run_id"`
 	TaskID    string      `json:"task_id"`
 	TryNumber int32       `json:"try_number"`
@@ -3544,7 +3588,12 @@ type TryAttemptEpochBoundsRow struct {
 // the previous release archived carries epoch 0, so its try reads as epoch 0
 // alone. Epoch 0 is always read as well, since every pre-upgrade log has it.
 func (q *Queries) TryAttemptEpochBounds(ctx context.Context, arg TryAttemptEpochBoundsParams) (TryAttemptEpochBoundsRow, error) {
-	row := q.db.QueryRow(ctx, tryAttemptEpochBounds, arg.DagRunID, arg.TaskID, arg.TryNumber)
+	row := q.db.QueryRow(ctx, tryAttemptEpochBounds,
+		arg.TenantID,
+		arg.DagRunID,
+		arg.TaskID,
+		arg.TryNumber,
+	)
 	var i TryAttemptEpochBoundsRow
 	err := row.Scan(&i.Low, &i.High)
 	return i, err
