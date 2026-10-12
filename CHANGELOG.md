@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-12
+
 ### Added
 
 - **An optional cap on list page sizes.** Every list endpoint accepted any
