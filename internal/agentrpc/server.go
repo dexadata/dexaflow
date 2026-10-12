@@ -554,10 +554,23 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 	// execution of the same try no longer overwrites it (ADR 0051 amendment,
 	// #863). A token without the claim writes the epoch-0 key, where every
 	// pre-upgrade log already lives.
-	w, oerr := s.logs.Open(logs.Ref{
+	open, resumed, rerr := s.logOpener(stream.Context())
+	if rerr != nil {
+		return rerr
+	}
+	w, oerr := open(logs.Ref{
 		TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber,
 		AttemptEpoch: id.AttemptEpoch,
 	})
+	if oerr == nil && resumed {
+		// The agent waits for this header before it sends the lines it kept
+		// while the stream was down: without it, it cannot tell a resumed writer
+		// from a refused stream or a control plane that would overwrite (#912).
+		if herr := stream.SendHeader(metadata.Pairs(logResumedHeaderKey, "1")); herr != nil {
+			_ = w.Close() //nolint:errcheck // nothing was written; the stream is already gone
+			return peerStatus("confirming the resumed log stream", herr, attemptAttrs(id)...)
+		}
+	}
 	if oerr != nil {
 		// The agent is told WHICH step failed — without that it sees only a bare
 		// stream EOF, with no server-side explanation (#36) — but not the sink's
@@ -590,6 +603,39 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 		publish = func(line string) { gate.publish(stream.Context(), line) }
 	}
 	return writeLines(s.shutdown, w, stream.Recv, publish, attemptAttrs(id))
+}
+
+// Log stream resume keys, mirrored from internal/agent
+// (agent.LogResumeMetadataKey, agent.LogResumedHeaderKey): the agent sets the
+// first on a StreamLogs stream it re-opens after the previous one ended
+// mid-task, and the control plane answers a resumed stream it accepted with
+// the second (#912).
+const (
+	logResumeMetadataKey = "dexaflow-log-resume"
+	logResumedHeaderKey  = "dexaflow-log-resumed"
+)
+
+// LogResumer is implemented by log sinks that can continue an attempt's stored
+// log (logs.DiskSink, logs.ObjectSink): Resume opens a writer that keeps what
+// is already stored, where Open may start the attempt over.
+type LogResumer interface {
+	Resume(ref logs.Ref) (logs.LogWriter, error)
+}
+
+// logOpener picks how StreamLogs opens the attempt's writer: Open for a first
+// stream, the sink's Resume for a stream the agent re-opened. A resume asked of
+// a sink that cannot resume is refused (Unimplemented) rather than served with
+// Open, which would overwrite the stored log; the agent then stops re-opening.
+func (s *Server) logOpener(ctx context.Context) (open func(logs.Ref) (logs.LogWriter, error), resumed bool, err error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	if len(md.Get(logResumeMetadataKey)) == 0 {
+		return s.logs.Open, false, nil
+	}
+	r, ok := s.logs.(LogResumer)
+	if !ok {
+		return nil, false, status.Error(codes.Unimplemented, "log stream resume is not supported by the configured log sink")
+	}
+	return r.Resume, true, nil
 }
 
 // logLevelString maps the protobuf log level onto the lowercase level name the

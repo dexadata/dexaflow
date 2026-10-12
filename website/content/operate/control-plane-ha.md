@@ -286,11 +286,18 @@ by at most a few seconds. What a kill loses is therefore **the unflushed tail
 of each running attempt** — for a typical task, the lines of the last ~5 s —
 not the attempt's whole log; and an orderly shutdown loses nothing on the
 control-plane side, because open log streams are closed and flushed at
-`SIGTERM` (see [drain grace](#drain-grace)). Two honest caveats. First, the
-agent does not currently re-open a log stream the control plane closed, so the
-lines a task prints *after* its control plane went away are not shipped by that
-task; the task itself is unaffected, the reconciler still recovers its outcome,
-and a replacement control plane serves the stored partial log. Second, a bucket
+`SIGTERM` (see [drain grace](#drain-grace)). Two honest caveats. First, when
+the control plane closes a task's log stream mid-task, the agent re-opens it
+against whichever replica answers next, retrying with the same capped backoff
+as its final report, and the new stream **continues** the stored log rather
+than starting it over (the control plane reads the stored object back before
+it accepts the stream). The lines the task prints while no control plane is
+reachable wait in the agent, up to 4 MiB, and are shipped once the stream is
+back. What is still lost: the lines already in flight when the stream broke,
+lines past that 4 MiB, and everything after the re-open is refused for good
+(a store that keeps failing the read of the stored object, or a control plane
+older than this behavior, which the agent detects and does not write to). The
+task itself is never affected. Second, a bucket
 with **object versioning** keeps every rewrite as a version — set a lifecycle
 rule on noncurrent versions or expect the versioned size to be several times
 the log size. On memory: the whole attempt is still held in RAM until it ends
