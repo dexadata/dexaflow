@@ -1752,7 +1752,9 @@ SELECT
     h.hostname,
     h.pod_name,
     h.node_name,
-    h.note
+    h.note,
+    ti.pool,
+    ti.pool_slots
 FROM task_instance_history h
 JOIN task_instances ti ON ti.id = h.task_instance_id
 WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
@@ -1775,7 +1777,9 @@ SELECT
     ti.hostname,
     ti.pod_name,
     ti.node_name,
-    ti.note
+    ti.note,
+    ti.pool,
+    ti.pool_slots
 FROM task_instances ti
 WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
 ORDER BY try_number
@@ -1805,6 +1809,8 @@ type ListTaskInstanceAttemptsRow struct {
 	PodName         *string            `json:"pod_name"`
 	NodeName        *string            `json:"node_name"`
 	Note            *string            `json:"note"`
+	Pool            *string            `json:"pool"`
+	PoolSlots       int32              `json:"pool_slots"`
 }
 
 // Returns every attempt for (run, task), oldest first. UNIONs the current
@@ -1815,7 +1821,9 @@ type ListTaskInstanceAttemptsRow struct {
 // left out and the current row, the try's latest execution, stands for it.
 // Each row carries the per-attempt fields PLUS the run-constant fields
 // (operator, max_tries, map_index) copied from the current TI; archived rows
-// get them via the JOIN.
+// get them via the JOIN. pool and pool_slots are the current TI's too: history
+// does not record them, so every attempt reports the pool the task is charged
+// to now (#1589).
 func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error) {
 	rows, err := q.db.Query(ctx, listTaskInstanceAttempts, arg.TenantID, arg.DagRunID, arg.TaskID)
 	if err != nil {
@@ -1843,6 +1851,8 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 			&i.PodName,
 			&i.NodeName,
 			&i.Note,
+			&i.Pool,
+			&i.PoolSlots,
 		); err != nil {
 			return nil, err
 		}
@@ -2796,7 +2806,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $4
+    WHERE src.dag_run_id = $5
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -2848,8 +2858,17 @@ SET state = 'none',
     pool_slots = COALESCE(
         ($3::int[])[array_position($2::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position($2::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF(($4::text[])[array_position($2::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $4
+WHERE ti.dag_run_id = $5
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 RETURNING ti.task_id
 `
@@ -2858,6 +2877,7 @@ type ResetAllFailedTaskInstancesParams struct {
 	SpecRetries   []int32     `json:"spec_retries"`
 	SpecTaskIds   []string    `json:"spec_task_ids"`
 	SpecPoolSlots []int32     `json:"spec_pool_slots"`
+	SpecPools     []string    `json:"spec_pools"`
 	DagRunID      pgtype.UUID `json:"dag_run_id"`
 }
 
@@ -2869,6 +2889,7 @@ func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllF
 		arg.SpecRetries,
 		arg.SpecTaskIds,
 		arg.SpecPoolSlots,
+		arg.SpecPools,
 		arg.DagRunID,
 	)
 	if err != nil {
@@ -2929,7 +2950,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $4 AND src.task_id = $5
+    WHERE src.dag_run_id = $5 AND src.task_id = $6
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -2981,8 +3002,17 @@ SET state = 'none',
     pool_slots = COALESCE(
         ($3::int[])[array_position($2::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position($2::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF(($4::text[])[array_position($2::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $4 AND ti.task_id = $5
+WHERE ti.dag_run_id = $5 AND ti.task_id = $6
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 `
 
@@ -2990,6 +3020,7 @@ type ResetFailedTaskInstanceParams struct {
 	SpecRetries   []int32     `json:"spec_retries"`
 	SpecTaskIds   []string    `json:"spec_task_ids"`
 	SpecPoolSlots []int32     `json:"spec_pool_slots"`
+	SpecPools     []string    `json:"spec_pools"`
 	DagRunID      pgtype.UUID `json:"dag_run_id"`
 	TaskID        string      `json:"task_id"`
 }
@@ -3001,6 +3032,7 @@ func (q *Queries) ResetFailedTaskInstance(ctx context.Context, arg ResetFailedTa
 		arg.SpecRetries,
 		arg.SpecTaskIds,
 		arg.SpecPoolSlots,
+		arg.SpecPools,
 		arg.DagRunID,
 		arg.TaskID,
 	)
@@ -3179,7 +3211,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $4 AND src.task_id = $5
+    WHERE src.dag_run_id = $5 AND src.task_id = $6
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
         queued_at = EXCLUDED.queued_at,
@@ -3232,14 +3264,24 @@ SET state = 'none',
     pool_slots = COALESCE(
         ($3::int[])[array_position($2::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position($2::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF(($4::text[])[array_position($2::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $4 AND ti.task_id = $5
+WHERE ti.dag_run_id = $5 AND ti.task_id = $6
 `
 
 type ResetTaskInstanceToNoneParams struct {
 	SpecRetries   []int32     `json:"spec_retries"`
 	SpecTaskIds   []string    `json:"spec_task_ids"`
 	SpecPoolSlots []int32     `json:"spec_pool_slots"`
+	SpecPools     []string    `json:"spec_pools"`
 	DagRunID      pgtype.UUID `json:"dag_run_id"`
 	TaskID        string      `json:"task_id"`
 }
@@ -3276,6 +3318,7 @@ func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInst
 		arg.SpecRetries,
 		arg.SpecTaskIds,
 		arg.SpecPoolSlots,
+		arg.SpecPools,
 		arg.DagRunID,
 		arg.TaskID,
 	)

@@ -85,6 +85,12 @@ type TaskInstance struct {
 	// Note is operational context shown in the UI's task panel — e.g. why a task
 	// is queued but not running (no executor available).
 	Note string
+	// Pool is the pool the instance is charged to, "default_pool" when the task
+	// declares none, and PoolSlots the slots the admission gate charges it (ADR
+	// 0066). Both are the instance's own: a clear re-binds them from the version
+	// the re-run executes (#1589).
+	Pool      string
+	PoolSlots int
 	// FailureReason is a short, human-readable cause for a terminal failure,
 	// recorded by whichever component observed it: the agent's own report, the
 	// reconciler reading the pod (image pull, OOM, exit code), a reaper declaring
