@@ -1258,6 +1258,8 @@ func (s *SchedulerStore) ListWarmBoundRunningTIs(ctx context.Context) ([]executo
 	for _, r := range rows {
 		out = append(out, executor.WarmBoundTI{
 			TaskInstanceID: uuidToString(r.TaskInstanceID),
+			TenantID:       uuidToString(r.TenantID),
+			DagID:          r.DagIDText,
 			DagRunID:       uuidToString(r.DagRunID),
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),

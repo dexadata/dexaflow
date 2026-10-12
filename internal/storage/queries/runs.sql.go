@@ -2222,12 +2222,16 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 
 const listWarmBoundRunningTIs = `-- name: ListWarmBoundRunningTIs :many
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
+       d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
        ti.warm_worker_id AS warm_worker_id
 FROM task_instances ti
+JOIN dag_runs dr ON dr.id = ti.dag_run_id
+JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
   AND ti.warm_worker_id IS NOT NULL
 ORDER BY ti.started_at NULLS LAST
@@ -2236,7 +2240,9 @@ LIMIT 100
 
 type ListWarmBoundRunningTIsRow struct {
 	TaskInstanceID pgtype.UUID `json:"task_instance_id"`
+	TenantID       pgtype.UUID `json:"tenant_id"`
 	DagRunID       pgtype.UUID `json:"dag_run_id"`
+	DagIDText      string      `json:"dag_id_text"`
 	TaskID         string      `json:"task_id"`
 	TryNumber      int32       `json:"try_number"`
 	AttemptEpoch   int32       `json:"attempt_epoch"`
@@ -2253,6 +2259,8 @@ type ListWarmBoundRunningTIsRow struct {
 // entirely — with warm pools off no TI is ever bound, so this returns empty and
 // the reaper is inert. The LIMIT bounds a single tick's work after a large
 // outage; the rest are picked up next tick.
+// tenant_id and dag_id locate the attempt's log stream for the reaper's
+// killed marker (#861).
 func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error) {
 	rows, err := q.db.Query(ctx, listWarmBoundRunningTIs)
 	if err != nil {
@@ -2264,7 +2272,9 @@ func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundR
 		var i ListWarmBoundRunningTIsRow
 		if err := rows.Scan(
 			&i.TaskInstanceID,
+			&i.TenantID,
 			&i.DagRunID,
+			&i.DagIDText,
 			&i.TaskID,
 			&i.TryNumber,
 			&i.AttemptEpoch,

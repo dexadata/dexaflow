@@ -219,12 +219,15 @@ func (r *Reaper) mayReap(ctx context.Context) bool {
 	return true
 }
 
-// SetLogSink wires the sink the agent-lost reaper uses to append a final
-// "killed: agent_lost" marker to a reaped attempt's log stream, so a killed
-// task's log ends with the reason instead of a silent truncation. Any logs.Sink
-// satisfies the parameter; nil (Lite / unwired) leaves markers off.
+// SetLogSink wires the sink the agent-lost, pod-lost and warm-worker-lost
+// reapers use to append a final "killed: <reason>" marker to a reaped
+// attempt's log stream, so a killed task's log ends with the reason instead of
+// a silent truncation (#861). Any logs.MarkerSink satisfies the parameter; nil
+// (unwired) leaves markers off.
 func (r *Reaper) SetLogSink(s logSink) {
 	r.agentLost.sink = s
+	r.podLost.sink = s
+	r.warmWorkerLost.sink = s
 }
 
 // SetAttemptLifetimeCeiling wires auth.max_attempt_credential_lifetime into

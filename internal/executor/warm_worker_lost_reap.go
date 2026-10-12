@@ -2,8 +2,12 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"time"
+
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // WarmPodLister is the narrow read-only seam onto the live warm fleet the
@@ -59,6 +63,10 @@ type WarmBoundTI struct {
 	// amendment).
 	AttemptEpoch int
 	WarmWorkerID string
+	// TenantID and DagID locate the attempt's log stream for the killed marker
+	// (#861).
+	TenantID string
+	DagID    string
 }
 
 // WarmWorkerLostReapStore is the slice of the store the warm-worker-lost reaper
@@ -101,6 +109,9 @@ type warmWorkerLostReaper struct {
 	warmPods WarmPodLister
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
+	// sink appends a final "killed: pod_lost" marker to each reaped attempt's
+	// log stream (#861). Nil disables the marker; the reap is unaffected.
+	sink logSink
 }
 
 func newWarmWorkerLostReaper(store WarmWorkerLostReapStore, logger *slog.Logger, rec DecisionRecorder) *warmWorkerLostReaper {
@@ -180,8 +191,23 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 		r.logger.Warn("warm worker gone; failing its in-flight attempt as pod_lost",
 			"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID)
 		r.record("warm_worker_lost")
+		r.writeMarker(ti)
 	}
 	return nil
+}
+
+// writeMarker ends the reaped attempt's log with the reason, since the stream
+// stopped wherever its warm worker died (#861). Best-effort, like the other
+// reapers' markers.
+func (r *warmWorkerLostReaper) writeMarker(ti WarmBoundTI) {
+	ref := logs.Ref{
+		TenantID: ti.TenantID, DagID: ti.DagID, RunID: ti.DagRunID, TaskID: ti.TaskID,
+		TryNumber: ti.TryNumber, AttemptEpoch: ti.AttemptEpoch,
+	}
+	msg := fmt.Sprintf("killed: pod_lost (warm worker %s is gone or terminated)", ti.WarmWorkerID)
+	if err := appendKilledMarker(r.sink, ref, time.Now().UTC(), msg); err != nil {
+		r.record("warm_worker_lost_log_marker_error")
+	}
 }
 
 func (r *warmWorkerLostReaper) record(decision string) {

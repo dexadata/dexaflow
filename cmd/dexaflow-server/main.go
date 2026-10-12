@@ -3086,7 +3086,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
 	reaper.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
-	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
+	// with a "killed: agent_lost" or "killed: pod_lost" marker instead of a
+	// silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
 	// agent's streamed content on either backend); the assertion holds for every
 	// sink NewDurableSink returns.

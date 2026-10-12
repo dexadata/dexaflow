@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -234,5 +235,46 @@ func TestWarmWorkerLostReaper_PanicRecovered(t *testing.T) {
 	// Must not panic out of run.
 	if err := r.run(context.Background()); err != nil {
 		t.Fatalf("run returned err after recovered panic: %v", err)
+	}
+}
+
+// TestWarmWorkerLostReaper_WritesKilledMarker: every attempt a dead warm worker
+// held ends its own log with one "killed: pod_lost" line naming the worker, so
+// the log does not stop mid-line with no cause (#861). An attempt on a live
+// worker, or one whose mark was a noop, gets nothing.
+func TestWarmWorkerLostReaper_WritesKilledMarker(t *testing.T) {
+	store := &fakeWarmBoundStore{bound: []WarmBoundTI{
+		{TaskInstanceID: "ti-a", TenantID: "t1", DagID: "dag-x", DagRunID: "run-1", TaskID: "load", TryNumber: 1, AttemptEpoch: 2, WarmWorkerID: "pod-dead"},
+		{TaskInstanceID: "ti-b", TenantID: "t1", DagID: "dag-x", DagRunID: "run-2", TaskID: "load", TryNumber: 3, WarmWorkerID: "pod-dead"},
+		{TaskInstanceID: "ti-live", TenantID: "t1", DagID: "dag-x", DagRunID: "run-3", TaskID: "load", TryNumber: 1, WarmWorkerID: "pod-live"},
+	}}
+	sink := &fakeLogSink{}
+	r := newWarmReaper(store, &fakeWarmLister{pods: []WarmPodInfo{{Name: "pod-live"}}})
+	r.sink = sink
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	for _, key := range []string{"t1/dag-x/run-1/load/1", "t1/dag-x/run-2/load/3"} {
+		evs := sink.events[key]
+		if len(evs) != 1 {
+			t.Fatalf("%s: want exactly one marker, got %v", key, sink.events)
+		}
+		if !strings.HasPrefix(evs[0].Message, "killed: pod_lost") || !strings.Contains(evs[0].Message, "pod-dead") {
+			t.Errorf("%s: marker = %q, want a killed: pod_lost line naming the worker", key, evs[0].Message)
+		}
+	}
+	if _, ok := sink.events["t1/dag-x/run-3/load/1"]; ok {
+		t.Errorf("an attempt on a live worker must not get a marker")
+	}
+
+	noop := &fakeWarmBoundStore{bound: store.bound[:1], markNoop: true}
+	sink = &fakeLogSink{}
+	r = newWarmReaper(noop, &fakeWarmLister{})
+	r.sink = sink
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(sink.events) != 0 {
+		t.Errorf("a noop mark must not write a marker, got %v", sink.events)
 	}
 }

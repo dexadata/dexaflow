@@ -1380,13 +1380,19 @@ WHERE dag_run_id = $1
 -- entirely — with warm pools off no TI is ever bound, so this returns empty and
 -- the reaper is inert. The LIMIT bounds a single tick's work after a large
 -- outage; the rest are picked up next tick.
+-- tenant_id and dag_id locate the attempt's log stream for the reaper's
+-- killed marker (#861).
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
+       d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
        ti.warm_worker_id AS warm_worker_id
 FROM task_instances ti
+JOIN dag_runs dr ON dr.id = ti.dag_run_id
+JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
   AND ti.warm_worker_id IS NOT NULL
 ORDER BY ti.started_at NULLS LAST
