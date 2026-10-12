@@ -54,7 +54,7 @@ type Querier interface {
 	// duplicate dispatch cannot move the epoch of the live attempt. The row is the
 	// task's latest try, matching how the dispatcher has always resolved it.
 	ClaimAttemptEpoch(ctx context.Context, arg ClaimAttemptEpochParams) (ClaimAttemptEpochRow, error)
-	ClearDagRuns(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	ClearDagRuns(ctx context.Context, arg ClearDagRunsParams) (int64, error)
 	// The reconciler confirms a provisional infra mark (ADR 0052 amendment, part
 	// 2): the attempt's pods show no SUCCESS record and no task container still
 	// running, so the guess stands and the planner may re-place. Guarded on the
@@ -184,7 +184,14 @@ type Querier interface {
 	// tenant_id is a predicate here, not only a property of the caller's resolved
 	// dag id (#508): a dag id of another tenant finds no run.
 	GetDagRun(ctx context.Context, arg GetDagRunParams) (DagRun, error)
+	// Unscoped: for the scheduler and the dispatcher, which hold run ids from
+	// their own listings. A run id that arrives in an agent token is read with
+	// GetDagRunInTenant instead (#508).
 	GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, error)
+	// A run by id, only inside the given tenant: the agent RPC reads the run its
+	// token names with the token's tenant, so a token of one tenant never loads
+	// another tenant's run (#508).
+	GetDagRunInTenant(ctx context.Context, arg GetDagRunInTenantParams) (DagRun, error)
 	// The run plus the LABEL of the version it is pinned to. The API needs the label
 	// to populate bundle_version, which is what makes the UI's clear dialog render
 	// its "Run with latest bundle version" control: the SPA shows that control only
@@ -197,8 +204,15 @@ type Querier interface {
 	// is written this way so that a future ON DELETE SET NULL degrades to a null
 	// label instead of dropping the run from the UI.
 	GetDagRunWithVersion(ctx context.Context, arg GetDagRunWithVersionParams) (GetDagRunWithVersionRow, error)
+	// dag_versions has no tenant_id: the tenant is checked on the parent dag (#508).
 	GetDagVersionByHash(ctx context.Context, arg GetDagVersionByHashParams) (DagVersion, error)
+	// Unscoped: for the spec cache the scheduler and the dispatcher share, which
+	// hold version ids from their own runs. A request path reads a version with
+	// GetDagVersionInTenant (#508).
 	GetDagVersionByID(ctx context.Context, id pgtype.UUID) (DagVersion, error)
+	// A version by id, only when its DAG belongs to the given tenant (#508).
+	// dag_versions has no tenant_id of its own; the tenant is its DAG's.
+	GetDagVersionInTenant(ctx context.Context, arg GetDagVersionInTenantParams) (DagVersion, error)
 	// See ListDagsWithVersion.
 	GetDagWithVersion(ctx context.Context, arg GetDagWithVersionParams) (GetDagWithVersionRow, error)
 	GetDefaultTenant(ctx context.Context) (GetDefaultTenantRow, error)
@@ -230,6 +244,8 @@ type Querier interface {
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
 	GetXComEntry(ctx context.Context, arg GetXComEntryParams) (GetXComEntryRow, error)
+	// The row is inserted only under a dag of the given tenant (#508): a dag id of
+	// another tenant inserts nothing and the query returns no row.
 	InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error)
 	// The implicit default pool every tenant needs (migration 023 seeds it for
 	// "default"), copied from default's so the slot count stays in step.
@@ -456,6 +472,11 @@ type Querier interface {
 	// caller. Never selects password_hash — the list must not expose secrets.
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListVariables(ctx context.Context, arg ListVariablesParams) ([]ListVariablesRow, error)
+	// Every variable across every tenant whose stored value does (sealed = true) or
+	// does not (sealed = false) start with the ciphertext tag (#507). It backs the
+	// variable_encryption boot sweeps, which seal plaintext rows ("on") or restore
+	// them ("decrypt"), and the key rotation sweep, which reads the sealed ones.
+	ListVariablesForEncryptionSweep(ctx context.Context, arg ListVariablesForEncryptionSweepParams) ([]ListVariablesForEncryptionSweepRow, error)
 	// The tenant's variables restricted to the given keys, filtered in the query
 	// (ADR 0055 D1: scope in the SQL, never post-filter the decrypted whole vault in
 	// the handler). Used under secret_scoping: enforce so a task receives only the
@@ -630,7 +651,7 @@ type Querier interface {
 	// Alert bookkeeping is cleared here for the same reason it is there: the clear
 	// starts a new failure episode, so a genuine re-failure re-pages, and a spent
 	// retry budget is not carried into an episode that has not been attempted.
-	ReopenDagRunKeepingVersion(ctx context.Context, id pgtype.UUID) error
+	ReopenDagRunKeepingVersion(ctx context.Context, arg ReopenDagRunKeepingVersionParams) error
 	// $3 is cast to task_state in every usage: without the cast Postgres deduces an
 	// enum type from `state = $3` but text from the literal comparisons below and
 	// rejects the parameter as having inconsistent types (SQLSTATE 42P08). The pod
@@ -886,6 +907,10 @@ type Querier interface {
 	// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
 	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error)
+	// Rewrites one stored value only if it is still the one the sweep read, so a
+	// concurrent write wins and the sweep counts the row as skipped. updated_at is
+	// left alone: the variable's value did not change, only its stored form.
+	UpdateVariableValueGuarded(ctx context.Context, arg UpdateVariableValueGuardedParams) (int64, error)
 	// Tri-state write (#887): COALESCE(EXCLUDED.col, connections.col) preserves the
 	// stored value when the param is NULL, overwrites it when the param is a value,
 	// and clears it when the param is a non-NULL empty string. A NULL param is how a

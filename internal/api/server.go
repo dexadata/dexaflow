@@ -103,6 +103,11 @@ type Dependencies struct {
 	// (ADR 0067 §3), "" when it is off. Registering a version on that image
 	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
 	SourceModeImage string
+	// ExecutionPolicy is executor.defaults.execution_allowlist (issue #629).
+	// When set, registering a DAG whose task sets an execution field (or
+	// priority class) outside it answers 400 naming the task and the field.
+	// Nil: everything allowed.
+	ExecutionPolicy *domain.ExecutionPolicy
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags           DagRepository

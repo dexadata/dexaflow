@@ -100,6 +100,7 @@ func issuerRefusals() []issuerRefusal {
 		{"store failure", good, portal, func() *fakeIssuerUsers {
 			return &fakeIssuerUsers{err: errors.New("db down")}
 		}, http.StatusInternalServerError, "server_error"},
+		{"issuer keys unavailable", url.Values{"token": {"keys-down"}}, portal, activeAcmeUser, http.StatusServiceUnavailable, "server_error"},
 	}
 }
 

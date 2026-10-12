@@ -94,8 +94,8 @@ func issuerSignInTarget(raw string) *url.URL {
 // It never creates a user and never takes roles from the token: the user must
 // already be linked to the issuer, and its roles are the ones Dexaflow holds.
 // Refusals set no cookie, answer with a status that says which side is wrong
-// (401 token, 403 user, origin or host, 500 Dexaflow), and log the reason
-// server-side only.
+// (401 token, 403 user, origin or host, 500 Dexaflow, 503 when the issuer's
+// keys cannot be downloaded), and log the reason server-side only.
 //
 // With an external sign-in URL configured, a refusal instead redirects the
 // browser there with the stable reason code (see refuse), so the person lands
@@ -119,6 +119,14 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 			return
 		}
 		id, err := d.issuer.Verify(c.Request.Context(), raw)
+		if errors.Is(err, issuer.ErrKeysUnavailable) {
+			// The issuer's keys could not be downloaded, so the token was
+			// never checked: a server-side outage, not a failed sign-in, and
+			// not audited as one (#1588), as on the bearer path (#1545).
+			d.logger.Error("trusted issuer sign-in: signing keys unavailable", "error", err)
+			d.refuse(c, http.StatusServiceUnavailable, issuerErrServer, "service unavailable", "the sign-in could not be checked, try again shortly")
+			return
+		}
 		if err != nil {
 			d.logger.Warn("trusted issuer sign-in refused: token", "reason", err)
 			reason := issuerReason(err)

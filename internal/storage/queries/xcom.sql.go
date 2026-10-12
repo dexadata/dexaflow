@@ -22,11 +22,13 @@ func (q *Queries) DeleteExpiredXComIndex(ctx context.Context) error {
 
 const deleteXComIndexForTasks = `-- name: DeleteXComIndexForTasks :many
 DELETE FROM xcom_index
-WHERE dag_run_id = $1 AND task_id = ANY($2::text[])
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND task_id = ANY($3::text[])
 RETURNING redis_key
 `
 
 type DeleteXComIndexForTasksParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
 	DagRunID pgtype.UUID `json:"dag_run_id"`
 	TaskIds  []string    `json:"task_ids"`
 }
@@ -36,7 +38,7 @@ type DeleteXComIndexForTasksParams struct {
 // carries no try number, so rows left behind would serve the cleared attempt's
 // values to the next attempt's downstream.
 func (q *Queries) DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, deleteXComIndexForTasks, arg.DagRunID, arg.TaskIds)
+	rows, err := q.db.Query(ctx, deleteXComIndexForTasks, arg.TenantID, arg.DagRunID, arg.TaskIds)
 	if err != nil {
 		return nil, err
 	}

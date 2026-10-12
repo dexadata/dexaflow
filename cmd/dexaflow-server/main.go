@@ -1187,6 +1187,12 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		if cfg.Execution.WarmPoolsEnabled {
 			agentSrv.SetLeaderCheck(sched.IsLeading)
 		}
+		// scheduler.eager_promotion: a terminal report wakes this replica's
+		// scheduler for an early tick. Only a leader acts on it; a woken follower
+		// runs its usual empty tick.
+		if cfg.Scheduler.EagerPromotion {
+			agentSrv.SetSettledHook(sched.Wake)
+		}
 		// On shutdown, drain the buffered dispatch pool (if any) so in-flight
 		// dispatches settle (success or failed via the sink) instead of leaking
 		// workers and leaving TIs stuck `queued` (#133). nil in Lite/passthrough.
@@ -1294,7 +1300,13 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		oidcFlow = flow
 	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
-	return buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg)), nil
+	srv := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
+	// Optional HTTPS on the API listener (#638); plain HTTP when unset.
+	if err := configureAPITLS(srv, cfg.Server); err != nil {
+		return nil, err
+	}
+	tel.Logger.Info("api listener", "http_addr", cfg.Server.HTTPAddr, "tls", srv.TLSConfig != nil)
+	return srv, nil
 }
 
 // oidcDiscoveryTimeout bounds the IdP discovery request on the boot path. It is
@@ -1447,6 +1459,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		ResourceUnit:                 resourceUnit(cfg),
 		UnitMisfits:                  unitMisfits(tel.Metrics),
 		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
+		ExecutionPolicy:              executionPolicy(cfg.Executor.Defaults),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2027,16 +2040,38 @@ func startGatedTicker(ctx context.Context, name string, interval time.Duration, 
 // panic-isolated by safeCycle. A tick that arrives while not leading is dropped,
 // not queued.
 func runGatedTicker(ctx context.Context, name string, ticks <-chan time.Time, leading func() bool, logger *slog.Logger, fn func()) {
+	runGatedTickerOrKick(ctx, name, ticks, nil, 0, leading, logger, fn)
+}
+
+// runGatedTickerOrKick is runGatedTicker that also runs the cycle on a signal
+// from kicks (event-driven warm-pool refill), under the same leadership gate. A
+// nil kicks channel never fires, which is exactly runGatedTicker. A kicked run
+// starts no sooner than minKickGap after the previous run, so a burst of events
+// (a deploy draining many workers) costs one reconcile instead of one per event;
+// kicks that arrive meanwhile coalesce into it. Ticks are never delayed.
+func runGatedTickerOrKick(ctx context.Context, name string, ticks <-chan time.Time, kicks <-chan struct{}, minKickGap time.Duration, leading func() bool, logger *slog.Logger, fn func()) {
+	var lastRun time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticks:
-			if leading != nil && !leading() {
-				continue
+		case <-kicks:
+			if wait := minKickGap - time.Since(lastRun); wait > 0 {
+				timer := time.NewTimer(wait)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
 			}
-			safeCycle(name, logger, fn)
 		}
+		if leading != nil && !leading() {
+			continue
+		}
+		safeCycle(name, logger, fn)
+		lastRun = time.Now()
 	}
 }
 
@@ -2211,13 +2246,57 @@ func runMaintenancePhase(ctx context.Context, name string, timeout time.Duration
 // the busy set (busy) once per tick to classify workers. Like the pod reconciler
 // it mutates cluster state, so it runs on the leader alone via the gated ticker.
 // It is only called when warm pools are enabled.
-func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSource, pods executor.WarmPodClient, busy executor.BusyWarmWorkerSource, maxWarmPodsPerTenant int, leading func() bool, rec executor.DecisionRecorder, logger *slog.Logger) {
+func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSource, pods executor.WarmPodClient, busy executor.BusyWarmWorkerSource, maxWarmPodsPerTenant int, warmCache *executor.WarmPodInformer, leading func() bool, rec executor.DecisionRecorder, logger *slog.Logger) {
 	rc := executor.NewWarmPoolReconciler(targets, pods, busy, maxWarmPodsPerTenant, logger, rec)
-	startGatedTicker(ctx, "warm-pool-reconcile", reconcileInterval, leading, logger, func() {
-		if err := rc.Reconcile(ctx); err != nil {
-			logger.Error("warm pool reconcile", "error", err)
-		}
-	})
+	// Event-driven refill (execution.warm_pool_event_refill): read the fleet from
+	// the warm-pod informer, reconcile on its change signals as well as on the
+	// tick, and create in parallel. Without it, kicks stays nil and this is the
+	// polling reconciler it always was.
+	var kicks <-chan struct{}
+	if warmCache != nil {
+		rc.SetCache(warmCache, warmCreateParallelism)
+		kicks = warmCache.Changes()
+	}
+	t := time.NewTicker(reconcileInterval)
+	go func() {
+		defer t.Stop()
+		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, warmKickMinGap, leading, logger, func() {
+			if err := rc.Reconcile(ctx); err != nil {
+				logger.Error("warm pool reconcile", "error", err)
+			}
+		})
+	}()
+}
+
+// warmCreateParallelism bounds how many warm pod creates one event-driven
+// reconcile issues at once: enough to refill a burst of claims in one or two
+// apiserver round trips, few enough not to stampede the apiserver or the image
+// registry when a large pool refills.
+const warmCreateParallelism = 4
+
+// warmKickMinGap is the least time between two event-driven warm-pool
+// reconciles. Each one reads the busy set from the database and may read the
+// fleet live, so a storm of pod events must not turn into a storm of those.
+const warmKickMinGap = time.Second
+
+// buildWarmPodInformer starts the warm-pod informer for event-driven refill and
+// waits for its first sync within the same boot budget as the task-pod informer.
+// A nil return (it could not be built) leaves the reconciler polling with a live
+// LIST; an informer that has not synced is read live until it does.
+func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, logger *slog.Logger) *executor.WarmPodInformer {
+	wi, err := executor.NewWarmPodInformer(cs, namespace)
+	if err != nil {
+		logger.Warn("warm pod informer unavailable; warm pools keep polling refill", "error", err)
+		return nil
+	}
+	wi.Start(ctx)
+	syncCtx, cancel := context.WithTimeout(ctx, podInformerSyncTimeout)
+	defer cancel()
+	if !wi.WaitForCacheSync(syncCtx) {
+		logger.Warn("warm pod informer did not sync within the boot budget; the warm-pool reconciler reads pods live until it does",
+			"namespace", namespace, "budget", podInformerSyncTimeout)
+	}
+	return wi
 }
 
 // warmPodSpecFunc returns the per-target warm-pod spec builder the warm-pod client
@@ -2246,6 +2325,12 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 	warmResources := resourceUnit(cfg).WarmResources()
 	useExchange := cfg.Auth.AgentTokenTransport == config.AgentTokenTransportExchange
 	return func(t executor.WarmTarget) (executor.WarmPodSpec, error) {
+		// ActiveWarmTargets already drops a version whose image the execution
+		// allowlist refuses (issue #537 C2); refusing here too means no warm pod
+		// is built for such an image whatever the target source.
+		if err := defaults.ExecutionPolicy.CheckImage(t.Image); err != nil {
+			return executor.WarmPodSpec{}, err
+		}
 		spec := executor.WarmPodSpec{
 			DagVersionID:        t.DagVersionID,
 			Image:               t.Image,
@@ -2365,6 +2450,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		}
 	} else if cfg.Server.PoolsReadOnly {
 		logger.Warn("server.pools_read_only has no effect: pools are a Pro edition feature")
+	}
+	// Off by default (ADR 0062): see config.SchedulerSection.EagerPromotion.
+	if cfg.Scheduler.EagerPromotion {
+		sched.EnableEagerPromotion()
+		logger.Info("scheduler eager promotion enabled: same-tick promotion and early ticks on task completion")
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
@@ -2579,8 +2669,15 @@ func releaseLeader(leader *scheduler.Leader, logger *slog.Logger) {
 	}
 }
 
+// serve runs one listener until it is shut down. A server with a TLSConfig
+// (the API listener with server.http_tls_cert/key, #638) serves HTTPS; its
+// certificate comes from TLSConfig.GetCertificate, so no file names are passed.
 func serve(s *http.Server, errCh chan<- error) {
-	if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	listen := s.ListenAndServe
+	if s.TLSConfig != nil {
+		listen = func() error { return s.ListenAndServeTLS("", "") }
+	}
+	if err := listen(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		errCh <- fmt.Errorf("serving %s: %w", s.Addr, err)
 	}
 }
@@ -2819,11 +2916,21 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// them off it is never constructed, so no warm pod is ever created and dispatch
 	// stays byte-for-byte today's dedicated pod-per-task.
 	if cfg.Execution.WarmPoolsEnabled {
-		store.SetWarmExecution(cfg.Execution)
+		store.SetWarmExecution(cfg.Execution, executionPolicy(cfg.Executor.Defaults))
 		// The busy set (running attempts durably bound to a warm worker) makes the
 		// reconciler busy-aware (ADR 0058 N1d-b): it scales the IDLE buffer and never
 		// deletes a worker with an in-flight attempt. store implements it.
-		startWarmPoolReconciler(ctx, store, warmPods, store, cfg.Execution.MaxWarmPodsPerTenant, sched.IsLeading, metrics, logger)
+		var warmCache *executor.WarmPodInformer
+		if cfg.Execution.WarmPoolEventRefill {
+			// On the maintenance client, like the task-pod informer and the
+			// warm-pod client the reconciler checks it against (#1315).
+			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, logger)
+			if warmCache != nil && warmPools != nil {
+				// A claimed worker leaves the idle buffer short: refill now.
+				warmPools.SetOnClaim(warmCache.Kick)
+			}
+		}
+		startWarmPoolReconciler(ctx, store, warmPods, store, cfg.Execution.MaxWarmPodsPerTenant, warmCache, sched.IsLeading, metrics, logger)
 		logger.Warn("warm pool reconciler enabled (ADR 0058 N1b2b); maintaining min_idle warm workers per active dag_version", "namespace", cfg.Executor.TaskNamespace)
 	}
 	logger.Info("pod dispatch enabled", "namespace", cfg.Executor.TaskNamespace, "agent_control_plane_addr", controlAddr,
@@ -2879,6 +2986,18 @@ func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
 	return unit
 }
 
+// executionPolicy is the parsed executor.defaults.execution_allowlist (issue
+// #629), nil when it allows everything. ServerConfig.Validate parses the same
+// values and fails boot on an error, so none reaches here; should one, the
+// most restrictive reading (no field allowed) is the safe one.
+func executionPolicy(c config.PlatformDefaultsSection) *domain.ExecutionPolicy {
+	policy, err := domain.ParseExecutionPolicy(c.ExecutionAllowlist.ExecutionPolicyConfig())
+	if err != nil {
+		return domain.DenyAllExecutionPolicy()
+	}
+	return policy
+}
+
 // unitMisfits is the API's misfit counter, nil (not a typed nil) without
 // metrics so the handler's nil check holds.
 func unitMisfits(m *observability.Metrics) api.UnitMisfitRecorder {
@@ -2906,6 +3025,7 @@ func platformDefaults(c config.PlatformDefaultsSection) dispatch.PlatformDefault
 			RunAsNonRoot:           c.RunTasksAsNonRoot,
 			ReadOnlyRootFilesystem: c.ReadOnlyTaskRootFilesystem,
 		},
+		ExecutionPolicy: executionPolicy(c),
 	}
 	if c.ResourcesCPU != "" || c.ResourcesMemory != "" {
 		// Set requests AND limits to the same quantity so a task that relies on the

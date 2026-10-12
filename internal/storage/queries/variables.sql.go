@@ -136,6 +136,47 @@ func (q *Queries) ListVariables(ctx context.Context, arg ListVariablesParams) ([
 	return items, nil
 }
 
+const listVariablesForEncryptionSweep = `-- name: ListVariablesForEncryptionSweep :many
+SELECT id, key, value FROM variables
+WHERE starts_with(value, $1::text) = $2::boolean
+ORDER BY id
+`
+
+type ListVariablesForEncryptionSweepParams struct {
+	Prefix string `json:"prefix"`
+	Sealed bool   `json:"sealed"`
+}
+
+type ListVariablesForEncryptionSweepRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Key   string      `json:"key"`
+	Value string      `json:"value"`
+}
+
+// Every variable across every tenant whose stored value does (sealed = true) or
+// does not (sealed = false) start with the ciphertext tag (#507). It backs the
+// variable_encryption boot sweeps, which seal plaintext rows ("on") or restore
+// them ("decrypt"), and the key rotation sweep, which reads the sealed ones.
+func (q *Queries) ListVariablesForEncryptionSweep(ctx context.Context, arg ListVariablesForEncryptionSweepParams) ([]ListVariablesForEncryptionSweepRow, error) {
+	rows, err := q.db.Query(ctx, listVariablesForEncryptionSweep, arg.Prefix, arg.Sealed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVariablesForEncryptionSweepRow{}
+	for rows.Next() {
+		var i ListVariablesForEncryptionSweepRow
+		if err := rows.Scan(&i.ID, &i.Key, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVariablesScoped = `-- name: ListVariablesScoped :many
 SELECT key, value, description
 FROM variables
@@ -177,6 +218,28 @@ func (q *Queries) ListVariablesScoped(ctx context.Context, arg ListVariablesScop
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateVariableValueGuarded = `-- name: UpdateVariableValueGuarded :execrows
+UPDATE variables SET value = $1
+WHERE id = $2 AND value = $3
+`
+
+type UpdateVariableValueGuardedParams struct {
+	Value  string      `json:"value"`
+	ID     pgtype.UUID `json:"id"`
+	Expect string      `json:"expect"`
+}
+
+// Rewrites one stored value only if it is still the one the sweep read, so a
+// concurrent write wins and the sweep counts the row as skipped. updated_at is
+// left alone: the variable's value did not change, only its stored form.
+func (q *Queries) UpdateVariableValueGuarded(ctx context.Context, arg UpdateVariableValueGuardedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateVariableValueGuarded, arg.Value, arg.ID, arg.Expect)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertVariable = `-- name: UpsertVariable :exec
