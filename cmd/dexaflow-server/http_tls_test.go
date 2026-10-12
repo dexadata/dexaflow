@@ -310,3 +310,72 @@ func TestStartAPISideWiresHTTPTLS(t *testing.T) {
 		t.Error("startAPISide set a TLS config with no cert configured, want plain HTTP")
 	}
 }
+
+// TestCertReloaderParsesABrokenPairOnceAndWarns: a rotation that leaves a pair
+// that does not load (a key that does not match, a cert-manager misissue) is
+// logged once per change and parsed once, not on every handshake, while the
+// last good pair keeps being served. A later change is tried again.
+func TestCertReloaderParsesABrokenPairOnceAndWarns(t *testing.T) {
+	dir := t.TempDir()
+	first := writeTestCert(t, dir, 1)
+	r, err := newCertReloader(first.certPath, first.keyPath)
+	if err != nil {
+		t.Fatalf("newCertReloader: %v", err)
+	}
+	var logs strings.Builder
+	r.log = slog.New(slog.NewTextHandler(&logs, nil))
+	loads := 0
+	r.load = func(cert, key string) (tls.Certificate, error) {
+		loads++
+		return tls.LoadX509KeyPair(cert, key)
+	}
+	touch := func(offset time.Duration, paths ...string) {
+		t.Helper()
+		at := time.Now().Add(offset)
+		for _, p := range paths {
+			if err := os.Chtimes(p, at, at); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	served := func() *big.Int {
+		t.Helper()
+		c, err := r.getCertificate(nil)
+		if err != nil || c == nil {
+			t.Fatalf("getCertificate = %v, %v", c, err)
+		}
+		leaf, err := x509.ParseCertificate(c.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return leaf.SerialNumber
+	}
+
+	if err := os.WriteFile(first.keyPath, []byte("not a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	touch(2*time.Second, first.keyPath)
+	for range 3 {
+		if got := served(); got.Cmp(first.serial) != 0 {
+			t.Fatalf("served serial = %v, want the last good %v", got, first.serial)
+		}
+	}
+	if loads != 1 {
+		t.Errorf("broken pair parsed %d times over 3 handshakes, want 1", loads)
+	}
+	if n := strings.Count(logs.String(), "level=WARN"); n != 1 {
+		t.Errorf("logged %d warnings for one broken pair, want 1:\n%s", n, logs.String())
+	}
+	if !strings.Contains(logs.String(), first.keyPath) {
+		t.Errorf("warning does not name the files:\n%s", logs.String())
+	}
+
+	second := writeTestCert(t, dir, 2)
+	touch(4*time.Second, second.certPath, second.keyPath)
+	if got := served(); got.Cmp(second.serial) != 0 {
+		t.Errorf("served serial after a fixed rotation = %v, want %v", got, second.serial)
+	}
+	if loads != 2 {
+		t.Errorf("loads = %d after the fixed rotation, want 2", loads)
+	}
+}

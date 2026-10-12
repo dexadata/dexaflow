@@ -138,3 +138,23 @@ tests:
     asserts:
       - matchRegexRaw:
           pattern: "then open http://localhost:8080"
+
+  # `helm upgrade --reuse-values` from v0.5.3 carries no httpTLS key at all.
+  - it: renders the notes when values from a release without httpTLS are reused
+    template: NOTES.txt
+    set:
+      httpTLS: null
+    asserts:
+      - matchRegexRaw:
+          pattern: "then open http://localhost:8080"
+
+  - it: renders the deployment when values from a release without httpTLS are reused
+    template: deployment.yaml
+    set:
+      httpTLS: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+          any: true

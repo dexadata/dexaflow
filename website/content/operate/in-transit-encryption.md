@@ -76,8 +76,12 @@ PEM file paths yourself. What changes:
 - TLS 1.2 is the minimum version.
 - The server re-reads the certificate and key when the files change, so a
   renewed Secret (cert-manager, or one you re-create) is served on the next
-  connection without a restart. A rotation caught half written keeps serving
-  the previous certificate until both files are valid again.
+  connection without a restart. A rotation caught half written, or a new pair
+  that does not load (for example a key that does not match the certificate),
+  keeps serving the previous certificate and logs one warning, `API TLS
+  certificate reload failed`, naming the files. The broken pair is not read
+  again until one of the files changes. Alert on that warning: the previous
+  certificate is served only until it expires.
 - Setting only one of the two files fails boot, so a typo cannot leave the hop
   silently in plain HTTP.
 - The metrics port is not affected.
