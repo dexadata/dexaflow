@@ -254,6 +254,36 @@ def test_run_unwraps_taskflow_decorator(tmp_path, monkeypatch):
     assert json.loads(out.read_text()) == {"ran": True}
 
 
+def test_run_overridden_task_runs_the_function_under_its_own_task_id(tmp_path, monkeypatch):
+    """``estimate.override(task_id="estimate_03")(3)`` (#1681): the parser emits the
+    entrypoint ``module:estimate`` and the task_id ``estimate_03``. Importing the
+    module runs the overrides again (as Airflow does), and the runner still
+    resolves the module-level decorator, unwraps it and runs the function under
+    the task_id the agent sets, with the literal captured for that task."""
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "estimate_03")
+    monkeypatch.setenv("LEOFLOW_CALL_ARGS_JSON", json.dumps({"worker": 3}))
+    body = (
+        "class _TaskDecorator:\n"
+        "    def __init__(self, fn, **kwargs):\n"
+        "        self.function, self.kwargs = fn, kwargs\n"
+        "    def override(self, **kwargs):\n"
+        "        return _TaskDecorator(self.function, **{**self.kwargs, **kwargs})\n"
+        "    def __call__(self, *a, **k):\n"
+        "        return object()  # an XComArg, never the result\n"
+        "def _estimate(worker, ti=None):\n"
+        "    return {'worker': worker, 'task_id': ti.task_id}\n"
+        "estimate = _TaskDecorator(_estimate)\n"
+        "_ = [estimate.override(task_id=f'estimate_{n:02d}')(n) for n in range(4)]\n"
+    )
+    mod = _write_module(tmp_path, monkeypatch, body)
+
+    runner.run(f"{mod}:estimate")
+
+    assert json.loads(out.read_text()) == {"worker": 3, "task_id": "estimate_03"}
+
+
 def test_run_resolves_xcom_input_arguments(tmp_path, monkeypatch):
     """A task consuming an upstream output receives it via LEOFLOW_XCOM_<param>."""
     out = tmp_path / "rv.json"
