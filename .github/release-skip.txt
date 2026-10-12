@@ -6,3 +6,4 @@
 #1465 ADR 0066 only, nothing to ship; the implementation is picked separately
 #1368 ADR 0064 only, nothing to ship; branching and skip land in the next minor
 #1517 ADR 0067 only, nothing to ship; the implementation is picked separately
+#1689 changelog sync of v0.5.1 to v0.5.3 back to main; release-0.5 already carries those sections
