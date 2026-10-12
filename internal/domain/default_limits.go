@@ -70,3 +70,48 @@ func (l *DefaultLimits) Apply(r Resources) Resources {
 	}
 	return out
 }
+
+// WarmResources is what a warm pod (ADR 0058) gets from the default limits
+// when no executor.unit is set: the limits of a task that declares nothing,
+// with Kubernetes setting the requests to them. A warm pod is created before
+// any task is known, so this is the only way the default limits reach a task
+// placed on a warm worker. Nil without default limits, leaving warm pods
+// unsized as before.
+func (l *DefaultLimits) WarmResources() *Resources {
+	if l == nil {
+		return nil
+	}
+	r := l.Apply(Resources{})
+	return &r
+}
+
+// WarmEligible reports whether a task fits a warm pod sized by WarmResources:
+// in every dimension with a default limit, the limit the task would get on a
+// dedicated pod (its declared limit, or the default raised to its request) is
+// not above the default. A larger task takes a dedicated pod, where it keeps
+// that limit, instead of running under the warm pod's smaller one. Without
+// default limits every task is eligible, as before.
+func (l *DefaultLimits) WarmEligible(t TaskSpec) bool {
+	if l == nil || t.Resources == nil {
+		return true
+	}
+	got := l.Apply(*t.Resources).Limits
+	if got == nil {
+		return true
+	}
+	return notAbove(got.CPU, l.cpu) && notAbove(got.Memory, l.memory)
+}
+
+// notAbove reports whether quantity v is at most bound. An empty bound (no
+// default limit in that dimension) or an unparsable value never excludes.
+func notAbove(v, bound string) bool {
+	if bound == "" || v == "" {
+		return true
+	}
+	qv, errV := resource.ParseQuantity(v)
+	qb, errB := resource.ParseQuantity(bound)
+	if errV != nil || errB != nil {
+		return true
+	}
+	return qv.Cmp(qb) <= 0
+}

@@ -248,3 +248,39 @@ func TestDispatchWithoutDefaultLimitsLeavesLimitsEmpty(t *testing.T) {
 		t.Errorf("limits = %+v; want none", exec.req.Resources.Limits)
 	}
 }
+
+// Without a unit, warm pods are sized by the default limits (#537), so a task
+// whose own limit would be larger takes a dedicated pod instead of running
+// under the warm pod's smaller limit; a task within the default is still
+// placed warm.
+func TestDispatchWarmPlacementWithDefaultLimits(t *testing.T) {
+	limits, err := domain.ParseDefaultLimits("2", "4Gi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		res      *domain.Resources
+		wantWarm bool
+	}{
+		"no resources":          {nil, true},
+		"within the default":    {&domain.Resources{Requests: &domain.ResourceQuantity{Memory: "1Gi"}}, true},
+		"request above default": {&domain.Resources{Requests: &domain.ResourceQuantity{Memory: "8Gi"}}, false},
+		"declared larger limit": {&domain.Resources{Limits: &domain.ResourceQuantity{CPU: "8"}}, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			exec := &fakeExecutor{}
+			d := newDispatcher(&fakeResolver{resolved: Resolved{TaskInstanceID: "ti", Image: "etl:v1"}}, &fakeIssuer{token: "t"}, exec)
+			d.SetPlatformDefaults(PlatformDefaults{Limits: limits})
+			placer := &fakePlacer{ok: true}
+			d.SetWarmPlacer(placer)
+			task := domain.TaskSpec{TaskID: "t", Type: domain.TaskTypePython, Entrypoint: "dag:t", Resources: c.res}
+			if _, err := d.Dispatch(context.Background(), "run", "etl", "ver", task); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if gotWarm := placer.calls == 1; gotWarm != c.wantWarm {
+				t.Errorf("placed warm = %v, want %v", gotWarm, c.wantWarm)
+			}
+		})
+	}
+}

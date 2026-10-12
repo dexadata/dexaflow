@@ -122,6 +122,7 @@ type PlatformDefaults struct {
 	// Limits fills an empty CPU or memory limit on every task pod, after the task
 	// and L0 resources above are chosen (executor.defaults.limits_*, #537). Nil:
 	// no default limit. Not applied with a unit, which always sets both limits.
+	// Without a unit the same limits also size the warm pods (see warmEligible).
 	Limits *domain.DefaultLimits
 	// PodSecurity carries the task-pod hardening choices. It lives here, not in
 	// the DAG spec, on purpose: whether untrusted task code may run as root is a
@@ -443,12 +444,14 @@ func (d *Dispatcher) checkUnit(runID, dagID string, task domain.TaskSpec) error 
 // warmEligible reports whether an attempt may go to a warm worker: no
 // staging, the warm ServiceAccount, none of its own placement or pod metadata,
 // and, with a resource unit, a size-1 task without resources, since a warm pod
-// is one unit.
+// is one unit. Without a unit, warm pods are sized by the default limits
+// (#537), so a task that would get a larger limit on a dedicated pod takes one.
 func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
 	return (r.Staging == nil || !r.Staging.Enabled) &&
 		warmSACompatible(task, d.defaultTaskServiceAccount) &&
 		warmPlacementCompatible(task) &&
-		d.defaults.Unit.WarmEligible(task)
+		d.defaults.Unit.WarmEligible(task) &&
+		(d.defaults.Unit != nil || d.defaults.Limits.WarmEligible(task))
 }
 
 // warmPlacementCompatible reports whether a task can run on a warm worker as it

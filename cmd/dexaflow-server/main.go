@@ -2241,6 +2241,12 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, controlAddr string) executor.WarmPodSpecFunc {
 	defaults := platformDefaults(cfg.Executor.Defaults)
 	warmResources := resourceUnit(cfg).WarmResources()
+	if warmResources == nil {
+		// Without a unit, the default task limits (#537) size the warm pod, so a
+		// task placed on a warm worker runs under the same cap as on a dedicated
+		// pod. Nil (nothing configured) leaves warm pods unsized, as before.
+		warmResources = defaults.Limits.WarmResources()
+	}
 	useExchange := cfg.Auth.AgentTokenTransport == config.AgentTokenTransportExchange
 	return func(t executor.WarmTarget) (executor.WarmPodSpec, error) {
 		spec := executor.WarmPodSpec{
@@ -2252,7 +2258,8 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			ServiceAccount:      cfg.Executor.TaskServiceAccount,
 			PodSecurity:         defaults.PodSecurity,
 			// With executor.unit a warm pod is one unit, and the dispatcher only
-			// places size-1 tasks without resources on it (ADR 0066 §3).
+			// places size-1 tasks without resources on it (ADR 0066 §3). Without
+			// one it carries the default task limits, if any.
 			Resources: warmResources,
 			// Self-lifecycle caps (ADR 0058 D9/D10/D6/H3). The attempt watchdog is
 			// anchored to the credential ceiling: an attempt can never validly outlive

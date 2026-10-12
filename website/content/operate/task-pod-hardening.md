@@ -145,9 +145,20 @@ empty, including a task that declares `requests` only. The rules:
   *requests* the default limit, so size it for what the nodes can schedule, or
   pair it with `executor.defaults.resources` to give those tasks a smaller,
   Guaranteed size first.
+- A task that declares only some requests gets the default limit in the other
+  dimension, and Kubernetes then sets that dimension's request to the limit too.
+  With `limits.memory: 4Gi`, a task declaring only `requests.cpu: 100m` also
+  requests 4Gi of memory, and may stay Pending on nodes with less free memory.
+  Declare the memory request (or limit) on such tasks to keep them small.
 - Either value may be set alone. Both empty (the default) adds no limit.
-- With `executor.unit` set, the unit already gives every task both limits and
-  these values are not used.
+- With warm pools on (`execution.warmPoolsEnabled`) and no `executor.unit`, the
+  same limits size every warm worker pod, so a task placed on a warm worker runs
+  under the same cap. Each warm pod therefore also requests the default limits
+  while it waits idle. A task whose own limit would be larger (a declared limit,
+  or a request, above the default) is not placed on a warm worker and takes a
+  dedicated pod, where it keeps that limit.
+- With `executor.unit` set, the unit already gives every task and every warm pod
+  both limits, and these values are not used.
 
 ### Reading an out-of-memory failure
 

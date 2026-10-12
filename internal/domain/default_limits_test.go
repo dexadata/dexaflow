@@ -118,3 +118,61 @@ func TestNilDefaultLimitsIsANoOp(t *testing.T) {
 		t.Errorf("nil Apply = %+v; want input unchanged", got)
 	}
 }
+
+// A warm pod (ADR 0058) is created before any task is known, so without a unit
+// it is sized as a task that declares nothing: the default limits, with
+// Kubernetes setting the requests to them. Nil without default limits, leaving
+// warm pods unsized as before.
+func TestDefaultLimitsWarmResources(t *testing.T) {
+	var none *DefaultLimits
+	if got := none.WarmResources(); got != nil {
+		t.Errorf("nil WarmResources = %+v; want nil", got)
+	}
+	limits, err := ParseDefaultLimits("2", "4Gi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := limits.WarmResources()
+	want := &Resources{Limits: &ResourceQuantity{CPU: "2", Memory: "4Gi"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("WarmResources = %+v; want %+v", got, want)
+	}
+}
+
+// A task whose own resources would get a larger limit than the warm pod's (a
+// declared limit or a request above the default) does not fit a warm pod sized
+// by the default limits, so it takes a dedicated pod where it keeps that limit.
+func TestDefaultLimitsWarmEligible(t *testing.T) {
+	limits, err := ParseDefaultLimits("2", "4Gi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		res  *Resources
+		want bool
+	}{
+		"no resources":                {nil, true},
+		"requests within the default": {&Resources{Requests: &ResourceQuantity{CPU: "500m", Memory: "1Gi"}}, true},
+		"limit equal to the default":  {&Resources{Limits: &ResourceQuantity{Memory: "4Gi"}}, true},
+		"request above the default":   {&Resources{Requests: &ResourceQuantity{Memory: "8Gi"}}, false},
+		"limit above the default":     {&Resources{Limits: &ResourceQuantity{CPU: "4"}}, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := limits.WarmEligible(TaskSpec{TaskID: "t", Resources: c.res}); got != c.want {
+				t.Errorf("WarmEligible = %v; want %v", got, c.want)
+			}
+		})
+	}
+	var none *DefaultLimits
+	if !none.WarmEligible(TaskSpec{TaskID: "t", Resources: &Resources{Limits: &ResourceQuantity{CPU: "64"}}}) {
+		t.Error("nil default limits must leave every task warm-eligible, as before")
+	}
+	cpuOnly, err := ParseDefaultLimits("2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cpuOnly.WarmEligible(TaskSpec{TaskID: "t", Resources: &Resources{Requests: &ResourceQuantity{Memory: "64Gi"}}}) {
+		t.Error("a dimension without a default limit must not make a task warm-ineligible")
+	}
+}
