@@ -73,7 +73,7 @@ func TestExternalSignInKeepsTheEscapeHatches(t *testing.T) {
 func TestExternalSignOutEndsOnTheOperatorsPage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/api/v2/auth/logout", logoutHandler(false, "https://portal.example.com/signout"))
+	r.GET("/api/v2/auth/logout", logoutHandler(sessionCookieSpec{}, "https://portal.example.com/signout"))
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v2/auth/logout", http.NoBody))
@@ -90,7 +90,7 @@ func TestExternalSignOutEndsOnTheOperatorsPage(t *testing.T) {
 func TestSignOutWithoutExternalURLIsTodaysBehavior(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/api/v2/auth/logout", logoutHandler(false, ""))
+	r.GET("/api/v2/auth/logout", logoutHandler(sessionCookieSpec{}, ""))
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v2/auth/logout", http.NoBody))

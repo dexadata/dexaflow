@@ -395,6 +395,12 @@ spec:
             - name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .ctx.Values.auth.sessionCookieName }}
+            # Session cookie name (#1405). Omitted when unset, so the server
+            # keeps _token; validated at boot.
+            - name: LEOFLOW_AUTH_SESSION_COOKIE_NAME
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .ctx.Values.auth.trustedIssuer }}
             {{- if .issuer }}
             # Trusted-issuer handoff (#1284). Rendered as a block only when an

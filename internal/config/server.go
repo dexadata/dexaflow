@@ -722,6 +722,17 @@ type AuthSection struct {
 	// Secure would strip it from the deployment that most needs it. Boot logs a
 	// WARN when it is on. Bind via LEOFLOW_AUTH_SESSION_COOKIE_INSECURE.
 	SessionCookieInsecure bool `mapstructure:"session_cookie_insecure"`
+	// SessionCookieName is the name of the browser session cookie (#1405).
+	// The default, _token, is what every earlier release used, so an existing
+	// install keeps its sessions. A name starting with __Host- makes the
+	// browser refuse the cookie unless it is Secure, has Path=/ and no Domain,
+	// which is how the session cookie is always set: a page on a sibling host
+	// under the same parent domain can then no longer plant a session here.
+	// Recommended for any deployment that serves several hosts under one
+	// parent domain. A __Host- or __Secure- name with SessionCookieInsecure
+	// fails boot, because the browser would drop every session cookie.
+	// Empty means _token. Bind via LEOFLOW_AUTH_SESSION_COOKIE_NAME.
+	SessionCookieName string `mapstructure:"session_cookie_name"`
 }
 
 // JWTSection configures JWT issuance and validation.
@@ -1123,6 +1134,8 @@ var serverDefaults = map[string]any{
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
+	// _token is the name every earlier release used (#1405).
+	"auth.session_cookie_name":     DefaultSessionCookieName,
 	"secret_key":                   "",
 	"secret_key_reencrypt_on_boot": true,
 	"secret_key_migration_lock":    false,
@@ -1629,6 +1642,9 @@ func (c *ServerConfig) validatePlatformIntegration() error {
 	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
 		return err
 	}
+	if err := validateSessionCookieName(c.Auth.SessionCookieName, c.Auth.SessionCookieInsecure); err != nil {
+		return err
+	}
 	if t := c.Auth.ServiceToken; t != "" && len(strings.TrimSpace(t)) < 32 {
 		return errors.New("auth.service_token must be at least 32 characters (generate one with `openssl rand -base64 48`)")
 	}
@@ -1651,6 +1667,37 @@ func validateExternalAuthURL(key, raw string) error {
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("%s must be an absolute http:// or https:// URL (got %q)", key, raw)
+	}
+	return nil
+}
+
+// DefaultSessionCookieName is the browser session cookie's name when
+// auth.session_cookie_name is unset: the name every earlier release used.
+const DefaultSessionCookieName = "_token"
+
+// oidcStateCookieName is the OIDC flow's own cookie. The session cookie may
+// not take its name, or each login would overwrite the other.
+const oidcStateCookieName = "_oidc_state"
+
+// sessionCookieNamePattern is an RFC 6265 cookie name: one or more token
+// characters, so no space, control character or separator such as ; or =.
+var sessionCookieNamePattern = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+// validateSessionCookieName checks auth.session_cookie_name (#1405). A browser
+// drops a __Host- or __Secure- cookie that is not Secure, so with
+// auth.session_cookie_insecure on such a name would fail every sign-in with no
+// visible error. Browsers match those prefixes in any case, so this does too.
+func validateSessionCookieName(name string, insecure bool) error {
+	if name == "" {
+		return nil
+	}
+	if !sessionCookieNamePattern.MatchString(name) || name == oidcStateCookieName {
+		return fmt.Errorf("auth.session_cookie_name must be a cookie name (letters, digits and !#$%%&'*+-.^_`|~, not %s) (got %q)", oidcStateCookieName, name)
+	}
+	lower := strings.ToLower(name)
+	if insecure && (strings.HasPrefix(lower, "__host-") || strings.HasPrefix(lower, "__secure-")) {
+		return fmt.Errorf("auth.session_cookie_name %q needs the Secure attribute, which auth.session_cookie_insecure removes; "+
+			"a browser drops such a cookie, so nobody could sign in. Serve the deployment over https, or use a name without the __Host- or __Secure- prefix", name)
 	}
 	return nil
 }
