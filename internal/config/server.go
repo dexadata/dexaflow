@@ -306,6 +306,30 @@ type PlatformDefaultsSection struct {
 	// breaks ordinary Python tasks (pip cache, /tmp, matplotlib config); turn it
 	// on for a fleet of tasks known not to write outside their volumes.
 	ReadOnlyTaskRootFilesystem bool `mapstructure:"read_only_task_root_filesystem"`
+	// ExecutionAllowlist restricts which task execution (placement) fields a DAG
+	// author may set, and optionally which priority classes (issue #629). The
+	// default allows everything. Like the two settings above it is a cluster
+	// setting: on a shared cluster these fields reach other teams' nodes and
+	// preemption order.
+	ExecutionAllowlist ExecutionAllowlistSection `mapstructure:"execution_allowlist"`
+}
+
+// ExecutionAllowlistSection is executor.defaults.execution_allowlist. A DAG
+// that sets a field (or priority class) outside it is refused at registration
+// and, for a DAG registered before the list changed, at dispatch.
+type ExecutionAllowlistSection struct {
+	// Fields lists the execution fields a DAG may set, by their dag.json names
+	// (domain.ExecutionPolicyFields). "*" (the default) allows all of them,
+	// "none" or an explicitly empty list allows none.
+	Fields []string `mapstructure:"fields"`
+	// PriorityClasses, when not empty, lists the only priority_class_name values
+	// a DAG may set. Empty (the default) allows any.
+	PriorityClasses []string `mapstructure:"priority_classes"`
+}
+
+// ExecutionPolicyConfig is the section as the domain parser takes it.
+func (s ExecutionAllowlistSection) ExecutionPolicyConfig() domain.ExecutionPolicyConfig {
+	return domain.ExecutionPolicyConfig{Fields: s.Fields, PriorityClasses: s.PriorityClasses}
 }
 
 // ExecutionSection configures warm worker pools — Pro-gated N:1 pod reuse
@@ -1057,6 +1081,11 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// Execution allowlist (issue #629): allow every field and any priority
+	// class, so an install that does not set it is unchanged. Each list binds
+	// from one comma-separated env var.
+	"executor.defaults.execution_allowlist.fields":           []string{domain.ExecutionPolicyAllFields},
+	"executor.defaults.execution_allowlist.priority_classes": []string{},
 	// client-go's own defaults on one shared client, so an unconfigured install
 	// keeps its effective apiserver budget.
 	"executor.kube_client.qps":               5.0,
@@ -1326,7 +1355,7 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateExecution(); err != nil {
 		return err
 	}
-	if err := c.validateExecutorUnit(); err != nil {
+	if err := c.validateExecutorPolicies(); err != nil {
 		return err
 	}
 	if err := c.validatePlatformIntegration(); err != nil {
@@ -1521,6 +1550,23 @@ func (c *ServerConfig) validateExecution() error {
 // size-1 tasks that declare no resources.
 func (c *ServerConfig) validateExecutorUnit() error {
 	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	return err
+}
+
+// validateExecutorPolicies checks the operator's task policies under executor:
+// the resource unit and the execution allowlist.
+func (c *ServerConfig) validateExecutorPolicies() error {
+	if err := c.validateExecutorUnit(); err != nil {
+		return err
+	}
+	return c.validateExecutionAllowlist()
+}
+
+// validateExecutionAllowlist checks executor.defaults.execution_allowlist
+// (issue #629), so a misspelled field name fails boot instead of allowing or
+// refusing the wrong thing.
+func (c *ServerConfig) validateExecutionAllowlist() error {
+	_, err := domain.ParseExecutionPolicy(c.Executor.Defaults.ExecutionAllowlist.ExecutionPolicyConfig())
 	return err
 }
 
