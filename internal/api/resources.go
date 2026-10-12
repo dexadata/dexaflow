@@ -1044,8 +1044,8 @@ func patchTaskInstanceHandler(repo TaskInstanceRepository, runs DagRunRepository
 			recordTaskAudit(c, audit, "taskinstance.mark."+body.NewState, runID, taskID, dto.TryNumber)
 		}
 		slog.Info("PATCH /taskInstances mark-state",
-			"tenant", tenantOf(c), "dag", dagID, "run", runID, "task", taskID,
-			"new_state", body.NewState, "dry_run", dryRun,
+			"tenant", logSafe(tenantOf(c)), "dag", logSafe(dagID), "run", logSafe(runID), "task", logSafe(taskID),
+			"new_state", logSafe(body.NewState), "dry_run", dryRun,
 			"write_ms", writeMs, "total_ms", time.Since(t0).Milliseconds())
 		// Airflow declares TaskInstanceCollectionResponse for the PATCH and its
 		// dry_run (the affected set). The 3.3 UI's Mark-as dialog reads
