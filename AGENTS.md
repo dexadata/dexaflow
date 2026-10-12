@@ -111,9 +111,17 @@ The Actions queue has few runners, so every wasted run delays everyone.
 
 ### Commits, pull requests and text
 
+- **Every commit is signed off by its author** (`git commit -s`, or the
+  `commit-msg` hook `make setup` installs): a `Signed-off-by:` trailer with the
+  author's email certifies the
+  [Developer Certificate of Origin](https://developercertificate.org/). The
+  DCO check (`.github/workflows/dco.yaml`) fails a PR with an unsigned commit;
+  `git rebase --signoff origin/main` fixes the branch. Merge commits and
+  Dependabot are exempt. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **No attribution trailers or footers.** Commits, PR descriptions and PR
   comments carry no `Co-Authored-By` lines, no session links and no generated-by
-  footers. Commit messages describe the change and nothing else.
+  footers. Commit messages describe the change and nothing else. The author's
+  own `Signed-off-by:` is not an attribution trailer: it is required (above).
 - **Everything in the repository is in English**: code, comments, commit
   messages, PR descriptions, docs and changelog entries.
 - **No em dashes** in new text written to the repository or to its PRs and

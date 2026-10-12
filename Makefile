@@ -51,7 +51,7 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: setup
-setup: ## Install Go tools (incl. changie), Python parser, and the pre-commit hook
+setup: ## Install Go tools (incl. changie), Python parser, and the pre-commit and commit-msg (DCO sign-off) hooks
 	go mod download
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
@@ -63,6 +63,7 @@ setup: ## Install Go tools (incl. changie), Python parser, and the pre-commit ho
 	go install github.com/miniscruff/changie@$(CHANGIE_VERSION)
 	command -v python3 >/dev/null && pip install -e "./parser[dev]" && pip install -e ./runtime/python || echo "skip parser/runtime install (python3 not found)"
 	install -m 0755 scripts/pre-commit .git/hooks/pre-commit
+	install -m 0755 scripts/commit-msg .git/hooks/commit-msg
 	@echo "setup complete"
 
 .PHONY: build

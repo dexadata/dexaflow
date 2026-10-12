@@ -53,6 +53,35 @@ CI enforces all of the above automatically. PRs that fail CI cannot be merged.
   - `chore: bump dependencies`
   - `refactor: extract scheduler decision logic`
 
+**Sign off your commits.** Dexaflow uses the
+[Developer Certificate of Origin](https://developercertificate.org/) (DCO).
+By adding a `Signed-off-by:` line to a commit you certify that you wrote the
+change, or otherwise have the right to submit it under the project's open
+source license. Every commit of a pull request needs one, with the same email
+as the commit's author:
+
+```bash
+git commit -s -m "fix: handle pod OOMKilled in K8s executor"
+# adds: Signed-off-by: Your Name <you@example.com>
+```
+
+`make setup` installs a `commit-msg` hook (`scripts/commit-msg`) that adds the
+line for you, the same one `git commit -s` writes, and never twice. Install it
+only if you agree to certify every commit you make in this repository.
+
+The **DCO** check (`.github/workflows/dco.yaml`, `scripts/dco-signoff.sh`)
+fails a pull request with a commit that is not signed off by its author, and
+names the commit. To fix a branch, sign off every commit and force-push:
+
+```bash
+git rebase --signoff origin/main     # or upstream/main from a fork
+git push --force-with-lease
+```
+
+Merge commits and commits made by GitHub App bots such as Dependabot are
+exempt. The check reads the commits of the pull request only: the commit a
+maintainer writes on `main` when squash-merging is not checked.
+
 #### 4. Record the Change
 
 Every pull request that changes shipped behavior records what changed. It does
@@ -165,7 +194,7 @@ docker compose --profile demo up --build
 ```bash
 # Read AGENTS.md first: the standing rules for PRs, releases and CI.
 
-make setup        # Go tools, Python parser/runtime, pre-commit hook
+make setup        # Go tools, Python parser/runtime, pre-commit and commit-msg hooks
 make build        # build bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent (plus leoflow* links)
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the quality gates you must pass before pushing
@@ -186,7 +215,7 @@ See [`README.md`](README.md) for the high-level layout. Detailed module document
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE), and you certify the [Developer Certificate of Origin](https://developercertificate.org/) for each commit you sign off (see "Sign off your commits" above).
 
 ## Recognition
 

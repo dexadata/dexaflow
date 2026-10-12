@@ -353,7 +353,7 @@ admin password any time with `dexaflow lite reset-password`.
 ```bash
 git clone https://github.com/dexadata/dexaflow
 cd dexaflow
-make setup            # Go tools, Python parser, pre-commit hook
+make setup            # Go tools, Python parser, pre-commit and commit-msg hooks
 make build            # builds bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
 
 # Start Postgres + Redis (Docker) and apply migrations

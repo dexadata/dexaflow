@@ -52,7 +52,7 @@ described in [Operating modes](/concepts/editions/).
 # Read AGENTS.md at the repository root first: the standing rules for PRs,
 # releases and CI.
 
-make setup        # Go tools, Python parser/runtime, and the pre-commit hook
+make setup        # Go tools, Python parser/runtime, pre-commit and commit-msg hooks
 make build        # bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the gates you must pass before pushing
@@ -148,6 +148,14 @@ git push -u origin fix/clear-error-message
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) —
   `feat: add XCom schema validation`, `fix: handle pod OOMKilled`, `test: failing
   test for retry backoff`.
+- **Sign off every commit** (`git commit -s`). The project uses the
+  [Developer Certificate of Origin](https://developercertificate.org/): the
+  `Signed-off-by: Your Name <you@example.com>` line certifies that you have the
+  right to submit the change under the project's license, and its email must be
+  the commit author's. `make setup` installs a `commit-msg` hook that adds it.
+  The **DCO** check fails a PR with a commit that is not signed off; fix the
+  branch with `git rebase --signoff upstream/main` and a force-push. Merge
+  commits and Dependabot commits are exempt.
 - **One logical change per PR.** If you write "and also…" in the description, split it.
 - Opening the PR loads a **template** — fill in what changed, how you tested, and
   tick the checklist (TDD, lint, GoDocs, ADR compliance).

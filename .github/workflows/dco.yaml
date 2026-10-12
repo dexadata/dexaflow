@@ -1,0 +1,52 @@
+# Requires a Developer Certificate of Origin sign-off on every commit of a pull
+# request (scripts/dco-signoff.sh, #1575). Each commit needs a
+# `Signed-off-by:` trailer with its author's email, which `git commit -s` (or
+# the commit-msg hook `make setup` installs) writes. Merge commits and commits
+# made by GitHub App bots such as Dependabot are exempt.
+#
+# It checks the commits of the pull request only, never `main`: maintainers
+# squash-merge, and the squash commit is a new commit made from the ones this
+# check already passed.
+#
+# Making it a required check is a ruleset change on the repository, done by a
+# maintainer once the check has run on open pull requests for a while.
+name: DCO
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. This workflow
+# runs only on pull requests, so the run id branch is never taken; it is kept
+# so the group expression reads like the other workflows'.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dco:
+    name: Commits signed off (DCO)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The head commit, not the merge commit GitHub builds. fetch-depth 0 also
+      # fetches every branch as it is now, which is what the range needs: the
+      # base is the CURRENT tip of the base branch, not pull_request.base.sha,
+      # because a branch that merged `main` in carries main's own commits and
+      # only the current tip is sure to contain them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # The refname goes through the environment, never into the command text
+      # (#970).
+      - name: Check every commit for a Signed-off-by from its author
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/dco-signoff.sh "origin/$BASE_REF" "$HEAD_SHA"

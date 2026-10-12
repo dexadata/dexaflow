@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Dexaflow commit-msg hook (#1575): adds the Developer Certificate of Origin
+# sign-off that `git commit -s` writes, so a forgotten `-s` does not fail the
+# DCO check of the pull request (scripts/dco-signoff.sh). `make setup` installs
+# it. It is a commit-msg hook and not part of scripts/pre-commit because the
+# pre-commit hook runs before the message exists.
+#
+# The trailer is added only when the same line is not there yet, so amending a
+# signed commit does not sign it twice. Adding it is the contributor's
+# certification (see CONTRIBUTING.md): install the hook only if you agree to
+# sign off every commit you make in this repository.
+set -euo pipefail
+
+ident="$(git var GIT_COMMITTER_IDENT)"
+# GIT_COMMITTER_IDENT is "Name <email> <timestamp> <tz>"; keep "Name <email>".
+ident="${ident%%>*}>"
+git interpret-trailers --in-place --if-exists addIfDifferent \
+	--trailer "Signed-off-by: $ident" "$1"

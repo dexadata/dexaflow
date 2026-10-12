@@ -21,6 +21,7 @@ Closes #
 - [ ] Docs updated under `website/content/` if behavior, flags, config, migrations or the API changed. Nothing user-discoverable? Apply the `skip-docs` label and add a line `Skip-docs: <reason>` to this description.
 - [ ] Changelog recorded: `make changelog` writes `.changes/unreleased/<slug>.yaml` (one file per PR, so it never conflicts). No user-facing change? Apply the `skip-changelog` label instead.
 - [ ] All code, comments, and commit messages are in English
+- [ ] Every commit is signed off by its author (`git commit -s`, DCO): see CONTRIBUTING.md
 - [ ] One logical change (no "and also…")
 
 <!-- UI change? Add before/after screenshots.
