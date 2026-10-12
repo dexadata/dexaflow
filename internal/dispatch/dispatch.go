@@ -393,6 +393,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if req.Execution.ServiceAccount == "" {
 		req.Execution.ServiceAccount = d.defaultTaskServiceAccount
 	}
+	// Name the default too, so the executor's allowlist re-check can tell it
+	// from an account the task chose (issue #537 C2).
+	req.DefaultServiceAccount = d.defaultTaskServiceAccount
 	if r.Staging != nil && r.Staging.Enabled {
 		// All of the run's tasks share one PVC, named deterministically so a
 		// clear+re-run re-attaches it (ADR 0022). The executor provisions it.
@@ -430,6 +433,11 @@ func (d *Dispatcher) refuseBeforeToken(runID, dagID string, task domain.TaskSpec
 	// before the list changed.
 	if refused := d.defaults.ExecutionPolicy.CheckTask(task); refused != nil {
 		return false, refused
+	}
+	// The image allowlist (issue #537 C2) checks the image this run resolved,
+	// the one the pod (or a warm worker of this version) would run.
+	if refused := d.defaults.ExecutionPolicy.CheckImage(r.Image); refused != nil {
+		return false, fmt.Errorf("task %q: %w", task.TaskID, refused)
 	}
 	// Register caps a source-mode source only while the mode is on; a version
 	// registered on the runtime image before it was turned on was never

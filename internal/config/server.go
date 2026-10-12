@@ -325,11 +325,21 @@ type ExecutionAllowlistSection struct {
 	// PriorityClasses, when not empty, lists the only priority_class_name values
 	// a DAG may set. Empty (the default) allows any.
 	PriorityClasses []string `mapstructure:"priority_classes"`
+	// ServiceAccounts, when not empty, lists the only execution.service_account
+	// values a DAG may name (issue #537 C2). A task that names none runs as
+	// executor.task_service_account, which is not checked. Empty allows any.
+	ServiceAccounts []string `mapstructure:"service_accounts"`
+	// Images, when not empty, lists the DAG images that may run: exact
+	// references or prefixes ending in "*" (issue #537 C2). Empty allows any.
+	Images []string `mapstructure:"images"`
 }
 
 // ExecutionPolicyConfig is the section as the domain parser takes it.
 func (s ExecutionAllowlistSection) ExecutionPolicyConfig() domain.ExecutionPolicyConfig {
-	return domain.ExecutionPolicyConfig{Fields: s.Fields, PriorityClasses: s.PriorityClasses}
+	return domain.ExecutionPolicyConfig{
+		Fields: s.Fields, PriorityClasses: s.PriorityClasses,
+		ServiceAccounts: s.ServiceAccounts, Images: s.Images,
+	}
 }
 
 // ExecutionSection configures warm worker pools — Pro-gated N:1 pod reuse
@@ -1120,6 +1130,8 @@ var serverDefaults = map[string]any{
 	// from one comma-separated env var.
 	"executor.defaults.execution_allowlist.fields":           []string{domain.ExecutionPolicyAllFields},
 	"executor.defaults.execution_allowlist.priority_classes": []string{},
+	"executor.defaults.execution_allowlist.service_accounts": []string{},
+	"executor.defaults.execution_allowlist.images":           []string{},
 	// client-go's own defaults on one shared client, so an unconfigured install
 	// keeps its effective apiserver budget.
 	"executor.kube_client.qps":               5.0,
