@@ -91,6 +91,52 @@ jobs:
           category: "/language:${{ matrix.language }}"
 
   # ─────────────────────────────────────────────────────────────────────
+  # CodeQL high-alert gate (ADR 0014, #494)
+  # The analysis above only uploads: it is green whatever it finds. This job
+  # reads the alerts the upload produced and fails when the pull request
+  # introduces an open alert of high or critical security severity. Alerts
+  # already open on the base branch are warnings here, not failures (see the
+  # script's header).
+  #
+  # It needs only the default GITHUB_TOKEN, scoped to reading code scanning
+  # alerts, which a pull request from a fork gets too. analyze waits for the
+  # upload to be processed (wait-for-processing defaults to true), so the
+  # alerts are there by the time this starts.
+  #
+  # always() and the result check below, rather than a plain `needs:`: when
+  # the analysis fails or is cancelled a needs-gated job is SKIPPED, and a
+  # skipped job satisfies a required check. This gate must report red then,
+  # not vanish.
+  # ─────────────────────────────────────────────────────────────────────
+  codeql-gate:
+    name: CodeQL high-alert gate
+    needs: codeql
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: read
+    steps:
+      - name: Require a finished CodeQL analysis
+        env:
+          ANALYSIS: ${{ needs.codeql.result }}
+        run: |
+          if [ "$ANALYSIS" != "success" ]; then
+            echo "::error::The CodeQL analysis ended '${ANALYSIS}', so its alerts cannot be judged. Re-run the CodeQL job."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The base branch goes through the environment, never into the command
+      # text: git refnames permit characters the shell would act on (#970).
+      - name: Fail on new high or critical CodeQL alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: bash scripts/codeql-alert-gate.sh --pr "$PR" --base "$BASE_REF"
+
+  # ─────────────────────────────────────────────────────────────────────
   # Trivy: FILESYSTEM scanning of this repository (ADR 0014)
   #
   # This job reads our module graph and lock files. It scans no image, and the
