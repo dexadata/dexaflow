@@ -749,6 +749,10 @@ status it stands for (`dexaflow.refusal_status` on the span), not as a `303`.
 | Linked user deactivated | `403` | `user_inactive` |
 | User linked in another tenant than the token names | `403` | `tenant_mismatch` |
 | Dexaflow could not look up the user or open the session | `500` | `server_error` |
+| The issuer's JWKS could not be downloaded, so the token was not checked | `503` | `server_error` |
+
+A JWKS outage writes no `issuer.login.failure` audit row: the token was never
+checked, so it is not a failed sign-in. It is logged at error level instead.
 
 The code is the only thing added to the URL: never the token, the subject,
 the email, the tenant or the origin. The redirect always goes to the
