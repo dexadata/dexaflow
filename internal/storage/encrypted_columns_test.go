@@ -21,12 +21,17 @@ import (
 var encryptingWritePaths = map[string][]string{
 	"SetConnection":      {"connections.password", "connections.extra"},
 	"SetConnectionPatch": {"connections.password", "connections.extra"},
+	// Variables are sealed only under variable_encryption: on (#507).
+	"SetVariable":                {"variables.value"},
+	"SetVariablePatch":           {"variables.value"},
+	"ConvergeVariableEncryption": {"variables.value"},
 }
 
 // keyMachinery are functions that encrypt only to move existing ciphertext
 // between keys, over the registry itself.
 var keyMachinery = map[string]bool{
-	"encOrEmpty": true, "encPatch": true, // helpers of the write paths above
+	"encOrEmpty": true, "encPatch": true, "sealVariable": true, // helpers of the write paths above
+	"convergeVariable": true, "reencryptVariables": true, // helpers of the variable sweeps
 	"reencryptOne": true, "ReencryptSecrets": true, // the Pro boot sweep
 	"MigrateSecretValues": true, "moveValue": true, // the Lite key migration
 }

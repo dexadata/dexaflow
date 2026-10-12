@@ -238,6 +238,13 @@ func toTaskInstanceDTO(ti domain.TaskInstance) taskInstanceDTO {
 	if hostname == "" {
 		hostname = "unknown"
 	}
+	// The pool and slots the instance is charged (#1589), so the task panel
+	// agrees with /api/v2/pools, which sums the same pool_slots.
+	pool := ti.Pool
+	if pool == "" {
+		pool = domain.DefaultPoolName
+	}
+	poolSlots := max(ti.PoolSlots, 1)
 	return taskInstanceDTO{
 		ID:               synthID(ti.RunID, ti.TaskID, ti.MapIndex),
 		TaskID:           ti.TaskID,
@@ -254,8 +261,8 @@ func toTaskInstanceDTO(ti domain.TaskInstance) taskInstanceDTO {
 		DagDisplayName:   ti.DagID,
 		Hostname:         &hostname,
 		Unixname:         &unixname,
-		Pool:             "default_pool",
-		PoolSlots:        1,
+		Pool:             pool,
+		PoolSlots:        poolSlots,
 		Queue:            &queue,
 		PriorityWeight:   &prio,
 		Operator:         op,

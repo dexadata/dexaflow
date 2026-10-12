@@ -70,9 +70,9 @@ type oidcDeps struct {
 	jwtSecret string
 	tokenTTL  time.Duration
 	logger    *slog.Logger
-	// insecureCookies drops Secure from the session and state cookies; see
-	// cookieSecure. Its zero value is the safe one.
-	insecureCookies bool
+	// session names the session cookie, and its insecure drops Secure from the
+	// session and state cookies (see cookieSecure). Its zero value is the safe one.
+	session sessionCookieSpec
 }
 
 // randomURLToken returns a cryptographically random, URL-safe token used for the
@@ -180,7 +180,7 @@ func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
 			abortSSOServerFailure(c, deps.logger, "minting session token", terr)
 			return
 		}
-		setSessionCookie(c, token, deps.tokenTTL, deps.insecureCookies)
+		setSessionCookie(c, token, deps.tokenTTL, deps.session)
 		deps.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success",
 			map[string]string{"subject": identity.Subject, "roles": strings.Join(user.Roles, ",")})
 		c.Redirect(http.StatusFound, sanitizeNext(payload.Next))
@@ -202,7 +202,7 @@ func (d oidcDeps) readState(c *gin.Context) (oidc.StatePayload, bool) {
 	}
 	// The state cookie is single-use for this attempt; clear it regardless of
 	// outcome so it cannot be replayed.
-	clearStateCookie(c, d.insecureCookies)
+	clearStateCookie(c, d.session.insecure)
 	return payload, true
 }
 

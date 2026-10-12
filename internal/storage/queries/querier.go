@@ -68,11 +68,16 @@ type Querier interface {
 	CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UUID) error
 	// Counts queued+running runs for a single DAG; used by the manual-trigger
 	// path to enforce max_active_runs (#200) before insert.
-	CountActiveDagRunsByDagID(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error)
 	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountConnections(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountDagRunStatesInWindow(ctx context.Context, arg CountDagRunStatesInWindowParams) ([]CountDagRunStatesInWindowRow, error)
-	CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	// The tenant is checked on the parent dag, once, rather than on every run row:
+	// a per-row tenant_id filter would turn the index-only count over
+	// idx_dag_runs_dag_logical into a heap visit per run. A dag_runs row always
+	// carries its dag's tenant, so a dag id of another tenant counts zero either
+	// way (#508).
+	CountDagRunsByDag(ctx context.Context, arg CountDagRunsByDagParams) (int64, error)
 	CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error)
 	CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	// One index probe per DAG of the tenant for its newest run. DAGs without runs
@@ -176,6 +181,8 @@ type Querier interface {
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
 	GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (Dag, error)
+	// tenant_id is a predicate here, not only a property of the caller's resolved
+	// dag id (#508): a dag id of another tenant finds no run.
 	GetDagRun(ctx context.Context, arg GetDagRunParams) (DagRun, error)
 	GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, error)
 	// The run plus the LABEL of the version it is pinned to. The API needs the label
@@ -432,9 +439,11 @@ type Querier interface {
 	// left out and the current row, the try's latest execution, stands for it.
 	// Each row carries the per-attempt fields PLUS the run-constant fields
 	// (operator, max_tries, map_index) copied from the current TI; archived rows
-	// get them via the JOIN.
+	// get them via the JOIN. pool and pool_slots are the current TI's too: history
+	// does not record them, so every attempt reports the pool the task is charged
+	// to now (#1589).
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
-	ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error)
+	ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstancesByRunParams) ([]TaskInstance, error)
 	// The batched form of ListTaskInstancesByRun for the scheduler tick: every
 	// active run's task instances in one round trip instead of one per run. Rows
 	// come grouped by run and, within a run, in the same task_id order the per-run
@@ -447,6 +456,11 @@ type Querier interface {
 	// caller. Never selects password_hash — the list must not expose secrets.
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListVariables(ctx context.Context, arg ListVariablesParams) ([]ListVariablesRow, error)
+	// Every variable across every tenant whose stored value does (sealed = true) or
+	// does not (sealed = false) start with the ciphertext tag (#507). It backs the
+	// variable_encryption boot sweeps, which seal plaintext rows ("on") or restore
+	// them ("decrypt"), and the key rotation sweep, which reads the sealed ones.
+	ListVariablesForEncryptionSweep(ctx context.Context, arg ListVariablesForEncryptionSweepParams) ([]ListVariablesForEncryptionSweepRow, error)
 	// The tenant's variables restricted to the given keys, filtered in the query
 	// (ADR 0055 D1: scope in the SQL, never post-filter the decrypted whole vault in
 	// the handler). Used under secret_scoping: enforce so a task receives only the
@@ -877,6 +891,10 @@ type Querier interface {
 	// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
 	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error)
+	// Rewrites one stored value only if it is still the one the sweep read, so a
+	// concurrent write wins and the sweep counts the row as skipped. updated_at is
+	// left alone: the variable's value did not change, only its stored form.
+	UpdateVariableValueGuarded(ctx context.Context, arg UpdateVariableValueGuardedParams) (int64, error)
 	// Tri-state write (#887): COALESCE(EXCLUDED.col, connections.col) preserves the
 	// stored value when the param is NULL, overwrites it when the param is a value,
 	// and clears it when the param is a non-NULL empty string. A NULL param is how a
