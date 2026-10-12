@@ -599,8 +599,8 @@ and cannot do.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. |
-| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: no dedicated value yet, use `extraEnv`. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. Helm: `execution.sourceMode.enabled`. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: `execution.sourceMode.image`; the chart refuses to render the same values the server refuses. |
 
 ### Logs (`logs.*`)
 

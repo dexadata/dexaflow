@@ -475,6 +475,12 @@ execution:
   maxWarmPodsPerTenant: 100
   # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
   warmReadOnlyRootFilesystem: false
+  # Pro source mode (ADR 0067): a DAG version whose `image` is exactly `sourceMode.image` and that carries its `dag.py` as `source` runs from that file on this runtime image, with no image build. See the docs page "Source mode" for what such a DAG can and cannot do, and exclude the `leoflow.io/dag-source` pod annotation in your log shipper before turning it on.
+  sourceMode:
+    # -- Turn Pro source mode on (ADR 0067). OFF by default: Pro ignores a version's source and nothing below reaches the server. Renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
+    enabled: false
+    # -- The runtime image source-mode versions name as their `image`, pinned by a full digest: `name@sha256:` and 64 lowercase hex characters. A source-mode version must name this exact string as its image, byte for byte (pass it to `dexaflow compile` as the image). Required when `enabled`; the chart refuses a tag alone or a short digest, as the server does at boot. Ignored while `enabled` is false.
+    image: ""
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see
