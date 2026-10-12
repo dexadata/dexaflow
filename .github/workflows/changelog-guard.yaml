@@ -15,6 +15,9 @@ on:
   pull_request:
     branches: [main, "release-*"]
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # The merge queue (#1569): see changelog-guard-queue below.
+  merge_group:
+    types: [checks_requested]
 
 # pull-requests: read is what lets the exemption step ask the API for the
 # CURRENT labels instead of trusting the event payload, which is a snapshot from
@@ -39,6 +42,7 @@ concurrency:
 jobs:
   changelog-guard:
     name: CHANGELOG entry present
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Exempt PRs with no user-facing change (release-prep, chore, dependabot,
@@ -110,3 +114,16 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: bash scripts/check-changelog-entry.sh "origin/$BASE_REF"
+
+  # The same check name in the merge queue, so it can be made required. The
+  # entry was judged on the pull request, and the queue cannot remove a
+  # fragment the pull request adds: the queue commit is the pull request on
+  # top of the newer base. So this only reports.
+  changelog-guard-queue:
+    name: CHANGELOG entry present
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Judged on the pull request
+        run: echo "The changelog entry was checked on the pull request; nothing to re-check in the merge queue."

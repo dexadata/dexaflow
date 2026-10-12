@@ -156,6 +156,14 @@ and applied by golang-migrate on start and by the chart's pre-upgrade Job.
   or `user_roles`. `migrations/tenant_roles_test.go` fails an up migration that
   writes `roles` or `role_permissions` and names the default tenant
   (#1305).
+- **Renumbering is the author's job.** Numbers must be contiguous
+  (`migrations/sequence_test.go`), so when another pull request merges a
+  migration with your number first, merge `main` into your branch and rename
+  yours to the next free number before the pull request enters the merge
+  queue. Once the merge queue is on for `main`, it tests each pull request on
+  top of the ones ahead of it, so two pull requests with the same number
+  cannot both merge: the second fails `Test + Coverage` in the queue and is
+  removed from it.
 
 ## Development Environment
 
