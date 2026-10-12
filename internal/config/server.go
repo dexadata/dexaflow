@@ -1039,7 +1039,7 @@ type OIDCSection struct {
 	// delimiter splits a dotted MAP KEY (a dotted IdP group like "app.admins")
 	// into nested maps and fails to decode. LoadServer parses this map straight
 	// from the raw YAML instead (#826). Env-var binding never applied to maps.
-	RoleMappings map[string]string `mapstructure:"-"`
+	RoleMappings map[string]string `mapstructure:"-" yaml:"role_mappings"`
 	// DefaultRole softens the default-deny WITHOUT weakening the secure default:
 	// when an authenticated user resolves to zero mapped roles and DefaultRole is
 	// set, they are granted this single role (operators are advised to use a
@@ -1058,7 +1058,7 @@ type OIDCSection struct {
 	// "sub.example.co.uk"), which viper's "." delimiter would split into nested
 	// maps and fail to decode — the #826 crash. LoadServer parses this map from
 	// the raw YAML instead.
-	TenantClaims map[string]string `mapstructure:"-"`
+	TenantClaims map[string]string `mapstructure:"-" yaml:"tenant_claims"`
 	// AllowedEmailDomains is an install-time, login-level allowlist layered on TOP
 	// of the tid/hd tenant pin — it is NOT the pin itself (that stays issuer +
 	// tid/hd + email_verified per D6). The check runs only AFTER the pin and

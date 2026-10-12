@@ -55,8 +55,9 @@ func docEnvVarsFromReference(t *testing.T) []string {
 }
 
 // docSettingFirstColumns returns the first column of every table row in the
-// configuration reference — the cell that names the setting, either as its
-// LEOFLOW_* env var or, for a config-file/Helm-values-only key, in dotted form.
+// server settings section of the configuration reference: the cell that
+// names the setting, either as its DEXAFLOW_* env var or, for a config-file
+// only key, as _(config file only)_ next to its dotted key.
 // It is the shared read side of both directions of the doc/binding guard.
 func docSettingFirstColumns(t *testing.T) []string {
 	t.Helper()
@@ -71,8 +72,15 @@ func docSettingFirstColumns(t *testing.T) []string {
 		t.Fatalf("read %s: %v", docPath, err)
 	}
 	var cols []string
+	// Only the server settings section: the variables a binary reads outside
+	// the config loaders (the "Other environment variables" section) bind
+	// through os.Getenv, not serverDefaults.
+	inServer := false
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+		if strings.HasPrefix(line, "## ") {
+			inServer = strings.HasPrefix(line, "## Server environment")
+		}
+		if !inServer || !strings.HasPrefix(strings.TrimSpace(line), "|") {
 			continue
 		}
 		// First column only: text up to the first column separator.
