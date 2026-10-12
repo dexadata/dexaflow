@@ -361,6 +361,8 @@ auth:
   externalSigninUrl: ""
   # -- Where sign-out lands after clearing the Dexaflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Dexaflow's sign-in page.
   externalSignoutUrl: ""
+  # -- Name of the browser session cookie (#1405). Empty (the default) keeps `_token`. Set a `__Host-` name such as `__Host-dexaflow` whenever several hosts share one parent domain (for example one host per tenant under `example.com`): the browser then refuses a session cookie planted from a sibling host. Changing it signs every browser out once.
+  sessionCookieName: ""
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
   # fetch (ADR 0055). All three ship on the value that is byte-for-byte today's
