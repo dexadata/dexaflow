@@ -393,6 +393,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if req.Execution.ServiceAccount == "" {
 		req.Execution.ServiceAccount = d.defaultTaskServiceAccount
 	}
+	// Name the default too, so the executor's allowlist re-check can tell it
+	// from an account the task chose (issue #537 C2).
+	req.DefaultServiceAccount = d.defaultTaskServiceAccount
 	if r.Staging != nil && r.Staging.Enabled {
 		// All of the run's tasks share one PVC, named deterministically so a
 		// clear+re-run re-attaches it (ADR 0022). The executor provisions it.

@@ -51,7 +51,13 @@ type Request struct {
 	Env             map[string]string
 	Resources       domain.Resources
 	Execution       domain.Execution
-	TimeoutSeconds  int
+	// DefaultServiceAccount is the operator's default task ServiceAccount, the
+	// one the dispatcher fills into Execution.ServiceAccount when the task names
+	// none. The execution allowlist does not govern it, so the executor's
+	// re-check of the allowlist skips exactly this account and checks any other
+	// (issue #537 C2).
+	DefaultServiceAccount string
+	TimeoutSeconds        int
 	// AttemptLifetimeCeilingSeconds is the operator's attempt credential ceiling
 	// (auth.max_attempt_credential_lifetime) in whole seconds. The Kubernetes
 	// executor floors the task pod's ActiveDeadlineSeconds with it when the task

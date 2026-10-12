@@ -40,7 +40,7 @@ func registerWarmSpec(t *testing.T, repo *storage.Repository, ctx context.Contex
 // effective count is resolved through the operator's clamp (min_idle 20, cap 8 => 8).
 func TestActiveWarmTargetsIntegration(t *testing.T) {
 	repo, sched, ctx := openRepo(t)
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8})
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil)
 
 	dagID := fmt.Sprintf("warm_tgt_%d", time.Now().UnixNano())
 	image := fmt.Sprintf("warm-img-%d:v1", time.Now().UnixNano())
@@ -73,7 +73,7 @@ func TestActiveWarmTargetsIntegration(t *testing.T) {
 	}
 
 	// With warm pools off the same active version reports a zero target (the gate).
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: false, MinIdleWorkers: 5, MaxPoolSize: 8})
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: false, MinIdleWorkers: 5, MaxPoolSize: 8}, nil)
 	offTargets, err := sched.ActiveWarmTargets(ctx)
 	if err != nil {
 		t.Fatalf("ActiveWarmTargets (off): %v", err)
@@ -82,5 +82,47 @@ func TestActiveWarmTargetsIntegration(t *testing.T) {
 		if tgt.Image == image && tgt.EffectiveMinIdle != 0 {
 			t.Errorf("warm pools off: effective min_idle = %d, want 0", tgt.EffectiveMinIdle)
 		}
+	}
+}
+
+// TestActiveWarmTargetsSkipsDisallowedImageIntegration: a DAG registered on an
+// image before the operator set the image allowlist (issue #537 C2) gets an
+// active run, yet surfaces no warm target, so no warm pod starts on its image.
+func TestActiveWarmTargetsSkipsDisallowedImageIntegration(t *testing.T) {
+	repo, sched, ctx := openRepo(t)
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{Images: []string{"registry.example.com/team-a/*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, policy)
+
+	suffix := time.Now().UnixNano()
+	rogueDag, rogueImage := fmt.Sprintf("warm_rogue_%d", suffix), fmt.Sprintf("ghcr.io/someone/tool-%d:latest", suffix)
+	okDag, okImage := fmt.Sprintf("warm_ok_%d", suffix), fmt.Sprintf("registry.example.com/team-a/etl-%d:v1", suffix)
+	registerWarmSpec(t, repo, ctx, rogueDag, rogueImage, 2)
+	registerWarmSpec(t, repo, ctx, okDag, okImage, 2)
+	for _, dagID := range []string{rogueDag, okDag} {
+		if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+			RunID: "r1", State: domain.DagRunStateQueued, RunType: "manual", LogicalDate: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("create run for %s: %v", dagID, err)
+		}
+	}
+
+	targets, err := sched.ActiveWarmTargets(ctx)
+	if err != nil {
+		t.Fatalf("ActiveWarmTargets: %v", err)
+	}
+	var sawOK bool
+	for _, tgt := range targets {
+		switch tgt.Image {
+		case rogueImage:
+			t.Errorf("warm target for disallowed image %s: %+v", rogueImage, tgt)
+		case okImage:
+			sawOK = true
+		}
+	}
+	if !sawOK {
+		t.Errorf("no warm target for allowed image %s in %+v", okImage, targets)
 	}
 }

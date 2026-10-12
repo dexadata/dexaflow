@@ -38,8 +38,8 @@ func TestKubernetesExecuteRefusesARequestOutsideTheExecutionAllowlist(t *testing
 }
 
 // The service account on a request may be the operator's default, filled in by
-// the dispatcher after it checked the task's own; the executor must not refuse
-// it (issue #537 C2).
+// the dispatcher (and named on DefaultServiceAccount) after it checked the
+// task's own; the executor must not refuse it (issue #537 C2).
 func TestKubernetesExecuteDoesNotRecheckTheFilledInServiceAccount(t *testing.T) {
 	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{ServiceAccounts: []string{"etl"}})
 	if err != nil {
@@ -48,9 +48,34 @@ func TestKubernetesExecuteDoesNotRecheckTheFilledInServiceAccount(t *testing.T) 
 	e := NewKubernetesExecutor(fake.NewClientset(), "leoflow")
 	req := sampleReq()
 	req.Execution.ServiceAccount = "operator-default"
+	req.DefaultServiceAccount = "operator-default"
 	req.ExecutionPolicy = policy
 	if disp, err := e.Execute(context.Background(), req); err != nil || disp != Dispatched {
 		t.Fatalf("Execute = %v, %v; want Dispatched", disp, err)
+	}
+}
+
+// Any other service account on the request is checked again, so a Request
+// builder that skipped the dispatcher's check cannot run a pod under an
+// account outside the allowlist (issue #537 C2).
+func TestKubernetesExecuteRefusesAServiceAccountOutsideTheAllowlist(t *testing.T) {
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{ServiceAccounts: []string{"etl"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := fake.NewClientset()
+	e := NewKubernetesExecutor(cs, "leoflow")
+	req := sampleReq()
+	req.Execution.ServiceAccount = "cluster-admin-ish"
+	req.DefaultServiceAccount = "operator-default"
+	req.ExecutionPolicy = policy
+	disp, err := e.Execute(context.Background(), req)
+	if err == nil || disp != Refused || !strings.Contains(err.Error(), "cluster-admin-ish") {
+		t.Fatalf("Execute = %v, %v; want Refused naming the service account", disp, err)
+	}
+	pods, _ := cs.CoreV1().Pods("leoflow").List(context.Background(), metav1.ListOptions{})
+	if len(pods.Items) != 0 {
+		t.Errorf("a refused request created %d pod(s)", len(pods.Items))
 	}
 }
 

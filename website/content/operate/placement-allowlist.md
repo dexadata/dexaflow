@@ -100,6 +100,9 @@ DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES=registry.example.com/team-
   not also match `team-ab`.
   With [source mode](/operate/source-mode/) on, a DAG pushed in source mode
   runs on the runtime image, so list that image too or those DAGs are refused.
+  With [warm pools](/operate/warm-pools/) on, a DAG version whose image is
+  outside the list gets no warm workers, so no warm pod ever starts on it;
+  warm workers left over from before the list changed are drained.
 
 Both are empty by default, which allows any service account and any image.
 

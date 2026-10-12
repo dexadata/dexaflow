@@ -59,11 +59,13 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposit
 	// The operator's execution allowlist (issue #629). The dispatcher already
 	// refused a task that breaks it; this keeps any other Request builder from
 	// placing a pod the operator did not allow.
-	// The service account is left out here: by now the dispatcher has filled
-	// in the operator's default task ServiceAccount, which the allowlist does
-	// not govern, and the account the task itself named was checked before.
+	// The service account is checked too, except the operator's default task
+	// ServiceAccount the dispatcher filled in for a task that named none: the
+	// allowlist does not govern that one.
 	authored := req.Execution
-	authored.ServiceAccount = ""
+	if authored.ServiceAccount != "" && authored.ServiceAccount == req.DefaultServiceAccount {
+		authored.ServiceAccount = ""
+	}
 	if err := req.ExecutionPolicy.CheckTask(domain.TaskSpec{TaskID: req.TaskID, Execution: &authored}); err != nil {
 		return Refused, err
 	}
