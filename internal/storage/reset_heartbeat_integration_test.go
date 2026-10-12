@@ -59,7 +59,7 @@ func seedStaleHeartbeat(t *testing.T, prefix string) *staleHeartbeatFixture {
 		t.Fatalf("materialize: %v", err)
 	}
 	f.transition(t, domain.TaskStateRunning)
-	if err := f.exec.RecordHeartbeat(ctx, auth.AgentIdentity{RunID: f.runUUID, TaskID: "t", TryNumber: 1}); err != nil {
+	if err := f.exec.RecordHeartbeat(ctx, auth.AgentIdentity{TenantID: defaultTenantID(), RunID: f.runUUID, TaskID: "t", TryNumber: 1}); err != nil {
 		t.Fatalf("RecordHeartbeat: %v", err)
 	}
 	if _, err := pg.Pool.Exec(ctx,
