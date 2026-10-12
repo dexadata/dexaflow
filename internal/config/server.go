@@ -488,6 +488,13 @@ type ExecutionSection struct {
 	// is turned on. Dedicated task pods are not affected; they follow
 	// executor.defaults.read_only_task_root_filesystem.
 	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
+	// WarmRequireAttemptHomeSweep refuses a warm worker that does not confirm,
+	// when it registers, that it empties /tmp and /dev/shm between attempts
+	// (#1678), so its DAG version's attempts run on dedicated pods. It applies
+	// only with WarmReadOnlyRootFilesystem on. Default false logs and meters
+	// such a worker and keeps it: agents from runtime v0.5.1 sweep but only the
+	// ones built after the report was added can confirm it.
+	WarmRequireAttemptHomeSweep bool `mapstructure:"warm_require_attempt_home_sweep"`
 	// WarmPoolEventRefill makes warm-pool refill event driven: the reconciler
 	// reads the fleet from a dedicated warm-pod informer instead of a LIST per
 	// tick, reacts at once to a worker being deleted, failing or claimed, and
@@ -1450,9 +1457,10 @@ var serverDefaults = map[string]any{
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
-	"execution.warm_read_only_root_filesystem": false,
-	"execution.source_mode.enabled":            false,
-	"execution.source_mode.image":              "",
+	"execution.warm_read_only_root_filesystem":  false,
+	"execution.warm_require_attempt_home_sweep": false,
+	"execution.source_mode.enabled":             false,
+	"execution.source_mode.image":               "",
 	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
 	"execution.warm_pool_event_refill": false,

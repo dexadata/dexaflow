@@ -292,6 +292,15 @@ message WorkerRegister {
     // is a locator, not a credential: the worker's authenticated identity still
     // comes from its bearer token on the stream context, never from this field.
     string pod_name = 2;
+    // attempt_home_sweep confirms that this worker runs with a per-attempt HOME
+    // and empties /tmp and /dev/shm before and after every attempt (the
+    // read-only-root isolation mode, LEOFLOW_WARM_ATTEMPT_HOME=1). A worker
+    // built on an older runtime never sets it. With
+    // execution.warm_read_only_root_filesystem on, the control plane logs and
+    // meters a registration that does not confirm the sweep, and refuses it
+    // when execution.warm_require_attempt_home_sweep is on too, so attempts run
+    // on dedicated pods instead of on a worker that would leak those paths.
+    bool attempt_home_sweep = 3;
 }
 
 // AssignmentAck answers a WorkAssignment. started=true means the worker began the

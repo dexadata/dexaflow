@@ -432,6 +432,22 @@ path) fails with it on, and a task that reads config baked into the image's home
 dir must point at it explicitly, for example with `DBT_PROFILES_DIR`. The setting
 takes effect on warm pods created after it is turned on: running warm pods keep
 their spec until they recycle (`workerIdleTtl`, `maxWorkerLifetime`).
+
+The sweep is done by the agent inside the task image, so it **needs a task image
+built on runtime v0.5.1 or later**. Each warm worker states in its registration
+whether it does the sweep. With the setting on, a worker that does not confirm
+it (an image built before the confirmation existed, or a pod created before the
+setting was turned on) logs a `warm worker does not confirm it empties /tmp and
+/dev/shm` warning with `reason=attempt_home_sweep_unconfirmed` and counts in
+`dexaflow_scheduler_decisions_total{decision_type="warm_worker_sweep_unconfirmed"}`,
+but still serves attempts, because images built on runtimes from v0.5.1 sweep
+without being able to say so. Once your task images are rebuilt, set
+**`execution.warm_require_attempt_home_sweep`** (Helm:
+`execution.warmRequireAttemptHomeSweep`) to refuse such a worker instead: that
+DAG version's attempts run on dedicated pods, and each refusal counts as
+`decision_type="warm_worker_refused_no_sweep"`. A refused worker exits and the
+pool replaces it, so an image that does not confirm the sweep keeps cycling warm
+pods until it is rebuilt.
 {{% /alert %}}
 
 Because a fresh scrubbed child and a fresh per-attempt token are mandatory, there is

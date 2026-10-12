@@ -608,6 +608,12 @@ spec:
             - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
               value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
+            {{- if .ctx.Values.execution.warmRequireAttemptHomeSweep }}
+            # Stamped only when on, so enabling warm pools alone renders the same
+            # env it did before this knob existed (the server default is false).
+            - name: LEOFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
+              value: {{ .ctx.Values.execution.warmRequireAttemptHomeSweep | quote }}
+            {{- end }}
             {{- if .ctx.Values.execution.warmPoolEventRefill }}
             # Stamped only when on, so enabling warm pools alone renders the same
             # env it did before this knob existed (the server default is false).
