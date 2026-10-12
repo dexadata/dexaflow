@@ -24,6 +24,7 @@ var scopedWrites = map[string]string{
 	"PATCH /api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id":         auth.ScopeRun,
 	"PATCH /api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action": auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/clearTaskInstances":                                  auth.ScopeRun,
+	"POST /api/v2/dags/:dag_id/dagRuns/:dag_run_id/clear":                           auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/versions":                                            auth.ScopeDeploy,
 }
 
@@ -43,6 +44,9 @@ var scopelessReads = map[string]bool{
 	"GET /ui/teams":                                            true,
 	"GET /ui/connections/hook_meta":                            true,
 	"GET /ui/next_run_assets/:dag_id":                          true,
+	"GET /ui/dags/:dag_id/deadlineAlerts":                      true,
+	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/deadlines":       true,
+	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/stats":           true,
 	"GET /api/v2/dagTags":                                      true,
 	"GET /api/v2/dagWarnings":                                  true,
 	"GET /api/v2/plugins":                                      true,

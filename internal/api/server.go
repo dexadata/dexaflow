@@ -334,6 +334,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
+	registerUIGantt(r, deps.Tasks)
 	registerUITasks(r, deps.Specs)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)
