@@ -2420,6 +2420,10 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	sched := scheduler.NewScheduler(store, logger,
 		time.Duration(cfg.Scheduler.LoopIntervalMS)*time.Millisecond)
 	sched.SetRecorder(metrics)
+	// Bound the dispatch work of one tick, and of one tenant in a tick, so a
+	// wide fan-out cannot stall every other run and cron creation (#1596).
+	sched.SetDispatchTickBudget(cfg.Scheduler.Dispatch.TickBudget)
+	sched.SetDispatchTenantLimit(cfg.Scheduler.Dispatch.MaxPerTenantPerTick)
 	// Named pools are Pro-only (ADR 0053): enable the cross-DAG slot gate only on
 	// the Pro edition. Left off on Lite/non-Pro, the tick never queries pool
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
