@@ -106,7 +106,10 @@ func BuildPod(req Request) *corev1.Pod {
 				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
 				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
-			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
+			Annotations: map[string]string{
+				"leoflow.io/task-instance-id": req.TaskInstanceID,
+				podAnnotationRawTaskID:        req.TaskID,
+			},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
