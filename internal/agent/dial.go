@@ -14,6 +14,7 @@ import (
 
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
@@ -46,6 +47,10 @@ func caPool(path string) (*x509.CertPool, error) {
 // It also returns the *TokenSource backing the per-RPC credential: the heartbeat
 // loop swaps a renewed token into it (ADR 0055 Fix #4) and the interceptor picks
 // the new bearer up on the next call.
+//
+// The channel reconnects with reconnectBackoff, so once the control plane is
+// back it is redialed within about one heartbeat interval, however long the
+// outage lasted (#899).
 func Dial(addr, token string, allowInsecure bool, caFile string) (agentv1.AgentServiceClient, *grpc.ClientConn, *TokenSource, error) {
 	return dial(addr, token, allowInsecure, caFile, defaultDialTuning())
 }
@@ -80,11 +85,13 @@ const (
 	agentHeartbeatTimeout = 10 * time.Second
 )
 
-// dialTuning holds the channel's liveness settings, so tests can shorten them.
+// dialTuning holds the channel's liveness and reconnect settings, so tests can
+// change them.
 type dialTuning struct {
 	keepalive        keepalive.ClientParameters
 	callTimeout      time.Duration
 	heartbeatTimeout time.Duration
+	reconnect        backoff.Config
 }
 
 // defaultDialTuning is the production tuning.
@@ -99,6 +106,7 @@ func defaultDialTuning() dialTuning {
 		},
 		callTimeout:      agentCallTimeout,
 		heartbeatTimeout: agentHeartbeatTimeout,
+		reconnect:        reconnectBackoff(),
 	}
 }
 
@@ -118,6 +126,28 @@ func callDeadline(tuning dialTuning) grpc.UnaryClientInterceptor {
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
 }
+
+// reconnectBackoff is the reconnect backoff of the agent's channel: grpc-go's
+// default ramp (1s, x1.6, 20% jitter) with the cap lowered from 120s to
+// reportRetryMaxDelay. The cap matters because a fail-fast RPC (ReportState,
+// Heartbeat) on a channel in TRANSIENT_FAILURE returns Unavailable without
+// starting a connect: only the channel's own schedule redials. With the
+// default cap, after a long outage the channel could stay down for up to two
+// minutes after the control plane returned while the report loop retried
+// every 15s in vain, and the heartbeats carried by the same channel lapsed
+// with it.
+func reconnectBackoff() backoff.Config {
+	return backoff.Config{
+		BaseDelay:  time.Second,
+		Multiplier: 1.6,
+		Jitter:     0.2,
+		MaxDelay:   reportRetryMaxDelay,
+	}
+}
+
+// minConnectTimeout is the least time one connection attempt gets, grpc-go's
+// default.
+const minConnectTimeout = 20 * time.Second
 
 func dial(addr, token string, allowInsecure bool, caFile string, tuning dialTuning) (agentv1.AgentServiceClient, *grpc.ClientConn, *TokenSource, error) {
 	if addr == "" {
@@ -146,6 +176,10 @@ func dial(addr, token string, allowInsecure bool, caFile string, tuning dialTuni
 		grpc.WithPerRPCCredentials(tokenAuth{source: tokens, secure: !allowInsecure}),
 		grpc.WithKeepaliveParams(tuning.keepalive),
 		grpc.WithChainUnaryInterceptor(callDeadline(tuning)),
+		// MinConnectTimeout restates grpc-go's default: a zero value here would
+		// bound each connection attempt by the backoff delay instead (1s at
+		// first), too short for a TLS handshake to a loaded server.
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: tuning.reconnect, MinConnectTimeout: minConnectTimeout}),
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("dialing control plane at %q: %w", addr, err)

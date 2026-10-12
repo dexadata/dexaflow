@@ -993,11 +993,13 @@ func (r *Runner) writeOutcome(rec taskoutcome.Record) {
 
 // reportRetryMaxDelay caps the pause between two attempts to deliver a report.
 // It equals the heartbeat interval on purpose: the heartbeat is the agent's
-// other channel to the control plane, and once the server is back a report
-// retry lands within about one heartbeat plus the gRPC channel's own reconnect
-// backoff (the channel re-dials on its own schedule, independent of this cap) —
-// the same posture the kubelet's status manager takes toward an unreachable
-// apiserver (keep trying at a bounded cadence, never abandon the status).
+// other channel to the control plane. The gRPC channel redials on its own
+// schedule (a fail-fast RPC on a channel in TRANSIENT_FAILURE does not start a
+// connect), so Dial caps that schedule at this same value (reconnectBackoff):
+// once the server is back the channel is up within about one heartbeat and the
+// next report retry lands by the following one. It is the same posture the
+// kubelet's status manager takes toward an unreachable apiserver (keep trying
+// at a bounded cadence, never abandon the status).
 const reportRetryMaxDelay = DefaultHeartbeatInterval
 
 // reportBackoff returns the delay before report retry attempt n (1-based): an
