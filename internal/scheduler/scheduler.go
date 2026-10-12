@@ -949,7 +949,7 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, er
 		return res, err
 	}
 	if s.eagerPromotion {
-		if run, err = s.promoteSameTick(ctx, run, settled, poolOf, &res); err != nil {
+		if run, err = s.promoteSameTick(ctx, run, planned, settled, poolOf, &res); err != nil {
 			return res, err
 		}
 	}

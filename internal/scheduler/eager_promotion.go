@@ -86,15 +86,25 @@ func (res *advanced) admit(poolOf map[string]poolCharge, taskID string) {
 // task the pass scheduled is queued and dispatched, and a skip or upstream
 // failure cascades to its downstreams. It returns the run with every persisted
 // plain transition folded into its states, which FinalizeRun then reads.
+// planned is the first pass's plan, whose queued promotions are folded too.
 //
 // Each re-plan is restricted to what the previous pass changed. Retry, reschedule
 // and infra re-place decisions belong to the first pass only, and a task that
 // was already scheduled when the tick began was offered once by that pass, so a
 // dispatch that failed or a gate that parked it is not retried until the next
-// tick. Admission gates see every promotion made by earlier passes. The loop
-// stops when a pass changes nothing, or after maxSameTickPasses re-plans.
-func (s *Scheduler) promoteSameTick(ctx context.Context, run RunState, settled *transitionBatch, poolOf map[string]poolCharge, res *advanced) (RunState, error) {
+// tick. Admission gates see every promotion made by earlier passes exactly once:
+// a promoted task is folded as queued, so the planner does not offer it again,
+// and its charge reaches the gates through ActiveTaskCount and PoolActive,
+// weighted by its slots (ADR 0066). The pool waits of each re-plan join the
+// first pass's, so the starvation clock of a task a re-plan scheduled starts in
+// this tick (ADR 0066 §4). The loop stops when a pass changes nothing, or after
+// maxSameTickPasses re-plans.
+func (s *Scheduler) promoteSameTick(ctx context.Context, run RunState, planned []PlannedTransition, settled *transitionBatch, poolOf map[string]poolCharge, res *advanced) (RunState, error) {
 	baseActive, basePool := run.ActiveTaskCount, run.PoolActive
+	reported := make(map[string]bool, len(res.waits))
+	for _, w := range res.waits {
+		reported[w.TaskID] = true
+	}
 	owned := false
 	for range maxSameTickPasses {
 		fresh := settled.foldable()
@@ -106,6 +116,11 @@ func (s *Scheduler) promoteSameTick(ctx context.Context, run RunState, settled *
 			run.States = maps.Clone(run.States)
 			owned = true
 		}
+		for _, t := range planned {
+			if t.To == domain.TaskStateQueued {
+				run.States[t.TaskID] = domain.TaskStateQueued
+			}
+		}
 		scheduled := make(map[string]bool, len(fresh))
 		for taskID, to := range fresh {
 			run.States[taskID] = to
@@ -115,7 +130,14 @@ func (s *Scheduler) promoteSameTick(ctx context.Context, run RunState, settled *
 		}
 		run.ActiveTaskCount = baseActive + res.admitted
 		run.PoolActive = withAdmitted(basePool, res.byPool)
-		plan := sameTickFollowUps(PlanRun(run), scheduled)
+		replanned, waits := planRun(run)
+		for _, w := range waits {
+			if !reported[w.TaskID] {
+				reported[w.TaskID] = true
+				res.waits = append(res.waits, w)
+			}
+		}
+		plan := sameTickFollowUps(replanned, scheduled)
 		if len(plan) == 0 {
 			break
 		}
@@ -123,6 +145,7 @@ func (s *Scheduler) promoteSameTick(ctx context.Context, run RunState, settled *
 		if settled, err = s.applyPlan(ctx, run, plan, poolOf, res); err != nil {
 			return run, err
 		}
+		planned = plan
 	}
 	return run, nil
 }
