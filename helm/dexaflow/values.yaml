@@ -475,6 +475,8 @@ execution:
   maxWarmPodsPerTenant: 100
   # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
   warmReadOnlyRootFilesystem: false
+  # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
+  warmPoolEventRefill: false
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see
