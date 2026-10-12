@@ -791,7 +791,13 @@ jobs:
               exit 1
             fi
             ./scripts/cosign-retry.sh sign --yes "${SIGN_PREFIX}/${name}@${digest}"
-            echo "chart ${name} ${version} @ ${digest}" >> "$GITHUB_STEP_SUMMARY"
+            # Read the signature back with the same identity pins the images
+            # use, so a sign that silently flaked cannot ship (#1687).
+            ./scripts/cosign-retry.sh verify \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yaml@refs/tags/" \
+              "${SIGN_PREFIX}/${name}@${digest}" >/dev/null
+            echo "chart ${name} ${version} @ ${digest}, signed and verified" >> "$GITHUB_STEP_SUMMARY"
           done
 
       # Re-point py3.N at the digest py3.N-<tag> already carries, under both

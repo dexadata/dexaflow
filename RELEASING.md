@@ -228,7 +228,7 @@ that people follow without naming a version.
 (`scripts/release-promote-plan.sh`, the same rule the docs root uses).
 `promote` first checks with cosign that every image the chart and the moving
 tags reference exists and carries this repository's release signature
-(`scripts/release-verify-images.sh`), then pushes and signs the charts, moves
+(`scripts/release-verify-images.sh`), then pushes, signs and verifies the charts, moves
 the `py3.N` tags and marks Latest last. Every step is idempotent: a failed
 `promote` is recovered by re-running that job alone.
 
