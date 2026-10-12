@@ -166,8 +166,14 @@ func (v *Verifier) Provider() string { return "issuer:" + v.cfg.Name }
 
 // Verify checks raw and returns the identity it carries.
 func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
+	ctx, outage := withKeyOutage(ctx)
 	tok, err := v.v.Verify(ctx, raw)
 	if err != nil {
+		if outage.hit.Load() {
+			// The keys could not be downloaded, so the token was never
+			// checked: an outage, not a refusal (#1588).
+			return nil, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 	id, claims, err := v.identity(tok, v.cfg.MaxLifetime)
