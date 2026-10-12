@@ -126,6 +126,12 @@ type PlatformDefaults struct {
 	// arbitrary service_account. It is populated from the cluster's configured
 	// defaults (runAsNonRoot on), which an operator can override.
 	PodSecurity executor.PodSecurity
+	// ExecutionPolicy is the operator's allowlist of task execution fields
+	// (executor.defaults.execution_allowlist, issue #629). Registration refuses a
+	// DAG that breaks it; dispatch refuses a task of a DAG registered before the
+	// list changed. Like PodSecurity it is cluster policy, never a DAG field.
+	// Nil allows everything.
+	ExecutionPolicy *domain.ExecutionPolicy
 }
 
 // Dispatcher builds executor requests for queued pod-path tasks and runs them.
@@ -287,21 +293,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if err != nil {
 		return executor.Rejected, fmt.Errorf("resolving task %s: %w", task.TaskID, err)
 	}
-	// Registration refuses a task larger than its size once a unit is
-	// configured; this catches a DAG registered before that (ADR 0066 §3), so no
-	// task runs larger than the slots it is charged.
-	if refused := d.checkUnit(runID, dagID, task); refused != nil {
+	sourceMode, refused := d.refuseBeforeToken(runID, dagID, task, r)
+	if refused != nil {
 		return executor.Refused, refused
-	}
-	// Register caps a source-mode source only while the mode is on; a version
-	// registered on the runtime image before it was turned on was never
-	// checked. Refuse it here with register's message rather than let the
-	// apiserver reject an oversize annotation on every try (ADR 0067 §3).
-	sourceMode := domain.SourceModeApplies(d.sourceModeImage, r.Image, r.Source != "")
-	if sourceMode {
-		if refused := domain.CheckSourceModeSize(dagID, r.Source); refused != nil {
-			return executor.Refused, refused
-		}
 	}
 	token, err := d.issuer.IssueAgentToken(auth.AgentIdentity{
 		TaskInstanceID: r.TaskInstanceID,
@@ -382,6 +376,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		AgentToken:           token,
 		// Cluster-operator policy, not a per-task choice — see PlatformDefaults.
 		PodSecurity:                   d.defaults.PodSecurity,
+		ExecutionPolicy:               d.defaults.ExecutionPolicy,
 		AttemptLifetimeCeilingSeconds: wholeSeconds(d.attemptLifetimeCeiling),
 	}
 	if task.ExecutionTimeoutSeconds != nil {
@@ -398,6 +393,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if req.Execution.ServiceAccount == "" {
 		req.Execution.ServiceAccount = d.defaultTaskServiceAccount
 	}
+	// Name the default too, so the executor's allowlist re-check can tell it
+	// from an account the task chose (issue #537 C2).
+	req.DefaultServiceAccount = d.defaultTaskServiceAccount
 	if r.Staging != nil && r.Staging.Enabled {
 		// All of the run's tasks share one PVC, named deterministically so a
 		// clear+re-run re-attaches it (ADR 0022). The executor provisions it.
@@ -419,6 +417,39 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	req.AgentTokenAudience = d.tokenAudience
 	req.AgentTokenExpirationSeconds = d.tokenExpirationSeconds
 	return d.exec.Execute(ctx, req)
+}
+
+// refuseBeforeToken runs the checks that refuse an attempt for good before its
+// agent token is minted and before warm placement, so a refused task never
+// runs. It also reports whether the attempt runs in source mode.
+func (d *Dispatcher) refuseBeforeToken(runID, dagID string, task domain.TaskSpec, r Resolved) (bool, error) {
+	// Registration refuses a task larger than its size once a unit is
+	// configured; this catches a DAG registered before that (ADR 0066 §3), so no
+	// task runs larger than the slots it is charged.
+	if refused := d.checkUnit(runID, dagID, task); refused != nil {
+		return false, refused
+	}
+	// The same for the execution allowlist (issue #629), for a DAG registered
+	// before the list changed.
+	if refused := d.defaults.ExecutionPolicy.CheckTask(task); refused != nil {
+		return false, refused
+	}
+	// The image allowlist (issue #537 C2) checks the image this run resolved,
+	// the one the pod (or a warm worker of this version) would run.
+	if refused := d.defaults.ExecutionPolicy.CheckImage(r.Image); refused != nil {
+		return false, fmt.Errorf("task %q: %w", task.TaskID, refused)
+	}
+	// Register caps a source-mode source only while the mode is on; a version
+	// registered on the runtime image before it was turned on was never
+	// checked. Refuse it here with register's message rather than let the
+	// apiserver reject an oversize annotation on every try (ADR 0067 §3).
+	sourceMode := domain.SourceModeApplies(d.sourceModeImage, r.Image, r.Source != "")
+	if sourceMode {
+		if refused := domain.CheckSourceModeSize(dagID, r.Source); refused != nil {
+			return false, refused
+		}
+	}
+	return sourceMode, nil
 }
 
 // checkUnit applies the resource unit to a task about to dispatch and returns

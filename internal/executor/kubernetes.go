@@ -56,6 +56,22 @@ func NewKubernetesExecutor(clientset kubernetes.Interface, namespace string) *Ku
 // importing Kubernetes error types (ADR 0051 Phase 4). The cause is returned
 // alongside so its text still feeds the scheduler's note/log.
 func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposition, error) {
+	// The operator's execution allowlist (issue #629). The dispatcher already
+	// refused a task that breaks it; this keeps any other Request builder from
+	// placing a pod the operator did not allow.
+	// The service account is checked too, except the operator's default task
+	// ServiceAccount the dispatcher filled in for a task that named none: the
+	// allowlist does not govern that one.
+	authored := req.Execution
+	if authored.ServiceAccount != "" && authored.ServiceAccount == req.DefaultServiceAccount {
+		authored.ServiceAccount = ""
+	}
+	if err := req.ExecutionPolicy.CheckTask(domain.TaskSpec{TaskID: req.TaskID, Execution: &authored}); err != nil {
+		return Refused, err
+	}
+	if err := req.ExecutionPolicy.CheckImage(req.Image); err != nil {
+		return Refused, fmt.Errorf("task %q: %w", req.TaskID, err)
+	}
 	// Provision the run's shared staging PVC on first use (idempotent), before the
 	// pod that mounts it (ADR 0022).
 	if req.StagingClaim != "" {

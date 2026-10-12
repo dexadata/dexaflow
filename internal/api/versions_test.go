@@ -222,3 +222,75 @@ func TestRegisterVersionChecksSourceMode(t *testing.T) {
 		})
 	}
 }
+
+// The operator execution allowlist (issue #629) is enforced at registration: a
+// DAG whose task sets an execution field outside it answers 400 naming the
+// task and the field, and a DAG within it registers.
+func TestRegisterVersionRejectsAnExecutionFieldOutsideTheAllowlist(t *testing.T) {
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{
+		Fields: []string{"tolerations", "priority_class_name"}, PriorityClasses: []string{"etl"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Dependencies{
+		Logger:          discardLogger(),
+		Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:     auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:     []string{"*"},
+		Versions:        &fakeVersionRepo{created: true},
+		ExecutionPolicy: policy,
+	})
+	for want, execution := range map[string]string{
+		"execution.affinity":      `{"affinity":{"nodeAffinity":{}}}`,
+		"system-cluster-critical": `{"priority_class_name":"system-cluster-critical"}`,
+	} {
+		body := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+			`{"task_id":"train","type":"python","entrypoint":"dag:a","execution":` + execution + `}]}`
+		rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) || !strings.Contains(rec.Body.String(), "train") {
+			t.Errorf("%s = %d %s, want 400 naming it and the task", want, rec.Code, rec.Body.String())
+		}
+	}
+	ok := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","execution":{"priority_class_name":"etl","tolerations":[{"key":"etl"}]}}]}`
+	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", ok); rec.Code != http.StatusCreated {
+		t.Errorf("allowed execution = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+// The service account and image allowlists (issue #537 C2) are enforced at
+// registration: an unlisted image or service account answers 400 naming it.
+func TestRegisterVersionRejectsAnImageOrServiceAccountOutsideTheAllowlist(t *testing.T) {
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{
+		ServiceAccounts: []string{"etl"}, Images: []string{"registry.example.com/team-a/*"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Dependencies{
+		Logger:          discardLogger(),
+		Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:     auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:     []string{"*"},
+		Versions:        &fakeVersionRepo{created: true},
+		ExecutionPolicy: policy,
+	})
+	cases := map[string]string{
+		"img:v1": `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+			`{"task_id":"train","type":"python","entrypoint":"dag:a"}]}`,
+		"cluster-admin": `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"registry.example.com/team-a/etl:v1","tasks":[` +
+			`{"task_id":"train","type":"python","entrypoint":"dag:a","execution":{"service_account":"cluster-admin"}}]}`,
+	}
+	for want, body := range cases {
+		rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%s = %d %s, want 400 naming it", want, rec.Code, rec.Body.String())
+		}
+	}
+	ok := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"registry.example.com/team-a/etl:v1","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","execution":{"service_account":"etl"}}]}`
+	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", ok); rec.Code != http.StatusCreated {
+		t.Errorf("allowed image and service account = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}

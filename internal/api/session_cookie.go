@@ -82,14 +82,33 @@ func browserMaySetSession(c *gin.Context) bool {
 	}
 }
 
-// setSessionCookie writes the _token session cookie server-side. Both login
-// paths call it, so both get HttpOnly, SameSite=Lax and the same path and
-// lifetime, and clearSessionCookie deletes exactly what it wrote.
-//
-// insecure drops the Secure attribute; see cookieSecure.
-func setSessionCookie(c *gin.Context, token string, ttl time.Duration, insecure bool) {
+// sessionCookieSpec is what decides the session cookie: its name
+// (auth.session_cookie_name, #1405) and whether it drops Secure
+// (auth.session_cookie_insecure, see cookieSecure). Every place that sets,
+// clears or reads the session cookie takes the same spec, so they cannot
+// disagree on the name.
+type sessionCookieSpec struct {
+	name     string
+	insecure bool
+}
+
+// cookieName returns the session cookie's name: authTokenCookie, the name
+// every earlier release used, when none is configured.
+func (s sessionCookieSpec) cookieName() string {
+	if s.name == "" {
+		return authTokenCookie
+	}
+	return s.name
+}
+
+// setSessionCookie writes the session cookie server-side. Both login paths
+// call it, so both get HttpOnly, SameSite=Lax and the same path and lifetime,
+// and clearSessionCookie deletes exactly what it wrote. It never sets a Domain
+// and always sets Path=/, which together with Secure is what a __Host- name
+// requires; config validation refuses a __Host- name without Secure.
+func setSessionCookie(c *gin.Context, token string, ttl time.Duration, spec sessionCookieSpec) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(authTokenCookie, token, int(ttl.Seconds()), sessionCookiePath, "", cookieSecure(insecure), true)
+	c.SetCookie(spec.cookieName(), token, int(ttl.Seconds()), sessionCookiePath, "", cookieSecure(spec.insecure), true)
 }
 
 // clearSessionCookie expires the session cookie. Every attribute a browser
@@ -97,9 +116,9 @@ func setSessionCookie(c *gin.Context, token string, ttl time.Duration, insecure 
 // Secure is itself refused over plain http, so a deletion that disagreed with
 // the cookie it is deleting would be silently dropped on exactly the deployment
 // the disagreement came from.
-func clearSessionCookie(c *gin.Context, insecure bool) {
+func clearSessionCookie(c *gin.Context, spec sessionCookieSpec) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(authTokenCookie, "", -1, sessionCookiePath, "", cookieSecure(insecure), true)
+	c.SetCookie(spec.cookieName(), "", -1, sessionCookiePath, "", cookieSecure(spec.insecure), true)
 }
 
 // cookieSecure reports whether the auth cookies carry Secure. It is true unless

@@ -55,7 +55,7 @@ pr_of() {
     -e 't' -e 's/.*\(#([0-9]+)\)[[:space:]]*$/\1/p'
 }
 release_mechanics() {
-  printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root)'
+  printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root|changelog: sync v[0-9][^ ]*( and v[0-9][^ ]*|, v[0-9][^ ]*)* to main)'
 }
 
 base_of() { # <version>: the branch the version is cut from (ADR 0062)

@@ -60,7 +60,25 @@ type ServerConfig struct {
 	// life, refuse to start while a migration holds it, and exit if it loses it.
 	// `dexaflow lite` sets it to true (ADR 0065 section 3).
 	SecretKeyMigrationLock bool `mapstructure:"secret_key_migration_lock"`
+	// VariableEncryption (DEXAFLOW_VARIABLE_ENCRYPTION, default "off") is how
+	// Variable values are stored (#507). "off" writes plaintext, as every
+	// earlier release did, and still reads values sealed before. "on" seals
+	// every write with SecretKey and seals the stored plaintext rows at boot;
+	// it requires a usable SecretKey. "decrypt" writes plaintext and restores
+	// every sealed row at boot: the step before rolling back to a release that
+	// cannot read sealed values.
+	VariableEncryption string `mapstructure:"variable_encryption"`
 }
+
+// Variable encryption modes (variable_encryption, #507).
+const (
+	// VariableEncryptionOff stores Variable values in plaintext (the default).
+	VariableEncryptionOff = "off"
+	// VariableEncryptionOn seals Variable values with the secret key.
+	VariableEncryptionOn = "on"
+	// VariableEncryptionDecrypt restores sealed values to plaintext at boot.
+	VariableEncryptionDecrypt = "decrypt"
+)
 
 // SecretsSection configures the external secrets backend (ADR 0060). When Backend
 // is set, a Connection/Variable a DAG declares can be resolved pod-side from the
@@ -289,6 +307,40 @@ type PlatformDefaultsSection struct {
 	// breaks ordinary Python tasks (pip cache, /tmp, matplotlib config); turn it
 	// on for a fleet of tasks known not to write outside their volumes.
 	ReadOnlyTaskRootFilesystem bool `mapstructure:"read_only_task_root_filesystem"`
+	// ExecutionAllowlist restricts which task execution (placement) fields a DAG
+	// author may set, and optionally which priority classes (issue #629). The
+	// default allows everything. Like the two settings above it is a cluster
+	// setting: on a shared cluster these fields reach other teams' nodes and
+	// preemption order.
+	ExecutionAllowlist ExecutionAllowlistSection `mapstructure:"execution_allowlist"`
+}
+
+// ExecutionAllowlistSection is executor.defaults.execution_allowlist. A DAG
+// that sets a field (or priority class) outside it is refused at registration
+// and, for a DAG registered before the list changed, at dispatch.
+type ExecutionAllowlistSection struct {
+	// Fields lists the execution fields a DAG may set, by their dag.json names
+	// (domain.ExecutionPolicyFields). "*" (the default) allows all of them,
+	// "none" or an explicitly empty list allows none.
+	Fields []string `mapstructure:"fields"`
+	// PriorityClasses, when not empty, lists the only priority_class_name values
+	// a DAG may set. Empty (the default) allows any.
+	PriorityClasses []string `mapstructure:"priority_classes"`
+	// ServiceAccounts, when not empty, lists the only execution.service_account
+	// values a DAG may name (issue #537 C2). A task that names none runs as
+	// executor.task_service_account, which is not checked. Empty allows any.
+	ServiceAccounts []string `mapstructure:"service_accounts"`
+	// Images, when not empty, lists the DAG images that may run: exact
+	// references or prefixes ending in "*" (issue #537 C2). Empty allows any.
+	Images []string `mapstructure:"images"`
+}
+
+// ExecutionPolicyConfig is the section as the domain parser takes it.
+func (s ExecutionAllowlistSection) ExecutionPolicyConfig() domain.ExecutionPolicyConfig {
+	return domain.ExecutionPolicyConfig{
+		Fields: s.Fields, PriorityClasses: s.PriorityClasses,
+		ServiceAccounts: s.ServiceAccounts, Images: s.Images,
+	}
 }
 
 // ExecutionSection configures warm worker pools — Pro-gated N:1 pod reuse
@@ -353,6 +405,13 @@ type ExecutionSection struct {
 	// is turned on. Dedicated task pods are not affected; they follow
 	// executor.defaults.read_only_task_root_filesystem.
 	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
+	// WarmPoolEventRefill makes warm-pool refill event driven: the reconciler
+	// reads the fleet from a dedicated warm-pod informer instead of a LIST per
+	// tick, reacts at once to a worker being deleted, failing or claimed, and
+	// issues replacement creates concurrently (bounded). Default false keeps
+	// today's 30s polling with a LIST and serial creates. The failover reapers
+	// and the drained-anchor delete keep their live reads either way.
+	WarmPoolEventRefill bool `mapstructure:"warm_pool_event_refill"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -493,6 +552,14 @@ type ServerSection struct {
 	// 0 (the default) keeps idle connections open, as before, even when
 	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
 	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
+	// HTTPTLSCert/HTTPTLSKey serve the API and UI listener (http_addr) over
+	// HTTPS with an operator-supplied PEM certificate and key (#638), so a load
+	// balancer can re-encrypt to the pod. Both must be set together; both empty
+	// (the default) keeps plain HTTP. The files are re-read when they change, so
+	// a rotated certificate is picked up without a restart. The metrics listener
+	// is not affected.
+	HTTPTLSCert string `mapstructure:"http_tls_cert"`
+	HTTPTLSKey  string `mapstructure:"http_tls_key"`
 	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
 	// only: create, resize and delete answer 403 for every role, tenant admin
 	// included. It is for an engine shared by many tenants, where the platform
@@ -502,6 +569,12 @@ type ServerSection struct {
 	// tenant cannot create pools then. Default false keeps pools writable under
 	// write:pool and undefined pools unlimited, today's behavior.
 	PoolsReadOnly bool `mapstructure:"pools_read_only"`
+}
+
+// HTTPTLSEnabled reports whether the API listener serves HTTPS, which needs
+// both server.http_tls_cert and server.http_tls_key.
+func (s ServerSection) HTTPTLSEnabled() bool {
+	return s.HTTPTLSCert != "" && s.HTTPTLSKey != ""
 }
 
 // Server roles (ADR 0049).
@@ -723,6 +796,17 @@ type AuthSection struct {
 	// Secure would strip it from the deployment that most needs it. Boot logs a
 	// WARN when it is on. Bind via LEOFLOW_AUTH_SESSION_COOKIE_INSECURE.
 	SessionCookieInsecure bool `mapstructure:"session_cookie_insecure"`
+	// SessionCookieName is the name of the browser session cookie (#1405).
+	// The default, _token, is what every earlier release used, so an existing
+	// install keeps its sessions. A name starting with __Host- makes the
+	// browser refuse the cookie unless it is Secure, has Path=/ and no Domain,
+	// which is how the session cookie is always set: a page on a sibling host
+	// under the same parent domain can then no longer plant a session here.
+	// Recommended for any deployment that serves several hosts under one
+	// parent domain. A __Host- or __Secure- name with SessionCookieInsecure
+	// fails boot, because the browser would drop every session cookie.
+	// Empty means _token. Bind via LEOFLOW_AUTH_SESSION_COOKIE_NAME.
+	SessionCookieName string `mapstructure:"session_cookie_name"`
 }
 
 // JWTSection configures JWT issuance and validation.
@@ -836,8 +920,16 @@ type OIDCSection struct {
 
 // SchedulerSection configures the scheduler loop.
 type SchedulerSection struct {
-	LoopIntervalMS int             `mapstructure:"loop_interval_ms"`
-	Enabled        bool            `mapstructure:"enabled"`
+	LoopIntervalMS int  `mapstructure:"loop_interval_ms"`
+	Enabled        bool `mapstructure:"enabled"`
+	// EagerPromotion cuts the latency between a task settling and its
+	// downstreams being dispatched. Within a tick, the scheduler re-plans a run
+	// after its own state changes (a newly scheduled task is queued at once, a
+	// skip cascades), a bounded number of times; and a task's terminal report
+	// triggers an early tick instead of waiting for the next interval, which
+	// stays the upper bound. Off by default (ADR 0062): the tick then promotes
+	// one step per interval, as it always has.
+	EagerPromotion bool            `mapstructure:"eager_promotion"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
 	Alerts         AlertsSection   `mapstructure:"alerts"`
 	// PoolStarvationThreshold is how long a task held only by its pool waits
@@ -988,6 +1080,8 @@ var serverDefaults = map[string]any{
 	"server.grpc_addr":            "0.0.0.0:9091",
 	"server.grpc_tls_cert":        "",
 	"server.grpc_tls_key":         "",
+	"server.http_tls_cert":        "", // empty: the API listener stays on plain HTTP (#638)
+	"server.http_tls_key":         "",
 	"server.cors.allowed_origins": []string{"http://localhost:8080"},
 	// Registered so viper's AutomaticEnv binds LEOFLOW_SERVER_TRUSTED_PROXIES. It
 	// is a []string, but viper's default decode hook splits a single
@@ -1077,6 +1171,9 @@ var serverDefaults = map[string]any{
 	"scheduler.loop_interval_ms":          1000,
 	"scheduler.enabled":                   true,
 	"scheduler.pool_starvation_threshold": "60s",
+	// Off by default (ADR 0062 feature gate): promotion keeps its one-step-per-
+	// tick cadence until an operator opts in.
+	"scheduler.eager_promotion": false,
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
@@ -1094,6 +1191,13 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
 	"executor.collect_settled_run_pods":     false,
 	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	// Execution allowlist (issue #629): allow every field and any priority
+	// class, so an install that does not set it is unchanged. Each list binds
+	// from one comma-separated env var.
+	"executor.defaults.execution_allowlist.fields":           []string{domain.ExecutionPolicyAllFields},
+	"executor.defaults.execution_allowlist.priority_classes": []string{},
+	"executor.defaults.execution_allowlist.service_accounts": []string{},
+	"executor.defaults.execution_allowlist.images":           []string{},
 	// client-go's own defaults on one shared client, so an unconfigured install
 	// keeps its effective apiserver budget.
 	"executor.kube_client.qps":               5.0,
@@ -1189,11 +1293,16 @@ var serverDefaults = map[string]any{
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
+	// _token is the name every earlier release used (#1405).
+	"auth.session_cookie_name":     DefaultSessionCookieName,
 	"secret_key":                   "",
 	"secret_key_reencrypt_on_boot": true,
 	"secret_key_migration_lock":    false,
-	"secrets.backend":              "",
-	"secrets.backend_kwargs":       "",
+	// Registered so DEXAFLOW_/LEOFLOW_VARIABLE_ENCRYPTION binds; off keeps the
+	// plaintext Variables every earlier release wrote and reads (#507).
+	"variable_encryption":    VariableEncryptionOff,
+	"secrets.backend":        "",
+	"secrets.backend_kwargs": "",
 	// Gate (ADR 0062): false sends every API body uncompressed, as before.
 	"server.gzip_responses": false,
 	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
@@ -1212,6 +1321,9 @@ var serverDefaults = map[string]any{
 	"execution.warm_read_only_root_filesystem": false,
 	"execution.source_mode.enabled":            false,
 	"execution.source_mode.image":              "",
+	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
+	"execution.warm_pool_event_refill": false,
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
@@ -1349,7 +1461,7 @@ func (c *ServerConfig) validateNonNegative() error {
 
 // Validate reports configuration errors that must abort startup.
 func (c *ServerConfig) Validate() error {
-	if err := c.validateRole(); err != nil {
+	if err := c.validateListeners(); err != nil {
 		return err
 	}
 	if err := c.validateProvider(); err != nil {
@@ -1365,7 +1477,7 @@ func (c *ServerConfig) Validate() error {
 		c.validateSecretPolicies,
 		c.validateExecution,
 		c.Retention.Validate,
-		c.validateExecutorUnit,
+		c.validateExecutorPolicies,
 		c.validatePlatformIntegration,
 	} {
 		if err := check(); err != nil {
@@ -1453,6 +1565,12 @@ func (c *ServerConfig) validateSecretPolicies() error {
 	default:
 		return fmt.Errorf("invalid auth.agent_token_transport %q: must be %q or %q",
 			c.Auth.AgentTokenTransport, AgentTokenTransportEnvVar, AgentTokenTransportExchange)
+	}
+	switch c.VariableEncryption {
+	case "", VariableEncryptionOff, VariableEncryptionOn, VariableEncryptionDecrypt:
+	default:
+		return fmt.Errorf("invalid variable_encryption %q: must be %q, %q or %q",
+			c.VariableEncryption, VariableEncryptionOff, VariableEncryptionOn, VariableEncryptionDecrypt)
 	}
 	return nil
 }
@@ -1555,6 +1673,23 @@ func (c *ServerConfig) validateExecution() error {
 // size-1 tasks that declare no resources.
 func (c *ServerConfig) validateExecutorUnit() error {
 	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	return err
+}
+
+// validateExecutorPolicies checks the operator's task policies under executor:
+// the resource unit and the execution allowlist.
+func (c *ServerConfig) validateExecutorPolicies() error {
+	if err := c.validateExecutorUnit(); err != nil {
+		return err
+	}
+	return c.validateExecutionAllowlist()
+}
+
+// validateExecutionAllowlist checks executor.defaults.execution_allowlist
+// (issue #629), so a misspelled field name fails boot instead of allowing or
+// refusing the wrong thing.
+func (c *ServerConfig) validateExecutionAllowlist() error {
+	_, err := domain.ParseExecutionPolicy(c.Executor.Defaults.ExecutionAllowlist.ExecutionPolicyConfig())
 	return err
 }
 
@@ -1703,6 +1838,9 @@ func (c *ServerConfig) validatePlatformIntegration() error {
 	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
 		return err
 	}
+	if err := validateSessionCookieName(c.Auth.SessionCookieName, c.Auth.SessionCookieInsecure); err != nil {
+		return err
+	}
 	if t := c.Auth.ServiceToken; t != "" && len(strings.TrimSpace(t)) < 32 {
 		return errors.New("auth.service_token must be at least 32 characters (generate one with `openssl rand -base64 48`)")
 	}
@@ -1725,6 +1863,37 @@ func validateExternalAuthURL(key, raw string) error {
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("%s must be an absolute http:// or https:// URL (got %q)", key, raw)
+	}
+	return nil
+}
+
+// DefaultSessionCookieName is the browser session cookie's name when
+// auth.session_cookie_name is unset: the name every earlier release used.
+const DefaultSessionCookieName = "_token"
+
+// oidcStateCookieName is the OIDC flow's own cookie. The session cookie may
+// not take its name, or each login would overwrite the other.
+const oidcStateCookieName = "_oidc_state"
+
+// sessionCookieNamePattern is an RFC 6265 cookie name: one or more token
+// characters, so no space, control character or separator such as ; or =.
+var sessionCookieNamePattern = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+// validateSessionCookieName checks auth.session_cookie_name (#1405). A browser
+// drops a __Host- or __Secure- cookie that is not Secure, so with
+// auth.session_cookie_insecure on such a name would fail every sign-in with no
+// visible error. Browsers match those prefixes in any case, so this does too.
+func validateSessionCookieName(name string, insecure bool) error {
+	if name == "" {
+		return nil
+	}
+	if !sessionCookieNamePattern.MatchString(name) || name == oidcStateCookieName {
+		return fmt.Errorf("auth.session_cookie_name must be a cookie name (letters, digits and !#$%%&'*+-.^_`|~, not %s) (got %q)", oidcStateCookieName, name)
+	}
+	lower := strings.ToLower(name)
+	if insecure && (strings.HasPrefix(lower, "__host-") || strings.HasPrefix(lower, "__secure-")) {
+		return fmt.Errorf("auth.session_cookie_name %q needs the Secure attribute, which auth.session_cookie_insecure removes; "+
+			"a browser drops such a cookie, so nobody could sign in. Serve the deployment over https, or use a name without the __Host- or __Secure- prefix", name)
 	}
 	return nil
 }
@@ -1921,6 +2090,27 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// validateListeners checks the server section: the role and the API
+// listener's TLS pair.
+func (c *ServerConfig) validateListeners() error {
+	if err := c.validateRole(); err != nil {
+		return err
+	}
+	return c.validateHTTPTLS()
+}
+
+// validateHTTPTLS refuses half of the API listener's TLS pair (#638): a cert
+// without its key, or the reverse, would otherwise boot on plain HTTP while the
+// operator believes the hop is encrypted.
+func (c *ServerConfig) validateHTTPTLS() error {
+	if (c.Server.HTTPTLSCert == "") != (c.Server.HTTPTLSKey == "") {
+		return errors.New("server.http_tls_cert and server.http_tls_key must be set together " +
+			"(DEXAFLOW_SERVER_HTTP_TLS_CERT and DEXAFLOW_SERVER_HTTP_TLS_KEY): only one is set, " +
+			"so the API listener would silently stay on plain HTTP")
+	}
+	return nil
 }
 
 // validateRole rejects an unknown server.role (ADR 0049). Empty is valid (defaults

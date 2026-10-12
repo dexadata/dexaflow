@@ -61,7 +61,9 @@ type cachedKeySet struct {
 	cooldown time.Duration
 
 	// fetch serializes downloads, so a burst on a cold cache waits for one.
-	fetch sync.Mutex
+	// It is a one-slot semaphore rather than a mutex so a waiting caller can
+	// give up when its own context ends (#1588).
+	fetch chan struct{}
 
 	mu          sync.Mutex // guards the fields below
 	keys        []jose.JSONWebKey
@@ -76,6 +78,7 @@ func newCachedKeySet(url string, algs []string, now func() time.Time) *cachedKey
 		client:   &http.Client{Timeout: keyFetchTimeout},
 		now:      now,
 		cooldown: KeyRefreshCooldown,
+		fetch:    make(chan struct{}, 1),
 	}
 	for _, a := range algs {
 		ks.algs = append(ks.algs, jose.SignatureAlgorithm(a))
@@ -130,10 +133,15 @@ func verifyWith(jws *jose.JSONWebSignature, keys []jose.JSONWebKey) ([]byte, boo
 // refresh downloads the JWKS unless another caller already did since seen,
 // or the last attempt is younger than the cooldown. Within the cooldown it
 // refuses: as an outage when the last attempt failed, as an unknown key
-// otherwise.
+// otherwise. A caller whose context ends while another caller's download runs
+// stops waiting and gets an outage: its token was not checked.
 func (ks *cachedKeySet) refresh(ctx context.Context, seen uint64) ([]jose.JSONWebKey, error) {
-	ks.fetch.Lock()
-	defer ks.fetch.Unlock()
+	select {
+	case ks.fetch <- struct{}{}:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: waiting for the key download: %w", ErrKeysUnavailable, ctx.Err())
+	}
+	defer func() { <-ks.fetch }()
 
 	ks.mu.Lock()
 	if ks.gen != seen {

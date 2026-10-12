@@ -237,6 +237,11 @@ func handleRepoError(c *gin.Context, err error) {
 	// this tenant, and the storage layer names the limit with domain.Safef.
 	case errors.Is(err, domain.ErrLimitExceeded):
 		AbortProblemCause(c, http.StatusForbidden, "limit exceeded", safeDetail(err, detailLimitExceeded), err)
+	// A stored secret no configured key opens (a Variable after a key rotation
+	// that dropped the old key): still a server fault, but the storage layer
+	// names the value and the way out with domain.Safef.
+	case errors.Is(err, domain.ErrValueUnreadable):
+		AbortProblemCause(c, http.StatusInternalServerError, "internal error", safeDetail(err, detailInternal), err)
 	default:
 		AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
 	}
@@ -1249,7 +1254,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
 	}
 	if deps.Versions != nil {
-		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage))
+		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage, deps.ExecutionPolicy))
 	}
 	if deps.Xcoms != nil {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))

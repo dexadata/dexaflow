@@ -51,7 +51,13 @@ type Request struct {
 	Env             map[string]string
 	Resources       domain.Resources
 	Execution       domain.Execution
-	TimeoutSeconds  int
+	// DefaultServiceAccount is the operator's default task ServiceAccount, the
+	// one the dispatcher fills into Execution.ServiceAccount when the task names
+	// none. The execution allowlist does not govern it, so the executor's
+	// re-check of the allowlist skips exactly this account and checks any other
+	// (issue #537 C2).
+	DefaultServiceAccount string
+	TimeoutSeconds        int
 	// AttemptLifetimeCeilingSeconds is the operator's attempt credential ceiling
 	// (auth.max_attempt_credential_lifetime) in whole seconds. The Kubernetes
 	// executor floors the task pod's ActiveDeadlineSeconds with it when the task
@@ -71,6 +77,13 @@ type Request struct {
 	// capabilities, blocking privilege escalation and setting a seccomp profile
 	// cost a normal task nothing. Zero value is the secure default.
 	PodSecurity PodSecurity
+
+	// ExecutionPolicy is the operator's allowlist of Execution fields (issue
+	// #629). The dispatcher refuses a task that breaks it before building the
+	// request; the Kubernetes executor checks it again before it builds the pod,
+	// so no path that builds a Request can place a pod the operator did not
+	// allow. Nil allows everything.
+	ExecutionPolicy *domain.ExecutionPolicy
 
 	// Source is the dag.py text captured at compile time. The SubprocessExecutor
 	// materializes it to a per-TI temp dir so `python -m leoflow_runtime

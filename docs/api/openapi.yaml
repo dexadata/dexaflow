@@ -878,6 +878,13 @@ components:
         description: { type: string, nullable: true }
         is_encrypted: { type: boolean }
         team_name: { type: string, nullable: true }
+        value_unreadable:
+          type: boolean
+          description: >-
+            Present and true in a listing when the value is encrypted with a
+            secret key the server does not have (for example after a key
+            rotation that dropped the old key). The value is then masked.
+            Reading the variable alone answers 500 with a message naming it.
 
     VariableBody:
       type: object

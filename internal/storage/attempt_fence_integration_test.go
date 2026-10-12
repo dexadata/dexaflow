@@ -23,6 +23,7 @@ import (
 // identityFor is the agent identity a token minted for this dispatch carries.
 func (f *staleHeartbeatFixture) identityFor(try, epoch int) auth.AgentIdentity {
 	return auth.AgentIdentity{
+		TenantID:       defaultTenantID(),
 		TaskInstanceID: f.tiID, RunID: f.runUUID, TaskID: "t", DagID: f.dagID,
 		TryNumber: try, AttemptEpoch: epoch, HasAttemptEpoch: true,
 	}
@@ -30,7 +31,7 @@ func (f *staleHeartbeatFixture) identityFor(try, epoch int) auth.AgentIdentity {
 
 // legacyIdentity is the identity of a token minted before the epoch existed.
 func (f *staleHeartbeatFixture) legacyIdentity(try int) auth.AgentIdentity {
-	return auth.AgentIdentity{TaskInstanceID: f.tiID, RunID: f.runUUID, TaskID: "t", DagID: f.dagID, TryNumber: try}
+	return auth.AgentIdentity{TenantID: defaultTenantID(), TaskInstanceID: f.tiID, RunID: f.runUUID, TaskID: "t", DagID: f.dagID, TryNumber: try}
 }
 
 // dispatch claims an epoch the way the dispatcher does and returns the

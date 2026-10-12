@@ -24,8 +24,8 @@ type ReencryptResult struct {
 // and nothing unreadable. Only a clean pass completes a rotation.
 func (r ReencryptResult) Clean() bool { return r.Skipped == 0 && r.Unreadable == 0 }
 
-// ReencryptSecrets rewrites every stored connection secret that a non-primary
-// key opened, so the rotation can finish and the old key be retired.
+// ReencryptSecrets rewrites every stored connection secret, and every sealed
+// variable value (#507), that a non-primary key opened, so the rotation can finish and the old key be retired.
 //
 // Without this a rotation never completes: the previous key stays in the read
 // set forever. "Set the new key and keep the old one" is not a rotation, it is
@@ -93,9 +93,16 @@ func (r *Repository) ReencryptSecrets(ctx context.Context) (ReencryptResult, err
 		res.Migrated++
 	}
 
+	varUnreadable, verr := r.reencryptVariables(ctx, stale, &res)
+	unreadable = append(unreadable, varUnreadable...)
+	if verr != nil {
+		res.Unreadable = len(unreadable)
+		return res, verr
+	}
+
 	res.Unreadable = len(unreadable)
 	if len(unreadable) > 0 {
-		return res, fmt.Errorf("re-encrypted %d connection(s); %d column(s) could not be opened by any configured key and were left untouched: %w",
+		return res, fmt.Errorf("re-encrypted %d secret(s); %d column(s) could not be opened by any configured key and were left untouched: %w",
 			res.Migrated, len(unreadable), errors.Join(unreadable...))
 	}
 	return res, nil
