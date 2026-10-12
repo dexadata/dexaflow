@@ -630,6 +630,14 @@ JSON
   _eq "$(test -f "$sd/sync.sh" && echo kept)" "kept" "an operator-supplied script is never deleted"
   rm -rf "$sd"
 
+  # promote_verdict: the watch's definition of PUBLISHED (ADR 0071).
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"success"}]')" "PROMOTED" "a successful promote job is PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"failure"}]')" "NOT failure" "a failed promote is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"failure"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"skipped"}]')" "NOT skipped" "a promote skipped behind a red gate is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":null}]')" "NOT pending" "a promote still running is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"}]')" "LEGACY" "a run from before ADR 0071 has no promote job"
+  _eq "$(promote_verdict 'not json')" "NOT unreadable" "an unreadable job list never reads as PUBLISHED"
+
   if [ "$fail" = 0 ]; then echo "self-test: PASS"; else echo "self-test: FAIL"; return 1; fi
 }
 
@@ -687,6 +695,35 @@ run_verdict() { # <runs-json>
   anyfail=$(printf '%s' "$j" | jq -r 'any(.[]; .conclusion == "failure")' 2>/dev/null) || { echo PENDING; return; }
   [ "$anyfail" = "true" ] && { echo FAILED; return; }
   echo GREEN
+}
+
+# promote_verdict <jobs-json>: what the release run's `promote` job says about
+# the public pointers (ADR 0071). Pure (jq only) so --self-test can table it.
+# <jobs-json> is the `jobs` array of the release run. Echoes one of:
+#
+#   PROMOTED   the promote job concluded success: chart pushed, and for a GA of
+#              the newest minor, Latest and py3.N moved
+#   LEGACY     the run has no promote job: release.yaml at this tag predates
+#              ADR 0071 (a patch cut from a release branch that has not picked
+#              it up yet), so a green run is still the old meaning of PUBLISHED
+#   NOT <c>    the promote job exists and did not succeed (skipped, failure,
+#              cancelled, or not finished): nothing public moved
+#
+# A green run implies a successful promote today, since a skipped job leaves
+# the run green only when its `if` is false, and promote's `if` is false only
+# when the gate failed, which turns the run red. This reads the job anyway: the
+# watch used to infer "published" from the gate's `exit 1` in another file,
+# and one job's own conclusion is a fact rather than an inference (#1684).
+promote_verdict() { # <jobs-json>
+  local c
+  c=$(printf '%s' "$1" | jq -r '[.[]? | select((.name // "") | startswith("Promote"))] |
+        if length == 0 then "LEGACY" else (.[0].conclusion // "pending") end' 2>/dev/null) || { echo "NOT unreadable"; return; }
+  case "$c" in
+    LEGACY)  echo LEGACY ;;
+    success) echo PROMOTED ;;
+    ""|null) echo "NOT pending" ;;
+    *)       echo "NOT $c" ;;
+  esac
 }
 
 # latest_runs <runs-json>: keeps the newest run of each workflow. A pull
@@ -1335,7 +1372,9 @@ main() {
     # symptom it creates is exactly what stops the recovery. Re-publishing first
     # costs nothing when the release is already published, and it means the next
     # verdict is computed against a release the smokes can actually download.
-    gh release edit "$tag" --repo "$REPO" --draft=false >/dev/null 2>&1 || true
+    # --latest=false: GitHub marks a release Latest by default when it leaves
+    # draft, and only release.yaml's promote job may move Latest (ADR 0071).
+    gh release edit "$tag" --repo "$REPO" --draft=false --latest=false >/dev/null 2>&1 || true
     isflake=1
     for rid in $failed; do
       # An unreadable log is NOT evidence of a non-flake. A job that dies in
@@ -1363,6 +1402,22 @@ main() {
     fi
     warn "release workflows red (non-flake) — inspect the run + gate"; break
   done
+  # PUBLISHED means the release run's promote job moved the pointers, not only
+  # that every run is green (ADR 0071): read that job's own conclusion.
+  if [ "${published:-0}" = 1 ]; then
+    local relrun jobs="" pv
+    relrun=$(gh run list --branch "$tag" --workflow release.yaml --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+    # An unreadable job list must never read as LEGACY (which keeps PUBLISHED),
+    # so a failed lookup hands promote_verdict something it cannot parse.
+    [ -n "$relrun" ] && jobs=$(gh api "repos/$REPO/actions/runs/$relrun/jobs?per_page=100" --jq '.jobs' 2>/dev/null || true)
+    pv="$(promote_verdict "${jobs:-unreadable}")"
+    case "$pv" in
+      PROMOTED) log "$tag promoted: chart pushed; Latest and py3.N moved if this is a GA of the newest minor" ;;
+      LEGACY)   log "$tag: release.yaml at this tag has no promote job (before ADR 0071); a green run is PUBLISHED" ;;
+      *)        published=0
+                warn "$tag release run is green but its promote job reports ${pv#NOT }, so the chart and Latest may not have moved; re-run promote (RELEASING.md)" ;;
+    esac
+  fi
   gh release view "$tag" --repo "$REPO" --json tagName,isDraft,isPrerelease,url \
     -q '"release \(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease) \(.url)"' 2>/dev/null | tee -a "$logf"
 
@@ -1371,10 +1426,11 @@ main() {
   # or still draft. Everything above this line is already recorded, so a failure
   # here costs the docs root and nothing else.
   #
-  # `published` tracks the workflow verdict, not `isDraft`. Those coincide only
-  # because release.yaml's retract step ends in `exit 1`, so a drafted release
-  # is always a red run, and its green arm un-drafts. That invariant lives in
-  # another file — if that `exit 1` ever goes, check this.
+  # `published` tracks the workflow verdict and the promote job's own
+  # conclusion (promote_verdict), not `isDraft`. A drafted release is always a
+  # red run because release.yaml's retract step ends in `exit 1`, and promote
+  # only runs after a green gate, so a run that reached PROMOTED has passed
+  # every gate whatever that step does.
   if ! is_rc "$version"; then
     if [ "${published:-0}" = 1 ]; then
       promote_docs_pr "$tag"
