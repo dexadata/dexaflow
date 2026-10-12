@@ -397,10 +397,13 @@ type Querier interface {
 	// slots of those past it; a NULL started_at is never listed (too poorly observed
 	// to reap). The reaper re-checks grace and pod liveness per candidate in Go.
 	// heartbeated lets Lite (no pods) judge a TI whose agent died before its first
-	// heartbeat, which the agent-lost query never lists (#916). The
-	// LIMIT bounds a single tick's reap work even after a large outage; the rest
-	// are picked up next tick.
-	ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error)
+	// heartbeat, which the agent-lost query never lists (#916). The page is
+	// keyset-paged on (started_at, id) after the reaper's cursor (R-07, #1597):
+	// with a fixed "oldest 100", 100 attempts with live pods hid a newer attempt
+	// whose pod vanished forever. The reaper keeps the cursor across sweeps and
+	// passes '-infinity' and the nil uuid to start over. The LIMIT bounds a single
+	// sweep's reap work.
+	ListRunningTasks(ctx context.Context, arg ListRunningTasksParams) ([]ListRunningTasksRow, error)
 	// Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 	// both "is there a slot due?" (schedule + last_logical), "how many slots
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
@@ -417,11 +420,16 @@ type Querier interface {
 	// from the pods' tenant and run labels; a pair whose tenant does not own the
 	// run matches nothing.
 	ListSettledRunIDs(ctx context.Context, arg ListSettledRunIDsParams) ([]ListSettledRunIDsRow, error)
-	// Lists every TI currently in `queued` alongside its queued_at timestamp for
-	// the dispatch-lost reaper (#202). The reaper applies the threshold per
-	// candidate so the SQL stays simple and the decision is purely in Go. The
-	// LIMIT bounds a tick's reap work after a long outage; the rest are picked
-	// up next tick (backstop, not sprint).
+	// Lists one page of the TIs in `queued` for at least the dispatch-lost
+	// threshold, with their queued_at, for the dispatch-lost reaper (#202). The
+	// threshold is applied here, before the LIMIT, so attempts inside it never
+	// take the slots of those past it; a NULL queued_at is never listed (too
+	// poorly observed to reap). The reaper re-checks the threshold in Go.
+	// The page is keyset-paged on (queued_at, id) after the reaper's cursor
+	// (R-07, #1597): with a fixed "oldest 100", 100 queued attempts whose pods
+	// are Pending (a capacity shortage) hid a newer lost dispatch forever. The
+	// reaper keeps the cursor across sweeps and passes '-infinity' and the nil
+	// uuid to start over. The LIMIT bounds a sweep's reap work.
 	// warm_worker_id rides along (ADR 0058 N1d-a2, review finding H3): a queued warm
 	// attempt whose serving warm worker is still alive is just slow to transition
 	// queued->running, so the dispatch-lost reaper must DEFER it rather than fail it
@@ -430,7 +438,7 @@ type Querier interface {
 	// gate unchanged.
 	// attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 	// teardown name exactly the attempt that was listed.
-	ListStaleQueuedTaskInstances(ctx context.Context) ([]ListStaleQueuedTaskInstancesRow, error)
+	ListStaleQueuedTaskInstances(ctx context.Context, arg ListStaleQueuedTaskInstancesParams) ([]ListStaleQueuedTaskInstancesRow, error)
 	// Returns every attempt for (run, task), oldest first. UNIONs the current
 	// task_instances row with all archived task_instance_history rows so the UI's
 	// /tries endpoint can render one navigable tab per attempt (Lima bug #241).
