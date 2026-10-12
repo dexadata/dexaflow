@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // The execution allowlist (issue #629) defaults to allowing every field, so an
@@ -74,5 +75,34 @@ func TestExecutionAllowlistValidatesAtBoot(t *testing.T) {
 	err = c.Validate()
 	if err == nil || !strings.Contains(err.Error(), "execution_allowlist") {
 		t.Fatalf("Validate = %v, want an execution_allowlist error", err)
+	}
+}
+
+// An explicitly empty fields list in the config file allows no field, the same
+// as "none" and as an empty list in Helm. Before, it parsed as "allow all", so
+// an operator locking placement down got the opposite with no warning.
+func TestExecutionAllowlistEmptyListInFileAllowsNone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dexaflow.yaml")
+	body := "executor:\n  defaults:\n    execution_allowlist:\n      fields: []\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.LoadServer(path, nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if al := c.Executor.Defaults.ExecutionAllowlist.Fields; al == nil || len(al) != 0 {
+		t.Fatalf("fields = %#v, want an explicit empty list", al)
+	}
+	p, err := domain.ParseExecutionPolicy(c.Executor.Defaults.ExecutionAllowlist.ExecutionPolicyConfig())
+	if err != nil {
+		t.Fatalf("ParseExecutionPolicy: %v", err)
+	}
+	if p == nil {
+		t.Fatal("policy is nil (allow all), want one that allows no field")
+	}
+	task := domain.TaskSpec{TaskID: "t", Execution: &domain.Execution{NodeSelector: map[string]string{"pool": "a"}}}
+	if err := p.CheckTask(task); err == nil {
+		t.Fatal("CheckTask = nil, want node_selector refused")
 	}
 }

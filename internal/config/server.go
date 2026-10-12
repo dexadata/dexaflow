@@ -302,7 +302,7 @@ type PlatformDefaultsSection struct {
 type ExecutionAllowlistSection struct {
 	// Fields lists the execution fields a DAG may set, by their dag.json names
 	// (domain.ExecutionPolicyFields). "*" (the default) allows all of them,
-	// "none" allows none.
+	// "none" or an explicitly empty list allows none.
 	Fields []string `mapstructure:"fields"`
 	// PriorityClasses, when not empty, lists the only priority_class_name values
 	// a DAG may set. Empty (the default) allows any.

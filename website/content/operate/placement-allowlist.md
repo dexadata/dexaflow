@@ -59,8 +59,11 @@ The fields the list governs, by their `dag.json` names:
 | `termination_grace_period_seconds` | how long the pod holds its node after a stop |
 | `labels`, `annotations` | what other selectors and controllers see on the pod |
 
-`*` (the default) allows all of them and `none` allows none (in Helm, an empty
-list also means none). `service_account` and `image_pull_policy` are not
+`*` (the default) allows all of them and `none` allows none. An explicitly
+empty list (`fields: []`) also allows none, in a server config file and in Helm
+alike, so writing an empty list to lock placement down never opens it. Only a
+list you leave unset (or an empty environment variable, which counts as unset)
+falls back to `*`. `service_account` and `image_pull_policy` are not
 governed by this list. An unknown name fails boot, so a typo cannot silently
 allow or refuse the wrong field.
 

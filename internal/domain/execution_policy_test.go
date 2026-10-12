@@ -42,6 +42,25 @@ func TestExecutionPolicyDefaultAllowsEverything(t *testing.T) {
 	}
 }
 
+// An explicitly empty list allows no field, as "none" does and as an empty
+// list does in Helm. Only an unset list (nil) means "every field": a config
+// file that writes `fields: []` to lock placement down must not open it.
+func TestExecutionPolicyExplicitEmptyFieldsAllowsNone(t *testing.T) {
+	p, err := ParseExecutionPolicy(ExecutionPolicyConfig{Fields: []string{}})
+	if err != nil {
+		t.Fatalf("ParseExecutionPolicy: %v", err)
+	}
+	if p == nil {
+		t.Fatal("policy is nil (allow all), want one that allows no field")
+	}
+	if err := p.CheckTask(TaskSpec{TaskID: "t", Execution: everyPlacementField()}); err == nil {
+		t.Fatal("CheckTask = nil, want a refusal")
+	}
+	if err := p.CheckTask(TaskSpec{TaskID: "plain"}); err != nil {
+		t.Errorf("CheckTask(no execution) = %v, want nil", err)
+	}
+}
+
 // Each governed field is refused when the allowlist leaves it out, and the
 // error names the task, the field and the setting to change.
 func TestExecutionPolicyRefusesEachFieldOutsideTheAllowlist(t *testing.T) {

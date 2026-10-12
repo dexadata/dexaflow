@@ -39,8 +39,8 @@ const (
 
 // ExecutionPolicyConfig is executor.defaults.execution_allowlist as configured.
 type ExecutionPolicyConfig struct {
-	// Fields lists the governed fields a DAG author may set. Empty or "*" allows
-	// every one; "none" allows none.
+	// Fields lists the governed fields a DAG author may set. Unset (nil) or "*"
+	// allows every one; "none" or an explicitly empty list allows none.
 	Fields []string
 	// PriorityClasses, when not empty, lists the only values a task's
 	// priority_class_name may take.
@@ -81,11 +81,17 @@ func DenyAllExecutionPolicy() *ExecutionPolicy {
 	return &ExecutionPolicy{fields: map[string]bool{}}
 }
 
-// parseAllowedFields returns the allowed field set, nil for "allow all".
+// parseAllowedFields returns the allowed field set, nil for "allow all". Only
+// an unset list (nil) allows all; an explicitly empty one allows none, as
+// "none" does and as an empty list does in Helm, so writing `fields: []` to
+// lock placement down can never open it.
 func parseAllowedFields(configured []string) (map[string]bool, error) {
+	if configured == nil {
+		return nil, nil //nolint:nilnil // nil is "every field allowed"
+	}
 	fields := trimAll(configured)
 	if len(fields) == 0 {
-		return nil, nil //nolint:nilnil // nil is "every field allowed"
+		return map[string]bool{}, nil
 	}
 	if slices.Contains(fields, ExecutionPolicyAllFields) || slices.Contains(fields, ExecutionPolicyNoFields) {
 		if len(fields) > 1 {
