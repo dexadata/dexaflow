@@ -6,6 +6,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // The run page's Clear button posts to /dagRuns/{dag_run_id}/clear, with the
@@ -101,5 +105,31 @@ func TestClearDagRunRefusesOnlyNew(t *testing.T) {
 	}
 	if tasks.clearCalled {
 		t.Error("an only_new clear executed")
+	}
+}
+
+// Clearing a run rewrites its task instances: a viewer, who may read runs and
+// task instances but not change them, is refused before anything is cleared,
+// the dry run included.
+func TestClearDagRunRefusesAViewer(t *testing.T) {
+	viewer := &auth.User{ID: "v1", TenantID: "default", Roles: []string{"viewer"}, Permissions: []auth.Permission{
+		{Action: "read", Resource: "dag"},
+		{Action: "read", Resource: "dag_run"},
+		{Action: "read", Resource: "task_instance"},
+	}}
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed}}}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: viewer},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		Tasks: tasks, DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+	})
+	for _, body := range []string{`{"dry_run":true}`, `{"dry_run":false}`} {
+		rec := authGet(srv, http.MethodPost, runClearPath, body)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("viewer clear %s = %d (%s), want 403", body, rec.Code, rec.Body.String())
+		}
+	}
+	if tasks.clearCalled {
+		t.Error("a viewer cleared the run")
 	}
 }
