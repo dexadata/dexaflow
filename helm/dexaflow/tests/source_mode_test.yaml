@@ -115,3 +115,24 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "execution.sourceMode.image must be pinned by a full digest"
+
+  # `helm upgrade --reuse-values` from v0.5.3 carries no execution.sourceMode.
+  - it: renders when values from a release without sourceMode are reused
+    template: deployment.yaml
+    set:
+      execution.sourceMode: null
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+
+  - it: renders both split Deployments when values without sourceMode are reused
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      execution.sourceMode: null
+    asserts:
+      - hasDocuments:
+          count: 2
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]

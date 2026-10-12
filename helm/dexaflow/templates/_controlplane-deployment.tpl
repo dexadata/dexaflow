@@ -530,7 +530,7 @@ spec:
               value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
             {{- end }}
-            {{- if .ctx.Values.execution.sourceMode.enabled }}
+            {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}
             # Pro source mode (ADR 0067). Stamped only when on, so an install that
             # never turns it on renders the env it had before (the server default
             # is off). deployment.yaml has already refused an image that is not
