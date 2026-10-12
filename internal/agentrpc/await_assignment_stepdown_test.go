@@ -103,6 +103,42 @@ func TestAwaitAssignmentKeepsLeasedStreamUntilAckOnStepDown(t *testing.T) {
 	requireNotLeaderEnd(t, ended)
 }
 
+// TestAwaitAssignmentAnnouncesRegistration: once the worker is registered the
+// handler sends a response header saying so. A worker resets its not-leader
+// reconnect budget on it, since a stream a leader accepted and later sent away
+// on a step-down is not one more failed search for the leader.
+func TestAwaitAssignmentAnnouncesRegistration(t *testing.T) {
+	stream, _, _, _ := openLeaderStream(t)
+	select {
+	case md := <-stream.headers:
+		if got := md.Get(warmRegisteredHeader); len(got) != 1 || got[0] != "true" {
+			t.Fatalf("response header %v, want %s: true", md, warmRegisteredHeader)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no response header after registration")
+	}
+	if warmRegisteredHeader != "dexaflow-warm-registered" {
+		t.Fatalf("header name %q changed; the agent reads dexaflow-warm-registered", warmRegisteredHeader)
+	}
+	stream.pushErr(io.EOF)
+}
+
+// TestAwaitAssignmentFollowerAnnouncesNothing: a refused stream carries no
+// registration header, so the worker keeps counting the rejection.
+func TestAwaitAssignmentFollowerAnnouncesNothing(t *testing.T) {
+	srv, a, _ := newWarmServer(t, nil)
+	srv.SetLeaderCheck(func() bool { return false })
+	stream := newFakeAwaitStream(ctxWithWarmToken(t, a))
+	if err := srv.AwaitAssignment(stream); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("follower: got %v, want FailedPrecondition", err)
+	}
+	select {
+	case md := <-stream.headers:
+		t.Fatalf("a follower sent a response header: %v", md)
+	default:
+	}
+}
+
 // TestAwaitAssignmentStaysOpenWhileLeading: the periodic gate does not end a
 // stream on a replica that is still the leader.
 func TestAwaitAssignmentStaysOpenWhileLeading(t *testing.T) {

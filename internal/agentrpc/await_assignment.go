@@ -10,6 +10,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/auth"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -94,12 +95,29 @@ func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServ
 		return err
 	}
 	defer s.warmPools.Deregister(worker)
+	announceRegistered(stream, worker.identity)
 
 	// Receive loop: acks and slot-free signals feed the registry. It ends on EOF
 	// (clean close) or any transport error, reported once on recvErr.
 	recvErr := make(chan error, 1)
 	go s.pumpWorkerMessages(stream, worker, recvErr)
 	return s.serveWorkerStream(stream, worker, id, recvErr)
+}
+
+// warmRegisteredHeader is the response header AwaitAssignment sends once the
+// worker is registered. A stream a follower refuses never carries it, so the
+// worker can tell a leader that accepted it and later stepped down from one
+// more refusal, and reset its not-leader reconnect budget (#1602). The agent
+// reads the same name (internal/agent warmRegisteredHeader).
+const warmRegisteredHeader = "dexaflow-warm-registered"
+
+// announceRegistered sends the registration header. A send failure means the
+// stream is already broken, which the serve loop sees on its own, so it is only
+// logged.
+func announceRegistered(stream agentv1.AgentService_AwaitAssignmentServer, identity string) {
+	if err := stream.SendHeader(metadata.Pairs(warmRegisteredHeader, "true")); err != nil {
+		slog.Debug("announcing warm worker registration", "identity", identity, "error", err)
+	}
 }
 
 // serveWorkerStream is AwaitAssignment's main loop once the worker is

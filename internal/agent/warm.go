@@ -135,7 +135,8 @@ type WarmRunner struct {
 	//
 	//   - ReconnectBackoff: base backoff, doubled each consecutive reconnect.
 	//   - ReconnectMaxBackoff: ceiling on a single backoff sleep.
-	//   - MaxReconnects: consecutive not-leader reconnects before giving up.
+	//   - MaxReconnects: consecutive not-leader reconnects before giving up. A
+	//     stream a leader accepted starts the count over (see leaderAccepted).
 	ReconnectBackoff    time.Duration
 	ReconnectMaxBackoff time.Duration
 	MaxReconnects       int
@@ -154,6 +155,24 @@ type WarmRunner struct {
 	// streamCloser holds the connection the most recent Redial opened, so it can be
 	// closed on the following reconnect (or on exit) rather than leaked.
 	streamCloser io.Closer
+
+	// leaderAccepted records that the current serve's stream was accepted by a
+	// leader: it announced the registration (warmRegisteredHeader) or sent an
+	// assignment. Run resets the reconnect budget on it.
+	leaderAccepted bool
+}
+
+// warmRegisteredHeader is the response header the control plane sends on an
+// assignment stream once it has registered the worker, so the worker can tell a
+// stream a leader accepted from one a follower refused. It must match
+// agentrpc's warmRegisteredHeader.
+const warmRegisteredHeader = "dexaflow-warm-registered"
+
+// acceptedByHeader reports whether the stream's response header announces the
+// registration. Called once the stream has ended, Header does not block.
+func acceptedByHeader(stream agentv1.AgentService_AwaitAssignmentClient) bool {
+	md, err := stream.Header()
+	return err == nil && len(md.Get(warmRegisteredHeader)) > 0
 }
 
 // Reconnect defaults (warm-pool Hole B) used when the corresponding WarmRunner
@@ -202,6 +221,7 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 
 	reconnects := 0
 	for {
+		w.leaderAccepted = false
 		err := w.serve(ctx, dagVersionID)
 		if err == nil {
 			return nil
@@ -210,6 +230,14 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 		// transport failure, fail-closed scratch) surfaces as before.
 		if status.Code(err) != codes.FailedPrecondition {
 			return err
+		}
+		// A stream a leader accepted ends not-leader when that leader steps down
+		// (#1602). That is a new search for the leader, not one more failure of
+		// the last search, so the consecutive-rejection budget starts over;
+		// otherwise a long-lived worker would exit after MaxReconnects leader
+		// changes over its whole life.
+		if w.leaderAccepted {
+			reconnects = 0
 		}
 		reconnects++
 		if reconnects > maxReconnects {
@@ -287,8 +315,13 @@ func (w *WarmRunner) serve(ctx context.Context, dagVersionID string) error {
 				slog.Info("warm worker recycling: the control plane ended the assignment stream while this worker was idle", "error", rerr)
 				return nil
 			}
+			if acceptedByHeader(stream) {
+				w.leaderAccepted = true
+			}
 			return fmt.Errorf("receiving assignment: %w", rerr)
 		}
+		// Only a leader hands out assignments, so this stream was accepted.
+		w.leaderAccepted = true
 		if serr := w.serveAssignment(ctx, stream, assignment); serr != nil {
 			// A stream / isolation failure is loop-fatal, EXCEPT a canceled stream
 			// (parent shutdown mid-attempt) — that is a clean shutdown, not an error.

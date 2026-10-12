@@ -235,7 +235,10 @@ from the workers' side:
   lock, failed leadership checks). Its open assignment streams re-check
   leadership about once a second: each **idle** worker's stream ends with the
   same `FailedPrecondition`, and the worker re-dials toward the new leader as
-  above. A worker running an attempt keeps its stream until the attempt is done
+  above. The 10-rejection bound counts only consecutive rejections: a stream a
+  leader accepted (it announces the registration, or hands out an assignment)
+  starts the count over, so a long-lived worker survives any number of leader
+  changes. A worker running an attempt keeps its stream until the attempt is done
   and its slot is free, then is sent on the same way. The warm-pool reconcile
   and staging-volume GC cycles that were running at the step-down stop within
   about a second as well, so they do not create or delete pods next to the new

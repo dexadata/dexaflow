@@ -10,5 +10,7 @@ body: |-
   worker is sent on with `FailedPrecondition` and re-dials toward the leader,
   and a busy one is sent on once its attempt is done. The warm-pool reconcile
   and staging GC cycles now run under a deadline of one interval and stop as
-  soon as their replica steps down. (#1602)
+  soon as their replica steps down. A worker's budget of 10 not-leader
+  reconnects now starts over whenever a leader accepts it, so a long-lived
+  worker no longer exits after 10 leader changes. (#1602)
 time: 2026-10-12T22:30:00.000000000-03:00
