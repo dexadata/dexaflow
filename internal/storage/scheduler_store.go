@@ -523,24 +523,27 @@ func (s *SchedulerStore) ApplyTransition(ctx context.Context, runID, taskID stri
 	})
 }
 
-// ApplyTransitions moves every listed task of a run to the SAME target state in
-// one UPDATE, the batched equivalent of calling ApplyTransition once per task.
-// The scheduler groups a tick's plain state-set transitions by target state and
-// flushes each group here, collapsing R updates into one per distinct state. The
-// per-row stamping is identical to the single-row query, so the result is
-// byte-identical — only the statement count drops. An empty list is a no-op.
-func (s *SchedulerStore) ApplyTransitions(ctx context.Context, runID string, taskIDs []string, to domain.TaskState) error {
+// ApplyTransitions moves every listed task of a run that is still in the from
+// state to the SAME target state in one UPDATE, the batched form of the plain
+// per-task transition. The scheduler groups a tick's plain state-set
+// transitions by source and target state and flushes each group here,
+// collapsing R updates into one per group. The from guard is the state the
+// tick's snapshot read: a row a concurrent writer moved since then is left
+// alone (#1605). It returns the task ids that actually moved. An empty list is
+// a no-op.
+func (s *SchedulerStore) ApplyTransitions(ctx context.Context, runID string, taskIDs []string, from, to domain.TaskState) ([]string, error) {
 	if len(taskIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	rid, err := parseUUID(runID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return s.q.UpdateTaskInstanceStatesByRunTasks(ctx, queries.UpdateTaskInstanceStatesByRunTasksParams{
-		DagRunID: rid,
-		TaskIds:  taskIDs,
-		State:    queries.TaskState(to),
+		DagRunID:  rid,
+		TaskIds:   taskIDs,
+		State:     queries.TaskState(to),
+		FromState: queries.TaskState(from),
 	})
 }
 

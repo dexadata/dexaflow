@@ -1035,13 +1035,16 @@ type Querier interface {
 	// Batched form of UpdateTaskInstanceStateByRunTask: applies ONE target state to
 	// every listed task of a run in a single statement. The per-row stamping is
 	// identical (scheduled_at/queued_at/started_at set on first entry only), as is
-	// the task_state cast, so a batch of R same-target transitions is byte-identical
-	// to R single-row updates — only the statement count changes (R UPDATEs → 1 per
-	// distinct target state). The scheduler groups a tick's plain state-set
-	// transitions (scheduled/skipped/upstream_failed/up_for_retry) by target state
-	// and flushes each group through this query. task_id = ANY keeps every row's CASE
-	// self-referential, so an already-stamped row is never re-stamped.
-	UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) error
+	// the task_state cast. The scheduler groups a tick's plain state-set transitions
+	// (scheduled/skipped/upstream_failed from none, up_for_retry from failed) by
+	// source and target state and flushes each group through this query.
+	// The write is guarded on the source state the tick's snapshot read
+	// (from_state), so a row a concurrent writer moved after the snapshot (a user's
+	// mark or clear, an agent's RUNNING report under an overlapping leader) is left
+	// alone instead of being overwritten (#1605, ADR 0031 leader-overlap
+	// correctness). The ids it returns are the rows that actually moved, so the
+	// tick records only those.
+	UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) ([]string, error)
 	// Sets the limits given and keeps the others: a NULL argument leaves that
 	// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
 	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
