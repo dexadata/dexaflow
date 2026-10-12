@@ -13,6 +13,10 @@ The **Pro** control plane installs on Kubernetes via the official Helm chart. Th
 chart is chart-test gated, publishes multi-arch images per release, and signs them
 with cosign. It runs on any cluster with an external Postgres + Redis.
 
+To try the chart on your machine first, with throwaway datastores and a local
+registry, see [Try Pro on a local cluster](/operate/local-cluster/) (for testing
+only, not for production).
+
 ## Install from the published OCI chart
 
 Every release tag publishes the chart as a **cosign-signed OCI artifact** to

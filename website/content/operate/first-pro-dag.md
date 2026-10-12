@@ -45,7 +45,9 @@ flowchart LR
   DAG image there; the control plane pulls it. (Lite needs none — this is a Pro
   thing.)
 - **A reachable Pro control plane.** A throwaway one comes from the
-  [Helm chart](/operate/helm-chart/).
+  [Helm chart](/operate/helm-chart/). To rehearse this whole page on your
+  machine, [Try Pro on a local cluster](/operate/local-cluster/) sets up a
+  local cluster, a registry and the chart (for testing only).
 
 ## Step 0 — log in once
 
