@@ -1,3 +1,0 @@
-kind: Added
-body: '**The MCP server ships as a signed image.** Every release now publishes `ghcr.io/dexadata/dexaflow-mcp`, tagged `<version>` and `v<version>` for amd64 and arm64 and signed with cosign keyless like the server image, so a platform that runs `dexaflow-mcp --transport http` beside the control plane can pin it by digest instead of building its own. The release gate verifies its signature. See Published images.'
-time: 2026-10-10T00:15:00.000000+00:00
