@@ -824,9 +824,9 @@ func makeDeleteDag(mintToken func() string, uiURL, home string, logf func(format
 // devSubprocessSetup provisions the isolated venv and returns the subprocess
 // server env plus a reload that re-discovers + recompiles + registers every
 // project in the workspace (no image build) — the fast multi-DAG inner loop,
-// with user code running unsandboxed on the host. The venv is shared across
-// projects and uses the dependency-union from WorkspaceSpec.RootCfg so every
-// DAG's imports resolve from a single virtualenv.
+// with user code running unsandboxed on the host. Each project gets its own
+// venv built from its own `dependencies:` and python_version, so DAGs that pin
+// different versions of the same package coexist in one workspace (#1679).
 func devSubprocessSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, o devOptions, home string) (env []string, makeReload func(func() string) func() error, err error) {
 	agentBin, err := resolveAndReport(ctx, cmd, o.agentBin, "agent")
 	if err != nil {
