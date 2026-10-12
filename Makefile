@@ -212,6 +212,10 @@ e2e-sso: ## Run the sign-in page SSO e2e (#1160 the flow is offered, #1191 a bre
 e2e-split: ## Run the k3d two-process api/scheduler split e2e (ADR 0049; needs k3d, kubectl, docker, jq; run make dev-up + make build first)
 	bash test/e2e/split-two-process.sh
 
+.PHONY: e2e-source-mode
+e2e-source-mode: ## Run the k3d Pro source mode e2e (ADR 0067, #1539; needs k3d, kubectl, docker, jq, python3; run make dev-up + make build first)
+	bash test/e2e/source-mode-e2e.sh
+
 .PHONY: e2e-dbt
 e2e-dbt: ## Run the k3d dbt pod-per-node e2e (ADR 0042; needs k3d, kubectl, docker, jq, dbt; run make dev-up + make build first)
 	bash test/e2e/dbt-e2e.sh
