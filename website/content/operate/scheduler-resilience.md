@@ -646,6 +646,20 @@ A sustained non-zero rate on any of these is worth investigating — reapers
 are backstops, not the primary path; if they fire often, something upstream
 is broken.
 
+### Loop and dispatch latency
+
+These collectors are written on every tick or dispatch (before 0.5.4 they were
+registered but stayed empty, [#1186](https://github.com/dexadata/dexaflow/issues/1186)):
+
+| Metric | What it measures |
+|---|---|
+| `dexaflow_scheduler_loop_duration_seconds` | Wall time of one leader tick, whether its step succeeded or failed. Followers are not observed. A p99 that grows with the number of active runs, or with history while active runs stay flat, is the first sign of a scheduler falling behind. |
+| `dexaflow_task_retries_total{dag_id,task_id}` | Retries the scheduler released (a task's `up_for_retry` reset to `none` with a new try number). |
+| `dexaflow_dispatch_latency_seconds` | Buffered dispatch only (`scheduler.dispatch.buffer_size` above 0): time from enqueue to the worker's dispatch returning, failed dispatches included. |
+| `dexaflow_dispatch_queue_depth` | Buffered dispatch only: requests waiting in the queue, now set as workers take requests too, so it falls back to 0 when the queue drains. |
+| `dexaflow_pods_created_total{dag_id,result}` | Task pod creates by result (`success` or `error`). |
+| `dexaflow_task_pod_creation_duration_seconds` | Latency of each task pod create call to the Kubernetes API, including the client-side rate limiter wait. |
+
 ## What's NOT a scheduler concern
 
 - **Postgres unreachable** — the scheduler's `Heartbeat()` goes unhealthy;

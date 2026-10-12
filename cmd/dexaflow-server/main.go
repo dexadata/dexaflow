@@ -2784,6 +2784,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// deleted it instead (ADR 0052 amendment).
 	if metrics != nil {
 		podExec.SetTeardownRecorder(metrics)
+		// Count every task pod create and observe its API latency (#1186).
+		podExec.SetPodMetrics(metrics)
 	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
 	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
