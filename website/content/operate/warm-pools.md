@@ -216,7 +216,10 @@ flowchart TB
    fleet live when a create was never observed and at least every 5 minutes.
    After a live read it keeps reading live until the informer holds (or saw
    deleted) every pod that read returned, so a lagging or stale cache, a hung
-   watch included, cannot overshoot either bound.
+   watch included, cannot overshoot either bound. A check deletes only idle
+   workers: it issues every delete before any create, and checks again that a
+   worker is still idle right before deleting it, so a worker that takes an
+   attempt while a long check is running is kept.
 2. **AwaitAssignment.** Each warm pod opens a long-lived bidirectional gRPC stream
    (`AwaitAssignment`) and **registers** under its authenticated identity, naming
    its `dag_version` and pod name. Work assignments flow down the stream; acks and
