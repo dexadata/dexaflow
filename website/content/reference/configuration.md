@@ -301,6 +301,53 @@ of the datastore, back up `config.yaml` with it, and `dexaflow uninstall` warns
 before it removes the only copy.
 {{% /alert %}}
 
+### Encrypting Variables
+
+Connection secrets are always encrypted at rest. Variables are stored in
+plaintext by default, and masked in API responses only when the key name looks
+secret (`password`, `token`, `api_key`, ...). A Variable that holds a DSN, a
+webhook URL or an API key under another name is therefore readable in the
+database and in every backup of it.
+
+Set `DEXAFLOW_VARIABLE_ENCRYPTION=on` (or `LEOFLOW_VARIABLE_ENCRYPTION`, or
+`variable_encryption: on` in `dexaflow.yaml`/`leoflow.yaml`) to encrypt them
+with the same key and cipher as connections:
+
+- every write stores the value encrypted;
+- at startup the server encrypts the Variables already stored in plaintext and
+  logs how many it changed;
+- reads, the API and delivery to task pods return the plaintext, so DAGs see no
+  difference. The API reports `is_encrypted: true` for an encrypted Variable;
+  masking still follows the key name;
+- a key rotation and `dexaflow lite migrate-key` move encrypted Variables onto
+  the new key together with the connection secrets.
+
+`on` needs a usable `DEXAFLOW_SECRET_KEY`: without one the server refuses to
+start rather than keep storing plaintext. With the default `off`, an install
+without a key works as before. A Variable that no configured key opens (after a
+rotation that dropped the old key, for example) is left as it is, and the
+server logs a warning naming it:
+
+- the Variables list (`GET /api/v2/variables`) still returns the tenant's other
+  Variables, and shows this one with its value masked (`***`) and
+  `value_unreadable: true`;
+- reading it alone (`GET /api/v2/variables/<key>`) answers `500` with a message
+  that names the Variable;
+- delivery to a task pod skips it with a warning, as it does for a connection.
+
+To recover, add the key it was encrypted with back as a later
+`DEXAFLOW_SECRET_KEY` entry, or delete the Variable and set it again.
+
+A value cannot start with `dexaflow:enc:v1:`, the tag that marks an encrypted
+value, in any mode.
+
+{{% alert title="Turn it on after every replica runs 0.5.4" color="warning" %}}
+A release older than 0.5.4 reads an encrypted Variable as its ciphertext and
+hands that to the task. Turn encryption on only once no older replica is
+running, and see [Upgrading to 0.5.4](/operate/upgrades/#upgrading-to-054)
+before rolling back.
+{{% /alert %}}
+
 ### Defaults
 
 Every field in `dexaflow.yaml` is optional. Zero-valued fields are filled by
@@ -389,6 +436,8 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_SERVER_METRICS_ADDR` | `0.0.0.0:9090` | both | Prometheus metrics. |
 | `DEXAFLOW_SERVER_GRPC_TLS_CERT` | _(empty)_ | Pro | PEM cert enabling TLS on the agent gRPC listener (#58). Set with `_KEY`; empty means plaintext (dev). The Pro Helm chart requires both (see [Pro TLS](/operate/pro-tls/)). |
 | `DEXAFLOW_SERVER_GRPC_TLS_KEY` | _(empty)_ | Pro | PEM private key paired with `DEXAFLOW_SERVER_GRPC_TLS_CERT`. Both must be set together to encrypt the agent channel. |
+| `DEXAFLOW_SERVER_HTTP_TLS_CERT` | _(empty)_ | both | Path to a PEM certificate (chain) that makes the API and UI listener (`server.http_tls_cert`, on `DEXAFLOW_SERVER_HTTP_ADDR`) serve HTTPS instead of plain HTTP, so a load balancer can re-encrypt to the pod (#638). Set with `_KEY`; setting only one of the two fails boot. Empty (the default) keeps plain HTTP. The files are re-read when they change on disk, so a rotated certificate is served without a restart. TLS 1.2 is the minimum. The metrics listener stays plain HTTP. In the chart set `httpTLS.enabled` and `httpTLS.secretName`. See [In-transit encryption](/operate/in-transit-encryption/). |
+| `DEXAFLOW_SERVER_HTTP_TLS_KEY` | _(empty)_ | both | Path to the PEM private key paired with `DEXAFLOW_SERVER_HTTP_TLS_CERT` (`server.http_tls_key`). Both must be set together. |
 | `DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS` | `http://localhost:8080` | both | Browser origins allowed to call the API cross-origin (`server.cors.allowed_origins`, a list). The UI is served same-origin with the API, so most deployments need no entry and should leave the server default alone. Comma-separated via the env var; in the chart set `config.cors.allowedOrigins` (a YAML list) and it is rendered comma-joined for you. The chart rejects `"*"` at render time (#1144). |
 | `DEXAFLOW_SERVER_TRUSTED_PROXIES` | *(empty — trust none)* | both | Proxy IPs/CIDRs whose `X-Forwarded-For` is honored for the client IP (`server.trusted_proxies`, a list). See note below. |
 | `DEXAFLOW_SERVER_GZIP_RESPONSES` | `false` | both | Gzip JSON and NDJSON responses of 1 KB or more on `/api/v2/*` and `/ui/*` for clients that send `Accept-Encoding: gzip`. Log routes and any response that streams (flushes before 1 KB, such as a live log tail) are never compressed. Clients that list `gzip;q=0` get identity. Only full `200` and `201` bodies are compressed, and every response of an eligible route carries `Vary: Accept-Encoding`. Routes that return secrets, tokens or code (`/api/v2/variables`, `/api/v2/connections`, XCom routes, `/api/v2/auth/`, `/ui/auth/`, `/api/v2/ide/`, `/api/v2/dagSources`, a DAG's `/spec` and a single task's detail, and a single task instance with its rendered fields) are never compressed, because compressing a secret next to attacker-reflected input lets the response length leak it (BREACH). Other JSON may still reflect request input next to private data, so weigh the bandwidth saved against that before turning it on behind a TLS terminator that does not already compress. Off sends every body uncompressed. Helm: set it through `extraEnv`. |
@@ -424,9 +473,10 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_JWT_TOKEN_TTL_SECONDS` | `3600` | both | Lifetime, in seconds, of an issued API token. |
 | `DEXAFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS` | `86400` | both | Ceiling, in seconds, on the **total** age of a transparently renewed session, measured from first login and preserved across every renewal. Past it, `POST /api/v2/auth/token/renew` refuses and the user must log in again; the short `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long a live session may keep refreshing. A non-positive value disables the ceiling. Renewal also re-checks that the account is still active, so a deactivated user stops being issued tokens as well as being refused on use. The renew endpoint is rate-limited to 60 requests a minute per client IP, on a budget separate from login's. Helm: `auth.sessionMaxLifetimeSeconds`. |
 | `DEXAFLOW_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | both | Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force). A successful login consumes no budget. `dexaflow lite` raises this well above the default (local single-user tool). |
-| `DEXAFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)). Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
+| `DEXAFLOW_SECRET_KEY` | — | both | Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)), and Variable values when `DEXAFLOW_VARIABLE_ENCRYPTION=on`. Raw 32 chars, 64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated list to rotate**: the first entry encrypts and decrypts, later entries only decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`. See [Rotating the encryption key](#rotating-the-encryption-key). |
 | `DEXAFLOW_SECRET_KEY_REENCRYPT_ON_BOOT` | `true` | both | Re-encrypt stored connection secrets onto the first `DEXAFLOW_SECRET_KEY` entry at startup ([Rotating the encryption key](#rotating-the-encryption-key)). `dexaflow lite` sets it to `false`: Lite moves keys only through [`dexaflow lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/). |
 | `DEXAFLOW_SECRET_KEY_MIGRATION_LOCK` | `false` | both | Hold the key-migration advisory lock for the server's lifetime: refuse to start while `dexaflow lite migrate-key` runs, and exit if the lock's database session is lost. `dexaflow lite` sets it to `true`; there is no reason to set it elsewhere. |
+| `DEXAFLOW_VARIABLE_ENCRYPTION` | `off` | both | How Variable values are stored. `off` writes plaintext, as every earlier release did. `on` encrypts every Variable value with `DEXAFLOW_SECRET_KEY` (AES-256-GCM, the cipher connections use) and encrypts the stored plaintext rows at startup. `decrypt` writes plaintext and turns every encrypted row back into plaintext at startup, the step before rolling back to a release older than 0.5.4. `on` and `decrypt` refuse to start without a usable key. Every mode reads both forms. Config key `variable_encryption`. See [Encrypting Variables](#encrypting-variables). |
 | `DEXAFLOW_AUTH_SECRET_SCOPING` | `permissive` | both | Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `permissive` (delivers the whole tenant vault; warns when a DAG declares a narrower set), `enforce` (delivers only the declared subset — empty declaration ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable. Helm: `auth.secretScoping`. |
 | `DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` | `observe` | both | Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `observe` (logs + audits a would-have-denied when the caller's task instance is not live, but still delivers) or `enforce` (denies). Liveness renewal is always on regardless of mode; this only chooses whether a not-live token is refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`. |
 | `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` | `envvar` | Pro (K8s) | How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)): `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec — today's behavior, byte-identical) or `exchange` (projected ServiceAccount token exchanged once via a control-plane `TokenReview` for a task-scoped JWT — nothing secret on the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`). Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite) executor. See [Agent credential transport](/operate/agent-credential-transport/). Helm: `auth.agentTokenTransport`. |
@@ -445,6 +495,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. A refused [trusted-issuer handoff](#trusted-issuer-handoff) is also sent back here, with an `error` code. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
+| `DEXAFLOW_AUTH_SESSION_COOKIE_NAME` | `_token` | both | Name of the browser session cookie. Set it to a name starting with `__Host-` (for example `__Host-dexaflow`) on any deployment that serves several hosts under one parent domain, such as one host per tenant (`<tenant>.example.com`): a browser then accepts the cookie only when it is `Secure`, has `Path=/` and no `Domain`, so a page on a sibling host can no longer plant a session on this one (session fixation). The session cookie is always set that way, so the prefix needs nothing else. Boot fails on a name a browser would not accept, and on a `__Host-` or `__Secure-` name together with `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE`. Changing the name signs every browser out once: sessions under the old name are no longer read, and that cookie expires on its own. The bundled UI never reads the cookie from a script, so it works under any name. Helm: `auth.sessionCookieName`. |
 | `DEXAFLOW_AUTH_DEV_NO_AUTH` | `false` | dev-only | Legacy escape hatch — bypasses auth entirely, treating every request as admin. Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite uses a real admin login generated by `dexaflow setup`; set this only for ephemeral test scaffolds. |
 
 ### OIDC / SSO (`auth.oidc.*`)
@@ -565,6 +616,8 @@ across clusters.
 |---|---|---|---|
 | `DEXAFLOW_EXECUTOR_DEFAULTS_RUN_TASKS_AS_NON_ROOT` | `true` | Pro | **Refuses to start a task container whose image resolves to UID 0**, completing Pod Security Admission's `restricted` set. On by default — the images this repo ships carry a numeric non-root UID (`USER 65532:65532`) and the executor pairs it with a pod-level `fsGroup` so the staging PVC stays writable. Turn it off only for a cluster whose task images legitimately run as root. Operator-scoped (never a DAG field). |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM` | `false` | Pro | Mounts every task container's root filesystem read-only. Off by default (`restricted` does not require it and it breaks ordinary Python tasks — pip cache, `/tmp`, matplotlib config). Turn on for a fleet of tasks known not to write outside their volumes. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS` | `*` | Pro | **Which task `execution` fields a DAG may set** (comma-separated `dag.json` names): `node_selector`, `tolerations`, `affinity`, `topology_spread_constraints`, `priority_class_name`, `runtime_class_name`, `resource_claims`, `termination_grace_period_seconds`, `labels`, `annotations`. `*` (default) allows all of them, `none` allows none (so does an explicitly empty list, `fields: []`, in a server config file or in Helm; an empty environment variable counts as unset). A DAG that sets a field outside the list is refused at registration (400 naming the task and the field), and a DAG registered before the list changed fails that task at dispatch (once, no retries). `service_account` and `image_pull_policy` are not governed. An unknown name fails boot. Operator-scoped (never a DAG field). See [Placement allowlist](/operate/placement-allowlist/). Helm: `executor.defaults.executionAllowlist.fields`. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES` | _(empty)_ | Pro | When set (comma-separated), the only `execution.priority_class_name` values a DAG may use; refused like a disallowed field. Empty (default) allows any priority class. Helm: `executor.defaults.executionAllowlist.priorityClasses`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_ACCESS_MODE` | `ReadWriteMany` | Pro | PVC access mode for the per-run staging volume. Default `ReadWriteMany` (multi-node prod); single-node dev (k3d local-path, no RWX) sets `ReadWriteOnce`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE` | _(empty)_ | Pro | Default size of the per-run staging volume when the DAG enabled staging without pinning it (a Kubernetes quantity, e.g. `10Gi`). Empty leaves the size unset. Helm: `executor.defaults.staging.size`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS` | _(empty)_ | Pro | Default StorageClass for the staging volume (e.g. the cluster's RWX class). Empty falls back to the cluster's default StorageClass. Helm: `executor.defaults.staging.storageClass`. |
@@ -589,6 +642,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_WORKER_IDLE_TTL` | `5m` | Pro | How long an idle warm worker is kept before it is recycled (D6). A duration string. |
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
 | `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
+| `DEXAFLOW_EXECUTION_WARM_POOL_EVENT_REFILL` | `false` | Pro | Refill warm pools on events instead of every 30s: the reconciler reads the warm fleet from a dedicated pod informer instead of a LIST per tick, reacts at once when a warm worker is deleted, fails or is claimed by an attempt, and creates replacements concurrently (up to 4 at a time). The periodic tick stays as a backstop. Helm: `execution.warmPoolEventRefill`. |
 
 ### Source mode (`execution.source_mode.*`)
 

@@ -189,6 +189,15 @@ accepted from first-time contributors** — open a discussion issue first.
   `user_roles` alone: tenants created through the service API copy their
   built-in roles from `default` only once (#1305).
   `migrations/tenant_roles_test.go` enforces it.
+- **Tenant predicates in SQL.** A query over a tenant-owned table (one with a
+  `tenant_id` column: `dag_runs`, `task_instances`, `xcom_index` and the rest)
+  that selects, updates or deletes by an internal id takes the caller's tenant
+  as a parameter and filters on it (`WHERE tenant_id = $1 AND ...`). Resolving
+  the id inside the tenant first is not enough on its own: the predicate keeps
+  a stray id from reaching another tenant's rows when some path skips the
+  resolve (#508). Background loops that work across every tenant (the
+  scheduler, the reapers, the janitors) are the exception. Not every query
+  follows the rule yet; #508 tracks the rest.
 
 ## 6. The CI gates
 

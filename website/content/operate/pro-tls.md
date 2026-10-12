@@ -33,6 +33,10 @@ server**, and the agent's own identity is its **bearer token**
 ([agent credential transport](/operate/agent-credential-transport/)), never a client cert.
 So provisioning a cert is only ever about the *server* side of the handshake.
 
+This page covers the agent gRPC channel. To encrypt the hop from your load
+balancer to the API pods as well, see
+[In-transit encryption](/operate/in-transit-encryption/).
+
 ```mermaid
 flowchart LR
   subgraph CHART["Helm chart (agentTLS.autoGenerate: true)"]

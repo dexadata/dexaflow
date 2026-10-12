@@ -23,6 +23,11 @@ type EncryptedColumn struct {
 	IDColumn string
 	// LabelColumn is a human-readable name of the row (a conn_id), for messages.
 	LabelColumn string
+	// Prefix, when set, tags the values of the column that are ciphertext; a
+	// value without it is plaintext and not a secret value of the registry.
+	// Variables hold both forms in one column (#507). SecretValue.Ciphertext
+	// carries the value without the prefix, and a rewrite puts it back.
+	Prefix string
 }
 
 // String renders the column as table.column.
@@ -35,10 +40,12 @@ func (c EncryptedColumn) String() string { return c.Table + "." + c.Column }
 // encrypted but missing from this list would be left under a key the migration
 // then deletes, so TestEveryEncryptedColumnIsInTheRegistry fails when a
 // repository write path seals a column that is not here (ADR 0065 section 7).
-// Variables join this list when they are encrypted at rest (#507).
+// Variables are listed with their ciphertext tag: only the sealed values of the
+// column are secrets of the registry (#507).
 var encryptedColumns = []EncryptedColumn{
 	{Table: "connections", Column: "password", IDColumn: "id", LabelColumn: "conn_id"},
 	{Table: "connections", Column: "extra", IDColumn: "id", LabelColumn: "conn_id"},
+	{Table: "variables", Column: "value", IDColumn: "id", LabelColumn: "key", Prefix: VariableCiphertextPrefix},
 }
 
 // EncryptedColumns returns a copy of the encrypted-column registry.
@@ -84,10 +91,12 @@ func readColumn(ctx context.Context, q RowQuerier, c EncryptedColumn) ([]SecretV
 	if err != nil || !exists {
 		return nil, err
 	}
-	sql := fmt.Sprintf("SELECT %s::text, %s::text, %s FROM %s WHERE %s IS NOT NULL AND %s <> '' ORDER BY %s::text",
+	// $1 is the ciphertext tag; an untagged column passes "", which every
+	// value starts with.
+	sql := fmt.Sprintf("SELECT %s::text, %s::text, %s FROM %s WHERE %s IS NOT NULL AND %s <> '' AND starts_with(%s, $1::text) ORDER BY %s::text",
 		ident(c.IDColumn), ident(c.LabelColumn), ident(c.Column), ident(c.Table),
-		ident(c.Column), ident(c.Column), ident(c.IDColumn))
-	rows, err := q.Query(ctx, sql)
+		ident(c.Column), ident(c.Column), ident(c.Column), ident(c.IDColumn))
+	rows, err := q.Query(ctx, sql, c.Prefix)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", c, err)
 	}
@@ -98,6 +107,7 @@ func readColumn(ctx context.Context, q RowQuerier, c EncryptedColumn) ([]SecretV
 		if serr := rows.Scan(&v.RowID, &v.Label, &v.Ciphertext); serr != nil {
 			return nil, fmt.Errorf("reading %s: %w", c, serr)
 		}
+		v.Ciphertext = strings.TrimPrefix(v.Ciphertext, c.Prefix)
 		out = append(out, v)
 	}
 	if rerr := rows.Err(); rerr != nil {
@@ -305,7 +315,7 @@ func moveValue(ctx context.Context, tx pgx.Tx, enc secrets.Cipher, v SecretValue
 	c := v.Column
 	sql := fmt.Sprintf("UPDATE %s SET %s = $1 WHERE %s::text = $2 AND %s = $3",
 		ident(c.Table), ident(c.Column), ident(c.IDColumn), ident(c.Column))
-	tag, err := tx.Exec(ctx, sql, sealed, v.RowID, v.Ciphertext)
+	tag, err := tx.Exec(ctx, sql, c.Prefix+sealed, v.RowID, c.Prefix+v.Ciphertext)
 	if err != nil {
 		return fmt.Errorf("rewriting %s of %q: %w", c.Column, v.Label, err)
 	}

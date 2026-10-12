@@ -74,7 +74,7 @@ func (r *LogReader) ReadLogs(ctx context.Context, tenant, dagID, runID, taskID s
 		return nil, mapNotFound(err)
 	}
 	bounds, err := r.q.TryAttemptEpochBounds(ctx, queries.TryAttemptEpochBoundsParams{
-		DagRunID: ref.DagRunID, TaskID: taskID, TryNumber: toInt32(tryNumber),
+		TenantID: ref.TenantID, DagRunID: ref.DagRunID, TaskID: taskID, TryNumber: toInt32(tryNumber),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("resolving the try's attempt epochs: %w", err)

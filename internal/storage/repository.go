@@ -33,12 +33,15 @@ type txBeginner interface {
 // Repository implements the API resource and auth user-store interfaces over
 // Postgres using the sqlc-generated query set.
 type Repository struct {
-	q           *queries.Queries
-	pool        txBeginner
-	cipher      secrets.Cipher
-	extCoverage externalSecretCoverage
-	xcomValues  XComValueDeleter
-	specs       *specCache
+	q      *queries.Queries
+	pool   txBeginner
+	cipher secrets.Cipher
+	// varEncryption is how Variable values are stored (#507); the zero value
+	// is off, the plaintext form every earlier release wrote.
+	varEncryption VariableEncryption
+	extCoverage   externalSecretCoverage
+	xcomValues    XComValueDeleter
+	specs         *specCache
 	// tenants caches tenant name -> id (see tenantID). Bounded by the number
 	// of tenants that exist, since only successful lookups are stored.
 	tenants *sync.Map
@@ -450,11 +453,11 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 	if err != nil {
 		return nil, 0, err
 	}
-	out, err := r.listDagRunsPage(ctx, dag.ID, dagID, limit, offset)
+	out, err := r.listDagRunsPage(ctx, dag, dagID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := r.q.CountDagRunsByDag(ctx, dag.ID)
+	total, err := r.q.CountDagRunsByDag(ctx, queries.CountDagRunsByDagParams{DagID: dag.ID, TenantID: dag.TenantID})
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
 	}
@@ -469,11 +472,13 @@ func (r *Repository) ListDagRunsPage(ctx context.Context, tenant, dagID string, 
 	if err != nil {
 		return nil, err
 	}
-	return r.listDagRunsPage(ctx, dag.ID, dagID, limit, offset)
+	return r.listDagRunsPage(ctx, dag, dagID, limit, offset)
 }
 
-func (r *Repository) listDagRunsPage(ctx context.Context, dagUUID pgtype.UUID, dagID string, limit, offset int) ([]domain.DagRun, error) {
-	rows, err := r.q.ListDagRunsByDagWithVersion(ctx, queries.ListDagRunsByDagWithVersionParams{DagID: dagUUID, Limit: toInt32(limit), Offset: toInt32(offset)})
+func (r *Repository) listDagRunsPage(ctx context.Context, dag queries.Dag, dagID string, limit, offset int) ([]domain.DagRun, error) {
+	rows, err := r.q.ListDagRunsByDagWithVersion(ctx, queries.ListDagRunsByDagWithVersionParams{
+		TenantID: dag.TenantID, DagID: dag.ID, Limit: toInt32(limit), Offset: toInt32(offset),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing dag runs: %w", err)
 	}
@@ -497,7 +502,7 @@ func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string,
 		states = []string{}
 	}
 	rows, err := r.q.ListDagRunsByDagAfter(ctx, queries.ListDagRunsByDagAfterParams{
-		DagID: dag.ID, States: states, AfterLogicalDate: pgtype.Timestamptz{Time: after.At, Valid: true},
+		TenantID: dag.TenantID, DagID: dag.ID, States: states, AfterLogicalDate: pgtype.Timestamptz{Time: after.At, Valid: true},
 		AfterRunID: after.Key, RowLimit: toInt32(limit),
 	})
 	if err != nil {
@@ -505,9 +510,9 @@ func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string,
 	}
 	var total int64
 	if len(states) == 0 {
-		total, err = r.q.CountDagRunsByDag(ctx, dag.ID)
+		total, err = r.q.CountDagRunsByDag(ctx, queries.CountDagRunsByDagParams{DagID: dag.ID, TenantID: dag.TenantID})
 	} else {
-		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{DagID: dag.ID, States: states})
+		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{TenantID: dag.TenantID, DagID: dag.ID, States: states})
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
@@ -525,7 +530,7 @@ func (r *Repository) GetDagRun(ctx context.Context, tenant, dagID, runID string)
 	if err != nil {
 		return domain.DagRun{}, err
 	}
-	run, err := r.q.GetDagRunWithVersion(ctx, queries.GetDagRunWithVersionParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRunWithVersion(ctx, queries.GetDagRunWithVersionParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return domain.DagRun{}, mapNotFound(err)
 	}
@@ -540,7 +545,7 @@ func (r *Repository) DeleteDagRun(ctx context.Context, tenant, dagID, runID stri
 	if err != nil {
 		return err
 	}
-	n, err := r.q.DeleteDagRun(ctx, queries.DeleteDagRunParams{DagID: dag.ID, RunID: runID})
+	n, err := r.q.DeleteDagRun(ctx, queries.DeleteDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return fmt.Errorf("deleting dag run: %w", err)
 	}
@@ -566,7 +571,7 @@ func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run
 		return domain.DagRun{}, err
 	}
 	if maxActive := int(dag.MaxActiveRuns); maxActive > 0 {
-		active, countErr := r.q.CountActiveDagRunsByDagID(ctx, dag.ID)
+		active, countErr := r.q.CountActiveDagRunsByDagID(ctx, queries.CountActiveDagRunsByDagIDParams{TenantID: dag.TenantID, DagID: dag.ID})
 		if countErr != nil {
 			return domain.DagRun{}, fmt.Errorf("counting active runs: %w", countErr)
 		}
@@ -625,12 +630,12 @@ func (r *Repository) ListTaskInstanceAttempts(ctx context.Context, tenant, dagID
 	if err != nil {
 		return nil, err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
 	rows, err := r.q.ListTaskInstanceAttempts(ctx, queries.ListTaskInstanceAttemptsParams{
-		DagRunID: run.ID, TaskID: taskID,
+		TenantID: run.TenantID, DagRunID: run.ID, TaskID: taskID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing task instance attempts: %w", err)
@@ -653,6 +658,8 @@ func (r *Repository) ListTaskInstanceAttempts(ctx context.Context, tenant, dagID
 			Duration:    row.DurationSeconds,
 			Hostname:    strOrEmpty(row.Hostname),
 			Note:        strOrEmpty(row.Note),
+			Pool:        poolName(row.Pool),
+			PoolSlots:   int(row.PoolSlots),
 			// The attempts view is where an operator opens a specific failed try, so
 			// it must carry the same cause the run-level list does. The UNION already
 			// selects error_message from both history and the live row.
@@ -668,11 +675,11 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 	if err != nil {
 		return nil, 0, err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return nil, 0, mapNotFound(err)
 	}
-	rows, err := r.q.ListTaskInstancesByRun(ctx, run.ID)
+	rows, err := r.q.ListTaskInstancesByRun(ctx, queries.ListTaskInstancesByRunParams{TenantID: run.TenantID, DagRunID: run.ID})
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing task instances: %w", err)
 	}
@@ -702,7 +709,7 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	if err != nil {
 		return 0, err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
@@ -793,7 +800,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 			return nil, nil
 		}
 		ids, err := q.ResetAllFailedTaskInstances(ctx, queries.ResetAllFailedTaskInstancesParams{
-			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
+			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("clearing failed tasks: %w", err)
@@ -804,7 +811,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 	for _, taskID := range taskIDs {
 		if onlyFailed {
 			n, err := q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{
-				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
+				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("clearing failed task %q: %w", taskID, err)
@@ -815,7 +822,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 			continue
 		}
 		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
-			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots,
+			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
 		}); err != nil {
 			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
@@ -832,7 +839,7 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 	if err != nil {
 		return err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return mapNotFound(err)
 	}
@@ -1045,7 +1052,7 @@ func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, ru
 	if err != nil {
 		return err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return mapNotFound(err)
 	}
@@ -1675,7 +1682,7 @@ func (r *Repository) ListVariables(ctx context.Context, tenant string, limit, of
 	}
 	out := make([]domain.Variable, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, domain.Variable{Key: v.Key, Value: v.Value, Description: strOrEmpty(v.Description)})
+		out = append(out, r.listVariable(v.Key, v.Value, v.Description))
 	}
 	return out, int(total), nil
 }
@@ -1705,7 +1712,7 @@ func (r *Repository) SecretVariables(ctx context.Context, tenantID string) (map[
 	}
 	out := make(map[string]string, len(rows))
 	for _, v := range rows {
-		out[v.Key] = v.Value
+		r.deliverVariable(out, v.Key, v.Value)
 	}
 	return out, nil
 }
@@ -1770,7 +1777,7 @@ func (r *Repository) SecretVariablesScoped(ctx context.Context, tenantID string,
 	}
 	out := make(map[string]string, len(rows))
 	for _, v := range rows {
-		out[v.Key] = v.Value
+		r.deliverVariable(out, v.Key, v.Value)
 	}
 	return out, nil
 }
@@ -1913,7 +1920,7 @@ func (r *Repository) GetVariable(ctx context.Context, tenant, key string) (domai
 	if err != nil {
 		return domain.Variable{}, mapNotFound(err)
 	}
-	return domain.Variable{Key: v.Key, Value: v.Value, Description: strOrEmpty(v.Description)}, nil
+	return r.toVariable(v.Key, v.Value, v.Description)
 }
 
 // SetVariable creates or updates a variable, always overwriting the value and
@@ -1925,8 +1932,12 @@ func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Va
 	if err != nil {
 		return err
 	}
+	stored, err := r.sealVariable(v.Value)
+	if err != nil {
+		return err
+	}
 	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: v.Key, Value: v.Value, Description: strPtr(v.Description),
+		TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
 	}); err != nil {
 		return fmt.Errorf("upserting variable: %w", err)
 	}
@@ -1949,8 +1960,12 @@ func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p doma
 	if p.Value != nil {
 		value = *p.Value
 	}
+	stored, err := r.sealVariable(value)
+	if err != nil {
+		return err
+	}
 	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: p.Key, Value: value, Description: p.Description,
+		TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
 	}); err != nil {
 		return fmt.Errorf("upserting variable: %w", err)
 	}
