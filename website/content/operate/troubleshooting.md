@@ -199,6 +199,36 @@ your DAG rather than an infrastructure failure, and you can act on them:
 | `task "a" may not read xcom from "b" (not a declared input or dependency)` | The task pulled an XCom it never declared as an input or a dependency. |
 | `no xcom for task "x"` | Nothing was pushed under that key. The agent handles this one by status code rather than by text, so you will normally see its effect rather than the sentence. |
 
+### `agent_lost` that is not a network fault: a refused agent credential
+
+An agent whose bearer the control plane refuses gets `Unauthenticated` on every
+RPC, so its heartbeats stop counting and the attempt is eventually reaped as
+`agent_lost`, which looks exactly like a network partition. The control plane
+writes a WARN line for every refusal, `rejected agent bearer token`, with a
+`reason` that tells the cases apart:
+
+| `reason` | Means | Look at |
+|---|---|---|
+| `expired` | The credential lapsed. A running attempt renews it on every heartbeat, so the agent could not reach the control plane for a whole token TTL (10 minutes), or its pod started after the credential minted at dispatch had already run out. | Control-plane and database availability around `expired_at`. |
+| `wrong_audience` | A token minted for another surface (a user token) reached the agent service. | A wiring bug: report it. |
+| `bad_signature` | The token was signed with another key: the JWT secret was rotated, or the token comes from another install. | `auth.jwt.secret` across replicas. |
+| `wrong_issuer`, `not_yet_valid`, `malformed`, `invalid` | The bearer is not a token this control plane minted as it stands. | The caller at `peer`. |
+| `missing` | The RPC carried no bearer at all. | The caller at `peer`. |
+
+For `expired` (and `not_yet_valid`) the line also names the attempt the
+credential belonged to (`ti`, `run`, `dag`, `task`, `try`, `epoch`) and when it
+lapsed (`expired_at`, `expired_for`), because the token's signature verified.
+For every other reason the token's claims are not trusted, so they are not
+logged. The token itself is never logged. The line is rate limited to ten per
+reason per minute, and the first line after a quiet minute reports how many
+were left out in `suppressed`; the metric
+`dexaflow_agent_token_rejections_total{reason}` counts every refusal.
+
+```bash
+kubectl logs deploy/<release> -c leoflow-server \
+  | jq 'select(.msg == "rejected agent bearer token") | {reason, run, task, try, expired_at, peer}'
+```
+
 ## Observability
 
 - **Metrics:** Prometheus at `:9090/metrics` (scheduler, dispatch, inline

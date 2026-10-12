@@ -41,6 +41,9 @@ type Metrics struct {
 	// Agent credentials: task tokens authenticated without an attempt_epoch
 	// claim, accepted under the epoch-0 rule (ADR 0051 amendment).
 	AgentLegacyAttemptTokens prometheus.Counter
+	// AgentTokenRejections counts agent RPCs refused for their bearer token, by
+	// reason (#1125).
+	AgentTokenRejections *prometheus.CounterVec
 	// Reconciler: durable SUCCESS records settled over a reaper's provisional
 	// infra mark, by the mark overridden (ADR 0052 amendment).
 	ReconcileInfraOverrides *prometheus.CounterVec
@@ -170,6 +173,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 				"or one an old replica renewed or exchanged during a rolling upgrade. Reports from such a token are read as epoch 0. " +
 				"It falls to zero once the rollout has finished and every pre-upgrade attempt has finished; a later release rejects such tokens.",
 		}),
+
+		AgentTokenRejections: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_agent_token_rejections_total",
+			Help: "Agent RPCs refused for their bearer token, by reason: expired (the credential lapsed: the agent could not renew it for a whole TTL, " +
+				"or its pod started after it ran out), wrong_audience (a token for another surface), bad_signature (another signing key), " +
+				"wrong_issuer, not_yet_valid, malformed, invalid, or missing (no bearer at all).",
+		}, []string{"reason"}),
 
 		ReconcileInfraOverrides: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_reconcile_infra_override_total",
@@ -397,6 +407,12 @@ func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 // without an attempt_epoch claim (ADR 0051 amendment). It satisfies
 // agentrpc.LegacyTokenRecorder.
 func (m *Metrics) RecordLegacyAttemptToken() { m.AgentLegacyAttemptTokens.Inc() }
+
+// RecordAgentTokenRejection counts one agent RPC refused for its bearer token.
+// It satisfies agentrpc.TokenRejectionRecorder.
+func (m *Metrics) RecordAgentTokenRejection(reason string) {
+	m.AgentTokenRejections.WithLabelValues(reason).Inc()
+}
 
 // RecordInfraOverride counts one durable SUCCESS settled over an infra mark.
 // It satisfies executor.InfraOverrideRecorder.

@@ -1174,9 +1174,11 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
-	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment).
+	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment)
+	// and refused agent bearers by reason (#1125).
 	if metrics != nil {
 		agentSrv.SetLegacyTokenRecorder(metrics)
+		agentSrv.SetTokenRejectionRecorder(metrics)
 	}
 	// The scheduler loop, its reapers and the janitors run on their own pool
 	// when database.scheduler_max_conns is set, so API traffic cannot starve
