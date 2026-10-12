@@ -899,7 +899,8 @@ type RetentionSection struct {
 	DryRun bool `mapstructure:"dry_run"`
 	// Interval is how often a cycle runs. Default 1h.
 	Interval time.Duration `mapstructure:"interval"`
-	// BatchSize caps the rows one DELETE statement removes. Default 1000.
+	// BatchSize caps the rows one DELETE statement removes, except the task
+	// instances of one run larger than it, which go together. Default 1000.
 	BatchSize int `mapstructure:"batch_size"`
 	// BatchPause is the sleep between two batches, so the janitor never holds
 	// the database busy. Default 100ms.

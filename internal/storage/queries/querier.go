@@ -142,6 +142,15 @@ type Querier interface {
 	DeletePool(ctx context.Context, arg DeletePoolParams) (int64, error)
 	DeleteSystemAuditLog(ctx context.Context, arg DeleteSystemAuditLogParams) (int64, error)
 	DeleteTaskInstanceHistoryOfRuns(ctx context.Context, arg DeleteTaskInstanceHistoryOfRunsParams) (int64, error)
+	// Deletes the task instances of whole runs only, never part of a run's: a run
+	// left with some of its task instances could be cleared between two batches,
+	// and the clear re-opens it resetting only the instances it finds, so the
+	// deleted tasks would never run and the run would never settle. A run whose
+	// task instances are all gone is safe to clear: it re-opens queued with none,
+	// and the scheduler materializes it again. Runs are taken in id order while
+	// their task instances fit row_limit; first_run_always lets the first run go
+	// whole even when it alone exceeds the limit, so a run larger than a batch is
+	// still deleted (the janitor sets it when the batch has its whole limit left).
 	DeleteTaskInstancesOfRuns(ctx context.Context, arg DeleteTaskInstancesOfRunsParams) (int64, error)
 	DeleteTaskStateHistoryOfRuns(ctx context.Context, arg DeleteTaskStateHistoryOfRunsParams) (int64, error)
 	DeleteTenantAuditLog(ctx context.Context, arg DeleteTenantAuditLogParams) (int64, error)

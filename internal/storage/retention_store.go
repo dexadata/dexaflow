@@ -156,7 +156,11 @@ func deleteRunRows(ctx context.Context, q *queries.Queries, tid pgtype.UUID, run
 			return q.DeleteXComIndexOfRuns(ctx, queries.DeleteXComIndexOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
 		}},
 		{&c.TaskInstances, func(n int32) (int64, error) {
-			return q.DeleteTaskInstancesOfRuns(ctx, queries.DeleteTaskInstancesOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
+			// Whole runs only (see DeleteTaskInstancesOfRuns); a run larger than
+			// the batch goes in a batch that has its whole limit left.
+			return q.DeleteTaskInstancesOfRuns(ctx, queries.DeleteTaskInstancesOfRunsParams{
+				TenantID: tid, RunIds: runs, RowLimit: int64(n), FirstRunAlways: n == limit,
+			})
 		}},
 		{&c.DagRuns, func(n int32) (int64, error) {
 			return q.DeleteDagRunsByID(ctx, queries.DeleteDagRunsByIDParams{TenantID: tid, RunIds: runs, RowLimit: n})
@@ -172,7 +176,9 @@ func deleteRunRows(ctx context.Context, q *queries.Queries, tid pgtype.UUID, run
 			return retention.Counts{}, fmt.Errorf("deleting expired run rows: %w", err)
 		}
 		*st.n = n
-		left -= int32(n) //nolint:gosec // n <= left, an int32
+		// n can exceed left only for the task instances of one run larger than
+		// the batch, which ends the batch.
+		left -= int32(min(n, int64(left))) //nolint:gosec // bounded by left, an int32
 		if left <= 0 {
 			break
 		}

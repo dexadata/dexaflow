@@ -76,11 +76,26 @@ WHERE id IN (
   LIMIT sqlc.arg(row_limit));
 
 -- name: DeleteTaskInstancesOfRuns :execrows
-DELETE FROM task_instances
-WHERE id IN (
-  SELECT ti.id FROM task_instances ti
-  WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = ANY(sqlc.arg(run_ids)::uuid[])
-  LIMIT sqlc.arg(row_limit));
+-- Deletes the task instances of whole runs only, never part of a run's: a run
+-- left with some of its task instances could be cleared between two batches,
+-- and the clear re-opens it resetting only the instances it finds, so the
+-- deleted tasks would never run and the run would never settle. A run whose
+-- task instances are all gone is safe to clear: it re-opens queued with none,
+-- and the scheduler materializes it again. Runs are taken in id order while
+-- their task instances fit row_limit; first_run_always lets the first run go
+-- whole even when it alone exceeds the limit, so a run larger than a batch is
+-- still deleted (the janitor sets it when the batch has its whole limit left).
+DELETE FROM task_instances d
+WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_run_id IN (
+  SELECT sized.dag_run_id FROM (
+    SELECT ti.dag_run_id, count(*) AS n,
+           sum(count(*)) OVER (ORDER BY ti.dag_run_id) AS running
+    FROM task_instances ti
+    WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = ANY(sqlc.arg(run_ids)::uuid[])
+    GROUP BY ti.dag_run_id
+  ) sized
+  WHERE sized.running <= sqlc.arg(row_limit)::bigint
+     OR (sqlc.arg(first_run_always)::boolean AND sized.running = sized.n));
 
 -- name: DeleteDagRunsByID :execrows
 -- Removes the locked runs whose children are all gone, up to row_limit.

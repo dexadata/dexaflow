@@ -9,7 +9,9 @@ body: |-
   `retention.batch_size` rows (default 1000) with a `retention.batch_pause`
   (default 100ms) between them and at most `retention.max_rows_per_cycle`
   (default 100000) rows per `retention.interval` (default 1h), with tenants
-  and the audit log taking turns. Active runs, runs with a task instance that
+  and the audit log taking turns. A run's task instances are deleted all
+  together, so a run larger than a batch never ends up re-opened by a clear
+  with part of its tasks missing. Active runs, runs with a task instance that
   is not settled (including one a clear just reset, even while the batch is
   running: the batch locks and re-checks the task instances before it deletes)
   and runs with a live staging volume are never touched. The janitor uses the

@@ -646,9 +646,13 @@ no staging volume of it is still live. It goes with its task instances, state
 history, attempt history and XCom index rows, children first. Every batch is
 one short transaction of at most `batch_size` rows, run rows included; a run
 with more rows than that is finished by later batches, each of which checks
-again that the run is still eligible. Before deleting, a batch locks the task
-instances of its runs and checks them again, so a run a clear touched after it
-was selected is kept whole; a run a clear is writing at that moment is skipped
+again that the run is still eligible. A run's task instances are deleted all
+together or not at all, so a clear between two batches never re-opens a run
+missing some of its tasks (a run whose task instances are all gone re-runs
+from scratch); a run with more task instances than `batch_size` has them
+removed alone in one batch, which is the only time a batch exceeds it.
+Before deleting, a batch locks the task instances of its runs and checks them
+again, so a run a clear touched after it was selected is kept whole; a run a clear is writing at that moment is skipped
 until a later cycle instead of waited on. Active and recent runs are never
 touched. The janitor sleeps `batch_pause` between batches and a cycle stops
 once it deleted `max_rows_per_cycle` rows; the rest waits for the next cycle.
@@ -674,7 +678,7 @@ keys; set them through `extraEnv`.
 | `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `0` (off) | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. |
 | `DEXAFLOW_RETENTION_DRY_RUN` | `false` | both | Only count what a cycle would delete; delete nothing. |
 | `DEXAFLOW_RETENTION_INTERVAL` | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |
-| `DEXAFLOW_RETENTION_BATCH_SIZE` | `1000` | both | Most rows one DELETE statement removes (1 to 50000). Also caps the runs per batch at 100. |
+| `DEXAFLOW_RETENTION_BATCH_SIZE` | `1000` | both | Most rows one DELETE statement removes (1 to 50000), except the task instances of a single run larger than that, which go together. Also caps the runs per batch at 100. |
 | `DEXAFLOW_RETENTION_BATCH_PAUSE` | `100ms` | both | Sleep between two batches, so the janitor never keeps the database busy. |
 | `DEXAFLOW_RETENTION_MAX_ROWS_PER_CYCLE` | `100000` | both | A cycle starts no new batch once it deleted this many rows, children included. |
 
