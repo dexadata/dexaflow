@@ -325,6 +325,25 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 	})
 }
 
+// FailTaskInfra marks a task instance failed for an infrastructure reason by
+// its ID (last_failure_kind 'infra', confirmed), guarded like FailTask, so the
+// planner re-places it on the infra budget instead of spending a task retry.
+// It implements part of executor.OutcomeReporter for a pod the cluster stopped
+// (ADR 0051, #1595).
+func (s *ExecutionStore) FailTaskInfra(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return err
+	}
+	msg := reason
+	return s.q.FailTaskInstanceInfraIfActive(ctx, queries.FailTaskInstanceInfraIfActiveParams{
+		ID:           tid,
+		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
+		ErrorMessage: &msg,
+	})
+}
+
 // SucceedTask marks a task instance succeeded by its ID — recovering a success
 // whose report was lost (ADR 0052) — guarded by the attempt and the active states.
 // A settle on an already-terminal or superseded row is a no-op.

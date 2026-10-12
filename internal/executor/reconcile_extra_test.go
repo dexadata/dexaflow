@@ -64,6 +64,10 @@ func (errReporter) FailTask(context.Context, string, int, int, string) error {
 	return errors.New("metadatabase unavailable")
 }
 
+func (errReporter) FailTaskInfra(context.Context, string, int, int, string) error {
+	return errors.New("metadatabase unavailable")
+}
+
 func (errReporter) SucceedTask(context.Context, string, int, int) error {
 	return errors.New("metadatabase unavailable")
 }

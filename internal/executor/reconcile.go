@@ -31,6 +31,10 @@ const (
 	settleSucceeded
 	// settleReschedule parks the task instance in up_for_reschedule.
 	settleReschedule
+	// settleInfra records the task instance as failed for an infrastructure
+	// reason (ADR 0051): the cluster stopped the pod, so the task is re-placed on
+	// the infra budget and keeps its own retries (#1595).
+	settleInfra
 )
 
 // verdict is the reconciler's classification of a task pod: whether it is terminal
@@ -38,7 +42,7 @@ const (
 type verdict struct {
 	terminal   bool       // the pod is done; eligible for GC on age
 	settle     settleKind // what to record for the task instance
-	reason     string     // failure reason (settleFailed)
+	reason     string     // failure reason (settleFailed, settleInfra)
 	at         time.Time  // next-poke time (settleReschedule)
 	fromRecord bool       // a durable outcome record drove this, not pod phase
 }
@@ -69,6 +73,12 @@ func classifyPod(pod *corev1.Pod) verdict {
 		case taskoutcome.Success:
 			return verdict{terminal: true, settle: settleSucceeded, fromRecord: true}
 		case taskoutcome.Failed:
+			// The agent writes a FAILED record when it catches the SIGTERM of a
+			// node shutdown or an eviction. The record says the task stopped, not
+			// why: the pod says the cluster stopped it, so the failure is infra.
+			if podWasDisrupted(pod) {
+				return verdict{terminal: true, settle: settleInfra, reason: disruptionReason(pod), fromRecord: true}
+			}
 			return verdict{terminal: true, settle: settleFailed, reason: failedReason(rec, pod), fromRecord: true}
 		case taskoutcome.Reschedule:
 			at, _ := rec.At() // Decode guaranteed a parseable time
@@ -81,6 +91,9 @@ func classifyPod(pod *corev1.Pod) verdict {
 	// recorded as failed so retries and finalization proceed.
 	switch pod.Status.Phase {
 	case corev1.PodFailed:
+		if podWasDisrupted(pod) {
+			return verdict{terminal: true, settle: settleInfra, reason: disruptionReason(pod)}
+		}
 		return verdict{terminal: true, settle: settleFailed, reason: podFailureReason(pod)}
 	case corev1.PodSucceeded:
 		return verdict{terminal: true, settle: settleNothing}
@@ -94,6 +107,67 @@ func classifyPod(pod *corev1.Pod) verdict {
 	default:
 		return verdict{terminal: false}
 	}
+}
+
+// disruptionPodReasons are the pod-level reasons the kubelet writes when it,
+// not the task, ended the pod: a node-pressure eviction (Evicted), a graceful
+// node shutdown (Shutdown and NodeShutdown on older kubelets, Terminated on
+// newer ones), and an admission refusal after the node accepted the pod
+// (OutOfcpu, OutOfmemory, UnexpectedAdmissionError). They are matched as well as
+// the DisruptionTarget condition because kubelets before that condition, and
+// the admission refusals, set only the reason.
+var disruptionPodReasons = map[string]bool{
+	"Evicted":                  true,
+	"Shutdown":                 true,
+	"NodeShutdown":             true,
+	"Terminated":               true,
+	"OutOfcpu":                 true,
+	"OutOfmemory":              true,
+	"UnexpectedAdmissionError": true,
+}
+
+// podWasDisrupted reports whether the cluster stopped the task pod for a reason
+// of its own (ADR 0051 infra rail, #1595): the pod carries DisruptionTarget=True
+// (TerminationByKubelet, PreemptionByScheduler, EvictionByEvictionAPI,
+// DeletionByTaintManager) or one of disruptionPodReasons. An OOMKilled task
+// container is never a disruption: the kernel enforced the task's own memory
+// limit, which is the task's failure to fix, so it stays on the task rail even
+// on a pod that also carries the condition.
+func podWasDisrupted(pod *corev1.Pod) bool {
+	if podWasOOMKilled(pod) {
+		return false
+	}
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.DisruptionTarget && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return disruptionPodReasons[pod.Status.Reason]
+}
+
+// disruptionReason describes an infra settle for the operator. It starts with
+// the pod_disrupted mark, the same "<mark>: " shape the reapers use (agent_lost,
+// pod_lost, dispatch_lost), and names what the cluster reported: the condition's
+// reason and the pod's reason and message. Every part comes from
+// kubelet-supplied fields, so the result is bounded.
+func disruptionReason(pod *corev1.Pod) string {
+	var parts []string
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.DisruptionTarget && c.Status == corev1.ConditionTrue && c.Reason != "" {
+			parts = append(parts, c.Reason)
+		}
+	}
+	if pod.Status.Reason != "" {
+		parts = append(parts, pod.Status.Reason)
+	}
+	cause := "the cluster stopped the task pod"
+	if len(parts) > 0 {
+		cause += " (" + strings.Join(parts, ", ") + ")"
+	}
+	if pod.Status.Message != "" {
+		cause += ": " + pod.Status.Message
+	}
+	return boundReason("pod_disrupted: " + cause + "; re-placed without spending a task retry.")
 }
 
 // outcomeRecord decodes the durable outcome record from the terminated task
@@ -400,6 +474,11 @@ type OutcomeReporter interface {
 	FailTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error
 	SucceedTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error
 	RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, at time.Time) error
+	// FailTaskInfra records the attempt as failed for an infrastructure reason
+	// (last_failure_kind 'infra', confirmed at once: the terminal pod is the
+	// confirmation), so the planner re-places it on the infra budget instead of
+	// spending a task retry (ADR 0051, #1595).
+	FailTaskInfra(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error
 }
 
 // PodSnapshotter supplies the reconciler's task-pod set from a local cache instead
@@ -621,6 +700,8 @@ func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber, 
 		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, epoch, v.at)
 	case settleFailed:
 		return r.reporter.FailTask(ctx, tiID, tryNumber, epoch, v.reason)
+	case settleInfra:
+		return r.reporter.FailTaskInfra(ctx, tiID, tryNumber, epoch, v.reason)
 	case settleNothing:
 		return nil
 	default:
