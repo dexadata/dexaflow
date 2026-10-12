@@ -1,0 +1,12 @@
+kind: Fixed
+body: |-
+  **Behind a load balancer or a service mesh, a task's final report now
+  outlasts a control-plane outage.** There the outage reaches the agent as an
+  HTTP 500 from the proxy or a stream reset mid-call, which gRPC reports as
+  `Unknown` or `Internal` rather than `Unavailable`, and the agent gave up on
+  the terminal report after one attempt, leaving the task to the slower
+  recovery by the reconciler. The terminal report now retries these
+  transport errors like `Unavailable`. An `Unknown` returned by the control
+  plane itself is still not retried, and an `Internal` one is still retried
+  for at most two minutes (#908).
+time: 2026-10-12T12:10:00.000000000-03:00
