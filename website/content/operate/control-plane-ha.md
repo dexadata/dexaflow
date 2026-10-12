@@ -174,18 +174,23 @@ from the workers' side:
   sitting idle treats that as a clean recycle: it exits `0`, with no `ERROR`
   line and no failed pod. A hard-killed leader is the same *code* but not the
   same *timing*. A killed process has its sockets torn down by the kernel, so
-  the worker's blocked receive fails promptly with `Unavailable` too; a lost
-  **node** closes nothing, and nothing pings — the agent's dial configures no
-  gRPC keepalive, and the control plane deliberately enables no server-initiated
-  keepalive either (it only *permits* a client's pings on an otherwise idle
-  stream, so gRPC does not `GOAWAY` them as abusive). "Nothing pings" is true of
-  gRPC only: Go's dialer still enables TCP keepalive at a 15s period, so the
-  kernel gives up after roughly 2.5 minutes on Linux defaults rather than never,
-  and the assignment stream's own idle TTL (5 minutes by default) is a second
-  backstop. So that worker sits blocked on a stream to a control plane that is
-  already gone for minutes, not seconds — bounded, but far longer than the
-  prompt failure a killed process produces. Tracked as
-  [#946](https://github.com/dexadata/dexaflow/issues/946). The new leader's warm-pool
+  the worker's blocked receive fails promptly with `Unavailable` too. A lost
+  **node** closes nothing, so the agent finds out by pinging: its gRPC channel
+  sends a keepalive ping after 20 seconds without traffic, including on an idle
+  assignment stream, and closes the connection when a ping goes unanswered for
+  10 seconds, so the worker sees `Unavailable` within about 30 seconds and
+  recycles. The control plane permits those pings (one every 10 seconds at
+  most, with or without an active stream) and sends none of its own: a
+  vanished agent is found by the heartbeat reapers, and an assignment sent to
+  a vanished warm worker is reclaimed when its ack lease expires.
+- **No agent call waits on a silent control plane.** Every unary call the
+  agent makes carries a deadline: 10 seconds for a heartbeat, so one
+  unanswered heartbeat never stalls the heartbeat loop into an `agent_lost`
+  reap of a healthy task, and 30 seconds for the rest (task spec, state
+  reports, XCom, secrets). A state report that times out is retried like any
+  other transient failure. These are fixed values, not settings
+  ([#946](https://github.com/dexadata/dexaflow/issues/946)).
+- **The warm-pool reconciler rebuilds the buffer.** The new leader's warm-pool
   reconciler is leader-gated as well, and it counts live warm pods from the
   **apiserver** and busy ones from the durable `warm_worker_id` binding, never
   from the registry, so it rebuilds each active DAG version's
