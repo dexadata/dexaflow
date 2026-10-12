@@ -1678,11 +1678,7 @@ func (r *Repository) ListVariables(ctx context.Context, tenant string, limit, of
 	}
 	out := make([]domain.Variable, 0, len(rows))
 	for _, v := range rows {
-		dv, verr := r.toVariable(v.Key, v.Value, v.Description)
-		if verr != nil {
-			return nil, 0, verr
-		}
-		out = append(out, dv)
+		out = append(out, r.listVariable(v.Key, v.Value, v.Description))
 	}
 	return out, int(total), nil
 }

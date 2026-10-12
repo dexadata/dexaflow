@@ -116,3 +116,27 @@ func TestOpenVariableEncryptedNeedsTheKey(t *testing.T) {
 		t.Error("a wrong key must fail, never return the ciphertext as the value")
 	}
 }
+
+// A listing marks a value no key opens instead of failing (#507): no value,
+// never the ciphertext, and the description kept. Reading it alone is an
+// ErrValueUnreadable error naming the key.
+func TestListVariableMarksAnUnreadableValue(t *testing.T) {
+	writer := &Repository{cipher: variableTestCipher(t, 1), varEncryption: VariableEncryptionOn}
+	stored, err := writer.sealVariable("v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desc := "a note"
+	wrong := &Repository{cipher: variableTestCipher(t, 99)}
+	got := wrong.listVariable("lost", stored, &desc)
+	want := domain.Variable{Key: "lost", Description: "a note", Encrypted: true, Unreadable: true}
+	if got != want {
+		t.Errorf("listVariable = %+v, want %+v", got, want)
+	}
+	if _, err := wrong.toVariable("lost", stored, &desc); !errors.Is(err, domain.ErrValueUnreadable) || !strings.Contains(err.Error(), `"lost"`) {
+		t.Errorf("toVariable = %v, want ErrValueUnreadable naming the key", err)
+	}
+	if got := writer.listVariable("ok", stored, nil); got.Unreadable || got.Value != "v" {
+		t.Errorf("readable listVariable = %+v", got)
+	}
+}

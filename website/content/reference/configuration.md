@@ -324,9 +324,19 @@ with the same key and cipher as connections:
 
 `on` needs a usable `DEXAFLOW_SECRET_KEY`: without one the server refuses to
 start rather than keep storing plaintext. With the default `off`, an install
-without a key works as before. A Variable that no configured key opens is left
-as it is: the API returns an error for it, and delivery to a task pod skips it
-with a warning, as it does for a connection.
+without a key works as before. A Variable that no configured key opens (after a
+rotation that dropped the old key, for example) is left as it is, and the
+server logs a warning naming it:
+
+- the Variables list (`GET /api/v2/variables`) still returns the tenant's other
+  Variables, and shows this one with its value masked (`***`) and
+  `value_unreadable: true`;
+- reading it alone (`GET /api/v2/variables/<key>`) answers `500` with a message
+  that names the Variable;
+- delivery to a task pod skips it with a warning, as it does for a connection.
+
+To recover, add the key it was encrypted with back as a later
+`DEXAFLOW_SECRET_KEY` entry, or delete the Variable and set it again.
 
 A value cannot start with `dexaflow:enc:v1:`, the tag that marks an encrypted
 value, in any mode.

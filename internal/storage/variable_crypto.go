@@ -97,13 +97,31 @@ func (r *Repository) openVariable(stored string) (plain string, sealed bool, err
 	return plain, true, nil
 }
 
-// toVariable maps a stored row to the domain type, opening a sealed value.
+// toVariable maps a stored row to the domain type, opening a sealed value. A
+// sealed value no configured key opens is a domain.ErrValueUnreadable error
+// whose message names the variable and the way out; the underlying cause
+// stays in the wrap chain for the log.
 func (r *Repository) toVariable(key, stored string, desc *string) (domain.Variable, error) {
 	plain, sealed, err := r.openVariable(stored)
 	if err != nil {
-		return domain.Variable{}, fmt.Errorf("variable %q: %w", key, err)
+		return domain.Variable{}, fmt.Errorf("%w: %w", domain.Safef(domain.ErrValueUnreadable,
+			"variable %q is encrypted with a secret key this server does not have; add that key back as a later secret key entry, or delete the variable and set it again", key), err)
 	}
 	return domain.Variable{Key: key, Value: plain, Description: strOrEmpty(desc), Encrypted: sealed}, nil
+}
+
+// listVariable maps a stored row for a listing. A value no configured key
+// opens does not fail the listing: the variable is returned marked Unreadable
+// with no value, and a warning is logged, the rule delivery to task pods
+// follows (deliverVariable).
+func (r *Repository) listVariable(key, stored string, desc *string) domain.Variable {
+	v, err := r.toVariable(key, stored, desc)
+	if err != nil {
+		slog.Warn("listing variable without its value: decrypt failed (key rotated or wrong DEXAFLOW_SECRET_KEY?)",
+			"key", key, "error", err)
+		return domain.Variable{Key: key, Description: strOrEmpty(desc), Encrypted: true, Unreadable: true}
+	}
+	return v
 }
 
 // deliverVariable opens a value for delivery to a task pod. One value no key

@@ -4,6 +4,7 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -183,6 +184,31 @@ func TestVariableEncryptionUnreadableValue(t *testing.T) {
 	}
 	if _, present := all["lost"]; present {
 		t.Error("an undecryptable variable must be skipped, never delivered as ciphertext")
+	}
+	// The API list keeps the tenant's other variables and marks the bad one,
+	// instead of failing the whole page.
+	listed, total, err := repo.ListVariables(ctx, "default", 100, 0)
+	if err != nil || total != 2 || len(listed) != 2 {
+		t.Fatalf("ListVariables = %+v, %d, %v; want both variables", listed, total, err)
+	}
+	for _, v := range listed {
+		switch v.Key {
+		case "lost":
+			if !v.Unreadable || !v.Encrypted || v.Value != "" {
+				t.Errorf("lost = %+v, want unreadable, encrypted, no value", v)
+			}
+		case "ok":
+			if v.Unreadable || v.Value != "y" {
+				t.Errorf("ok = %+v", v)
+			}
+		}
+	}
+	// Reading it alone is an error a caller can recognize, with a message that
+	// says what happened.
+	_, err = repo.GetVariable(ctx, "default", "lost")
+	var safe *domain.SafeError
+	if !errors.Is(err, domain.ErrValueUnreadable) || !errors.As(err, &safe) || !strings.Contains(safe.ClientMessage(), `"lost"`) {
+		t.Errorf("GetVariable(lost) = %v, want a SafeError of class ErrValueUnreadable naming the key", err)
 	}
 	repo.SetVariableEncryption(storage.VariableEncryptionDecrypt)
 	res, err := repo.ConvergeVariableEncryption(ctx)

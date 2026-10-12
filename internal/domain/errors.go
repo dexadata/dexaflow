@@ -28,3 +28,8 @@ var ErrSchemaNotCurrent = errors.New("database schema is not current")
 // request is well formed, and repeating it will not succeed until the limit or
 // the tenant's usage changes.
 var ErrLimitExceeded = errors.New("tenant limit exceeded")
+
+// ErrValueUnreadable is returned when a stored value is encrypted and no
+// configured secret key opens it. It is a server configuration fault, not the
+// caller's: the API answers 500, with a message that says what happened.
+var ErrValueUnreadable = errors.New("stored value cannot be decrypted")

@@ -10,5 +10,7 @@ body: |-
   0.5.3 does: turn it on once every replica runs 0.5.4, and before rolling back
   to 0.5.3 set it to `decrypt` and restart, which restores the plaintext. `on`
   and `decrypt` refuse to start without a usable key. A Variable value can no
-  longer start with `dexaflow:enc:v1:`, the tag of an encrypted value.
+  longer start with `dexaflow:enc:v1:`, the tag of an encrypted value. A
+  Variable no configured key opens is listed with its value masked and
+  `value_unreadable: true` instead of failing the whole list.
 time: 2026-10-09T12:00:00.000000000-03:00

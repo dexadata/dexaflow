@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 type fakeVariableStore struct {
 	vars     map[string]domain.Variable
 	setCalls []domain.Variable
+	// getErr, when set, is what GetVariable returns for every key.
+	getErr error
 }
 
 func (f *fakeVariableStore) ListVariables(_ context.Context, _ string, _, _ int) ([]domain.Variable, int, error) {
@@ -27,6 +30,9 @@ func (f *fakeVariableStore) ListVariables(_ context.Context, _ string, _, _ int)
 }
 
 func (f *fakeVariableStore) GetVariable(_ context.Context, _, key string) (domain.Variable, error) {
+	if f.getErr != nil {
+		return domain.Variable{}, f.getErr
+	}
 	if v, ok := f.vars[key]; ok {
 		return v, nil
 	}
@@ -261,5 +267,50 @@ func TestVariableDTOReportsEncryption(t *testing.T) {
 	plain := toVariableDTO(domain.Variable{Key: "api_token", Value: "t"})
 	if plain.IsEncrypted || plain.Value != secretMask {
 		t.Errorf("plaintext variable DTO = %+v", plain)
+	}
+}
+
+// A Variable no configured key opens (#507) is listed with the others, its
+// value masked and flagged value_unreadable, so one bad row does not empty the
+// tenant's Variables page. Readable variables carry no flag.
+func TestVariableListMarksAnUnreadableValue(t *testing.T) {
+	store := &fakeVariableStore{vars: map[string]domain.Variable{
+		"lost":   {Key: "lost", Encrypted: true, Unreadable: true},
+		"region": {Key: "region", Value: "eu", Encrypted: true},
+	}}
+	rec := authGet(variablesServer(store), http.MethodGet, "/api/v2/variables", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v2/variables = %d, body %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Variables []map[string]any `json:"variables"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]map[string]any{}
+	for _, v := range out.Variables {
+		got[v["key"].(string)] = v
+	}
+	if lost := got["lost"]; lost == nil || lost["value"] != secretMask || lost["value_unreadable"] != true {
+		t.Errorf("unreadable variable = %v, want a masked value and value_unreadable true", lost)
+	}
+	if region := got["region"]; region == nil || region["value"] != "eu" {
+		t.Errorf("readable variable = %v", region)
+	} else if _, flagged := region["value_unreadable"]; flagged {
+		t.Errorf("readable variable carries value_unreadable: %v", region)
+	}
+}
+
+// Reading one unreadable Variable is still an error, but its detail tells the
+// operator what happened instead of the generic internal-error phrase.
+func TestVariableGetUnreadableExplainsTheError(t *testing.T) {
+	store := &fakeVariableStore{getErr: domain.Safef(domain.ErrValueUnreadable, "variable %q is encrypted with a key this server does not have", "lost")}
+	rec := authGet(variablesServer(store), http.MethodGet, "/api/v2/variables/lost", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/v2/variables/lost = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `variable \"lost\" is encrypted with a key this server does not have`) {
+		t.Errorf("body %s does not explain the failure", body)
 	}
 }
