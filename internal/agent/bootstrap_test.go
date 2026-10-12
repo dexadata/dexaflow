@@ -89,7 +89,7 @@ func TestReportBootstrapFailureWritesADecodableRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "termination-log")
 	ReportBootstrapFailure(path, StageExchange, status.Error(codes.Unauthenticated, "projected token is not valid"))
 
-	raw, err := os.ReadFile(path) //nolint:gosec // G304: test-owned temp path.
+	raw, err := os.ReadFile(path) // G304: test-owned temp path.
 	if err != nil {
 		t.Fatalf("bootstrap failure must leave a termination message: %v", err)
 	}

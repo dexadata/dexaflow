@@ -202,7 +202,7 @@ func ensureDagVenv(ctx context.Context, cmd *cobra.Command, home, dagID, runtime
 // dagVenvRuntimeChecksum returns the checksum recorded by the most recent
 // runtime install into the per-DAG venv (empty when no marker yet).
 func dagVenvRuntimeChecksum(home, dagID string) string {
-	b, err := os.ReadFile(dagVenvRuntimeMarkerPath(home, dagID)) //nolint:gosec // path derived from the per-user dev home + sanitized dag_id
+	b, err := os.ReadFile(dagVenvRuntimeMarkerPath(home, dagID)) // path derived from the per-user dev home + sanitized dag_id
 	if err != nil {
 		return ""
 	}
@@ -212,7 +212,7 @@ func dagVenvRuntimeChecksum(home, dagID string) string {
 // dagVenvDepsUpToDate reports whether the per-DAG venv already has exactly
 // these deps installed, by signature comparison.
 func dagVenvDepsUpToDate(home, dagID string, deps []string) bool {
-	b, err := os.ReadFile(dagVenvDepsMarkerPath(home, dagID)) //nolint:gosec // path derived from the per-user dev home + sanitized dag_id
+	b, err := os.ReadFile(dagVenvDepsMarkerPath(home, dagID)) // path derived from the per-user dev home + sanitized dag_id
 	if err != nil {
 		return false
 	}
@@ -264,7 +264,7 @@ func dagVenvMinorMismatch(dir, pythonVersion string) (stale bool, builtOn int, e
 // leoflow_runtime alone would leave a venv built before that package existed
 // looking healthy whenever the checksum signal is empty.
 func ensureDagVenvRuntime(ctx context.Context, cmd *cobra.Command, home, dagID, runtimeSrc, py string, inst installer) error {
-	check := exec.CommandContext(ctx, py, "-c", "import leoflow_runtime, leoflow, dexaflow") //nolint:gosec // py is a managed per-DAG venv interpreter
+	check := exec.CommandContext(ctx, py, "-c", "import leoflow_runtime, leoflow, dexaflow") // py is a managed per-DAG venv interpreter
 	importOK := check.Run() == nil
 	want, cerr := runtimeSrcChecksum(runtimeSrc)
 	need := !importOK

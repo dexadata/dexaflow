@@ -33,7 +33,7 @@ func TestRunParserSetsProjectConfigEnv(t *testing.T) {
 	// Stub prints the env var and exits 0 — the assertion is that we
 	// observe it set to the marshaled JSON.
 	stub := "#!/bin/sh\nprintf '%s' \"$LEOFLOW_PROJECT_CONFIG_JSON\"\nexit 0\n"
-	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil { //nolint:gosec // test fixture
+	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil { // test fixture
 		t.Fatalf("write stub: %v", err)
 	}
 
@@ -97,7 +97,7 @@ func TestRunParserOmitsEnvWhenConfigNil(t *testing.T) {
 		"else\n" +
 		"  echo UNSET\n" +
 		"fi\nexit 0\n"
-	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil { //nolint:gosec // test fixture
+	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil { // test fixture
 		t.Fatalf("write stub: %v", err)
 	}
 

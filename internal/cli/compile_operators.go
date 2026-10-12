@@ -14,7 +14,7 @@ import (
 // validateOperatorProvidersFile reads a produced dag.json and validates that every
 // airflow_operator task's provider is declared (ADR 0040 A5).
 func validateOperatorProvidersFile(path string, cfg *domain.LeoflowConfig) error {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: output path is operator-supplied on the CLI.
+	data, err := os.ReadFile(path) // G304: output path is operator-supplied on the CLI.
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}

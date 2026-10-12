@@ -115,7 +115,7 @@ func devDBPort(devDir string) int {
 
 // readPort reads a positive integer port from a file, if present and valid.
 func readPort(path string) (int, bool) {
-	b, err := os.ReadFile(path) //nolint:gosec // path derived from the per-user Dexaflow home
+	b, err := os.ReadFile(path) // path derived from the per-user Dexaflow home
 	if err != nil {
 		return 0, false
 	}

@@ -24,6 +24,9 @@ ARG GOLANGCI_LINT_VERSION
 #   - curl: golangci-lint installer
 #   - build-essential: cgo for the few deps that touch it
 #   - ca-certificates: HTTPS verifies on the curl pulls
+# Debian package versions are not pinned: the bookworm mirror drops old
+# versions, so an exact pin breaks the build; this is a local test image.
+# hadolint ignore=DL3008
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl git build-essential \

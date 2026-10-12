@@ -67,7 +67,7 @@ func scaffoldProject(dir string) (string, error) {
 	}
 	for name, content := range files {
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil { //nolint:gosec // G306: scaffold files are non-sensitive source.
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil { // G306: scaffold files are non-sensitive source.
 			return "", fmt.Errorf("writing %s: %w", name, err)
 		}
 	}

@@ -36,7 +36,7 @@ func ExchangeToken(ctx context.Context, client agentv1.AgentServiceClient, token
 // whitespace (the kubelet writes the token without a trailing newline, but trim
 // defensively so the bearer matches exactly what the apiserver signed).
 func ReadTokenFile(path string) (string, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // G304: token path is set by the control plane on the pod spec.
+	raw, err := os.ReadFile(path) // G304: token path is set by the control plane on the pod spec.
 	if err != nil {
 		return "", fmt.Errorf("reading projected token %q: %w", path, err)
 	}

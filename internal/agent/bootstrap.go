@@ -103,7 +103,7 @@ func ReportBootstrapFailure(path string, stage BootstrapStage, err error) {
 		slog.Warn("encoding bootstrap failure record", "error", encErr)
 		return
 	}
-	if werr := os.WriteFile(path, []byte(enc), 0o644); werr != nil { //nolint:gosec // G306: the kubelet reads this file; 0644 matches the outcome-record writer.
+	if werr := os.WriteFile(path, []byte(enc), 0o644); werr != nil { // G306: the kubelet reads this file; 0644 matches the outcome-record writer.
 		slog.Warn("writing bootstrap failure record", "path", path, "error", werr)
 	}
 }

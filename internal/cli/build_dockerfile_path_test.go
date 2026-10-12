@@ -20,7 +20,7 @@ func recordingBuilder(t *testing.T) (builder, record string) {
 	builder = filepath.Join(t.TempDir(), "fake-builder")
 	record = filepath.Join(t.TempDir(), "dockerfile.txt")
 	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -f ]; then printf %s \"$2\" > \"" + record + "\"; fi; shift; done\nexit 0\n"
-	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { // a test fixture that must be executable
 		t.Fatal(err)
 	}
 	return builder, record
@@ -38,7 +38,7 @@ func buildWithConfiguredDockerfile(t *testing.T, dir, dockerfile string) (string
 	cfg := &domain.LeoflowConfig{DagID: "d", Build: &domain.BuildConfig{Dockerfile: dockerfile}}
 	cfg.ApplyDefaults()
 	err := buildAndPush(cmd, dir, compileOptions{build: true, builder: builder, dockerfile: "Dockerfile"}, cfg, "img:t")
-	seen, rerr := os.ReadFile(record) //nolint:gosec // a path this test created
+	seen, rerr := os.ReadFile(record) // a path this test created
 	if rerr != nil {
 		return "", err
 	}
@@ -198,7 +198,7 @@ func TestTheDockerfileFlagIsNotConfinedToTheProject(t *testing.T) {
 	if err := buildAndPush(cmd, dir, o, cfg, "img:t"); err != nil {
 		t.Fatalf("an explicit --dockerfile was refused: %v", err)
 	}
-	seen, err := os.ReadFile(record) //nolint:gosec // a path this test created
+	seen, err := os.ReadFile(record) // a path this test created
 	if err != nil || string(seen) != filepath.Join(dir, rel) {
 		t.Errorf("the builder got -f %q (%v), want %q", seen, err, filepath.Join(dir, rel))
 	}

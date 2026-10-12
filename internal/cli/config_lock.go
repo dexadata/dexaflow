@@ -43,7 +43,7 @@ var errConfigLocked = errors.New("another dexaflow command is changing ~/.dexafl
 // user's next command cannot open.
 func lockConfigDir(dir string, mode configLockMode, wait bool) (func(), error) {
 	path := filepath.Join(dir, configLockName)
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // fixed name under the user's own ~/.dexaflow
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) // fixed name under the user's own ~/.dexaflow
 	if err != nil {
 		return nil, fmt.Errorf("opening the config lock %s: %w", path, err)
 	}
@@ -59,7 +59,7 @@ func lockConfigDir(dir string, mode configLockMode, wait bool) (func(), error) {
 // and otherwise proceeds unlocked: a read-only run (`migrate-key --dry-run`)
 // promises to create nothing, not even the lock file.
 func lockConfigDirIfPresent(dir string, mode configLockMode) (func(), error) {
-	f, err := os.OpenFile(filepath.Join(dir, configLockName), os.O_RDONLY, 0) //nolint:gosec // fixed name under the user's own ~/.dexaflow
+	f, err := os.OpenFile(filepath.Join(dir, configLockName), os.O_RDONLY, 0) // fixed name under the user's own ~/.dexaflow
 	if errors.Is(err, os.ErrNotExist) {
 		return func() {}, nil
 	}
@@ -77,7 +77,7 @@ func flockFile(f *os.File, mode configLockMode, wait bool) (func(), error) {
 	if !wait {
 		how |= syscall.LOCK_NB
 	}
-	if err := syscall.Flock(int(f.Fd()), how); err != nil { //nolint:gosec // a file descriptor fits an int
+	if err := syscall.Flock(int(f.Fd()), how); err != nil { // a file descriptor fits an int
 		_ = f.Close() //nolint:errcheck // the lock error is the one worth reporting
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, errConfigLocked
@@ -85,7 +85,7 @@ func flockFile(f *os.File, mode configLockMode, wait bool) (func(), error) {
 		return nil, fmt.Errorf("locking %s: %w", f.Name(), err)
 	}
 	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck,gosec // closing releases it anyway
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck // closing releases it anyway
 		_ = f.Close()                                   //nolint:errcheck // best effort
 	}, nil
 }

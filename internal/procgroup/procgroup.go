@@ -60,7 +60,7 @@ func Write(path string, r Record) error {
 // (fs.ErrNotExist); a malformed one is an error, never a zero group id, which
 // would address the caller's own process group.
 func Read(path string) (Record, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // the caller owns the record directory
+	data, err := os.ReadFile(path) // the caller owns the record directory
 	if err != nil {
 		return Record{}, err
 	}

@@ -25,8 +25,8 @@ func startGroup(t *testing.T, script string) int {
 	pgid := cmd.Process.Pid
 	// Collect the leader in the background so it never lingers as a zombie of
 	// the test process, which would keep the group readable as alive.
-	go func() { _ = cmd.Wait() }()                                 //nolint:errcheck // exit status is irrelevant here
-	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) }) //nolint:errcheck // best-effort cleanup
+	go func() { _ = cmd.Wait() }()                                 // exit status is irrelevant here
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) }) // best-effort cleanup
 	return pgid
 }
 

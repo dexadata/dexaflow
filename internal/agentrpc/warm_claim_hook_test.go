@@ -22,7 +22,7 @@ func TestStartedAckNotifiesClaimAfterBinding(t *testing.T) {
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return time.Hour }
 	var claims, bindsAtClaim atomic.Int32
 	reg.SetOnClaim(func() {
-		bindsAtClaim.Store(int32(len(store.warmBindingCalls()))) //nolint:gosec // tiny test count
+		bindsAtClaim.Store(int32(len(store.warmBindingCalls()))) // tiny test count
 		claims.Add(1)
 	})
 	srv.SetWarmPools(reg)

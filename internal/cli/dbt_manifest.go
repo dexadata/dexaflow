@@ -36,7 +36,7 @@ func loadDbtManifest(cmd *cobra.Command, dir string, c *domain.DbtConfig, localW
 	projectDir := filepath.Join(dir, c.Project)
 	if c.Manifest != "" {
 		path := filepath.Join(projectDir, c.Manifest)
-		data, rerr := os.ReadFile(path) //nolint:gosec // G304: operator-supplied project path.
+		data, rerr := os.ReadFile(path) // G304: operator-supplied project path.
 		if rerr != nil {
 			return nil, fmt.Errorf("reading dbt manifest %s: %w", path, rerr)
 		}
@@ -75,7 +75,7 @@ func loadDbtManifest(cmd *cobra.Command, dir string, c *domain.DbtConfig, localW
 		return nil, fmt.Errorf("dbt parse in %s: %w", projectDir, rerr)
 	}
 	path := filepath.Join(projectDir, "target", "manifest.json")
-	data, rerr := os.ReadFile(path) //nolint:gosec // derived from operator-supplied project path.
+	data, rerr := os.ReadFile(path) // derived from operator-supplied project path.
 	if rerr != nil {
 		return nil, fmt.Errorf("reading dbt manifest %s: %w", path, rerr)
 	}

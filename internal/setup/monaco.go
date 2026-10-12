@@ -146,7 +146,7 @@ func writeMonacoFile(tr *tar.Reader, target string) error {
 	if err != nil {
 		return fmt.Errorf("creating %q: %w", target, err)
 	}
-	if _, err := io.Copy(f, io.LimitReader(tr, maxMonacoArchiveBytes)); err != nil { //nolint:gosec // bounded by the archive cap
+	if _, err := io.Copy(f, io.LimitReader(tr, maxMonacoArchiveBytes)); err != nil { // bounded by the archive cap
 		_ = f.Close() //nolint:errcheck // already returning an error
 		return fmt.Errorf("writing %q: %w", target, err)
 	}

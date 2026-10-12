@@ -110,7 +110,7 @@ func writeFileAtomicWith(path string, data []byte, opts atomicOpts) error {
 
 // syncDir fsyncs a directory so a rename or unlink in it is durable.
 func syncDir(dir string) error {
-	d, err := os.Open(dir) //nolint:gosec // the directory of a file this process just wrote
+	d, err := os.Open(dir) // the directory of a file this process just wrote
 	if err != nil {
 		return err
 	}

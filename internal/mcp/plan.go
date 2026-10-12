@@ -35,7 +35,7 @@ const maxPlanTaskInstances = 200
 // replica of the HTTP transport must load the same key, so a plan made on one
 // applies on another.
 func LoadPlanKey(path string) ([]byte, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // the operator names the file
+	raw, err := os.ReadFile(path) // the operator names the file
 	if err != nil {
 		return nil, fmt.Errorf("plan key: %w", err)
 	}

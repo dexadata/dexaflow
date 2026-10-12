@@ -338,7 +338,7 @@ func dbtProjectDir(dagDir, project string, local bool) string {
 // the group's downstream is rewired onto the group's leaves. Runs after the parser
 // and before validation, so the final dag.json carries no dbt_group type.
 func expandDbtGroupsInFile(cmd *cobra.Command, dir, output string, cfg *domain.LeoflowConfig, local bool) error {
-	data, err := os.ReadFile(output) //nolint:gosec // G304: operator-supplied output path.
+	data, err := os.ReadFile(output) // G304: operator-supplied output path.
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", output, err)
 	}
@@ -428,7 +428,7 @@ func dbtConnectionProfile(dir string, c *domain.DbtConfig) (conn, profile string
 // key the generated profiles.yml must use.
 func dbtProfileName(projectDir string) (string, error) {
 	path := filepath.Join(projectDir, "dbt_project.yml")
-	data, err := os.ReadFile(path) //nolint:gosec // G304: operator-supplied project path.
+	data, err := os.ReadFile(path) // G304: operator-supplied project path.
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -873,7 +873,7 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 	if cfg.Staging == nil && cfg.Alerts == nil && len(cfg.Tasks) == 0 && !hasDAGDefaults(cfg.Defaults) {
 		return nil
 	}
-	data, err := os.ReadFile(dagJSONPath) //nolint:gosec // G304: output path is operator-supplied on the CLI.
+	data, err := os.ReadFile(dagJSONPath) // G304: output path is operator-supplied on the CLI.
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", dagJSONPath, err)
 	}
@@ -1053,7 +1053,7 @@ func applyDAGDefaults(task *domain.TaskSpec, d *domain.ConfigDefaults) {
 
 // validateDAGFile reads a produced dag.json and validates it against the schema.
 func validateDAGFile(path string) error {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: output path is supplied by the operator on the CLI.
+	data, err := os.ReadFile(path) // G304: output path is supplied by the operator on the CLI.
 	if err != nil {
 		return fmt.Errorf("reading produced %s: %w", path, err)
 	}
@@ -1074,7 +1074,7 @@ func validateDAGFile(path string) error {
 // Python text in the spec's source field, so the control plane can serve it to
 // the UI's Code tab. Re-marshaled with indentation to keep dag.json readable.
 func embedSource(dagJSONPath, sourcePath string) error {
-	specData, err := os.ReadFile(dagJSONPath) //nolint:gosec // G304: output path is operator-supplied on the CLI.
+	specData, err := os.ReadFile(dagJSONPath) // G304: output path is operator-supplied on the CLI.
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", dagJSONPath, err)
 	}
@@ -1082,7 +1082,7 @@ func embedSource(dagJSONPath, sourcePath string) error {
 	if uerr := json.Unmarshal(specData, &spec); uerr != nil {
 		return fmt.Errorf("parsing %s: %w", dagJSONPath, uerr)
 	}
-	src, err := os.ReadFile(sourcePath) //nolint:gosec // G304: source path is operator-supplied on the CLI.
+	src, err := os.ReadFile(sourcePath) // G304: source path is operator-supplied on the CLI.
 	if err != nil {
 		return fmt.Errorf("reading dag source %s: %w", sourcePath, err)
 	}

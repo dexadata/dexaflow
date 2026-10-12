@@ -29,7 +29,7 @@ func restoreFixture(t *testing.T) (dexaHome, archive string) {
 		t.Fatal(err)
 	}
 	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "config.yaml"), []byte("workspace: \""+home+"/ws\"\n"), 0o644); err != nil { //nolint:gosec // a loose mode in the archive is the point
+	if err := os.WriteFile(filepath.Join(src, "config.yaml"), []byte("workspace: \""+home+"/ws\"\n"), 0o644); err != nil { // a loose mode in the archive is the point
 		t.Fatal(err)
 	}
 	dump := filepath.Join(t.TempDir(), "dump.sql")

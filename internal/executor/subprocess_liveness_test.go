@@ -172,7 +172,7 @@ func TestPIDDirRefusesATamperableDirectory(t *testing.T) {
 	if err := os.Mkdir(open, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(open, 0o777); err != nil { //nolint:gosec // the test needs a world-writable dir
+	if err := os.Chmod(open, 0o777); err != nil { // the test needs a world-writable dir
 		t.Fatal(err)
 	}
 	e := NewSubprocessExecutor("/bin/true", discardLogger())

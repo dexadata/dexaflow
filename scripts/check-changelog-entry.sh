@@ -67,6 +67,7 @@ self_test() {
 
 	local setup_log
 	setup_log="$(
+		exec 2>&1
 		export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 		cd "$tmp" || exit 1
 		git -c init.defaultBranch=main init -q . &&
@@ -75,7 +76,7 @@ self_test() {
 		printf '%s\n' '# Changelog' '' '## [Unreleased]' '' '### Fixed' '- a thing (#1)' '' '## [1.0.0] - 2026-01-01' '- old' > CHANGELOG.md &&
 		git add -A && git commit -qm base &&
 		git update-ref refs/remotes/origin/main refs/heads/main
-	2>&1)" || { printf '  FAIL self-test setup could not build the fixture repo\n%s\n' "$setup_log"; return 1; }
+	)" || { printf '  FAIL self-test setup could not build the fixture repo\n%s\n' "$setup_log"; return 1; }
 
 	# _case <name> <want-rc> <want-substring> -- <commands run inside $tmp>
 	# GITHUB_BASE_REF is part of the gate's decision, and it is SET in the

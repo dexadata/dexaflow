@@ -94,7 +94,7 @@ func pythonSourcesChecksum() (string, error) {
 			return rerr
 		}
 		fmt.Fprintf(h, "%s\x00", p) //nolint:errcheck // sha256 hash writer never errors
-		h.Write(b)                  //nolint:errcheck // sha256 hash writer never errors
+		h.Write(b)                  // sha256 hash writer never errors
 		return nil
 	})
 	if err != nil {

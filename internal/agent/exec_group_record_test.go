@@ -60,7 +60,7 @@ func TestHelperAgentRunsATask(t *testing.T) {
 		t.Skip("helper process only")
 	}
 	var out bytes.Buffer
-	_, _ = NewExecRunnerRecordingGroup(path).Run(context.Background(), []string{"sleep", "60"}, os.Environ(), &out, &out) //nolint:errcheck // killed by the parent test
+	_, _ = NewExecRunnerRecordingGroup(path).Run(context.Background(), []string{"sleep", "60"}, os.Environ(), &out, &out) // killed by the parent test
 }
 
 // TestKilledAgentLeavesAStoppableOrphan reproduces the Lite duplicate-execution
@@ -70,7 +70,7 @@ func TestHelperAgentRunsATask(t *testing.T) {
 // without a second copy running.
 func TestKilledAgentLeavesAStoppableOrphan(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.pgid")
-	helper := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestHelperAgentRunsATask$") //nolint:gosec // re-executes this test binary
+	helper := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestHelperAgentRunsATask$") // re-executes this test binary
 	helper.Env = append(os.Environ(), "DEXAFLOW_TEST_HELPER_GROUP_RECORD="+path)
 	if err := helper.Start(); err != nil {
 		t.Fatal(err)
@@ -84,12 +84,12 @@ func TestKilledAgentLeavesAStoppableOrphan(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			_ = helper.Process.Kill() //nolint:errcheck // test cleanup
+			_ = helper.Process.Kill() // test cleanup
 			t.Fatalf("the agent never recorded its task group: %v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Cleanup(func() { _ = syscall.Kill(-rec.PGID, syscall.SIGKILL) }) //nolint:errcheck // best-effort cleanup
+	t.Cleanup(func() { _ = syscall.Kill(-rec.PGID, syscall.SIGKILL) }) // best-effort cleanup
 	if rec.AgentPID != helper.Process.Pid {
 		t.Fatalf("record names agent %d, want %d", rec.AgentPID, helper.Process.Pid)
 	}
@@ -97,7 +97,7 @@ func TestKilledAgentLeavesAStoppableOrphan(t *testing.T) {
 	if err := helper.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	_ = helper.Wait() //nolint:errcheck // killed on purpose
+	_ = helper.Wait() // killed on purpose
 
 	alive, err := procgroup.GroupAlive(rec.PGID)
 	if err != nil || !alive {

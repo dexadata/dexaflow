@@ -233,7 +233,7 @@ func extractEntry(tr *tar.Reader, hdr *tar.Header, destDir, name string) error {
 		if openErr != nil {
 			return fmt.Errorf("creating %q: %w", target, openErr)
 		}
-		if _, cpErr := io.Copy(f, io.LimitReader(tr, maxPythonArchiveBytes)); cpErr != nil { //nolint:gosec // bounded by the archive cap
+		if _, cpErr := io.Copy(f, io.LimitReader(tr, maxPythonArchiveBytes)); cpErr != nil { // bounded by the archive cap
 			_ = f.Close() //nolint:errcheck // already returning an error
 			return fmt.Errorf("writing %q: %w", target, cpErr)
 		}
@@ -282,7 +282,7 @@ func extractSymlink(hdr *tar.Header, destDir, target, name string) error {
 	if rmErr := os.RemoveAll(target); rmErr != nil {
 		return fmt.Errorf("removing existing %q before symlink: %w", target, rmErr)
 	}
-	return os.Symlink(hdr.Linkname, target) //nolint:gosec // target sanitized; link resolved within destDir
+	return os.Symlink(hdr.Linkname, target) // target sanitized; link resolved within destDir
 }
 
 // sanitizeArchivePath joins a tar entry name onto destDir, returning the safe

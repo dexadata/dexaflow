@@ -253,11 +253,32 @@ test-integration: test-db ## Run //go:build integration tests against the isolat
 cover: test ## Show total Go coverage
 	go tool cover -func=coverage.out | tail -1
 
+# Files the shell and Dockerfile linters cover, shared by `make lint` and the CI
+# Lint job so the two cannot drift. examples/*/Dockerfile are left out: the
+# compiler generates them (scripts/sync-example-dockerfiles.sh), so a finding
+# there is fixed in the generator, not in the copies.
+SHELLCHECK_FILES := $(wildcard scripts/*.sh scripts/chaos/*.sh)
+HADOLINT_FILES   := $(wildcard deploy/Dockerfile.*) runtime/Dockerfile scripts/chaos/Dockerfile
+SHELLCHECK ?= shellcheck
+HADOLINT   ?= hadolint
+
 .PHONY: lint
-lint: ## Run golangci-lint and ruff
+lint: ## Run golangci-lint, ruff, shellcheck and hadolint (a missing ruff/shellcheck/hadolint is skipped)
 	golangci-lint run ./...
-	command -v ruff >/dev/null && (cd parser && ruff check .) || echo "skip ruff (not installed)"
-	command -v ruff >/dev/null && (cd runtime/python && ruff check .) || echo "skip runtime ruff (not installed)"
+	@if command -v ruff >/dev/null; then (cd parser && ruff check .) && (cd runtime/python && ruff check .); \
+	else echo "skip ruff (not installed)"; fi
+	@if command -v $(SHELLCHECK) >/dev/null; then $(MAKE) --no-print-directory lint-shell; \
+	else echo "skip shellcheck (not installed: https://github.com/koalaman/shellcheck#installing)"; fi
+	@if command -v $(HADOLINT) >/dev/null; then $(MAKE) --no-print-directory lint-docker; \
+	else echo "skip hadolint (not installed: https://github.com/hadolint/hadolint#install)"; fi
+
+.PHONY: lint-shell
+lint-shell: ## Run shellcheck on the CI and release scripts (warnings and errors fail)
+	$(SHELLCHECK) --severity=warning $(SHELLCHECK_FILES)
+
+.PHONY: lint-docker
+lint-docker: ## Run hadolint on the hand-written Dockerfiles (warnings and errors fail)
+	$(HADOLINT) --failure-threshold warning $(HADOLINT_FILES)
 
 .PHONY: fmt
 fmt: ## Format Go code

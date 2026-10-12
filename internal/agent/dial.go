@@ -21,7 +21,7 @@ import (
 // caPool builds a certificate pool trusting the PEM CA at path, for verifying a
 // self-signed / cluster server certificate.
 func caPool(path string) (*x509.CertPool, error) {
-	pem, err := os.ReadFile(path) //nolint:gosec // G304: CA path is operator-supplied config.
+	pem, err := os.ReadFile(path) // G304: CA path is operator-supplied config.
 	if err != nil {
 		return nil, fmt.Errorf("reading CA file %q: %w", path, err)
 	}

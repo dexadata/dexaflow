@@ -77,7 +77,7 @@ func (c *checker) loadFaultWindows() []faultWindow {
 	if c.o.faultsFile == "" {
 		return nil
 	}
-	f, err := os.Open(c.o.faultsFile) //nolint:gosec // operator-supplied harness path
+	f, err := os.Open(c.o.faultsFile) // operator-supplied harness path
 	if err != nil {
 		return nil
 	}

@@ -397,7 +397,7 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 	noop := func() {}
 	path := filepath.Join(dir, dockerignoreName)
 
-	original, rerr := os.ReadFile(path) //nolint:gosec // G304: dir is the user's own project directory.
+	original, rerr := os.ReadFile(path) // G304: dir is the user's own project directory.
 	had := rerr == nil
 	if rerr != nil && !os.IsNotExist(rerr) {
 		return noop, nil, fmt.Errorf("reading %s: %w", path, rerr)

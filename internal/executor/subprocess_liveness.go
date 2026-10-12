@@ -159,7 +159,7 @@ func (e *SubprocessExecutor) forgetGroup(runID, taskID string, tryNumber, pid in
 
 // readPID parses one record file.
 func readPID(path string) (int, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path is a digest under the executor's own pid dir
+	data, err := os.ReadFile(path) // path is a digest under the executor's own pid dir
 	if err != nil {
 		return 0, err
 	}

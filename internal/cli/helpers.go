@@ -87,7 +87,7 @@ func fileExists(path string) bool {
 func loadProjectConfig(dir string) (*domain.LeoflowConfig, error) {
 	announceProjectConfig(dir)
 	p := projectConfigPath(dir)
-	data, err := os.ReadFile(p) //nolint:gosec // G304: project path is supplied by the operator on the CLI.
+	data, err := os.ReadFile(p) // G304: project path is supplied by the operator on the CLI.
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", p, err)
 	}
@@ -110,7 +110,7 @@ func loadProjectConfig(dir string) (*domain.LeoflowConfig, error) {
 // errors still fail.
 func loadProjectConfigLenient(dir string) (*domain.LeoflowConfig, error) {
 	p := projectConfigPath(dir)
-	data, err := os.ReadFile(p) //nolint:gosec // G304: project path is supplied by the operator on the CLI.
+	data, err := os.ReadFile(p) // G304: project path is supplied by the operator on the CLI.
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", p, err)
 	}

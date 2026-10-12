@@ -249,7 +249,7 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 	// Close stops waiting after cfg.DrainTimeout (#463).
 	// The disposition goes to a RetrySink, which re-offers backpressure and
 	// transient errors like the synchronous path does; a plain sink fails the TI.
-	disp, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task) //nolint:contextcheck // worker intentionally detaches from the caller's ctx
+	disp, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task) // worker intentionally detaches from the caller's ctx
 	if err == nil {
 		return
 	}
@@ -259,7 +259,7 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 		b.metrics.RecordDispatchInnerError()
 	}
 	if rs, ok := b.sink.(RetrySink); ok {
-		if herr := rs.HandleDispatchFailure(context.Background(), req.runID, req.task.TaskID, disp, err); herr != nil { //nolint:contextcheck // worker intentionally uses a fresh context for the failure report
+		if herr := rs.HandleDispatchFailure(context.Background(), req.runID, req.task.TaskID, disp, err); herr != nil { // worker intentionally uses a fresh context for the failure report
 			b.logger.Error("re-offering a failed dispatch",
 				"run", req.runID, "task", req.task.TaskID, "error", herr)
 		}
@@ -275,7 +275,7 @@ func (b *BufferedDispatcher) reportFailure(req dispatchRequest, reason string) {
 	if b.sink == nil {
 		return
 	}
-	if err := b.sink.MarkTaskDispatchFailed(context.Background(), req.runID, req.task.TaskID, reason); err != nil { //nolint:contextcheck // worker intentionally uses a fresh context for the failure report
+	if err := b.sink.MarkTaskDispatchFailed(context.Background(), req.runID, req.task.TaskID, reason); err != nil { // worker intentionally uses a fresh context for the failure report
 		b.logger.Error("reporting dispatch failure",
 			"run", req.runID, "task", req.task.TaskID, "error", err)
 	}

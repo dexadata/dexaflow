@@ -346,7 +346,7 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 		// more here than it did with a single key.
 		logger.Warn("no usable LEOFLOW_SECRET_KEY; connection management disabled (Variables still work)",
 			"error", kerr)
-		return nil //nolint:nilerr // a missing/unusable key is non-fatal: run without connection encryption
+		return nil // a missing/unusable key is non-fatal: run without connection encryption
 	}
 	ciphers := make([]secrets.Cipher, 0, len(keys))
 	for i, k := range keys {
@@ -2645,7 +2645,7 @@ func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.D
 func releaseLeader(leader *scheduler.Leader, logger *slog.Logger) {
 	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := leader.Release(rctx); err != nil { //nolint:contextcheck // fresh context to release after shutdown
+	if err := leader.Release(rctx); err != nil { // fresh context to release after shutdown
 		logger.Error("releasing leadership", "error", err)
 	}
 }
@@ -2668,9 +2668,9 @@ func serve(s *http.Server, errCh chan<- error) {
 // agent on the host (dev only); "kubernetes" (default) launches task pods.
 func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
 	if cfg.Executor.Type == "subprocess" {
-		return setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		return setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) // buffered worker deliberately detaches from caller ctx
 	}
-	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) // buffered worker deliberately detaches from caller ctx
 }
 
 // setWarmPlacer attaches the warm-worker placement seam to the dispatcher, but

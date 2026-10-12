@@ -34,7 +34,7 @@ type liteFileSecrets struct {
 // Empty fields for a missing or unparseable file: the caller is a best-effort
 // sync, and refusing there would block a password reset over a comment.
 func configFileSecrets(path string) liteFileSecrets {
-	raw, err := os.ReadFile(path) //nolint:gosec // operator-owned path under the user's home
+	raw, err := os.ReadFile(path) // operator-owned path under the user's home
 	if err != nil {
 		return liteFileSecrets{}
 	}

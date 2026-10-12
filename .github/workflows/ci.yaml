@@ -16,6 +16,8 @@ env:
   GO_VERSION: "1.26.9"
   PYTHON_VERSION: "3.11"
   GOLANGCI_LINT_VERSION: "v2.12.2"
+  HADOLINT_VERSION: "v2.14.0"
+  HADOLINT_SHA256: "6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"
 
 # A newer push to the same pull request supersedes this run, so the older one
 # is cancelled instead of holding runners the newer one needs. Every other run
@@ -47,6 +49,25 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+      # The file lists live in the Makefile (lint-shell, lint-docker), so
+      # `make lint` checks exactly what this job checks. Ruff is not repeated
+      # here: the python-parser and python-runtime jobs already run it.
+      - name: shellcheck
+        if: ${{ !cancelled() }}
+        run: |
+          shellcheck --version
+          make lint-shell
+
+      - name: hadolint
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/hadolint" "$url"
+          echo "${HADOLINT_SHA256}  $RUNNER_TEMP/hadolint" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/hadolint"
+          make lint-docker HADOLINT="$RUNNER_TEMP/hadolint"
 
   # ─────────────────────────────────────────────────────────────────────
   # Proto drift: the generated gRPC code (proto/agent/v1) is committed, so a

@@ -92,8 +92,8 @@ func TestClassifyCommandError(t *testing.T) {
 		{name: "redis.Nil → nil_reply (defensive)", err: redis.Nil, want: "nil_reply"},
 		// NOAUTH / WRONGPASS are verbatim Redis reply prefixes — keep the
 		// case as Redis emits so the classifier matches what hits prod.
-		{name: "NOAUTH → auth", err: errors.New("redis: NOAUTH Authentication required"), want: "auth"}, //nolint:revive // verbatim Redis reply prefix
-		{name: "WRONGPASS → auth", err: errors.New("redis: WRONGPASS invalid password"), want: "auth"},  //nolint:revive // verbatim Redis reply prefix
+		{name: "NOAUTH → auth", err: errors.New("redis: NOAUTH Authentication required"), want: "auth"}, // verbatim Redis reply prefix
+		{name: "WRONGPASS → auth", err: errors.New("redis: WRONGPASS invalid password"), want: "auth"},  // verbatim Redis reply prefix
 		{name: "i/o timeout → timeout", err: errors.New("read tcp 10.0.0.1:6379: i/o timeout"), want: "timeout"},
 		{name: "connection reset → connection_reset", err: errors.New("write tcp 10.0.0.1:6379: connection reset by peer"), want: "connection_reset"},
 		{name: "broken pipe → connection_reset", err: errors.New("write tcp 10.0.0.1:6379: broken pipe"), want: "connection_reset"},
@@ -146,7 +146,7 @@ func TestObservabilityHookCountsCommandFailures(t *testing.T) {
 	fm := newFakeRedisMetrics()
 	hook := newRedisObservabilityHook(fm)
 	process := hook.ProcessHook(func(context.Context, redis.Cmder) error {
-		return errors.New("redis: NOAUTH Authentication required") //nolint:revive // verbatim Redis reply prefix
+		return errors.New("redis: NOAUTH Authentication required") // verbatim Redis reply prefix
 	})
 	if err := process(context.Background(), redis.NewCmd(context.Background(), "GET", "k")); err == nil {
 		t.Fatal("expected error to propagate")

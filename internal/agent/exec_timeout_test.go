@@ -55,7 +55,7 @@ func readPGID(t *testing.T, pidFile string) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		b, err := os.ReadFile(pidFile) //nolint:gosec // test-owned temp path
+		b, err := os.ReadFile(pidFile) // test-owned temp path
 		if err == nil {
 			fields := strings.Fields(string(b))
 			if len(fields) == 2 {
@@ -85,7 +85,7 @@ func requireProcessGroupGone(t *testing.T, pgid int) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		err := syscall.Kill(-pgid, 0)
-		if err == syscall.ESRCH { //nolint:errorlint // syscall.Kill returns a bare syscall.Errno
+		if err == syscall.ESRCH { // syscall.Kill returns a bare syscall.Errno
 			return
 		}
 		if time.Now().After(deadline) {
@@ -350,7 +350,7 @@ func TestKillProcessGroupFallsBackWhenTheChildLeadsNoGroup(t *testing.T) {
 	if !errors.As(werr, &exitErr) {
 		t.Fatalf("child did not exit on a signal: %v", werr)
 	}
-	if !exitErr.ProcessState.Sys().(syscall.WaitStatus).Signaled() { //nolint:errcheck,forcetypeassert // unix-only test
+	if !exitErr.ProcessState.Sys().(syscall.WaitStatus).Signaled() { //nolint:forcetypeassert // unix-only test
 		t.Errorf("child exited %v, want it killed by a signal", exitErr.ProcessState)
 	}
 }

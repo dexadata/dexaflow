@@ -90,7 +90,7 @@ func XComEnvVar(name string, value []byte) string {
 // ReadReturnValue reads the optional return-value file. ok is false (no error)
 // when the file does not exist.
 func ReadReturnValue(path string) (value []byte, ok bool, err error) {
-	data, rerr := os.ReadFile(path) //nolint:gosec // path is the fixed helper output location
+	data, rerr := os.ReadFile(path) // path is the fixed helper output location
 	if errors.Is(rerr, os.ErrNotExist) {
 		return nil, false, nil
 	}

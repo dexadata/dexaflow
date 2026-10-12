@@ -74,7 +74,7 @@ func dropDevDatabase(ctx context.Context, cmd *cobra.Command) error {
 	}
 	defer func() { _ = conn.Close(ctx) }() //nolint:errcheck // best-effort close of a short-lived maintenance connection
 	devPrintln(cmd.OutOrStdout(), "▸ dropping "+devDBName+" …")
-	//nolint:gosec // G201: the database name is a fixed constant, sanitized as an identifier.
+	// G201: the database name is a fixed constant, sanitized as an identifier.
 	if _, eerr := conn.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{devDBName}.Sanitize()+" WITH (FORCE)"); eerr != nil {
 		return fmt.Errorf("dropping database %s: %w", devDBName, eerr)
 	}

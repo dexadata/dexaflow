@@ -39,7 +39,7 @@ func stubParser(t *testing.T, dir string) string {
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"$dagid\",\"dag_version\":\"v0\",\"image\":\"i:1\"," +
 		"\"tasks\":[{\"task_id\":\"t\",\"type\":\"python\",\"entrypoint\":\"dag:t\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(p, []byte(body), 0o755); err != nil { //nolint:gosec // test fixture must be executable
+	if err := os.WriteFile(p, []byte(body), 0o755); err != nil { // test fixture must be executable
 		t.Fatal(err)
 	}
 	return p
@@ -61,7 +61,7 @@ func stubBuilder(t *testing.T, dir, log, failFor string) string {
 		"kind=missing; [ -d \"$file\" ] && kind=dir; [ -f \"$file\" ] && kind=file\n" +
 		"printf '%s\\t%s\\t%s\\n' \"$tag\" \"$file\" \"$kind\" >> " + log + "\n" +
 		"if " + fail + "; then echo 'builder refused' >&2; exit 1; fi\n"
-	if err := os.WriteFile(p, []byte(body), 0o755); err != nil { //nolint:gosec // test fixture must be executable
+	if err := os.WriteFile(p, []byte(body), 0o755); err != nil { // test fixture must be executable
 		t.Fatal(err)
 	}
 	return p

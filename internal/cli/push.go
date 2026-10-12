@@ -24,7 +24,7 @@ func newPushCommand() *cobra.Command {
 		Short: "Register a compiled dag.json with the control plane.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			data, err := os.ReadFile(args[0]) //nolint:gosec // path supplied by the operator on the CLI
+			data, err := os.ReadFile(args[0]) // path supplied by the operator on the CLI
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", args[0], err)
 			}

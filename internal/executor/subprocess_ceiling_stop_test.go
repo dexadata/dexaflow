@@ -46,9 +46,9 @@ func TestHelperCeilingAgent(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	// Best-effort: the parent test may already be gone when a cleanup kills
 	// this task, and a failure here must not print into its output.
-	if f, oerr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); oerr == nil { //nolint:gosec // test-owned temp file
-		_, _ = f.WriteString(line + "\n") //nolint:errcheck // best-effort, see above
-		_ = f.Close()                     //nolint:errcheck // best-effort, see above
+	if f, oerr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); oerr == nil { // test-owned temp file
+		_, _ = f.WriteString(line + "\n") // best-effort, see above
+		_ = f.Close()                     // best-effort, see above
 	}
 	// A non-zero exit keeps the testing package from printing a PASS line into
 	// the parent test's output, which Execute wires the agent's stdout to.
@@ -58,7 +58,7 @@ func TestHelperCeilingAgent(t *testing.T) {
 // appendLine appends one line to path.
 func appendLine(t *testing.T, path, line string) {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // test-owned temp file
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // test-owned temp file
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func startCeilingAttempt(t *testing.T, logPath string) (*SubprocessExecutor, pro
 	for {
 		rec, err := procgroup.Read(e.groupPath("r", "t", 1))
 		if err == nil {
-			t.Cleanup(func() { _ = syscall.Kill(-rec.PGID, syscall.SIGKILL) }) //nolint:errcheck // best-effort cleanup
+			t.Cleanup(func() { _ = syscall.Kill(-rec.PGID, syscall.SIGKILL) }) // best-effort cleanup
 			return e, rec
 		}
 		if time.Now().After(deadline) {
@@ -130,7 +130,7 @@ func TestStopAttemptStopsALiveAgentsTask(t *testing.T) {
 	if alive, aerr := e.AttemptProcessAlive(ctx, "r", "t", 1); aerr != nil || alive {
 		t.Errorf("after the stop: AttemptProcessAlive = (%v, %v), want (false, nil): the agent must have exited", alive, aerr)
 	}
-	data, err := os.ReadFile(logPath) //nolint:gosec // test-owned temp file
+	data, err := os.ReadFile(logPath) // test-owned temp file
 	if err != nil || !strings.Contains(string(data), "task failed") {
 		t.Errorf("the agent must have logged its task's end before StopAttempt returned, got %q (%v)", data, err)
 	}
@@ -195,7 +195,7 @@ func TestCeilingTryLogEndsWithTheCeilingLine(t *testing.T) {
 	if got := tl.snapshot(); len(got) != 1 || got[0] != "mark ti/1/1" {
 		t.Fatalf("the attempt must be failed as credential_ceiling exactly once, got %q", got)
 	}
-	data, err := os.ReadFile(logPath) //nolint:gosec // test-owned temp file
+	data, err := os.ReadFile(logPath) // test-owned temp file
 	if err != nil {
 		t.Fatal(err)
 	}

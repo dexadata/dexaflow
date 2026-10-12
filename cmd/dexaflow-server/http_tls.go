@@ -99,7 +99,7 @@ func (r *certReloader) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, e
 	defer r.mu.Unlock()
 	certMod, keyMod, err := r.modTimes()
 	if err != nil {
-		return r.cert, nil //nolint:nilerr // a file briefly missing mid-rotation: keep serving the last good pair
+		return r.cert, nil // a file briefly missing mid-rotation: keep serving the last good pair
 	}
 	if certMod.Equal(r.certMod) && keyMod.Equal(r.keyMod) {
 		return r.cert, nil

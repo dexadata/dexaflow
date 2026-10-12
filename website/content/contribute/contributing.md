@@ -80,6 +80,14 @@ merge. They are not bureaucracy; they are why the codebase stays an A+.
 - **Go Report Card A+** — gofmt, govet, gocyclo ≤ 15, golint, ineffassign, misspell,
   license, plus the extended golangci-lint stack. `make lint` clean every commit.
   ([ADR 0012](/project/adrs/))
+- **Lint suppressions are justified.** A `//nolint` names the linter it silences
+  and says why after it (`//nolint:gosec // path comes from the operator's own
+  config`); `nolintlint` fails one without a reason or that is no longer needed.
+- **Scripts and Dockerfiles are linted too.** `make lint` runs shellcheck on
+  `scripts/` and hadolint on the hand-written Dockerfiles when they are
+  installed (`make lint-shell` and `make lint-docker` require them); CI always
+  runs both. Silence a finding only with a narrow inline directive and a
+  comment that says why (`# shellcheck disable=SC2086`, `# hadolint ignore=DL3008`).
 - **GoDocs on every exported identifier** — starting with the name, ending with a period.
 - **English** for all code, comments, commit messages, and docs.
 - **No new dependency** without justification; the supply-chain scans
@@ -202,7 +210,9 @@ accepted from first-time contributors** — open a discussion issue first.
 ## 6. The CI gates
 
 Every PR runs, and must pass: the **build + unit/integration tests** with the
-per-package coverage floor, **golangci-lint** (the A+ stack), and the
+per-package coverage floor (the total and each package's coverage are on the
+Test job's summary page), **lint** (golangci-lint with the A+ stack, shellcheck
+and hadolint), and the
 **security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), and the
 **CHANGELOG guard** (a fragment, a hand-written entry, or the `skip-changelog`
 label), and the **docs guard** (an edit under `website/content/`, or the

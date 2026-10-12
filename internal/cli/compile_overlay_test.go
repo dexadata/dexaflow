@@ -38,7 +38,7 @@ func writeDagJSON(t *testing.T) string {
 // readSpec loads a dag.json from disk for assertions.
 func readSpec(t *testing.T, path string) domain.DAGSpec {
 	t.Helper()
-	data, err := os.ReadFile(path) //nolint:gosec // G304: test-controlled temp path.
+	data, err := os.ReadFile(path) // G304: test-controlled temp path.
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}

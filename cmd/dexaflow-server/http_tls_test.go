@@ -168,7 +168,7 @@ func TestConfigureAPITLSServesHTTPS(t *testing.T) {
 		t.Error("the HTTPS response was not served with the configured certificate")
 	}
 
-	old := &tls.Config{RootCAs: cert.pool, MinVersion: tls.VersionTLS11, MaxVersion: tls.VersionTLS11} //nolint:gosec // proving the server refuses it
+	old := &tls.Config{RootCAs: cert.pool, MinVersion: tls.VersionTLS11, MaxVersion: tls.VersionTLS11} // proving the server refuses it
 	if conn, derr := (&tls.Dialer{Config: old}).DialContext(context.Background(), "tcp", srv.Addr); derr == nil {
 		_ = conn.Close()
 		t.Error("a TLS 1.1 handshake succeeded, want the server to require TLS 1.2 or later")
@@ -263,7 +263,7 @@ func TestConfigureAPITLSKeepsServingWhenARotationIsHalfWritten(t *testing.T) {
 // reads which certificate came back) and returns the leaf's serial.
 func servedSerial(t *testing.T, addr string) *big.Int {
 	t.Helper()
-	d := &tls.Dialer{Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}} //nolint:gosec // reading the served cert only
+	d := &tls.Dialer{Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}} // reading the served cert only
 	conn, err := d.DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("TLS dial: %v", err)

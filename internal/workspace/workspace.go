@@ -106,7 +106,7 @@ func (f *FS) Read(rel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(abs) //nolint:gosec // abs is confined to the root by resolve
+	data, err := os.ReadFile(abs) // abs is confined to the root by resolve
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", rel, err)
 	}
@@ -144,7 +144,7 @@ func (f *FS) Create(rel string, dir bool) error {
 	if mkErr := os.MkdirAll(filepath.Dir(abs), 0o750); mkErr != nil {
 		return fmt.Errorf("creating parent of %q: %w", rel, mkErr)
 	}
-	file, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600) //nolint:gosec // abs confined by resolve
+	file, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600) // abs confined by resolve
 	if err != nil {
 		return fmt.Errorf("creating %q: %w", rel, err)
 	}

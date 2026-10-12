@@ -295,7 +295,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 // is split from runDeploy so the post-build flow (which needs no builder) is
 // unit-testable against a fake control plane.
 func registerDeployedDAG(ctx context.Context, out io.Writer, serverURL, token, output, digestRef, version string) (dagID string, err error) {
-	data, rerr := os.ReadFile(output) //nolint:gosec // output path is operator-controlled (the DAG dir).
+	data, rerr := os.ReadFile(output) // output path is operator-controlled (the DAG dir).
 	if rerr != nil {
 		return "", fmt.Errorf("reading %s: %w", output, rerr)
 	}

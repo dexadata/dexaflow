@@ -287,7 +287,7 @@ func TestDagVenvKeptWhenDeclaredMinorMatches(t *testing.T) {
 	}
 	// Content, not existence: a rebuild would have replaced the stub with a real
 	// interpreter, so comparing bytes is what actually rules one out.
-	b, rerr := os.ReadFile(py) //nolint:gosec // test fixture path
+	b, rerr := os.ReadFile(py) // test fixture path
 	if rerr != nil || string(b) != "#!/bin/sh\nexit 0\n" {
 		t.Errorf("the venv interpreter was replaced (%q, %v); a matching minor must be a no-op", b, rerr)
 	}

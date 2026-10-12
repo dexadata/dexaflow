@@ -148,7 +148,7 @@ func killProc(ref procRef, usePidfd bool) error {
 
 // sameProcess reports whether ref.pid is still the process the walk recorded.
 func sameProcess(ref procRef) bool {
-	raw, err := os.ReadFile("/proc/" + strconv.Itoa(ref.pid) + "/stat") //nolint:gosec // fixed procfs path
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(ref.pid) + "/stat") // fixed procfs path
 	if err != nil {
 		return false
 	}
@@ -169,7 +169,7 @@ func liveDescendants(root int) ([]procRef, error) {
 		if convErr != nil {
 			continue
 		}
-		raw, readErr := os.ReadFile("/proc/" + e.Name() + "/stat") //nolint:gosec // fixed procfs path
+		raw, readErr := os.ReadFile("/proc/" + e.Name() + "/stat") // fixed procfs path
 		if readErr != nil {
 			continue // exited during the walk
 		}

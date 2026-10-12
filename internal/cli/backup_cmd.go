@@ -162,7 +162,7 @@ func runPgDump(cmd *cobra.Command, leoflowHome, dumpPath string) error {
 // still be snapshotted; restore knows how to tolerate a partial bundle on
 // the read side.
 func writeBackupArchive(output, leoflowHome, workspace, dumpPath string, manifest []byte) error {
-	f, err := os.Create(output) //nolint:gosec // user-chosen output path
+	f, err := os.Create(output) // user-chosen output path
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func writeBackupArchive(output, leoflowHome, workspace, dumpPath string, manifes
 	}
 	for _, p := range []string{"config.yaml", "setup.json"} {
 		full := filepath.Join(leoflowHome, p)
-		data, rerr := os.ReadFile(full) //nolint:gosec // managed home; path is fixed
+		data, rerr := os.ReadFile(full) // managed home; path is fixed
 		if rerr != nil {
 			continue
 		}
@@ -186,7 +186,7 @@ func writeBackupArchive(output, leoflowHome, workspace, dumpPath string, manifes
 		}
 	}
 	if dumpPath != "" {
-		dump, rerr := os.ReadFile(dumpPath) //nolint:gosec // temp file we just wrote
+		dump, rerr := os.ReadFile(dumpPath) // temp file we just wrote
 		if rerr != nil {
 			return fmt.Errorf("reading pg_dump output: %w", rerr)
 		}

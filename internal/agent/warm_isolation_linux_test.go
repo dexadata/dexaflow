@@ -44,7 +44,7 @@ func (c *survivorProbeCmd) Run(ctx context.Context, argv, env []string, stdout, 
 }
 
 func readPidFile(path string) (int, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // test-owned temp file
+	raw, err := os.ReadFile(path) // test-owned temp file
 	if err != nil {
 		return 0, fmt.Errorf("reading escaped pid: %w", err)
 	}

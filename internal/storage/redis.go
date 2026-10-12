@@ -34,7 +34,7 @@ func redisOptions(url, caPath string) (*redis.Options, error) {
 	if caPath == "" {
 		return opts, nil
 	}
-	pem, err := os.ReadFile(caPath) //nolint:gosec // operator-configured path; reading it is the entire point.
+	pem, err := os.ReadFile(caPath) // operator-configured path; reading it is the entire point.
 	if err != nil {
 		return nil, fmt.Errorf("reading redis CA file %q: %w", caPath, err)
 	}

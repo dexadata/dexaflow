@@ -38,7 +38,7 @@ type liteKeyConfig struct {
 // field given twice, or a key spelled in another case (the loader matches keys
 // case-insensitively, so it would read a value this reader did not).
 func readLiteKeyConfig(path string) (liteKeyConfig, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // operator-owned path under the user's home
+	raw, err := os.ReadFile(path) // operator-owned path under the user's home
 	if errors.Is(err, os.ErrNotExist) {
 		return liteKeyConfig{}, nil
 	}

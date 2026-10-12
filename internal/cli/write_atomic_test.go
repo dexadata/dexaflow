@@ -17,7 +17,7 @@ import (
 func TestWriteFileAtomicTightensAnExistingLooseFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil { //nolint:gosec // the loose mode is the point
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil { // the loose mode is the point
 		t.Fatal(err)
 	}
 	if err := os.Chmod(path, 0o644); err != nil {

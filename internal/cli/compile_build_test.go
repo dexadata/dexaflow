@@ -194,7 +194,7 @@ func TestEnsureDockerfileGeneratesWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureDockerfile() error = %v", err)
 	}
-	data, readErr := os.ReadFile(path) //nolint:gosec // test reads a path it just created
+	data, readErr := os.ReadFile(path) // test reads a path it just created
 	if readErr != nil {
 		t.Fatalf("reading generated Dockerfile: %v", readErr)
 	}

@@ -108,7 +108,7 @@ func resolveConnectionExtra(cmd *cobra.Command, inline, file string) (string, er
 		return "", fmt.Errorf("--extra and --extra-file are mutually exclusive")
 	}
 	if byFile {
-		data, err := os.ReadFile(file) //nolint:gosec // path is operator-supplied on their own CLI.
+		data, err := os.ReadFile(file) // path is operator-supplied on their own CLI.
 		if err != nil {
 			return "", fmt.Errorf("reading --extra-file: %w", err)
 		}

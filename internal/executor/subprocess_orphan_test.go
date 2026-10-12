@@ -24,8 +24,8 @@ func startTaskGroup(t *testing.T) int {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting task group: %v", err)
 	}
-	go func() { _ = cmd.Wait() }()                                            //nolint:errcheck // exit status is irrelevant here
-	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }) //nolint:errcheck // best-effort cleanup
+	go func() { _ = cmd.Wait() }()                                            // exit status is irrelevant here
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }) // best-effort cleanup
 	return cmd.Process.Pid
 }
 

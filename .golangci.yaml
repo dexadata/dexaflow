@@ -46,6 +46,7 @@ linters:
 
     # ─── Style consistency ───
     - whitespace         # Trailing whitespace
+    - nolintlint         # Every //nolint names its linters and says why (#1572)
     - tagliatelle        # Struct tag naming consistency
 
   settings:
@@ -114,6 +115,13 @@ linters:
         - hugeParam        # Premature optimization; profile first
         - rangeValCopy     # Same as above
         - paramTypeCombine # Stylistic preference, not enforced
+
+    nolintlint:
+      # A suppression must name the linter it silences and carry a reason
+      # after it (`//nolint:gosec // reason`), and must still be needed.
+      require-specific: true
+      require-explanation: true
+      allow-unused: false
 
     errcheck:
       check-type-assertions: true

@@ -1134,7 +1134,7 @@ func ensureDevDatabase(ctx context.Context, cmd *cobra.Command) error {
 		return nil
 	}
 	devPrintln(cmd.OutOrStdout(), "▸ creating isolated dev database "+devDBName+" …")
-	//nolint:gosec // G201: the database name is a fixed constant, sanitized as an identifier.
+	// G201: the database name is a fixed constant, sanitized as an identifier.
 	if _, eerr := conn.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{devDBName}.Sanitize()); eerr != nil {
 		return fmt.Errorf("creating database %s: %w", devDBName, eerr)
 	}
@@ -1273,7 +1273,7 @@ func resolvePython3(ctx context.Context, managed string, lookPath func(string) (
 
 // pythonVersion runs `<py> --version` and returns the reported major.minor.
 func pythonVersion(ctx context.Context, py string) (major, minor int, err error) {
-	out, err := exec.CommandContext(ctx, py, "--version").CombinedOutput() //nolint:gosec // py is a resolved interpreter path (managed or LookPath result)
+	out, err := exec.CommandContext(ctx, py, "--version").CombinedOutput() // py is a resolved interpreter path (managed or LookPath result)
 	if err != nil {
 		return 0, 0, fmt.Errorf("running %s --version: %w", py, err)
 	}
@@ -1365,7 +1365,7 @@ func runtimeSrcChecksum(runtimeSrc string) (string, error) {
 		// can't collide by content concatenation (e.g. moving lines between files).
 		h.Write([]byte(rel))
 		h.Write([]byte{0})
-		b, rerr := os.ReadFile(p) //nolint:gosec // path is under the bundled pysrc tree
+		b, rerr := os.ReadFile(p) // path is under the bundled pysrc tree
 		if rerr != nil {
 			return "", fmt.Errorf("reading %s: %w", p, rerr)
 		}
@@ -1550,7 +1550,7 @@ func companionVersion(ctx context.Context, path string) string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "version").Output() //nolint:gosec // path resolved by resolveBinary, not user input
+	out, err := exec.CommandContext(ctx, path, "version").Output() // path resolved by resolveBinary, not user input
 	if err != nil {
 		return ""
 	}
@@ -1861,7 +1861,7 @@ func clusterServerEnv(p liteEnvParams, kubeconfig string) []string {
 // returns once it has started.
 func startDevServer(ctx context.Context, cmd *cobra.Command, serverBin string, env []string) (*exec.Cmd, error) {
 	devPrintln(cmd.OutOrStdout(), "▸ starting control plane …")
-	srv := exec.CommandContext(ctx, serverBin) //nolint:gosec // serverBin is operator-resolved on the dev CLI
+	srv := exec.CommandContext(ctx, serverBin) // serverBin is operator-resolved on the dev CLI
 	srv.Env = liteServerEnviron(os.Environ(), env)
 	srv.Stdout, srv.Stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
 	if err := srv.Start(); err != nil {
@@ -2025,7 +2025,7 @@ func devCompileAndRegister(ctx context.Context, cmd *cobra.Command, dir string, 
 			return aerr
 		}
 	}
-	data, err := os.ReadFile(opts.output) //nolint:gosec // path is leoflow-controlled under ~/.dexaflow
+	data, err := os.ReadFile(opts.output) // path is leoflow-controlled under ~/.dexaflow
 	if err != nil {
 		return fmt.Errorf("reading compiled dag.json: %w", err)
 	}
@@ -2266,7 +2266,7 @@ func dedupe(in []string) []string {
 // A venv whose version cannot be determined reports ok=false rather than 0, so
 // an unreadable cfg leaves the venv alone instead of rebuilding it every boot.
 func pyvenvMinor(dir string) (int, bool) {
-	b, err := os.ReadFile(filepath.Join(dir, "pyvenv.cfg")) //nolint:gosec // dir is a leoflow-managed venv path
+	b, err := os.ReadFile(filepath.Join(dir, "pyvenv.cfg")) // dir is a leoflow-managed venv path
 	if err != nil {
 		return 0, false
 	}

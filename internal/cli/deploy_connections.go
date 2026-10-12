@@ -50,7 +50,7 @@ func collectConnIDs(dagJSON []byte) []string {
 // connection, prints a reminder to create them on the control plane — never a
 // silent gap between "deploy succeeded" and "the DAG actually runs".
 func surfaceConnections(out io.Writer, dagJSONPath string) {
-	data, err := os.ReadFile(dagJSONPath) //nolint:gosec // path is the operator-controlled DAG dir.
+	data, err := os.ReadFile(dagJSONPath) // path is the operator-controlled DAG dir.
 	if err != nil {
 		return
 	}

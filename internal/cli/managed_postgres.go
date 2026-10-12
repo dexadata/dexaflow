@@ -160,7 +160,7 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) (started bool
 		// the conf parser quotes paths natively, so a data dir with spaces works and
 		// we avoid the fragile space-split of an -o option string.
 		confPath := filepath.Join(dataDir, "postgresql.conf")
-		cf, oerr := os.OpenFile(confPath, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // path derived from our per-user data dir
+		cf, oerr := os.OpenFile(confPath, os.O_APPEND|os.O_WRONLY, 0o600) // path derived from our per-user data dir
 		if oerr != nil {
 			return false, fmt.Errorf("opening %s: %w", confPath, oerr)
 		}

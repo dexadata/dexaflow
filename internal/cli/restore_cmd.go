@@ -132,7 +132,7 @@ var psqlRestore = runPsqlRestore
 func restoreConfigFiles(out io.Writer, leoflowHome string, archive archiveContents) error {
 	cfgPath := filepath.Join(leoflowHome, "config.yaml")
 	if len(archive.Config) > 0 {
-		if cur, err := os.ReadFile(cfgPath); err == nil { //nolint:gosec // the user's own config
+		if cur, err := os.ReadFile(cfgPath); err == nil { // the user's own config
 			pre := filepath.Join(leoflowHome, preRestoreName)
 			if werr := writeFileAtomicWith(pre, cur, atomicOpts{ownerFrom: cfgPath}); werr != nil {
 				return fmt.Errorf("keeping the current config.yaml before replacing it: %w", werr)
@@ -170,7 +170,7 @@ type archiveContents struct {
 // half-restore. workspace/<rel> entries land in a path→bytes map so the
 // restore can rebuild the tree later in the user-resolved workspace dir.
 func readBackupArchive(path string) (archiveContents, error) {
-	f, err := os.Open(path) //nolint:gosec // user-chosen input path
+	f, err := os.Open(path) // user-chosen input path
 	if err != nil {
 		return archiveContents{}, fmt.Errorf("opening archive: %w", err)
 	}

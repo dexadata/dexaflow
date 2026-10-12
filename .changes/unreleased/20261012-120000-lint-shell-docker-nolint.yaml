@@ -1,0 +1,10 @@
+kind: Changed
+body: |-
+  **Shell scripts, Dockerfiles and lint suppressions are linted.** The Lint job
+  of CI and `make lint` now run shellcheck on `scripts/` (warnings and errors
+  fail) and hadolint on the hand-written Dockerfiles, and golangci-lint enables
+  `nolintlint`, so every `//nolint` names its linter, says why, and is removed
+  once it is no longer needed. The Test job writes the total and per-package
+  unit coverage to the run's job summary. `make lint-shell` and
+  `make lint-docker` run the two new checks on their own.
+time: 2026-10-12T12:00:00.000000000-03:00

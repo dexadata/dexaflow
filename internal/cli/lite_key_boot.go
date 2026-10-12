@@ -186,7 +186,7 @@ const serverKeyLockCapability = "lite-key-lock"
 func checkServerKeyLock(ctx context.Context, serverBin string) error {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, serverBin, "version").Output() //nolint:gosec // path resolved by resolveBinary
+	out, err := exec.CommandContext(cctx, serverBin, "version").Output() // path resolved by resolveBinary
 	if err == nil && advertisesKeyLock(string(out)) {
 		return nil
 	}
