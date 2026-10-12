@@ -72,15 +72,93 @@ to `release-*` as they do on `main`, and CI and the security scans also run on
 pushes to `release-*`, so the merge commit a patch is tagged from has a run to
 gate on.
 
-## The changelog fills itself, per PR
+## How the changelog flows
 
-Every PR records its own user-facing change under `## [Unreleased]` in
-`CHANGELOG.md`, enforced by the **`changelog-guard`** CI job
-(`scripts/check-changelog-entry.sh`). So by the time you cut, `[Unreleased]` is
-already the complete release note — no scramble to reconstruct it, and no
-back-fill "docs(changelog)" PRs (the recurring pattern this gate ends). A PR with
-no user-facing change (release-prep, chore, dependabot, docs-only) carries the
-**`skip-changelog`** label to bypass the gate.
+`CHANGELOG.md` is assembled, not edited. Each pull request records its change
+as one fragment file, the cut folds the fragments into the file, and after a
+patch the result is brought back to `main`. The contributor side (how to write
+a fragment, what not to edit) is in
+[Record a change](https://dexaflow.dexadata.ai/contribute/recipes/record-a-change/);
+this section is the whole lifecycle.
+
+1. **A pull request to `main` writes a fragment.** `make changelog` (changie)
+   writes `.changes/unreleased/<timestamp>-<slug>.yaml` with a `kind` (one of
+   the kinds in `.changie.yaml`) and a `body`. A pull request with no
+   user-facing change carries the `skip-changelog` label instead.
+2. **A cherry-pick carries it to `release-X.Y`.** `git cherry-pick -x` copies
+   the fragment with the same file name and the same text. Keep both: the sync
+   in step 5 matches the fragment on `main` to what shipped by that name, and
+   by its text.
+3. **The cut folds the fragments, on the branch it cuts from.**
+   `scripts/changelog-fold.sh` renders every pending fragment into
+   `## [Unreleased]` and deletes the files, in the prepare commit. An rc stops
+   there; its entries wait in `[Unreleased]` for the GA.
+4. **A GA dates the section.** `[Unreleased]` becomes `## [X.Y.Z] - <date>`
+   and a fresh, empty `[Unreleased]` opens above it.
+5. **A patch GA syncs back to `main`.** For `X.Y.Z` with `Z > 0`, steps 3 and
+   4 happened on `release-X.Y`, so `main` still has every fragment the patch
+   shipped and no `[X.Y.Z]` section. Right after pushing the tag, the cut runs
+   `scripts/changelog-sync.sh X.Y.Z --pr`, which opens
+   `changelog: sync vX.Y.Z to main` from a branch `changelog/sync-vX.Y.Z`:
+   the dated sections of the minor's patches that `main` lacks, copied
+   verbatim from the tag in version order, and the deletion of the fragments
+   the release consumed. The cut does not wait for it, and its failure never
+   fails the cut; merge it once it is green. It depends only on the tag, not
+   on the release workflows reaching PUBLISHED: the changelog is true once
+   the tag exists. The milestone guard exempts the branch, and
+   `release-gap.sh` and `docs-gap.sh` treat its commit as release mechanics.
+6. **`X.Y.0` is cut from `main`.** Steps 3 and 4 happen on `main` itself, so
+   there is nothing to sync. This is the cut that would publish an unsynced
+   patch's fragments a second time, which is why it checks first (below).
+
+```
+ main             release-X.Y
+  |  PR + fragment   |
+  |---cherry-pick -x-->  same fragment, same file name
+  |                  |
+  |                  |  cut X.Y.Z (Z > 0): fold, delete fragments, date [X.Y.Z]
+  |                  o  tag vX.Y.Z
+  |<--sync PR--------'  changelog: sync vX.Y.Z to main
+  |   + [X.Y.Z] section, - consumed fragments
+  |
+  o  cut X.Y+1.0 on main: fold (only what never shipped), date, tag
+```
+
+What checks it, and when:
+
+| Check | What it checks | When it runs |
+|---|---|---|
+| `check-changelog-entry.sh` (CHANGELOG guard) | The pull request adds a fragment or edits `[Unreleased]`, or carries `skip-changelog` | Every pull request to `main` and `release-*` |
+| `check-changelog-structure.sh` (CHANGELOG structure) | One `[Unreleased]`, first; every other heading `## [X.Y.Z] - YYYY-MM-DD`, strictly descending; only declared kinds, once each, in order, none empty (from 0.4.7 on); every GA tag of a minor the file records has its section, except the newest tag of each minor while its sync pull request is open; every fragment parses, has a declared `kind` and a non-empty `body`, and is not already an entry of a dated section | Pull requests to `main` and `release-*` that touch the changelog, the fragments or these scripts; and every cut, as one of the `check-*.sh` gates |
+| `changelog-sync.sh --check-all` | `main` carries the changelog of the newest patch of every minor: no missing section, no fragment the release consumed | Preflight of every cut. A minor cut (from `main`) refuses; a patch cut warns, because its own sync repairs the earlier ones |
+| `changelog-fold.sh` | The fold drops no line of the file | Every cut |
+
+### When the changelog drifts
+
+- **The sync pull request failed to open, or was closed unmerged.** Nothing
+  about the release is affected. From any checkout:
+  `scripts/changelog-sync.sh X.Y.Z --pr --fetch`. It works from the tag in a
+  scratch worktree of `origin/main`, never switches your checkout, and
+  re-running it updates the same branch and pull request.
+- **A patch was synced late or never.** Syncing the newest patch of the minor
+  also inserts every earlier section the minor is missing, so
+  `scripts/changelog-sync.sh <newest X.Y.Z> --pr --fetch` repairs them all.
+  `scripts/changelog-sync.sh --check-all --fetch` says which minor is behind.
+- **CHANGELOG structure is red on a pull request.** It names the rule and the
+  line. "vX.Y.Z is tagged but has no section" is a missed sync (above).
+  "already an entry of a dated section" is a fragment that shipped: delete it
+  in the same pull request. A malformed heading or a fragment that does not
+  parse is fixed in the pull request that is red.
+- **A fragment was renamed on one side.** The sync still removes it when its
+  text matches a released entry, and says it matched by content. When a
+  fragment of the consumed name is on `main` with different text (edited after
+  the pick), the sync keeps it, reports it, and exits 1: decide by hand whether
+  it is the shipped entry (delete it) or a new one (keep it, give it a new
+  name).
+- **Preview without changing anything:** `scripts/changelog-sync.sh X.Y.Z
+  --check --fetch` prints what a sync would insert and delete.
+  `scripts/changelog-sync.sh X.Y.Z` (no flag) applies the sync to the
+  checkout you are in, for a pull request you open yourself.
 
 ## The flow the script runs
 
@@ -88,11 +166,16 @@ no user-facing change (release-prep, chore, dependabot, docs-only) carries the
    detected from the `-rc.N` suffix, and the base branch picked from the
    version: `main` for `X.Y.0` and its candidates, `release-X.Y` for later
    patches (it must exist on `origin`). Being checked out on another branch
-   only warns; the cut builds on `origin/<base>` either way.
+   only warns; the cut builds on `origin/<base>` either way. It also runs
+   `scripts/changelog-sync.sh --check-all`: a cut from `main` refuses while
+   `main` lacks the changelog of a patch already released, and a patch cut
+   warns.
 2. **Prepare**: a `release/<tag>` branch off the base. Bump
    `helm/dexaflow/Chart.yaml` `version`+`appVersion` in lockstep (ADR 0028), regenerate the chart README with
-   `helm-docs`, and for a **GA** move `CHANGELOG [Unreleased]` to `[X.Y.Z] - <date>`
-   with a fresh empty `[Unreleased]` (an **rc** keeps `[Unreleased]`). Run every
+   `helm-docs`, fold the pending changelog fragments into `[Unreleased]`, and
+   for a **GA** move `CHANGELOG [Unreleased]` to `[X.Y.Z] - <date>`
+   with a fresh empty `[Unreleased]` (an **rc** keeps `[Unreleased]`). See
+   [How the changelog flows](#how-the-changelog-flows). Run every
    `scripts/check-*.sh` gate against the tag. One of them,
    `check-changelog-entry.sh`, is a pull-request gate with no question to ask
    when there is no pull request, so it reports `gate SKIP`; the cut log
@@ -104,10 +187,15 @@ no user-facing change (release-prep, chore, dependabot, docs-only) carries the
 4. **Guard → tag**: verifies the Chart at the merge commit matches the version,
    waits for the base branch's CI on that commit, then, behind an explicit
    **confirmation gate**, tags and pushes.
-5. **Watch**: writes `.release-<tag>.log` the moment the tag is pushed, then
+5. **Sync the changelog to main** (**patch GA** only): right after the tag
+   push and the `.release-<tag>.log` line, opens
+   `changelog: sync vX.Y.Z to main` (`scripts/changelog-sync.sh X.Y.Z --pr`)
+   and moves on without waiting for it. A failure warns and prints the command
+   to run by hand; it never fails the cut.
+6. **Watch**: writes `.release-<tag>.log` the moment the tag is pushed, then
    follows the tag's release workflows to **PUBLISHED**, un-drafting +
    re-running if the gate retracts on a flake (#862).
-6. **Publish the docs root** (**GA** only, and only if step 5 reached
+7. **Publish the docs root** (**GA** only, and only if step 6 reached
    PUBLISHED): opens a `docs/promote-<tag>` PR repointing
    `website/scripts/ci/versions.json`, waits for it green and merges it. It runs
    last on purpose: the Pages deploy checks the tag out, so it cannot ride in
@@ -197,6 +285,12 @@ scripts/release-gap.sh 0.5.1 --fetch
 
 # User-facing changes the release would ship without docs (the cut refuses while non-empty)
 scripts/docs-gap.sh 0.5.2 --fetch
+
+# Does main carry the changelog of every patch already tagged? (a minor cut refuses while not)
+scripts/changelog-sync.sh --check-all --fetch
+
+# Bring a patch's changelog back to main by hand (the cut does this after a patch GA)
+scripts/changelog-sync.sh 0.5.4 --pr --fetch
 
 # A patch of a minor that already shipped is cut from release-0.5
 scripts/cut-release.sh v0.5.1-rc.1

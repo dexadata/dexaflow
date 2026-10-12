@@ -57,6 +57,11 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
 9. **Release checklist.**
    - `scripts/release-gap.sh X.Y.Z` is empty (patches cut from `release-X.Y`).
    - The changelog fragments and release notes describe what ships.
+   - `scripts/changelog-sync.sh --check-all --fetch` is clean: `main` carries
+     the changelog of every patch already tagged (a minor cut refuses
+     otherwise), and after a patch GA its `changelog: sync vX.Y.Z to main`
+     pull request is merged
+     ([RELEASING.md](RELEASING.md#how-the-changelog-flows)).
    - `leoflow.yaml`, `LEOFLOW_*` variables and `~/.leoflow` still work next to
      `dexaflow.yaml`, `DEXAFLOW_*` and `~/.dexaflow`.
    - No commit in the range carries a `Co-Authored-By` trailer, a session link
