@@ -81,7 +81,20 @@ sides also corrupted the file in practice, leaving five headings for three
 kinds. Two fragments are two different files and cannot conflict at all.
 
 Editing `CHANGELOG.md` by hand still passes the gate, because a change that is
-recorded is recorded. Prefer the fragment.
+recorded is recorded. Prefer the fragment, and never edit a dated
+(`## [X.Y.Z] - <date>`) section: those are published release notes, and the
+release tooling copies them between branches verbatim.
+
+Once your fragment is merged, leave it alone. The release cut folds it into
+`CHANGELOG.md` and deletes it; when a patch release ships it from
+`release-X.Y`, a `changelog: sync vX.Y.Z to main` pull request deletes it from
+`main` too. A cherry-pick to a release branch carries the fragment unchanged,
+with the same file name: renaming or rewording it on one side is how a shipped
+entry gets published twice. The **CHANGELOG structure** check validates every
+fragment (it parses, has a declared `kind` and a non-empty `body`) and fails a
+pull request that adds one whose text already shipped. The whole lifecycle, and
+what to do when it drifts, is in
+[RELEASING.md, How the changelog flows](RELEASING.md#how-the-changelog-flows).
 
 If the PR has no user-facing change at all (release prep, a chore, a
 dependency bump, a docs-only edit), apply the **`skip-changelog`** label to the
