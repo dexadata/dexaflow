@@ -224,7 +224,11 @@ flowchart TB
 3. **Lease + ack.** When an attempt for that version is ready, the control plane
    leases a free slot on a registered worker and sends the assignment. The worker
    **acks**, and a durable warm-attempt binding is written so a leader failover can
-   recover which worker holds which task instance.
+   recover which worker holds which task instance. A failed binding write is
+   retried with backoff for about 12 seconds. An ack that arrives after the
+   30 second lease still binds the attempt for up to 5 minutes after the lease
+   expired, and the worker is not offered other work during that time, since it
+   runs the attempt as soon as it acks.
 4. **Fork from a pristine template.** The worker runs each attempt in a **fresh
    child process forked from a pristine template — never from a sibling attempt**
    ([isolation](#isolation-between-attempts)).

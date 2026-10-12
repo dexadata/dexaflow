@@ -18,13 +18,18 @@ type Querier interface {
 	// task_id, try_number) as started. A later failover reaper matches warm_worker_id
 	// against the live warm-pod set to find attempts a dead warm pod held.
 	//
-	// Guarded on state IN ('queued', 'running') — the same active predicate the
-	// heartbeat and liveness queries use — so a settled attempt is never bound: an
-	// ack that races a reaper settling the row must not stamp a worker onto a
-	// terminal TI. Bounded by (dag_run_id, task_id, try_number, attempt_epoch) to
-	// match exactly the attempt the assignment named. Returns the affected row count; zero means the
-	// attempt already moved on (terminal or superseded), and the caller treats that
-	// as a benign no-op, never an error.
+	// Guarded on state IN ('scheduled', 'queued', 'running'), so a settled attempt
+	// is never bound: an ack that races a reaper settling the row must not stamp a
+	// worker onto a terminal TI. 'scheduled' is admitted because with synchronous
+	// dispatch the warm placer hands the assignment out inside Dispatch, before the
+	// tick records queued, and the worker can ack (and report RUNNING) first. Missing
+	// that bind left a running warm attempt unbound, and the pod-lost reaper failed it
+	// while it ran (#1600). The epoch pin makes this safe: a scheduled row carries the
+	// claimed epoch only for the attempt the dispatcher just handed out, and every
+	// re-dispatch bumps it. Bounded by (dag_run_id, task_id, try_number,
+	// attempt_epoch) to match exactly the attempt the assignment named. Returns the
+	// affected row count; zero means the attempt already moved on (terminal or
+	// superseded), and the caller treats that as a benign no-op, never an error.
 	BindWarmAttempt(ctx context.Context, arg BindWarmAttemptParams) (int64, error)
 	// Atomically claim one on-failure ATTEMPT for a run, returning the row iff this
 	// call won it. Replaces the old claim-then-send (#431), which set alerted_at
@@ -386,7 +391,8 @@ type Querier interface {
 	// actively STARTING the attempt; counting only `running` would classify it IDLE
 	// in that window and let the excess-idle-tail delete remove a worker that is
 	// starting an attempt — an M1 violation that kills a just-started attempt. The
-	// BindWarmAttempt guard binds exactly the queued/running window, and every
+	// BindWarmAttempt guard binds the scheduled/queued/running window (a scheduled
+	// bound row moves to queued or running within the same tick), and every
 	// re-dispatch/reset that moves a bound row back out of that window clears
 	// warm_worker_id, so a queued+bound row here is always a live starting attempt,
 	// never a stale binding.
