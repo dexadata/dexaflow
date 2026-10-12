@@ -43,3 +43,25 @@ func TestValidateSchedule(t *testing.T) {
 		})
 	}
 }
+
+// A TZ= or CRON_TZ= prefix with nothing after it made robfig/cron's parser
+// slice past the end of the string and panic (it cuts the zone at the first
+// space). A dag.json schedule reaches that parser at registration and on every
+// scheduler tick, so it must come back as a validation error.
+func TestParseCronRejectsBareTimeZonePrefix(t *testing.T) {
+	for _, expr := range []string{"TZ=", "TZ=UTC", "CRON_TZ=Europe/Lisbon", "TZ=UTC\t0 * * * *"} {
+		if _, err := ParseCron(expr); err == nil {
+			t.Errorf("ParseCron(%q) = nil error, want one", expr)
+		}
+		spec := DAGSpec{Schedule: &expr}
+		if err := spec.ValidateSchedule(); err == nil {
+			t.Errorf("ValidateSchedule(%q) = nil, want an error", expr)
+		}
+		if _, ok := MinScheduleInterval(expr); ok {
+			t.Errorf("MinScheduleInterval(%q) ok, want not ok", expr)
+		}
+	}
+	if _, err := ParseCron("CRON_TZ=Europe/Lisbon 30 2 * * *"); err != nil {
+		t.Errorf("a zone followed by an expression is valid: %v", err)
+	}
+}

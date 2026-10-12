@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // dueScheduledSlots returns the logical dates for which the scheduler should
@@ -29,7 +31,7 @@ import (
 // scheduleParseable backstop in createDueRuns already log the bad expression
 // once; this helper stays silent.
 func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.Time, catchup bool, maxSlots int) []time.Time {
-	schedule, err := cron.ParseStandard(expr)
+	schedule, err := domain.ParseCron(expr)
 	if err != nil {
 		return nil
 	}
@@ -69,7 +71,11 @@ func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.
 	cursor := seed
 	for {
 		cursor = schedule.Next(cursor)
-		if cursor.After(now) {
+		// Next returns the zero time for a schedule that never fires (31
+		// February, an empty hour list). Taking it for a slot dated year 1
+		// would create a bogus run, or, below the start_date floor, ask Next
+		// again forever and hang the tick.
+		if cursor.IsZero() || cursor.After(now) {
 			break
 		}
 		if startDate != nil && cursor.Before(*startDate) {
