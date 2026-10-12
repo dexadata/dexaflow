@@ -132,9 +132,11 @@ var disruptionPodReasons = map[string]bool{
 // DeletionByTaintManager) or one of disruptionPodReasons. An OOMKilled task
 // container is never a disruption: the kernel enforced the task's own memory
 // limit, which is the task's failure to fix, so it stays on the task rail even
-// on a pod that also carries the condition.
+// on a pod that also carries the condition. An eviction for a limit of the
+// task's own (ownLimitEviction) is the same class of failure and stays on the
+// task rail too.
 func podWasDisrupted(pod *corev1.Pod) bool {
-	if podWasOOMKilled(pod) {
+	if podWasOOMKilled(pod) || ownLimitEviction(pod) {
 		return false
 	}
 	for _, c := range pod.Status.Conditions {
@@ -143,6 +145,42 @@ func podWasDisrupted(pod *corev1.Pod) bool {
 		}
 	}
 	return disruptionPodReasons[pod.Status.Reason]
+}
+
+// ownLimitEvictionMarks are the parts of the kubelet's eviction messages
+// (pkg/kubelet/eviction/helpers.go) that name a limit of the pod's own: a
+// container over its ephemeral-storage limit, the pod over the sum of its
+// containers' limits, and an emptyDir volume over its sizeLimit. A node-pressure
+// eviction says "The node was low on resource" instead and carries none of them.
+var ownLimitEvictionMarks = []string{
+	"exceeded its local ephemeral storage limit",                // containerEphemeralStorageMessageFmt
+	"local storage usage exceeds the total limit of containers", // podEphemeralStorageMessageFmt
+	"exceeds the limit", // emptyDirMessageFmt
+}
+
+// ownLimitEviction reports whether the kubelet evicted the pod because the task
+// outgrew a limit of its own rather than because the node ran short (review
+// finding 1595-1). Like an OOMKilled container, that is the task's failure to
+// fix, and it is deterministic: re-placing it on the infra budget would rerun it
+// up to the infra limit without spending a retry and blame the cluster.
+func ownLimitEviction(pod *corev1.Pod) bool {
+	if pod.Status.Reason != "Evicted" {
+		return false
+	}
+	for _, mark := range ownLimitEvictionMarks {
+		if strings.Contains(pod.Status.Message, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownLimitEvictionReason describes an own-limit eviction for the operator,
+// naming the kubelet's message, which says which limit was exceeded. Bounded,
+// because the message is a kubelet-supplied field.
+func ownLimitEvictionReason(pod *corev1.Pod) string {
+	return boundReason("the task pod was evicted for exceeding its own limit: " +
+		strings.TrimSpace(pod.Status.Message) + "; raise the task's ephemeral-storage limit or emptyDir sizeLimit.")
 }
 
 // disruptionReason describes an infra settle for the operator. It starts with
@@ -231,6 +269,9 @@ func recordMatchesPod(rec taskoutcome.Record, pod *corev1.Pod) bool {
 // unmarked one is the task's own text, so it does not hide an OOMKilled pod
 // either, and it is shown only labeled (withTaskProvided).
 func failedReason(rec taskoutcome.Record, pod *corev1.Pod) string {
+	if agentReason(rec) == "" && ownLimitEviction(pod) {
+		return withTaskProvided(ownLimitEvictionReason(pod), taskProvidedReason(rec))
+	}
 	if agentReason(rec) == "" && podWasOOMKilled(pod) {
 		// The RECORD's exit code, not the container's, and the difference is the
 		// whole reason this takes an argument. On the path that reaches here the
@@ -372,6 +413,9 @@ func withTaskProvided(platform, task string) string {
 // result is bounded — the strings are copied from kubelet-supplied fields, which
 // are an untrusted, unbounded source for a value that ends up end-user visible.
 func podFailureReason(pod *corev1.Pod) string {
+	if ownLimitEviction(pod) {
+		return ownLimitEvictionReason(pod)
+	}
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.Name != taskContainerName {
 			continue

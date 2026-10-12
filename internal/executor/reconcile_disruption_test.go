@@ -162,3 +162,94 @@ func TestDisruptionReasonIsBounded(t *testing.T) {
 		t.Errorf("reason length %d exceeds the cap %d", len(v.reason), taskoutcome.MaxReasonLen)
 	}
 }
+
+// Kubelet eviction messages, verbatim from pkg/kubelet/eviction/helpers.go
+// (nodeLowMessageFmt, containerMessageFmt, containerEphemeralStorageMessageFmt,
+// podEphemeralStorageMessageFmt, emptyDirMessageFmt) as the kubelet renders them.
+const (
+	evictNodePressureMsg = "The node was low on resource: ephemeral-storage. Threshold quantity: 10Gi, available: 9Gi. " +
+		"Container task was using 12Gi, request is 0, has larger consumption of ephemeral-storage. "
+	evictContainerEphemeralMsg = `Container task exceeded its local ephemeral storage limit "1Gi". `
+	evictPodEphemeralMsg       = "Pod ephemeral local storage usage exceeds the total limit of containers 1Gi. "
+	evictEmptyDirMsg           = `Usage of EmptyDir volume "scratch" exceeds the limit "500Mi". `
+)
+
+// TestReconcileOwnLimitEvictionIsATaskFailure is review finding 1595-1: the
+// kubelet also evicts a pod (reason Evicted) when the task outgrows a limit of
+// its own, the container's or the pod's ephemeral-storage limit or an emptyDir
+// sizeLimit. That is the task's fault, the same class as OOMKilled, and it is
+// deterministic, so it must stay a task failure that spends a retry instead of
+// being re-placed on the infra budget. A node-pressure eviction, whose message
+// names the node, stays infra. Each own-limit case is checked with and without
+// the DisruptionTarget condition and with a FAILED record the agent wrote on
+// the SIGTERM.
+func TestReconcileOwnLimitEvictionIsATaskFailure(t *testing.T) {
+	limits := map[string]string{
+		"container ephemeral-storage limit": evictContainerEphemeralMsg,
+		"pod ephemeral-storage limit":       evictPodEphemeralMsg,
+		"emptyDir sizeLimit":                evictEmptyDirMsg,
+	}
+	shapes := map[string]func(*corev1.Pod) *corev1.Pod{
+		"reason only":    func(p *corev1.Pod) *corev1.Pod { return p },
+		"with condition": func(p *corev1.Pod) *corev1.Pod { return disrupted(p, "TerminationByKubelet") },
+		"with a FAILED record": func(p *corev1.Pod) *corev1.Pod {
+			return disrupted(withRecord(p, taskoutcome.FailedWith(143)), "TerminationByKubelet")
+		},
+	}
+	for limit, msg := range limits {
+		for shape, mk := range shapes {
+			t.Run(limit+"/"+shape, func(t *testing.T) {
+				pod := mk(withPodReason(managedPod("p-limit", "ti-limit", corev1.PodFailed), "Evicted", msg))
+				rep := &fakeReporter{}
+				if err := NewReconciler(fake.NewClientset(pod), "leoflow", rep).Reconcile(context.Background()); err != nil {
+					t.Fatalf("Reconcile: %v", err)
+				}
+				got := rep.settled["ti-limit"]
+				if got.kind != settleFailed {
+					t.Fatalf("settled %+v, want a task failure", got)
+				}
+				if strings.HasPrefix(got.reason, "pod_disrupted") {
+					t.Errorf("reason %q must not carry the infra mark", got.reason)
+				}
+				if !strings.Contains(got.reason, strings.TrimSpace(msg)) {
+					t.Errorf("reason %q must name the kubelet's message %q", got.reason, msg)
+				}
+			})
+		}
+	}
+
+	t.Run("node pressure stays infra", func(t *testing.T) {
+		pod := disrupted(withPodReason(managedPod("p-node", "ti-node", corev1.PodFailed), "Evicted", evictNodePressureMsg),
+			"TerminationByKubelet")
+		if v := classifyPod(pod); v.settle != settleInfra {
+			t.Fatalf("settle = %v, want infra", v.settle)
+		}
+		old := withPodReason(managedPod("p-node-old", "ti-node-old", corev1.PodFailed), "Evicted", evictNodePressureMsg)
+		if v := classifyPod(old); v.settle != settleInfra {
+			t.Fatalf("reason-only node pressure: settle = %v, want infra", v.settle)
+		}
+	})
+
+	// Only an eviction is read for a limit: a node shutdown whose message
+	// happens to share the wording is still the cluster stopping the pod.
+	t.Run("limit wording on a non-eviction stays infra", func(t *testing.T) {
+		pod := disrupted(withPodReason(managedPod("p-sd", "ti-sd", corev1.PodFailed), "Terminated", evictEmptyDirMsg),
+			"TerminationByKubelet")
+		if v := classifyPod(pod); v.settle != settleInfra {
+			t.Fatalf("settle = %v, want infra", v.settle)
+		}
+	})
+}
+
+// TestOwnLimitEvictionReasonIsBounded: the kubelet message lands in the
+// end-user field, so the task-failure reason is capped too.
+func TestOwnLimitEvictionReasonIsBounded(t *testing.T) {
+	long := `Usage of EmptyDir volume "` + strings.Repeat("v", 10*taskoutcome.MaxReasonLen) + `" exceeds the limit "1Gi". `
+	v := classifyPod(withPodReason(managedPod("p", "ti", corev1.PodFailed), "Evicted", long))
+	if v.settle != settleFailed {
+		t.Fatalf("settle = %v, want a task failure", v.settle)
+	}
+	if len(v.reason) > taskoutcome.MaxReasonLen {
+		t.Errorf("reason length %d exceeds the cap %d", len(v.reason), taskoutcome.MaxReasonLen)
+	}
+}

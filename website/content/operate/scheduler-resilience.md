@@ -286,7 +286,13 @@ The reconciler reads two signals from the terminal pod:
 Two things still win over them. A durable SUCCESS or RESCHEDULE record settles
 as before (the task finished before the node went away). And an `OOMKilled`
 task container stays a task failure even on a disrupted pod, because the kernel
-enforced the task's own memory limit. A FAILED record does not win: the agent
+enforced the task's own memory limit. The same holds for an `Evicted` pod whose
+kubelet message names a limit of the pod's own (a container over its
+ephemeral-storage limit, the pod over its containers' total ephemeral-storage
+limit, or an emptyDir volume over its `sizeLimit`): the task outgrew what it
+asked for, so it is a task failure that spends a retry, and the
+`error_message` quotes the kubelet's message. Only an eviction for node
+pressure ("The node was low on resource") is infra. A FAILED record does not win: the agent
 writes one when it catches the SIGTERM of a node shutdown, and that record says
 the task stopped, not why.
 
