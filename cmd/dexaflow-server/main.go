@@ -1070,6 +1070,7 @@ func resilienceLadder(cfg *config.ServerConfig) executor.ResilienceLadder {
 		MaxAttemptCredentialLifetime: cfg.Auth.MaxAttemptCredentialLifetime,
 		TaskTerminationGrace:         time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second,
 		InfraConfirmMaxWait:          scheduler.InfraConfirmMaxWait,
+		DispatchLostThreshold:        rc.DispatchLostThreshold,
 	}
 }
 
@@ -3087,6 +3088,14 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// attempt watchdog: a silent attempt older than it fails for the credential
 	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
 	reaper.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
+	// Under the env-var transport the attempt credential is minted at dispatch
+	// and sits on the pod spec, so its TTL runs while the pod is still Pending.
+	// A pod still Pending as it runs out is re-placed with a fresh one instead
+	// of starting with a dead credential (#1126). The exchange transport mints
+	// the credential when the agent starts, so nothing runs out while it waits.
+	if cfg.Auth.AgentTokenTransport != config.AgentTokenTransportExchange {
+		reaper.SetAttemptTokenTTL(attemptTokenTTL)
+	}
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
 	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the

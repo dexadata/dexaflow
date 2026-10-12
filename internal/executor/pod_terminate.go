@@ -296,6 +296,33 @@ func terminalForTeardown(pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
 
+// TaskPodPending reports whether exactly the (run, task, try, epoch) attempt
+// has a Pending pod and no Running one, i.e. its agent has not started yet
+// (image pull, node provisioning, init containers). Selector and epoch are
+// pinned exactly as in TaskPodPresence. An error reports nothing pending, and
+// the reaper defers on the error itself.
+func (e *KubernetesExecutor) TaskPodPending(ctx context.Context, a Attempt) (bool, error) {
+	selector := attemptSelector(a)
+	pods, err := e.clientset.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return false, fmt.Errorf("listing pods for start (%s): %w", selector, err)
+	}
+	pending := false
+	for i := range pods.Items {
+		if !podMatchesEpoch(&pods.Items[i], a.AttemptEpoch) {
+			continue
+		}
+		phase := pods.Items[i].Status.Phase
+		if phase == corev1.PodRunning {
+			return false, nil
+		}
+		if phase == corev1.PodPending {
+			pending = true
+		}
+	}
+	return pending, nil
+}
+
 // TaskPodPresence reports what the apiserver holds for exactly the
 // (run, task, try, epoch) attempt: a live pod (Pending/Running), a present-but-finished
 // pod, or no pod at all. The dispatch-lost and pod-lost reapers consult this

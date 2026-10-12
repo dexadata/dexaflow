@@ -22,6 +22,9 @@ type fakePodManager struct {
 	// exists for that attempt. A key in neither map is a genuine absence, which
 	// is what most tests want, so they need not mention this one.
 	terminal map[string]bool
+	// pending maps "runID/taskID/try" -> whether the attempt's live pod is still
+	// Pending (its agent has not started); absent key is false.
+	pending map[string]bool
 	// activeCalls counts TaskPodPresence invocations, so a test can assert the live
 	// (quorum) read was skipped when the presence cache already deferred.
 	activeCalls int
@@ -70,6 +73,14 @@ func (f *fakePodManager) TaskPodPresence(_ context.Context, a Attempt) (PodPrese
 	default:
 		return PodPresenceAbsent, nil
 	}
+}
+
+// TaskPodPending reports the `pending` fixture for exactly the attempt.
+func (f *fakePodManager) TaskPodPending(_ context.Context, a Attempt) (bool, error) {
+	if f.activeErr != nil {
+		return false, f.activeErr
+	}
+	return f.pending[fmt.Sprintf("%s/%s/%d", a.RunID, a.TaskID, a.TryNumber)], nil
 }
 
 // --- Dispatch-lost reaper: K8s-aware deferral (part C) ---------------------
