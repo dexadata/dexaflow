@@ -2376,9 +2376,7 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 	go func() {
 		defer t.Stop()
 		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, warmKickMinGap, leading, logger, func() {
-			if err := rc.Reconcile(ctx); err != nil {
-				logger.Error("warm pool reconcile", "error", err)
-			}
+			runLeaderTick(ctx, "warm pool reconcile", reconcileInterval, leaderTickPoll, leading, logger, rc.Reconcile)
 		})
 	}()
 }
@@ -2536,10 +2534,49 @@ func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace stri
 	exec := executor.NewKubernetesExecutor(cs, namespace)
 	exec.SetStagingStore(store)
 	startGatedTicker(ctx, "staging-gc", stagingGCInterval, leading, logger, func() {
-		if err := exec.GCStagingClaims(ctx, stagingTTL); err != nil {
-			logger.Error("staging gc", "error", err)
-		}
+		runLeaderTick(ctx, "staging gc", stagingGCInterval, leaderTickPoll, leading, logger, func(tctx context.Context) error {
+			return exec.GCStagingClaims(tctx, stagingTTL)
+		})
 	})
+}
+
+// leaderTickPoll is how often a running leader-gated cycle re-checks leadership
+// (runLeaderTick). The leadership watch polls every 5 seconds, so one second
+// adds little to how long a step-down takes to stop the cycle.
+const leaderTickPoll = time.Second
+
+// runLeaderTick runs one cycle of a leader-gated loop that mutates cluster
+// state (the warm-pool reconcile, the staging GC) under a context that ends at
+// the cycle's budget or as soon as leading() reports false (#1602). The gated
+// ticker only checks leadership when a tick starts, so without this a cycle in
+// progress at a step-down kept creating and deleting pods next to the new
+// leader's own loop, and one database call hung on a dead connection could hold
+// it indefinitely. Both loops are level-triggered, so a cycle cut short is
+// finished by the next one. A nil leading means always leading. An error is
+// logged, except once the parent context is done (shutdown).
+func runLeaderTick(ctx context.Context, name string, budget, poll time.Duration, leading func() bool, logger *slog.Logger, fn func(context.Context) error) {
+	tctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if leading != nil {
+		go func() {
+			t := time.NewTicker(poll)
+			defer t.Stop()
+			for {
+				select {
+				case <-tctx.Done():
+					return
+				case <-t.C:
+					if !leading() {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
+	if err := fn(tctx); err != nil && ctx.Err() == nil {
+		logger.Error(name, "error", err)
+	}
 }
 
 func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {

@@ -230,6 +230,16 @@ from the workers' side:
   constant today (the bound is a field only tests set), after which it exits
   non-zero and lets the reconciler replace the pod rather than spinning forever
   against a misconfigured deployment.
+- **A leader that steps down without restarting sends its workers on.** A
+  replica can lose leadership and keep running as a follower (a lost advisory
+  lock, failed leadership checks). Its open assignment streams re-check
+  leadership about once a second: each **idle** worker's stream ends with the
+  same `FailedPrecondition`, and the worker re-dials toward the new leader as
+  above. A worker running an attempt keeps its stream until the attempt is done
+  and its slot is free, then is sent on the same way. The warm-pool reconcile
+  and staging-volume GC cycles that were running at the step-down stop within
+  about a second as well, so they do not create or delete pods next to the new
+  leader's own cycles.
 - **A busy worker finishes its attempt, then exits non-zero — by design.** The
   server puts **no busy predicate** on the shutdown: the raw `SIGTERM` context
   *is* the shutdown signal the assignment handler selects on, so every open

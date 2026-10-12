@@ -186,6 +186,10 @@ type Server struct {
 	// bindRetryDelays is the backoff between retries of a failed warm binding
 	// write (bindWarmAttempt). Injectable so tests retry without waiting.
 	bindRetryDelays []time.Duration
+	// leaderPoll is how often an open AwaitAssignment stream re-checks
+	// leaderCheck, so a replica that steps down without a restart sends its
+	// workers away (#1602). Zero means defaultLeaderPoll; tests shorten it.
+	leaderPoll time.Duration
 	// shutdown, when non-nil, is closed as the control plane begins shutting down.
 	// StreamLogs is a bidi stream held open for the whole task; without this signal
 	// its receive loop blocked on Recv until the agent finished, so a graceful stop

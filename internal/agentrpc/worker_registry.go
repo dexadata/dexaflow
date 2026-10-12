@@ -297,6 +297,29 @@ func (r *WorkerRegistry) Deregister(w *registeredWorker) {
 	}
 }
 
+// retireIfIdle takes w off the free set and reports true when it is idle: still
+// this identity's entry, not busy with an acked attempt, and holding no
+// assignment that awaits its ack. An expired lease kept as a tombstone counts as
+// awaiting its ack: the worker may still ack it late and run it (#1600). It
+// reports false, changing nothing, for a
+// worker that is serving or about to serve. The caller ends the worker's stream
+// on true, so taking it off the free set in the same step keeps an assignment
+// from being handed to a stream that is closing.
+func (r *WorkerRegistry) retireIfIdle(w *registeredWorker) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.workers[w.identity] != w || w.busy {
+		return false
+	}
+	for _, ls := range r.leases {
+		if ls.worker == w {
+			return false
+		}
+	}
+	r.removeFreeLocked(w)
+	return true
+}
+
 // Assign hands a WorkAssignment to some free worker of dagVersion by pushing it
 // onto that worker's outbound channel and starting its lease. It returns false
 // when no free worker of that dag_version exists (nothing was handed out and no
