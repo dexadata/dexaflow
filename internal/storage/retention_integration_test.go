@@ -134,7 +134,9 @@ func countFor(t *testing.T, pool *pgxpool.Pool, ctx context.Context, sql string,
 // (none counts as unsettled) and that have no live staging volume, in the
 // asked tenant only, together with every child row; everything else survives.
 // Every call stays within its row limit, run rows included, even when one run
-// has more children than the limit.
+// has more children than the limit. The task instances of one run are the
+// exception: they are deleted together or not at all, so a run with more of
+// them than the limit has them removed alone in one batch.
 func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 	store, pool, ctx := openRetention(t)
 	f := seedRetention(t, pool, ctx)
@@ -152,7 +154,9 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 		if c.DagRuns > 1 {
 			t.Fatalf("batch removed %d runs, want at most maxRuns=1", c.DagRuns)
 		}
-		if c.Total() > 2 {
+		// The one exception to the limit: the task instances of a run larger
+		// than the batch go together, alone in a batch, never part of them.
+		if c.Total() > 2 && c.TaskInstances != c.Total() {
 			t.Fatalf("batch removed %d rows (%+v), want at most the row limit 2", c.Total(), c)
 		}
 		total = total.Add(c)

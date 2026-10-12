@@ -104,3 +104,67 @@ func TestRetentionDryRunCountIsBoundedPerTenant(t *testing.T) {
 		t.Errorf("got %+v, want 2 runs, 2 task instances, 2 audit rows, capped", got)
 	}
 }
+
+// TestRetentionNeverLeavesARunWithPartOfItsTaskInstances: a run whose rows
+// span two batches is cleared between them. A clear re-opens the run and only
+// resets the task instances it finds, so a run left with part of its task
+// instances would re-run without the deleted tasks and never settle. A batch
+// therefore deletes a run's task instances all together or not at all: here the
+// first batch spends its limit on the child rows and stops before the task
+// instances, and the cleared run keeps all three.
+func TestRetentionNeverLeavesARunWithPartOfItsTaskInstances(t *testing.T) {
+	store, pool, ctx := openRetention(t)
+	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_split_%d", time.Now().UnixNano()))
+	old := 400 * 24 * time.Hour
+	run := seedRun(t, pool, ctx, tenant, dag, version, "split", "success", &old, "success", "success", "success")
+	cutoff := time.Now().Add(-24 * time.Hour)
+
+	// 3 task instances, each with 2 state history rows, 1 attempt row and 1 XCom
+	// row: 12 child rows, so a limit of 13 has 1 row left for the 3 instances.
+	got, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 100, 13)
+	if err != nil {
+		t.Fatalf("DeleteFinishedRuns: %v", err)
+	}
+	if got.TaskInstances != 0 {
+		t.Errorf("first batch deleted %d task instances, want 0 (all 3 do not fit the 1 row left)", got.TaskInstances)
+	}
+	mustExec(t, pool, ctx, `UPDATE task_instances SET state = 'none' WHERE dag_run_id = $1`, run)
+	mustExec(t, pool, ctx, `UPDATE dag_runs SET state = 'queued', ended_at = NULL WHERE id = $1`, run)
+
+	if _, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 100, 13); err != nil {
+		t.Fatalf("DeleteFinishedRuns: %v", err)
+	}
+	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instances WHERE dag_run_id = $1`, run); n != 3 {
+		t.Errorf("the cleared run has %d of its 3 task instances, want all 3", n)
+	}
+}
+
+// TestRetentionDeletesARunLargerThanTheBatchInOneGo: a run with more task
+// instances than the batch limit is still deleted, all its task instances in
+// the batch that finds the whole limit free, so a large run cannot be kept
+// forever by the rule above.
+func TestRetentionDeletesARunLargerThanTheBatchInOneGo(t *testing.T) {
+	store, pool, ctx := openRetention(t)
+	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_large_%d", time.Now().UnixNano()))
+	old := 400 * 24 * time.Hour
+	run := seedRun(t, pool, ctx, tenant, dag, version, "large", "success", &old, "success", "success", "success")
+	cutoff := time.Now().Add(-24 * time.Hour)
+
+	var total int64
+	for range 20 {
+		got, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 100, 2)
+		if err != nil {
+			t.Fatalf("DeleteFinishedRuns: %v", err)
+		}
+		if got.TaskInstances != 0 && got.TaskInstances != 3 {
+			t.Fatalf("a batch deleted %d task instances, want all 3 of the run or none", got.TaskInstances)
+		}
+		total += got.Total()
+		if got.Total() == 0 {
+			break
+		}
+	}
+	if runExists(t, pool, ctx, run) {
+		t.Errorf("the run was not deleted after %d rows", total)
+	}
+}
