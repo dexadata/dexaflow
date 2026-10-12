@@ -81,6 +81,11 @@ type WarmWorkerLostReapStore interface {
 	// state='running'). applied=false means a late settle raced the mark — a
 	// benign skip, never a false reap.
 	MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
+	// MarkTaskPodLostOOMKilled is MarkTaskPodLost, the same infra mark with the
+	// same guards, for an attempt whose warm worker's container the kubelet
+	// reported OOMKilled (#1218): only the failure message differs, naming the
+	// OOM kill. The attribution stays infra (ADR 0051, ADR 0058 D7).
+	MarkTaskPodLostOOMKilled(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
 
 // warmWorkerLostReaper recovers a dead warm worker's in-flight attempts (ADR 0058
@@ -158,10 +163,19 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 		return nil
 	}
 	live := make(map[string]bool, len(pods))
+	// oomKilled names the terminal workers whose container the kubelet reported
+	// OOMKilled (#1218). On cgroup v2 the kubelet sets memory.oom.group, so an
+	// OOM in a task kills the whole warm-worker container and this reaper is the
+	// one that settles the attempt. A worker already deleted leaves no evidence
+	// and keeps the plain pod_lost text.
+	oomKilled := map[string]bool{}
 	for _, p := range pods {
 		if p.Terminal {
 			// A terminal warm pod can never serve again; it is not live, so an
 			// attempt still bound to it is correctly reaped below.
+			if p.TerminationReason == "OOMKilled" {
+				oomKilled[p.Name] = true
+			}
 			continue
 		}
 		live[p.Name] = true
@@ -175,7 +189,8 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 			r.record("warm_worker_lost_gate_skip")
 			continue
 		}
-		applied, ferr := r.store.MarkTaskPodLost(ctx, ti.TaskInstanceID, ti.TryNumber, ti.AttemptEpoch)
+		oom := oomKilled[ti.WarmWorkerID]
+		applied, ferr := r.mark(ctx, ti, oom)
 		if ferr != nil {
 			r.logger.Error("marking warm-worker-lost task pod-lost",
 				"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID, "error", ferr)
@@ -189,22 +204,38 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 			continue
 		}
 		r.logger.Warn("warm worker gone; failing its in-flight attempt as pod_lost",
-			"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID)
+			"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID, "oom_killed", oom)
 		r.record("warm_worker_lost")
-		r.writeMarker(ti)
+		if oom {
+			r.record("warm_worker_lost_oomkilled")
+		}
+		r.writeMarker(ti, oom)
 	}
 	return nil
 }
 
+// mark fails the attempt as pod_lost, through the OOMKilled variant when its
+// worker's container was reported OOMKilled. Both are the same infra mark.
+func (r *warmWorkerLostReaper) mark(ctx context.Context, ti WarmBoundTI, oom bool) (bool, error) {
+	if oom {
+		return r.store.MarkTaskPodLostOOMKilled(ctx, ti.TaskInstanceID, ti.TryNumber, ti.AttemptEpoch)
+	}
+	return r.store.MarkTaskPodLost(ctx, ti.TaskInstanceID, ti.TryNumber, ti.AttemptEpoch)
+}
+
 // writeMarker ends the reaped attempt's log with the reason, since the stream
 // stopped wherever its warm worker died (#861). Best-effort, like the other
-// reapers' markers.
-func (r *warmWorkerLostReaper) writeMarker(ti WarmBoundTI) {
+// reapers' markers. oom names the OOM kill when the worker's container was
+// reported OOMKilled (#1218).
+func (r *warmWorkerLostReaper) writeMarker(ti WarmBoundTI, oom bool) {
 	ref := logs.Ref{
 		TenantID: ti.TenantID, DagID: ti.DagID, RunID: ti.DagRunID, TaskID: ti.TaskID,
 		TryNumber: ti.TryNumber, AttemptEpoch: ti.AttemptEpoch,
 	}
 	msg := fmt.Sprintf("killed: pod_lost (warm worker %s is gone or terminated)", ti.WarmWorkerID)
+	if oom {
+		msg = fmt.Sprintf("killed: pod_lost (warm worker %s was OOMKilled; raise the task's memory limit)", ti.WarmWorkerID)
+	}
 	if err := appendKilledMarker(r.sink, ref, time.Now().UTC(), msg); err != nil {
 		r.record("warm_worker_lost_log_marker_error")
 	}

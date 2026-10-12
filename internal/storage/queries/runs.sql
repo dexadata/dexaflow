@@ -1559,7 +1559,10 @@ SET state = 'failed',
     -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
-    error_message = 'pod_lost: the task pod vanished with no live pod past the grace period — see #527'
+    -- error_message overrides the default reason; the warm-worker-lost reaper
+    -- passes one naming an OOM kill (#1218). It keeps the pod_lost: prefix the
+    -- infra override reads the mark from.
+    error_message = COALESCE(sqlc.narg(error_message)::text, 'pod_lost: the task pod vanished with no live pod past the grace period — see #527')
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)

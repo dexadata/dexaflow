@@ -64,6 +64,10 @@ func (s *liteReapStore) MarkTaskPodLost(_ context.Context, id string, _, _ int) 
 	s.podMarked = append(s.podMarked, id)
 	return true, nil
 }
+func (s *liteReapStore) MarkTaskPodLostOOMKilled(_ context.Context, id string, _, _ int) (bool, error) {
+	s.podMarked = append(s.podMarked, id)
+	return true, nil
+}
 func (s *liteReapStore) ListWarmBoundRunningTIs(context.Context) ([]executor.WarmBoundTI, error) {
 	return nil, nil
 }

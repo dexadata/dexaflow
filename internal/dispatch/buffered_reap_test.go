@@ -147,6 +147,10 @@ func (q *queuedRows) FailDispatchRefused(context.Context, string, string, string
 	return nil
 }
 
+func (q *queuedRows) MarkTaskPodLostOOMKilled(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+
 // Every other reaper sees nothing.
 func (q *queuedRows) ListReapCandidates(context.Context) ([]executor.ReapCandidate, error) {
 	return nil, nil

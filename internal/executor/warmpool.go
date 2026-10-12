@@ -104,6 +104,10 @@ type WarmPodInfo struct {
 	DagVersionID string
 	Terminal     bool
 	TenantID     string
+	// TerminationReason is the warm-worker container's terminated reason as the
+	// kubelet reported it (for example OOMKilled), or "" while it runs. The
+	// warm-worker-lost reaper names an OOM kill from it (#1218).
+	TerminationReason string
 }
 
 // WarmPodClient is the cluster side of warm-pool reconciliation: list the warm

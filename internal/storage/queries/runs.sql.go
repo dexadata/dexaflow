@@ -2579,15 +2579,19 @@ SET state = 'failed',
     -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN $1::bool THEN NULL ELSE now() END,
-    error_message = 'pod_lost: the task pod vanished with no live pod past the grace period — see #527'
-WHERE id = $2
-  AND try_number = $3
-  AND attempt_epoch = $4
+    -- error_message overrides the default reason; the warm-worker-lost reaper
+    -- passes one naming an OOM kill (#1218). It keeps the pod_lost: prefix the
+    -- infra override reads the mark from.
+    error_message = COALESCE($2::text, 'pod_lost: the task pod vanished with no live pod past the grace period — see #527')
+WHERE id = $3
+  AND try_number = $4
+  AND attempt_epoch = $5
   AND state = 'running'
 `
 
 type MarkTaskPodLostParams struct {
 	Provisional  bool        `json:"provisional"`
+	ErrorMessage *string     `json:"error_message"`
 	ID           pgtype.UUID `json:"id"`
 	TryNumber    int32       `json:"try_number"`
 	AttemptEpoch int32       `json:"attempt_epoch"`
@@ -2602,6 +2606,7 @@ type MarkTaskPodLostParams struct {
 func (q *Queries) MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markTaskPodLost,
 		arg.Provisional,
+		arg.ErrorMessage,
 		arg.ID,
 		arg.TryNumber,
 		arg.AttemptEpoch,
