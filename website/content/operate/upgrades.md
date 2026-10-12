@@ -709,6 +709,48 @@ migrate -path migrations -database "$DATABASE_URL" goto 41
 
 The down drops the column and its check. No other data changes.
 
+### Upgrading to 0.5.4
+
+**Encrypting Variables is opt-in** (#507). With the default
+`variable_encryption: off`, 0.5.4 stores Variables exactly as 0.5.3 does, so a
+rolling upgrade and a rollback need nothing for them. No migration is involved:
+an encrypted value lives in the same `value` column, marked by the
+`dexaflow:enc:v1:` prefix, and every 0.5.4 mode reads both forms.
+
+To encrypt them, once every control plane replica runs 0.5.4 (an older replica
+would hand the ciphertext to a task):
+
+1. Make sure `DEXAFLOW_SECRET_KEY` is set. Without it the server refuses to
+   start with `variable_encryption` set to `on` or `decrypt`.
+2. Set `DEXAFLOW_VARIABLE_ENCRYPTION=on` (Helm: `extraEnv`) and restart. Each
+   replica encrypts the plaintext rows it finds at startup and logs
+   `stored variables encrypted with the secret key` with the count. Replicas
+   that start together are safe: each rewrite is guarded on the value it read.
+
+**Rolling back to 0.5.3 after turning it on.** 0.5.3 cannot read an encrypted
+Variable: it delivers the ciphertext to tasks as the value. Before you roll
+back:
+
+1. Set `DEXAFLOW_VARIABLE_ENCRYPTION=decrypt` on 0.5.4 and restart every
+   replica. Startup turns every encrypted Variable back into plaintext and logs
+   `stored variables restored to plaintext`; new writes are plaintext.
+2. Check that nothing is left: this returns `0`.
+
+   ```sql
+   SELECT count(*) FROM variables WHERE starts_with(value, 'dexaflow:enc:v1:');
+   ```
+
+   A row no configured key opens is left encrypted and logged at `ERROR`;
+   add the missing key to `DEXAFLOW_SECRET_KEY` and restart, or set that
+   Variable again.
+3. Roll back as usual. A value 0.5.3 writes is plaintext, which 0.5.4 reads as
+   is, so moving forward again needs nothing either.
+
+Setting `variable_encryption` back to `off` stops encrypting new writes but
+leaves encrypted rows encrypted and readable by 0.5.4; only `decrypt` makes
+them readable by 0.5.3. A backup taken while it is on holds ciphertext: restore
+it with the same key, as for connections.
+
 ## Related issues
 
 - #136 — this contract.

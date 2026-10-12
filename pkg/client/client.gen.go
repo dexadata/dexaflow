@@ -403,6 +403,9 @@ type Variable struct {
 	Key         string  `json:"key"`
 	TeamName    *string `json:"team_name,omitempty"`
 	Value       string  `json:"value"`
+
+	// ValueUnreadable Present and true in a listing when the value is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The value is then masked. Reading the variable alone answers 500 with a message naming it.
+	ValueUnreadable *bool `json:"value_unreadable,omitempty"`
 }
 
 // VariableBody Variable create/replace payload. value and description are tri-state: omit the key to preserve the stored value, send an empty string to clear it, or send a value to set it. A value equal to the mask `***` for a sensitive-looking key (secret/password/token/...) is treated as "unchanged", so re-submitting a variable read back from GET (whose sensitive value is masked) never overwrites the real value with the mask.
