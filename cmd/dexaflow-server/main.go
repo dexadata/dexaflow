@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1170,7 +1171,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, metrics, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
@@ -1338,7 +1339,7 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
 	srv := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
 	// Optional HTTPS on the API listener (#638); plain HTTP when unset.
-	if err := configureAPITLS(srv, cfg.Server); err != nil {
+	if err := configureAPITLS(srv, cfg.Server, tel.Metrics); err != nil {
 		return nil, err
 	}
 	tel.Logger.Info("api listener", "http_addr", cfg.Server.HTTPAddr, "tls", srv.TLSConfig != nil)
@@ -1632,10 +1633,21 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, servesAPI bool, apiSrv,
 
 // startAgentGRPC starts the AgentService gRPC server and returns it for graceful
 // shutdown. TLS is enabled when tlsCert/tlsKey are set (issue #58); otherwise the
-// channel is plaintext (dev). The per-task bearer token in metadata authenticates
+// channel is plaintext (dev). The pair is read at boot (a missing or invalid file
+// is a boot error) and re-read on the next handshake whenever either file
+// changes, so a renewed certificate is served without a restart (#637). The per-task bearer token in metadata authenticates
 // each call regardless. inflight (required) is installed on the interceptor
 // chain so the bounded stop can report the handlers it leaves running.
-func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, metrics *observability.Metrics, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+	secure := tlsCert != "" && tlsKey != ""
+	var creds credentials.TransportCredentials
+	if secure {
+		r, cerr := newCertReloader(tlsListenerAgentGRPC, tlsCert, tlsKey, metrics)
+		if cerr != nil {
+			return nil, nil, fmt.Errorf("loading agent grpc TLS cert: %w", cerr)
+		}
+		creds = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: r.getCertificate})
+	}
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -1712,12 +1724,7 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 		// connection would cost something and detect nothing those miss.
 		grpc.KeepaliveEnforcementPolicy(agentrpc.KeepaliveEnforcementPolicy()),
 	}
-	secure := tlsCert != "" && tlsKey != ""
 	if secure {
-		creds, cerr := credentials.NewServerTLSFromFile(tlsCert, tlsKey)
-		if cerr != nil {
-			return nil, nil, fmt.Errorf("loading agent grpc TLS cert: %w", cerr)
-		}
 		opts = append(opts, grpc.Creds(creds))
 	}
 	srv = grpc.NewServer(opts...)
