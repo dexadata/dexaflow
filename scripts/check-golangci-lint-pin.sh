@@ -8,7 +8,7 @@
 #   scripts/chaos/Dockerfile ARG        that image's default, for a bare docker build
 #   .github/workflows/*.yaml            what the CI job that decides the grade runs
 #
-# ADR 0012 makes golangci-lint the arbiter of the A+ floor and CLAUDE.md makes
+# ADR 0012 makes golangci-lint the arbiter of the A+ floor and AGENTS.md makes
 # "make lint is clean" the precondition for a commit. Both sentences are only
 # true while the two run the same binary. Drift here does not break anything
 # loudly — it makes a clean local run stop predicting CI, in whichever direction

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/ui"
 	"github.com/dexadata/dexaflow/internal/version"
@@ -129,7 +130,7 @@ func versionHandler() gin.HandlerFunc {
 func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		runs, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), limit, offset)
+		runs, err := listDagRunsPage(c, repo, c.Param("dag_id"), limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -147,7 +148,7 @@ func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 // (not 404) — the SPA renders an empty header rather than erroring.
 func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		runs, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), 1, 0)
+		runs, err := listDagRunsPage(c, repo, c.Param("dag_id"), 1, 0)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -163,7 +164,7 @@ func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 // registerUIViews mounts the read-only /ui view endpoints (and the UI-support
 // /api/v2/version) whose repositories are configured.
 func registerUIViews(r gin.IRouter, deps Dependencies) {
-	r.GET("/api/v2/version", versionHandler())
+	r.GET("/api/v2/version", RequireScope(auth.ScopeRead), versionHandler())
 	if deps.DagRuns != nil {
 		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.DagRuns))
 		r.GET("/ui/dags/:dag_id/latest_run", RequirePermission("read", "dag_run"), latestRunHandler(deps.DagRuns))

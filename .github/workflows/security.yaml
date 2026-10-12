@@ -120,7 +120,7 @@ jobs:
       # different owner, and wiring the image list in here would let one accepted
       # base-image finding silently suppress the same CVE in code we wrote.
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@c03d123cb480c08c69b054af418ea5e69fe6e57e # master
         with:
           scan-type: fs
           scan-ref: .
@@ -247,7 +247,7 @@ jobs:
       # findings are excluded here too — an alert nobody can ever close is not
       # visibility, it is noise that teaches people to ignore the tab.
       - name: Trivy image scan (SARIF report)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@c03d123cb480c08c69b054af418ea5e69fe6e57e # master
         with:
           scan-type: image
           image-ref: leoflow-server:ci
@@ -269,7 +269,7 @@ jobs:
 
       # Gate: fixable CRITICAL/HIGH only.
       - name: Trivy image scan (gate)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@c03d123cb480c08c69b054af418ea5e69fe6e57e # master
         with:
           scan-type: image
           image-ref: leoflow-server:ci
@@ -328,6 +328,9 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: none
 
       # No build-args: the Dockerfile's own GO_VERSION default is the pin, and
       # scripts/check-migrate-cli-build-tags.sh asserts it equals this
@@ -339,7 +342,7 @@ jobs:
       # Report: every FIXABLE finding at any severity, so the Security tab shows
       # the MEDIUM/LOW ones the gate deliberately does not block on.
       - name: Trivy image scan (SARIF report)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@c03d123cb480c08c69b054af418ea5e69fe6e57e # master
         with:
           scan-type: image
           image-ref: leoflow-migrate:ci
@@ -360,7 +363,7 @@ jobs:
 
       # Gate: fixable CRITICAL/HIGH only.
       - name: Trivy image scan (gate)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@c03d123cb480c08c69b054af418ea5e69fe6e57e # master
         with:
           scan-type: image
           image-ref: leoflow-migrate:ci

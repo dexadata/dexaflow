@@ -2,10 +2,12 @@
 
 Standing rules for everyone who changes this repository: maintainers, contributors
 and automated agents alike. Read this file before opening a pull request or cutting
-a release. Codebase context (architecture, tech stack, code conventions, testing
-discipline) lives in [`.github/CLAUDE.md.template`](.github/CLAUDE.md.template);
-the release mechanics live in [`RELEASING.md`](RELEASING.md). When this file and
-an ADR disagree, the ADR wins and this file gets fixed.
+a release. The project principles, code conventions and testing discipline are in
+section 3, and section 4 maps where everything else is documented. When this
+file and an ADR disagree, the ADR wins and this file gets fixed.
+
+Directories with rules of their own carry their own `AGENTS.md`; when you change
+files there, that file applies on top of this one.
 
 ## 1. Release candidate reviews
 
@@ -26,7 +28,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    (`make test-integration`), and the fixes of the previous patches still holding.
 4. **End to end.** The E2E suites ran green on the candidate's commit: E2E Lite,
    the k3d e2es (`make rc-smoke`), and the performance gates workflow
-   (`.github/workflows/e2e-gates.yaml`).
+   (`.github/workflows/e2e-gates.yaml`). That workflow and the soak smoke run
+   nightly on `main` and on rc tags only, so start both by hand
+   (`workflow_dispatch`) on the `release-X.Y` commit before the cut.
 5. **UI with Playwright.** When the candidate changes anything the browser shows
    (embedded UI assets, `/api/v2/` responses the UI reads, sign-in, login or SSO),
    the Playwright flows (`test/e2e/ui-smoke.js`, `make e2e-sso`,
@@ -72,6 +76,12 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
   line that `-x` writes, so a pick without it counts as missing. See
   [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-branches-and-open-main/)
   and [`RELEASING.md`](RELEASING.md).
+- **Patch content is decided by the safety bar of
+  [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/),
+  not by kind.** While the project is 0.x, features and migrations ship in
+  patches when they meet it. A review does not ask to move a change to a minor
+  for being a feature or adding a migration; it names the point of the bar the
+  change fails, with evidence.
 - **Nothing merged to `main` is left out of the release branch by accident.**
   What will never ship in the minor is listed with its reason in
   `.github/release-skip.txt` on the release branch.
@@ -106,3 +116,98 @@ The Actions queue has few runners, so every wasted run delays everyone.
 - Follow the PR template (`.github/PULL_REQUEST_TEMPLATE.md`): one logical change
   per PR, a changelog fragment (`make changelog`) or the `skip-changelog` label,
   docs updated or `skip-docs` with its reason.
+
+## 3. Principles and conventions
+
+### Project principles
+
+1. **English everywhere.** Code, comments, commit messages, documentation and
+   identifiers are in English.
+2. **Strict TDD.** Production code is written in response to a failing test:
+   write the test, run it, see it fail, implement, see it pass, refactor. See
+   [ADR 0011](https://dexaflow.dexadata.ai/project/adrs/0011-tdd-strict/).
+3. **Go Report Card A+ is the quality floor.** Every commit keeps gofmt, govet,
+   gocyclo (max 15), GoDocs on all exports, ineffassign, misspell and license at
+   100%, plus the golangci-lint stack in `.golangci.yaml` (ADR 0012).
+4. **GoDocs on every exported identifier,** starting with the identifier name and
+   ending with a period.
+5. **No Python in the hot path.** Python runs only in the DAG parser sidecar and
+   inside user task containers.
+6. **DAGs are immutable artifacts:** a `dag.json` and a container image, versioned
+   together, never mutated after compilation.
+7. **Each DAG has its own container image.** No shared `/dags` filesystem and no
+   monolithic worker image.
+8. **The Airflow UI is a hard compatibility target.** The HTTP API at `/api/v2/`
+   matches Airflow 3.2.x semantics; internal models can be richer, but the public
+   API speaks Airflow's vocabulary. Never break that surface.
+9. **Enterprise architecture, simple implementations.** Schemas, interfaces and
+   middleware are built for production from day one; implementations start simple.
+10. **Observability is not optional.** Prometheus metrics, OpenTelemetry tracing
+    and structured logs ship with every feature.
+11. **Supply chain security is built in.** govulncheck, gosec, Trivy and CodeQL run
+    on every PR (ADR 0014). A new dependency is a new supply chain surface: it must
+    be clean under `make vuln` and tracked by Dependabot.
+12. **`dexaflow.yaml` is the authoring standard.** The compiler generates the
+    Dockerfile. A hand-written Dockerfile is a supported escape hatch (ADR 0003),
+    never the default in examples, docs or tests.
+13. **ADRs are immutable once accepted.** Read the ADRs of an area before changing
+    it; a new decision gets a new ADR.
+
+### Code conventions
+
+- **Package names:** lowercase, one word, no underscores.
+- **Errors:** wrap with context (`fmt.Errorf("doing X: %w", err)`); never swallow
+  an error.
+- **Logging:** `log/slog` with structured fields; no `fmt.Println` in production
+  code.
+- **Context:** every function that does I/O takes `context.Context` first.
+- **Tests:** integration tests carry the `//go:build integration` tag; coverage
+  floors are enforced in CI (ADR 0011).
+- **No global state** except metrics registries and configuration
+  (`internal/config`).
+- **Interfaces live near their consumers,** in the package that uses them.
+
+### Testing discipline
+
+- **Show the result.** `make lint` and `go test ./...` run before a change is
+  called done, and the output is what proves it.
+- **Test the documented path.** A test that bypasses the path users take (a
+  hand-written Dockerfile, an overridden environment variable, a fixture that
+  never imports `dag.py`) proves nothing about that path.
+- **Mutation-test every new assertion.** Revert the fix, watch the test fail,
+  restore it, and check that the mutation actually applied.
+- **Lock the wiring, not the leaf.** Drive the real entry point and assert on its
+  output; bugs cluster where a correct helper gets a wrong input.
+- **A comment that describes behavior the code does not have is a bug.** When
+  behavior changes, search for the sentences that described the old behavior.
+- **Read the exit code you think you read.** `cmd | head` reports the status of
+  `head`; an empty filter output is not a pass.
+
+## 4. Where things are documented
+
+This file stays short and points; detail lives next to what it describes
+([ADR 0069](https://dexaflow.dexadata.ai/project/adrs/0069-contributor-context/)).
+
+| You need | Read |
+|---|---|
+| What Dexaflow is and how it is built | [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/), [core concepts](https://dexaflow.dexadata.ai/concepts/core-concepts/), [glossary](https://dexaflow.dexadata.ai/reference/glossary/) |
+| Why a design is the way it is | [ADRs](https://dexaflow.dexadata.ai/project/adrs/), then the `// Package` comment of the Go package |
+| Rules for one area | [`migrations/AGENTS.md`](migrations/AGENTS.md), [`internal/api/AGENTS.md`](internal/api/AGENTS.md), [`helm/AGENTS.md`](helm/AGENTS.md), [`scripts/AGENTS.md`](scripts/AGENTS.md), [`website/AGENTS.md`](website/AGENTS.md) |
+| Steps for a recurring change | [Recipes](https://dexaflow.dexadata.ai/contribute/recipes/): add a migration, record a change, backport to a release branch |
+| A large change before coding it | [Specs](https://dexaflow.dexadata.ai/project/specs/) and their template |
+| Setting up and running locally | [`CONTRIBUTING.md`](CONTRIBUTING.md), [local dev loop](https://dexaflow.dexadata.ai/contribute/local-dev-loop/) |
+| Cutting a release | [`RELEASING.md`](RELEASING.md) and section 1 above |
+| What a release may contain | [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/) |
+| Reporting or fixing a vulnerability | [`SECURITY.md`](SECURITY.md) |
+
+### Public and local context
+
+- Everything a contributor needs to make a correct change is committed, in
+  English, and written for people, in the places above.
+- Files that configure one editor or assistant (`CLAUDE.md`, `GEMINI.md`,
+  `.cursor/`, `.claude/` and the like) and personal notes (`.local/`) stay out
+  of the repository; `.gitignore` lists them and
+  `scripts/check-no-tool-context.sh` fails CI if one is tracked. A local tool
+  file loads this one and adds only what is specific to the tool or the person.
+- When a review or an incident teaches something the next contributor would
+  need, add it to the nearest `AGENTS.md` or recipe in the same PR.

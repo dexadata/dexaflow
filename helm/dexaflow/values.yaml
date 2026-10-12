@@ -361,6 +361,8 @@ auth:
   externalSigninUrl: ""
   # -- Where sign-out lands after clearing the Dexaflow session (#1288), so your platform can end its own session too. Absolute `http(s)` URL; empty (the default) returns to Dexaflow's sign-in page.
   externalSignoutUrl: ""
+  # -- Name of the browser session cookie (#1405). Empty (the default) keeps `_token`. Set a `__Host-` name such as `__Host-dexaflow` whenever several hosts share one parent domain (for example one host per tenant under `example.com`): the browser then refuses a session cookie planted from a sibling host. Changing it signs every browser out once.
+  sessionCookieName: ""
   # How the in-pod agent obtains its control-plane credential, whether secret
   # delivery is bound to task-instance liveness, and what a task is allowed to
   # fetch (ADR 0055). All three ship on the value that is byte-for-byte today's
@@ -716,7 +718,7 @@ taskNetworkPolicy:
 networkPolicy:
   # -- Enable NetworkPolicy gating ingress + egress on the control-plane pods. Requires a CNI that enforces policies (Calico/Cilium/etc.).
   enabled: false
-  # -- NetworkPolicy `from` rules for HTTP + gRPC ingress (task pods dial back). Empty = allow from any pod in any namespace. Tighten with e.g. `[{namespaceSelector: {}}]` for same-namespace only.
+  # -- NetworkPolicy `from` rules for HTTP + gRPC ingress (task pods dial back). Empty = allow from anywhere: every pod in every namespace, node and host traffic, and off-cluster clients where the CNI keeps the client IP. For pods of the release namespace only, use `[{podSelector: {}}]`. Task pods must still reach the gRPC port, so when `taskNamespace` differs from the release namespace add `{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: <taskNamespace>}}}`. Do not use `[{namespaceSelector: {}}]` for this: an empty namespaceSelector matches every namespace (#1076).
   ingressFrom: []
   # -- NetworkPolicy `from` rules for the metrics port (Prometheus scrape). **Narrow this**: the default below allows any namespace, and the metrics listener is unauthenticated and labels its series with `dag_id` and `task_id`. Replace it with your Prometheus namespace, e.g. `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}]`. An empty list means no rule at all, which an Ingress-typed policy denies — that was the old default, and it made `networkPolicy.enabled` plus `metrics.serviceMonitor.enabled` a scrape target that never answered and failed nothing at install (#1067). Stated as a real value rather than left to a comment about what empty means, because a magic empty is how #1067 happened.
   metricsFrom:

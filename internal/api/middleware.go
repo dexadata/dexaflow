@@ -7,6 +7,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -135,8 +138,9 @@ func CORS(allowed []string) gin.HandlerFunc {
 // in its own route group instead of a user session.
 var alwaysPublic = []string{"/auth/", "/api/v2/auth/", "/api/v2/service/", "/healthz", "/readyz", "/docs", "/openapi", "/ui/config"}
 
-// authTokenCookie is the cookie the Airflow 3.2.1 UI carries the JWT in (set by
-// the login flow). JWTAuth accepts it as a fallback to the Authorization header.
+// authTokenCookie is the default name of the cookie the UI carries the JWT in
+// (set by the login flow); auth.session_cookie_name renames it (#1405). JWTAuth
+// accepts it as a fallback to the Authorization header.
 const authTokenCookie = "_token"
 
 // dataPlanePrefixes require a bearer token. Everything outside them — the static
@@ -175,19 +179,19 @@ func DevBypassAuth() gin.HandlerFunc {
 
 // JWTAuth validates the bearer token on protected routes and stores the user.
 func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
-	return jwtAuth(authn, nil)
+	return jwtAuth(authn, nil, authTokenCookie)
 }
 
 // jwtAuth is JWTAuth with an optional trusted-issuer bearer (#1468): a bearer
 // in the Authorization header that is not a valid engine token is then also
 // checked against the trusted issuer. A nil bearer leaves JWTAuth unchanged.
-func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth) gin.HandlerFunc {
+func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, cookieName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublic(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
-		tokens := candidateTokens(c)
+		tokens := candidateTokens(c, cookieName)
 		if len(tokens) == 0 {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
@@ -214,6 +218,12 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth) gin.HandlerFunc
 				tenantless = err
 			}
 			if err == nil {
+				if user.Scoped && !scopeGated(c) {
+					// ADR 0067: scopes are checked by the route's permission gate,
+					// so a route without one is closed to scoped tokens.
+					AbortProblem(c, http.StatusForbidden, "forbidden", scopedRouteRefusal)
+					return
+				}
 				c.Set(contextKeyUser, user)
 				c.Next()
 				return
@@ -260,16 +270,16 @@ func bearerToken(header string) string {
 }
 
 // candidateTokens returns the JWTs to try authenticating, in order: the
-// Authorization bearer first, then the Airflow UI's _token cookie. Both are
+// Authorization bearer first, then the session cookie named cookieName. Both are
 // returned (not just the first present) so JWTAuth can fall back to the cookie
 // when the bearer is stale/invalid — the SPA-refresh case — rather than failing
 // on the bearer alone.
-func candidateTokens(c *gin.Context) []string {
+func candidateTokens(c *gin.Context, cookieName string) []string {
 	var tokens []string
 	if t := bearerToken(c.GetHeader("Authorization")); t != "" {
 		tokens = append(tokens, t)
 	}
-	if cookie, err := c.Request.Cookie(authTokenCookie); err == nil && cookie.Value != "" {
+	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" {
 		tokens = append(tokens, cookie.Value)
 	}
 	return tokens
@@ -285,20 +295,78 @@ func UserFromContext(c *gin.Context) (*auth.User, bool) {
 	return u, ok
 }
 
-// RequirePermission enforces an RBAC permission on a route.
+// RequirePermission enforces an RBAC permission on a route. For a principal
+// whose token carries scopes (ADR 0067), a read route also needs
+// dexaflow:read, and any other route is refused: a write a scoped token may
+// call names its scope with RequireScopedPermission, so a write nobody mapped
+// fails closed.
 func RequirePermission(action, resource string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		user, ok := UserFromContext(c)
-		if !ok {
-			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no authenticated user")
-			return
-		}
-		if !user.HasPermission(action, resource) {
-			AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+action+":"+resource)
-			return
-		}
-		c.Next()
+	scope := ""
+	if action == "read" {
+		scope = auth.ScopeRead
 	}
+	return requirePermission(action, resource, scope)
+}
+
+// RequireScopedPermission is RequirePermission for a write route that a
+// scoped token may call when it carries scope (ADR 0067). The role check
+// still runs first: a scope narrows what roles allow and never widens it.
+func RequireScopedPermission(action, resource, scope string) gin.HandlerFunc {
+	return requirePermission(action, resource, scope)
+}
+
+// RequireScope is the scope check alone, for a protected route that checks no
+// role permission (any signed-in user may call it) and that a scoped token
+// may reach when it carries scope. Without it, jwtAuth refuses a scoped
+// token on the route.
+func RequireScope(scope string) gin.HandlerFunc {
+	return permissionGate{scope: scope}.check
+}
+
+func requirePermission(action, resource, scope string) gin.HandlerFunc {
+	return permissionGate{action: action, resource: resource, scope: scope}.check
+}
+
+// permissionGate checks the role permission (when action is set), then, for
+// a scoped principal, the route's scope; an empty scope means no scope grants
+// the route. Its check is a method value rather than a closure so jwtAuth can
+// find it in a route's handler chain (scopeGated).
+type permissionGate struct{ action, resource, scope string }
+
+func (g permissionGate) check(c *gin.Context) {
+	user, ok := UserFromContext(c)
+	if !ok {
+		AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no authenticated user")
+		return
+	}
+	if g.action != "" && !user.HasPermission(g.action, g.resource) {
+		AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+g.action+":"+g.resource)
+		return
+	}
+	if user.Scoped && g.scope == "" {
+		AbortProblem(c, http.StatusForbidden, "forbidden", scopedRouteRefusal)
+		return
+	}
+	if user.Scoped && !user.HasScope(g.scope) {
+		AbortProblem(c, http.StatusForbidden, "forbidden", "missing scope "+g.scope)
+		return
+	}
+	c.Next()
+}
+
+// scopedRouteRefusal is the detail of a 403 for a route no scope grants.
+const scopedRouteRefusal = "a scoped token cannot call this route"
+
+// permissionGateName is the name gin reports for permissionGate.check in a
+// route's handler chain.
+var permissionGateName = runtime.FuncForPC(reflect.ValueOf(permissionGate{}.check).Pointer()).Name()
+
+// scopeGated reports whether the matched route runs a permissionGate, which
+// is where a scoped principal's scopes are checked. jwtAuth refuses a scoped
+// principal on any other route, so a route registered without a permission
+// check fails closed for scoped tokens instead of ignoring their scopes.
+func scopeGated(c *gin.Context) bool {
+	return slices.Contains(c.HandlerNames(), permissionGateName)
 }
 
 // xcomEntriesSegment marks where the task instance route's XCom key starts.

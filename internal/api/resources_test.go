@@ -1050,3 +1050,39 @@ func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 		t.Errorf("clear payload dag_version.bundle_version = %q, want v1-pinned", *dv.BundleVersion)
 	}
 }
+
+// pauseRecorder records SetPaused calls.
+type pauseRecorder struct {
+	fakeDagRepo
+	calls int
+}
+
+func (p *pauseRecorder) SetPaused(ctx context.Context, tenant, dagID string, paused bool) (domain.DAG, error) {
+	p.calls++
+	return p.fakeDagRepo.SetPaused(ctx, tenant, dagID, paused)
+}
+
+// TestPatchDagWithoutIsPausedIsRefused: a PATCH that does not say whether to
+// pause must not be read as is_paused=false, which would unpause a scheduled
+// DAG (and maybe start a catch-up) for a request that asked for something
+// else. The route grants only pause and unpause, so anything else is a 400.
+func TestPatchDagWithoutIsPausedIsRefused(t *testing.T) {
+	for _, body := range []string{`{}`, `{"is_paused":null}`, `{"description":"x"}`} {
+		repo := &pauseRecorder{fakeDagRepo: fakeDagRepo{dags: []domain.DAG{{DagID: "etl", IsPaused: true}}}}
+		srv := NewServer(Dependencies{
+			Logger:        discardLogger(),
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			Dags:          repo,
+		})
+
+		rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl", body)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("PATCH %s = %d (%s), want 400", body, rec.Code, rec.Body.String())
+		}
+		if repo.calls != 0 {
+			t.Errorf("PATCH %s called SetPaused %d times, want 0", body, repo.calls)
+		}
+	}
+}

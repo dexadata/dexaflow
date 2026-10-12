@@ -1,0 +1,9 @@
+# GoReleaser runtime image for the MCP server. Like Dockerfile.server.release,
+# it copies the binary GoReleaser already built and stamped with its version
+# into a minimal non-root image. The server speaks MCP over stdio by default;
+# run it with `--transport http` to serve remote clients (see the MCP docs).
+FROM gcr.io/distroless/static-debian13:nonroot
+COPY dexaflow-mcp /dexaflow-mcp
+EXPOSE 9099
+USER nonroot:nonroot
+ENTRYPOINT ["/dexaflow-mcp"]

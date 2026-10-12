@@ -28,8 +28,10 @@ the model Kubernetes uses:
   `git cherry-pick -x <sha>` (the `-x` records the original commit), the title
   prefixed `[release-X.Y]`, and a link to the original PR. Carry its changelog
   fragment with it: patch notes are folded from the fragments on the release
-  branch. Only bug, regression and security fixes and release docs are
-  cherry-picked, plus what the ADR records as an exception.
+  branch. While the project is 0.x, any change that meets the safety bar of
+  [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/)
+  may be cherry-picked, features and migrations included; picks keep the
+  migration order of `main`.
 - **Every PR to `main` names its release as a milestone** (`v0.5.1`,
   `v0.5.2`, ...). The milestone guard check fails a PR without one. A PR
   milestoned for the patch being cut needs its cherry-pick; one milestoned for

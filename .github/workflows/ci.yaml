@@ -707,6 +707,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -789,6 +790,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -868,6 +870,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -997,6 +1000,7 @@ jobs:
           # merge-base must be present). checkout + gate always run; the heavy
           # steps are guarded, so this job always reports its (required) check.
           fetch-depth: 0
+      - uses: ./.github/actions/docker-hub-mirror
       # Docs/tooling-only PRs validate nothing here; skip the k3d run but keep
       # reporting this required check. Computes the base..head diff and runs the
       # heavy steps only when a file outside the allowlist changed.
@@ -1337,6 +1341,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check no stale legacy deploy path remains
         run: bash scripts/check-no-stale-deploy-path.sh
+      # ADR 0069: files that configure one editor or assistant stay local.
+      # Shares this job so the check costs no extra runner.
+      - name: No tool-specific context files are tracked
+        run: bash scripts/check-no-tool-context.sh
 
   # ─────────────────────────────────────────────────────────────────────
   # Python parser tests — matrix across every Python the host detector

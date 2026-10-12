@@ -433,8 +433,14 @@ deploy, layer on:
   populate `networkPolicy.egress` with your own data-store and apiserver rules
   (DNS is always allowed regardless). Its ingress, meanwhile, is port-scoped but
   not source-scoped until you set `networkPolicy.ingressFrom`: with the default
-  empty list the policy renders ports 8080/9091 with no `from`, so any pod in any
-  namespace may reach them. It renders nothing for task pods.
+  empty list the policy renders ports 8080/9091 with no `from`, so anything may
+  reach them: every pod in every namespace, node and host traffic, and
+  off-cluster clients where the CNI keeps the client IP. To admit only the
+  release namespace, set `networkPolicy.ingressFrom` to `[{podSelector: {}}]`,
+  and add a `namespaceSelector` matching `kubernetes.io/metadata.name` of
+  `taskNamespace` when task pods run in another namespace, since they dial the
+  gRPC port back. Do not use `[{namespaceSelector: {}}]` for this: an empty
+  namespace selector matches every namespace. It renders nothing for task pods.
 - **`taskNetworkPolicy.enabled` is the task-pod policy, and it defaults to
   `false`.** This is the one that governs the pods running untrusted,
   author-supplied DAG code: it denies all ingress and allows egress only to DNS,

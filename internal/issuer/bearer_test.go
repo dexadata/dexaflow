@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -37,8 +38,9 @@ func TestVerifyBearerAcceptsATokenForABearerAudience(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyBearer: %v", err)
 	}
-	want := Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}
-	if *id != want {
+	// No scope claim: the token may only read (ADR 0067).
+	want := Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme", Scopes: []string{"dexaflow:read"}}
+	if !reflect.DeepEqual(*id, want) {
 		t.Errorf("identity = %+v, want %+v", *id, want)
 	}
 }
@@ -181,5 +183,46 @@ func TestVerifyBearerRefusesAnEngineToken(t *testing.T) {
 	}
 	if n := f.calls.Load(); n != 0 {
 		t.Errorf("JWKS fetched %d times for an HS256 token, want 0", n)
+	}
+}
+
+// TestVerifyBearerScopes reads the OAuth scope claim (ADR 0067): a
+// space-separated string, read only when absent, nothing when empty, and a
+// refusal when it is not a string.
+func TestVerifyBearerScopes(t *testing.T) {
+	cases := []struct {
+		name  string
+		claim any
+		want  []string
+	}{
+		{"absent", nil, []string{"dexaflow:read"}},
+		{"one", "dexaflow:run", []string{"dexaflow:run"}},
+		{"several, extra spaces", "  dexaflow:read   dexaflow:run dexaflow:deploy ", []string{"dexaflow:read", "dexaflow:run", "dexaflow:deploy"}},
+		{"empty", "", []string{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeJWKS(t)
+			v := newTestVerifier(f, bearerConfig(f))
+			claims := bearerClaims()
+			if c.claim != nil {
+				claims["scope"] = c.claim
+			}
+			id, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key))
+			if err != nil {
+				t.Fatalf("VerifyBearer: %v", err)
+			}
+			if !reflect.DeepEqual(id.Scopes, c.want) {
+				t.Errorf("scopes = %#v, want %#v", id.Scopes, c.want)
+			}
+		})
+	}
+
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, bearerConfig(f))
+	claims := bearerClaims()
+	claims["scope"] = []string{"dexaflow:run"}
+	if _, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key)); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("array scope claim: err = %v, want ErrInvalidToken", err)
 	}
 }

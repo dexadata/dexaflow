@@ -466,6 +466,32 @@ type ServerSection struct {
 	// When both are set the channel is encrypted; empty means plaintext (dev).
 	GRPCTLSCert string `mapstructure:"grpc_tls_cert"`
 	GRPCTLSKey  string `mapstructure:"grpc_tls_key"`
+	// GzipResponses gzips JSON and NDJSON responses of 1 KB or more on the API
+	// and UI surfaces for clients that accept it. Log routes and anything that
+	// flushes (live tails, SSE) stay uncompressed. Routes that return secrets,
+	// tokens or code (variables, connections, XComs, auth and the UI session
+	// token, IDE files, DAG sources and specs, a single task or task
+	// instance) also stay uncompressed:
+	// compressing a secret next to reflected input lets its length leak the
+	// secret (BREACH). Other JSON can still echo request input next to private
+	// data, which is the trade-off of turning this on. Off by default (ADR 0062).
+	GzipResponses bool `mapstructure:"gzip_responses"`
+	// MaxPageLimit caps the `limit` a list endpoint accepts, and the
+	// `dag_runs_limit` of /ui/dags; a larger value is served as the cap, like
+	// Airflow's [api] maximum_page_limit. 0 (the default, ADR 0062 gate) keeps
+	// today's behavior: no cap.
+	MaxPageLimit int `mapstructure:"max_page_limit"`
+	// ReadTimeout bounds reading a whole request, headers and body, on the API
+	// and metrics listeners: a slow client cannot hold a connection open by
+	// trickling a body. Set it above the slowest legitimate upload. It never
+	// limits a response: net/http lifts the read deadline once the body is
+	// read, so live log tails are unaffected. 0 (the default, ADR 0062 gate)
+	// means no limit, as before.
+	ReadTimeout time.Duration `mapstructure:"read_timeout"`
+	// IdleTimeout closes a keep-alive connection that has been idle this long.
+	// 0 (the default) keeps idle connections open, as before, even when
+	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
+	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
 	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
 	// only: create, resize and delete answer 403 for every role, tenant admin
 	// included. It is for an engine shared by many tenants, where the platform
@@ -696,6 +722,17 @@ type AuthSection struct {
 	// Secure would strip it from the deployment that most needs it. Boot logs a
 	// WARN when it is on. Bind via LEOFLOW_AUTH_SESSION_COOKIE_INSECURE.
 	SessionCookieInsecure bool `mapstructure:"session_cookie_insecure"`
+	// SessionCookieName is the name of the browser session cookie (#1405).
+	// The default, _token, is what every earlier release used, so an existing
+	// install keeps its sessions. A name starting with __Host- makes the
+	// browser refuse the cookie unless it is Secure, has Path=/ and no Domain,
+	// which is how the session cookie is always set: a page on a sibling host
+	// under the same parent domain can then no longer plant a session here.
+	// Recommended for any deployment that serves several hosts under one
+	// parent domain. A __Host- or __Secure- name with SessionCookieInsecure
+	// fails boot, because the browser would drop every session cookie.
+	// Empty means _token. Bind via LEOFLOW_AUTH_SESSION_COOKIE_NAME.
+	SessionCookieName string `mapstructure:"session_cookie_name"`
 }
 
 // JWTSection configures JWT issuance and validation.
@@ -1097,11 +1134,20 @@ var serverDefaults = map[string]any{
 	// AutomaticEnv only sees keys it has a default for), and false so the
 	// hardened posture is what a config that never mentions it gets.
 	"auth.session_cookie_insecure": false,
+	// _token is the name every earlier release used (#1405).
+	"auth.session_cookie_name":     DefaultSessionCookieName,
 	"secret_key":                   "",
 	"secret_key_reencrypt_on_boot": true,
 	"secret_key_migration_lock":    false,
 	"secrets.backend":              "",
 	"secrets.backend_kwargs":       "",
+	// Gate (ADR 0062): false sends every API body uncompressed, as before.
+	"server.gzip_responses": false,
+	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
+	"server.max_page_limit": 0,
+	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
+	"server.read_timeout": "0s",
+	"server.idle_timeout": "0s",
 	// Trace sampling gates (ADR 0062): the defaults trace every request.
 	"observability.otel.sample_ratio":     1.0,
 	"observability.otel.skip_probe_spans": false,
@@ -1227,6 +1273,18 @@ const (
 	AgentTokenTransportExchange = "exchange"
 )
 
+// validateNonNegative refuses settings where a negative value would silently
+// read as "off" instead of failing boot.
+func (c *ServerConfig) validateNonNegative() error {
+	if c.Server.MaxPageLimit < 0 {
+		return fmt.Errorf("server.max_page_limit must not be negative (got %d); 0 leaves list pages uncapped", c.Server.MaxPageLimit)
+	}
+	if c.Scheduler.PoolStarvationThreshold < 0 {
+		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
+	return nil
+}
+
 // Validate reports configuration errors that must abort startup.
 func (c *ServerConfig) Validate() error {
 	if err := c.validateRole(); err != nil {
@@ -1238,8 +1296,8 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateLogs(); err != nil {
 		return err
 	}
-	if c.Scheduler.PoolStarvationThreshold < 0 {
-		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	if err := c.validateNonNegative(); err != nil {
+		return err
 	}
 	if err := c.validateSecretPolicies(); err != nil {
 		return err
@@ -1584,6 +1642,9 @@ func (c *ServerConfig) validatePlatformIntegration() error {
 	if err := validateTrustedIssuer(c.Auth.TrustedIssuer); err != nil {
 		return err
 	}
+	if err := validateSessionCookieName(c.Auth.SessionCookieName, c.Auth.SessionCookieInsecure); err != nil {
+		return err
+	}
 	if t := c.Auth.ServiceToken; t != "" && len(strings.TrimSpace(t)) < 32 {
 		return errors.New("auth.service_token must be at least 32 characters (generate one with `openssl rand -base64 48`)")
 	}
@@ -1606,6 +1667,37 @@ func validateExternalAuthURL(key, raw string) error {
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("%s must be an absolute http:// or https:// URL (got %q)", key, raw)
+	}
+	return nil
+}
+
+// DefaultSessionCookieName is the browser session cookie's name when
+// auth.session_cookie_name is unset: the name every earlier release used.
+const DefaultSessionCookieName = "_token"
+
+// oidcStateCookieName is the OIDC flow's own cookie. The session cookie may
+// not take its name, or each login would overwrite the other.
+const oidcStateCookieName = "_oidc_state"
+
+// sessionCookieNamePattern is an RFC 6265 cookie name: one or more token
+// characters, so no space, control character or separator such as ; or =.
+var sessionCookieNamePattern = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+// validateSessionCookieName checks auth.session_cookie_name (#1405). A browser
+// drops a __Host- or __Secure- cookie that is not Secure, so with
+// auth.session_cookie_insecure on such a name would fail every sign-in with no
+// visible error. Browsers match those prefixes in any case, so this does too.
+func validateSessionCookieName(name string, insecure bool) error {
+	if name == "" {
+		return nil
+	}
+	if !sessionCookieNamePattern.MatchString(name) || name == oidcStateCookieName {
+		return fmt.Errorf("auth.session_cookie_name must be a cookie name (letters, digits and !#$%%&'*+-.^_`|~, not %s) (got %q)", oidcStateCookieName, name)
+	}
+	lower := strings.ToLower(name)
+	if insecure && (strings.HasPrefix(lower, "__host-") || strings.HasPrefix(lower, "__secure-")) {
+		return fmt.Errorf("auth.session_cookie_name %q needs the Secure attribute, which auth.session_cookie_insecure removes; "+
+			"a browser drops such a cookie, so nobody could sign in. Serve the deployment over https, or use a name without the __Host- or __Secure- prefix", name)
 	}
 	return nil
 }
@@ -1807,6 +1899,12 @@ func isLoopbackHost(host string) bool {
 // validateRole rejects an unknown server.role (ADR 0049). Empty is valid (defaults
 // to "all"). A typo like "worker" is a loud boot failure, not a silent monolith.
 func (c *ServerConfig) validateRole() error {
+	// The listener timeouts are validated with the role: both shape how this
+	// process serves HTTP. A negative duration is a typo, not "off".
+	if c.Server.ReadTimeout < 0 || c.Server.IdleTimeout < 0 {
+		return fmt.Errorf("server.read_timeout (%v) and server.idle_timeout (%v) must not be negative; 0 disables them",
+			c.Server.ReadTimeout, c.Server.IdleTimeout)
+	}
 	switch c.Server.Role {
 	case "", RoleAll, RoleAPI, RoleScheduler:
 		return nil

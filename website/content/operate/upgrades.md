@@ -674,6 +674,41 @@ pool slots and a resource unit (#1466).
 | `scheduler.pool_starvation_threshold` (Helm `config.scheduler.poolStarvationThreshold`) | `60s` | Reserves a pool for a task of more than one slot that has waited longer than this, so smaller tasks cannot keep it out. Pools without sized tasks are never reserved. `0s` disables it. | #1482 |
 | `max_task_pool_slots` on `PUT /api/v2/service/tenants/{tenant}` | `0` (unlimited) | Refuses at registration, with a 403, a task whose size is above the tenant's limit. Uses migration 041. | #1483 |
 
+### Upgrading to 0.5.3
+
+0.5.3 applies one migration, `042_task_instance_pool_slots`. It adds
+`task_instances.pool_slots` (`INTEGER NOT NULL DEFAULT 1`) so the Pools screen
+and `/api/v2/pools` count the slots a sized task takes, the same weight the
+admission gate charges (#1499). The default is a constant, so Postgres records
+it without rewriting the table. The `>= 1` check is added `NOT VALID` and then
+validated in its own transaction under a lock that blocks neither readers nor
+writers. Every task instance created before the upgrade reads as one slot, so
+the sized tasks of a run that started before the upgrade are under-reported on
+the Pools screen until they settle or are cleared. Scheduling is not affected.
+
+The migration waits at most 5 seconds for its lock. If a long transaction holds
+`task_instances` longer than that, the migration rolls back, golang-migrate marks
+version 42 dirty and nothing changed: run `migrate force 41` and retry. Every
+statement can be repeated.
+
+**Rolling back 0.5.3 to 0.5.2.** On Pro, `helm rollback <release> <revision>`
+is supported and leaves the schema at 042: the 0.5.2 control plane boots
+against it with the warning `database schema is ahead of this binary;
+proceeding`, never reads the new column, and its inserts get the default. As
+with earlier patches, prefer it to a `helm upgrade` that points at chart 0.5.2,
+whose migration Job fails with `no migration found for version 42`; if you must
+use that upgrade, pass `--set migrations.enabled=false` or run the down
+migration first. On Lite, `dexaflow lite` 0.5.2 refuses a database above 041,
+so the way back is the snapshot from
+[How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+or the down migration with the 0.5.3 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 41
+```
+
+The down drops the column and its check. No other data changes.
+
 ## Related issues
 
 - #136 — this contract.

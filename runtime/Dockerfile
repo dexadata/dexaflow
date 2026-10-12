@@ -109,6 +109,24 @@ COPY --from=agent-build /out/dexaflow-agent /usr/local/bin/dexaflow-agent
 # rename launch the agent as `leoflow-agent`, and executor.agent_path defaults to it.
 RUN ln -s dexaflow-agent /usr/local/bin/leoflow-agent
 COPY runtime/python /opt/leoflow-runtime
+
+# pip is pinned to one release on every Python line (#1299). The slim base images
+# ship whatever pip the line was released with (23.0.1 on 3.10, 24.0 on 3.11,
+# 25.0.1 on 3.12, 26.2.1 on 3.13), and the older three carry fixable findings
+# in pip itself (six or seven per line, CVE-2025-8869 among them, the newest
+# fixed in 26.2.0). A DAG image
+# runs this pip for its `requirements:` (internal/cli/compile_build.go), so the
+# version is user-visible: pinning it here gives every line the same resolver
+# instead of four. It is upgraded first so every later install runs on it.
+#
+# pip 26 also ships a CycloneDX SBOM of the packages it vendors
+# (pip/_vendor/bom.cdx.json), which Trivy reads. That makes pip's vendored
+# urllib3 2.7.0, msgpack 1.1.2 and setuptools 70.3.0 (pkg_resources only) show
+# up as findings; older pips vendor the same or older copies without saying so.
+# No pip release vendors fixed versions yet, so those are accepted, by purl, in
+# .trivyignore.yaml with the reasoning; bump this pin when one does.
+ARG PIP_VERSION=26.2.1
+RUN pip install --no-cache-dir "pip==${PIP_VERSION}"
 RUN pip install --no-cache-dir /opt/leoflow-runtime
 
 # Dexaflow DAGs are authored with the Apache Airflow Task SDK (`from airflow.sdk

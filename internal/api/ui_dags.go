@@ -179,7 +179,7 @@ func uiDagsHandler(dags DagRepository, latest DagLatestRunsReader, favorites Fav
 		listMs := time.Since(t0).Milliseconds()
 		runsLimit := defaultDagRunsLimit
 		if n, perr := strconv.Atoi(c.Query("dag_runs_limit")); perr == nil && n > 0 {
-			runsLimit = n
+			runsLimit = capPageLimit(c, n)
 		}
 		ids := make([]string, len(ds))
 		for i, d := range ds {

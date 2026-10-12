@@ -1,0 +1,15 @@
+kind: Added
+body: |-
+  **Optional read and idle timeouts for the HTTP listeners.** The API and
+  metrics listeners only bounded reading request headers, so a client could
+  hold a connection by trickling a request body, and idle keep-alive
+  connections were never closed. `server.read_timeout` and
+  `server.idle_timeout` (`DEXAFLOW_SERVER_READ_TIMEOUT`,
+  `DEXAFLOW_SERVER_IDLE_TIMEOUT`, or the legacy `LEOFLOW_` names; Go durations
+  such as `60s`) set them. The read timeout covers reading the request only:
+  live log tails and other long responses keep streaming, and no write timeout
+  is set. Set it above your slowest legitimate upload; a read timeout shorter
+  than 10 seconds also bounds reading the headers. Both default to `0s`, no
+  limit, as before; an idle timeout of `0s` stays off even when a read timeout
+  is set.
+time: 2026-10-02T17:50:00.000000000-03:00

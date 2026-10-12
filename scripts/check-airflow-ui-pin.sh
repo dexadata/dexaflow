@@ -27,7 +27,7 @@
 #     to avoid, so it stays a human step; this gate's header is where the next
 #     bump reads that it is one.
 #   - website/content/project/** and CHANGELOG.md, which are records of their
-#     own era (ADRs are immutable — CLAUDE.md).
+#     own era (ADRs are immutable, AGENTS.md).
 #   - scripts/connectors-providers*.txt, whose `apache-airflow==` pin happens to
 #     match today but governs the provider package set, not the SPA.
 #

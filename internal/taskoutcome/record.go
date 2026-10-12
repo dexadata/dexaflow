@@ -67,7 +67,25 @@ type Record struct {
 	// internal error path can reach this durable, end-user-visible field. A reader
 	// still bounds it: the record can also arrive from a task that wrote its own
 	// termination message.
+	//
+	// A reader serves it as the platform's own failure reason only when Author
+	// says the agent wrote it (see AgentAuthored, #948).
 	Reason string `json:"reason,omitempty"`
+	// Author marks a record whose Reason the agent classified. The agent's
+	// reason constructors (FailedBecause, FailedBecauseWith) stamp AuthorAgent;
+	// a record without it (a task that wrote its own termination message, or an
+	// agent that predates the field) still settles its outcome, but a reader
+	// does not present its Reason as platform-authored.
+	//
+	// It is a declaration of authorship, NOT an authentication: the task runs as
+	// a child of the agent in the same container and uid, so it can write this
+	// field too, and no key the agent holds is out of the task's reach (ADR 0052,
+	// "The trust caveat"). What it does is make authorship explicit, so a reason
+	// that does not claim the agent as its author is never vouched for, and so a
+	// later authenticated marker has a slot to replace. It is optional and
+	// additive like AttemptEpoch: v stays 1, and only a record that carries a
+	// reason carries it, so every other record keeps today's bytes.
+	Author string `json:"author,omitempty"`
 	// AttemptEpoch names the execution of the try that wrote the record (ADR
 	// 0052 amendment), as the task spec gave it to the agent. It is optional
 	// and additive like Reason: v stays 1, an old reader ignores it, and a
@@ -75,6 +93,22 @@ type Record struct {
 	// label alone. A reader that finds an epoch different from the pod's label
 	// treats the record as absent.
 	AttemptEpoch *int64 `json:"attempt_epoch,omitempty"`
+}
+
+// AuthorAgent is the Author value the agent stamps on a reason it classified.
+const AuthorAgent = "agent"
+
+// AgentAuthored reports whether the record declares the agent as the author of
+// its Reason. See Author for what this does and does not establish.
+func (r Record) AgentAuthored() bool { return r.Author == AuthorAgent }
+
+// agentReason stamps the agent as the author of a non-empty reason.
+func (r Record) agentReason(reason string) Record {
+	r.Reason = TruncateReason(reason, MaxReasonLen)
+	if r.Reason != "" {
+		r.Author = AuthorAgent
+	}
+	return r
 }
 
 // WithAttemptEpoch returns the record stamped with the execution that wrote
@@ -99,9 +133,10 @@ func FailedWith(exitCode int32) Record {
 // FailedBecause returns a failure record carrying a classified reason, for a
 // failure the agent detected before any state could be reported. The reason is
 // truncated to MaxReasonLen so an over-long classification degrades to a shorter
-// message rather than losing the whole record to the size cap.
+// message rather than losing the whole record to the size cap. A non-empty reason
+// is stamped as agent-authored (Author).
 func FailedBecause(reason string) Record {
-	return Record{V: Version, Outcome: Failed, Reason: TruncateReason(reason, MaxReasonLen)}
+	return Record{V: Version, Outcome: Failed}.agentReason(reason)
 }
 
 // FailedBecauseWith returns a failure record carrying BOTH the user process exit
@@ -112,12 +147,7 @@ func FailedBecause(reason string) Record {
 // remains the constructor for a failure where no user process ever ran, and so
 // has no exit code to report.
 func FailedBecauseWith(exitCode int32, reason string) Record {
-	return Record{
-		V:        Version,
-		Outcome:  Failed,
-		ExitCode: &exitCode,
-		Reason:   TruncateReason(reason, MaxReasonLen),
-	}
+	return Record{V: Version, Outcome: Failed, ExitCode: &exitCode}.agentReason(reason)
 }
 
 // TruncateReason clamps a failure reason to limit bytes, cutting on a rune boundary

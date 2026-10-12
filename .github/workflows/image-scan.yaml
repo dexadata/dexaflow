@@ -171,6 +171,10 @@ jobs:
       - name: Warm the vulnerability database
         run: trivy image --download-db-only
 
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: ${{ env.PY_LINES }}
+
       - name: Build images
         run: |
           set -euo pipefail
