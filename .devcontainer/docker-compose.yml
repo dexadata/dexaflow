@@ -1,0 +1,55 @@
+# Services of the devcontainer (#1574): the development container, Postgres
+# and Redis. The development container and Redis share Postgres's network
+# namespace, so every default that says localhost (Makefile DATABASE_URL and
+# TEST_DATABASE_URL, the server's database.url and redis.url, the integration
+# tests) works unchanged inside the container.
+#
+# Postgres and Redis run the same images as the repository's docker-compose.yml
+# and provision `leoflow_test` the same way (deploy/initdb), on a volume of
+# their own so the devcontainer never touches a `make dev-up` database.
+name: dexaflow-devcontainer
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    command: sleep infinity
+    volumes:
+      - ..:/workspaces/dexaflow:cached
+    network_mode: service:postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: leoflow
+      POSTGRES_PASSWORD: leoflow
+      POSTGRES_DB: leoflow
+    volumes:
+      - devcontainer-pgdata:/var/lib/postgresql/data
+      - ../deploy/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leoflow -d leoflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    network_mode: service:postgres
+    depends_on:
+      postgres:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  devcontainer-pgdata:

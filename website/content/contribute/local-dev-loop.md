@@ -23,6 +23,50 @@ changed:
 Neither loop goes near `git tag` or the release pipeline — that keeps release tags
 clean.
 
+## The devcontainer
+
+`.devcontainer/` describes a development container with everything the gates
+need, for VS Code (Dev Containers), GitHub Codespaces or the `devcontainer` CLI.
+Opening the repository in it gives you:
+
+- Postgres 17 and Redis 7 on `localhost`, with the `leoflow` and `leoflow_test`
+  databases already migrated, so the Makefile's database defaults work unchanged
+  and the integration tests run with
+  `DATABASE_URL=postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable go test -tags integration ./...`
+  (or `make ci-local`). `make dev-up` and `make test-integration` drive the
+  root Compose project and are not needed here. The data lives on a volume of
+  its own, apart from `make dev-up`'s.
+- Go at the `toolchain` version in `go.mod`, Hugo at the version the website
+  workflows pin, Helm and the helm-unittest plugin at `helm-ci.yaml`'s versions,
+  and k3d at the version the CI e2e jobs install. `.devcontainer/install-tools.sh`
+  reads each version from that file, so the container has no pins of its own.
+- The Go tools (golangci-lint, changie, govulncheck, migrate, ...) installed by
+  `make setup` at the Makefile's pins, the Python parser and runtime in a
+  Python 3.11 virtualenv, and the docs site's npm packages.
+- Docker inside the container (docker-in-docker) and kubectl, for the k3d
+  end-to-end targets.
+
+`make lint test` and `make ci-local` run in it with nothing else to install.
+
+### What `make ci-local` runs
+
+`make ci-local` (`scripts/ci-local.sh`) runs every CI gate it can without a
+repository secret, then lists each step that did not pass and why. A step ends
+in one of three states:
+
+- **PASS** or **FAIL**: the gate ran. The run exits non-zero if any gate
+  failed, after running the others.
+- **SKIP** because a tool or service is missing: govulncheck, the integration
+  tests (they need Postgres), helm unittest, the parser's pytest and the Hugo
+  build. The message says how to get it; the devcontainer has them all.
+- **SKIP** because CI runs it with a repository secret: the link check (it uses
+  `GITHUB_TOKEN`; export one to run it locally), the OpenSSF Scorecard (GitHub
+  only) and the GCP cluster validation (cloud credentials, billed clusters).
+
+gofmt, the build, golangci-lint, the unit tests and the script self-tests are
+required: a missing tool fails the run instead of skipping it, because a clean
+summary without them would mean nothing.
+
 ## The `dexaflow lite` hot-reload loop
 
 `dexaflow lite` runs the whole stack locally — control plane, the embedded Airflow

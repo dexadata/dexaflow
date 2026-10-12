@@ -1,0 +1,37 @@
+// Dexaflow development container (#1574). Opens with Postgres and Redis on
+// localhost and every tool `make lint test` and `make ci-local` need, at the
+// versions the repository pins: Go, Hugo, Helm and k3d from install-tools.sh,
+// the Go tools from `make setup`. See website/content/contribute/local-dev-loop.md.
+{
+  "name": "Dexaflow",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "runServices": ["dev", "postgres", "redis"],
+  "workspaceFolder": "/workspaces/dexaflow",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+  "features": {
+    // Docker for the k3d end-to-end targets (make e2e and friends).
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    // Node 22, as website-build.yml, for the docs site's PostCSS toolchain.
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    // kubectl for the e2e scripts. CI takes the runner image's kubectl,
+    // unpinned, so this follows the same policy.
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "version": "latest",
+      "helm": "none",
+      "minikube": "none"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "forwardPorts": [8080, 8088],
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go", "ms-python.python", "redhat.vscode-yaml"],
+      "settings": {
+        "go.toolsManagement.autoUpdate": false,
+        "go.lintTool": "golangci-lint"
+      }
+    }
+  }
+}

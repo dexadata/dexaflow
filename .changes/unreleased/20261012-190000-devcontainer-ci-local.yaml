@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **A devcontainer, and a `make ci-local` that says what it skipped.** The
+  repository ships `.devcontainer/` with Postgres and Redis on `localhost` and
+  Go, Hugo, Helm, helm-unittest and k3d at the versions `go.mod` and the CI
+  workflows pin, so a contributor can run `make lint test` and `make ci-local`
+  without installing anything. `make ci-local` now ends every gate as PASS,
+  FAIL or SKIP and closes with the steps that did not pass and why; the gates
+  CI runs with a repository secret (the link check, the OpenSSF Scorecard, the
+  GCP cluster validation) are listed as skipped by name instead of left out.
+  (#1574)
+time: 2026-10-12T19:00:00.000000000-03:00

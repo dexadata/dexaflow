@@ -56,7 +56,12 @@ make setup        # Go tools, Python parser/runtime, and the pre-commit hook
 make build        # bin/dexaflow, bin/dexaflow-server, bin/dexaflow-agent
 make dev-up       # start Postgres + Redis (Docker) and apply migrations
 make lint test    # the gates you must pass before pushing
+make ci-local     # every CI gate that needs no repository secret
 ```
+
+Or skip the setup: the repository ships a devcontainer (`.devcontainer/`) with
+Postgres, Redis and every tool at its pinned version; see
+[The devcontainer](/contribute/local-dev-loop/#the-devcontainer).
 
 For a full author→run loop without Kubernetes, `dexaflow lite` runs an isolated,
 hot-reloading stack with the silver **Lite** edition badge (see
