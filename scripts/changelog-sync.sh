@@ -339,6 +339,9 @@ self_test() {
 	_eq() { if [ "$1" = "$2" ]; then printf '  ok   %s\n' "$3"; else printf '  FAIL %s\n    got:  %q\n    want: %q\n' "$3" "$1" "$2"; fail=1; fi; }
 	tmp="$(mktemp -d)"
 	export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+	# With no global config there is no identity, and sync_pr commits in its own
+	# worktree: a runner has no fallback identity (a laptop often does).
+	export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 
 	# Version order, the one comparison every insert depends on.
 	_lt() { if version_lt "$1" "$2"; then echo yes; else echo no; fi; }
