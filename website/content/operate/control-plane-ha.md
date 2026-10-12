@@ -582,6 +582,31 @@ boot-time check of the timing ladder they depend on, described in
 that were in flight during the window from being falsely failed. HA shortens the
 window; the resilience mechanisms make the remaining window survivable. Run both.
 
+### When the database disappears without a reset
+
+A managed failover that moves the database address, a network partition or a
+lost database node can leave the leader's lock session open on a socket that
+no longer answers. Two settings bound how long that lasts:
+
+- **On the scheduler.** Every leadership check, and every attempt to take
+  leadership, runs under a deadline of one check interval (5 s). A check that
+  cannot confirm the lock in time counts as failed, and after 3 failed checks
+  in a row the leader steps down (reason `check_timeout`) and campaigns again,
+  so a leader cut off from its database stops scheduling within about 15 to
+  30 seconds. Before, the check waited for the kernel to give up on the socket
+  (about 15 minutes with the default `tcp_retries2`), while a follower on the
+  new primary could already lead.
+- **On the database server.** The leader session sets `tcp_keepalives_idle =
+  30`, `tcp_keepalives_interval = 10`, `tcp_keepalives_count = 3` and
+  `tcp_user_timeout = 60000` for itself, so Postgres ends a session whose
+  client vanished within about a minute and the advisory lock is free for the
+  next leader. With the operating system defaults that takes about two hours,
+  and no replica can lead in the meantime. The settings are sent with `SET`
+  (not as startup parameters, which PgBouncer refuses), apply to the leader
+  session only, and are skipped with a warning where the server refuses one.
+
+Nothing needs configuring: both apply to every install.
+
 ## Related
 
 - [Helm chart](/operate/helm-chart/) — the entry point and the chart README
