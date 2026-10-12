@@ -162,7 +162,10 @@ git push -u origin fix/clear-error-message
   open PR edits the same few lines: each merge conflicts the rest, each conflict
   costs a rebase, and each rebase re-runs the full CI matrix. Two fragments are
   two different files and cannot conflict. Hand-editing `CHANGELOG.md` still
-  passes the gate; the fragment is the cheaper way to do the same thing.
+  passes the gate; the fragment is the cheaper way to do the same thing. Dated
+  sections are published release notes: never edit them. What happens to the
+  fragment after it merges is in
+  [Record a change](/contribute/recipes/record-a-change/#what-happens-to-the-fragment).
 
   A PR with no user-facing change (release prep, chore, dependency bump,
   docs-only) takes the **`skip-changelog`** label instead. Dependabot PRs are
