@@ -557,6 +557,7 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 		// A failed attempt is a normal, already-reported outcome. Keep serving.
 		slog.Warn("warm attempt finished with an error",
 			"assignment", a.GetAssignmentId(), "error", aerr)
+		w.settleUnreported(ctx, r, a, aerr)
 	}
 
 	// D4 isolation, part 3: no process of this attempt may outlive it. The exec
@@ -586,6 +587,32 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 		return fmt.Errorf("signaling slot free after assignment %q: %w", a.GetAssignmentId(), err)
 	}
 	return nil
+}
+
+// settleUnreported reports FAILED for an acked attempt that ended before any of
+// its reports reached the control plane: a GetTaskSpec error, a command that
+// cannot be built, a RUNNING report that was refused (#1603). The ack bound the
+// attempt to this worker while it was still queued, and nothing else settles a
+// bound queued row while the worker lives, so without this report the attempt
+// stays queued and the worker counts as busy until the pod ends. A dedicated pod
+// that fails the same way exits non-zero and is settled failed by the
+// reconciler; this is the same outcome, reported directly. It runs on the
+// worker's context, not the attempt's, so an attempt that hit its watchdog
+// before reporting is still settled; a worker that is itself shutting down
+// reports nothing, since its pod is going away and the reapers settle the row.
+// The report goes out under the attempt's own token, which is still the live
+// one here, and is best effort: a report that cannot land leaves the
+// dispatch-lost reaper as the backstop.
+func (w *WarmRunner) settleUnreported(ctx context.Context, r *Runner, a *agentv1.WorkAssignment, cause error) {
+	if r.reportLanded || ctx.Err() != nil {
+		return
+	}
+	slog.Warn("warm attempt ended before any report reached the control plane; reporting it failed",
+		"assignment", a.GetAssignmentId())
+	if err := r.reportClassified(ctx, agentv1.TaskState_TASK_STATE_FAILED, 1, cause.Error(), ""); err != nil {
+		slog.Warn("reporting failed state for a warm attempt that never started",
+			"assignment", a.GetAssignmentId(), "error", err)
+	}
 }
 
 // resetScratch removes and recreates the agent's per-attempt scratch dir. This is
