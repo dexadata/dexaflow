@@ -9,7 +9,8 @@ description: Expose Variables and Connections to your task pods.
 ---
 
 Dexaflow stores **Variables** and **Connections** in the control plane (connection
-secrets encrypted at rest, AES-256-GCM, ADR 0019; on Lite read
+secrets encrypted at rest, AES-256-GCM, ADR 0019; Variables too when the operator
+sets [`variable_encryption: on`](/reference/configuration/#encrypting-variables); on Lite read
 [what that protects](#encryption-at-rest-on-lite)) and delivers them to task pods
 at runtime as environment variables, so your task reads them with the **native
 Airflow APIs** *and* as plain env (ADR 0021).

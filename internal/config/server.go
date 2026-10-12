@@ -59,7 +59,25 @@ type ServerConfig struct {
 	// life, refuse to start while a migration holds it, and exit if it loses it.
 	// `dexaflow lite` sets it to true (ADR 0065 section 3).
 	SecretKeyMigrationLock bool `mapstructure:"secret_key_migration_lock"`
+	// VariableEncryption (DEXAFLOW_VARIABLE_ENCRYPTION, default "off") is how
+	// Variable values are stored (#507). "off" writes plaintext, as every
+	// earlier release did, and still reads values sealed before. "on" seals
+	// every write with SecretKey and seals the stored plaintext rows at boot;
+	// it requires a usable SecretKey. "decrypt" writes plaintext and restores
+	// every sealed row at boot: the step before rolling back to a release that
+	// cannot read sealed values.
+	VariableEncryption string `mapstructure:"variable_encryption"`
 }
+
+// Variable encryption modes (variable_encryption, #507).
+const (
+	// VariableEncryptionOff stores Variable values in plaintext (the default).
+	VariableEncryptionOff = "off"
+	// VariableEncryptionOn seals Variable values with the secret key.
+	VariableEncryptionOn = "on"
+	// VariableEncryptionDecrypt restores sealed values to plaintext at boot.
+	VariableEncryptionDecrypt = "decrypt"
+)
 
 // SecretsSection configures the external secrets backend (ADR 0060). When Backend
 // is set, a Connection/Variable a DAG declares can be resolved pod-side from the
@@ -1139,8 +1157,11 @@ var serverDefaults = map[string]any{
 	"secret_key":                   "",
 	"secret_key_reencrypt_on_boot": true,
 	"secret_key_migration_lock":    false,
-	"secrets.backend":              "",
-	"secrets.backend_kwargs":       "",
+	// Registered so DEXAFLOW_/LEOFLOW_VARIABLE_ENCRYPTION binds; off keeps the
+	// plaintext Variables every earlier release wrote and reads (#507).
+	"variable_encryption":    VariableEncryptionOff,
+	"secrets.backend":        "",
+	"secrets.backend_kwargs": "",
 	// Gate (ADR 0062): false sends every API body uncompressed, as before.
 	"server.gzip_responses": false,
 	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
@@ -1392,6 +1413,12 @@ func (c *ServerConfig) validateSecretPolicies() error {
 	default:
 		return fmt.Errorf("invalid auth.agent_token_transport %q: must be %q or %q",
 			c.Auth.AgentTokenTransport, AgentTokenTransportEnvVar, AgentTokenTransportExchange)
+	}
+	switch c.VariableEncryption {
+	case "", VariableEncryptionOff, VariableEncryptionOn, VariableEncryptionDecrypt:
+	default:
+		return fmt.Errorf("invalid variable_encryption %q: must be %q, %q or %q",
+			c.VariableEncryption, VariableEncryptionOff, VariableEncryptionOn, VariableEncryptionDecrypt)
 	}
 	return nil
 }

@@ -447,6 +447,11 @@ type Querier interface {
 	// caller. Never selects password_hash — the list must not expose secrets.
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListVariables(ctx context.Context, arg ListVariablesParams) ([]ListVariablesRow, error)
+	// Every variable across every tenant whose stored value does (sealed = true) or
+	// does not (sealed = false) start with the ciphertext tag (#507). It backs the
+	// variable_encryption boot sweeps, which seal plaintext rows ("on") or restore
+	// them ("decrypt"), and the key rotation sweep, which reads the sealed ones.
+	ListVariablesForEncryptionSweep(ctx context.Context, arg ListVariablesForEncryptionSweepParams) ([]ListVariablesForEncryptionSweepRow, error)
 	// The tenant's variables restricted to the given keys, filtered in the query
 	// (ADR 0055 D1: scope in the SQL, never post-filter the decrypted whole vault in
 	// the handler). Used under secret_scoping: enforce so a task receives only the
@@ -877,6 +882,10 @@ type Querier interface {
 	// column as it is, 0 makes the limit unlimited (migrations 040 and 041).
 	UpdateTenantLimits(ctx context.Context, arg UpdateTenantLimitsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error)
+	// Rewrites one stored value only if it is still the one the sweep read, so a
+	// concurrent write wins and the sweep counts the row as skipped. updated_at is
+	// left alone: the variable's value did not change, only its stored form.
+	UpdateVariableValueGuarded(ctx context.Context, arg UpdateVariableValueGuardedParams) (int64, error)
 	// Tri-state write (#887): COALESCE(EXCLUDED.col, connections.col) preserves the
 	// stored value when the param is NULL, overwrites it when the param is a value,
 	// and clears it when the param is a non-NULL empty string. A NULL param is how a
