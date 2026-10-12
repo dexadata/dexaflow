@@ -58,6 +58,11 @@ var scopelessReads = map[string]bool{
 	"GET /api/v2/backfills":                                    true,
 	"GET /api/v2/config":                                       true,
 	"GET /api/v2/dags/:dag_id/dagRuns/:dag_run_id/hitlDetails": true,
+	// Airflow 3.3 calls Dexaflow does not serve (airflow33_unserved.go).
+	"GET /api/v2/assets/:asset_id/state-store":      true,
+	"GET /api/v2/assets/:asset_id/state-store/:key": true,
+	"GET /ui/partitioned_dag_runs":                  true,
+	"GET /ui/pending_partitioned_dag_run/:dag_id":   true,
 }
 
 // newFullScopeServer wires every optional dependency that adds routes, so the

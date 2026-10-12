@@ -347,6 +347,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)
 	registerUIStubs(r)
 	registerAPIStubs(r)
+	registerAirflow33Unserved(r)
 	if deps.UI != nil {
 		static := gin.WrapH(http.StripPrefix("/static", deps.UI.StaticHandler()))
 		r.GET("/static/*filepath", static)

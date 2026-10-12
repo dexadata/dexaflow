@@ -1008,6 +1008,12 @@ func patchTaskInstanceHandler(repo TaskInstanceRepository, runs DagRunRepository
 		// the SPA's cache invalidation (see #271 update).
 		t0 := time.Now()
 		action := strings.Trim(c.Param("action"), "/")
+		// The task state store PATCH shares this catch-all; it must never
+		// reach the mark below.
+		if taskStateStoreAction(action) {
+			abortNotAvailable(c, featureStateStore)
+			return
+		}
 		dryRun := action == "dry_run" || strings.HasSuffix(action, "/dry_run")
 		var body markStateRequest
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -1115,15 +1121,12 @@ func taskInstanceActionHandler(tasks TaskInstanceRepository, logs LogReader, xco
 			serveLogs(c, logs, tasks, try)
 			return
 		}
-		if xcoms != nil {
-			if action == "xcomEntries" {
-				serveXComEntries(c, xcoms)
-				return
-			}
-			if key, ok := strings.CutPrefix(action, "xcomEntries/"); ok {
-				serveXComValue(c, xcoms, key)
-				return
-			}
+		if serveXComAction(c, xcoms, action) {
+			return
+		}
+		if taskStateStoreAction(action) {
+			serveTaskStateStore(c, action)
+			return
 		}
 		if action == "links" {
 			// The task Details view reads g.extra_links and calls Object.keys on it,
@@ -1170,6 +1173,23 @@ func taskInstanceActionHandler(tasks TaskInstanceRepository, logs LogReader, xco
 		}
 		serveSingleTaskInstance(c, tasks, runs, versions, specs, mapIndex)
 	}
+}
+
+// serveXComAction answers the xcomEntries list and value reads of the task
+// instance catch-all, and reports whether action was one of them.
+func serveXComAction(c *gin.Context, xcoms XComReader, action string) bool {
+	if xcoms == nil {
+		return false
+	}
+	if action == "xcomEntries" {
+		serveXComEntries(c, xcoms)
+		return true
+	}
+	if key, ok := strings.CutPrefix(action, "xcomEntries/"); ok {
+		serveXComValue(c, xcoms, key)
+		return true
+	}
+	return false
 }
 
 // serveSingleTaskInstance returns one task instance (TaskInstanceResponse) by

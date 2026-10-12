@@ -153,7 +153,8 @@ backend, in three tiers:
 | Degrade | `GET /ui/dependencies` | empty graph |
 | Degrade | `GET /ui/backfills` | empty list |
 | Degrade | `GET /ui/next_run_assets/{dag_id}` | empty |
-| Degrade | `GET /ui/partitioned_dag_runs` · `GET /ui/pending_partitioned_dag_run/{dag_id}` | empty |
+| Degrade | `GET /ui/partitioned_dag_runs` | empty (`partitioned_dag_runs: []`, `total: 0`) |
+| Degrade | `GET /ui/pending_partitioned_dag_run/{dag_id}` | `501` (no empty form for a single run) |
 | Degrade | `GET /ui/dags/{dag_id}/dagRuns/{dag_run_id}/deadlines` | empty |
 | Degrade | `GET /ui/dags/{dag_id}/deadlineAlerts` (3.3) | empty |
 | Degrade | `GET /ui/dags/{dag_id}/dagRuns/{dag_run_id}/stats` (3.3) | `duration: null` (the stats panel stays hidden) |
@@ -351,6 +352,23 @@ Known gaps the 3.3 UI exposes, none of them a crash:
   Clear dialog shows "run on latest version" as forced for it; the request it
   sends still keeps the run's own version. Every other run names its pinned
   version, in `GET .../dagRuns/{dag_run_id}` and in the run list alike.
-- Deadline alerts, run duration stats, asset state stores and partitioned runs
-  answer empty.
+- Deadline alerts and run duration stats answer empty.
+- The calls below are not served yet. Each one answers `501` with the detail
+  "... is not available in Dexaflow yet", which the UI shows as an error toast,
+  and a list read answers its empty collection, so no view breaks on them:
+  - The bulk actions of the runs table (select runs, then "Clear Dag Runs",
+    "Mark Dag Runs as..." or "Delete Dag Runs"):
+    `POST /api/v2/dags/{dag_id}/clearDagRuns` (dry run preview included) and
+    the bulk `PATCH /api/v2/dags/{dag_id}/dagRuns`. Clear, mark or delete the
+    runs one at a time from each run.
+  - Marking a whole task group:
+    `PATCH .../dagRuns/{dag_run_id}/taskGroupInstances/{group_id}` and its
+    `/dry_run`. Mark the task instances one at a time.
+  - Clearing partitions: `POST /api/v2/dags/{dag_id}/clearPartitions`.
+  - The asset and task state stores: `/api/v2/assets/{asset_id}/state-store`
+    and `.../taskInstances/{task_id}/state-store`, each with `/{key}`. The two
+    list reads answer an empty collection; reading one key, writing
+    (`PUT`, `PATCH`) and deleting answer `501`.
+  - Partitioned runs: `GET /ui/partitioned_dag_runs` answers an empty list and
+    `GET /ui/pending_partitioned_dag_run/{dag_id}` answers `501`.
 
