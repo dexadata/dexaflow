@@ -42,6 +42,24 @@ dominated by the image pull. During it:
   settling grace < token TTL, and two maintenance cycles inside the grace),
   refusing to start if a knob was moved out of order. These bound the damage;
   they do not remove the window.
+- **Tasks starting or finishing in the window wait instead of failing.** An
+  agent that cannot read its task spec, variables, connections or upstream
+  XComs at start, or deliver its return value and XComs at the end, retries
+  with jittered backoff, so a restart of a single control-plane replica, a
+  Postgres failover or a Redis restart does not spend the user's retries. The
+  bound is 2 minutes of wall time per phase, counted from the first try and
+  including the time each try takes: all the reads before the task runs share
+  one 2-minute budget, and all the output pushes share another. A try that
+  hangs is cut at the end of the budget rather than at its own 30-second
+  deadline, and the agent never sleeps past it, so a start against a control
+  plane that answers nothing gives up 2 minutes after it began, however many
+  upstream XComs it reads. The control plane answers a store outage
+  (connection refused or reset, a failover's admin shutdown, a full connection
+  pool, a statement timeout, Redis loading or read-only) with gRPC
+  `Unavailable` rather than `Internal`. The agent also retries an `Internal`
+  answer to a state report for up to 2 minutes of backoff, which covers an
+  older control plane during an upgrade. An outage longer than that still
+  fails the attempt as before.
 - **The API and UI are down.** Every replica is the same binary, so one replica
   means one API.
 
