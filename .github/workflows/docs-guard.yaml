@@ -4,8 +4,8 @@
 # A standalone workflow — not a job in ci.yaml — for the same reason as the
 # CHANGELOG guard: it triggers on `labeled` / `unlabeled` too, so applying
 # `skip-docs` re-runs THIS guard alone and the exemption takes effect at once.
-# It also triggers on `edited`: the label needs a `Skip-docs: <reason>` line in
-# the description, and adding that line has to re-run the guard as well.
+# It also triggers on `edited`: a `Skip-docs: <reason>` line in the
+# description is the opt-out, and adding that line has to re-run the guard.
 #
 # Why it exists: taskPodSecurity.readOnlyRootFilesystem — the security hardening
 # of the v0.4.5 tranche — shipped in rc.3 with zero mentions anywhere under
@@ -61,7 +61,11 @@ jobs:
         run: |
           gh api --paginate "repos/${{ github.repository }}/pulls/${PR}/files" \
             --jq '.[].filename' > /tmp/changed.txt
-      - name: Require a docs update (or the skip-docs label with a reason)
+      # A `Skip-docs: <reason>` line passes with or without the label, so a
+      # pull request from a fork, whose author cannot apply labels, can opt
+      # out too (#1560). The body comes from the event payload, which is
+      # current on `edited`, the event that adding the line fires.
+      - name: Require a docs update (or a Skip-docs line with a reason)
         env:
           SKIP_DOCS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-docs') && '1' || '0' }}
           PR_BODY: ${{ github.event.pull_request.body }}

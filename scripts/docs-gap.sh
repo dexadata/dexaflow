@@ -19,8 +19,8 @@
 # reachable from it (v0.5.1 for 0.5.2, v0.5.0 for 0.6.0 cut from main) is
 # judged by the guard's own rule (user_facing() in check-docs-updated.sh): a
 # commit that changes user-facing surface passes when it also edits
-# website/content/, or when its pull request carries the `skip-docs` label and
-# a `Skip-docs: <reason>` line in its description. For a cherry-pick, the
+# website/content/, or when its pull request has a `Skip-docs: <reason>` line
+# in its description (the `skip-docs` label is optional since #1560). For a cherry-pick, the
 # label and the reason of the original pull request on main count as well.
 #
 # A change documented by a later pull request, or one held on purpose, is
@@ -143,8 +143,10 @@ gap() {
       meta="$(pr_meta "$k")"
       labels="${meta%%$'\t'*}"; reason="${meta#*$'\t'}"
       [ "$meta" = "$labels" ] && reason=""
+      # The reason line is the opt-out, label or not: an author on a fork
+      # cannot apply labels (#1560). A label without a reason is still named.
+      if [ -n "$reason" ]; then skipped=1; break; fi
       if printf ',%s,' "$labels" | grep -q ',skip-docs,'; then
-        if [ -n "$reason" ]; then skipped=1; break; fi
         why="skip-docs without a reason"
       fi
     done
@@ -159,7 +161,7 @@ self_test() {
   _eq "$(base_of 0.5.2)" "release-0.5" "a patch is cut from its release branch"
   _eq "$(base_of 0.6.0-rc.1)" "main" "a minor is cut from main"
   # Pull request metadata comes from a table here, not from GitHub.
-  pr_meta() { case "$1" in 3) printf 'skip-docs\tinternal only' ;; 4) printf 'skip-docs\t' ;; 10) printf 'skip-docs\tcovered by the guide' ;; esac; }
+  pr_meta() { case "$1" in 3) printf 'skip-docs\tinternal only' ;; 4) printf 'skip-docs\t' ;; 10) printf 'skip-docs\tcovered by the guide' ;; 14) printf '\tinternal only, from a fork' ;; esac; }
 
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   _g() { git -C "$tmp" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@" >/dev/null 2>&1; }
@@ -174,6 +176,8 @@ self_test() {
   _c .changes/unreleased/a.yaml "fix: changes behaviour (#5)" $'kind: Changed\nbody: x'
   _c .changes/unreleased/b.yaml "fix: restores behaviour (#6)" $'kind: Fixed\nbody: x'
   _c internal/scheduler/x.go "perf: internals (#7)"
+  # A reason with no label: an author on a fork cannot apply labels (#1560).
+  _c internal/config/fork.go "feat: a setting from a fork (#14)"
   _c CHANGELOG.md "release: prepare v0.9.1-rc.1"
   _g tag v0.9.1-rc.1
   _c internal/cli/run.go "feat: a flag (#8)"
