@@ -11,9 +11,9 @@ body: |-
   bare instance crashed the 3.3 Mark-as dialog); `POST
   .../dagRuns/{dag_run_id}/clear` clears a whole run (`only_new` is refused with
   400); `GET /ui/gantt/{dag_id}/{run_id}` serves every attempt of the run;
-  `GET .../dagRuns/{dag_run_id}` names the run's pinned version in
-  `dag_versions`, so the Clear dialogs no longer force "run with latest bundle
-  version"; and grid runs carry `has_note`, runs `partition_date` (null), the
+  `GET .../dagRuns` and `GET .../dagRuns/{dag_run_id}` name each run's pinned
+  version in `dag_versions`, so the Clear dialogs no longer force "run with
+  latest bundle version"; and grid runs carry `has_note`, runs `partition_date` (null), the
   dashboard counts `awaiting_input` and the lower-bound flags. Mark as failed
   and Clear were re-verified in a browser against the new bundle: the state
   badge updates without a reload and the page stays responsive

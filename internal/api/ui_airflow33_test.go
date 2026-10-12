@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -147,4 +148,83 @@ func TestGetDagRunNamesItsPinnedVersion(t *testing.T) {
 	if v := versionsOf("unknown"); len(v) != 0 {
 		t.Errorf("a run pinned to an unregistered label = %v, want no versions", v)
 	}
+}
+
+// countingVersionLister counts the version reads, so a test can tell one read
+// per page from one read per run.
+type countingVersionLister struct {
+	fakeVersionLister
+	calls int
+}
+
+func (f *countingVersionLister) ListDagVersions(ctx context.Context, tenant, dagID string) ([]domain.DagVersion, error) {
+	f.calls++
+	return f.fakeVersionLister.ListDagVersions(ctx, tenant, dagID)
+}
+
+// The runs table of the 3.3 UI opens the same Clear dialog from each row, with
+// the row from the run list. A row with no dag_versions forces and disables
+// "Run with latest bundle version" while the request still keeps the run's
+// version, so the list names each run's pinned version too, on offset and
+// keyset pages alike, reading the DAG's versions once per page.
+func TestListDagRunsNamesPinnedVersions(t *testing.T) {
+	created := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	runs := fiveRuns()
+	for i := range runs {
+		runs[i].Version = "v1.0.0"
+	}
+	runs[0].Version = "gone"
+	versions := &countingVersionLister{fakeVersionLister: fakeVersionLister{versions: []domain.DagVersion{
+		{ID: "id2", VersionNumber: 2, Version: "v1.1.0", CreatedAt: created},
+		{ID: "id1", VersionNumber: 1, Version: "v1.0.0", CreatedAt: created},
+	}}}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		DagRuns: &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: runs}}, DagVersions: versions,
+	})
+	type page struct {
+		DagRuns []struct {
+			DagRunID    string           `json:"dag_run_id"`
+			DagVersions []map[string]any `json:"dag_versions"`
+		} `json:"dag_runs"`
+		NextCursor *string `json:"next_cursor"`
+	}
+	get := func(path string) page {
+		t.Helper()
+		versions.calls = 0
+		rec := authGet(srv, http.MethodGet, path, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d (%s)", path, rec.Code, rec.Body.String())
+		}
+		if versions.calls != 1 {
+			t.Errorf("GET %s read the versions %d times, want once per page", path, versions.calls)
+		}
+		var p page
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	check := func(p page) {
+		t.Helper()
+		for _, r := range p.DagRuns {
+			if r.DagRunID == "r5" {
+				if len(r.DagVersions) != 0 {
+					t.Errorf("r5 (unregistered label) dag_versions = %v, want none", r.DagVersions)
+				}
+				continue
+			}
+			if len(r.DagVersions) != 1 || r.DagVersions[0]["version_number"] != float64(1) {
+				t.Errorf("%s dag_versions = %v, want version 1", r.DagRunID, r.DagVersions)
+			}
+		}
+	}
+	first := get("/api/v2/dags/etl/dagRuns?limit=2&cursor=")
+	check(first)
+	if first.NextCursor == nil {
+		t.Fatal("first page names no next_cursor")
+	}
+	check(get("/api/v2/dags/etl/dagRuns?limit=2&cursor=" + url.QueryEscape(*first.NextCursor)))
+	check(get("/api/v2/dags/etl/dagRuns?limit=5"))
 }

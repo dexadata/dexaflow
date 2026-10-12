@@ -412,7 +412,7 @@ func validRunState(s string) bool {
 	}
 }
 
-func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
+func listDagRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// "~" is Airflow's wildcard for "all DAGs"; the UI home polls
 		// GET /api/v2/dags/~/dagRuns for a global run view. Dexaflow has no
@@ -432,7 +432,7 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 				return
 			}
 			if cur.Keyset != nil {
-				listDagRunsByCursor(c, repo, *cur.Keyset, cur.Offset, states, limit)
+				listDagRunsByCursor(c, repo, versions, *cur.Keyset, cur.Offset, states, limit)
 				return
 			}
 			offset = cur.Offset
@@ -443,8 +443,11 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 			return
 		}
 		out := dagRunCollectionDTO{DagRuns: make([]dagRunDTO, 0, len(runs)), TotalEntries: total}
+		pinned := pinnedDagVersions(c, versions)
 		for _, r := range runs {
-			out.DagRuns = append(out.DagRuns, toDagRunDTO(r))
+			dto := toDagRunDTO(r)
+			pinned.name(&dto, r)
+			out.DagRuns = append(out.DagRuns, dto)
 		}
 		setPaginationLinks(c, total, limit, offset)
 		_, keyset := repo.(DagRunPageReader)
@@ -476,37 +479,48 @@ func getDagRunHandler(repo DagRunRepository, versions DagVersionLister) gin.Hand
 			return
 		}
 		dto := toDagRunDTO(r)
-		if v, ok := pinnedDagVersion(c, versions, r); ok {
-			dto.DagVersions = []any{v}
-		}
+		pinnedDagVersions(c, versions).name(&dto, r)
 		c.JSON(http.StatusOK, dto)
 	}
 }
 
-// pinnedDagVersion resolves the registered version a run is pinned to, by its
-// label. The Airflow 3.3 Clear dialogs read the run's dag_versions: an empty
+// pinnedVersions resolves runs to the registered versions they are pinned to,
+// by label. The Airflow 3.3 Clear dialogs read a run's dag_versions: an empty
 // list means "carried over from Airflow 2", which forces and locks the "Run
 // with latest bundle version" control. A run whose label no longer resolves
 // keeps the empty list.
-func pinnedDagVersion(c *gin.Context, versions DagVersionLister, r domain.DagRun) (dagVersionDTO, bool) {
-	if versions == nil || r.Version == "" {
-		return dagVersionDTO{}, false
+type pinnedVersions struct {
+	dagID   string
+	byLabel map[string]domain.DagVersion
+}
+
+// pinnedDagVersions reads the DAG's versions once, for one run or a page of them.
+func pinnedDagVersions(c *gin.Context, versions DagVersionLister) pinnedVersions {
+	p := pinnedVersions{dagID: c.Param("dag_id")}
+	if versions == nil {
+		return p
 	}
-	dagID := c.Param("dag_id")
-	vs, err := versions.ListDagVersions(c.Request.Context(), tenantOf(c), dagID)
+	vs, err := versions.ListDagVersions(c.Request.Context(), tenantOf(c), p.dagID)
 	if err != nil {
-		return dagVersionDTO{}, false
+		return p
 	}
-	var best *domain.DagVersion
-	for i := range vs {
-		if vs[i].Version == r.Version && (best == nil || vs[i].VersionNumber > best.VersionNumber) {
-			best = &vs[i]
+	p.byLabel = make(map[string]domain.DagVersion, len(vs))
+	for _, v := range vs {
+		if best, ok := p.byLabel[v.Version]; !ok || v.VersionNumber > best.VersionNumber {
+			p.byLabel[v.Version] = v
 		}
 	}
-	if best == nil {
-		return dagVersionDTO{}, false
+	return p
+}
+
+// name sets dto's dag_versions to the version run r is pinned to, when it resolves.
+func (p pinnedVersions) name(dto *dagRunDTO, r domain.DagRun) {
+	if r.Version == "" {
+		return
 	}
-	return toDagVersionDTO(dagID, *best), true
+	if v, ok := p.byLabel[r.Version]; ok {
+		dto.DagVersions = []any{toDagVersionDTO(p.dagID, v)}
+	}
 }
 
 // applyDeclaredParams merges the DAG version's declared param defaults under the
@@ -1289,7 +1303,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 	}
 	if deps.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
-		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns))
+		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns, deps.DagVersions))
 		g.POST("", RequireScopedPermission("execute", "dag", auth.ScopeRun), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
 		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.DagRuns, deps.DagVersions))
 		g.PATCH("/:dag_run_id", RequireScopedPermission("write", "dag_run", auth.ScopeRun), patchDagRunHandler(deps.DagRuns, deps.Audit))

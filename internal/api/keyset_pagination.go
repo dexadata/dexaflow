@@ -181,7 +181,7 @@ func readCursor(c *gin.Context, raw string, supported bool) (domain.PageCursor, 
 
 // listDagRunsByCursor serves one keyset page of a DAG's runs. offset is the
 // page's offset when the cursor recorded it, else -1.
-func listDagRunsByCursor(c *gin.Context, repo DagRunRepository, cur domain.PageCursor, offset int, states []string, limit int) {
+func listDagRunsByCursor(c *gin.Context, repo DagRunRepository, versions DagVersionLister, cur domain.PageCursor, offset int, states []string, limit int) {
 	pr, ok := repo.(DagRunPageReader)
 	if !ok {
 		AbortProblem(c, http.StatusBadRequest, "bad request", "cursor pagination is not available for this list")
@@ -195,8 +195,11 @@ func listDagRunsByCursor(c *gin.Context, repo DagRunRepository, cur domain.PageC
 	more := len(runs) > limit
 	runs = runs[:min(len(runs), limit)]
 	out := dagRunCollectionDTO{DagRuns: make([]dagRunDTO, 0, len(runs)), TotalEntries: total}
+	pinned := pinnedDagVersions(c, versions)
 	for _, r := range runs {
-		out.DagRuns = append(out.DagRuns, toDagRunDTO(r))
+		dto := toDagRunDTO(r)
+		pinned.name(&dto, r)
+		out.DagRuns = append(out.DagRuns, dto)
 	}
 	if more {
 		last := runCursor(runs[len(runs)-1])

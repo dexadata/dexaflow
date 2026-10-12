@@ -325,6 +325,11 @@ What the 3.3 UI reads that the 3.2 UI did not, and what Dexaflow serves for it:
   tasks a newer DAG version added.
 - **Gantt.** `GET /ui/gantt/{dag_id}/{run_id}` is implemented; the catch-all `{}`
   crashed the 3.3 Gantt view.
+- **Pinned version on runs.** `GET .../dagRuns` and
+  `GET .../dagRuns/{dag_run_id}` name the version each run is pinned to in
+  `dag_versions`. The 3.3 Clear dialogs, opened from the run page or from a row
+  of the runs table, read an empty list as a run carried over from Airflow 2 and
+  force "Run with latest bundle version".
 - **New fields.** `has_note` on grid runs, `partition_date` (always `null`) on
   runs, `awaiting_input` in the task instance state counts, and the
   `*_counts_are_lower_bounds` flags (always `false`: the dashboard counts are
@@ -342,8 +347,10 @@ Known gaps the 3.3 UI exposes, none of them a crash:
 
 - The note typed in the 3.3 Clear dialog is not stored (run and task instance
   notes are not editable yet).
-- A run carries no `dag_versions`, so the run Clear dialog shows "run on latest
-  version" as forced; the request it sends still keeps the run's own version.
+- A run whose version is no longer registered carries no `dag_versions`, so the
+  Clear dialog shows "run on latest version" as forced for it; the request it
+  sends still keeps the run's own version. Every other run names its pinned
+  version, in `GET .../dagRuns/{dag_run_id}` and in the run list alike.
 - Deadline alerts, run duration stats, asset state stores and partitioned runs
   answer empty.
 
