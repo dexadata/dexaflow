@@ -432,7 +432,9 @@ type Querier interface {
 	// left out and the current row, the try's latest execution, stands for it.
 	// Each row carries the per-attempt fields PLUS the run-constant fields
 	// (operator, max_tries, map_index) copied from the current TI; archived rows
-	// get them via the JOIN.
+	// get them via the JOIN. pool and pool_slots are the current TI's too: history
+	// does not record them, so every attempt reports the pool the task is charged
+	// to now (#1589).
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
 	ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error)
 	// The batched form of ListTaskInstancesByRun for the scheduler tick: every

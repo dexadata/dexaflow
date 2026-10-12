@@ -259,7 +259,9 @@ ORDER BY dag_run_id, task_id;
 -- left out and the current row, the try's latest execution, stands for it.
 -- Each row carries the per-attempt fields PLUS the run-constant fields
 -- (operator, max_tries, map_index) copied from the current TI; archived rows
--- get them via the JOIN.
+-- get them via the JOIN. pool and pool_slots are the current TI's too: history
+-- does not record them, so every attempt reports the pool the task is charged
+-- to now (#1589).
 SELECT
     ti.id AS task_instance_id,
     ti.map_index,
@@ -277,7 +279,9 @@ SELECT
     h.hostname,
     h.pod_name,
     h.node_name,
-    h.note
+    h.note,
+    ti.pool,
+    ti.pool_slots
 FROM task_instance_history h
 JOIN task_instances ti ON ti.id = h.task_instance_id
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
@@ -300,7 +304,9 @@ SELECT
     ti.hostname,
     ti.pod_name,
     ti.node_name,
-    ti.note
+    ti.note,
+    ti.pool,
+    ti.pool_slots
 FROM task_instances ti
 WHERE ti.dag_run_id = $1 AND ti.task_id = $2
 ORDER BY try_number;
@@ -515,6 +521,15 @@ SET state = 'none',
     pool_slots = COALESCE(
         (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
 
@@ -983,6 +998,15 @@ SET state = 'none',
     pool_slots = COALESCE(
         (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
@@ -1054,6 +1078,15 @@ SET state = 'none',
     pool_slots = COALESCE(
         (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
 WHERE ti.dag_run_id = sqlc.arg(dag_run_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
