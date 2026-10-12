@@ -63,6 +63,7 @@ LEOFLOW_UI_EDITION="lite" \
 LEOFLOW_UI_WORKSPACE="$HOME_DIR/ws" \
 LEOFLOW_UI_MONACO_DIR="$HOME_DIR/monaco" \
 LEOFLOW_LOGS_DIR="$HOME_DIR/logs" \
+LEOFLOW_EXECUTOR_TYPE="subprocess" \
   "$HOME_DIR/leoflow-server" >"$HOME_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
