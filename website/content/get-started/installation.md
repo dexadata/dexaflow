@@ -527,9 +527,54 @@ plus `dexaflow` and `dexaflow-agent` binaries) are published by
 
 ```bash
 # Verify the server image at a release tag.
-cosign verify ghcr.io/dexadata/dexaflow-server:v0.5.1 \
-  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
+TAG=v0.5.4
+cosign verify "ghcr.io/dexadata/dexaflow-server:${TAG}" \
+  --certificate-identity "https://github.com/dexadata/dexaflow/.github/workflows/release.yaml@refs/tags/${TAG}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The identity is exact: the release workflow at that tag, so a signature made
+by any other workflow, branch or tag does not verify. Releases before
+`v0.5.0` were signed from `neochaotic/leoflow`; use
+`https://github.com/neochaotic/leoflow/.github/workflows/release.yaml@refs/tags/${TAG}`
+for those.
+
+#### Build provenance and SBOMs
+
+From `v0.5.4` on, every release archive and every image the release workflow
+pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate`, each
+`dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names, which share their
+digests) carries a [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
+attestation, and each archive's SPDX SBOM is attested against that archive.
+Check them with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+TAG=v0.5.4
+gh release download "$TAG" --repo dexadata/dexaflow --pattern "dexaflow_${TAG#v}_linux_amd64.tar.gz"
+gh attestation verify "dexaflow_${TAG#v}_linux_amd64.tar.gz" \
+  --repo dexadata/dexaflow \
+  --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
+
+gh attestation verify "oci://ghcr.io/dexadata/dexaflow-server:${TAG}" \
+  --repo dexadata/dexaflow \
+  --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
+```
+
+Add `--predicate-type https://spdx.dev/Document/v2.3` to check the SBOM
+attestation of an archive instead of its provenance. Offline, the archive
+provenance is also published on the release as
+`dexaflow_<version>.intoto.jsonl`; pass it with `--bundle`.
+
+Each image also carries its SPDX SBOM (for `linux/amd64`) as a cosign
+attestation, next to the image in the registry, under its `dexaflow-*` name:
+
+```bash
+TAG=v0.5.4
+cosign verify-attestation "ghcr.io/dexadata/dexaflow-server:${TAG}" \
+  --type spdxjson \
+  --certificate-identity "https://github.com/dexadata/dexaflow/.github/workflows/release.yaml@refs/tags/${TAG}" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  | jq -r .payload | base64 -d | jq .predicate
 ```
 
 ### Full values reference
