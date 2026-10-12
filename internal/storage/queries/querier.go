@@ -68,11 +68,16 @@ type Querier interface {
 	CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UUID) error
 	// Counts queued+running runs for a single DAG; used by the manual-trigger
 	// path to enforce max_active_runs (#200) before insert.
-	CountActiveDagRunsByDagID(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error)
 	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountConnections(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountDagRunStatesInWindow(ctx context.Context, arg CountDagRunStatesInWindowParams) ([]CountDagRunStatesInWindowRow, error)
-	CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	// The tenant is checked on the parent dag, once, rather than on every run row:
+	// a per-row tenant_id filter would turn the index-only count over
+	// idx_dag_runs_dag_logical into a heap visit per run. A dag_runs row always
+	// carries its dag's tenant, so a dag id of another tenant counts zero either
+	// way (#508).
+	CountDagRunsByDag(ctx context.Context, arg CountDagRunsByDagParams) (int64, error)
 	CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error)
 	CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	// One index probe per DAG of the tenant for its newest run. DAGs without runs
@@ -176,6 +181,8 @@ type Querier interface {
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
 	GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (Dag, error)
+	// tenant_id is a predicate here, not only a property of the caller's resolved
+	// dag id (#508): a dag id of another tenant finds no run.
 	GetDagRun(ctx context.Context, arg GetDagRunParams) (DagRun, error)
 	GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, error)
 	// The run plus the LABEL of the version it is pinned to. The API needs the label
@@ -434,7 +441,7 @@ type Querier interface {
 	// (operator, max_tries, map_index) copied from the current TI; archived rows
 	// get them via the JOIN.
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
-	ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error)
+	ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstancesByRunParams) ([]TaskInstance, error)
 	// The batched form of ListTaskInstancesByRun for the scheduler tick: every
 	// active run's task instances in one round trip instead of one per run. Rows
 	// come grouped by run and, within a run, in the same task_id order the per-run

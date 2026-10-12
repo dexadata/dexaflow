@@ -450,11 +450,11 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 	if err != nil {
 		return nil, 0, err
 	}
-	out, err := r.listDagRunsPage(ctx, dag.ID, dagID, limit, offset)
+	out, err := r.listDagRunsPage(ctx, dag, dagID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := r.q.CountDagRunsByDag(ctx, dag.ID)
+	total, err := r.q.CountDagRunsByDag(ctx, queries.CountDagRunsByDagParams{DagID: dag.ID, TenantID: dag.TenantID})
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
 	}
@@ -469,11 +469,13 @@ func (r *Repository) ListDagRunsPage(ctx context.Context, tenant, dagID string, 
 	if err != nil {
 		return nil, err
 	}
-	return r.listDagRunsPage(ctx, dag.ID, dagID, limit, offset)
+	return r.listDagRunsPage(ctx, dag, dagID, limit, offset)
 }
 
-func (r *Repository) listDagRunsPage(ctx context.Context, dagUUID pgtype.UUID, dagID string, limit, offset int) ([]domain.DagRun, error) {
-	rows, err := r.q.ListDagRunsByDagWithVersion(ctx, queries.ListDagRunsByDagWithVersionParams{DagID: dagUUID, Limit: toInt32(limit), Offset: toInt32(offset)})
+func (r *Repository) listDagRunsPage(ctx context.Context, dag queries.Dag, dagID string, limit, offset int) ([]domain.DagRun, error) {
+	rows, err := r.q.ListDagRunsByDagWithVersion(ctx, queries.ListDagRunsByDagWithVersionParams{
+		TenantID: dag.TenantID, DagID: dag.ID, Limit: toInt32(limit), Offset: toInt32(offset),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing dag runs: %w", err)
 	}
@@ -497,7 +499,7 @@ func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string,
 		states = []string{}
 	}
 	rows, err := r.q.ListDagRunsByDagAfter(ctx, queries.ListDagRunsByDagAfterParams{
-		DagID: dag.ID, States: states, AfterLogicalDate: pgtype.Timestamptz{Time: after.At, Valid: true},
+		TenantID: dag.TenantID, DagID: dag.ID, States: states, AfterLogicalDate: pgtype.Timestamptz{Time: after.At, Valid: true},
 		AfterRunID: after.Key, RowLimit: toInt32(limit),
 	})
 	if err != nil {
@@ -505,9 +507,9 @@ func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string,
 	}
 	var total int64
 	if len(states) == 0 {
-		total, err = r.q.CountDagRunsByDag(ctx, dag.ID)
+		total, err = r.q.CountDagRunsByDag(ctx, queries.CountDagRunsByDagParams{DagID: dag.ID, TenantID: dag.TenantID})
 	} else {
-		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{DagID: dag.ID, States: states})
+		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{TenantID: dag.TenantID, DagID: dag.ID, States: states})
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag runs: %w", err)
@@ -525,7 +527,7 @@ func (r *Repository) GetDagRun(ctx context.Context, tenant, dagID, runID string)
 	if err != nil {
 		return domain.DagRun{}, err
 	}
-	run, err := r.q.GetDagRunWithVersion(ctx, queries.GetDagRunWithVersionParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRunWithVersion(ctx, queries.GetDagRunWithVersionParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return domain.DagRun{}, mapNotFound(err)
 	}
@@ -540,7 +542,7 @@ func (r *Repository) DeleteDagRun(ctx context.Context, tenant, dagID, runID stri
 	if err != nil {
 		return err
 	}
-	n, err := r.q.DeleteDagRun(ctx, queries.DeleteDagRunParams{DagID: dag.ID, RunID: runID})
+	n, err := r.q.DeleteDagRun(ctx, queries.DeleteDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return fmt.Errorf("deleting dag run: %w", err)
 	}
@@ -566,7 +568,7 @@ func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run
 		return domain.DagRun{}, err
 	}
 	if maxActive := int(dag.MaxActiveRuns); maxActive > 0 {
-		active, countErr := r.q.CountActiveDagRunsByDagID(ctx, dag.ID)
+		active, countErr := r.q.CountActiveDagRunsByDagID(ctx, queries.CountActiveDagRunsByDagIDParams{TenantID: dag.TenantID, DagID: dag.ID})
 		if countErr != nil {
 			return domain.DagRun{}, fmt.Errorf("counting active runs: %w", countErr)
 		}
@@ -625,12 +627,12 @@ func (r *Repository) ListTaskInstanceAttempts(ctx context.Context, tenant, dagID
 	if err != nil {
 		return nil, err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
 	rows, err := r.q.ListTaskInstanceAttempts(ctx, queries.ListTaskInstanceAttemptsParams{
-		DagRunID: run.ID, TaskID: taskID,
+		TenantID: run.TenantID, DagRunID: run.ID, TaskID: taskID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing task instance attempts: %w", err)
@@ -668,11 +670,11 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 	if err != nil {
 		return nil, 0, err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return nil, 0, mapNotFound(err)
 	}
-	rows, err := r.q.ListTaskInstancesByRun(ctx, run.ID)
+	rows, err := r.q.ListTaskInstancesByRun(ctx, queries.ListTaskInstancesByRunParams{TenantID: run.TenantID, DagRunID: run.ID})
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing task instances: %w", err)
 	}
@@ -702,7 +704,7 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	if err != nil {
 		return 0, err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
@@ -832,7 +834,7 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 	if err != nil {
 		return err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return mapNotFound(err)
 	}
@@ -1045,7 +1047,7 @@ func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, ru
 	if err != nil {
 		return err
 	}
-	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{DagID: dag.ID, RunID: runID})
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
 	if err != nil {
 		return mapNotFound(err)
 	}
