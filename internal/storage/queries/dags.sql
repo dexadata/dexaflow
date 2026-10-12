@@ -50,15 +50,23 @@ WHERE tenant_id = $1 AND dag_id = $2
 RETURNING *;
 
 -- name: GetDagVersionByHash :one
-SELECT * FROM dag_versions WHERE dag_id = $1 AND spec_hash = $2;
+-- dag_versions has no tenant_id: the tenant is checked on the parent dag (#508).
+SELECT * FROM dag_versions
+WHERE dag_versions.dag_id = $1 AND dag_versions.spec_hash = $2
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $3);
 
 -- name: InsertDagVersion :one
+-- The row is inserted only under a dag of the given tenant (#508): a dag id of
+-- another tenant inserts nothing and the query returns no row.
 INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)
+SELECT d.id, sqlc.arg(version)::text, sqlc.arg(image_reference)::text, sqlc.arg(spec)::jsonb,
+       sqlc.arg(spec_hash)::text, sqlc.narg(created_by)::uuid
+FROM dags d
+WHERE d.id = sqlc.arg(dag_id) AND d.tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
 
 -- name: SetCurrentDagVersion :exec
-UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1;
+UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3;
 
 -- name: GetCurrentDagSpec :one
 SELECT v.spec
@@ -113,4 +121,4 @@ WHERE d.tenant_id = $1 AND d.is_active = true
   AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'));
 
 -- name: ClearDagRuns :execrows
-DELETE FROM dag_runs WHERE dag_id = $1;
+DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;
