@@ -364,3 +364,70 @@ func taskPoolSlots(t *testing.T, pg *storage.Postgres, ctx context.Context, runU
 	}
 	return n
 }
+
+// TestClearPoolFollowsTheVersionThatWillRun (#1589): a clear re-binds the task
+// instance's pool together with its pool_slots, from the version the re-run
+// executes. Before, a task moved to another pool in the new version was still
+// charged to its old pool after a run_on_latest_version clear, so the pools API
+// counted it in a pool the admission gate no longer charged. A pinned clear
+// keeps the run's pool, a task moved back to the implicit default pool stores
+// NULL, and a task the executing version no longer declares keeps its pool.
+// Proven on all three reset statements.
+func TestClearPoolFollowsTheVersionThatWillRun(t *testing.T) {
+	cases := []struct {
+		name   string
+		latest bool
+		v1Pool string
+		v2     []domain.TaskSpec
+		want   *string
+	}{
+		{name: "pinned keeps the run's pool", latest: false, v1Pool: "etl",
+			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, Pool: "gpu"}}, want: strPtr("etl")},
+		{name: "run_on_latest_version takes the current pool", latest: true, v1Pool: "etl",
+			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, Pool: "gpu"}}, want: strPtr("gpu")},
+		{name: "moving back to the default pool stores NULL", latest: true, v1Pool: "etl",
+			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython}}, want: nil},
+		{name: "a task the current version dropped keeps its pool", latest: true, v1Pool: "etl",
+			v2: []domain.TaskSpec{{TaskID: "other", Type: domain.TaskTypePython, Pool: "gpu"}}, want: strPtr("etl")},
+	}
+	for _, c := range cases {
+		for _, mode := range clearModes {
+			t.Run(c.name+"/"+mode.name, func(t *testing.T) {
+				repo, sched, pg, ctx := openInfra(t)
+				dagID := fmt.Sprintf("clear_pool_%d", time.Now().UnixNano())
+				v1 := []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, Pool: c.v1Pool}}
+				runUUID := seedClearRun(t, repo, sched, ctx,
+					domain.DAGSpec{DagID: dagID, DagVersion: "v1", Image: "img:v1", Tasks: v1}, v1)
+				if got := taskPool(t, pg, ctx, runUUID); got == nil || *got != c.v1Pool {
+					t.Fatalf("precondition: materialized pool is not %q", c.v1Pool)
+				}
+				registerClearSpec(t, repo, ctx, domain.DAGSpec{DagID: dagID, DagVersion: "v2", Image: "img:v2", Tasks: c.v2})
+
+				opts := domain.ClearOptions{ResetDagRun: true, RunOnLatestVersion: c.latest}
+				if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", mode.taskIDs, mode.onlyFailed, opts); err != nil {
+					t.Fatalf("ClearTaskInstances: %v", err)
+				}
+				got := taskPool(t, pg, ctx, runUUID)
+				switch {
+				case c.want == nil && got != nil:
+					t.Errorf("pool = %q, want NULL (default_pool)", *got)
+				case c.want != nil && got == nil:
+					t.Errorf("pool = NULL, want %q", *c.want)
+				case c.want != nil && *got != *c.want:
+					t.Errorf("pool = %q, want %q", *got, *c.want)
+				}
+			})
+		}
+	}
+}
+
+// taskPool reads task "t"'s pool, nil for the implicit default_pool.
+func taskPool(t *testing.T, pg *storage.Postgres, ctx context.Context, runUUID string) *string {
+	t.Helper()
+	var pool *string
+	if err := pg.Pool.QueryRow(ctx,
+		"SELECT pool FROM task_instances WHERE dag_run_id=$1::uuid AND task_id='t'", runUUID).Scan(&pool); err != nil {
+		t.Fatalf("select pool: %v", err)
+	}
+	return pool
+}

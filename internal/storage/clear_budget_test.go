@@ -23,6 +23,7 @@ func TestRetryBudgetOf(t *testing.T) {
 	spec.Tasks[0].Retries = &two
 	spec.Tasks[2].Retries = &zero
 	spec.Tasks[0].PoolSlots = 4
+	spec.Tasks[1].Pool = "gpu"
 
 	got := retryBudgetOf(spec)
 	if want := []string{"own", "default", "explicit_zero"}; !reflect.DeepEqual(got.taskIDs, want) {
@@ -36,6 +37,12 @@ func TestRetryBudgetOf(t *testing.T) {
 	// (#1499): an unset size is one slot.
 	if want := []int32{4, 1, 1}; !reflect.DeepEqual(got.poolSlots, want) {
 		t.Errorf("pool slots = %v, want %v", got.poolSlots, want)
+	}
+
+	// pools follow the task's declared pool, empty for the implicit
+	// default_pool, so a clear re-binds the pool with the size (#1589).
+	if want := []string{"", "gpu", ""}; !reflect.DeepEqual(got.pools, want) {
+		t.Errorf("pools = %v, want %v", got.pools, want)
 	}
 
 	spec.DefaultArgs = nil

@@ -362,9 +362,11 @@ admissions until it fits. Tasks of size 1 never reserve a pool.
 The Pools screen and `/api/v2/pools` count slots the same way: two tasks of
 size 4 running in a pool of 8 show 8 occupied slots and 0 open, and each
 state's count (`running_slots`, `queued_slots`, `scheduled_slots`,
-`deferred_slots`) is the sum of its tasks' sizes. A task's size is recorded
-when its run starts, and a clear takes the size of the version the re-run
-executes.
+`deferred_slots`) is the sum of its tasks' sizes. A task's size and pool are
+recorded when its run starts, and a clear takes both from the version the
+re-run executes, so a task a newer version moved to another pool is charged
+there once it is cleared onto that version. The API's task instances report
+the same `pool` and `pool_slots`.
 
 ```yaml
 defaults:

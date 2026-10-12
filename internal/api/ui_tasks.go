@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -152,8 +153,8 @@ func toTaskResponse(spec domain.DAGSpec, t domain.TaskSpec) taskResponseDTO {
 		// (the Tasks Details view calls Object.keys on it, so it must not be null).
 		RetryDelay:        timeDeltaDTO{Type: "TimeDelta", Seconds: 300},
 		DownstreamTaskIDs: downstreamIDs(spec.Tasks, t.TaskID),
-		Pool:              "default_pool",
-		PoolSlots:         1,
+		Pool:              cmp.Or(t.Pool, domain.DefaultPoolName),
+		PoolSlots:         t.EffectivePoolSlots(),
 		PriorityWeight:    1,
 		WeightRule:        "downstream",
 		UIColor:           "#fff",
