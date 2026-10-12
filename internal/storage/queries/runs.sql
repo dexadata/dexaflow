@@ -392,7 +392,16 @@ SELECT EXISTS (
 SELECT * FROM dag_versions WHERE id = $1;
 
 -- name: GetDagRunByID :one
+-- Unscoped: for the scheduler and the dispatcher, which hold run ids from
+-- their own listings. A run id that arrives in an agent token is read with
+-- GetDagRunInTenant instead (#508).
 SELECT * FROM dag_runs WHERE id = $1;
+
+-- name: GetDagRunInTenant :one
+-- A run by id, only inside the given tenant: the agent RPC reads the run its
+-- token names with the token's tenant, so a token of one tenant never loads
+-- another tenant's run (#508).
+SELECT * FROM dag_runs WHERE tenant_id = $1 AND id = $2;
 
 -- name: UpdateTaskInstanceStateByRunTask :exec
 -- Stamps the per-state entry timestamps the UI shows (scheduled_when /
@@ -739,7 +748,7 @@ WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule';
 -- scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
 -- so the runtime's on_failure_callback gate must read it from here (#424).
 SELECT first_reschedule_at, max_tries FROM task_instances
-WHERE dag_run_id = $1 AND task_id = $2;
+WHERE tenant_id = $1 AND dag_run_id = $2 AND task_id = $3;
 
 -- name: FailTaskInstanceIfActive :exec
 -- Settle a task instance failed from the pod reconciler, guarded by id,
@@ -857,6 +866,7 @@ SET state = $3::task_state,
     duration_seconds = CASE WHEN $3::task_state IN ('success', 'failed') AND started_at IS NOT NULL
         THEN EXTRACT(EPOCH FROM (now() - started_at)) ELSE duration_seconds END
 WHERE dag_run_id = $1 AND task_id = $2
+  AND tenant_id = sqlc.arg(tenant_id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = COALESCE(sqlc.narg(attempt_epoch)::int, 0)
   AND state IN ('none', 'scheduled', 'queued', 'running');
@@ -877,6 +887,7 @@ SET state = 'up_for_reschedule'::task_state,
     -- delivered get_first_reschedule_date lets the sensor honor cumulative timeout.
     first_reschedule_at = COALESCE(first_reschedule_at, now())
 WHERE dag_run_id = $1 AND task_id = $2
+  AND tenant_id = sqlc.arg(tenant_id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = COALESCE(sqlc.narg(attempt_epoch)::int, 0)
   AND state IN ('running', 'queued', 'scheduled');
@@ -1194,6 +1205,7 @@ SET last_heartbeat_at = now()
 WHERE dag_run_id = $1
   AND task_id = $2
   AND try_number = $3
+  AND tenant_id = sqlc.arg(tenant_id)
   AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_epoch)::int)
   AND state IN ('queued', 'running');
 
@@ -1219,6 +1231,7 @@ SELECT EXISTS (
     WHERE dag_run_id = $1
       AND task_id = $2
       AND try_number = $3
+      AND tenant_id = sqlc.arg(tenant_id)
       AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_epoch)::int)
       AND state IN ('queued', 'running')
 );

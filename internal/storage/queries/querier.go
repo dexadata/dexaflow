@@ -184,7 +184,14 @@ type Querier interface {
 	// tenant_id is a predicate here, not only a property of the caller's resolved
 	// dag id (#508): a dag id of another tenant finds no run.
 	GetDagRun(ctx context.Context, arg GetDagRunParams) (DagRun, error)
+	// Unscoped: for the scheduler and the dispatcher, which hold run ids from
+	// their own listings. A run id that arrives in an agent token is read with
+	// GetDagRunInTenant instead (#508).
 	GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, error)
+	// A run by id, only inside the given tenant: the agent RPC reads the run its
+	// token names with the token's tenant, so a token of one tenant never loads
+	// another tenant's run (#508).
+	GetDagRunInTenant(ctx context.Context, arg GetDagRunInTenantParams) (DagRun, error)
 	// The run plus the LABEL of the version it is pinned to. The API needs the label
 	// to populate bundle_version, which is what makes the UI's clear dialog render
 	// its "Run with latest bundle version" control: the SPA shows that control only
