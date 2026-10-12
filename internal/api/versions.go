@@ -58,7 +58,7 @@ func (g unitGate) check(spec *domain.DAGSpec) error {
 	return nil
 }
 
-func registerVersionHandler(repo DagVersionRepository, unit unitGate, sourceModeImage string) gin.HandlerFunc {
+func registerVersionHandler(repo DagVersionRepository, unit unitGate, sourceModeImage string, policy *domain.ExecutionPolicy) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var spec domain.DAGSpec
 		if err := c.ShouldBindJSON(&spec); err != nil {
@@ -78,6 +78,12 @@ func registerVersionHandler(repo DagVersionRepository, unit unitGate, sourceMode
 			return
 		}
 		if err := domain.CheckSourceMode(sourceModeImage, &spec); err != nil {
+			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
+			return
+		}
+		// The operator's execution allowlist (issue #629): refuse at push what
+		// dispatch would refuse anyway, so the author learns it now.
+		if err := policy.CheckSpec(&spec); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
 			return
 		}

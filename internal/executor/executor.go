@@ -72,6 +72,13 @@ type Request struct {
 	// cost a normal task nothing. Zero value is the secure default.
 	PodSecurity PodSecurity
 
+	// ExecutionPolicy is the operator's allowlist of Execution fields (issue
+	// #629). The dispatcher refuses a task that breaks it before building the
+	// request; the Kubernetes executor checks it again before it builds the pod,
+	// so no path that builds a Request can place a pod the operator did not
+	// allow. Nil allows everything.
+	ExecutionPolicy *domain.ExecutionPolicy
+
 	// Source is the dag.py text captured at compile time. The SubprocessExecutor
 	// materializes it to a per-TI temp dir so `python -m leoflow_runtime
 	// dag:<task>` can importlib it from there — this is how multi-DAG Lite setups

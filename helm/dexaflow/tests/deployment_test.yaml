@@ -485,6 +485,58 @@ tests:
             name: LEOFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM
             value: "true"
 
+  - it: stamps the execution allowlist as allow-all by default (issue 629)
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS
+            value: "*"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES
+          any: true
+
+  - it: renders a restricted execution allowlist (issue 629)
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      executor.defaults.executionAllowlist.fields: [tolerations, priority_class_name]
+      executor.defaults.executionAllowlist.priorityClasses: [etl-low, etl-normal]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS
+            value: "tolerations,priority_class_name"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES
+            value: "etl-low,etl-normal"
+
+  - it: renders an empty execution allowlist as none, not as the allow-all fallback (issue 629)
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      executor.defaults.executionAllowlist.fields: []
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS
+            value: "none"
+
   - it: "audit H2 — control-plane pod sets seccompProfile RuntimeDefault (restricted PSA)"
     template: deployment.yaml
     set:
