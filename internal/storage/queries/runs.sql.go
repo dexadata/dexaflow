@@ -863,8 +863,40 @@ const getDagVersionByID = `-- name: GetDagVersionByID :one
 SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions WHERE id = $1
 `
 
+// Unscoped: for the spec cache the scheduler and the dispatcher share, which
+// hold version ids from their own runs. A request path reads a version with
+// GetDagVersionInTenant (#508).
 func (q *Queries) GetDagVersionByID(ctx context.Context, id pgtype.UUID) (DagVersion, error) {
 	row := q.db.QueryRow(ctx, getDagVersionByID, id)
+	var i DagVersion
+	err := row.Scan(
+		&i.ID,
+		&i.DagID,
+		&i.Version,
+		&i.ImageReference,
+		&i.Spec,
+		&i.SpecHash,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDagVersionInTenant = `-- name: GetDagVersionInTenant :one
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions
+WHERE dag_versions.id = $1
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $2)
+`
+
+type GetDagVersionInTenantParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// A version by id, only when its DAG belongs to the given tenant (#508).
+// dag_versions has no tenant_id of its own; the tenant is its DAG's.
+func (q *Queries) GetDagVersionInTenant(ctx context.Context, arg GetDagVersionInTenantParams) (DagVersion, error) {
+	row := q.db.QueryRow(ctx, getDagVersionInTenant, arg.ID, arg.TenantID)
 	var i DagVersion
 	err := row.Scan(
 		&i.ID,
@@ -2565,8 +2597,13 @@ const reopenDagRunKeepingVersion = `-- name: ReopenDagRunKeepingVersion :exec
 UPDATE dag_runs
 SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL
-WHERE id = $1
+WHERE id = $1 AND tenant_id = $2
 `
+
+type ReopenDagRunKeepingVersionParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
 
 // The same re-open as ResetDagRunToVersion, WITHOUT touching dag_version_id: the
 // run stays pinned to the version it was created with, so the re-run executes the
@@ -2582,8 +2619,8 @@ WHERE id = $1
 // Alert bookkeeping is cleared here for the same reason it is there: the clear
 // starts a new failure episode, so a genuine re-failure re-pages, and a spent
 // retry budget is not carried into an episode that has not been attempted.
-func (q *Queries) ReopenDagRunKeepingVersion(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, reopenDagRunKeepingVersion, id)
+func (q *Queries) ReopenDagRunKeepingVersion(ctx context.Context, arg ReopenDagRunKeepingVersionParams) error {
+	_, err := q.db.Exec(ctx, reopenDagRunKeepingVersion, arg.ID, arg.TenantID)
 	return err
 }
 
@@ -2860,7 +2897,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $5
+    WHERE src.tenant_id = $5 AND src.dag_run_id = $6
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -2922,7 +2959,7 @@ SET state = 'none',
         ELSE NULLIF(($4::text[])[array_position($2::text[], ti.task_id)], '')
     END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $5
+WHERE ti.tenant_id = $5 AND ti.dag_run_id = $6
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 RETURNING ti.task_id
 `
@@ -2932,6 +2969,7 @@ type ResetAllFailedTaskInstancesParams struct {
 	SpecTaskIds   []string    `json:"spec_task_ids"`
 	SpecPoolSlots []int32     `json:"spec_pool_slots"`
 	SpecPools     []string    `json:"spec_pools"`
+	TenantID      pgtype.UUID `json:"tenant_id"`
 	DagRunID      pgtype.UUID `json:"dag_run_id"`
 }
 
@@ -2944,6 +2982,7 @@ func (q *Queries) ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllF
 		arg.SpecTaskIds,
 		arg.SpecPoolSlots,
 		arg.SpecPools,
+		arg.TenantID,
 		arg.DagRunID,
 	)
 	if err != nil {
@@ -2969,12 +3008,13 @@ UPDATE dag_runs
 SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL,
     dag_version_id = $2
-WHERE id = $1
+WHERE id = $1 AND tenant_id = $3
 `
 
 type ResetDagRunToVersionParams struct {
 	ID           pgtype.UUID `json:"id"`
 	DagVersionID pgtype.UUID `json:"dag_version_id"`
+	TenantID     pgtype.UUID `json:"tenant_id"`
 }
 
 // Clear with run_on_latest_version re-binds the run to the DAG's current
@@ -2988,7 +3028,7 @@ type ResetDagRunToVersionParams struct {
 // not been attempted, so a cleared run could exhaust its attempts without ever
 // having tried.
 func (q *Queries) ResetDagRunToVersion(ctx context.Context, arg ResetDagRunToVersionParams) error {
-	_, err := q.db.Exec(ctx, resetDagRunToVersion, arg.ID, arg.DagVersionID)
+	_, err := q.db.Exec(ctx, resetDagRunToVersion, arg.ID, arg.DagVersionID, arg.TenantID)
 	return err
 }
 
@@ -3004,7 +3044,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $5 AND src.task_id = $6
+    WHERE src.tenant_id = $5 AND src.dag_run_id = $6 AND src.task_id = $7
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -3066,7 +3106,7 @@ SET state = 'none',
         ELSE NULLIF(($4::text[])[array_position($2::text[], ti.task_id)], '')
     END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $5 AND ti.task_id = $6
+WHERE ti.tenant_id = $5 AND ti.dag_run_id = $6 AND ti.task_id = $7
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 `
 
@@ -3075,6 +3115,7 @@ type ResetFailedTaskInstanceParams struct {
 	SpecTaskIds   []string    `json:"spec_task_ids"`
 	SpecPoolSlots []int32     `json:"spec_pool_slots"`
 	SpecPools     []string    `json:"spec_pools"`
+	TenantID      pgtype.UUID `json:"tenant_id"`
 	DagRunID      pgtype.UUID `json:"dag_run_id"`
 	TaskID        string      `json:"task_id"`
 }
@@ -3087,6 +3128,7 @@ func (q *Queries) ResetFailedTaskInstance(ctx context.Context, arg ResetFailedTa
 		arg.SpecTaskIds,
 		arg.SpecPoolSlots,
 		arg.SpecPools,
+		arg.TenantID,
 		arg.DagRunID,
 		arg.TaskID,
 	)
@@ -3265,7 +3307,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = $5 AND src.task_id = $6
+    WHERE src.tenant_id = $5 AND src.dag_run_id = $6 AND src.task_id = $7
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
         queued_at = EXCLUDED.queued_at,
@@ -3328,7 +3370,7 @@ SET state = 'none',
         ELSE NULLIF(($4::text[])[array_position($2::text[], ti.task_id)], '')
     END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = $5 AND ti.task_id = $6
+WHERE ti.tenant_id = $5 AND ti.dag_run_id = $6 AND ti.task_id = $7
 `
 
 type ResetTaskInstanceToNoneParams struct {
@@ -3336,6 +3378,7 @@ type ResetTaskInstanceToNoneParams struct {
 	SpecTaskIds   []string    `json:"spec_task_ids"`
 	SpecPoolSlots []int32     `json:"spec_pool_slots"`
 	SpecPools     []string    `json:"spec_pools"`
+	TenantID      pgtype.UUID `json:"tenant_id"`
 	DagRunID      pgtype.UUID `json:"dag_run_id"`
 	TaskID        string      `json:"task_id"`
 }
@@ -3373,6 +3416,7 @@ func (q *Queries) ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInst
 		arg.SpecTaskIds,
 		arg.SpecPoolSlots,
 		arg.SpecPools,
+		arg.TenantID,
 		arg.DagRunID,
 		arg.TaskID,
 	)
@@ -3430,11 +3474,12 @@ SET state = $1::task_state,
     started_at = CASE WHEN $1::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     last_failure_kind = NULL,
     infra_confirmed_at = now()
-WHERE dag_run_id = $2 AND task_id = $3
+WHERE tenant_id = $2 AND dag_run_id = $3 AND task_id = $4
 `
 
 type SetTaskInstanceStateByUserParams struct {
 	State    TaskState   `json:"state"`
+	TenantID pgtype.UUID `json:"tenant_id"`
 	DagRunID pgtype.UUID `json:"dag_run_id"`
 	TaskID   string      `json:"task_id"`
 }
@@ -3445,7 +3490,12 @@ type SetTaskInstanceStateByUserParams struct {
 // user marks failed is neither re-placed nor overridden by a late SUCCESS
 // record (ADR 0052 amendment).
 func (q *Queries) SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskInstanceStateByUserParams) error {
-	_, err := q.db.Exec(ctx, setTaskInstanceStateByUser, arg.State, arg.DagRunID, arg.TaskID)
+	_, err := q.db.Exec(ctx, setTaskInstanceStateByUser,
+		arg.State,
+		arg.TenantID,
+		arg.DagRunID,
+		arg.TaskID,
+	)
 	return err
 }
 
@@ -3700,7 +3750,7 @@ func (q *Queries) TryAttemptEpochBounds(ctx context.Context, arg TryAttemptEpoch
 const updateDagRunState = `-- name: UpdateDagRunState :one
 UPDATE dag_runs
 SET state = $2, started_at = $3, ended_at = $4
-WHERE id = $1
+WHERE id = $1 AND tenant_id = $5
 RETURNING id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at
 `
 
@@ -3709,6 +3759,7 @@ type UpdateDagRunStateParams struct {
 	State     DagRunState        `json:"state"`
 	StartedAt pgtype.Timestamptz `json:"started_at"`
 	EndedAt   pgtype.Timestamptz `json:"ended_at"`
+	TenantID  pgtype.UUID        `json:"tenant_id"`
 }
 
 func (q *Queries) UpdateDagRunState(ctx context.Context, arg UpdateDagRunStateParams) (DagRun, error) {
@@ -3717,6 +3768,7 @@ func (q *Queries) UpdateDagRunState(ctx context.Context, arg UpdateDagRunStatePa
 		arg.State,
 		arg.StartedAt,
 		arg.EndedAt,
+		arg.TenantID,
 	)
 	var i DagRun
 	err := row.Scan(

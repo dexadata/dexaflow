@@ -136,7 +136,7 @@ ORDER BY queued_at;
 -- name: UpdateDagRunState :one
 UPDATE dag_runs
 SET state = $2, started_at = $3, ended_at = $4
-WHERE id = $1
+WHERE id = $1 AND tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
 
 -- name: ReopenDagRunKeepingVersion :exec
@@ -157,7 +157,7 @@ RETURNING *;
 UPDATE dag_runs
 SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL
-WHERE id = $1;
+WHERE id = $1 AND tenant_id = $2;
 
 -- name: ResetDagRunToVersion :exec
 -- Clear with run_on_latest_version re-binds the run to the DAG's current
@@ -174,7 +174,7 @@ UPDATE dag_runs
 SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL,
     dag_version_id = $2
-WHERE id = $1;
+WHERE id = $1 AND tenant_id = sqlc.arg(tenant_id);
 
 -- name: ClaimAlertAttempt :one
 -- Atomically claim one on-failure ATTEMPT for a run, returning the row iff this
@@ -389,7 +389,17 @@ SELECT EXISTS (
 )::bool AS run_exists;
 
 -- name: GetDagVersionByID :one
+-- Unscoped: for the spec cache the scheduler and the dispatcher share, which
+-- hold version ids from their own runs. A request path reads a version with
+-- GetDagVersionInTenant (#508).
 SELECT * FROM dag_versions WHERE id = $1;
+
+-- name: GetDagVersionInTenant :one
+-- A version by id, only when its DAG belongs to the given tenant (#508).
+-- dag_versions has no tenant_id of its own; the tenant is its DAG's.
+SELECT * FROM dag_versions
+WHERE dag_versions.id = $1
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $2);
 
 -- name: GetDagRunByID :one
 -- Unscoped: for the scheduler and the dispatcher, which hold run ids from
@@ -428,7 +438,7 @@ SET state = sqlc.arg(state)::task_state,
     started_at = CASE WHEN sqlc.arg(state)::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     last_failure_kind = NULL,
     infra_confirmed_at = now()
-WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = sqlc.arg(task_id);
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id) AND task_id = sqlc.arg(task_id);
 
 -- name: UpdateTaskInstanceStatesByRunTasks :exec
 -- Batched form of UpdateTaskInstanceStateByRunTask: applies ONE target state to
@@ -486,7 +496,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
+    WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
         queued_at = EXCLUDED.queued_at,
@@ -549,7 +559,7 @@ SET state = 'none',
         ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
     END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
+WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
 
 -- name: ResetTaskInstanceForRetry :execrows
 -- The scheduler retry rail's reset: identical to ResetTaskInstanceToNone but
@@ -966,7 +976,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
+    WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -1028,7 +1038,7 @@ SET state = 'none',
         ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
     END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
+WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
 
 -- name: ResetAllFailedTaskInstances :many
@@ -1046,7 +1056,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = sqlc.arg(dag_run_id)
+    WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -1108,7 +1118,7 @@ SET state = 'none',
         ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
     END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = sqlc.arg(dag_run_id)
+WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = sqlc.arg(dag_run_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 RETURNING ti.task_id;
 

@@ -39,7 +39,7 @@ func (r *Repository) loadClearRetryBudget(ctx context.Context, dag queries.Dag, 
 	if !versionID.Valid {
 		return clearRetryBudget{}, nil
 	}
-	version, err := r.q.GetDagVersionByID(ctx, versionID)
+	version, err := r.q.GetDagVersionInTenant(ctx, queries.GetDagVersionInTenantParams{ID: versionID, TenantID: dag.TenantID})
 	if err != nil {
 		return clearRetryBudget{}, fmt.Errorf("loading the version a clear re-runs: %w", err)
 	}
