@@ -45,17 +45,31 @@ type ExecutionPolicyConfig struct {
 	// PriorityClasses, when not empty, lists the only values a task's
 	// priority_class_name may take.
 	PriorityClasses []string
+	// ServiceAccounts, when not empty, lists the only execution.service_account
+	// values a task may name (issue #537 C2). A task that names none runs as the
+	// operator's default task ServiceAccount and is not checked.
+	ServiceAccounts []string
+	// Images, when not empty, lists the DAG images that may run (issue #537
+	// C2): an exact image reference, or a prefix ending in "*" (for example
+	// "registry.example.com/team-a/*"). A lone "*" allows any image.
+	Images []string
 }
 
-// ExecutionPolicy is the operator's allowlist of task execution fields (issue
-// #629). A nil *ExecutionPolicy allows everything, so callers need not branch
-// on it.
+// ExecutionPolicy is the operator's allowlist of task execution fields, service
+// accounts and images (issues #629 and #537 C2). A nil *ExecutionPolicy allows
+// everything, so callers need not branch on it.
 type ExecutionPolicy struct {
 	// fields is the set of allowed fields; nil allows every governed field.
 	fields map[string]bool
 	// priorityClasses is the set of allowed priority_class_name values; nil
 	// allows any.
 	priorityClasses []string
+	// serviceAccounts is the list of allowed service_account values; nil allows
+	// any.
+	serviceAccounts []string
+	// images is the list of allowed image references and "*"-terminated
+	// prefixes; nil allows any.
+	images []string
 }
 
 // ParseExecutionPolicy validates the configured allowlist. It returns nil (allow
@@ -69,10 +83,36 @@ func ParseExecutionPolicy(c ExecutionPolicyConfig) (*ExecutionPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fields == nil && classes == nil {
+	sas, err := allowedValues("service_accounts", c.ServiceAccounts)
+	if err != nil {
+		return nil, err
+	}
+	images, err := parseAllowedImages(c.Images)
+	if err != nil {
+		return nil, err
+	}
+	if fields == nil && classes == nil && sas == nil && images == nil {
 		return nil, nil //nolint:nilnil // no restriction is the default, not an error; nil is the allow-all policy
 	}
-	return &ExecutionPolicy{fields: fields, priorityClasses: classes}, nil
+	return &ExecutionPolicy{fields: fields, priorityClasses: classes, serviceAccounts: sas, images: images}, nil
+}
+
+// parseAllowedImages returns the allowed image references and prefixes, nil
+// for "any image" (an empty list or a lone "*").
+func parseAllowedImages(configured []string) ([]string, error) {
+	images, err := allowedValues("images", configured)
+	if err != nil {
+		return nil, err
+	}
+	for _, img := range images {
+		if strings.Contains(strings.TrimSuffix(img, "*"), "*") {
+			return nil, fmt.Errorf("executor.defaults.execution_allowlist.images: %q may use \"*\" only as its last character", img)
+		}
+	}
+	if slices.Contains(images, "*") {
+		return nil, nil
+	}
+	return images, nil
 }
 
 // DenyAllExecutionPolicy allows no governed field. It is the safe reading of a
@@ -181,6 +221,10 @@ func (p *ExecutionPolicy) CheckTask(t TaskSpec) error {
 		errs = append(errs, fmt.Errorf("task %q sets execution.priority_class_name %q, which is not in executor.defaults.execution_allowlist.priority_classes (%s)",
 			t.TaskID, pc, strings.Join(p.priorityClasses, ", ")))
 	}
+	if sa := t.Execution.ServiceAccount; sa != "" && p.serviceAccounts != nil && !slices.Contains(p.serviceAccounts, sa) {
+		errs = append(errs, fmt.Errorf("task %q sets execution.service_account %q, which is not in executor.defaults.execution_allowlist.service_accounts (%s)",
+			t.TaskID, sa, strings.Join(p.serviceAccounts, ", ")))
+	}
 	return errors.Join(errs...)
 }
 
@@ -190,12 +234,34 @@ func (p *ExecutionPolicy) CheckSpec(spec *DAGSpec) error {
 		return nil
 	}
 	var errs []error
+	if err := p.CheckImage(spec.Image); err != nil {
+		errs = append(errs, err)
+	}
 	for _, t := range spec.Tasks {
 		if err := p.CheckTask(t); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// CheckImage returns why the DAG image may not run under the policy, or nil.
+// An empty image is not checked: it is refused elsewhere.
+func (p *ExecutionPolicy) CheckImage(image string) error {
+	if p == nil || p.images == nil || image == "" {
+		return nil
+	}
+	for _, allowed := range p.images {
+		if prefix, ok := strings.CutSuffix(allowed, "*"); ok {
+			if strings.HasPrefix(image, prefix) {
+				return nil
+			}
+		} else if image == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("image %q is not in executor.defaults.execution_allowlist.images (%s)",
+		image, strings.Join(p.images, ", "))
 }
 
 func (p *ExecutionPolicy) allowedFieldsText() string {

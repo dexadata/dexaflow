@@ -59,3 +59,34 @@ func TestDispatchPassesTheExecutionPolicyToTheExecutor(t *testing.T) {
 		t.Error("request carries no execution policy")
 	}
 }
+
+// The image and service_account allowlists (issue #537 C2) are enforced at
+// dispatch too: the image is the one the run resolved, the service account the
+// one the task names (the operator's default is never checked).
+func TestDispatchRefusesAnImageOrServiceAccountOutsideTheAllowlist(t *testing.T) {
+	d, exec, _, placer := policyDispatcher(t, domain.ExecutionPolicyConfig{
+		Images: []string{"registry.example.com/*"}, ServiceAccounts: []string{"etl"},
+	})
+	task := domain.TaskSpec{TaskID: "t", Type: domain.TaskTypePython, Entrypoint: "dag:t"}
+	disp, err := d.Dispatch(context.Background(), "run", "etl", "ver", task)
+	if err == nil || disp != executor.Refused || !strings.Contains(err.Error(), "etl:v1") {
+		t.Fatalf("Dispatch = %v, %v; want Refused naming image etl:v1", disp, err)
+	}
+	if exec.req.TaskID != "" || placer.calls != 0 {
+		t.Errorf("refused task reached the executor or a warm worker")
+	}
+
+	d, exec, _, placer = policyDispatcher(t, domain.ExecutionPolicyConfig{ServiceAccounts: []string{"etl"}})
+	placer.ok = false
+	d.SetDefaultTaskServiceAccount("operator-default")
+	if disp, err := d.Dispatch(context.Background(), "run", "etl", "ver", task); err != nil || disp != executor.Dispatched {
+		t.Fatalf("task without a service account = %v, %v; want Dispatched under the operator default", disp, err)
+	}
+	if exec.req.Execution.ServiceAccount != "operator-default" {
+		t.Errorf("service account = %q, want the operator default", exec.req.Execution.ServiceAccount)
+	}
+	task.Execution = &domain.Execution{ServiceAccount: "admin"}
+	if disp, err := d.Dispatch(context.Background(), "run", "etl", "ver", task); err == nil || disp != executor.Refused {
+		t.Fatalf("unlisted service account = %v, %v; want Refused", disp, err)
+	}
+}

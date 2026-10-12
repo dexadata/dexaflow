@@ -64,6 +64,36 @@ func TestExecutionAllowlistBindsFromFile(t *testing.T) {
 	}
 }
 
+// The service account and image allowlists (issue #537 C2) default to empty
+// (allow any) and bind from both env prefixes.
+func TestExecutionAllowlistIdentityKeysBind(t *testing.T) {
+	c, err := config.LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	al := c.Executor.Defaults.ExecutionAllowlist
+	if len(al.ServiceAccounts) != 0 || len(al.Images) != 0 {
+		t.Errorf("defaults = %+v, want empty service_accounts and images", al)
+	}
+	for _, prefix := range []string{"DEXAFLOW_", "LEOFLOW_"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Setenv(prefix+"EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_SERVICE_ACCOUNTS", "etl,reports")
+			t.Setenv(prefix+"EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES", "registry.example.com/team-a/*")
+			c, err := config.LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			al := c.Executor.Defaults.ExecutionAllowlist
+			if !slices.Equal(al.ServiceAccounts, []string{"etl", "reports"}) {
+				t.Errorf("service_accounts = %v", al.ServiceAccounts)
+			}
+			if !slices.Equal(al.Images, []string{"registry.example.com/team-a/*"}) {
+				t.Errorf("images = %v", al.Images)
+			}
+		})
+	}
+}
+
 // A typo in the allowlist fails boot instead of silently allowing or
 // refusing the wrong field.
 func TestExecutionAllowlistValidatesAtBoot(t *testing.T) {
