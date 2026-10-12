@@ -37,8 +37,8 @@ helm install lf oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leof
   --set bootstrap.password='admin'
 ```
 
-Use the release tag **without** the leading `v` as `--version` (tag `v0.4.0` →
-`--version 0.4.0`); the chart `version`/`appVersion` move in lockstep with the
+Use the release tag **without** the leading `v` as `--version` (tag `vX.Y.Z` →
+`--version X.Y.Z`); the chart `version`/`appVersion` move in lockstep with the
 tag. The chart is cosign-signed by digest — verify it with
 `cosign verify ghcr.io/dexadata/charts/dexaflow --certificate-identity-regexp '…' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 
@@ -579,7 +579,7 @@ differ from what's committed.
 | httpTLS.secretName | string | `""` | Name of a `kubernetes.io/tls` Secret (keys `tls.crt` and `tls.key`) for the API listener, typically a cert-manager `Certificate` whose SANs cover the name the load balancer dials (the Service DNS name, or the pod IP when the LB targets pods directly). Required when `enabled`. Mounted only into the pods that serve the API (the `api` role when split). |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"ghcr.io/dexadata/dexaflow-server"` | Control-plane image. Published by GoReleaser on every tag, signed with cosign. |
-| image.tag | string | `""` | Image tag. Defaults to `.Chart.appVersion` when empty; to pin a specific release set `--set image.tag=v0.4.0-rc.2` (the `v`-prefix and no-`v` forms are both published and resolve to the same digest, so either works). |
+| image.tag | string | `""` | Image tag. Defaults to `.Chart.appVersion` when empty; to pin a specific release set `--set image.tag=vX.Y.Z` (the `v`-prefix and no-`v` forms are both published and resolve to the same digest, so either works). |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` | Ingress annotations (controller-specific: rewrites, TLS, auth, etc.). |
 | ingress.className | string | `""` | Ingress class name (e.g. `nginx`). Leave empty to use the cluster default. |
@@ -607,7 +607,7 @@ differ from what's committed.
 | migrations.enabled | bool | `true` |  |
 | migrations.image.pullPolicy | string | `"IfNotPresent"` |  |
 | migrations.image.repository | string | `"ghcr.io/dexadata/dexaflow-migrate"` | leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Dexaflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64). |
-| migrations.image.tag | string | `""` | Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms — use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=v0.4.0-rc.2`. |
+| migrations.image.tag | string | `""` | Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms — use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=vX.Y.Z`. |
 | migrations.path | string | `"/migrations"` | Path inside the migrate image where the SQL files live. Must match the COPY destination in `deploy/Dockerfile.migrate`. |
 | migrations.podSecurityContext.fsGroup | int | `65532` |  |
 | migrations.podSecurityContext.runAsGroup | int | `65532` |  |
