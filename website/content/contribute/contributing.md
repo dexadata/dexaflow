@@ -82,6 +82,12 @@ merge. They are not bureaucracy; they are why the codebase stays an A+.
   ([ADR 0012](/project/adrs/))
 - **GoDocs on every exported identifier** — starting with the name, ending with a period.
 - **English** for all code, comments, commit messages, and docs.
+- **No em dashes in new text, no attribution in commits.** Lines you add, your
+  commit messages and the PR description carry no em dash (use a comma, a
+  colon, parentheses or two sentences) and no `Co-Authored-By` trailer,
+  session link or generated-by footer. The **Repository text rules** check on
+  every PR and the pre-commit hook (`scripts/check-repo-rules.sh --staged`)
+  enforce it and name the file and line; existing text is not flagged.
 - **No new dependency** without justification; the supply-chain scans
   (govulncheck, gosec, Trivy, CodeQL) run on every PR. ([ADR 0014](/project/adrs/))
 

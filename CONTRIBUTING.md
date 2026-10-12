@@ -119,6 +119,11 @@ The label alone fails the guard. The release cut reads the reason back
 1. Fork the repository and create your branch.
 2. Make your changes following TDD discipline.
 3. Run `make lint test` locally before pushing.
+   Added lines, commit messages and the PR description follow the text rules of
+   [AGENTS.md](AGENTS.md): no em dashes in new text, and no `Co-Authored-By`
+   trailers, session links or generated-by footers. `scripts/check-repo-rules.sh`
+   checks them on every PR and on staged lines in the pre-commit hook, and
+   names the file and line it found.
 4. Push and open a PR using the template.
 5. Fill in the PR description completely. Linked issue, what changed, what was tested, screenshots if UI is affected.
 6. Wait for CI. If any check fails, fix and push again.

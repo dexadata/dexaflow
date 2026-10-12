@@ -1,0 +1,10 @@
+kind: Changed
+body: |-
+  **The text rules of AGENTS.md are checked on every pull request.** A new
+  check fails a pull request that adds an em dash (in any added line or in its
+  description) or carries a `Co-Authored-By` trailer, a session link or a
+  generated-by footer in a commit message or the description, and names the
+  file and line it found. Only added lines are read, so existing text is not
+  flagged. The pre-commit hook runs the same check on the staged lines
+  (`scripts/check-repo-rules.sh --staged`).
+time: 2026-10-12T12:10:00.000000000-03:00

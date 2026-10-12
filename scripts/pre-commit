@@ -21,6 +21,11 @@ if [ -n "$unformatted" ]; then
 	exit 1
 fi
 
+# The text rules of AGENTS.md on the staged lines: no em dash in added text.
+# The pull request guard checks the same, plus the commit messages.
+echo "[pre-commit] repository text rules"
+scripts/check-repo-rules.sh --staged
+
 echo "[pre-commit] go vet"
 go vet ./...
 
