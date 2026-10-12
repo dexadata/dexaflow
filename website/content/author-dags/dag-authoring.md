@@ -161,8 +161,13 @@ anything that can list processes in the same container (`ps`,
 any process of the same user on a Lite host) reads it, and `set -x`, error
 messages and argument-logging wrappers copy it into the task log.
 
-Every Variable and Connection already reaches the task as an environment
-variable, so reference it by name and let bash expand it at run time:
+A Variable or Connection the task receives is already in its environment as
+`AIRFLOW_VAR_<KEY>` or `AIRFLOW_CONN_<ID>`, so reference it by name and let bash
+expand it at run time. On an install that runs `auth.secret_scoping: enforce`,
+the task receives only the names its DAG declares in `dexaflow.yaml`
+([Declare what a task consumes](/author-dags/variables-connections/#declare-what-a-task-consumes)),
+and an undeclared one expands to an empty string. The templated form has the
+same requirement, so declare what the command uses either way:
 
 ```python
 # Wrong: the token is rendered into the command line.

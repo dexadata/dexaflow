@@ -58,11 +58,14 @@ into a shell command. A Secret reaches a container as an environment variable
 (`secretKeyRef`) or a mounted file, and the kubelet resolves it by reference.
 The Pod spec (code) and the Secret (data) stay separate.
 
-Dexaflow already has the reference path. Variables and Connections reach every
-task as `AIRFLOW_VAR_<KEY>` and `AIRFLOW_CONN_<ID>` environment variables
-(ADR 0021, scoped by ADR 0045 and ADR 0055). A bash task that writes
-`"$AIRFLOW_VAR_API_KEY"` gets the same secret without it ever being part of the
-command line.
+Dexaflow already has the reference path. The Variables and Connections a task
+receives reach it as `AIRFLOW_VAR_<KEY>` and `AIRFLOW_CONN_<ID>` environment
+variables (ADR 0021, scoped by ADR 0045 and ADR 0055). Under the default
+`auth.secret_scoping: permissive`, and under `off`, that is every Variable and
+Connection of the tenant; under `enforce` it is only the names the DAG declares
+in `dexaflow.yaml`. A bash task that writes `"$AIRFLOW_VAR_API_KEY"` gets the same
+secret a template would render, under the same declaration rule, without it
+ever being part of the command line.
 
 The same distinction applies to the control plane's own credential (the #476
 residual folded into #388). With `auth.agent_token_transport: envvar`, the
