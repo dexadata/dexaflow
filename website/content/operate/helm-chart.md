@@ -214,6 +214,8 @@ track, such as cgo allocations and page cache.
   validation status.
 - [Deploy your first Pro DAG](/operate/first-pro-dag/) — the promotion walkthrough.
 - [Upgrades](/operate/upgrades/) — upgrading a chart release safely.
+- [In-transit encryption](/operate/in-transit-encryption/): a service mesh with
+  mTLS, or `httpTLS` for HTTPS on the API listener, and `networkPolicy.grpcFrom`.
 - [SSO with Google Workspace](/operate/sso-google-workspace/) or
   [with another OIDC provider](/operate/sso-other-providers/): turning on
   `auth.oidc.*`.

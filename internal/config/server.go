@@ -534,6 +534,14 @@ type ServerSection struct {
 	// 0 (the default) keeps idle connections open, as before, even when
 	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
 	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
+	// HTTPTLSCert/HTTPTLSKey serve the API and UI listener (http_addr) over
+	// HTTPS with an operator-supplied PEM certificate and key (#638), so a load
+	// balancer can re-encrypt to the pod. Both must be set together; both empty
+	// (the default) keeps plain HTTP. The files are re-read when they change, so
+	// a rotated certificate is picked up without a restart. The metrics listener
+	// is not affected.
+	HTTPTLSCert string `mapstructure:"http_tls_cert"`
+	HTTPTLSKey  string `mapstructure:"http_tls_key"`
 	// PoolsReadOnly makes the tenant-facing pool API (/api/v2/pools) serve reads
 	// only: create, resize and delete answer 403 for every role, tenant admin
 	// included. It is for an engine shared by many tenants, where the platform
@@ -543,6 +551,12 @@ type ServerSection struct {
 	// tenant cannot create pools then. Default false keeps pools writable under
 	// write:pool and undefined pools unlimited, today's behavior.
 	PoolsReadOnly bool `mapstructure:"pools_read_only"`
+}
+
+// HTTPTLSEnabled reports whether the API listener serves HTTPS, which needs
+// both server.http_tls_cert and server.http_tls_key.
+func (s ServerSection) HTTPTLSEnabled() bool {
+	return s.HTTPTLSCert != "" && s.HTTPTLSKey != ""
 }
 
 // Server roles (ADR 0049).
@@ -975,6 +989,8 @@ var serverDefaults = map[string]any{
 	"server.grpc_addr":            "0.0.0.0:9091",
 	"server.grpc_tls_cert":        "",
 	"server.grpc_tls_key":         "",
+	"server.http_tls_cert":        "", // empty: the API listener stays on plain HTTP (#638)
+	"server.http_tls_key":         "",
 	"server.cors.allowed_origins": []string{"http://localhost:8080"},
 	// Registered so viper's AutomaticEnv binds LEOFLOW_SERVER_TRUSTED_PROXIES. It
 	// is a []string, but viper's default decode hook splits a single
@@ -1337,7 +1353,7 @@ func (c *ServerConfig) validateNonNegative() error {
 
 // Validate reports configuration errors that must abort startup.
 func (c *ServerConfig) Validate() error {
-	if err := c.validateRole(); err != nil {
+	if err := c.validateListeners(); err != nil {
 		return err
 	}
 	if err := c.validateProvider(); err != nil {
@@ -1967,6 +1983,27 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// validateListeners checks the server section: the role and the API
+// listener's TLS pair.
+func (c *ServerConfig) validateListeners() error {
+	if err := c.validateRole(); err != nil {
+		return err
+	}
+	return c.validateHTTPTLS()
+}
+
+// validateHTTPTLS refuses half of the API listener's TLS pair (#638): a cert
+// without its key, or the reverse, would otherwise boot on plain HTTP while the
+// operator believes the hop is encrypted.
+func (c *ServerConfig) validateHTTPTLS() error {
+	if (c.Server.HTTPTLSCert == "") != (c.Server.HTTPTLSKey == "") {
+		return errors.New("server.http_tls_cert and server.http_tls_key must be set together " +
+			"(DEXAFLOW_SERVER_HTTP_TLS_CERT and DEXAFLOW_SERVER_HTTP_TLS_KEY): only one is set, " +
+			"so the API listener would silently stay on plain HTTP")
+	}
+	return nil
 }
 
 // validateRole rejects an unknown server.role (ADR 0049). Empty is valid (defaults
