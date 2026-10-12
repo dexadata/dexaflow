@@ -129,7 +129,7 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 		// With a host binding (#1463), a token for one tenant opens no session
 		// on another tenant's host.
 		if !d.hosts.allows(c, id.Tenant) {
-			d.logger.Warn("trusted issuer sign-in refused: host", "tenant", id.Tenant, "host", d.hosts.requestHost(c))
+			d.logger.Warn("trusted issuer sign-in refused: host", "tenant", logSafe(id.Tenant), "host", logSafe(d.hosts.requestHost(c)))
 			d.record(c, auditIssuerLoginFailure, id.Tenant, "", id.Email, map[string]string{"reason": issuerErrHostTenantMismatch})
 			d.refuse(c, http.StatusForbidden, issuerErrHostTenantMismatch, "forbidden", "this sign-in is not for this host")
 			return
