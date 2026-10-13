@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,5 +29,24 @@ func TestInitCommandPrintsNextStep(t *testing.T) {
 	}
 	if !strings.Contains(got, "dexaflow lite") && !strings.Contains(got, "dexaflow validate") {
 		t.Errorf("D6: expected a next-step suggestion (dexaflow lite / dexaflow validate); got: %q", got)
+	}
+}
+
+// TestScaffoldedFilesHaveNoEmDash locks the text `init` and `new` write into a
+// user's project: the dag.py and dexaflow.yaml they scaffold carry no em dash,
+// the house style of every text the project ships (#1709).
+func TestScaffoldedFilesHaveNoEmDash(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "orders_report")
+	if _, err := scaffoldProject(dir); err != nil {
+		t.Fatalf("scaffoldProject: %v", err)
+	}
+	for _, name := range []string{"dag.py", "dexaflow.yaml"} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if strings.ContainsRune(string(b), '—') {
+			t.Errorf("%s has an em dash:\n%s", name, b)
+		}
 	}
 }
