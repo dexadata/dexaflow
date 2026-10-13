@@ -182,7 +182,7 @@ func cases(tenant string) []queryCase {
 		{"CountDagRunStatesInWindow", "CountDagRunStatesInWindow", "dashboard history", []any{tenant, weekAgo, now}},
 		{"CountTaskInstanceStatesInWindow", "CountTaskInstanceStatesInWindow", "dashboard history", []any{tenant, weekAgo, now}},
 		{"ListActiveDagRuns", "ListActiveDagRuns", "scheduler tick", nil},
-		{"ListRunningTasks", "ListRunningTasks", "pod-lost reaper", []any{60.0}},
+		{"ListRunningTasks", "ListRunningTasks", "pod-lost reaper", []any{60.0, time.Unix(0, 0), "00000000-0000-0000-0000-000000000000", 100}},
 		{"ListActiveStagingVolumes", "ListActiveStagingVolumes", "staging GC", nil},
 		{"PoolSlotUsage", "PoolSlotUsage", "/api/v2/pools", []any{tenant}},
 		{"CountAuditLogs (dag)", "CountAuditLogs", "audit page", []any{tenant, "qp_dag_00002"}},

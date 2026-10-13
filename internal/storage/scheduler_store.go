@@ -1017,11 +1017,17 @@ func (s *SchedulerStore) MarkTaskCredentialCeiling(ctx context.Context, taskInst
 	return n == 1, nil
 }
 
-// ListStaleQueuedCandidates returns every `queued` TI with its queued_at, for
-// the dispatch-lost reaper (#202). The reaper applies the threshold per row
-// so the SQL stays simple.
-func (s *SchedulerStore) ListStaleQueuedCandidates(ctx context.Context) ([]executor.StaleQueuedCandidate, error) {
-	rows, err := s.q.ListStaleQueuedTaskInstances(ctx)
+// ListStaleQueuedCandidates returns one page of the TIs `queued` for at least
+// threshold, with their queued_at, after the cursor, for the dispatch-lost
+// reaper (#202, R-07). The reaper re-checks the threshold per row.
+func (s *SchedulerStore) ListStaleQueuedCandidates(ctx context.Context, threshold time.Duration, after executor.ReapCursor) ([]executor.StaleQueuedCandidate, error) {
+	at, id, err := reapCursorArgs(after)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListStaleQueuedTaskInstances(ctx, queries.ListStaleQueuedTaskInstancesParams{
+		ThresholdSeconds: threshold.Seconds(), AfterAt: at, AfterID: id, PageSize: executor.ReapPageSize,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing stale-queued candidates: %w", err)
 	}
@@ -1113,9 +1119,16 @@ func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceI
 
 // ListRunningTasks returns the `running`, non-warm TIs that have been running
 // for at least grace, with the timestamp each entered running, for the pod-lost
-// reaper (#527). The reaper still applies the pod-liveness check per row.
-func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Duration) ([]executor.PodLostCandidate, error) {
-	rows, err := s.q.ListRunningTasks(ctx, grace.Seconds())
+// reaper (#527), one page after the cursor (R-07). The reaper still applies
+// the pod-liveness check per row.
+func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Duration, after executor.ReapCursor) ([]executor.PodLostCandidate, error) {
+	at, id, err := reapCursorArgs(after)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListRunningTasks(ctx, queries.ListRunningTasksParams{
+		GraceSeconds: grace.Seconds(), AfterAt: at, AfterID: id, PageSize: executor.ReapPageSize,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing running tasks: %w", err)
 	}
@@ -1187,4 +1200,18 @@ func rfc3339OrEmpty(ts pgtype.Timestamptz) string {
 		return ""
 	}
 	return ts.Time.UTC().Format(time.RFC3339)
+}
+
+// reapCursorArgs renders a reaper's keyset cursor as query arguments. The zero
+// cursor is the start of the list: '-infinity' and the nil uuid, which every
+// row compares after.
+func reapCursorArgs(c executor.ReapCursor) (pgtype.Timestamptz, pgtype.UUID, error) {
+	if c.IsZero() {
+		return pgtype.Timestamptz{InfinityModifier: pgtype.NegativeInfinity, Valid: true}, pgtype.UUID{Valid: true}, nil
+	}
+	id, err := parseUUID(c.ID)
+	if err != nil {
+		return pgtype.Timestamptz{}, pgtype.UUID{}, fmt.Errorf("reap cursor: %w", err)
+	}
+	return pgtype.Timestamptz{Time: c.At, Valid: true}, id, nil
 }
