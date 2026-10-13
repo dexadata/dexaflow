@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -58,7 +59,7 @@ func (f *fakeAPITokens) RevokeAPIToken(_ context.Context, _, id, ownerID string)
 		return auth.APIToken{}, f.revokeErr
 	}
 	f.revoked = append(f.revoked, id+"|"+ownerID)
-	return auth.APIToken{ID: id, Name: "ci-x"}, nil
+	return auth.APIToken{ID: id, Name: "ci-x", UserID: "u-owner"}, nil
 }
 
 func tokenServer(user *auth.User, store *fakeAPITokens, audit *fakeAuthAudit) *gin.Engine {
@@ -297,7 +298,8 @@ func TestRevokeUnknownTokenIsNotFoundAndAudited(t *testing.T) {
 	}
 	ok := &fakeAuthAudit{}
 	authGet(tokenServer(deployerUser(), &fakeAPITokens{}, ok), http.MethodDelete, "/api/v2/apiTokens/tok-1", "")
-	if len(ok.events) != 1 || ok.events[0].action != "api_token.revoke" || ok.events[0].extra["token_id"] != "tok-1" {
+	if len(ok.events) != 1 || ok.events[0].action != "api_token.revoke" || ok.events[0].extra["token_id"] != "tok-1" ||
+		ok.events[0].extra["token_owner_id"] != "u-owner" {
 		t.Errorf("revoke audit = %+v", ok.events)
 	}
 }
@@ -344,5 +346,25 @@ func TestDeployScopeReadsOnlyWhatDeployNeeds(t *testing.T) {
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "missing scope") {
 			t.Errorf("%s with dexaflow:deploy = %d %s, want 403 missing scope", path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// TestAPITokenIsNotAcceptedFromTheSessionCookie: an API token authenticates
+// only from the Authorization header. In the session cookie it is ignored, so
+// a token planted in a browser cookie never opens a session.
+func TestAPITokenIsNotAcceptedFromTheSessionCookie(t *testing.T) {
+	srv := tokenServer(deployerUser(), &fakeAPITokens{}, nil)
+	call := func(cookie string) int {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v2/dags", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: authTokenCookie, Value: cookie})
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := call(auth.APITokenPrefix + "planted"); code != http.StatusUnauthorized {
+		t.Errorf("API token in the session cookie = %d, want 401", code)
+	}
+	if code := call("eyJhbGciOiJIUzI1NiJ9.session.sig"); code != http.StatusOK {
+		t.Errorf("session JWT in the cookie = %d, want 200", code)
 	}
 }

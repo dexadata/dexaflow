@@ -138,7 +138,8 @@ func createAPITokenHandler(store TokenStore, audit AuthAuditWriter) gin.HandlerF
 			return
 		}
 		recordTokenEvent(c, audit, user, "api_token.create", tok, map[string]string{
-			"scopes": strings.Join(tok.Scopes, " "), "expires_at": tok.ExpiresAt.UTC().Format(time.RFC3339),
+			"token_owner_id": tok.UserID,
+			"scopes":         strings.Join(tok.Scopes, " "), "expires_at": tok.ExpiresAt.UTC().Format(time.RFC3339),
 		})
 		out := toAPITokenDTO(tok)
 		out.Token = plain
@@ -222,7 +223,7 @@ func revokeAPITokenHandler(store TokenStore, audit AuthAuditWriter) gin.HandlerF
 			handleRepoError(c, err)
 			return
 		}
-		recordTokenEvent(c, audit, user, "api_token.revoke", tok, nil)
+		recordTokenEvent(c, audit, user, "api_token.revoke", tok, map[string]string{"token_owner_id": tok.UserID})
 		c.Status(http.StatusNoContent)
 	}
 }

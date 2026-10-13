@@ -12,8 +12,9 @@ body: |-
   revoke <id>` (an admin sees and revokes every token of the tenant), or
   through `POST`, `GET /api/v2/apiTokens` and `DELETE
   /api/v2/apiTokens/{token_id}`. A token never does more than its owner's
-  current roles allow, stops working when its owner is deactivated, and cannot
-  create, list or revoke tokens. A new built-in `deployer` role, created in
+  current roles allow, stops working when its owner is deactivated, cannot
+  create, list or revoke tokens, and works only from the `Authorization`
+  header, never as a session cookie. A new built-in `deployer` role, created in
   every tenant and assigned to no one, grants `read:dag` and the new
   `deploy:dag` permission: it registers versions and rolls back, and cannot
   delete, pause or trigger a DAG. Registering a version and setting the

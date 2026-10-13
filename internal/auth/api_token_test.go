@@ -29,9 +29,9 @@ func (f *fakeTokenStore) FindAPITokenByHash(_ context.Context, hash string) (*AP
 	return &copied, nil
 }
 
-func (f *fakeTokenStore) TouchAPIToken(_ context.Context, _ string, at time.Time) error {
+func (f *fakeTokenStore) TouchAPIToken(_ context.Context, _ string, at time.Time) (bool, error) {
 	f.touched = append(f.touched, at)
-	return nil
+	return true, nil
 }
 
 // nextAuth records whether the API token authenticator delegated to it.
@@ -121,24 +121,18 @@ func TestAPITokenAuthenticatesAsScopedOwner(t *testing.T) {
 	}
 }
 
-func TestAPITokenLastUseIsThrottled(t *testing.T) {
+// TestAPITokenEveryUseIsOfferedToTheStore: the authenticator offers every
+// use to the store, which decides in SQL whether to write (the throttle is
+// pinned by TestAPITokenLastUseIsThrottledInSQLIntegration).
+func TestAPITokenEveryUseIsOfferedToTheStore(t *testing.T) {
 	a, tokens, _, _, plain := newTokenFixture(t)
 	recent := tokenNow.Add(-time.Minute)
 	tokens.token.LastUsedAt = &recent
-
 	if _, err := a.Authenticate(context.Background(), plain); err != nil {
 		t.Fatal(err)
 	}
-	if len(tokens.touched) != 0 {
-		t.Errorf("a token used a minute ago was written again: %v", tokens.touched)
-	}
-	old := tokenNow.Add(-2 * apiTokenTouchInterval)
-	tokens.token.LastUsedAt = &old
-	if _, err := a.Authenticate(context.Background(), plain); err != nil {
-		t.Fatal(err)
-	}
-	if len(tokens.touched) != 1 {
-		t.Errorf("a stale last use was not refreshed: %v", tokens.touched)
+	if len(tokens.touched) != 1 || !tokens.touched[0].Equal(tokenNow) {
+		t.Errorf("uses offered = %v, want one at now", tokens.touched)
 	}
 }
 

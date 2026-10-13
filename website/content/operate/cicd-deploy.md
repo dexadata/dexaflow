@@ -277,7 +277,9 @@ What a deploy token can do, and how it ends:
   request. Deactivating the owner stops all of the owner's tokens.
 - **Limits.** A token cannot create, list or revoke tokens. A user holds at
   most 50 live tokens, and token names are unique among a user's live tokens:
-  1 to 64 letters, digits, dots, dashes or underscores.
+  1 to 64 letters, digits, dots, dashes or underscores. Once a token has
+  expired, a new token can take its name. The token is sent in the
+  `Authorization` header only; it never works as a browser session cookie.
 
 Creating, listing and revoking tokens is also available through the API
 (`POST`, `GET /api/v2/apiTokens` and `DELETE /api/v2/apiTokens/{id}`). The UI

@@ -87,24 +87,17 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash string) (GetA
 
 const insertAPIToken = `-- name: InsertAPIToken :one
 INSERT INTO api_tokens (tenant_id, user_id, name, token_hash, scopes, expires_at)
-SELECT u.tenant_id, u.id, $1, $2, $3::text[], $4
-FROM users u
-WHERE u.id = $5 AND u.tenant_id = $6
-  AND (
-      SELECT count(*) FROM api_tokens l
-      WHERE l.user_id = u.id AND l.revoked_at IS NULL AND l.expires_at > now()
-  ) < $7::bigint
+VALUES ($1, $2, $3, $4, $5::text[], $6)
 RETURNING id, created_at
 `
 
 type InsertAPITokenParams struct {
+	TenantID  pgtype.UUID        `json:"tenant_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
 	Name      string             `json:"name"`
 	TokenHash string             `json:"token_hash"`
 	Scopes    []string           `json:"scopes"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-	UserID    pgtype.UUID        `json:"user_id"`
-	TenantID  pgtype.UUID        `json:"tenant_id"`
-	MaxLive   int64              `json:"max_live"`
 }
 
 type InsertAPITokenRow struct {
@@ -112,19 +105,16 @@ type InsertAPITokenRow struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
-// Stores a new API token for a user of the tenant (ADR 0074). The SELECT
-// yields no row, so nothing is inserted, when the user is not in the tenant
-// or already holds max_live live tokens: the caller reads pgx.ErrNoRows and
-// tells the two apart with CountLiveAPITokens.
+// Stores a new API token (ADR 0074). The caller holds LockAPITokenOwner and
+// has checked the cap in the same transaction.
 func (q *Queries) InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) (InsertAPITokenRow, error) {
 	row := q.db.QueryRow(ctx, insertAPIToken,
+		arg.TenantID,
+		arg.UserID,
 		arg.Name,
 		arg.TokenHash,
 		arg.Scopes,
 		arg.ExpiresAt,
-		arg.UserID,
-		arg.TenantID,
-		arg.MaxLive,
 	)
 	var i InsertAPITokenRow
 	err := row.Scan(&i.ID, &i.CreatedAt)
@@ -196,12 +186,49 @@ func (q *Queries) ListAPITokens(ctx context.Context, arg ListAPITokensParams) ([
 	return items, nil
 }
 
+const lockAPITokenOwner = `-- name: LockAPITokenOwner :one
+SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE
+`
+
+type LockAPITokenOwnerParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Locks the user row a token is created for, so concurrent creates for one
+// user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY
+// UPDATE does not block the key-share locks that inserts referencing the user
+// take. No row: the user is not in the tenant.
+func (q *Queries) LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockAPITokenOwner, arg.ID, arg.TenantID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const retireExpiredAPITokenName = `-- name: RetireExpiredAPITokenName :exec
+UPDATE api_tokens SET revoked_at = now()
+WHERE user_id = $1 AND name = $2 AND revoked_at IS NULL AND expires_at <= now()
+`
+
+type RetireExpiredAPITokenNameParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	Name   string      `json:"name"`
+}
+
+// Revokes the user's expired, unrevoked tokens with this name, so an expired
+// token does not hold its name forever.
+func (q *Queries) RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) error {
+	_, err := q.db.Exec(ctx, retireExpiredAPITokenName, arg.UserID, arg.Name)
+	return err
+}
+
 const revokeAPIToken = `-- name: RevokeAPIToken :one
 UPDATE api_tokens
-SET revoked_at = COALESCE(revoked_at, now())
-WHERE id = $1 AND tenant_id = $2
+SET revoked_at = now()
+WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
   AND ($3::uuid IS NULL OR user_id = $3::uuid)
-RETURNING id, name
+RETURNING id, name, user_id
 `
 
 type RevokeAPITokenParams struct {
@@ -211,22 +238,24 @@ type RevokeAPITokenParams struct {
 }
 
 type RevokeAPITokenRow struct {
-	ID   pgtype.UUID `json:"id"`
-	Name string      `json:"name"`
+	ID     pgtype.UUID `json:"id"`
+	Name   string      `json:"name"`
+	UserID pgtype.UUID `json:"user_id"`
 }
 
-// Revokes a token of the tenant; owner_id NULL revokes any owner's. Revoking
-// a revoked token keeps its first revocation time.
+// Revokes a live token of the tenant; owner_id NULL revokes any owner's. A
+// revoked token matches no row, so it is not revoked or audited twice.
 func (q *Queries) RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) (RevokeAPITokenRow, error) {
 	row := q.db.QueryRow(ctx, revokeAPIToken, arg.ID, arg.TenantID, arg.OwnerID)
 	var i RevokeAPITokenRow
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Name, &i.UserID)
 	return i, err
 }
 
-const touchAPIToken = `-- name: TouchAPIToken :exec
+const touchAPIToken = `-- name: TouchAPIToken :execrows
 UPDATE api_tokens SET last_used_at = $1
-WHERE id = $2 AND (last_used_at IS NULL OR last_used_at < $1)
+WHERE id = $2
+  AND (last_used_at IS NULL OR last_used_at < $1::timestamptz - interval '5 minutes')
 `
 
 type TouchAPITokenParams struct {
@@ -234,7 +263,12 @@ type TouchAPITokenParams struct {
 	ID pgtype.UUID        `json:"id"`
 }
 
-func (q *Queries) TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error {
-	_, err := q.db.Exec(ctx, touchAPIToken, arg.At, arg.ID)
-	return err
+// The five-minute throttle is this predicate, so concurrent requests write
+// once and an older time never moves the last use back.
+func (q *Queries) TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, touchAPIToken, arg.At, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

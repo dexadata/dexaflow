@@ -85,20 +85,31 @@ tenant.
   days. There is no non-expiring token.
 - **Last use.** The time a token last authenticated a request is recorded, at
   most once every five minutes per token, so a busy pipeline does not write
-  on every request. A failed write is logged and does not fail the request.
+  on every request. The throttle is the `UPDATE`'s own predicate
+  (`last_used_at < $at - interval '5 minutes'`), so concurrent requests
+  write once and an older time never moves it back. A failed write is logged
+  and does not fail the request.
 - **Revocation.** Revoking sets `revoked_at` and keeps the row, so the audit
-  trail can still name the token. A revoked token is refused on its next
+  trail can still name the token. Revoking a revoked token is not found
+  (`404`), so it is never revoked or audited twice. A revoked token is refused on its next
   request. Deactivating or deleting the owner stops all of its tokens.
 - **Limits.** Names are 1 to 64 ASCII letters, digits, dots, dashes or
   underscores, starting with a letter or digit, unique among one owner's
-  live tokens. A user holds at most 50 live tokens. The create body is
+  unrevoked tokens; creating a token revokes the owner's expired tokens of
+  the same name first, in the same transaction, so an expired token does not
+  hold its name. A user holds at most 50 live tokens. The create transaction
+  locks the owner's `users` row (`FOR NO KEY UPDATE`) before it counts, so
+  concurrent creates cannot pass the cap together. The create body is
   bounded to 4 KiB and unknown fields are refused.
 - **Who sees what.** A user lists and revokes its own tokens. A user who
   manages the tenant's accounts (`write:user`, which the admin role has) lists
   and revokes every token of the tenant. No list or revoke crosses tenants.
 - **Audit.** `api_token.create` (with the scopes and the expiry) and
-  `api_token.revoke` are recorded with the acting user, the token's id and its
-  name.
+  `api_token.revoke` are recorded with the acting user, the token's id, its
+  name and its owner's id.
+- **Header only.** An API token authenticates only from the `Authorization`
+  header. A `dxf_` value in the session cookie is ignored, so a token never
+  becomes a browser session.
 
 The API is `POST /api/v2/apiTokens`, `GET /api/v2/apiTokens` and
 `DELETE /api/v2/apiTokens/{token_id}`, Dexaflow-only routes outside the Airflow

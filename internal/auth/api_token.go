@@ -21,10 +21,6 @@ const APITokenPrefix = "dxf_"
 // apiTokenSecretBytes is the entropy of an API token: 256 random bits.
 const apiTokenSecretBytes = 32
 
-// apiTokenTouchInterval bounds how often a token's last-use time is written:
-// a CI job that calls the API many times in a minute writes it once.
-const apiTokenTouchInterval = 5 * time.Minute
-
 // ErrAPITokenNotFound is returned by APITokenStore.FindAPITokenByHash when no
 // token has the given hash.
 var ErrAPITokenNotFound = errors.New("api token not found")
@@ -51,8 +47,10 @@ type APITokenStore interface {
 	// FindAPITokenByHash returns the token whose secret hashes to hash, revoked
 	// and expired ones included, or ErrAPITokenNotFound.
 	FindAPITokenByHash(ctx context.Context, hash string) (*APIToken, error)
-	// TouchAPIToken records that the token was used at at.
-	TouchAPIToken(ctx context.Context, id string, at time.Time) error
+	// TouchAPIToken records that the token was used at at, unless its last
+	// recorded use is less than five minutes before at, and reports whether
+	// it wrote. The store decides, so concurrent requests write once.
+	TouchAPIToken(ctx context.Context, id string, at time.Time) (bool, error)
 }
 
 // apiTokenScopeSets maps the scope a caller asks for when creating a token to
@@ -172,13 +170,11 @@ func (a *APITokenAuthenticator) owner(ctx context.Context, rec *APIToken) (*User
 	return user, nil
 }
 
-// touch records the use when the last one is older than the touch interval.
-// It is best effort: a failed write is logged and the request goes on.
+// touch records the use; the store skips the write when the last recorded
+// use is recent. It is best effort: a failed write is logged and the request
+// goes on.
 func (a *APITokenAuthenticator) touch(ctx context.Context, rec *APIToken, now time.Time) {
-	if rec.LastUsedAt != nil && now.Sub(*rec.LastUsedAt) < apiTokenTouchInterval {
-		return
-	}
-	if err := a.tokens.TouchAPIToken(ctx, rec.ID, now); err != nil {
+	if _, err := a.tokens.TouchAPIToken(ctx, rec.ID, now); err != nil {
 		slog.WarnContext(ctx, "recording api token use", "token_id", rec.ID, "error", err)
 	}
 }

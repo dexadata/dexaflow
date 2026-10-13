@@ -1,16 +1,21 @@
+-- name: LockAPITokenOwner :one
+-- Locks the user row a token is created for, so concurrent creates for one
+-- user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY
+-- UPDATE does not block the key-share locks that inserts referencing the user
+-- take. No row: the user is not in the tenant.
+SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE;
+
+-- name: RetireExpiredAPITokenName :exec
+-- Revokes the user's expired, unrevoked tokens with this name, so an expired
+-- token does not hold its name forever.
+UPDATE api_tokens SET revoked_at = now()
+WHERE user_id = $1 AND name = $2 AND revoked_at IS NULL AND expires_at <= now();
+
 -- name: InsertAPIToken :one
--- Stores a new API token for a user of the tenant (ADR 0074). The SELECT
--- yields no row, so nothing is inserted, when the user is not in the tenant
--- or already holds max_live live tokens: the caller reads pgx.ErrNoRows and
--- tells the two apart with CountLiveAPITokens.
+-- Stores a new API token (ADR 0074). The caller holds LockAPITokenOwner and
+-- has checked the cap in the same transaction.
 INSERT INTO api_tokens (tenant_id, user_id, name, token_hash, scopes, expires_at)
-SELECT u.tenant_id, u.id, sqlc.arg(name), sqlc.arg(token_hash), sqlc.arg(scopes)::text[], sqlc.arg(expires_at)
-FROM users u
-WHERE u.id = sqlc.arg(user_id) AND u.tenant_id = sqlc.arg(tenant_id)
-  AND (
-      SELECT count(*) FROM api_tokens l
-      WHERE l.user_id = u.id AND l.revoked_at IS NULL AND l.expires_at > now()
-  ) < sqlc.arg(max_live)::bigint
+VALUES (sqlc.arg(tenant_id), sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(token_hash), sqlc.arg(scopes)::text[], sqlc.arg(expires_at))
 RETURNING id, created_at;
 
 -- name: CountLiveAPITokens :one
@@ -26,9 +31,12 @@ FROM api_tokens k
 JOIN tenants t ON t.id = k.tenant_id
 WHERE k.token_hash = $1;
 
--- name: TouchAPIToken :exec
+-- name: TouchAPIToken :execrows
+-- The five-minute throttle is this predicate, so concurrent requests write
+-- once and an older time never moves the last use back.
 UPDATE api_tokens SET last_used_at = sqlc.arg(at)
-WHERE id = sqlc.arg(id) AND (last_used_at IS NULL OR last_used_at < sqlc.arg(at));
+WHERE id = sqlc.arg(id)
+  AND (last_used_at IS NULL OR last_used_at < sqlc.arg(at)::timestamptz - interval '5 minutes');
 
 -- name: ListAPITokens :many
 -- The tenant's unrevoked tokens, newest first; owner_id NULL lists every
@@ -48,10 +56,10 @@ WHERE k.tenant_id = sqlc.arg(tenant_id) AND k.revoked_at IS NULL
   AND (sqlc.narg(owner_id)::uuid IS NULL OR k.user_id = sqlc.narg(owner_id)::uuid);
 
 -- name: RevokeAPIToken :one
--- Revokes a token of the tenant; owner_id NULL revokes any owner's. Revoking
--- a revoked token keeps its first revocation time.
+-- Revokes a live token of the tenant; owner_id NULL revokes any owner's. A
+-- revoked token matches no row, so it is not revoked or audited twice.
 UPDATE api_tokens
-SET revoked_at = COALESCE(revoked_at, now())
-WHERE id = sqlc.arg(id) AND tenant_id = sqlc.arg(tenant_id)
+SET revoked_at = now()
+WHERE id = sqlc.arg(id) AND tenant_id = sqlc.arg(tenant_id) AND revoked_at IS NULL
   AND (sqlc.narg(owner_id)::uuid IS NULL OR user_id = sqlc.narg(owner_id)::uuid)
-RETURNING id, name;
+RETURNING id, name, user_id;

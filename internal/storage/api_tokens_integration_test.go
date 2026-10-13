@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -303,4 +304,180 @@ func openPG(t *testing.T) *storage.Postgres {
 	}
 	t.Cleanup(pg.Close)
 	return pg
+}
+
+// TestAPITokenLastUseIsThrottledInSQLIntegration: the five-minute throttle on
+// last_used_at is decided by the UPDATE itself, so concurrent requests within
+// five minutes write once, a later one writes again, and an older time never
+// moves it back.
+func TestAPITokenLastUseIsThrottledInSQLIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	userID, _ := apiTokenOwner(t, ctx, repo, "default", "deployer")
+	_, tok := newStoredToken(t, ctx, repo, "default", userID, "touch")
+	t0 := time.Now().UTC().Truncate(time.Second)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	writes := 0
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			wrote, err := repo.TouchAPIToken(ctx, tok.ID, t0.Add(time.Duration(i)*10*time.Second))
+			if err != nil {
+				t.Errorf("TouchAPIToken: %v", err)
+				return
+			}
+			if wrote {
+				mu.Lock()
+				writes++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+	if writes != 1 {
+		t.Fatalf("20 concurrent uses within five minutes wrote %d times, want 1", writes)
+	}
+	first, err := repo.FindAPITokenByHash(ctx, hashOfID(t, ctx, tok.ID))
+	if err != nil || first.LastUsedAt == nil {
+		t.Fatalf("last use = %+v, %v", first, err)
+	}
+	if wrote, _ := repo.TouchAPIToken(ctx, tok.ID, first.LastUsedAt.Add(-time.Hour)); wrote {
+		t.Error("an older use moved last_used_at back")
+	}
+	if wrote, _ := repo.TouchAPIToken(ctx, tok.ID, first.LastUsedAt.Add(4*time.Minute+59*time.Second)); wrote {
+		t.Error("a use within five minutes wrote again")
+	}
+	if wrote, _ := repo.TouchAPIToken(ctx, tok.ID, first.LastUsedAt.Add(5*time.Minute+time.Second)); !wrote {
+		t.Error("a use after five minutes was not recorded")
+	}
+}
+
+// TestAPITokenExpiredNameIsReusableIntegration: an expired token that was
+// never revoked does not hold its name: creating a token with that name
+// revokes the expired one in the same transaction and succeeds.
+func TestAPITokenExpiredNameIsReusableIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	userID, _ := apiTokenOwner(t, ctx, repo, "default", "deployer")
+	_, old := newStoredToken(t, ctx, repo, "default", userID, "nightly")
+	if _, err := pg.Pool.Exec(ctx, `UPDATE api_tokens SET created_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE id = $1`, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, fresh := newStoredToken(t, ctx, repo, "default", userID, "nightly")
+	if fresh.ID == old.ID {
+		t.Fatal("the expired token was returned again")
+	}
+	var revoked *time.Time
+	if err := pg.Pool.QueryRow(ctx, `SELECT revoked_at FROM api_tokens WHERE id = $1`, old.ID).Scan(&revoked); err != nil || revoked == nil {
+		t.Errorf("expired token revoked_at = %v (%v), want it revoked by the new create", revoked, err)
+	}
+	// A live token of the same name still blocks the name.
+	_, h, _ := auth.NewAPIToken()
+	scopes, _ := auth.APITokenScopes("deploy")
+	if _, err := repo.CreateAPIToken(ctx, "default", userID, "nightly", h, scopes, time.Now().Add(time.Hour)); !errors.Is(err, domain.ErrConflict) {
+		t.Errorf("name of a live token = %v, want ErrConflict", err)
+	}
+}
+
+// TestAPITokenCapHoldsUnderConcurrencyIntegration: concurrent creates cannot
+// pass the live-token cap together.
+func TestAPITokenCapHoldsUnderConcurrencyIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	userID, _ := apiTokenOwner(t, ctx, repo, "default", "deployer")
+	scopes, _ := auth.APITokenScopes("read")
+	exp := time.Now().Add(time.Hour)
+	for i := 0; i < storage.MaxLiveAPITokensPerUser-2; i++ {
+		_, h, _ := auth.NewAPIToken()
+		if _, err := repo.CreateAPIToken(ctx, "default", userID, fmt.Sprintf("pre%d", i), h, scopes, exp); err != nil {
+			t.Fatalf("token %d: %v", i, err)
+		}
+	}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created, refused := 0, 0
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, h, _ := auth.NewAPIToken()
+			_, err := repo.CreateAPIToken(ctx, "default", userID, fmt.Sprintf("race%d", i), h, scopes, exp)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				created++
+			case errors.Is(err, domain.ErrValidation):
+				refused++
+			default:
+				t.Errorf("create %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	var live int
+	if err := pg.Pool.QueryRow(ctx, `SELECT count(*) FROM api_tokens WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()`, userID).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if created != 2 || refused != 8 || live != storage.MaxLiveAPITokensPerUser {
+		t.Errorf("created %d refused %d live %d, want 2, 8 and %d", created, refused, live, storage.MaxLiveAPITokensPerUser)
+	}
+}
+
+// TestRevokeIsOnceAndNamesTheOwnerIntegration: a revoke returns the token's
+// owner, and revoking a revoked token is not found, so it is not done (or
+// audited) twice.
+func TestRevokeIsOnceAndNamesTheOwnerIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	userID, _ := apiTokenOwner(t, ctx, repo, "default", "deployer")
+	_, tok := newStoredToken(t, ctx, repo, "default", userID, "once")
+	got, err := repo.RevokeAPIToken(ctx, "default", tok.ID, "")
+	if err != nil || got.UserID != userID || got.Name != "once" {
+		t.Fatalf("revoke = %+v, %v; want the token with its owner", got, err)
+	}
+	if _, err := repo.RevokeAPIToken(ctx, "default", tok.ID, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("second revoke = %v, want ErrNotFound", err)
+	}
+}
+
+// TestAPITokenCreateSerializesOnTheOwnerIntegration pins why the cap holds:
+// a create waits while another transaction holds the owner's row, as a
+// concurrent create does between its count and its insert.
+func TestAPITokenCreateSerializesOnTheOwnerIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	userID, _ := apiTokenOwner(t, ctx, repo, "default", "deployer")
+	holder, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, `SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, h, _ := auth.NewAPIToken()
+		scopes, _ := auth.APITokenScopes("read")
+		_, cerr := repo.CreateAPIToken(ctx, "default", userID, "serial", h, scopes, time.Now().Add(time.Hour))
+		done <- cerr
+	}()
+	select {
+	case cerr := <-done:
+		t.Fatalf("create finished (%v) while another transaction held the owner", cerr)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := holder.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case cerr := <-done:
+		if cerr != nil {
+			t.Errorf("create after the holder committed: %v", cerr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("create still blocked after the holder committed")
+	}
 }

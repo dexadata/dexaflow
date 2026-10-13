@@ -296,10 +296,8 @@ type Querier interface {
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
 	GetXComEntry(ctx context.Context, arg GetXComEntryParams) (GetXComEntryRow, error)
-	// Stores a new API token for a user of the tenant (ADR 0074). The SELECT
-	// yields no row, so nothing is inserted, when the user is not in the tenant
-	// or already holds max_live live tokens: the caller reads pgx.ErrNoRows and
-	// tells the two apart with CountLiveAPITokens.
+	// Stores a new API token (ADR 0074). The caller holds LockAPITokenOwner and
+	// has checked the cap in the same transaction.
 	InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) (InsertAPITokenRow, error)
 	// The row is inserted only under a dag of the given tenant (#508): a dag id of
 	// another tenant inserts nothing and the query returns no row.
@@ -569,6 +567,11 @@ type Querier interface {
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
+	// Locks the user row a token is created for, so concurrent creates for one
+	// user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY
+	// UPDATE does not block the key-share locks that inserts referencing the user
+	// take. No row: the user is not in the tenant.
+	LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (pgtype.UUID, error)
 	// Locks the DAG's row for the rest of the transaction, so registers of the same
 	// DAG are serialized: the spec-hash check of one register sees the version the
 	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
@@ -933,8 +936,11 @@ type Querier interface {
 	// plans and runs. Each execution's log is kept apart by its epoch-keyed object.
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
-	// Revokes a token of the tenant; owner_id NULL revokes any owner's. Revoking
-	// a revoked token keeps its first revocation time.
+	// Revokes the user's expired, unrevoked tokens with this name, so an expired
+	// token does not hold its name forever.
+	RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) error
+	// Revokes a live token of the tenant; owner_id NULL revokes any owner's. A
+	// revoked token matches no row, so it is not revoked or audited twice.
 	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) (RevokeAPITokenRow, error)
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
 	SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag, error)
@@ -979,7 +985,9 @@ type Querier interface {
 	TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
 	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
-	TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error
+	// The five-minute throttle is this predicate, so concurrent requests write
+	// once and an older time never moves the last use back.
+	TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) (int64, error)
 	// The range of attempt epochs one try's executions can have, for the log
 	// reader (ADR 0051 amendment, #863). Epochs grow monotonically per row and the
 	// try only grows, so every execution of try N has an epoch above the latest
