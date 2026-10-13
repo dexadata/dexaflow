@@ -217,7 +217,7 @@ that people follow without naming a version.
 
 | What | Who follows it | Moved by | rc | GA, newest minor | GA, older minor |
 |---|---|---|---|---|---|
-| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs | `release`, `migrate-image`, `runtime-image` | yes | yes | yes |
+| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs | `release`, `migrate-image`, `runtime-image` with `runtime-manifest` | yes | yes | yes |
 | GitHub release, public, not Latest | pinned `install.sh`, the smokes | GoReleaser (`make_latest: false`) | prerelease | yes | yes |
 | Helm chart `X.Y.Z` (`charts/dexaflow`, `charts/leoflow`) | `helm install`, `helm upgrade` | `promote` | yes | yes | yes |
 | `dexaflow-runtime:py3.N`, `leoflow-runtime:py3.N` | development builds, the docs | `promote` | no | yes | no |
@@ -231,6 +231,15 @@ tags reference exists and carries this repository's release signature
 (`scripts/release-verify-images.sh`), then pushes, signs and verifies the charts, moves
 the `py3.N` tags and marks Latest last. Every step is idempotent: a failed
 `promote` is recovered by re-running that job alone.
+
+The image jobs need only `chart-preflight`, not `release`, so they build while
+GoReleaser runs (#1686). Each `runtime-image` leg builds one architecture on a
+runner of that architecture (arm64 on `ubuntu-24.04-arm`) and pushes it by
+digest, untagged; `runtime-manifest` merges the two digests into the
+multi-arch index, tags it under both image names and signs it. The gate waits
+for all of them. A run whose GoReleaser job fails can therefore leave the
+versioned images behind: they are pinnable by tag, but no pointer moves, and a
+re-run pushes the same tags again.
 
 Every un-draft, the gate's and the one `cut-release.sh` does on a flake, passes
 `--latest=false`: GitHub marks a release Latest by default when it leaves draft,
