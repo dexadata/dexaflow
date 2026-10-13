@@ -155,7 +155,8 @@ func isTagChar(c byte) bool {
 // include_paths, a dbt directory, the Dockerfile, dbt.manifest) is followed
 // through symlinks and hashed as its target's content, since the build copies
 // what it points at; it must resolve inside the project, except dbt.manifest,
-// which only the CLI reads. A symlink inside a walked directory is hashed as
+// which only the CLI reads, and the Dockerfile, which `docker build -f` reads
+// from anywhere. A symlink inside a walked directory is hashed as
 // its target string and never followed, since COPY keeps links. Modification times and file modes
 // never count, so a chmod alone keeps the label. It leaves out what the build
 // cannot see or what every compile rewrites: .git, exclude_paths and
@@ -296,7 +297,9 @@ func (w *contentWalker) roots(ownDockerfile string) []hashRootSpec {
 	if ownDockerfile != "" {
 		name := filepath.Clean(ownDockerfile)
 		w.pinned[filepath.ToSlash(name)] = true
-		roots = append(roots, hashRootSpec{name: name, pinned: true, inside: true})
+		// Not held to the project: `docker build -f` takes a Dockerfile from
+		// anywhere, and only build.dockerfile is confined (at build time).
+		roots = append(roots, hashRootSpec{name: name, pinned: true})
 	}
 	if w.manifest != "" {
 		w.pinned[w.manifest] = true

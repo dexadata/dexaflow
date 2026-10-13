@@ -336,9 +336,6 @@ func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, 
 		}
 		return true, nil
 	case deployStale:
-		if current == "" {
-			current = "none"
-		}
 		return false, fmt.Errorf("%s content matches version %s, which is not the current version (%s). "+
 			"Rolling back to it is not supported yet (#1702); to register this content again as a new version, pass --dag-version <new-label>",
 			dagID, version, current)
@@ -373,6 +370,17 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, serverURL, token, o
 	}
 	if status >= http.StatusMultipleChoices {
 		return "", versionConflictHint(apiStatusError(status, []byte(body)), version, origin)
+	}
+	if status == http.StatusOK {
+		// 200 rather than 201: the server already had this exact spec and made
+		// no version. Reached when the pre-check was skipped (--force) or could
+		// not be made, so the label may not be the current version.
+		if _, werr := fmt.Fprintf(out,
+			"warning: %s was already registered as version %s with this exact content; nothing new was registered, and it may not be the current version\n",
+			spec.DagID, version); werr != nil {
+			return "", werr
+		}
+		return spec.DagID, nil
 	}
 	if _, werr := fmt.Fprintf(out,
 		"Deployed %s -> %s\n  image %s\n  registered version %s\n", spec.DagID, serverURL, digestRef, version); werr != nil {

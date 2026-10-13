@@ -37,11 +37,13 @@ const (
 //
 // The current label is the bundle_version of GET /api/v2/dags/{dag_id}/details
 // and the registered ones are the bundle_version of each entry of
-// GET /api/v2/dags/{dag_id}/dagVersions, both Airflow-compatible reads. A 404
-// (a DAG never registered), a 403 and a network error let the deploy proceed
-// as it did before this check existed, with a note for the last two. A 401
-// stops the deploy with the usual sign-in hint, since the register would be
-// refused the same way; any other answer stops it too, naming --force.
+// GET /api/v2/dags/{dag_id}/dagVersions, both Airflow-compatible reads; with
+// no current label the DAG is treated as unknown. A 404 (a DAG never
+// registered), a 403, a network error and a 5xx after one retry let the
+// deploy proceed as it did before this check existed, with a note for all but
+// the 404. A 401 stops the deploy with the usual sign-in hint, since the
+// register would be refused the same way; any other answer stops it too,
+// naming --force.
 func checkDeployed(ctx context.Context, warn io.Writer, serverURL, token, dagID, label string) (deployedState, string, error) {
 	if dagID == "" || label == "" {
 		return deployUnknown, "", nil
@@ -56,6 +58,11 @@ func checkDeployed(ctx context.Context, warn io.Writer, serverURL, token, dagID,
 	current := ""
 	if details.BundleVersion != nil {
 		current = *details.BundleVersion
+	}
+	if current == "" {
+		// No current version to compare with: nothing says this content is
+		// stale, so build as for an unknown label.
+		return deployUnknown, "", nil
 	}
 	if current == label {
 		return deployCurrent, current, nil
@@ -77,44 +84,58 @@ func checkDeployed(ctx context.Context, warn io.Writer, serverURL, token, dagID,
 }
 
 // getControlPlaneJSON GETs u and decodes a 2xx body into out. It reports
-// ok=false and no error when the deploy should simply proceed (404, 403, a
-// network error), and an error when it should stop.
+// ok=false and no error when the deploy should simply proceed: a 404, a 403,
+// a network or read error, or a 5xx that a single retry did not cure. It
+// returns an error when the deploy should stop: a 401, any other status, or a
+// 2xx body it cannot decode.
 func getControlPlaneJSON(ctx context.Context, warn io.Writer, u, token, label string, out any) (ok bool, err error) {
 	note := func(reason string) {
 		slog.DebugContext(ctx, "pre-deploy check skipped", "url", u, "reason", reason)
 		//nolint:errcheck // advisory: the deploy proceeds either way
 		fmt.Fprintf(warn, "note: could not check whether %s is already deployed (%s); deploying\n", label, reason)
 	}
+	status, body, err := getOnce(ctx, u, token)
+	if err == nil && status >= http.StatusInternalServerError {
+		status, body, err = getOnce(ctx, u, token)
+	}
+	switch {
+	case err != nil:
+		note(err.Error())
+		return false, nil
+	case status == http.StatusUnauthorized:
+		return false, fmt.Errorf("checking whether %s is already deployed: %w", label, apiStatusError(status, body))
+	case status == http.StatusNotFound:
+		return false, nil
+	case status == http.StatusForbidden || status >= http.StatusInternalServerError:
+		note(fmt.Sprintf("server returned %d", status))
+		return false, nil
+	case status >= http.StatusMultipleChoices:
+		return false, fmt.Errorf("checking whether %s is already deployed: %w; pass --force to deploy without the check",
+			label, apiStatusError(status, body))
+	}
+	if derr := json.Unmarshal(body, out); derr != nil {
+		return false, fmt.Errorf("checking whether %s is already deployed: decoding %s: %w; pass --force to deploy without the check", label, u, derr)
+	}
+	return true, nil
+}
+
+// getOnce performs one authenticated GET and returns its status and body.
+func getOnce(ctx context.Context, u, token string) (status int, body []byte, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
-		return false, fmt.Errorf("building request: %w", err)
+		return 0, nil, fmt.Errorf("building request: %w", err)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
-		note(err.Error())
-		return false, nil
+		return 0, nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck // read-only response body
-	body, rerr := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized:
-		return false, fmt.Errorf("checking whether %s is already deployed: %w", label, apiStatusError(resp.StatusCode, body))
-	case resp.StatusCode == http.StatusNotFound:
-		return false, nil
-	case resp.StatusCode == http.StatusForbidden:
-		note("server returned 403")
-		return false, nil
-	case resp.StatusCode >= http.StatusMultipleChoices:
-		return false, fmt.Errorf("checking whether %s is already deployed: %w; pass --force to deploy without the check",
-			label, apiStatusError(resp.StatusCode, body))
-	case rerr != nil:
-		return false, fmt.Errorf("checking whether %s is already deployed: reading %s: %w; pass --force to deploy without the check", label, u, rerr)
+	body, err = io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return 0, nil, fmt.Errorf("reading the response: %w", err)
 	}
-	if derr := json.Unmarshal(body, out); derr != nil {
-		return false, fmt.Errorf("checking whether %s is already deployed: decoding %s: %w; pass --force to deploy without the check", label, u, derr)
-	}
-	return true, nil
+	return resp.StatusCode, body, nil
 }

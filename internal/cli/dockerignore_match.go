@@ -111,16 +111,33 @@ func regexpClassBody(s string) string {
 }
 
 // mayReinclude reports whether a `!` line could bring back something under
-// the excluded directory dir, so the walk has to descend into it: the
-// negation pattern lies under dir, or starts with a wildcard that can match
-// anywhere. Docker's walker skips every other excluded directory.
+// the excluded directory dir, so the walk has to descend into it, as Docker's
+// walker does: the negation has more segments than dir and its leading
+// segments match dir's segment by segment (`!*/keep.txt` reaches data/), or a
+// `**` segment comes first, which can match anywhere.
 func (d dockerignore) mayReinclude(dir string) bool {
+	dirSegs := strings.Split(dir, "/")
 	for _, p := range d.negations {
-		if strings.HasPrefix(p+"/", dir+"/") || strings.HasPrefix(p, "**") {
+		if negationReaches(strings.Split(p, "/"), dirSegs) {
 			return true
 		}
 	}
 	return false
+}
+
+func negationReaches(patSegs, dirSegs []string) bool {
+	for i, ds := range dirSegs {
+		if i >= len(patSegs) {
+			return false
+		}
+		if patSegs[i] == "**" {
+			return true
+		}
+		if ok, _ := path.Match(patSegs[i], ds); !ok { //nolint:errcheck // a malformed segment matches nothing
+			return false
+		}
+	}
+	return len(patSegs) > len(dirSegs)
 }
 
 // excluded reports whether the slash path relative to the context root stays

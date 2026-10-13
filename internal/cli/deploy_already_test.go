@@ -16,13 +16,15 @@ import (
 // deployServer fakes the control plane for a deploy and records what it was
 // asked for. current is the DAG's current label; registered lists every label.
 type deployServer struct {
-	mu         sync.Mutex
-	current    string
-	registered []string
-	status     int // when set, the answer to both reads
-	reads      int
-	registers  int
-	triggers   int
+	mu          sync.Mutex
+	current     string
+	registered  []string
+	status      int // when set, the answer to both reads
+	failFirst   int // reads answered 500 before the normal answer
+	nullCurrent bool
+	reads       int
+	registers   int
+	triggers    int
 }
 
 func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -31,8 +33,17 @@ func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/details") || strings.HasSuffix(r.URL.Path, "/dagVersions")):
 		s.reads++
+		if s.failFirst > 0 {
+			s.failFirst--
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if s.status != 0 {
 			w.WriteHeader(s.status)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/details") && s.nullCurrent {
+			_, _ = io.WriteString(w, `{"dag_id":"etl","bundle_version":null}`)
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/details") {
@@ -69,7 +80,12 @@ func TestCheckDeployed(t *testing.T) {
 		{"never registered", &deployServer{status: http.StatusNotFound}, deployUnknown, "", false},
 		{"forbidden", &deployServer{status: http.StatusForbidden}, deployUnknown, "", true},
 		{"unauthorized", &deployServer{status: http.StatusUnauthorized}, deployUnknown, "server returned 401", false},
-		{"server error", &deployServer{status: http.StatusInternalServerError}, deployUnknown, "--force", false},
+		// A 5xx is retried once, then the deploy proceeds with a note.
+		{"server error", &deployServer{status: http.StatusInternalServerError}, deployUnknown, "", true},
+		{"server error cured by the retry", &deployServer{failFirst: 1, current: "L", registered: []string{"L"}}, deployCurrent, "", false},
+		// Nothing current to compare with: build, never "stale (none)".
+		{"no current version", &deployServer{nullCurrent: true, registered: []string{"L"}}, deployUnknown, "", false},
+		{"bad request", &deployServer{status: http.StatusBadRequest}, deployUnknown, "--force", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -87,6 +103,14 @@ func TestCheckDeployed(t *testing.T) {
 				t.Errorf("note = %q, want note=%v", warn.String(), c.wantNote)
 			}
 		})
+	}
+	// A 2xx the CLI cannot read stops the deploy.
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "not json")
+	}))
+	defer garbled.Close()
+	if _, _, err := checkDeployed(context.Background(), io.Discard, garbled.URL, "", "etl", "L"); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Errorf("undecodable 2xx: err = %v, want a stop naming --force", err)
 	}
 	// A network error proceeds, with a note.
 	var warn strings.Builder
@@ -208,5 +232,40 @@ func TestDeployBuildsWhenTheCheckDoesNotApply(t *testing.T) {
 				t.Error("the builder never ran")
 			}
 		})
+	}
+}
+
+func TestDeployTakesADockerfileOutsideTheProject(t *testing.T) {
+	dir, builder, log := deployFixture(t)
+	shared := filepath.Join(filepath.Dir(dir), "Dockerfile.shared")
+	if err := os.WriteFile(shared, []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(&deployServer{status: http.StatusNotFound})
+	defer srv.Close()
+	_, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder, "--dockerfile", "../Dockerfile.shared")
+	if err != nil && strings.Contains(err.Error(), "outside the project") {
+		t.Fatalf("deploy refused a --dockerfile outside the project: %v", err)
+	}
+	if !builderRan(log) {
+		t.Errorf("the builder never ran (err %v)", err)
+	}
+}
+
+func TestRegisterDeployedDAGWarnsWhenNothingNewWasRegistered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v1","created":false}`)
+	}))
+	defer srv.Close()
+	out := filepath.Join(t.TempDir(), "dag.json")
+	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var sb strings.Builder
+	if _, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, "r@sha256:x", "v1", labelDefault); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sb.String(), "already registered as version v1") || !strings.Contains(sb.String(), "may not be the current version") || strings.Contains(sb.String(), "Deployed") {
+		t.Errorf("output %q, want the already-registered warning and no Deployed line", sb.String())
 	}
 }

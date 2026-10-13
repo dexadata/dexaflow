@@ -201,9 +201,11 @@ It leaves out `.git`, what `exclude_paths` and `.dockerignore` keep out of the
 build, the compiled `dag.json`, and the files `dbt parse` rewrites on every run
 (`target/manifest.json` and its siblings, `logs/`, `.user.yml`) unless
 `dbt.manifest` points at one of them. Anything else under `target/` counts,
-because it ships in the image. A path the build names (`dag_source`, an
-`include_paths` entry, a dbt directory, the Dockerfile) is followed through
-symlinks and hashed as what it points to, which must be inside the project; a
+because it ships in the image. A path the build copies (`dag_source`, an
+`include_paths` entry, a dbt directory) is followed through symlinks and
+hashed as what it points to, which must be inside the project; the Dockerfile
+and `dbt.manifest` are followed too and may live outside it, as
+`--dockerfile ../Dockerfile.shared` does; a
 symlink found inside a copied directory counts as the path it points to, never
 followed. File times and modes never count. A file the label cannot read stops
 the compile with its name: add it to `exclude_paths`, or pass `--dag-version`.
@@ -232,13 +234,16 @@ and which labels it has registered:
   says so. Making an older version current again is not supported yet
   ([#1702](https://github.com/dexadata/dexaflow/issues/1702)); pass a new
   `--dag-version` to register the same content as a new version.
-- **The label is unknown**, or the DAG has never been registered (`404`):
-  deploy builds and registers as usual.
+- **The label is unknown**, the DAG has never been registered (`404`), or it
+  has no current version: deploy builds and registers as usual.
 
-A `403` or a network error on the check lets the deploy proceed with a note.
-A `401` stops it with the sign-in hint, and any other answer stops it naming
-`--force`. `--force` skips the check altogether, and an explicit
-`--dag-version` is never checked.
+A `403`, a network error, or a `5xx` that one retry does not cure lets the
+deploy proceed with a note. A `401` stops it with the sign-in hint, and any
+other answer, or a response it cannot read, stops it naming `--force`.
+`--force` skips the check altogether, and an explicit `--dag-version` is never
+checked. When a deploy that went past the check registers content the server
+already holds, it says so with a warning instead of `Deployed`: nothing new
+was registered, and that version may not be the current one.
 
 A 409 can still happen, and the hint names the cause that applies:
 

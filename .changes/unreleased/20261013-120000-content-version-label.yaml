@@ -13,8 +13,10 @@ body: |-
   skips the build, push and register (`--trigger` still runs), so re-running a
   CI job on unchanged sources succeeds; when the label belongs to an older
   version it stops before building, since rolling back is not supported yet
-  (#1702). A `401` on that check stops the deploy, and the new `--force` flag
-  skips the check. The label is a valid image tag, so a git tag like
+  (#1702). A `401` on that check stops the deploy, a `403`, a network error or
+  a `5xx` after one retry lets it proceed, and the new `--force` flag skips the
+  check. A deploy that registers content the server already holds now warns
+  that nothing new was registered. The label is a valid image tag, so a git tag like
   `release/v1` or `v1+build` no longer breaks `tag_strategy: version`. With
   that default strategy a tagged release is now pushed as `:v1.2.3-<hash>`
   instead of `:v1.2.3`; set `tag_strategy: git_tag` to keep the plain release

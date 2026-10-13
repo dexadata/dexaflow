@@ -264,6 +264,16 @@ func TestDockerignoreReincludeDescendsOnlyWhereItCan(t *testing.T) {
 	if m.mayReinclude("build") {
 		t.Error("nothing under build is re-included; the walk must skip it")
 	}
+	if !parseDockerignore([]byte("data\n!*/keep.txt\n")).mayReinclude("data") {
+		t.Error("!*/keep.txt reaches data/keep.txt")
+	}
+	// A negation naming the directory itself brings back nothing beneath it.
+	if parseDockerignore([]byte("data\n!data/keep\n")).mayReinclude("data/keep") {
+		t.Error("!data/keep names the directory, not anything under it")
+	}
+	if parseDockerignore([]byte("data\n!*/keep.txt\n")).mayReinclude("data/sub") {
+		t.Error("!*/keep.txt cannot reach under data/sub")
+	}
 	if !parseDockerignore([]byte("x\n!**/keep\n")).mayReinclude("x") {
 		t.Error("a ** negation can match anywhere")
 	}
@@ -284,5 +294,61 @@ func TestDockerignoreClassNeverMatchesASlash(t *testing.T) {
 		if got := parseDockerignore([]byte(c.pattern + "\n")).excluded(c.path); got != c.want {
 			t.Errorf("%q excludes %q = %v, want %v", c.pattern, c.path, got, c.want)
 		}
+	}
+}
+
+func TestDefaultDAGVersionHashesADockerfileOutsideTheProject(t *testing.T) {
+	t.Run("--dockerfile ../X", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "proj")
+		writeProjectFile(t, dir, "dag.py", "# dag\n")
+		writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\n")
+		writeProjectFile(t, parent, "Dockerfile.shared", "FROM scratch\n")
+		cfg, err := loadProjectConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		label := func() string {
+			l, lerr := defaultDAGVersion(context.Background(), dir, cfg, "../Dockerfile.shared", "")
+			if lerr != nil {
+				t.Fatalf("defaultDAGVersion: %v", lerr)
+			}
+			return l
+		}
+		before := label()
+		writeProjectFile(t, parent, "Dockerfile.shared", "FROM busybox\n")
+		if got := label(); got == before {
+			t.Errorf("an edited shared Dockerfile kept label %q", before)
+		}
+	})
+	t.Run("a Dockerfile symlinked outside", func(t *testing.T) {
+		dir := versionProject(t, "")
+		outside := t.TempDir()
+		writeProjectFile(t, outside, "Dockerfile", "FROM scratch\n")
+		if err := os.Symlink(filepath.Join(outside, "Dockerfile"), filepath.Join(dir, "Dockerfile")); err != nil {
+			t.Fatal(err)
+		}
+		before := labelOf(t, dir)
+		writeProjectFile(t, outside, "Dockerfile", "FROM busybox\n")
+		if got := labelOf(t, dir); got == before {
+			t.Errorf("an edit behind the Dockerfile link kept label %q", before)
+		}
+	})
+}
+
+func TestDefaultDAGVersionSeesAFileAGlobNegationReincludes(t *testing.T) {
+	dir := versionProject(t, "")
+	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY . /app\n")
+	writeProjectFile(t, dir, ".dockerignore", "data\n!*/keep.txt\n")
+	writeProjectFile(t, dir, "data/keep.txt", "k")
+	writeProjectFile(t, dir, "data/other.txt", "o")
+	before := labelOf(t, dir)
+	writeProjectFile(t, dir, "data/other.txt", "o2")
+	if got := labelOf(t, dir); got != before {
+		t.Fatalf("an excluded file moved the label: %q -> %q", before, got)
+	}
+	writeProjectFile(t, dir, "data/keep.txt", "k2")
+	if got := labelOf(t, dir); got == before {
+		t.Errorf("data/keep.txt ships through !*/keep.txt, but editing it kept label %q", before)
 	}
 }
