@@ -22,11 +22,13 @@ func (q *Queries) DeleteExpiredXComIndex(ctx context.Context) error {
 
 const deleteXComIndexForTasks = `-- name: DeleteXComIndexForTasks :many
 DELETE FROM xcom_index
-WHERE dag_run_id = $1 AND task_id = ANY($2::text[])
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND task_id = ANY($3::text[])
 RETURNING redis_key
 `
 
 type DeleteXComIndexForTasksParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
 	DagRunID pgtype.UUID `json:"dag_run_id"`
 	TaskIds  []string    `json:"task_ids"`
 }
@@ -36,7 +38,7 @@ type DeleteXComIndexForTasksParams struct {
 // carries no try number, so rows left behind would serve the cleared attempt's
 // values to the next attempt's downstream.
 func (q *Queries) DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, deleteXComIndexForTasks, arg.DagRunID, arg.TaskIds)
+	rows, err := q.db.Query(ctx, deleteXComIndexForTasks, arg.TenantID, arg.DagRunID, arg.TaskIds)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +64,7 @@ JOIN dag_runs dr ON dr.id = x.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
 JOIN tenants t ON t.id = d.tenant_id
 WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3 AND x.task_id = $4 AND x.key = $5
+  AND dr.tenant_id = t.id AND x.tenant_id = t.id
   AND x.expires_at > now()
 `
 
@@ -101,10 +104,11 @@ func (q *Queries) GetXComByNames(ctx context.Context, arg GetXComByNamesParams) 
 const getXComEntry = `-- name: GetXComEntry :one
 SELECT redis_key, content_type, size_bytes, created_at
 FROM xcom_index
-WHERE dag_run_id = $1 AND task_id = $2 AND key = $3 AND expires_at > now()
+WHERE tenant_id = $1 AND dag_run_id = $2 AND task_id = $3 AND key = $4 AND expires_at > now()
 `
 
 type GetXComEntryParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
 	DagRunID pgtype.UUID `json:"dag_run_id"`
 	TaskID   string      `json:"task_id"`
 	Key      string      `json:"key"`
@@ -118,7 +122,12 @@ type GetXComEntryRow struct {
 }
 
 func (q *Queries) GetXComEntry(ctx context.Context, arg GetXComEntryParams) (GetXComEntryRow, error) {
-	row := q.db.QueryRow(ctx, getXComEntry, arg.DagRunID, arg.TaskID, arg.Key)
+	row := q.db.QueryRow(ctx, getXComEntry,
+		arg.TenantID,
+		arg.DagRunID,
+		arg.TaskID,
+		arg.Key,
+	)
 	var i GetXComEntryRow
 	err := row.Scan(
 		&i.RedisKey,
@@ -136,6 +145,7 @@ JOIN dag_runs dr ON dr.id = x.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
 JOIN tenants t ON t.id = d.tenant_id
 WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3 AND x.task_id = $4
+  AND dr.tenant_id = t.id AND x.tenant_id = t.id
   AND x.expires_at > now()
 ORDER BY x.key
 `
