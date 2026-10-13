@@ -6,10 +6,14 @@ body: |-
   `dexaflow runs trigger`, `dexaflow deploy --trigger`) or a cleared run of a
   paused DAG started at once. The scheduler now leaves a queued run of a
   paused DAG alone: no task instance is created and nothing is dispatched.
-  The API is unchanged and still answers with the queued run. Unpausing the
-  DAG (UI switch or `dexaflow admin dags unpause <dag_id>`) starts the waiting
-  runs on the next scheduler tick. Runs that already started keep running
-  when their DAG is paused. Since new DAGs are paused at creation, a first
+  The API is unchanged and still answers with the queued run. A waiting run
+  still counts toward `max_active_runs`, and when a clear puts a running run
+  back in `queued`, its tasks that are still running keep counting toward
+  `max_active_tasks` and their pool's slots. Unpausing the DAG (UI switch or
+  `dexaflow admin dags unpause <dag_id>`) starts the waiting runs on the next
+  scheduler tick; the unpause does not hold back queued runs past
+  `max_active_runs`. Runs that already started keep running when their DAG is
+  paused. Since new DAGs are paused at creation, a first
   `dexaflow deploy --trigger` now leaves its run queued until you unpause the
   DAG. `dexaflow lite` registers new DAGs active, so the local loop is
   unaffected. (#1705)

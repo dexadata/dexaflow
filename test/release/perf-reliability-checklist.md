@@ -49,6 +49,13 @@ a relative rule disagree, the stricter one decides.
 | C4 | Migrations on a realistic database | Upgrade from `vPREV` over the BASELINE dataset, then roll back to `vPREV`'s schema (AGENTS.md review 7) | Time of each migration recorded; no `INVALID` index left (`SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid` returns 0 rows); the upgrade guide's recovery table lists every new migration | rc, GA, patch* (`migrations/`) | local |
 | C5 | Connection budget | Count the pools the release opens per replica (main, scheduler, leader, health) and compare with the chart's documented formula | The formula in the HA guide matches the code | GA | local |
 
+Watch in C1: `ListActiveDagRuns` reads the pause of each active run's DAG
+(#1705). It must stay one primary-key probe of `dags` per active run; a hashed
+subplan over the paused DAGs seq-scans `dags` on every tick. Measured on one
+machine (EXPLAIN ANALYZE, timing off, median of 10) with 100,000 DAGs (10%
+paused), 2,000 active runs and 300,000 settled runs: 1.4 ms without the pause
+read, 15.6 ms with the hashed subplan, 10.1 ms with the per-row probe.
+
 ## D. Dispatch throughput and backpressure
 
 | # | Item | How | Decides | When | Where |
