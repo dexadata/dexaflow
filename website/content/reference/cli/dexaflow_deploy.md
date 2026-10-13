@@ -16,12 +16,16 @@ dexaflow deploy [path | dag_id] [flags]
 ### Options
 
 ```
+      --active               leave the DAG active (unpaused) after this deploy, new or not
       --all                  deploy every DAG project in the workspace
       --builder string       image build tool to shell out to (e.g. docker, podman, nerdctl) (default "docker")
       --dag-version string   DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)
       --dockerfile string    Dockerfile path relative to the DAG directory (default "Dockerfile")
       --force                build, push and register even when the default content label is already deployed
   -h, --help                 help for deploy
+      --output string        output format: text, or json for one JSON document on stdout (human lines go to stderr) (default "text")
+      --paused               leave the DAG paused after this deploy, new or not (default: a new DAG follows is_paused_upon_creation, else the server's dags_are_paused_at_creation; a redeploy keeps is_paused)
+      --plan                 say per DAG what would be built, pushed and registered, and why, without doing any of it
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
       --server string        control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py

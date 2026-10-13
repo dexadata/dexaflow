@@ -34,12 +34,12 @@ func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
 	digest := "ghcr.io/org/etl@sha256:cafef00d"
 
 	var sb strings.Builder
-	dagID, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, digest, "v1", labelDefault)
+	res, err := registerDeployedDAG(context.Background(), &sb, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: digest, version: "v1", origin: labelDefault})
 	if err != nil {
 		t.Fatalf("registerDeployedDAG: %v", err)
 	}
-	if dagID != "etl" {
-		t.Errorf("dagID = %q, want etl", dagID)
+	if res.DagID != "etl" || res.Status != deployStatusRegistered || res.Digest != "sha256:cafef00d" || res.Image != digest {
+		t.Errorf("result = %+v, want etl registered with the digest", res)
 	}
 	if gotPath != "/api/v2/dags/etl/versions" {
 		t.Errorf("path = %q", gotPath)
@@ -71,7 +71,7 @@ func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
 	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1", labelDefault)
+	_, err := registerDeployedDAG(context.Background(), io.Discard, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelDefault})
 	if err == nil {
 		t.Error("expected an error when the control plane rejects the register")
 	}

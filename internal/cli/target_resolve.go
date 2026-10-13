@@ -152,7 +152,13 @@ type serverChoice struct {
 	Target *activeTarget
 	// Source says what chose URL, in words a user can act on.
 	Source string
-	tc     *targetContext
+	// Implicit is true when nothing chose URL: no flag, target, variable or
+	// server_url, so it is the built-in http://localhost:8080.
+	Implicit bool
+	// Lite is true when the config file was written for Lite (`dexaflow
+	// setup`), where the local server is the expected one.
+	Lite bool
+	tc   *targetContext
 }
 
 // resolveServer decides which control plane a command calls:
@@ -192,7 +198,8 @@ func resolveServer(cmd *cobra.Command, serverFlag string) (*serverChoice, error)
 	case tc.store.ServerURL != "":
 		source = "server_url in " + tc.storePath
 	}
-	return &serverChoice{URL: cfg.ServerURL, Source: source, tc: tc}, nil
+	return &serverChoice{URL: cfg.ServerURL, Source: source, tc: tc,
+		Implicit: source == "the default", Lite: cfg.LiteExecutor != ""}, nil
 }
 
 // tokenSource says where resolveServerToken found the token.

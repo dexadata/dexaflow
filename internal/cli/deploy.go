@@ -33,6 +33,26 @@ type deployOptions struct {
 	trigger    bool
 	yes        bool
 	force      bool
+	paused     bool
+	active     bool
+	plan       bool
+	output     string
+	// report collects each DAG's result for --output json; nil for text.
+	report *deployReport
+}
+
+// pausedOverride is is_paused as --paused or --active set it, nil when
+// neither was passed.
+func (o deployOptions) pausedOverride() *bool {
+	switch {
+	case o.paused:
+		v := true
+		return &v
+	case o.active:
+		v := false
+		return &v
+	}
+	return nil
 }
 
 // newDeployCommand builds `dexaflow deploy [path]`: the pipeline-less promotion of
@@ -46,7 +66,7 @@ func newDeployCommand() *cobra.Command {
 		Short: "Build, push, and register a DAG to a control plane (Pro).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDeployTarget(cmd, args, o)
+			return runDeployCommand(cmd, args, o)
 		},
 	}
 	cmd.Flags().BoolVar(&o.all, "all", false, "deploy every DAG project in the workspace")
@@ -60,6 +80,11 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
+	cmd.Flags().BoolVar(&o.paused, "paused", false, "leave the DAG paused after this deploy, new or not (default: a new DAG follows is_paused_upon_creation, else the server's dags_are_paused_at_creation; a redeploy keeps is_paused)")
+	cmd.Flags().BoolVar(&o.active, "active", false, "leave the DAG active (unpaused) after this deploy, new or not")
+	cmd.MarkFlagsMutuallyExclusive("paused", "active")
+	cmd.Flags().BoolVar(&o.plan, "plan", false, "say per DAG what would be built, pushed and registered, and why, without doing any of it")
+	cmd.Flags().StringVar(&o.output, "output", outputText, "output format: text, or json for one JSON document on stdout (human lines go to stderr)")
 	return cmd
 }
 
@@ -251,25 +276,37 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 		return fmt.Errorf("no DAG projects found in workspace %s", wsDir)
 	}
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
-	if serverURL, _, terr := resolveServerToken(cmd, o.serverURL, o.token); terr == nil &&
-		shouldConfirm(serverURL, o.yes, cmdInteractive(cmd)) {
+	choice, _, cerr := deployServerChoice(cmd, o)
+	if cerr != nil {
+		return cerr
+	}
+	if !o.plan && shouldConfirm(choice.URL, o.yes, cmdInteractive(cmd)) {
 		target := fmt.Sprintf("%d DAG(s) from %s", len(ws.Projects), wsDir)
-		if !confirmDeploy(cmd.InOrStdin(), out, target, serverURL) {
+		if !confirmDeploy(cmd.InOrStdin(), out, target, choice.URL) {
 			return fmt.Errorf("deploy aborted")
 		}
 	}
 	o.yes = true // confirmed once for the whole workspace; no per-project prompts
+	verb := "deploying"
+	if o.plan {
+		verb = "planning"
+	}
 	var failed []string
 	for _, p := range ws.Projects {
-		devPrintf(out, "==> deploying %s (%s)\n", p.DagID, p.Path)
+		devPrintf(out, "==> %s %s (%s)\n", verb, p.DagID, p.Path)
 		if derr := runDeploy(cmd, p.Path, o); derr != nil {
 			failed = append(failed, p.DagID)
+			o.report.add(deployResult{DagID: p.DagID, Status: deployStatusFailed, Error: derr.Error()})
 			devPrintf(errOut, "    FAILED %s: %v\n", p.DagID, derr)
 		}
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("%d of %d deploys failed: %s",
 			len(failed), len(ws.Projects), strings.Join(failed, ", "))
+	}
+	if o.plan {
+		_, err = io.WriteString(out, planSummary(len(ws.Projects), wsDir))
+		return err
 	}
 	_, err = fmt.Fprintf(out, "Deployed %d DAG(s) from %s\n", len(ws.Projects), wsDir)
 	return err
@@ -421,76 +458,133 @@ func orDefault(source string) string {
 
 // runDeploy orchestrates the pipeline-less promotion: validate the project,
 // enforce the registry, build+push the image for the target platform, re-pin it
-// by digest into dag.json, and register that with the control plane.
+// by digest into dag.json, and register that with the control plane. With
+// --plan it stops after deciding what it would do.
 func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 	cfg, prov, err := loadDeployConfig(cmd, dir)
 	if err != nil {
 		return err
 	}
-	choice, token, serr := resolveServerChoiceToken(cmd, o.serverURL, o.token)
+	choice, token, serr := deployServerChoice(cmd, o)
 	if serr != nil {
 		return serr
 	}
+	o.report.setServer(choice)
 	serverURL := choice.URL
 	if perr := printDeploySettings(cmd.OutOrStdout(), choice, cfg, prov); perr != nil {
 		return perr
 	}
-	if shouldConfirm(serverURL, o.yes, cmdInteractive(cmd)) &&
+	if !o.plan && shouldConfirm(serverURL, o.yes, cmdInteractive(cmd)) &&
 		!confirmDeploy(cmd.InOrStdin(), cmd.OutOrStdout(), dir, serverURL) {
 		return fmt.Errorf("deploy aborted")
 	}
+	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token}
+	return d.run()
+}
 
+// deployRun is one DAG's deploy once its config and server are resolved.
+type deployRun struct {
+	cmd              *cobra.Command
+	dir              string
+	o                deployOptions
+	cfg              *domain.LeoflowConfig
+	serverURL, token string
+}
+
+// run resolves the label and image, then plans, or checks, builds, pushes
+// and registers.
+func (d *deployRun) run() error {
 	origin := labelDefault
-	if o.dagVersion != "" {
+	if d.o.dagVersion != "" {
 		origin = labelExplicit
 	}
-	output := filepath.Join(dir, "dag.json")
+	output := filepath.Join(d.dir, "dag.json")
 	co := compileOptions{
 		output:     output,
-		builder:    o.builder,
-		dockerfile: o.dockerfile,
-		dagVersion: o.dagVersion,
-		build:      !o.skipBuild,
-		push:       !o.skipBuild,
+		builder:    d.o.builder,
+		dockerfile: d.o.dockerfile,
+		dagVersion: d.o.dagVersion,
+		build:      !d.o.skipBuild,
+		push:       !d.o.skipBuild,
 	}
 	// Resolved here rather than inside runCompile because the digest lookup
 	// below needs the same reference; runCompile then takes both as given.
-	image, ierr := resolveVersionAndImage(cmd, dir, &co, cfg)
+	image, ierr := resolveVersionAndImage(d.cmd, d.dir, &co, d.cfg)
 	if ierr != nil {
 		return ierr
 	}
 	co.image = image
 	version := co.dagVersion
-	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
-	// Only a content label says anything about content; --force skips it.
-	if done, perr := preDeployCheck(ctx, cmd.ErrOrStderr(), out, serverURL, token, cfg.DagID, version,
-		origin == labelDefault && !o.force, o.trigger); done || perr != nil {
-		return perr
+	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
+	if d.o.plan {
+		return d.plan(ctx, version, image, origin)
 	}
-	if cerr := runCompile(cmd, dir, co); cerr != nil {
+	// Only a content label says anything about content; --force skips it.
+	if done, perr := preDeployCheck(ctx, d.cmd.ErrOrStderr(), out, d.serverURL, d.token, d.cfg.DagID, version,
+		origin == labelDefault && !d.o.force); done || perr != nil {
+		if perr != nil {
+			return perr
+		}
+		return d.alreadyCurrent(ctx, version)
+	}
+	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
 	}
-
-	digestRef, derr := imageDigest(cmd, o.builder, image)
+	digestRef, derr := imageDigest(d.cmd, d.o.builder, image)
 	if derr != nil {
 		return derr
 	}
-	dagID, rerr := registerDeployedDAG(ctx, out, serverURL, token, output, digestRef, version, origin)
+	res, rerr := registerDeployedDAG(ctx, out, registerRequest{serverURL: d.serverURL, token: d.token, output: output,
+		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride()})
 	if rerr != nil {
 		return rerr
 	}
 	surfaceConnections(out, output)
-	if o.trigger {
-		return triggerDeployRun(ctx, out, serverURL, token, dagID)
+	return d.finish(ctx, res)
+}
+
+// plan says what a deploy of this DAG would do, and records it.
+func (d *deployRun) plan(ctx context.Context, version, image string, origin labelOrigin) error {
+	in := planInput{serverURL: d.serverURL, token: d.token, dagID: d.cfg.DagID, version: version, image: image,
+		origin: origin, skipBuild: d.o.skipBuild, force: d.o.force, paused: d.o.pausedOverride()}
+	res, err := planDeploy(ctx, d.cmd.ErrOrStderr(), in)
+	if err != nil {
+		return err
+	}
+	d.o.report.add(res)
+	return printPlan(d.cmd.OutOrStdout(), d.dir, res, in)
+}
+
+// alreadyCurrent finishes a deploy whose content is already the current
+// version: nothing was registered, so --paused or --active is applied with
+// the Airflow PATCH, then the summary and --trigger run as for a register.
+func (d *deployRun) alreadyCurrent(ctx context.Context, version string) error {
+	if p := d.o.pausedOverride(); p != nil {
+		if err := patchDagPausedRaw(ctx, d.serverURL, d.token, d.cfg.DagID, *p); err != nil {
+			return err
+		}
+	}
+	return d.finish(ctx, deployResult{DagID: d.cfg.DagID, Status: deployStatusCurrent, Version: version})
+}
+
+// finish prints what happens next, records the result and runs --trigger.
+func (d *deployRun) finish(ctx context.Context, res deployResult) error {
+	out := d.cmd.OutOrStdout()
+	if err := printNextStep(ctx, out, d.serverURL, d.token, &res); err != nil {
+		return err
+	}
+	d.o.report.add(res)
+	if d.o.trigger {
+		return triggerDeployRun(ctx, out, d.serverURL, d.token, res.DagID)
 	}
 	return nil
 }
 
 // preDeployCheck runs checkDeployed for a content label (when enabled) and
-// acts on it: done when the label is already the current version (nothing is built,
-// pushed or registered, and --trigger still starts a run), an error when the
-// label is an older version or the check was refused for authentication.
-func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, dagID, version string, enabled, trigger bool) (done bool, err error) {
+// acts on it: done when the label is already the current version (nothing is
+// built, pushed or registered; the caller finishes the deploy), an error when
+// the label is an older version or the check was refused for authentication.
+func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, dagID, version string, enabled bool) (done bool, err error) {
 	if !enabled {
 		return false, nil
 	}
@@ -500,15 +594,10 @@ func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, 
 	}
 	switch state {
 	case deployCurrent:
-		if _, werr := fmt.Fprintf(out, "%s already deployed as %s (the current version): nothing to build, push or register.\n"+
+		_, werr := fmt.Fprintf(out, "%s already deployed as %s (the current version): nothing to build, push or register.\n"+
 			"Changes outside the hashed inputs (environment variables, Variables read at parse time) need a new --dag-version; --force skips this check.\n",
-			dagID, version); werr != nil {
-			return true, werr
-		}
-		if trigger {
-			return true, triggerDeployRun(ctx, out, serverURL, token, dagID)
-		}
-		return true, nil
+			dagID, version)
+		return true, werr
 	case deployStale:
 		return false, fmt.Errorf("%s content matches version %s, which is not the current version (%s). "+
 			"To make it current again, run `dexaflow rollback %s --to %s`; to register this content again as a new version, pass --dag-version <new-label>",
@@ -518,49 +607,69 @@ func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, 
 	return false, nil
 }
 
+// registerRequest is what registerDeployedDAG registers: the compiled
+// dag.json at output, pinned to digestRef, under version, with the optional
+// is_paused of --paused or --active.
+type registerRequest struct {
+	serverURL, token string
+	output           string
+	digestRef        string
+	version          string
+	origin           labelOrigin
+	paused           *bool
+}
+
+// registerAnswer is the part of the register response the deploy reports.
+// IsPaused is nil from a server that does not report it.
+type registerAnswer struct {
+	SpecHash string `json:"spec_hash"`
+	IsPaused *bool  `json:"is_paused"`
+}
+
 // registerDeployedDAG re-pins the compiled dag.json to the pushed image's digest
 // and registers it with the control plane, then prints a per-phase summary. It
 // is split from runDeploy so the post-build flow (which needs no builder) is
 // unit-testable against a fake control plane.
-func registerDeployedDAG(ctx context.Context, out io.Writer, serverURL, token, output, digestRef, version string, origin labelOrigin) (dagID string, err error) {
-	data, rerr := os.ReadFile(output) //nolint:gosec // output path is operator-controlled (the DAG dir).
+func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) (deployResult, error) {
+	data, rerr := os.ReadFile(r.output) //nolint:gosec // output path is operator-controlled (the DAG dir).
 	if rerr != nil {
-		return "", fmt.Errorf("reading %s: %w", output, rerr)
+		return deployResult{}, fmt.Errorf("reading %s: %w", r.output, rerr)
 	}
-	repinned, perr := repinImageInSpec(data, digestRef)
+	repinned, perr := repinImageInSpec(data, r.digestRef)
 	if perr != nil {
-		return "", perr
+		return deployResult{}, perr
 	}
-	if werr := os.WriteFile(output, repinned, 0o600); werr != nil {
-		return "", fmt.Errorf("writing %s: %w", output, werr)
+	if werr := os.WriteFile(r.output, repinned, 0o600); werr != nil {
+		return deployResult{}, fmt.Errorf("writing %s: %w", r.output, werr)
 	}
 	var spec domain.DAGSpec
 	if jerr := json.Unmarshal(repinned, &spec); jerr != nil {
-		return "", fmt.Errorf("parsing compiled dag.json: %w", jerr)
+		return deployResult{}, fmt.Errorf("parsing compiled dag.json: %w", jerr)
 	}
-	status, body, uerr := pushVersion(ctx, serverURL, token, spec.DagID, repinned)
+	status, body, uerr := pushVersionPaused(ctx, r.serverURL, r.token, spec.DagID, repinned, r.paused)
 	if uerr != nil {
-		return "", uerr
+		return deployResult{}, uerr
 	}
 	if status >= http.StatusMultipleChoices {
-		return "", versionConflictHint(apiStatusError(status, []byte(body)), version, origin)
+		return deployResult{}, versionConflictHint(apiStatusError(status, []byte(body)), r.version, r.origin)
 	}
+	var answer registerAnswer
+	_ = json.Unmarshal([]byte(body), &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
+	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
+		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated, Status: deployStatusRegistered}
 	if status == http.StatusOK {
 		// 200 rather than 201: the server already had this exact spec and made
 		// no version. Reached when the pre-check was skipped (--force) or could
 		// not be made, so the label may not be the current version.
-		if _, werr := fmt.Fprintf(out,
+		res.Status = deployStatusUnchanged
+		_, werr := fmt.Fprintf(out,
 			"warning: %s was already registered as version %s with this exact content; nothing new was registered, and it may not be the current version\n",
-			spec.DagID, version); werr != nil {
-			return "", werr
-		}
-		return spec.DagID, nil
+			spec.DagID, r.version)
+		return res, werr
 	}
-	if _, werr := fmt.Fprintf(out,
-		"Deployed %s -> %s\n  image %s\n  registered version %s\n", spec.DagID, serverURL, digestRef, version); werr != nil {
-		return "", werr
-	}
-	return spec.DagID, nil
+	_, werr := fmt.Fprintf(out,
+		"Deployed %s -> %s\n  image %s\n  registered version %s\n", spec.DagID, r.serverURL, r.digestRef, r.version)
+	return res, werr
 }
 
 // triggerDeployRun kicks a manual run of the just-registered DAG, the --trigger

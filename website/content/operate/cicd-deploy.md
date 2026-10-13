@@ -121,6 +121,59 @@ so a pipeline that redeploys an active DAG keeps it active. A DAG that should
 start active sets `is_paused_upon_creation=False`; see
 [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 
+### What a deploy says, and the flags that change it
+
+Every deploy prints the server it goes to (and the target that chose it)
+before it builds, and ends with a line saying what happens next:
+
+```text
+next: etl is paused, so nothing runs until `dexaflow admin dags unpause etl`; unpausing creates 13 catchup runs since start_date 2026-10-01T00:00:00Z, then one run per tick; next tick 2026-10-14T00:00:00Z (UTC).
+```
+
+An active DAG gets its next run time instead. The line follows the scheduler:
+with `catchup=True` and a `start_date`, every tick since `start_date` gets a
+run; otherwise only the latest tick does. A DAG that already ran resumes after
+its last run, so its count is an upper bound.
+
+With no server set anywhere (no `--server`, `--target`, `DEXAFLOW_SERVER_URL`
+or `server_url`), `deploy` stops before building instead of going to
+`http://localhost:8080`; a machine set up for Lite keeps the local default.
+
+| Flag | What it does |
+|---|---|
+| `--paused` / `--active` | Leaves the DAG paused or active after this deploy, new or not, instead of the creation rule above. The register sets it in its own transaction, audited as `dag.pause` or `dag.unpause`; for content that is already current, nothing is registered and the DAG is paused or unpaused with the Airflow `PATCH /api/v2/dags/{dag_id}`. |
+| `--plan` | Says per DAG what a deploy would build, push and register, and why (content changed, already current, an older version, a new DAG), without running the parser, the builder or the register. Works with `--all`. |
+| `--output json` | Prints one JSON document on stdout for the pipeline to read; the human lines and the builder's output go to stderr. |
+
+The JSON document has one entry per DAG:
+
+```json
+{
+  "server": "https://pro.example.com",
+  "target": "prod",
+  "dags": [
+    {
+      "dag_id": "my_pipeline",
+      "status": "registered",
+      "version": "v1.4.0-3f9c2a1b7d4e",
+      "image": "ghcr.io/acme/my_pipeline@sha256:4e1f...",
+      "digest": "sha256:4e1f...",
+      "spec_hash": "9b0c...",
+      "created": true,
+      "is_paused": true,
+      "next": "my_pipeline is paused, so nothing runs until ..."
+    }
+  ]
+}
+```
+
+`status` is `registered` (a new version), `unchanged` (the server already had
+this exact content), `current` (the content label is the current version, so
+nothing was built), or `failed` (one DAG of `--all`, with `error`). With
+`--plan` it is `planned` or `refused`, and a `plan` object carries `build`,
+`push`, `register` and `reason`. After a failure of `--all` the document is
+still printed, so the pipeline sees which DAGs went through.
+
 {{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The per-DAG pipeline above stays the recommendation, and the `paths:` filter is
 the point of it: one DAG per pipeline is what keeps a broken DAG from blocking
