@@ -72,12 +72,14 @@ func attemptEvidence(pods []*corev1.Pod, a Attempt) infraEvidence {
 	return out
 }
 
-// podIsAttempt reports whether the pod carries exactly the attempt's labels.
+// podIsAttempt reports whether the pod carries exactly the attempt's labels
+// and, when it has one, its raw task id (podMatchesTask).
 func podIsAttempt(pod *corev1.Pod, a Attempt) bool {
 	try, epoch, ok := attemptOf(pod)
 	return ok && try == a.TryNumber && epoch == a.AttemptEpoch &&
 		pod.Labels[podLabelRunID] == labelValue(a.RunID) &&
-		pod.Labels[podLabelTaskID] == labelValue(a.TaskID)
+		pod.Labels[podLabelTaskID] == labelValue(a.TaskID) &&
+		podMatchesTask(pod, a.TaskID)
 }
 
 // taskContainerTerminated reports whether the pod's task container has

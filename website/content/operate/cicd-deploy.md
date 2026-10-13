@@ -67,8 +67,8 @@ the same steps into CI.
 Registry auth, RBAC scope, non-root images, private-registry pulls, and the
 `--dag-version`/`409` gotcha are exactly the errors CI hits first, since a
 runner has none of a laptop's ambient state (no `docker login`, no
-`dexaflow auth login` session, no git history for `--dag-version` to resolve
-against). **[Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/)**
+`dexaflow auth login` session, often a shallow clone with no tags for the
+default version label to start from). **[Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/)**
 has the exact error and fix for each.
 {{% /alert %}}
 
@@ -109,6 +109,13 @@ pushes the image to your registry → registers `dag.json`. The control plane ru
 the new version on the next trigger. One DAG per pipeline keeps blast radius
 small: a broken `another_pipeline` never blocks `my_pipeline`.
 
+The first registration of a DAG leaves it **paused**, as in Airflow: its
+schedule creates no run until someone unpauses it (UI switch, or
+`dexaflow admin dags unpause <dag_id>`). Later registrations never change that,
+so a pipeline that redeploys an active DAG keeps it active. A DAG that should
+start active sets `is_paused_upon_creation=False`; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
+
 {{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The per-DAG pipeline above stays the recommendation, and the `paths:` filter is
 the point of it — one DAG per pipeline is what keeps a broken DAG from blocking
@@ -135,9 +142,10 @@ Two behaviours matter more than the loop itself:
   built. A half-built workspace — some images new, some stale — is invisible
   afterwards.
 
-With no `--dag-version` / `--sha` it derives them the same way `deploy` does —
-`git describe`, and the short commit hash. (`deploy` has no `--sha` flag at all;
-it always derives the sha.)
+With no `--dag-version` / `--sha` it derives them the same way `deploy` does,
+per project: the version label from `git describe` in the project's directory
+plus a hash of that project's content, and the short commit hash of that
+directory. (`deploy` has no `--sha` flag at all; it always derives the sha.)
 
 Using it **as** your CI, in place of per-DAG pipelines, is a deliberate trade:
 one job rebuilds everything on any change, so blast radius and build time both
@@ -147,8 +155,12 @@ grow with the repo. Choose it only if you want that.
 {{% alert title="Tag images immutably" color="success" %}}
 The recipes tag by git SHA (`my_pipeline:$GIT_SHA`), never `:latest`. The
 image a `dag.json` points at is then frozen — re-running an old DAG version
-pulls exactly the bytes it shipped with, and a rollback is a re-`push` of the
-older `dag.json`.
+pulls exactly the bytes it shipped with.
+
+Re-pushing an older `dag.json` as it is does not roll back: that content is
+already registered, so the server answers `created: false` and changes nothing,
+neither the current version nor the schedule. To make older code live again,
+deploy the older commit under a new `--dag-version`.
 {{% /alert %}}
 
 ## Prerequisites

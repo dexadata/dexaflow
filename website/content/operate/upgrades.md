@@ -168,6 +168,44 @@ Two consequences for your own tooling:
   policy the chart creates normally does not exist yet when the *pre-install*
   hook runs.
 
+### Upgrading to 0.5.4: the task namespace default
+
+Charts before 0.5.4 defaulted `taskNamespace` to the literal `leoflow`, whatever
+namespace the release was installed in. A `helm install -n dexaflow` without
+`--set taskNamespace=...` sent task pods, their staging PVCs, the executor Role
+and RoleBinding and the agent CA ConfigMap to a `leoflow` namespace the operator
+never chose (#1682).
+
+From 0.5.4 an unset `taskNamespace` means the release namespace on a fresh
+install. On `helm upgrade` an unset value keeps the namespace the release's
+running control plane already uses: the chart reads it from the
+`LEOFLOW_EXECUTOR_TASK_NAMESPACE` env of the live Deployment, so the upgrade
+does not move task pods or their RBAC under running tasks. The chart's NOTES
+print a line when this happens.
+
+| Your install | What the upgrade does |
+|---|---|
+| Release namespace is `leoflow` | Nothing changes. |
+| `taskNamespace` set explicitly (any value, `leoflow` included) | Nothing changes. |
+| Another release namespace, `taskNamespace` unset | Keeps `leoflow`. Set `taskNamespace: leoflow` to pin it. |
+| Rendered by `helm template`, ArgoCD or Flux, `taskNamespace` unset | The renderer cannot read the live release, so it renders the **release namespace**. Set `taskNamespace: leoflow` in your values **before** syncing 0.5.4 if your task pods run there today. |
+
+To move task pods to the release namespace on purpose:
+
+1. Let running tasks finish, or pause the DAGs that would start new ones.
+2. `helm upgrade ... --set taskNamespace=<release namespace>`. Helm deletes the
+   Role, RoleBinding and CA ConfigMap it had created in `leoflow` and creates
+   them in the new namespace, and the control plane switches to it.
+3. The control plane no longer watches `leoflow`, so it does not clean it up.
+   List what is left with
+   `kubectl -n leoflow get pods,pvc,configmaps -l leoflow.io/run-id` (warm-pool
+   anchors carry `leoflow.io/warm-anchor=true`) and delete it once it has
+   finished.
+
+Installs that do not use the chart are unaffected: the server's own default for
+`executor.task_namespace` (`DEXAFLOW_EXECUTOR_TASK_NAMESPACE` or
+`LEOFLOW_EXECUTOR_TASK_NAMESPACE`) is still `leoflow`.
+
 ### Upgrading to 0.5.1: finish the rollout promptly
 
 0.5.1 fences each task execution by an attempt epoch carried in the agent's
@@ -750,6 +788,42 @@ Setting `variable_encryption` back to `off` stops encrypting new writes but
 leaves encrypted rows encrypted and readable by 0.5.4; only `decrypt` makes
 them readable by 0.5.3. A backup taken while it is on holds ciphertext: restore
 it with the same key, as for connections.
+
+### What changes in 0.5.4 without a flag
+
+**New DAGs start paused** (#1705). 0.5.4 follows Airflow: a DAG registered for
+the first time starts paused, so its schedule creates no run, catchup
+included, until someone unpauses it. Manual triggers still run. Changing a
+default in a patch is a deliberate exception to the patch rule
+([ADR 0068](/project/adrs/0068-patch-content-gated-by-safety/),
+`helm/AGENTS.md`), decided in #1705.
+
+DAGs that already exist keep their state, and a redeploy never pauses or
+unpauses a DAG, so the upgrade itself changes nothing that is running. Three
+cases do change:
+
+- **A DAG deleted and deployed again comes back paused**, because it is
+  registered for the first time again.
+- **During a rolling upgrade**, a replica still on 0.5.3 registers new DAGs
+  active until every replica runs 0.5.4.
+- **A DAG that already passes `is_paused_upon_creation`** compiles into a
+  `dag.json` that now carries it, so its spec hash changes. Redeploying it
+  under the same `--dag-version` is refused with 409; deploy it under a new
+  `--dag-version` (a new commit does this on its own).
+
+A pipeline that deploys a new DAG and expects its schedule to start has three
+ways back to the 0.5.3 behavior:
+
+- unpause the DAG after its first deploy (UI switch, or
+  `dexaflow admin dags unpause <dag_id>`);
+- set `is_paused_upon_creation=False` on that DAG;
+- set `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false` on the server to register
+  every new DAG active. On Helm, set the chart value
+  `config.dagsArePausedAtCreation: false` rather than `extraEnv`: the chart
+  already renders this variable from that value.
+
+`dexaflow lite` keeps registering new DAGs active. Rolling back to 0.5.3 needs
+nothing: 0.5.3 ignores the setting and the spec field.
 
 ## Related issues
 

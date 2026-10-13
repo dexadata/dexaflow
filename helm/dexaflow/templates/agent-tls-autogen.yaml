@@ -91,7 +91,7 @@ metadata:
   # Task pods mount this ConfigMap, and they run in taskNamespace (which may
   # differ from the release namespace) — so it must live there, alongside the
   # executor Role (rbac.yaml) and task ServiceAccount.
-  namespace: {{ .Values.taskNamespace }}
+  namespace: {{ include "leoflow.taskNamespace" . }}
   labels:
     {{- include "leoflow.labels" . | nindent 4 }}
 data:

@@ -67,6 +67,14 @@ type ServerConfig struct {
 	// every sealed row at boot: the step before rolling back to a release that
 	// cannot read sealed values.
 	VariableEncryption string `mapstructure:"variable_encryption"`
+	// DagsArePausedAtCreation (DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION, default
+	// true) is Airflow's [core] dags_are_paused_at_creation: a DAG registered
+	// for the first time starts paused, so its schedule creates no run until
+	// someone unpauses it. A DAG's own is_paused_upon_creation wins over it.
+	// It applies only on creation: a redeploy never pauses or unpauses a DAG
+	// (#1705). `dexaflow lite` sets it to false, so a DAG run locally starts
+	// active as it always did.
+	DagsArePausedAtCreation bool `mapstructure:"dags_are_paused_at_creation"`
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -289,6 +297,13 @@ type PlatformDefaultsSection struct {
 	// override nor the DAG set any (Kubernetes quantities, e.g. "250m"/"256Mi").
 	ResourcesCPU    string `mapstructure:"resources_cpu"`
 	ResourcesMemory string `mapstructure:"resources_memory"`
+	// LimitsCPU/LimitsMemory are the default task limits (#537): the CPU and
+	// memory limit a task pod gets in a dimension its resources leave without
+	// one, including a task that declares requests only. Empty (the default)
+	// sets no limit, as before. Either may be set alone. Not applied with
+	// executor.unit, which always sets both limits.
+	LimitsCPU    string `mapstructure:"limits_cpu"`
+	LimitsMemory string `mapstructure:"limits_memory"`
 	// RunTasksAsNonRoot refuses to start a task container whose image resolves
 	// to UID 0, completing Pod Security Admission's `restricted` set. On by
 	// default now that the images this repo ships carry a numeric non-root UID:
@@ -325,11 +340,21 @@ type ExecutionAllowlistSection struct {
 	// PriorityClasses, when not empty, lists the only priority_class_name values
 	// a DAG may set. Empty (the default) allows any.
 	PriorityClasses []string `mapstructure:"priority_classes"`
+	// ServiceAccounts, when not empty, lists the only execution.service_account
+	// values a DAG may name (issue #537 C2). A task that names none runs as
+	// executor.task_service_account, which is not checked. Empty allows any.
+	ServiceAccounts []string `mapstructure:"service_accounts"`
+	// Images, when not empty, lists the DAG images that may run: exact
+	// references or prefixes ending in "*" (issue #537 C2). Empty allows any.
+	Images []string `mapstructure:"images"`
 }
 
 // ExecutionPolicyConfig is the section as the domain parser takes it.
 func (s ExecutionAllowlistSection) ExecutionPolicyConfig() domain.ExecutionPolicyConfig {
-	return domain.ExecutionPolicyConfig{Fields: s.Fields, PriorityClasses: s.PriorityClasses}
+	return domain.ExecutionPolicyConfig{
+		Fields: s.Fields, PriorityClasses: s.PriorityClasses,
+		ServiceAccounts: s.ServiceAccounts, Images: s.Images,
+	}
 }
 
 // ExecutionSection configures warm worker pools — Pro-gated N:1 pod reuse
@@ -679,7 +704,20 @@ type TrustedIssuerSection struct {
 	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
 	// 900-second default; at most 3600.
 	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
+	// HostPattern binds a browser session to its tenant's host (#1463), for
+	// an operator that serves each tenant on its own host in front of one
+	// engine, for example "{tenant}.example.com". When set, a handoff is
+	// accepted only on the host the pattern names for the token's tenant, and
+	// a request that authenticates with the session cookie only on the host
+	// for the session's tenant. The host is the request's Host, or
+	// X-Forwarded-Host from a peer in server.trusted_proxies. A bearer in the
+	// Authorization header is not bound. Empty (the default) binds nothing.
+	HostPattern string `mapstructure:"host_pattern"`
 }
+
+// HostPatternTenant is the placeholder auth.trusted_issuer.host_pattern
+// replaces with the session's tenant.
+const HostPatternTenant = "{tenant}"
 
 // Enabled reports whether a trusted issuer is configured.
 func (s TrustedIssuerSection) Enabled() bool { return s.Issuer != "" }
@@ -909,8 +947,16 @@ type OIDCSection struct {
 
 // SchedulerSection configures the scheduler loop.
 type SchedulerSection struct {
-	LoopIntervalMS int             `mapstructure:"loop_interval_ms"`
-	Enabled        bool            `mapstructure:"enabled"`
+	LoopIntervalMS int  `mapstructure:"loop_interval_ms"`
+	Enabled        bool `mapstructure:"enabled"`
+	// EagerPromotion cuts the latency between a task settling and its
+	// downstreams being dispatched. Within a tick, the scheduler re-plans a run
+	// after its own state changes (a newly scheduled task is queued at once, a
+	// skip cascades), a bounded number of times; and a task's terminal report
+	// triggers an early tick instead of waiting for the next interval, which
+	// stays the upper bound. Off by default (ADR 0062): the tick then promotes
+	// one step per interval, as it always has.
+	EagerPromotion bool            `mapstructure:"eager_promotion"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
 	Alerts         AlertsSection   `mapstructure:"alerts"`
 	// PoolStarvationThreshold is how long a task held only by its pool waits
@@ -1098,6 +1144,9 @@ var serverDefaults = map[string]any{
 	"scheduler.loop_interval_ms":          1000,
 	"scheduler.enabled":                   true,
 	"scheduler.pool_starvation_threshold": "60s",
+	// Off by default (ADR 0062 feature gate): promotion keeps its one-step-per-
+	// tick cadence until an operator opts in.
+	"scheduler.eager_promotion": false,
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
@@ -1125,6 +1174,8 @@ var serverDefaults = map[string]any{
 	// from one comma-separated env var.
 	"executor.defaults.execution_allowlist.fields":           []string{domain.ExecutionPolicyAllFields},
 	"executor.defaults.execution_allowlist.priority_classes": []string{},
+	"executor.defaults.execution_allowlist.service_accounts": []string{},
+	"executor.defaults.execution_allowlist.images":           []string{},
 	// client-go's own defaults on one shared client, so an unconfigured install
 	// keeps its effective apiserver budget.
 	"executor.kube_client.qps":               5.0,
@@ -1149,6 +1200,10 @@ var serverDefaults = map[string]any{
 	// configures one. Scalars (Kubernetes quantities, e.g. "250m"/"256Mi").
 	"executor.defaults.resources_cpu":    "",
 	"executor.defaults.resources_memory": "",
+	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU /
+	// _MEMORY (#537). Empty sets no default task limit.
+	"executor.defaults.limits_cpu":    "",
+	"executor.defaults.limits_memory": "",
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_UNIT_CPU / _MEMORY. Empty
 	// (both) means no resource unit (ADR 0066).
 	"executor.unit.cpu":                                "",
@@ -1214,6 +1269,7 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.allowed_origins":             []string{},
 	"auth.trusted_issuer.bearer_audiences":            []string{},
 	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
+	"auth.trusted_issuer.host_pattern":                "",
 	"auth.external_signin_url":                        "",
 	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
@@ -1227,9 +1283,11 @@ var serverDefaults = map[string]any{
 	"secret_key_migration_lock":    false,
 	// Registered so DEXAFLOW_/LEOFLOW_VARIABLE_ENCRYPTION binds; off keeps the
 	// plaintext Variables every earlier release wrote and reads (#507).
-	"variable_encryption":    VariableEncryptionOff,
-	"secrets.backend":        "",
-	"secrets.backend_kwargs": "",
+	"variable_encryption": VariableEncryptionOff,
+	// Airflow's default (#1705): new DAGs start paused.
+	"dags_are_paused_at_creation": true,
+	"secrets.backend":             "",
+	"secrets.backend_kwargs":      "",
 	// Gate (ADR 0062): false sends every API body uncompressed, as before.
 	"server.gzip_responses": false,
 	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
@@ -1596,8 +1654,14 @@ func (c *ServerConfig) validateExecution() error {
 // quantities valid and positive, enforce refuse or warn, max_size positive.
 // It combines with warm pools: a warm pod is then one unit and serves only
 // size-1 tasks that declare no resources.
+//
+// It also checks the default task limits (executor.defaults.limits_*, #537),
+// the other operator-set bound on task resources: unset, or valid and positive.
 func (c *ServerConfig) validateExecutorUnit() error {
-	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	if _, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig()); err != nil {
+		return err
+	}
+	_, err := domain.ParseDefaultLimits(c.Executor.Defaults.LimitsCPU, c.Executor.Defaults.LimitsMemory)
 	return err
 }
 
@@ -1831,7 +1895,7 @@ var issuerNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
 // Every missing or malformed key is reported in one error, so first-time setup
 // is one edit rather than a chain of restarts.
 func validateTrustedIssuer(s TrustedIssuerSection) error {
-	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 {
+	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 && s.HostPattern == "" {
 		return nil
 	}
 	checks := []struct {
@@ -1848,6 +1912,7 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
 		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
 		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
+		{hostPatternValid(s.HostPattern), "auth.trusted_issuer.host_pattern (empty, or a host[:port] with exactly one {tenant}, such as {tenant}.example.com)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -1972,6 +2037,23 @@ func originsValid(list []string) bool {
 		}
 	}
 	return true
+}
+
+// hostPatternChars is what a host pattern may hold once {tenant} is taken
+// out: a host name and an optional port. No scheme, path or wildcard, so the
+// pattern names exactly one host per tenant.
+var hostPatternChars = regexp.MustCompile(`^[A-Za-z0-9.-]*(:\d{1,5})?$`)
+
+// hostPatternValid accepts an empty pattern (no binding), or a host[:port]
+// holding exactly one {tenant}.
+func hostPatternValid(p string) bool {
+	if p == "" {
+		return true
+	}
+	if strings.Count(p, HostPatternTenant) != 1 {
+		return false
+	}
+	return hostPatternChars.MatchString(strings.Replace(p, HostPatternTenant, "t", 1))
 }
 
 // jwksURLAllowed accepts an https URL with a host, or http on a loopback host

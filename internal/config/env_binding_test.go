@@ -287,3 +287,34 @@ func TestLoadServerPoolsReadOnly(t *testing.T) {
 		t.Fatal("DEXAFLOW_SERVER_POOLS_READ_ONLY=true did not bind server.pools_read_only")
 	}
 }
+
+// TestLoadServerBindsExecutorDefaultLimits proves the default task limits (#537)
+// bind from env under both prefixes, the only route the Helm chart has to them.
+func TestLoadServerBindsExecutorDefaultLimits(t *testing.T) {
+	for _, prefix := range []string{"LEOFLOW", "DEXAFLOW"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Setenv(prefix+"_EXECUTOR_DEFAULTS_LIMITS_CPU", "2")
+			t.Setenv(prefix+"_EXECUTOR_DEFAULTS_LIMITS_MEMORY", "4Gi")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer() error = %v", err)
+			}
+			if c.Executor.Defaults.LimitsCPU != "2" || c.Executor.Defaults.LimitsMemory != "4Gi" {
+				t.Errorf("limits = %q/%q, want 2/4Gi", c.Executor.Defaults.LimitsCPU, c.Executor.Defaults.LimitsMemory)
+			}
+		})
+	}
+}
+
+// TestLoadServerRejectsInvalidDefaultLimits: a limit the apiserver would reject
+// fails the boot instead of failing every task pod later.
+func TestLoadServerRejectsInvalidDefaultLimits(t *testing.T) {
+	t.Setenv("LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY", "four gigs")
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "executor.defaults.limits_memory") {
+		t.Fatalf("Validate() = %v; want an error naming executor.defaults.limits_memory", err)
+	}
+}

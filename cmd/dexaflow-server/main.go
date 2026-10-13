@@ -173,6 +173,7 @@ func run() error {
 	// A clear deletes the stored XCom of the attempts it clears, not just their
 	// index rows, since agents fetch values by key (#1131).
 	repo.SetXComBackend(xcomBackend)
+	configureRegistration(repo, cfg)
 	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
@@ -1187,6 +1188,12 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		if cfg.Execution.WarmPoolsEnabled {
 			agentSrv.SetLeaderCheck(sched.IsLeading)
 		}
+		// scheduler.eager_promotion: a terminal report wakes this replica's
+		// scheduler for an early tick. Only a leader acts on it; a woken follower
+		// runs its usual empty tick.
+		if cfg.Scheduler.EagerPromotion {
+			agentSrv.SetSettledHook(sched.Wake)
+		}
 		// On shutdown, drain the buffered dispatch pool (if any) so in-flight
 		// dispatches settle (success or failed via the sink) instead of leaking
 		// workers and leaving TIs stuck `queued` (#133). nil in Lite/passthrough.
@@ -1498,6 +1505,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Host binding (#1463): empty unless auth.trusted_issuer.host_pattern is set.
+		TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
 		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
 		TrustedIssuerBearer: issuerBearer(trustedIssuer),
 		// Operator service API (#1283): off unless auth.service_token is set.
@@ -2315,8 +2324,20 @@ func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespac
 func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, controlAddr string) executor.WarmPodSpecFunc {
 	defaults := platformDefaults(cfg.Executor.Defaults)
 	warmResources := resourceUnit(cfg).WarmResources()
+	if warmResources == nil {
+		// Without a unit, the default task limits (#537) size the warm pod, so a
+		// task placed on a warm worker runs under the same cap as on a dedicated
+		// pod. Nil (nothing configured) leaves warm pods unsized, as before.
+		warmResources = defaults.Limits.WarmResources()
+	}
 	useExchange := cfg.Auth.AgentTokenTransport == config.AgentTokenTransportExchange
 	return func(t executor.WarmTarget) (executor.WarmPodSpec, error) {
+		// ActiveWarmTargets already drops a version whose image the execution
+		// allowlist refuses (issue #537 C2); refusing here too means no warm pod
+		// is built for such an image whatever the target source.
+		if err := defaults.ExecutionPolicy.CheckImage(t.Image); err != nil {
+			return executor.WarmPodSpec{}, err
+		}
 		spec := executor.WarmPodSpec{
 			DagVersionID:        t.DagVersionID,
 			Image:               t.Image,
@@ -2326,7 +2347,8 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			ServiceAccount:      cfg.Executor.TaskServiceAccount,
 			PodSecurity:         defaults.PodSecurity,
 			// With executor.unit a warm pod is one unit, and the dispatcher only
-			// places size-1 tasks without resources on it (ADR 0066 §3).
+			// places size-1 tasks without resources on it (ADR 0066 §3). Without
+			// one it carries the default task limits, if any.
 			Resources: warmResources,
 			// Self-lifecycle caps (ADR 0058 D9/D10/D6/H3). The attempt watchdog is
 			// anchored to the credential ceiling: an attempt can never validly outlive
@@ -2440,6 +2462,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		}
 	} else if cfg.Server.PoolsReadOnly {
 		logger.Warn("server.pools_read_only has no effect: pools are a Pro edition feature")
+	}
+	// Off by default (ADR 0062): see config.SchedulerSection.EagerPromotion.
+	if cfg.Scheduler.EagerPromotion {
+		sched.EnableEagerPromotion()
+		logger.Info("scheduler eager promotion enabled: same-tick promotion and early ticks on task completion")
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
@@ -2901,7 +2928,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// them off it is never constructed, so no warm pod is ever created and dispatch
 	// stays byte-for-byte today's dedicated pod-per-task.
 	if cfg.Execution.WarmPoolsEnabled {
-		store.SetWarmExecution(cfg.Execution)
+		store.SetWarmExecution(cfg.Execution, executionPolicy(cfg.Executor.Defaults))
 		// The busy set (running attempts durably bound to a warm worker) makes the
 		// reconciler busy-aware (ADR 0058 N1d-b): it scales the IDLE buffer and never
 		// deletes a worker with an in-flight attempt. store implements it.
@@ -2971,6 +2998,17 @@ func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
 	return unit
 }
 
+// defaultLimits is the configured default task limits (#537). Config
+// validation already refused an invalid value at boot, so the error branch is
+// unreachable on a running server; nil (no default limits) is its safe reading.
+func defaultLimits(c config.PlatformDefaultsSection) *domain.DefaultLimits {
+	limits, err := domain.ParseDefaultLimits(c.LimitsCPU, c.LimitsMemory)
+	if err != nil {
+		return nil
+	}
+	return limits
+}
+
 // executionPolicy is the parsed executor.defaults.execution_allowlist (issue
 // #629), nil when it allows everything. ServerConfig.Validate parses the same
 // values and fails boot on an error, so none reaches here; should one, the
@@ -3012,6 +3050,7 @@ func platformDefaults(c config.PlatformDefaultsSection) dispatch.PlatformDefault
 		},
 		ExecutionPolicy: executionPolicy(c),
 	}
+	d.Limits = defaultLimits(c)
 	if c.ResourcesCPU != "" || c.ResourcesMemory != "" {
 		// Set requests AND limits to the same quantity so a task that relies on the
 		// platform default reaches Guaranteed QoS (requests == limits, cpu AND
@@ -3039,4 +3078,11 @@ func logEnvCompat(r envcompat.Report) {
 	if n := len(r.Legacy); n > 0 {
 		slog.Info("environment: variables set under their LEOFLOW_* names are also read as DEXAFLOW_*", "count", n)
 	}
+}
+
+// configureRegistration applies the settings DAG registration reads: whether a
+// DAG registered for the first time starts paused (dags_are_paused_at_creation,
+// #1705). A DAG's own is_paused_upon_creation still wins over it.
+func configureRegistration(repo *storage.Repository, cfg *config.ServerConfig) {
+	repo.SetDagsArePausedAtCreation(cfg.DagsArePausedAtCreation)
 }

@@ -182,7 +182,7 @@ The Connection is managed in the UI (encrypted; the password is never returned):
 ![Admin → Connections showing etl_target (postgres, host.k3d.internal:55432)](/assets/screenshots/etl-connection.png)
 
 Each run is traceable to the exact **deployment** that produced it: the
-`dag_versions` entry carries a deployment label (git describe in prod,
+`dag_versions` entry carries a deployment label (git describe plus a content hash in prod,
 `dev-<timestamp>` in dev), surfaced as `bundle_version` on the version API.
 
 ## Gotcha: import heavy deps inside the task

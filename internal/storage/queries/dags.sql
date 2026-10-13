@@ -1,17 +1,39 @@
--- name: UpsertDag :one
-INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (tenant_id, dag_id) DO UPDATE
-SET description = EXCLUDED.description,
-    owner = EXCLUDED.owner,
-    tags = EXCLUDED.tags,
-    schedule = EXCLUDED.schedule,
-    schedule_timezone = EXCLUDED.schedule_timezone,
-    start_date = EXCLUDED.start_date,
-    max_active_runs = EXCLUDED.max_active_runs,
-    catchup = EXCLUDED.catchup,
+-- name: EnsureDag :exec
+-- Creates the dags row of a DAG registered for the first time, with the
+-- metadata of the spec that will become its first version. An existing row is
+-- left untouched (no write, no lock): RegisterDagVersion then locks it with
+-- LockDagByDagID and rewrites the metadata only when a new version becomes
+-- current (UpdateDagMetadata). A concurrent first insert of the same dag_id
+-- waits on the unique index until the other transaction ends.
+-- is_paused is set only here, on creation (dags_are_paused_at_creation or the
+-- spec's is_paused_upon_creation, #1705): a redeploy never changes it.
+INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup, is_paused)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+ON CONFLICT (tenant_id, dag_id) DO NOTHING;
+
+-- name: LockDagByDagID :one
+-- Locks the DAG's row for the rest of the transaction, so registers of the same
+-- DAG are serialized: the spec-hash check of one register sees the version the
+-- previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
+-- another register, but not the KEY SHARE lock every dag_runs insert takes on
+-- its DAG, so run creation is not blocked while a version registers.
+SELECT * FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR NO KEY UPDATE;
+
+-- name: UpdateDagMetadata :exec
+-- Applies the spec of the version that is becoming current to the dags row, in
+-- the same transaction as SetCurrentDagVersion. is_paused is never touched:
+-- pausing is an operator decision, not a deploy one.
+UPDATE dags
+SET description = $3,
+    owner = $4,
+    tags = $5,
+    schedule = $6,
+    schedule_timezone = $7,
+    start_date = $8,
+    max_active_runs = $9,
+    catchup = $10,
     updated_at = now()
-RETURNING *;
+WHERE id = $1 AND tenant_id = $2;
 
 -- name: GetDagByDagID :one
 SELECT * FROM dags WHERE tenant_id = $1 AND dag_id = $2;
@@ -50,15 +72,23 @@ WHERE tenant_id = $1 AND dag_id = $2
 RETURNING *;
 
 -- name: GetDagVersionByHash :one
-SELECT * FROM dag_versions WHERE dag_id = $1 AND spec_hash = $2;
+-- dag_versions has no tenant_id: the tenant is checked on the parent dag (#508).
+SELECT * FROM dag_versions
+WHERE dag_versions.dag_id = $1 AND dag_versions.spec_hash = $2
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $3);
 
 -- name: InsertDagVersion :one
+-- The row is inserted only under a dag of the given tenant (#508): a dag id of
+-- another tenant inserts nothing and the query returns no row.
 INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)
+SELECT d.id, sqlc.arg(version)::text, sqlc.arg(image_reference)::text, sqlc.arg(spec)::jsonb,
+       sqlc.arg(spec_hash)::text, sqlc.narg(created_by)::uuid
+FROM dags d
+WHERE d.id = sqlc.arg(dag_id) AND d.tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
 
 -- name: SetCurrentDagVersion :exec
-UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1;
+UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3;
 
 -- name: GetCurrentDagSpec :one
 SELECT v.spec
@@ -113,4 +143,4 @@ WHERE d.tenant_id = $1 AND d.is_active = true
   AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'));
 
 -- name: ClearDagRuns :execrows
-DELETE FROM dag_runs WHERE dag_id = $1;
+DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;

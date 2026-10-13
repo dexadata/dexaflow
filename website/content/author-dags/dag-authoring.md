@@ -107,6 +107,12 @@ with DAG("my_pipeline", schedule="@daily", catchup=False, tags=["etl"]):
     transform(extract())
 ```
 
+A DAG starts **paused** the first time it is deployed to Pro, as in Airflow, so
+its schedule waits for an unpause. Pass `is_paused_upon_creation=False` to
+`DAG(...)` or `@dag(...)` to have it start active (`True` keeps it paused on a
+server configured otherwise). It only matters on that first deploy; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
+
 `from airflow.sdk import …` is the canonical Airflow 3 spelling and what we
 recommend. The deprecated-but-still-valid Airflow 3 aliases resolve to the same
 objects, so a migrated DAG compiles unchanged:
@@ -200,6 +206,14 @@ Also supported:
 - **XCom**: TaskFlow data-flow (`transform(extract())`) is resolved automatically into typed inputs (`xcom_input`) — for `@task` **and** operator args.
 - **Schedule**: cron strings and presets (`@daily`, `0 * * * *`).
 - **Dependencies**: linear ordering via TaskFlow calls or `a >> b`.
+- **`.override(...)` on a `@task`**: `estimate.override(task_id="estimate_03")(3)`
+  builds the task with different operator arguments, as in Airflow. It takes the
+  same arguments as `@task(...)` (`task_id`, `retries`, `retry_delay`,
+  `execution_timeout`, `trigger_rule`, `pool_slots`, ...), merged over the
+  decorator's, and leaves the decorated function unchanged. A repeated `task_id`
+  gets the usual `__1`, `__2` suffix. Two limits: `on_failure_callback` is
+  refused in `.override(...)` (set it on `@task(...)`, where the runtime reads it),
+  and `.override(...).expand(...)` is refused like any dynamic task mapping.
 
 > Connector cookbooks (postgres, mysql, sqlite, redis, http) are `python`
 > tasks that read a managed Connection (`AIRFLOW_CONN_*`) — that is the

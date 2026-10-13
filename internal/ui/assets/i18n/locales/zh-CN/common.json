@@ -18,21 +18,27 @@
   "asset_other": "资源",
   "assetEvent_one": "资源事件",
   "assetEvent_other": "资源事件",
+  "assetInactive": {
+    "tooltip": "上游资源已停用；调度器将暂停分区评估，直到其重新启用。"
+  },
   "backfill_one": "回填",
   "backfill_other": "回填",
   "browse": {
     "auditLog": "审计日志",
+    "deadlines": "截止期限",
     "jobs": "作业",
     "requiredActions": "待响应的任务实例",
     "xcoms": "XComs"
   },
   "collapseAllExtra": "收起所有额外 JSON",
   "collapseDetailsPanel": "收起详细信息",
+  "consumingAsset": "消费者资源",
   "createdAssetEvent_one": "已创建资源事件",
   "createdAssetEvent_other": "已创建资源事件",
   "dag_one": "Dag",
   "dag_other": "Dags",
   "dagDetails": {
+    "activeRuns": "活跃执行数",
     "catchup": "自动回填",
     "dagRunTimeout": "Dag 执行超时",
     "defaultArgs": "默认参数",
@@ -60,8 +66,14 @@
     "dagVersions": "Dag 版本",
     "dataIntervalEnd": "数据区间结束",
     "dataIntervalStart": "数据区间起始",
+    "durationStats": {
+      "mean": "平均值",
+      "mode": "众数"
+    },
+    "expectedDuration": "预计耗时",
     "lastSchedulingDecision": "最后调度决策",
     "mappedPartitionKey": "映射分区键",
+    "partitionDate": "分区日期",
     "partitionKey": "分区键",
     "queuedAt": "开始排队时间",
     "runAfter": "最早可执行时间",
@@ -103,6 +115,12 @@
     "notFound": "找不到页面",
     "title": "错误"
   },
+  "errors": {
+    "forbidden": {
+      "description": "您没有权限执行此操作。",
+      "title": "拒绝访问"
+    }
+  },
   "expand": {
     "collapse": "收起",
     "expand": "展开",
@@ -118,6 +136,7 @@
   },
   "filter": "筛选",
   "filters": {
+    "date": "日期",
     "durationFrom": "持续时间起始",
     "durationTo": "持续时间结束",
     "endTime": "结束时间",
@@ -125,9 +144,18 @@
     "logicalDateTo": "逻辑结束日期",
     "runAfterFrom": "执行时间起始",
     "runAfterTo": "执行时间结束",
+    "searchAsset": "搜索资源",
     "selectDateRange": "选择日期范围",
-    "startTime": "开始时间"
+    "selectDateTime": "选择日期与时间",
+    "startTime": "开始时间",
+    "time": "时间"
   },
+  "fullscreen": {
+    "tooltip": "按下 {{hotkey}} 进入全屏"
+  },
+  "generateToken": "生成令牌",
+  "includedIn": "包含于",
+  "key": "键",
   "logicalDate": "逻辑日期",
   "logout": "退出登录",
   "logoutConfirmation": "确定要退出登录吗？",
@@ -157,10 +185,14 @@
   "note": {
     "add": "添加笔记",
     "dagRun": "Dag 执行笔记",
+    "edit": "编辑笔记",
     "label": "笔记",
     "placeholder": "添加笔记...",
-    "taskInstance": "任务实例笔记"
+    "preview": "预览",
+    "taskInstance": "任务实例笔记",
+    "write": "编写"
   },
+  "overallStatus": "总体状态",
   "partitionedDagRun_one": "分区 Dag 执行",
   "partitionedDagRun_other": "分区 Dag 执行",
   "partitionedDagRunDetail": {
@@ -171,6 +203,7 @@
   "reset": "重置",
   "runId": "执行 ID",
   "runTypes": {
+    "asset_materialization": "资源物化",
     "asset_triggered": "资源触发",
     "backfill": "回填",
     "manual": "手动触发",
@@ -183,6 +216,12 @@
     },
     "tooltip": "按 {{hotkey}} 滚动到{{direction}}"
   },
+  "search": {
+    "advanced": {
+      "description": "在值中的任意位置匹配（子串搜索）。在大型部署中较慢，因为它无法使用默认的 B-tree 索引。详情请参阅文档中关于自定义元数据索引的章节。",
+      "title": "任意位置匹配"
+    }
+  },
   "security": {
     "actions": "操作",
     "permissions": "权限",
@@ -191,6 +230,48 @@
     "users": "用户"
   },
   "selectLanguage": "选择语言",
+  "selected": "已选择",
+  "shortcuts": {
+    "categories": {
+      "code": "代码",
+      "dagView": "Dag 视图",
+      "filters": "筛选",
+      "global": "全局",
+      "logs": "日志",
+      "navigation": "导航",
+      "runActions": "执行与任务操作",
+      "search": "搜索"
+    },
+    "descriptions": {
+      "clearRun": "清除 $t(dagRun_one)",
+      "clearTaskInstance": "清除 $t(taskInstance_one)",
+      "downloadLogs": "下载日志",
+      "focusFilterSearch": "聚焦筛选搜索框",
+      "focusLogSearch": "搜索日志",
+      "focusSearch": "聚焦搜索框",
+      "markRunFailed": "标记 $t(dagRun_one) 为失败",
+      "markRunSuccess": "标记 $t(dagRun_one) 为成功",
+      "markTaskFailed": "标记 $t(task_one) 为失败",
+      "markTaskGroupFailed": "标记 $t(taskGroup_one) 为失败",
+      "markTaskGroupSuccess": "标记 $t(taskGroup_one) 为成功",
+      "markTaskSuccess": "标记 $t(task_one) 为成功",
+      "navigateTasks": "导航 $t(task_other)",
+      "openGraphFilters": "打开图形筛选",
+      "scrollBottom": "滚动到最下方",
+      "scrollTop": "滚动到最上方",
+      "searchDags": "搜索 $t(dag_other)",
+      "showHelp": "显示 $t(shortcuts.title)",
+      "toggleExpand": "展开或收起所有分组",
+      "toggleFullscreen": "切换全屏",
+      "toggleGraphGrid": "切换图形 / 网格视图",
+      "toggleSource": "切换源代码",
+      "toggleTaskGroup": "展开或收起 $t(taskGroup_one)",
+      "toggleTimestamp": "切换时间戳",
+      "toggleWrap": "切换 $t(wrap.wrap)"
+    },
+    "empty": "此页面没有可用的键盘快捷键。",
+    "title": "键盘快捷键"
+  },
   "showDetailsPanel": "显示详细信息",
   "signedInAs": "当前登录身份",
   "source": {
@@ -203,6 +284,7 @@
   "startDate": "开始日期",
   "state": "状态",
   "states": {
+    "awaiting_input": "等待输入",
     "deferred": "已延后",
     "failed": "失败",
     "no_status": "无状态",
@@ -235,23 +317,33 @@
       "any": "任何"
     },
     "tagPlaceholder": "按标签筛选",
-    "to": "结束时间"
+    "to": "结束时间",
+    "updatedAt": "更新时间"
   },
   "task": {
+    "dependsOnPast": "依赖过去",
     "documentation": "任务文档",
     "lastInstance": "最后实例",
     "operator": "任务操作器",
-    "triggerRule": "触发规则"
+    "retries": "重试次数",
+    "triggerRule": "触发规则",
+    "waitForDownstream": "等待下游"
   },
   "task_one": "任务",
   "task_other": "任务",
-  "taskGroup": "任务分组",
+  "taskGroup": {
+    "documentation": "任务分组文档"
+  },
+  "taskGroup_one": "任务分组",
+  "taskGroup_other": "任务分组",
   "taskId": "任务 ID",
   "taskInstance": {
+    "additionalAttributes": "任务实例附加属性",
     "dagVersion": "Dag 版本",
     "executor": "执行器",
     "executorConfig": "执行器配置",
     "hostname": "主机名称",
+    "id": "ID",
     "maxTries": "最大尝试次数",
     "pid": "PID",
     "pool": "资源池",
@@ -259,14 +351,17 @@
     "priorityWeight": "优先级权重",
     "queue": "排队",
     "queuedWhen": "开始排队时间",
+    "renderedMapIndex": "已渲染映射索引",
     "scheduledWhen": "开始调度时间",
+    "trigger": "触发器",
     "triggerer": {
-      "assigned": "指派的触发器",
+      "assigned": "指派的触发者",
       "class": "触发器类别",
       "createdAt": "触发器创建时间",
       "id": "触发器 ID",
-      "latestHeartbeat": "最新触发器心跳时间",
-      "title": "触发器信息"
+      "job": "触发者作业",
+      "latestHeartbeat": "最新触发者心跳时间",
+      "title": "触发者信息"
     },
     "unixname": "Unix 名称"
   },
@@ -291,11 +386,25 @@
     "utc": "UTC"
   },
   "toaster": {
+    "bulkClear": {
+      "error": "批量清除 {{resourceName}} 请求失败",
+      "success": {
+        "description": "已成功清除 {{count}} 个 {{resourceName}}。键：{{keys}}",
+        "title": "已提交批量清除 {{resourceName}} 请求"
+      }
+    },
     "bulkDelete": {
       "error": "批量删除 {{resourceName}} 请求失败",
       "success": {
         "description": "已成功删除 {{count}} 个 {{resourceName}}。键：{{keys}}",
         "title": "已提交批量删除 {{resourceName}} 请求"
+      }
+    },
+    "bulkUpdate": {
+      "error": "批量更新 {{resourceName}} 请求失败",
+      "success": {
+        "description": "已成功更新 {{count}} 个 {{resourceName}}。键：{{keys}}",
+        "title": "已提交批量更新 {{resourceName}} 请求"
       }
     },
     "create": {
@@ -327,10 +436,27 @@
       }
     }
   },
+  "tokenGeneration": {
+    "apiToken": "API 令牌",
+    "cliToken": "CLI 令牌",
+    "errorDescription": "生成令牌时发生错误。请重试。",
+    "errorTitle": "令牌生成失败",
+    "generate": "生成",
+    "selectType": "请选择要生成的令牌类型。",
+    "title": "生成令牌",
+    "tokenExpiresIn": "此令牌将在 {{duration}} 后过期。",
+    "tokenGenerated": "您的令牌已生成。",
+    "tokenShownOnce": "此令牌仅显示一次。请立即复制。"
+  },
   "total": "总计 {{state}}",
   "triggered": "已触发",
   "tryNumber": "尝试次数",
   "user": "用户",
+  "validation": {
+    "mustBeAtLeast": "不能小于 {{min}}。",
+    "mustBeValidNumber": "必须是有效的数字。"
+  },
+  "value": "值",
   "wrap": {
     "hotkey": "w",
     "tooltip": "按 {{hotkey}} 切换换行",

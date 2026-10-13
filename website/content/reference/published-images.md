@@ -42,15 +42,22 @@ thing.)
 | `dexaflow-migrate` | `0.4.8` **and** `v0.4.8` | no |
 | `dexaflow-mcp` | `0.4.8` **and** `v0.4.8` | no |
 | `dexaflow-runtime` | `py3.11-v0.4.8` | no |
-| `dexaflow-runtime` | `py3.11` | **yes**, republished by every release |
+| `dexaflow-runtime` | `py3.11` | **yes**, moved by every GA of the newest minor |
 | the chart | `0.4.8` | no |
 
 The server, migrate and MCP images carry both the bare and the `v`-prefixed tag, and
 both resolve to identical digests, so either spelling works.
 
+The versioned tags appear while a release is still being checked. The chart,
+the moving `py3.N` tags and the GitHub release marked Latest move only after
+every install, upgrade and signature check passed, so a chart version never
+references an image that does not exist yet.
+
 {{% alert title="py3.11 moves, py3.11-v0.4.8 does not" color="warning" %}}
-Every release republishes `dexaflow-runtime:py<version>` pointing at its own
-build. A `FROM ghcr.io/dexadata/dexaflow-runtime:py3.11` rebuilt next month is
+Every GA of the newest minor re-points `dexaflow-runtime:py<version>` at its
+own build, once the release has passed its install, upgrade and signature
+checks. A release candidate never moves it, and neither does a patch of an
+older minor. A `FROM ghcr.io/dexadata/dexaflow-runtime:py3.11` rebuilt next month is
 a different base than the same line built today. Pin the versioned tag when you
 want a build to reproduce.
 {{% /alert %}}

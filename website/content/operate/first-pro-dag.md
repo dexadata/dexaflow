@@ -45,7 +45,9 @@ flowchart LR
   DAG image there; the control plane pulls it. (Lite needs none — this is a Pro
   thing.)
 - **A reachable Pro control plane.** A throwaway one comes from the
-  [Helm chart](/operate/helm-chart/).
+  [Helm chart](/operate/helm-chart/). To rehearse this whole page on your
+  machine, [Try Pro on a local cluster](/operate/local-cluster/) sets up a
+  local cluster, a registry and the chart (for testing only).
 
 ## Step 0 — log in once
 
@@ -131,8 +133,15 @@ That one command crossed every boundary:
    now pulls **exactly** the bytes you built — no `:latest` drift.
 
 {{% alert title="It registers, it doesn't run — by default" color="info" %}}
-`deploy` publishes the artifact; a scheduled DAG then runs on its schedule.
-Add `--trigger` to kick a run immediately, or trigger from the Airflow UI.
+`deploy` publishes the artifact. A DAG deployed for the first time starts
+**paused**, as in Airflow: its schedule creates no run until you unpause it
+with the switch in the UI or `dexaflow admin dags unpause first_pro_dag`.
+Add `--trigger` to kick a run immediately (a manual trigger runs even while the
+DAG is paused), or trigger from the Airflow UI. Later deploys keep the DAG
+paused or active as you left it. To have new DAGs start active, set
+`is_paused_upon_creation=False` on the DAG or ask the operator to set
+`DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false`; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 {{% /alert %}}
 
 ## Step 3 — trigger and watch it run
@@ -157,7 +166,7 @@ shows state and logs. That is the whole Pro lifecycle, in one verb.
 |---|---|---|
 | `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
 | `denied` / `unauthorized` on push | builder not logged in to the registry | `docker login ghcr.io` (registry auth ≠ control-plane auth) |
-| Task pod: `exec format error` | image arch ≠ cluster arch | already handled — deploy builds `linux/amd64`; for a Graviton cluster pass `--platform linux/arm64` |
+| Task pod: `exec format error` | image arch ≠ cluster arch | already handled — deploy builds `linux/amd64`; for a Graviton cluster set `build.platforms: ["linux/arm64"]` in `dexaflow.yaml` |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …` — create them on Pro (UI/API) first; see [Variables & Connections](/author-dags/variables-connections/) |
 
 Hit something not on this list — an unsupported task type, `CreateContainerConfigError`,
@@ -194,9 +203,9 @@ both, and run both from the same commit when the strategy is `git_sha`.
 
 {{% alert title="Prefer tag_strategy: git_sha for a split pipeline" color="info" %}}
 With the default `version` strategy the tag is the DAG version label, which
-comes from `git describe`, so two runs of the same pipeline on the same commit
-produce the same tag and a rebuild silently replaces what is already in the
-registry. `git_sha` ties the tag to the commit instead, which is what makes a
+comes from `git describe` and a hash of the DAG's content, so two runs of the
+same pipeline on the same commit produce the same tag and a rebuild silently
+replaces what is already in the registry. `git_sha` ties the tag to the commit instead, which is what makes a
 deploy reproducible and a rollback a matter of pointing at an older tag.
 
 Either way the artifact is re-pinned by digest after the push, so the tag is a

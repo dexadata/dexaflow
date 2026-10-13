@@ -371,7 +371,7 @@ roadmap item.
 | `build.dockerfile` | *unset* | A Dockerfile the project ships, used as-is instead of the generated one when the file exists (a missing file falls back to the generated Dockerfile). It is relative to the directory holding `dexaflow.yaml` and must stay inside it: an absolute path, or one escaping the project (`../x`), is refused by `dexaflow validate` and `compile`, and `compile --build` refuses one that a symlink leads out of the project. A Dockerfile outside the project is not reviewed with it, and it skips every check described in [Values that reach the generated Dockerfile](#values-that-reach-the-generated-dockerfile). The `--dockerfile` flag is not confined: it is the operator's own choice on the command line, and it wins over this field. |
 | `build.platforms` | `["linux/amd64"]` | Multi-arch via `["linux/amd64","linux/arm64"]`. |
 | `registry.auth_method` | `"docker_config"` | Credential source for `compile --push`. |
-| `registry.tag_strategy` | `"version"` | How `dag_version` is mapped to image tag. |
+| `registry.tag_strategy` | `"version"` | How the image tag is picked. `version` and `custom`: the DAG version label, the `--dag-version` you pass or else the default `<git describe>-<content hash>` (see [the version label](/operate/deploy-prerequisites/#8-the-version-label-and-its-409)). `git_sha`: the short commit of the project directory. `git_tag`: the git tag on the project's `HEAD`. `git_sha` and `git_tag` fall back to the version label, with a warning, when there is no commit or no tag on `HEAD`. Characters an image tag cannot carry become `-`. |
 | `staging.enabled` | `false` | Opt-in per-run RWX volume — ADR 0022. |
 | `defaults.*` | *unset* | DAG-level task defaults; layered under task overrides — ADR 0023. |
 | `tasks.<id>` | *unset* | Per-task overrides; must reference a `task_id` present in the compiled DAG. |
@@ -492,6 +492,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES` | _(empty)_ | both | Comma-separated audiences whose tokens from the trusted issuer are accepted as the bearer of any `/api/v2` request, reused until they expire: the [bearer mode](#trusted-issuer-bearer-tokens), for remote MCP clients behind your platform (`leoflow-mcp` is the conventional audience). Each must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE`. Empty leaves the mode off. Helm: `auth.trustedIssuer.bearerAudiences`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. Helm: `auth.trustedIssuer.bearerMaxLifetimeSeconds`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN` | _(empty)_ | both | Binds every browser session to its tenant's host, for an operator that serves each tenant on its own host in front of one Dexaflow, for example `{tenant}.example.com`. A handoff for a tenant is accepted only on that tenant's host, and a session cookie only on the host of the session's tenant. See [Binding sessions to tenant hosts](#binding-sessions-to-tenant-hosts). A host and optional port with exactly one `{tenant}`; boot fails otherwise, or when the issuer is not set. Empty binds nothing. Helm: `auth.trustedIssuer.hostPattern`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. A refused [trusted-issuer handoff](#trusted-issuer-handoff) is also sent back here, with an `error` code. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
@@ -569,6 +570,12 @@ answers the same generic 403 it answers for every other failure. The server logs
 a WARN at boot when the secret is empty.
 {{% /alert %}}
 
+### DAG registration
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` | `true` | both | Start a DAG paused when it is registered for the first time, so its schedule creates no run until someone unpauses it. Airflow's setting of the same name. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. `false` registers new DAGs active, as releases before 0.5.4 did. `dexaflow lite` sets it to `false`. Config key `dags_are_paused_at_creation`. Helm: set the chart value `config.dagsArePausedAtCreation` (not `extraEnv`); the chart always renders this variable. A DAG deleted and deployed again comes back paused. See [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused). |
+
 ### Scheduler (`scheduler.*`)
 
 | Variable | Default | Edition | Purpose |
@@ -576,6 +583,7 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_SCHEDULER_ENABLED` | `true` | both | Whether this process runs the scheduler loop. |
 | `DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS` | `1000` | both | Scheduler tick interval, in milliseconds. |
 | `DEXAFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD` | `60s` | Pro | How long a scheduled task of more than one slot that does not fit its pool (its dispatch backoff elapsed, its DAG under `max_active_tasks`) waits before the pool is reserved for it ([ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)). While reserved the pool admits no other task, so tasks of fewer slots cannot keep a larger one out forever; the oldest waiter wins, one per pool; a task of size 1 never reserves, so an install that sets no `size` admits exactly as before; a tick in which something other than the pool holds the waiter keeps its waiting time; and a task larger than its whole pool is never reserved for (it is logged once instead). The state lives in the leader's memory. `0s` disables it; negative fails boot. Helm: `config.scheduler.poolStarvationThreshold`. |
+| `DEXAFLOW_SCHEDULER_EAGER_PROMOTION` | `false` | both | Dispatches downstream tasks sooner after their upstreams settle. Within one tick, a task that becomes ready is queued at once instead of on the next tick, and skips or upstream failures cascade down the DAG (bounded passes per run, the rest continues next tick). A task's final state report also triggers an early tick on the replica that receives it, started at least 100 ms, and at least twice the previous tick's duration, after the previous tick began; the loop interval stays the upper bound. `dexaflow_scheduler_woken_ticks_total` (also exported as `leoflow_scheduler_woken_ticks_total`) counts those early ticks. Max active tasks and pool limits apply across the extra passes. Off by default. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency): the tick only enqueues, and a full buffer leaves the task scheduled for the next tick. Recommended for a busy cluster: `512` with 16 workers. Helm: `config.scheduler.dispatch.bufferSize`. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. Helm: `config.scheduler.dispatch.workers`. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_TICK_BUDGET` | `5s` | both | Wall time one scheduler tick may spend dispatching. Once it is spent the tick stops dispatching: the remaining ready tasks stay `scheduled` with no dispatch attempt charged, and the next tick starts at the run after the one that was cut, so one wide fan-out (for example under the Kubernetes client limit of `EXECUTOR_KUBE_CLIENT_QPS`) cannot hold every other run of every tenant for minutes. Due cron runs are created before the tick dispatches. `0s` dispatches every ready task in the tick however long it takes (the behavior before 0.5.4); negative fails boot. |
@@ -588,7 +596,7 @@ a WARN at boot when the secret is empty.
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
 | `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `dexaflow lite` sets it). |
-| `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). |
+| `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). The Helm chart always sets it (to the release namespace by default, #1682), so the `leoflow` default applies only to installs that do not use the chart. |
 | `DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR` | _(empty → `server.grpc_addr`)_ | both | gRPC address task pods dial back to. In a local k3d/kind cluster set it to a host-reachable address such as `host.k3d.internal:9091`. |
 | `DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP` | _(empty)_ | Pro | Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel (dev). |
 | `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` | _(empty)_ | Pro | Names a Kubernetes Secret mounted read-only into every task pod, so a task can read a cluster-stored credential (e.g. a GCP SA key) referenced by a connection's `key_path` ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)). Empty = no secret mounted. |
@@ -620,11 +628,15 @@ across clusters.
 | `DEXAFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM` | `false` | Pro | Mounts every task container's root filesystem read-only. Off by default (`restricted` does not require it and it breaks ordinary Python tasks — pip cache, `/tmp`, matplotlib config). Turn on for a fleet of tasks known not to write outside their volumes. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS` | `*` | Pro | **Which task `execution` fields a DAG may set** (comma-separated `dag.json` names): `node_selector`, `tolerations`, `affinity`, `topology_spread_constraints`, `priority_class_name`, `runtime_class_name`, `resource_claims`, `termination_grace_period_seconds`, `labels`, `annotations`. `*` (default) allows all of them, `none` allows none (so does an explicitly empty list, `fields: []`, in a server config file or in Helm; an empty environment variable counts as unset). A DAG that sets a field outside the list is refused at registration (400 naming the task and the field), and a DAG registered before the list changed fails that task at dispatch (once, no retries). `service_account` and `image_pull_policy` are not governed. An unknown name fails boot. Operator-scoped (never a DAG field). See [Placement allowlist](/operate/placement-allowlist/). Helm: `executor.defaults.executionAllowlist.fields`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES` | _(empty)_ | Pro | When set (comma-separated), the only `execution.priority_class_name` values a DAG may use; refused like a disallowed field. Empty (default) allows any priority class. Helm: `executor.defaults.executionAllowlist.priorityClasses`. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_SERVICE_ACCOUNTS` | _(empty)_ | Pro | When set (comma-separated), the only `execution.service_account` values a DAG may name. A task that names none runs as `DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT`, which is not checked. Refused at registration and at dispatch like a disallowed field. Empty (default) allows any. Helm: `executor.defaults.executionAllowlist.serviceAccounts`. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES` | _(empty)_ | Pro | When set (comma-separated), the only DAG images that may run: an exact reference (`busybox:1.36`) or a prefix ending in `*` (`registry.example.com/team-a/*`); `*` is allowed only at the end. A DAG with another image is refused at registration (400 naming the image) and at dispatch, and gets no warm workers. Empty (default) allows any. Helm: `executor.defaults.executionAllowlist.images`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_ACCESS_MODE` | `ReadWriteMany` | Pro | PVC access mode for the per-run staging volume. Default `ReadWriteMany` (multi-node prod); single-node dev (k3d local-path, no RWX) sets `ReadWriteOnce`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE` | _(empty)_ | Pro | Default size of the per-run staging volume when the DAG enabled staging without pinning it (a Kubernetes quantity, e.g. `10Gi`). Empty leaves the size unset. Helm: `executor.defaults.staging.size`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS` | _(empty)_ | Pro | Default StorageClass for the staging volume (e.g. the cluster's RWX class). Empty falls back to the cluster's default StorageClass. Helm: `executor.defaults.staging.storageClass`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU` | _(empty)_ | Pro | Default CPU for a task that declares none of its own (a Kubernetes quantity, e.g. `250m`). Applied as **both request and limit**. Guaranteed QoS needs the **memory** default set too — cpu alone leaves the task Burstable with no memory bound at all, and the control plane WARNs at boot naming the missing key; empty leaves it BestEffort unless the DAG sets its own. Helm: `executor.defaults.resources.cpu`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY` | _(empty)_ | Pro | Default memory for a task that declares none of its own (e.g. `256Mi`). Applied as **both request and limit**. Set it together with the CPU default — either one alone is Burstable, not Guaranteed. Helm: `executor.defaults.resources.memory`. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU` | _(empty)_ | Pro | Default CPU **limit** for every task pod whose resources leave the CPU limit empty, including a task that declares requests only (a Kubernetes quantity, e.g. `2`). A declared limit is never changed, and a request above this value raises the filled limit to the request. Where the CPU request is also empty, Kubernetes sets the request to this limit, as it does for a `LimitRange` default, so a task declaring only a memory request also requests this CPU. Without `executor.unit`, the default limits also size every warm worker pod, and a task whose own limit would be larger skips warm placement and takes a dedicated pod. Empty (the default) sets no limit. Not applied with `executor.unit`, which always sets both limits. Helm: `executor.defaults.limits.cpu`. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY` | _(empty)_ | Pro | Default memory **limit** for every task pod whose resources leave the memory limit empty (e.g. `4Gi`). Same rules as the CPU limit above (a task declaring only a CPU request also requests this memory, and warm worker pods carry it too); either may be set alone. Empty (the default) sets no limit. Helm: `executor.defaults.limits.memory`. |
 
 ### Warm worker pools (`execution.*`)
 
@@ -655,8 +667,8 @@ and cannot do.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. |
-| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: no dedicated value yet, use `extraEnv`. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. Helm: `execution.sourceMode.enabled`. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | (unset) | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: `execution.sourceMode.image`; the chart refuses to render the same values the server refuses. |
 
 ### Logs (`logs.*`)
 
@@ -804,6 +816,7 @@ status it stands for (`dexaflow.refusal_status` on the span), not as a `303`.
 | Subject not linked to the issuer | `403` | `user_not_linked` |
 | Linked user deactivated | `403` | `user_inactive` |
 | User linked in another tenant than the token names | `403` | `tenant_mismatch` |
+| Token for a tenant posted on another tenant's host ([host binding](#binding-sessions-to-tenant-hosts)) | `403` | `host_tenant_mismatch` |
 | Dexaflow could not look up the user or open the session | `500` | `server_error` |
 | The issuer's JWKS could not be downloaded, so the token was not checked | `503` | `server_error` |
 
@@ -828,6 +841,43 @@ one session: a second post of the same `jti` is refused until the token
 expires. That memory is per server process, so with several replicas a token
 could be accepted once by each; the short lifetime is what bounds that
 window. Mint each token right before posting it, and never put one in a URL.
+
+### Binding sessions to tenant hosts
+
+When you serve each tenant on its own host (`acme.example.com`,
+`globex.example.com`) in front of one Dexaflow, set `host_pattern` so a
+session works only on its own tenant's host:
+
+```yaml
+auth:
+  trusted_issuer:
+    # ... the handoff keys above ...
+    host_pattern: "{tenant}.example.com"
+```
+
+With it set:
+
+- A handoff is accepted only when the request's host is the pattern with the
+  token's tenant in place of `{tenant}`. On any other host it answers `403`
+  (or redirects to the external sign-in with `error=host_tenant_mismatch` when
+  one is set), sets no cookie, and records `issuer.login.failure` with reason
+  `host_tenant_mismatch`.
+- A request that authenticates with the session cookie is accepted only on the
+  host of the session's tenant, however the session was opened (handoff,
+  password or single sign-on). On any other host the API answers `401` and the
+  UI sends the browser to sign in, and both clear the cookie. A password or
+  single sign-on login for the `default` tenant then works only on
+  `default.example.com` (with the pattern above).
+- A token in the `Authorization` header (the CLI, API clients, a
+  [trusted-issuer bearer](#trusted-issuer-bearer-tokens)) is not bound to a
+  host: it never travels on its own the way a cookie does.
+
+The host is the request's `Host` header, compared without the port unless the
+pattern names one, and ignoring case. Behind an ingress that rewrites `Host`,
+list the ingress in `server.trusted_proxies`: the `X-Forwarded-Host` it sets is
+then used, and only from those peers. This also stops a session that a page
+on one tenant's host plants for its own tenant from being used on another
+tenant's host.
 
 ### Trusted-issuer bearer tokens
 

@@ -95,9 +95,15 @@ type DAGSpec struct {
 	// change only (add the key to the authoring schema and have the parser emit
 	// it), with no domain/scheduler rework. Until then it stays 0 and every DAG,
 	// and all of Lite, behaves exactly as before.
-	MinIdleWorkers int          `json:"min_idle_workers,omitempty"`
-	Catchup        bool         `json:"catchup,omitempty"`
-	DefaultArgs    *DefaultArgs `json:"default_args,omitempty"`
+	MinIdleWorkers int  `json:"min_idle_workers,omitempty"`
+	Catchup        bool `json:"catchup,omitempty"`
+	// IsPausedUponCreation is Airflow's is_paused_upon_creation DAG argument:
+	// whether the DAG starts paused when it is registered for the first time.
+	// It overrides the server's dags_are_paused_at_creation; nil leaves the
+	// decision to that setting. It is read only on creation: a later version
+	// never changes whether the DAG is paused (#1705).
+	IsPausedUponCreation *bool        `json:"is_paused_upon_creation,omitempty"`
+	DefaultArgs          *DefaultArgs `json:"default_args,omitempty"`
 	// Staging, when enabled, requests an ephemeral RWX volume shared by the run's
 	// tasks at /staging (ADR 0022). nil/disabled means no staging volume.
 	Staging *StagingConfig `json:"staging,omitempty"`
