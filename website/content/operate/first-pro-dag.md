@@ -144,16 +144,46 @@ paused or active as you left it. To have new DAGs start active, set
 ## Step 3: trigger and watch it run
 
 ```console
-$ dexaflow deploy --trigger
+$ dexaflow deploy --trigger --follow
 …
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
   registered version 1a2b3c4
   triggered run manual__1717525200
+Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
+  https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
+note: first_pro_dag is paused: this manual run starts anyway, but its schedule creates no run until you unpause it: dexaflow admin dags unpause first_pro_dag
+  extract  queued
+  extract  running
+  extract  success  2.9s
+  load     queued
+  load     running
+  load     success  3.1s
+    | loaded 42 rows
+Run manual__1717525200 succeeded (followed for 21.4s).
 ```
 
 The scheduler pulls your image, runs each task in its own pod, and the Airflow UI
 shows state and logs. That is the whole Pro lifecycle, in one verb.
+
+`--follow` prints each task state change and the logs of each attempt as it
+finishes, with the link to the run in the UI, and exits with the result of the
+run, so a script or a CI job can rely on it:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | the run succeeded |
+| `1` | the deploy or the API failed (the error says why) |
+| `2` | the run failed; the error names the failed tasks and the ones that did not run because of them (`upstream_failed`) |
+| `3` | `--timeout` elapsed before the run ended (for example `--timeout 30m`) |
+| `130` | you pressed Ctrl-C |
+
+Ctrl-C and `--timeout` only stop following: the run keeps going, and
+`dexaflow runs status first_pro_dag --run <run_id>` shows it later. A run that
+stays queued for two minutes gets a note saying no task has started and where
+to look. `dexaflow runs trigger <dag_id> --follow` does the same for a run you
+start without deploying, and `dexaflow runs logs <dag_id>` prints the logs of
+every task of the latest run.
 
 ## When it doesn't work
 

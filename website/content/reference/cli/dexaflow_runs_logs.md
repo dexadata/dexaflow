@@ -7,20 +7,20 @@ linkTitle: "runs logs"
 weight: 50
 ---
 
-Stream a task attempt's logs (the latest attempt by default).
+Print task logs: one task's attempt, or every task of a run (the latest run by default).
 
 ```
-dexaflow runs logs <dag_id> <run_id> <task_id> [flags]
+dexaflow runs logs <dag_id> [run_id [task_id]] [flags]
 ```
 
 ### Options
 
 ```
-  -f, --follow          keep streaming new log lines while the task is still running
+  -f, --follow          with a task_id, keep streaming its new log lines; without one, follow the run to its end
   -h, --help            help for logs
       --server string   control plane base URL (default: config server_url)
       --token string    JWT bearer token (default: config token)
-      --try int         attempt number to read (default: the task's latest attempt)
+      --try int         attempt number to read, with a task_id (default: the task's latest attempt)
 ```
 
 ### Options inherited from parent commands
