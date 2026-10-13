@@ -129,10 +129,7 @@ func TestListStaleQueuedCarriesWarmWorkerIDIntegration(t *testing.T) {
 	dedDag := fmt.Sprintf("stale_dedicated_%d", stamp)
 	dedRun := seedQueuedTaskNoBind(t, repo, sched, ctx, dedDag, "load")
 
-	got, err := sched.ListStaleQueuedCandidates(ctx)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedCandidates: %v", err)
-	}
+	got := allStaleQueued(t, sched, ctx, 0)
 
 	var warmSeen, dedSeen bool
 	for _, c := range got {

@@ -39,6 +39,28 @@ scheduler crash that leaves TIs queued is fully reaped within
 **`max(3 min, 5 min) + 30 s`** — the dispatch-lost reaper runs first, then the
 orphan-run reaper picks up the now-no-active-TI run on a later cycle.
 
+### Large backlogs: the candidate lists are paged
+
+The pod-lost and dispatch-lost reapers read their candidates one page of 100
+rows per cycle, oldest first, and keep their place between cycles: each cycle
+asks for the page after the last row the previous cycle saw, and a page shorter
+than 100 rows sends the next cycle back to the start. The dispatch-lost
+threshold and the pod-lost grace are applied in the query, before the page
+limit, so rows still inside them never take a slot.
+
+Before this, both lists always returned the 100 oldest rows. With 100 or more
+older attempts whose pods were alive (long tasks, or Pending pods during a
+capacity shortage), a newer attempt whose pod vanished or whose create never
+happened was never listed, kept its pool slot and its `max_active_tasks`
+charge, and its run never finished
+([#1597](https://github.com/dexadata/dexaflow/issues/1597)). Now such an
+attempt is reached within `ceil(N / 100)` cycles, where N is the number of
+candidates ahead of it, so the SLAs above hold up to 100 candidates and grow by
+one cycle (30 s) per further 100. The agent-lost reaper orders by heartbeat
+staleness and is not paged. The Lite passes over running attempts (the
+credential ceiling and the never-heartbeated agent-lost check) page the same
+way.
+
 ### Who enforces `execution_timeout` — and why the pod outlives it
 
 A task that declares `execution_timeout_seconds` and runs in its **own** pod has
