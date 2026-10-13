@@ -781,6 +781,25 @@ WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
 
+-- name: FailTaskInstanceInfraIfActive :exec
+-- Settle a task instance failed for an infrastructure reason from the pod
+-- reconciler (ADR 0051, #1595): the cluster stopped the pod (an eviction, a
+-- graceful node shutdown, a preemption), so the attempt goes to the infra
+-- re-place rail and keeps the task's own retries. Confirmed at once: the
+-- reconciler read the terminal pod and found no SUCCESS record, which is what
+-- the confirmation pass would check (ADR 0052 amendment, part 2). Guarded like
+-- FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
+-- states.
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = now(),
+    error_message = sqlc.arg(error_message)
+WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state IN ('scheduled', 'queued', 'running');
+
 -- name: SucceedTaskInstanceIfActive :execrows
 -- Settle a task instance succeeded from its durable outcome record (ADR 0052),
 -- recovering a success whose report was lost. Guarded by id, try_number and
