@@ -21,11 +21,12 @@
 # Fixed and Security fragments alone do not count; a fix restores documented
 # behaviour, and one that changes it is expected to say so with Changed.
 #
-# Escape hatch: the `skip-docs` label, for PRs that genuinely change nothing a
-# user could discover — release prep, dependabot, pure internals. Same shape as
-# skip-changelog, and the workflow re-runs on label so it takes effect at once.
-# The label needs a reason: a line `Skip-docs: <why>` in the PR description, so
-# the decision can be read back at release time (scripts/docs-gap.sh reads it).
+# Escape hatch: a line `Skip-docs: <why>` in the PR description, for PRs that
+# genuinely change nothing a user could discover (release prep, dependabot,
+# pure internals). The reason is what scripts/docs-gap.sh reads back at release
+# time. The `skip-docs` label is optional: it used to be required, which no
+# author of a pull request from a fork could satisfy (#1560). The label without
+# a reason still fails.
 #
 # Usage: scripts/check-docs-updated.sh <base-ref> [changed-files-file]
 #        SKIP_DOCS_LABEL=1 PR_BODY="..." scripts/check-docs-updated.sh <base-ref> <file>
@@ -97,13 +98,16 @@ check() { # <base-ref> [changed-files-file]
 	else
 		changed=$(git diff --name-only "$base"...HEAD)
 	fi
+	# A `Skip-docs: <reason>` line opts out with or without the label: an
+	# author whose pull request comes from a fork cannot apply labels, and the
+	# reason, not the label, is what the release cut reads back (#1560).
+	local why
+	why=$(skip_docs_reason "${PR_BODY:-}")
+	if [ -n "$why" ]; then
+		echo "skip-docs: $why"
+		return 0
+	fi
 	if [ "${SKIP_DOCS_LABEL:-0}" = 1 ]; then
-		local why
-		why=$(skip_docs_reason "${PR_BODY:-}")
-		if [ -n "$why" ]; then
-			echo "skip-docs: $why"
-			return 0
-		fi
 		{
 			echo "This PR carries the 'skip-docs' label but its description gives no reason."
 			echo "Add a line like this to the PR description and this guard re-runs:"
@@ -130,8 +134,8 @@ check() { # <base-ref> [changed-files-file]
 		echo
 		echo "Update ${DOCS_DIR}/ in THIS PR — a capability an operator cannot find"
 		echo "in the docs did not really ship. If nothing here is user-discoverable,"
-		echo "apply the 'skip-docs' label and add a 'Skip-docs: <reason>' line to the"
-		echo "PR description; this guard re-runs on both."
+		echo "add a 'Skip-docs: <reason>' line to the PR description (the 'skip-docs'"
+		echo "label is optional); this guard re-runs when the description changes."
 	} >&2
 	return 1
 }
@@ -214,6 +218,13 @@ self_test() {
 	[ "$rc" -ne 0 ] || { echo "self-test FAIL: an empty Skip-docs line accepted" >&2; return 1; }
 	SKIP_DOCS_LABEL=1 PR_BODY=$'Summary\r\nskip-docs: internal only\r\n' check X "$tmp/c" >/dev/null 2>&1 ||
 		{ echo "self-test FAIL: skip-docs with a reason rejected" >&2; return 1; }
+	# A pull request from a fork cannot apply labels (#1560): the reason line
+	# alone is the opt-out, for everyone, and the reason is what the release
+	# cut reads back anyway.
+	SKIP_DOCS_LABEL=0 PR_BODY=$'Summary\r\nSkip-docs: test fixtures only\r\n' check X "$tmp/c" >/dev/null 2>&1 ||
+		{ echo "self-test FAIL: a Skip-docs line without the label rejected" >&2; return 1; }
+	rc=0; SKIP_DOCS_LABEL=0 PR_BODY=$'Summary\r\nSkip-docs:\r\n' check X "$tmp/c" >/dev/null 2>&1 || rc=$?
+	[ "$rc" -ne 0 ] || { echo "self-test FAIL: an empty Skip-docs line without the label accepted" >&2; return 1; }
 	[ "$(skip_docs_reason $'a\n  Skip-docs: covered by #12  \n')" = "covered by #12" ] ||
 		{ echo "self-test FAIL: skip_docs_reason did not read the reason" >&2; return 1; }
 
