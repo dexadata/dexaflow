@@ -202,9 +202,10 @@ This file stays short and points; detail lives next to what it describes
 |---|---|
 | What Dexaflow is and how it is built | [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/), [core concepts](https://dexaflow.dexadata.ai/concepts/core-concepts/), [glossary](https://dexaflow.dexadata.ai/reference/glossary/) |
 | Why a design is the way it is | [ADRs](https://dexaflow.dexadata.ai/project/adrs/), then the `// Package` comment of the Go package |
-| Rules for one area | [`migrations/AGENTS.md`](migrations/AGENTS.md), [`internal/api/AGENTS.md`](internal/api/AGENTS.md), [`helm/AGENTS.md`](helm/AGENTS.md), [`scripts/AGENTS.md`](scripts/AGENTS.md), [`website/AGENTS.md`](website/AGENTS.md) |
-| Steps for a recurring change | [Recipes](https://dexaflow.dexadata.ai/contribute/recipes/): add a migration, record a change, backport to a release branch |
-| A large change before coding it | [Specs](https://dexaflow.dexadata.ai/project/specs/) and their template |
+| Rules for one area | [`migrations/AGENTS.md`](migrations/AGENTS.md), [`internal/api/AGENTS.md`](internal/api/AGENTS.md), [`internal/auth/AGENTS.md`](internal/auth/AGENTS.md) (tenant isolation too), [`internal/config/AGENTS.md`](internal/config/AGENTS.md), [`internal/dispatch/AGENTS.md`](internal/dispatch/AGENTS.md), [`internal/executor/AGENTS.md`](internal/executor/AGENTS.md), [`internal/scheduler/AGENTS.md`](internal/scheduler/AGENTS.md), [`internal/storage/AGENTS.md`](internal/storage/AGENTS.md), [`proto/AGENTS.md`](proto/AGENTS.md), [`parser/AGENTS.md`](parser/AGENTS.md), [`runtime/AGENTS.md`](runtime/AGENTS.md), [`helm/AGENTS.md`](helm/AGENTS.md), [`scripts/AGENTS.md`](scripts/AGENTS.md), [`website/AGENTS.md`](website/AGENTS.md) |
+| Steps for a recurring change | [Recipes](https://dexaflow.dexadata.ai/contribute/recipes/): add a migration, a setting, an `/api/v2/` endpoint, a Helm value, a CLI command, a connector; record a change; backport; cut a release candidate; fix a flaky end-to-end job |
+| What to check in a review | [Review checklists](https://dexaflow.dexadata.ai/contribute/review-checklists/): Airflow compatibility, Kubernetes behavior, docs, developer experience |
+| A large change before coding it | [Specs](https://dexaflow.dexadata.ai/project/specs/) and their template; a new decision starts from the [ADR template](https://dexaflow.dexadata.ai/project/adrs/#template) |
 | Setting up and running locally | [`CONTRIBUTING.md`](CONTRIBUTING.md), [local dev loop](https://dexaflow.dexadata.ai/contribute/local-dev-loop/) |
 | Cutting a release | [`RELEASING.md`](RELEASING.md) and section 1 above |
 | What a release may contain | [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/) |

@@ -10,7 +10,9 @@ description: The why behind Leoflow design decisions — one record per decision
 cascade: { type: docs }
 ---
 
-The *why* behind Leoflow's design. ADRs are immutable once accepted.
+The *why* behind Leoflow's design. ADRs are immutable once accepted. To
+record a new decision, start from the [template](#template) at the end of
+this page.
 
 - [ADR 0001: Why Leoflow and Not Apache Airflow's KubernetesExecutor](/project/adrs/0001-why-leoflow/)
 - [ADR 0002: Pod-per-Task Execution Model](/project/adrs/0002-pod-per-task/)
@@ -82,3 +84,45 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0069: Contributor context is public and tool-agnostic; tool files stay local](/project/adrs/0069-contributor-context/)
 - [ADR 0070: Secrets reach a process by environment reference, never rendered into a command string](/project/adrs/0070-secrets-by-env-reference/)
 - [ADR 0071: Releases stage, verify, then promote; only a promote job moves public pointers](/project/adrs/0071-stage-verify-promote-releases/)
+
+## Template
+
+An ADR records one decision and why it was made; what a large change will
+build goes in a [spec](/project/specs/)
+([ADR 0069](/project/adrs/0069-contributor-context/)).
+
+**File it** as `NNNN-short-title.md` in this directory, with the next free
+number: check open pull requests as well as `main`, because two drafts can
+take the same number. Open it as its own pull request, which also adds it to
+the list above.
+
+**Status** starts as `Proposed` and becomes `Accepted` when the decision is
+taken. From then on the record is not rewritten: a later decision gets a new
+ADR that names the one it replaces in its **Relates** line.
+
+```markdown
+---
+title: "ADR NNNN: <the decision, as a sentence>"
+linkTitle: "NNNN · <short title>"
+weight: NNNN0
+description: "ADR NNNN: <one sentence>"
+---
+
+**Status:** Proposed
+**Date:** YYYY-MM-DD
+**Relates:** ADR <n> (<how it relates>), ...
+
+## Context
+The problem and the forces at play, with evidence: issues, incidents,
+measurements, the code as it is today.
+
+## Decision
+What is decided, stated so a reviewer can check a change against it.
+
+## Alternatives considered
+Each option that was rejected, and why.
+
+## Consequences
+What becomes easier, what becomes harder, and what follows from it
+(specs, migrations, settings, docs).
+```
