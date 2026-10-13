@@ -168,15 +168,21 @@ git push -u origin fix/clear-error-message
   [Record a change](/contribute/recipes/record-a-change/#what-happens-to-the-fragment).
 
   A PR with no user-facing change (release prep, chore, dependency bump,
-  docs-only) takes the **`skip-changelog`** label instead. Dependabot PRs are
-  exempt without one.
+  docs-only) carries a `Skip-changelog: <reason>` line in its description, or
+  the **`skip-changelog`** label. Dependabot PRs are exempt without either.
 - **User-facing changes update the docs in the same PR.** A chart value, the
   authoring schema, a CLI command, a server setting, a migration, the OpenAPI
   document, or a changelog fragment of kind Added, Changed, Deprecated or
   Removed needs an edit under `website/content/`. When nothing in the PR is
-  user-discoverable, apply the **`skip-docs`** label and put a
-  `Skip-docs: <reason>` line in the PR description; the label without a
-  reason fails the docs guard, and the release cut reads the reason back.
+  user-discoverable, put a `Skip-docs: <reason>` line in the PR description
+  (the **`skip-docs`** label is optional); the label without a reason fails
+  the docs guard, and the release cut reads the reason back.
+- **Pull requests from forks pass the same guards.** The `Skip-changelog:` and
+  `Skip-docs:` lines replace the labels a fork cannot apply, the milestone
+  guard passes a fork's PR with a notice (a maintainer sets the milestone
+  before merging), and no pull request workflow depends on a repository
+  secret. See "Pull requests from a fork" in
+  [`CONTRIBUTING.md`](https://github.com/dexadata/dexaflow/blob/main/CONTRIBUTING.md).
 
 {{% alert title="Security-sensitive areas need extra review" color="danger" %}}
 Changes to `internal/auth/`, `internal/executor/`, `internal/storage/`,
@@ -209,9 +215,9 @@ accepted from first-time contributors** — open a discussion issue first.
 Every PR runs, and must pass: the **build + unit/integration tests** with the
 per-package coverage floor, **golangci-lint** (the A+ stack), and the
 **security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), and the
-**CHANGELOG guard** (a fragment, a hand-written entry, or the `skip-changelog`
-label), and the **docs guard** (an edit under `website/content/`, or the
-`skip-docs` label with a `Skip-docs: <reason>` line). The same
+**CHANGELOG guard** (a fragment, a hand-written entry, or a `Skip-changelog:`
+line or label), and the **docs guard** (an edit under `website/content/`, or a
+`Skip-docs: <reason>` line). The same
 `make lint test` you run locally is the fast feedback loop; CI is the source of
 truth. Push fixes until everything is green, then a maintainer reviews — we aim
 for three business days.
