@@ -169,7 +169,9 @@ paths:
         The response carries the token once; the server keeps only its
         SHA-256 hash. The token authenticates as its owner, with the owner's
         current roles narrowed to the token's scopes: deploy carries
-        dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The
+        dexaflow:deploy alone (it registers versions, sets the current
+        version, and reads the DAG list, DAGs, their details and versions,
+        and nothing else), read carries dexaflow:read. The
         caller's roles must allow what the scope does (deploy needs deploy or
         write on dags, read needs read on dags). An account holds at most 50
         live tokens. Audited as api_token.create. Not callable with an API

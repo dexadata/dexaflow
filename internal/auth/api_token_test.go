@@ -223,7 +223,9 @@ func TestNonAPITokenIsDelegated(t *testing.T) {
 }
 
 func TestAPITokenScopes(t *testing.T) {
-	if got, ok := APITokenScopes("deploy"); !ok || !slices.Equal(got, []string{ScopeRead, ScopeDeploy}) {
+	// A deploy token does not carry dexaflow:read: the reads a deploy needs
+	// accept dexaflow:deploy, and every other read stays closed (ADR 0074).
+	if got, ok := APITokenScopes("deploy"); !ok || !slices.Equal(got, []string{ScopeDeploy}) {
 		t.Errorf("deploy = %v, %v", got, ok)
 	}
 	if got, ok := APITokenScopes("read"); !ok || !slices.Equal(got, []string{ScopeRead}) {

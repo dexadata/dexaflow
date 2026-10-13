@@ -86,7 +86,7 @@ func TestDeployerRoleDeploysAndNothingElse(t *testing.T) {
 	for _, scoped := range []bool{false, true} {
 		user := deployerUser()
 		if scoped {
-			user.Scoped, user.Scopes = true, []string{auth.ScopeRead, auth.ScopeDeploy}
+			user.Scoped, user.Scopes = true, []string{auth.ScopeDeploy}
 		}
 		srv := tokenServer(user, &fakeAPITokens{}, nil)
 		allowed := map[string][3]string{
@@ -158,7 +158,7 @@ func TestCreateDeployTokenReturnsItOnceAndStoresTheHash(t *testing.T) {
 		t.Fatalf("store got %v, want the hash of the returned token", store.hashes)
 	}
 	got := store.created[0]
-	if got.UserID != "u-ci" || got.TenantID != "acme" || !slices.Equal(got.Scopes, []string{auth.ScopeRead, auth.ScopeDeploy}) {
+	if got.UserID != "u-ci" || got.TenantID != "acme" || !slices.Equal(got.Scopes, []string{auth.ScopeDeploy}) {
 		t.Errorf("stored %+v, want the caller's deploy token in acme", got)
 	}
 	if d := got.ExpiresAt.Sub(before); d < 90*24*time.Hour || d > 90*24*time.Hour+time.Minute {
@@ -313,6 +313,36 @@ func TestCreateTokenMapsStoreRefusals(t *testing.T) {
 		rec := authGet(tokenServer(deployerUser(), &fakeAPITokens{createErr: tc.err}, nil), http.MethodPost, "/api/v2/apiTokens", `{"name":"ci","scope":"deploy"}`)
 		if rec.Code != tc.want {
 			t.Errorf("store %v = %d %s, want %d", tc.err, rec.Code, rec.Body.String(), tc.want)
+		}
+	}
+}
+
+// TestDeployScopeReadsOnlyWhatDeployNeeds: a token that carries only
+// dexaflow:deploy, which is what a deploy token carries, reads DAGs and their
+// versions and nothing else its owner could read, even when the owner is an
+// admin: variables, connections, logs, XComs, users and the event log answer
+// 403 naming the missing scope.
+func TestDeployScopeReadsOnlyWhatDeployNeeds(t *testing.T) {
+	srv := newFullScopeServer(t)
+	const token = "scopes:dexaflow:deploy"
+	for _, path := range []string{
+		"/api/v2/dags", "/api/v2/dags/etl", "/api/v2/dags/etl/details",
+		"/api/v2/dags/etl/dagVersions", "/api/v2/dags/etl/dagVersions/1",
+	} {
+		c := scopeCall{path, http.MethodGet, path, ""}
+		if rec := c.do(srv, token); scopeRefused(rec) {
+			t.Errorf("%s with dexaflow:deploy = %d %s, want past the scope checks", path, rec.Code, rec.Body.String())
+		}
+	}
+	for _, path := range []string{
+		"/api/v2/variables", "/api/v2/connections", "/api/v2/users", "/api/v2/eventLogs",
+		"/api/v2/dags/etl/dagRuns", "/api/v2/dags/etl/dagRuns/r1/taskInstances/t/logs/1",
+		"/api/v2/xcoms/etl/r1/t/k", "/api/v2/pools",
+	} {
+		c := scopeCall{path, http.MethodGet, path, ""}
+		rec := c.do(srv, token)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "missing scope") {
+			t.Errorf("%s with dexaflow:deploy = %d %s, want 403 missing scope", path, rec.Code, rec.Body.String())
 		}
 	}
 }

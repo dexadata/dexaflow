@@ -56,11 +56,12 @@ type APITokenStore interface {
 }
 
 // apiTokenScopeSets maps the scope a caller asks for when creating a token to
-// the scopes the token carries. No scope implies another (ADR 0067), so the
-// deploy set names read explicitly: a deploy needs to read the DAG it checks.
+// the scopes the token carries. A deploy token carries dexaflow:deploy alone:
+// the DAG reads a deploy needs accept that scope, and every other read its
+// owner may have stays closed to it (ADR 0074).
 var apiTokenScopeSets = map[string][]string{
 	"read":   {ScopeRead},
-	"deploy": {ScopeRead, ScopeDeploy},
+	"deploy": {ScopeDeploy},
 }
 
 // APITokenScopes returns the scopes an API token created for scope carries,

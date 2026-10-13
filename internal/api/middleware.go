@@ -359,16 +359,30 @@ func RequireDeployPermission() gin.HandlerFunc {
 	return permissionGate{action: "deploy", alt: "write", resource: "dag", scope: auth.ScopeDeploy}.check
 }
 
+// RequireDeployRead guards a DAG read that a deploy needs: the DAG list, a
+// DAG, its details and its versions (ADR 0074). It needs read:dag, and a
+// scoped token needs dexaflow:read or dexaflow:deploy, so a deploy token
+// reads what it deploys and none of the other reads its owner may have.
+func RequireDeployRead() gin.HandlerFunc {
+	return permissionGate{action: "read", resource: "dag", scope: auth.ScopeRead, altScope: auth.ScopeDeploy}.check
+}
+
 func requirePermission(action, resource, scope string) gin.HandlerFunc {
 	return permissionGate{action: action, resource: resource, scope: scope}.check
 }
 
 // permissionGate checks the role permission (when action is set; alt, when
 // set, is a second action on the same resource that also passes), then, for
-// a scoped principal, the route's scope; an empty scope means no scope grants
-// the route. Its check is a method value rather than a closure so jwtAuth can
-// find it in a route's handler chain (scopeGated).
-type permissionGate struct{ action, alt, resource, scope string }
+// a scoped principal, the route's scope (or altScope, when set); an empty
+// scope means no scope grants the route. Its check is a method value rather
+// than a closure so jwtAuth can find it in a route's handler chain
+// (scopeGated).
+type permissionGate struct{ action, alt, resource, scope, altScope string }
+
+// scopeAllows reports whether a scoped user's token carries the route's scope.
+func (g permissionGate) scopeAllows(user *auth.User) bool {
+	return user.HasScope(g.scope) || (g.altScope != "" && user.HasScope(g.altScope))
+}
 
 // allows reports whether user holds the gate's permission.
 func (g permissionGate) allows(user *auth.User) bool {
@@ -400,7 +414,7 @@ func (g permissionGate) check(c *gin.Context) {
 		AbortProblem(c, http.StatusForbidden, "forbidden", scopedRouteRefusal)
 		return
 	}
-	if user.Scoped && !user.HasScope(g.scope) {
+	if user.Scoped && !g.scopeAllows(user) {
 		AbortProblem(c, http.StatusForbidden, "forbidden", "missing scope "+g.scope)
 		return
 	}

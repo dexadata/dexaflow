@@ -260,12 +260,14 @@ variable (the pre-rename `LEOFLOW_TOKEN` still works).
 
 What a deploy token can do, and how it ends:
 
-- **Scope.** `--scope deploy` carries `dexaflow:read` and `dexaflow:deploy`:
-  the token reads DAGs and versions, registers versions and sets the current
-  version, and is refused everything else, whatever its owner's roles. It
-  never does more than its owner's roles allow either, and the owner's roles
-  are read again on every request. `--scope read` makes a read-only token.
-  `deploy --trigger` needs to trigger a run, which a deploy token cannot do.
+- **Scope.** `--scope deploy` carries `dexaflow:deploy`: the token reads
+  DAGs, DAG details and versions, registers versions and sets the current
+  version, and is refused everything else, whatever its owner's roles: no
+  variables, connections, logs, XComs, runs, users or event log. It never does
+  more than its owner's roles allow either, and the owner's roles are read
+  again on every request. `--scope read` makes a token that reads everything
+  its owner can read, so do not give one to CI. `deploy --trigger` needs to
+  trigger a run, which a deploy token cannot do.
 - **Lifetime.** `--ttl` takes days (`90d`) or a duration (`12h`), from one hour
   to 365 days; the default is 90 days. An expired token answers `401`.
 - **Listing.** `dexaflow auth tokens list` shows your tokens with their id,

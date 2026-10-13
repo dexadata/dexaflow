@@ -26,9 +26,10 @@ import (
 )
 
 // TestAPITokenWiringAgainstPostgres locks the wiring, not the leaf (ADR
-// 0073): through the API server the boot path builds, a deployer signs in,
-// creates a deploy token, and the token then reads DAGs, is refused deleting
-// one and minting another token, and stops working once revoked.
+// 0074): through the API server the boot path builds, an admin signs in and
+// creates a deploy token; whatever its owner's roles, the token then reads
+// DAGs, is refused every other read, deleting a DAG and minting another
+// token, and stops working once revoked.
 func TestAPITokenWiringAgainstPostgres(t *testing.T) {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -43,7 +44,7 @@ func TestAPITokenWiringAgainstPostgres(t *testing.T) {
 	repo := storage.NewRepository(pg)
 	email := fmt.Sprintf("ci_%d@example.com", time.Now().UnixNano())
 	const password = "deployer-password-1"
-	if _, err := repo.CreateUser(ctx, "default", email, password, []string{"deployer"}); err != nil {
+	if _, err := repo.CreateUser(ctx, "default", email, password, []string{"admin"}); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
@@ -89,6 +90,11 @@ func TestAPITokenWiringAgainstPostgres(t *testing.T) {
 
 	if rec := call(http.MethodGet, "/api/v2/dags", tok.Token, ""); rec.Code != http.StatusOK {
 		t.Errorf("list dags with the token = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	for _, path := range []string{"/api/v2/variables", "/api/v2/connections", "/api/v2/users", "/api/v2/eventLogs"} {
+		if rec := call(http.MethodGet, path, tok.Token, ""); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "missing scope") {
+			t.Errorf("GET %s with a deploy token = %d %s, want 403 missing scope", path, rec.Code, rec.Body.String())
+		}
 	}
 	if rec := call(http.MethodDelete, "/api/v2/dags/anything", tok.Token, ""); rec.Code != http.StatusForbidden {
 		t.Errorf("delete dag with the token = %d %s, want 403", rec.Code, rec.Body.String())

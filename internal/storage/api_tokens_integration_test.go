@@ -77,7 +77,7 @@ func TestAPITokenStoresOnlyTheHashIntegration(t *testing.T) {
 		t.Fatalf("FindAPITokenByHash: %v", err)
 	}
 	if found.ID != tok.ID || found.TenantID != "default" || found.UserID != userID || found.Name != "ci-x" ||
-		!slices.Equal(found.Scopes, []string{auth.ScopeRead, auth.ScopeDeploy}) || found.RevokedAt != nil {
+		!slices.Equal(found.Scopes, []string{auth.ScopeDeploy}) || found.RevokedAt != nil {
 		t.Errorf("found %+v, want the created token", found)
 	}
 	if _, err := repo.FindAPITokenByHash(ctx, auth.HashAPIToken(plain+"x")); !errors.Is(err, auth.ErrAPITokenNotFound) {

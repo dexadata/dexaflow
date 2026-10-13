@@ -61,9 +61,18 @@ tenant.
   a JWT, ADR 0008), marked `Scoped` with the token's scopes. A database
   failure during the lookup answers `503`, never `401`, like the JWT path.
 - **Scopes.** A token is created for a named scope set: `deploy` carries
-  `dexaflow:read` and `dexaflow:deploy`, `read` carries `dexaflow:read`. The
-  ADR 0067 gate then applies unchanged: the role check runs first, the scope
-  check second, both must pass, and a write no scope maps is refused. The
+  `dexaflow:deploy` alone, `read` carries `dexaflow:read`. The ADR 0067 gate
+  then applies: the role check runs first, the scope check second, both must
+  pass, and a write no scope maps is refused. A deploy token does not carry
+  `dexaflow:read`, which would open every read its owner has (variables,
+  connection metadata, logs, XComs, users, the event log). Instead the reads
+  a deploy makes accept `dexaflow:deploy` as well as `dexaflow:read`: the DAG
+  list, a DAG, its details and its versions
+  (`GET /api/v2/dags`, `/api/v2/dags/{id}`, `/api/v2/dags/{id}/details`,
+  `/api/v2/dags/{id}/dagVersions` and `/dagVersions/{n}`). Every other read
+  is refused to it with `403` naming `dexaflow:read`. This amends ADR 0067's
+  scope table for trusted-issuer tokens too: a token with `dexaflow:deploy`
+  now also reads those DAG routes. The
   creator must hold what the scope does at creation (`deploy` needs
   `deploy:dag` or `write:dag`, `read` needs `read:dag`), so a token never
   names a scope its owner could not use; at use time the owner's current
@@ -133,9 +142,11 @@ JWT), `dexaflow auth tokens list` and `dexaflow auth tokens revoke <id>`.
 
 - CI stores one revocable secret per pipeline instead of a password, and the
   CI/CD guide (`operate/cicd-deploy`) shows that pattern.
-- A leaked deploy token can register versions and roll back until it expires
-  or is revoked; it cannot delete, pause or trigger, and it cannot create
-  tokens.
+- A leaked deploy token can register versions, roll back, and read the DAGs
+  and versions of its owner's tenant until it expires or is revoked. It
+  cannot delete, pause or trigger, cannot read variables, connections, logs,
+  XComs, runs, users or the event log, and cannot create tokens. A `read`
+  token reads everything its owner can read; give CI a `deploy` token.
 - Every request with an API token costs one indexed lookup and the user
   reload a JWT already costs, plus at most one write every five minutes per
   token.
