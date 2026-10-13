@@ -187,6 +187,15 @@ type Querier interface {
 	// comes from its leoflow.io/attempt-epoch label, absent meaning 0. The
 	// active-state guard prevents clobbering a terminal row.
 	FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInstanceIfActiveParams) error
+	// Settle a task instance failed for an infrastructure reason from the pod
+	// reconciler (ADR 0051, #1595): the cluster stopped the pod (an eviction, a
+	// graceful node shutdown, a preemption), so the attempt goes to the infra
+	// re-place rail and keeps the task's own retries. Confirmed at once: the
+	// reconciler read the terminal pod and found no SUCCESS record, which is what
+	// the confirmation pass would check (ADR 0052 amendment, part 2). Guarded like
+	// FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
+	// states.
+	FailTaskInstanceInfraIfActive(ctx context.Context, arg FailTaskInstanceInfraIfActiveParams) error
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
 	GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (Dag, error)

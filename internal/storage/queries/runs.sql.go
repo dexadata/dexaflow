@@ -672,6 +672,43 @@ func (q *Queries) FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInst
 	return err
 }
 
+const failTaskInstanceInfraIfActive = `-- name: FailTaskInstanceInfraIfActive :exec
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = now(),
+    error_message = $1
+WHERE id = $2 AND try_number = $3
+  AND attempt_epoch = $4
+  AND state IN ('scheduled', 'queued', 'running')
+`
+
+type FailTaskInstanceInfraIfActiveParams struct {
+	ErrorMessage *string     `json:"error_message"`
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+}
+
+// Settle a task instance failed for an infrastructure reason from the pod
+// reconciler (ADR 0051, #1595): the cluster stopped the pod (an eviction, a
+// graceful node shutdown, a preemption), so the attempt goes to the infra
+// re-place rail and keeps the task's own retries. Confirmed at once: the
+// reconciler read the terminal pod and found no SUCCESS record, which is what
+// the confirmation pass would check (ADR 0052 amendment, part 2). Guarded like
+// FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
+// states.
+func (q *Queries) FailTaskInstanceInfraIfActive(ctx context.Context, arg FailTaskInstanceInfraIfActiveParams) error {
+	_, err := q.db.Exec(ctx, failTaskInstanceInfraIfActive,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
+	return err
+}
+
 const getDagRun = `-- name: GetDagRun :one
 SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3
 `

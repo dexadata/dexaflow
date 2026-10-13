@@ -31,6 +31,7 @@ see [Lite: which reapers run](#lite-which-reapers-run).
 | Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/dexaflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
+| Cluster stopped the task pod (graceful node shutdown on a spot or preemptible reclaim, node-pressure eviction, preemption, admission refusal) | Pod reconciler | next reconcile sweep (30 s) | TI failed with `pod_disrupted` on the infra rail: re-placed on the infra budget without spending a task retry. See [A pod the cluster stopped is an infra failure](#a-pod-the-cluster-stopped-is-an-infra-failure). |
 | Run stuck `running` with no live TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
 
 Every SLA above is a floor: the reapers run every **30 s**, so detection lands
@@ -282,6 +283,47 @@ On Lite there is no reconciler and no pod to wait for: the mark is confirmed
 when it is made, and nothing changes. Marks made before the upgrade count as
 confirmed. Every rail that starts a new execution of the task (retry, clear,
 re-place, reschedule) clears `infra_confirmed_at` again.
+
+## A pod the cluster stopped is an infra failure
+
+A task pod can end because the cluster stopped it rather than because the task
+failed: the kubelet shuts the node down gracefully (a spot or preemptible
+reclaim), evicts the pod under node pressure, the scheduler preempts it, or the
+kubelet refuses it at admission. [ADR 0051](/project/adrs/0051-separate-orchestration-and-execution-state-machines/)
+puts these on the infra rail, and the pod reconciler settles them there: the
+task instance is `failed` with `last_failure_kind = infra` and an
+`error_message` that starts with `pod_disrupted:`, and the planner re-places it
+on the infra budget. The task's own `retries` are not spent, so a task with
+`retries: 0` survives a node reclaim.
+
+The reconciler reads two signals from the terminal pod:
+
+- the `DisruptionTarget` condition with status `True` (reasons
+  `TerminationByKubelet`, `PreemptionByScheduler`, `EvictionByEvictionAPI`,
+  `DeletionByTaintManager`);
+- the pod reason `Evicted`, `Shutdown`, `NodeShutdown`, `Terminated`,
+  `OutOfcpu`, `OutOfmemory` or `UnexpectedAdmissionError`, which older kubelets
+  and admission refusals set without the condition.
+
+Two things still win over them. A durable SUCCESS or RESCHEDULE record settles
+as before (the task finished before the node went away). And an `OOMKilled`
+task container stays a task failure even on a disrupted pod, because the kernel
+enforced the task's own memory limit. The same holds for an `Evicted` pod whose
+kubelet message names a limit of the pod's own (a container over its
+ephemeral-storage limit, the pod over its containers' total ephemeral-storage
+limit, or an emptyDir volume over its `sizeLimit`): the task outgrew what it
+asked for, so it is a task failure that spends a retry, and the
+`error_message` quotes the kubelet's message. Only an eviction for node
+pressure ("The node was low on resource") is infra. A FAILED record does not win: the agent
+writes one when it catches the SIGTERM of a node shutdown, and that record says
+the task stopped, not why.
+
+The settle is confirmed at once, since the reconciler has just read the
+terminal pod, so it does not wait for the infra confirmation valve. A pod that
+vanished with its node instead is still the pod-lost reaper's `pod_lost`; both
+end on the same infra rail. The infra budget bounds the re-places, so a task
+that keeps landing on reclaimed nodes ends in a terminal infra failure instead
+of looping.
 
 ## Lite: which reapers run
 
