@@ -52,6 +52,15 @@ The response carries the created run, including its `dag_run_id` and `state`:
 {"dag_run_id": "manual__2026-01-01T00:00:00Z", "state": "queued", "conf": {"date": "2026-01-01", "limit": 100}, "...": "..."}
 ```
 
+{{% alert title="A run of a paused DAG waits for the unpause" color="warning" %}}
+A DAG registered for the first time starts paused, as in Airflow. The trigger
+is still accepted (`201`, `state: queued`), but the run stays `queued` until
+the DAG is unpaused: with the switch in the UI, `dexaflow admin dags unpause
+<dag_id>`, or `PATCH /api/v2/dags/{dag_id}` with `{"is_paused": false}`. A
+poll that never sees the run leave `queued` is the sign. See
+[What "paused" means](/concepts/core-concepts/#what-paused-means-and-what-it-does-not-mean).
+{{% /alert %}}
+
 {{% alert title="Declared params are validated and defaulted" color="info" %}}
 If the DAG declares `params=` (Airflow's typed params), the trigger merges your
 `conf` over the declared defaults (your value wins per key) and validates each
