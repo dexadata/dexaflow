@@ -123,6 +123,7 @@
         "image_name": { "type": "string", "description": "Defaults to dag_id." },
         "tag_strategy": {
           "type": "string",
+          "description": "How the image tag is picked. version (default) and custom: the DAG version label (the --dag-version you pass, else the content-derived default). git_sha: the short commit of the project directory. git_tag: the git tag on the project's HEAD. git_sha and git_tag fall back to the version label, with a warning, when there is no commit or no tag. Characters an image tag cannot carry become '-'.",
           "enum": ["version", "git_sha", "git_tag", "custom"],
           "default": "version"
         }

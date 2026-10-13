@@ -67,8 +67,8 @@ the same steps into CI.
 Registry auth, RBAC scope, non-root images, private-registry pulls, and the
 `--dag-version`/`409` gotcha are exactly the errors CI hits first, since a
 runner has none of a laptop's ambient state (no `docker login`, no
-`dexaflow auth login` session, no git history for `--dag-version` to resolve
-against). **[Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/)**
+`dexaflow auth login` session, often a shallow clone with no tags for the
+default version label to start from). **[Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/)**
 has the exact error and fix for each.
 {{% /alert %}}
 
@@ -135,9 +135,10 @@ Two behaviours matter more than the loop itself:
   built. A half-built workspace — some images new, some stale — is invisible
   afterwards.
 
-With no `--dag-version` / `--sha` it derives them the same way `deploy` does —
-`git describe`, and the short commit hash. (`deploy` has no `--sha` flag at all;
-it always derives the sha.)
+With no `--dag-version` / `--sha` it derives them the same way `deploy` does,
+per project: the version label from `git describe` in the project's directory
+plus a hash of that project's content, and the short commit hash of that
+directory. (`deploy` has no `--sha` flag at all; it always derives the sha.)
 
 Using it **as** your CI, in place of per-DAG pipelines, is a deliberate trade:
 one job rebuilds everything on any change, so blast radius and build time both
