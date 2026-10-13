@@ -118,3 +118,17 @@ func suffixes(values map[string]string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Lookup returns the value of the variable named NewPrefix+suffix, else of
+// LegacyPrefix+suffix, and whether either holds a non-empty value. It reads the
+// process environment directly, so it agrees with Mirror without depending on
+// the binary having called it: a CLI command run from a test, or embedded in
+// another program, sees the same answer.
+func Lookup(suffix string) (string, bool) {
+	for _, key := range []string{NewPrefix + suffix, LegacyPrefix + suffix} {
+		if v := os.Getenv(key); v != "" {
+			return v, true
+		}
+	}
+	return "", false
+}
