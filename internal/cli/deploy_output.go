@@ -73,16 +73,23 @@ func (r *deployReport) add(res deployResult) {
 	}
 }
 
-// addFailure records that the deploy of dagID failed with err, once: --all
-// and the DAG's own deploy both report the same failure.
+// addFailure records that the deploy of dagID failed with err, keeping one
+// entry per DAG: --all and the DAG's own deploy both report the same failure,
+// and a --trigger that fails after the register turns the registered entry
+// into a failed one that still names the version.
 func (r *deployReport) addFailure(dagID string, err error) {
 	if r == nil {
 		return
 	}
-	for _, d := range r.DAGs {
-		if d.DagID == dagID && d.Status == deployStatusFailed {
-			return
+	for i := range r.DAGs {
+		if r.DAGs[i].DagID != dagID {
+			continue
 		}
+		if r.DAGs[i].Status != deployStatusFailed {
+			r.DAGs[i].Status = deployStatusFailed
+			r.DAGs[i].Error = err.Error()
+		}
+		return
 	}
 	r.add(deployResult{DagID: dagID, Status: deployStatusFailed, Error: err.Error()})
 }

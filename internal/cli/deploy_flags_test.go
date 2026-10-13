@@ -377,3 +377,31 @@ func TestDeployOutputJSONReportsAFailure(t *testing.T) {
 		t.Errorf("doc = %s", out)
 	}
 }
+
+// TestDeployOutputJSONReportsAFailedTriggerOnce: the version registered, then
+// --trigger failed. The DAG used to appear twice, once registered and once
+// failed; it is one entry, failed, that still names the registered version.
+func TestDeployOutputJSONReportsAFailedTriggerOnce(t *testing.T) {
+	fake := &deployServer{failTrigger: true}
+	_, out, _, _, err := deployTo(t, fake, "--trigger", "--output", "json")
+	if err == nil {
+		t.Fatal("want the deploy to fail on the trigger")
+	}
+	var doc struct {
+		DAGs []struct {
+			DagID   string `json:"dag_id"`
+			Status  string `json:"status"`
+			Version string `json:"version"`
+			Error   string `json:"error"`
+		} `json:"dags"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", jerr, out)
+	}
+	if fake.registers != 1 || fake.triggers != 1 {
+		t.Fatalf("registers=%d triggers=%d, want one of each", fake.registers, fake.triggers)
+	}
+	if len(doc.DAGs) != 1 || doc.DAGs[0].Status != "failed" || doc.DAGs[0].Error == "" || doc.DAGs[0].Version == "" {
+		t.Errorf("doc = %s", out)
+	}
+}

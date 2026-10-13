@@ -33,6 +33,7 @@ type deployServer struct {
 	startDate    string // start_date; "" answers null
 	dagCreated   bool   // dag_created of the register answer
 	ignorePaused bool   // an older server: no is_paused query, no is_paused in the answer
+	failTrigger  bool   // answer the trigger with 500
 	regQueries   []string
 	patches      []string
 }
@@ -76,6 +77,10 @@ func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, `{"dag_id":"etl","is_paused":%v}`, s.paused)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dagRuns"):
 		s.triggers++
+		if s.failTrigger {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	default:
 		w.WriteHeader(http.StatusNotFound)
