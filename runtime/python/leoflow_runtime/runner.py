@@ -16,7 +16,7 @@ from leoflow_runtime.xcom import XCOM_ENV_PREFIX
 # lines from their own print(). They go to stdout (not stderr) on purpose:
 # stderr maps to log level=error in the UI, which would visually scream on
 # every successful run.
-_LIFECYCLE_PREFIX = "[leoflow]"
+_LIFECYCLE_PREFIX = "[dexaflow]"
 
 
 def _lifecycle(msg: str) -> None:
@@ -124,7 +124,7 @@ def run(entrypoint: str) -> None:
     Emits three lifecycle lines so the UI's log panel is informative even when
     the user function is silent: ``loading <entrypoint>``, ``resolved kwargs:
     {...}`` (when any), and ``returned <repr>`` (success) or no extra line on
-    raise (the agent wraps the traceback). All three use ``[leoflow]`` prefix
+    raise (the agent wraps the traceback). All three use ``[dexaflow]`` prefix
     via :func:`_lifecycle` so they are distinguishable from user ``print()``.
     """
     module_name, sep, fn_name = entrypoint.partition(":")

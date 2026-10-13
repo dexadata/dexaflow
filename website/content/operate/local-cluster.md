@@ -197,7 +197,8 @@ pins `dag.json` to the digest the push returned and registers it with the
 control plane. `--trigger` creates a run. A DAG registered for the first time
 starts paused (the chart's `config.dagsArePausedAtCreation` defaults to
 `true`), so the run waits in `queued` and `deploy` prints a note saying so;
-the unpause starts it, and turns on the DAG's `@daily` schedule. See
+the unpause starts it and turns on the DAG's `@daily` schedule, which also
+creates one run for the latest tick (`catchup=False`), so a second run appears. See
 [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 
 The image is built for your machine's architecture, which is also the k3d
