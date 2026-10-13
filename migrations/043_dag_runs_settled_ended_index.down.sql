@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;
