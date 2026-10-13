@@ -5,7 +5,7 @@ weight: 730
 description: "ADR 0073: the CLI resolves a builder in a fixed order (skip, code layer, daemonless dependency layer, remote builder, local daemon), talks to registries through a pure Go client (go-containerregistry, never the Docker SDK), and addresses dependency images by the hash of what they contain."
 ---
 
-**Status:** Proposed
+**Status:** Accepted. Sections 1 and 5 are implemented by #1760; the rest is v0.6 work (section 6).
 **Date:** 2026-10-13
 **Relates:** ADR 0003 (a DAG is a `dag.json` and an image), ADR 0014 (supply chain gates), ADR 0015 (no Docker SDK), ADR 0041 (`deploy`, digest pinning and `--platform`, amended here), ADR 0048 (no user code in the control plane), ADR 0068 (patch content)
 **Issues:** #1706
@@ -48,9 +48,14 @@ image's digest-pinned reference. `deploy` registers that reference; it never
 asks a local image store for it, except for `--skip-build`, which builds
 nothing.
 
-A builder refuses, before the parser runs, a request it cannot satisfy (for
-example several platforms on a single-platform builder), with an error that
-names the platforms and the way out.
+The inputs of a build are validated before anything is parsed, built or sent
+to the control plane: every platform value, whatever its source (section 5).
+What a builder can build is the builder's business. One that can tell in
+advance (a daemonless path that finds a package without a wheel) declines,
+names why, and resolution moves to the next path. The local daemon cannot tell
+in advance, because the same tool builds a platform list or refuses it
+depending on its configuration, so it runs the tool and, when the tool fails,
+keeps its error and adds a hint that says what to change.
 
 Every command that builds prints the path it took and why, for example
 `builder: local-daemon (docker), fallback: no daemonless or remote builder is
@@ -84,7 +89,12 @@ does them in process with **`github.com/google/go-containerregistry`**
 (ggcr), under these rules:
 
 - **CLI only.** It is imported by `internal/build` and reached only from
-  `cmd/dexaflow`. The server, scheduler and agent binaries never link it.
+  `cmd/dexaflow`. The server (which also runs the scheduler role), the agent
+  and the MCP server never link it, nor `internal/build`. A test enforces
+  this from #1760 on, before the dependency exists:
+  `internal/build/deps_test.go` runs `go list -deps` on `./cmd/dexaflow-server`,
+  `./cmd/dexaflow-agent` and `./cmd/dexaflow-mcp` and fails if either import
+  path appears.
 - **Allowed packages:** `pkg/name`, `pkg/authn`, `pkg/v1`, `pkg/v1/remote`,
   `pkg/v1/mutate`, `pkg/v1/tarball`, `pkg/v1/empty`, `pkg/v1/types`. Never
   `pkg/v1/daemon`, which wraps the Docker SDK (ADR 0015), nor
@@ -129,16 +139,55 @@ mutation code described above.
 The dependency image's key is the SHA-256 of a canonical JSON document holding:
 
 - the **resolved** dependency set: every package with its exact version and
-  wheel hashes, from a lock the CLI produces at build time with the target
-  platform tags (`uv pip compile --python-platform ...`), sorted. Unpinned
-  specifiers are resolved first, so the key does not move when an index
-  publishes a new version between two builds of the same lock, and does move
-  when the resolution changes;
+  wheel hashes, sorted. `connectors:` are expanded to their provider packages
+  before resolution, so they enter the key here;
 - the **runtime base image digest**, never its tag;
 - the **platform** (`os/arch[/variant]`), so each platform has its own key;
-- `system_packages` (sorted), the Python version, the package index URLs
-  (never their credentials), and a format version owned by the CLI that is
-  bumped when the layout of the layer changes.
+- the **wheel compatibility of the base image**: its libc family and version
+  (the `manylinux_2_X` or `musllinux_1_X` tags it accepts), the Python
+  implementation, version and ABI (`cp311`, `abi3`). They follow from the base
+  digest, but the resolution depends on them, so they are recorded explicitly
+  and a wrong reading changes the key instead of reusing a wrong image;
+- the **installer** and its version (`uv` or `pip`), and every flag that
+  changes the installed tree (`--only-binary`, `--no-binary`, bytecode
+  compilation, index strategy);
+- the package **index URLs** (never their credentials);
+- **local and VCS dependencies**: a VCS dependency by the commit it resolved
+  to, never a branch name; a local path or file by the hash of its content,
+  read with the same file walk as the version label (section 4, "the code
+  layer");
+- the **image configuration** the dependency image sets: environment,
+  `build.labels`, working directory, user and entrypoint;
+- `system_packages`, sorted. A connector that needs system libraries adds them
+  to `system_packages` when it is expanded, so they enter the key there. A
+  system package takes the build to path 4 or 5, where the apt sources are
+  fixed by the base image digest already in the key;
+- a format version owned by the CLI, bumped when the layout of the layer
+  changes.
+
+**Lock reuse or re-resolution.** When the project ships a lock (`uv.lock`, or
+a requirements file where every line pins a version and a hash), the CLI uses
+it as is and resolves nothing: the key comes from the lock's content, and two
+builds of the same lock always share one dependency image. Without a lock the
+CLI re-resolves the declared specifiers on every build, for the target
+platform (`uv pip compile --python-platform ...`), and the key covers the
+result: a new upstream release that satisfies an unpinned specifier changes
+the key and rebuilds the dependency image, which is what an unpinned
+specifier asks for. Re-resolving costs a metadata request per package that
+uv's local cache does not hold. Its budget is 5 s of the 30 s p50 target for a
+redeploy with unchanged dependencies (#1706); the CLI prints how long the
+resolution took, and the docs tell projects that need a faster or reproducible
+redeploy to commit a lock. `--rebuild` forces a rebuild in both cases.
+
+**The code layer** is built from the same file walk as the version label's
+content hash (`contentHash`): the same `.dockerignore`, `exclude_paths` and
+`include_paths`, and the same symlink rules: a root the build names
+(`dag_source`, an `include_paths` entry, a dbt directory) is followed and must
+resolve inside the project, and a symlink inside a walked directory is kept as
+a link, never followed. The layer and the label
+therefore always cover the same files, and nothing the generated Dockerfile
+would have kept out (credentials, `.git`) can reach the registry through the
+fast path.
 
 The key is the dependency image's tag (`deps-<key prefix>`) in the DAG's own
 repository; the skip path is a manifest HEAD for that tag. The DAG image is
@@ -153,16 +202,23 @@ cache key, not a version.
 The platform comes from `--platform` on `compile`, `build` and `deploy`, then
 `build.platforms` in `dexaflow.yaml`, then the target, then the workspace
 defaults, then `linux/amd64`, and the CLI prints the value with its source.
-Several platforms are built by a builder that can push one image per platform
-under one index (paths 1 to 4, and buildx in path 5). A builder that cannot
-refuses before the parser runs and says to choose one platform; the plain
-local daemon path is such a builder until its buildx support lands.
+Every value is validated as `os/arch[/variant]`, whatever its source, and a
+malformed one is refused, with the source named, before anything is parsed,
+built or sent to the control plane; `dexaflow build` checks every project
+before it builds any. Several platforms are built by a builder that pushes one
+image per platform under one index (paths 1 to 4, and buildx in path 5). The
+local daemon passes the list to the tool unchanged: docker with the containerd
+image store builds and pushes it as a manifest list, and the digest of that
+list is registered. A tool that refuses the list fails the build, and the
+error says how to build one platform, naming `build.platforms` first because
+not every command that builds has `--platform`.
 
 ### 6. Scope of 0.5.4
 
 0.5.4 ships the seam with the local daemon as its only backend (unchanged
 behavior), the builder line in the output, and `--platform` on `compile`,
-`build` and `deploy` with its source printed and the multi-platform refusal.
+`build` and `deploy` with its source printed, the validation of every
+platform value, and the hint on a failed multi-platform build.
 It adds no dependency. Everything else in this record is v0.6 work, in this
 order: the registry client with the digest read from the registry and the
 skip path; the image split with the code layer; the daemonless dependency
