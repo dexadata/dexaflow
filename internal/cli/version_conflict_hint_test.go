@@ -81,7 +81,7 @@ func TestRegisterDeployedDAGExplainsA409(t *testing.T) {
 	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1", labelExplicit)
+	_, err := registerDeployedDAG(context.Background(), io.Discard, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelExplicit})
 	if err == nil || !strings.Contains(err.Error(), "pass a new --dag-version or omit it") {
 		t.Fatalf("deploy register on 409 = %v, want the explicit-label hint", err)
 	}

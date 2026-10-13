@@ -125,19 +125,21 @@ func taskInstanceMaps(tis []queries.TaskInstance) taskMaps {
 }
 
 // ActiveRuns loads every active dag run and projects it into the scheduler's
-// RunState (topology + per-task state), the read side of a scheduler tick.
+// RunState (topology + per-task state), the read side of a scheduler tick. A
+// run of a paused DAG is included and marked Held (#1705).
 func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, error) {
-	runs, err := s.q.ListActiveDagRuns(ctx)
+	rows, err := s.q.ListActiveDagRuns(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing active runs: %w", err)
 	}
-	tisByRun, err := s.taskInstancesByRun(ctx, runs)
+	tisByRun, err := s.taskInstancesByRun(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]scheduler.RunState, 0, len(runs))
+	out := make([]scheduler.RunState, 0, len(rows))
 	s.specs.beginTick()
-	for _, run := range runs {
+	for _, row := range rows {
+		run := row.DagRun
 		// The spec is immutable per dag_version_id (see specCache), so N active
 		// runs sharing a version decode it once, not N times. The cached spec is
 		// shared read-only: copy Tasks before applyDefaultRetries so filling a
@@ -171,6 +173,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			DagVersionID:      uuidToString(run.DagVersionID),
 			TenantID:          uuidToString(run.TenantID),
 			State:             domain.DagRunState(run.State),
+			Held:              row.DagPaused,
 			Tasks:             spec.Tasks,
 			Graph:             graph,
 			States:            ts.states,
@@ -198,13 +201,13 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 // query orders by (dag_run_id, task_id), so each run's slice keeps the task_id
 // order the per-run query returned. A run with no rows (not yet materialized)
 // is simply absent, which taskInstanceMaps reads as an empty run, as before.
-func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.DagRun) (map[pgtype.UUID][]queries.TaskInstance, error) {
+func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.ListActiveDagRunsRow) (map[pgtype.UUID][]queries.TaskInstance, error) {
 	if len(runs) == 0 {
 		return map[pgtype.UUID][]queries.TaskInstance{}, nil
 	}
 	ids := make([]pgtype.UUID, len(runs))
 	for i, run := range runs {
-		ids[i] = run.ID
+		ids[i] = run.DagRun.ID
 	}
 	tis, err := s.q.ListTaskInstancesByRuns(ctx, ids)
 	if err != nil {
@@ -348,11 +351,17 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 // the spec is immutable per dag_version_id, so N active runs sharing a version
 // decode it once and the effective target is derived from the DAG author's
 // min_idle_workers under the operator's clamp/fallback. It implements
-// executor.WarmTargetSource without the executor importing storage.
+// executor.WarmTargetSource without the executor importing storage. A run held
+// by its paused DAG (#1705) keeps a target only while one of its tasks is live,
+// since nothing else of it is dispatched until the unpause.
 func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.WarmTarget, error) {
-	runs, err := s.q.ListActiveDagRuns(ctx)
+	rows, err := s.q.ListActiveDagRuns(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing active runs: %w", err)
+	}
+	runs, err := s.warmRuns(ctx, rows)
+	if err != nil {
+		return nil, err
 	}
 	versions := make([]activeWarmVersion, 0, len(runs))
 	seen := make(map[pgtype.UUID]bool, len(runs))
@@ -377,6 +386,50 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 		})
 	}
 	return warmTargets(versions, s.warmExec, s.warmPolicy), nil
+}
+
+// warmRuns returns the active runs that need warm workers: every run except a
+// queued run of a paused DAG with no live task. Such a run dispatches nothing
+// until the unpause (#1705), but a clear can put a running run back in queued
+// while some of its tasks still run on warm workers, and those keep the
+// target, as does a running run of a paused DAG, which goes on dispatching.
+// The task instances are read only for the waiting runs, so the common case
+// adds no query.
+func (s *SchedulerStore) warmRuns(ctx context.Context, rows []queries.ListActiveDagRunsRow) ([]queries.DagRun, error) {
+	var waiting []queries.ListActiveDagRunsRow
+	for _, row := range rows {
+		if waitsForUnpause(row) {
+			waiting = append(waiting, row)
+		}
+	}
+	tisByRun, err := s.taskInstancesByRun(ctx, waiting)
+	if err != nil {
+		return nil, err
+	}
+	runs := make([]queries.DagRun, 0, len(rows))
+	for _, row := range rows {
+		if waitsForUnpause(row) && !hasLiveTask(tisByRun[row.DagRun.ID]) {
+			continue
+		}
+		runs = append(runs, row.DagRun)
+	}
+	return runs, nil
+}
+
+// waitsForUnpause reports whether the row is a queued run of a paused DAG, the
+// run the scheduler leaves untouched until the unpause.
+func waitsForUnpause(row queries.ListActiveDagRunsRow) bool {
+	return row.DagPaused && row.DagRun.State == queries.DagRunStateQueued
+}
+
+// hasLiveTask reports whether any of the task instances is queued or running.
+func hasLiveTask(tis []queries.TaskInstance) bool {
+	for _, ti := range tis {
+		if ti.State == queries.TaskStateQueued || ti.State == queries.TaskStateRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // MaterializeTasks creates a none-state task instance for each task in the run,

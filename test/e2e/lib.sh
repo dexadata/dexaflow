@@ -27,3 +27,29 @@ k3d_import() {
   printf 'FATAL: k3d image import failed to land images in cluster %q after 3 attempts (the tarball-not-found flake)\n' "$cluster" >&2
   return 1
 }
+
+# unpause_dag unpauses a registered DAG the way an Airflow user does before a
+# manual run: PATCH /api/v2/dags/{dag_id} with {"is_paused": false}. A DAG
+# registered for the first time starts paused (dags_are_paused_at_creation,
+# default true), and a run triggered while its DAG is paused stays queued until
+# the DAG is unpaused, so a script that triggers a run and waits on it calls
+# this first. It prints nothing on stdout (callers run it inside $(...)) and
+# fails unless the server answers with is_paused false.
+#
+# Usage: unpause_dag <api-base-url> <dag_id> [bearer-token]
+unpause_dag() {
+  local api="$1" dag="$2" token="${3:-}" body paused
+  local auth=()
+  [ -n "$token" ] && auth=(-H "Authorization: Bearer $token")
+  body="$(curl -fsS --max-time 30 -X PATCH ${auth[@]+"${auth[@]}"} \
+    -H 'Content-Type: application/json' -d '{"is_paused": false}' \
+    "$api/api/v2/dags/$dag")" || {
+    printf 'unpause_dag: PATCH %s/api/v2/dags/%s failed\n' "$api" "$dag" >&2
+    return 1
+  }
+  paused="$(printf '%s' "$body" | jq -r '.is_paused')"
+  [ "$paused" = "false" ] || {
+    printf 'unpause_dag: %s still reports is_paused=%s after the PATCH\n' "$dag" "$paused" >&2
+    return 1
+  }
+}

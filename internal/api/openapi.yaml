@@ -458,6 +458,10 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       summary: Update DAG (typically pause/unpause)
+      description: >-
+        Sets is_paused. A change is audited as dag.pause or dag.unpause with
+        the acting user; asking for the state the DAG is already in records
+        nothing.
       operationId: updateDag
       tags: [DAGs]
       requestBody:
@@ -523,8 +527,28 @@ paths:
         hash) is a no-op answered with 200 and created false, and leaves the
         current version as it is. The same label with other content is
         refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+
+        Without is_paused, a DAG the register creates starts paused per its
+        is_paused_upon_creation, else the server's dags_are_paused_at_creation,
+        and an existing DAG keeps its state. With is_paused, the DAG ends the
+        register in that state whether it is created, gets a new version or
+        already had this content; a change to an existing DAG is audited as
+        dag.pause or dag.unpause in the same transaction. Pausing is a
+        run-state write: sending is_paused also needs write on dags, and a
+        scoped token needs dexaflow:run as well as dexaflow:deploy, else the
+        register is refused with 403.
       operationId: registerDagVersion
       tags: [DAGs]
+      parameters:
+        - name: is_paused
+          in: query
+          required: false
+          description: >-
+            Sets the DAG's is_paused for this register (true or false). Any
+            other value is refused with 400. Sending it needs write on dags,
+            and a scoped token also needs the dexaflow:run scope (403
+            otherwise).
+          schema: { type: boolean }
       requestBody:
         required: true
         content:
@@ -547,6 +571,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not register, or sent is_paused without write on dags or, with a scoped token, without dexaflow:run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: The version label is registered with other content
           content:
@@ -1369,6 +1398,8 @@ components:
         version: { type: string }
         spec_hash: { type: string }
         created: { type: boolean, description: False when the content was already registered. }
+        dag_created: { type: boolean, description: True when this register created the DAG (its first version); false for a new version of an existing DAG. }
+        is_paused: { type: boolean, description: The DAG's is_paused after the register. }
 
     DagVersionCollection:
       type: object

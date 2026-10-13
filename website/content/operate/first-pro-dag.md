@@ -139,26 +139,32 @@ That one command crossed every boundary:
 `deploy` publishes the artifact. A DAG deployed for the first time starts
 **paused**, as in Airflow: its schedule creates no run until you unpause it
 with the switch in the UI or `dexaflow admin dags unpause first_pro_dag`.
-Add `--trigger` to kick a run immediately (a manual trigger runs even while the
-DAG is paused), or trigger from the Airflow UI. Later deploys keep the DAG
+Add `--trigger` to create a run at once, or trigger from the Airflow UI. While
+the DAG is paused the run waits in `queued`, as in Airflow; it starts as soon
+as you unpause the DAG. Later deploys keep the DAG
 paused or active as you left it. To have new DAGs start active, set
 `is_paused_upon_creation=False` on the DAG or ask the operator to set
 `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false`; see
 [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 {{% /alert %}}
 
-## Step 3: trigger and watch it run
+## Step 3: activate, trigger and watch it run
+
+A DAG deployed for the first time is paused, and a run triggered while it is
+paused waits in `queued` until you unpause it, as in Airflow. `--active`
+unpauses the DAG in the same register, so one command deploys it, starts a run
+and follows it:
 
 ```console
-$ dexaflow deploy --trigger --follow
+$ dexaflow deploy --active --trigger --follow
 …
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
   registered version 1a2b3c4
+next: first_pro_dag is active and has no schedule; it runs only when triggered (`dexaflow runs trigger first_pro_dag`).
   triggered run manual__1717525200
 Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
   https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
-note: first_pro_dag is paused: this manual run starts anyway, but its schedule creates no run until you unpause it: dexaflow admin dags unpause first_pro_dag
   extract  queued
   extract  running
   extract  success  2.9s
@@ -175,8 +181,27 @@ note: first_pro_dag is paused: this manual run starts anyway, but its schedule c
 Run manual__1717525200 succeeded (followed for 21.4s).
 ```
 
-The scheduler pulls your image, runs each task in its own pod, and the Airflow UI
-shows state and logs. That is the whole Pro lifecycle, in one verb.
+The scheduler starts the run, pulls your image, runs each task in its own pod,
+and the Airflow UI shows state and logs. Later deploys leave the DAG active,
+so `--active` is only needed the first time. Setting `is_paused` needs write
+on dags: the built-in deployer role and a deploy-only token cannot pass
+`--active`, so in CI an admin unpauses the DAG once instead
+(`dexaflow admin dags unpause first_pro_dag`).
+
+If you trigger while the DAG is still paused, the command says so and the run
+waits:
+
+```console
+$ dexaflow deploy --trigger --follow
+…
+  triggered run manual__1717525200
+Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
+  https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
+note: first_pro_dag is paused: this run waits in queued until you unpause it: dexaflow admin dags unpause first_pro_dag
+```
+
+Run the unpause from another terminal (or the switch in the UI) and the
+followed run starts.
 
 `--follow` prints each task state change and the logs of each attempt as it
 finishes, with the link to the run in the UI, and exits with the result of the
@@ -192,10 +217,11 @@ run, so a script or a CI job can rely on it:
 
 Ctrl-C and `--timeout` only stop following: the run keeps going, and
 `dexaflow runs status first_pro_dag --run <run_id>` shows it later. A run that
-stays queued for two minutes gets a note saying no task has started and where
-to look. `dexaflow runs trigger <dag_id> --follow` does the same for a run you
-start without deploying, and `dexaflow runs logs <dag_id>` prints the logs of
-every task of the latest run.
+stays queued for two minutes gets a note: the pause when the DAG is paused,
+otherwise that no task has started and where to look. `dexaflow runs trigger
+<dag_id> --follow` and `dexaflow deploy --trigger --follow` follow a run the
+same way, and `dexaflow runs logs <dag_id>` prints the logs of every task of
+the latest run.
 
 ## When it doesn't work
 

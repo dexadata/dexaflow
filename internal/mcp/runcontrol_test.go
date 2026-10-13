@@ -175,6 +175,9 @@ type controlPlane struct {
 	calls  []cpCall
 	dryRun []string
 	dag    string
+	// queued is the DAG's number of runs in queued, the total_entries the run
+	// list answers for state=queued.
+	queued int
 }
 
 func (cp *controlPlane) serve(t *testing.T) *httptest.Server {
@@ -196,6 +199,12 @@ func (cp *controlPlane) serve(t *testing.T) *httptest.Server {
 			_, _ = io.WriteString(w, `{"dag_id":"etl","dag_run_id":"manual__1","state":"queued"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/dags/etl":
 			_, _ = io.WriteString(w, cp.dag)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/dags/etl/dagRuns":
+			if got := r.URL.Query()["state"]; len(got) != 1 || got[0] != "queued" {
+				t.Errorf("run list asked for state %v, want queued", got)
+			}
+			b, _ := json.Marshal(map[string]any{"dag_runs": []any{}, "total_entries": cp.queued})
+			_, _ = w.Write(b)
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v2/dags/etl":
 			paused, _ := c.Body["is_paused"].(bool)
 			b, _ := json.Marshal(map[string]any{"dag_id": "etl", "is_paused": paused})
@@ -451,6 +460,58 @@ func TestUnpauseApplyRefusedWhenTheDagChanged(t *testing.T) {
 				t.Error("a refused apply must not unpause")
 			}
 		})
+	}
+}
+
+// TestUnpauseWithQueuedRunsPlans: runs triggered or cleared while the DAG was
+// paused wait in queued and all start on the unpause, so even an unscheduled
+// DAG gets a plan, and its summary says how many runs will start.
+func TestUnpauseWithQueuedRunsPlans(t *testing.T) {
+	for name, dag := range map[string]string{
+		"unscheduled": `{"dag_id":"etl","is_paused":true}`,
+		"scheduled":   scheduledDag,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cp := &controlPlane{dag: dag, queued: 3}
+			h := rcHandlers(t, cp, clock())
+
+			_, plan, err := h.unpauseDag(context.Background(), callAs(anaToken), dagInput{DagID: "etl"})
+			if err != nil {
+				t.Fatalf("unpauseDag: %v", err)
+			}
+			if plan.Done || plan.PlanID == "" || !strings.Contains(plan.Summary, "3 queued runs will start") {
+				t.Fatalf("output = %+v, want a plan saying 3 queued runs will start", plan)
+			}
+			if cp.count(http.MethodPatch, "/api/v2/dags/etl") != 0 {
+				t.Fatal("planning must not unpause")
+			}
+			if _, out, err := h.applyPlan(context.Background(), callAs(anaToken), applyPlanInput{PlanID: plan.PlanID}); err != nil || !out.Done {
+				t.Fatalf("applyPlan = %+v, %v", out, err)
+			}
+			if cp.count(http.MethodPatch, "/api/v2/dags/etl") != 1 {
+				t.Error("apply must unpause")
+			}
+		})
+	}
+}
+
+// TestUnpauseApplyRefusedWhenMoreRunsQueued: more runs waiting than the plan
+// showed would start unseen, so apply asks for a new plan.
+func TestUnpauseApplyRefusedWhenMoreRunsQueued(t *testing.T) {
+	cp := &controlPlane{dag: `{"dag_id":"etl","is_paused":true}`, queued: 1}
+	h := rcHandlers(t, cp, clock())
+	_, plan, err := h.unpauseDag(context.Background(), callAs(anaToken), dagInput{DagID: "etl"})
+	if err != nil || plan.PlanID == "" {
+		t.Fatalf("unpauseDag = %+v, %v", plan, err)
+	}
+	cp.mu.Lock()
+	cp.queued = 2
+	cp.mu.Unlock()
+	if _, _, err := h.applyPlan(context.Background(), callAs(anaToken), applyPlanInput{PlanID: plan.PlanID}); err == nil {
+		t.Error("apply succeeded with more queued runs than the plan showed")
+	}
+	if cp.count(http.MethodPatch, "/api/v2/dags/etl") != 0 {
+		t.Error("a refused apply must not unpause")
 	}
 }
 

@@ -104,6 +104,12 @@ control plane a command calls is, in order:
    workspace's `default_target`, then `current_target` in your config file;
 5. `server_url` in your config file, then `http://localhost:8080`.
 
+`dexaflow deploy` does not take that last default: with no server set by any
+of the steps above it stops before building and says how to set one, unless
+the machine is set up for Lite (`dexaflow setup`), where the local server is
+the expected one. Pass `--server http://localhost:8080` to deploy to a local
+server on purpose.
+
 A name that matches no target is an error that lists the known ones; the
 command never falls back to another server silently. `dexaflow auth login`
 prints the server it signs in to, and what chose it, before it reads a

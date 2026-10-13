@@ -180,9 +180,11 @@ type Querier interface {
 	// LockDagByDagID and rewrites the metadata only when a new version becomes
 	// current (UpdateDagMetadata). A concurrent first insert of the same dag_id
 	// waits on the unique index until the other transaction ends.
-	// is_paused is set only here, on creation (dags_are_paused_at_creation or the
-	// spec's is_paused_upon_creation, #1705): a redeploy never changes it.
-	EnsureDag(ctx context.Context, arg EnsureDagParams) error
+	// is_paused is set here, on creation (dags_are_paused_at_creation or the
+	// spec's is_paused_upon_creation, #1705): a redeploy never changes it, unless
+	// the register asks for a state (is_paused), which SetDagPaused then applies.
+	// The row count tells the register whether it created the DAG (1) or found it (0).
+	EnsureDag(ctx context.Context, arg EnsureDagParams) (int64, error)
 	// The subset of the given conn_ids that exist for the tenant. Used to reject a
 	// DAG that declares an unknown connection at registration (ADR 0055 D6); a name
 	// absent from the result does not exist.
@@ -337,7 +339,19 @@ type Querier interface {
 	// The tenant's unrevoked tokens, newest first; owner_id NULL lists every
 	// owner's. Never selects token_hash.
 	ListAPITokens(ctx context.Context, arg ListAPITokensParams) ([]ListAPITokensRow, error)
-	ListActiveDagRuns(ctx context.Context) ([]DagRun, error)
+	// The runs the scheduler reads on a tick, and the warm-pool reconcile reads:
+	// every queued and running run, each with dag_paused, the is_paused of its DAG.
+	// No run is filtered out. The scheduler leaves a queued run of a paused DAG
+	// waiting (not started, nothing materialized or dispatched) until the DAG is
+	// unpaused, whoever created it (a manual trigger, a clear), as Airflow 3 does
+	// when it moves queued runs to running (#1705); a running run of a paused DAG
+	// advances so the tasks it started finish. The waiting run stays in the result
+	// because a clear on a running run puts it back in queued while other tasks of
+	// it still run, and those tasks must keep counting against max_active_runs,
+	// max_active_tasks and the pool caps. The scan stays on idx_dag_runs_state;
+	// dag_paused is one primary-key probe of dags per active run, which keeps the
+	// cost proportional to the active runs, not to the number of DAGs.
+	ListActiveDagRuns(ctx context.Context) ([]ListActiveDagRunsRow, error)
 	// run_id is the dag_run's UUID (StagingClaimName uses it), so join on dag_runs.id,
 	// which is globally unique. run_state is NULL only when the run row is truly gone.
 	// The join compares uuids so it probes dag_runs_pkey; casting dag_runs.id to text
