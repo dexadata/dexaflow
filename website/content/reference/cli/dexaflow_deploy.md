@@ -26,6 +26,7 @@ dexaflow deploy [path | dag_id] [flags]
       --output string        output format: text, or json for one JSON document on stdout (human lines go to stderr) (default "text")
       --paused               leave the DAG paused after this deploy, new or not (default: a new DAG follows is_paused_upon_creation, else the server's dags_are_paused_at_creation; a redeploy keeps is_paused)
       --plan                 say per DAG what would be built, pushed and registered, and why, without doing any of it
+      --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
       --server string        control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py

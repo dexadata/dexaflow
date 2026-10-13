@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -85,6 +86,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("paused", "active")
 	cmd.Flags().BoolVar(&o.plan, "plan", false, "say per DAG what would be built, pushed and registered, and why, without doing any of it")
 	cmd.Flags().StringVar(&o.output, "output", outputText, "output format: text, or json for one JSON document on stdout (human lines go to stderr)")
+	addPlatformFlag(cmd)
 	return cmd
 }
 
@@ -520,6 +522,7 @@ func (d *deployRun) run() error {
 		origin = labelExplicit
 	}
 	output := filepath.Join(d.dir, "dag.json")
+	var built build.Result
 	co := compileOptions{
 		output:     output,
 		builder:    d.o.builder,
@@ -527,6 +530,9 @@ func (d *deployRun) run() error {
 		dagVersion: d.o.dagVersion,
 		build:      !d.o.skipBuild,
 		push:       !d.o.skipBuild,
+		// printDeploySettings showed the platforms; the build pins its push.
+		settingsShown: true,
+		built:         &built,
 	}
 	// Resolved here rather than inside runCompile because the digest lookup
 	// below needs the same reference; runCompile then takes both as given.
@@ -551,7 +557,7 @@ func (d *deployRun) run() error {
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
 	}
-	digestRef, derr := imageDigest(d.cmd, d.o.builder, image)
+	digestRef, derr := deployedDigest(d.cmd, d.o.builder, image, built)
 	if derr != nil {
 		return derr
 	}

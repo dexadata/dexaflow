@@ -151,7 +151,9 @@ that is set, so all three derive the same image:
 The image name defaults to the `dag_id` (lowercased), and `deploy` prints the
 registry it uses and where it came from before it builds. `build.platforms`
 and `base_image` follow the same idea: the project's own value, then the
-target's, then the workspace defaults. Lite applies the workspace defaults
+target's, then the workspace defaults, and `--platform` on `compile`, `build`
+and `deploy` wins over all of them for the platform
+([Builders](/operate/builders/#choosing-the-platform)). Lite applies the workspace defaults
 but never a target's. With a target, the workspace is the one around the
 current folder (the one the target came from), and its defaults apply only to
 projects inside it.

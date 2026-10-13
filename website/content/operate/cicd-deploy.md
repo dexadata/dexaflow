@@ -27,8 +27,10 @@ dexaflow deploy --yes                                  # compile → build → p
 ```
 
 `dexaflow deploy` is the [pipeline-less promotion](/project/adrs/0041-leoflow-deploy-pipelineless/):
-it builds for the cluster's architecture (`build.platforms` in `dexaflow.yaml`,
-`linux/amd64` when unset), pins the image by digest, and registers the artifact.
+it builds for the cluster's architecture (`--platform`, else `build.platforms`
+in `dexaflow.yaml`, `linux/amd64` when neither is set) with the first
+[builder](/operate/builders/) that applies, pins the image by digest, and
+registers the artifact.
 `--yes` skips the confirmation prompt (use it in automation). **It is the
 recommended command in CI too**, and the recipes below use it.
 
