@@ -1248,17 +1248,9 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 // DAG exists, so a redeploy never pauses or unpauses it.
 func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, specHash string, specJSON []byte, paused bool) (bool, error) {
 	meta := dagMetadataOf(spec)
-	if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
-		TenantID: tid, DagID: spec.DagID,
-		Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
-		Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
-		MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup, IsPaused: paused,
-	}); err != nil {
-		return false, fmt.Errorf("creating dag: %w", err)
-	}
-	dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: spec.DagID})
+	dag, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, paused)
 	if err != nil {
-		return false, fmt.Errorf("locking dag: %w", err)
+		return false, err
 	}
 	if _, verr := qtx.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
 		return false, nil
@@ -1310,6 +1302,33 @@ func (r *Repository) pausedOnCreation(spec domain.DAGSpec) bool {
 		return *spec.IsPausedUponCreation
 	}
 	return r.pausedAtCreation
+}
+
+// ensureAndLockDag creates the DAG's row when it is missing and locks it. A
+// DeleteDag that commits between the two statements leaves nothing to lock;
+// the pair is then tried once more, which creates the DAG again. A DAG that is
+// gone a second time is reported as a conflict for the caller to retry.
+// paused is is_paused for a DAG this call creates.
+func ensureAndLockDag(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, meta queries.UpdateDagMetadataParams, paused bool) (queries.Dag, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
+			TenantID: tid, DagID: dagID,
+			Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
+			Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
+			MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup, IsPaused: paused,
+		}); err != nil {
+			return queries.Dag{}, fmt.Errorf("creating dag: %w", err)
+		}
+		dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
+		if err == nil {
+			return dag, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return queries.Dag{}, fmt.Errorf("locking dag: %w", err)
+		}
+	}
+	return queries.Dag{}, domain.Safef(domain.ErrConflict,
+		"dag %q was deleted while this version was being registered; push it again", dagID)
 }
 
 // dagMetadataOf maps a spec to the dags-row columns it owns while it is the

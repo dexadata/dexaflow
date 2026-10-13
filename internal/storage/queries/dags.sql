@@ -14,8 +14,10 @@ ON CONFLICT (tenant_id, dag_id) DO NOTHING;
 -- name: LockDagByDagID :one
 -- Locks the DAG's row for the rest of the transaction, so registers of the same
 -- DAG are serialized: the spec-hash check of one register sees the version the
--- previous one committed.
-SELECT * FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR UPDATE;
+-- previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
+-- another register, but not the KEY SHARE lock every dag_runs insert takes on
+-- its DAG, so run creation is not blocked while a version registers.
+SELECT * FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR NO KEY UPDATE;
 
 -- name: UpdateDagMetadata :exec
 -- Applies the spec of the version that is becoming current to the dags row, in
