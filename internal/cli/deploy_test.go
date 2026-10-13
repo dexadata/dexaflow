@@ -166,6 +166,7 @@ func TestResolveProjectDirFindsByDagID(t *testing.T) {
 }
 
 func TestDeployUnknownDagIDFails(t *testing.T) {
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
 	ws := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte("workspace: "+ws+"\n"), 0o600); err != nil {
@@ -177,7 +178,8 @@ func TestDeployUnknownDagIDFails(t *testing.T) {
 }
 
 func TestDeployAllEmptyWorkspaceFails(t *testing.T) {
-	ws := t.TempDir() // empty: no DAG projects
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
+	ws := t.TempDir()    // empty: no DAG projects
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte("workspace: "+ws+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -188,6 +190,7 @@ func TestDeployAllEmptyWorkspaceFails(t *testing.T) {
 }
 
 func TestDeployAllRejectsExtraArg(t *testing.T) {
+	t.Chdir(t.TempDir())
 	if _, _, err := run(t, "deploy", "somedir", "--all"); err == nil {
 		t.Error("expected --all combined with a path/dag_id to be rejected")
 	}
