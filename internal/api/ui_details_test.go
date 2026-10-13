@@ -208,3 +208,35 @@ func TestDagDetailsParamsReadErrorFallsBack(t *testing.T) {
 		t.Errorf("spec-read error should fall back to {}, got %s", got)
 	}
 }
+
+// TestDagDetailsIsPausedUponCreation: details reports the DAG's own
+// is_paused_upon_creation from its current spec, and null when the DAG does
+// not set it (or the spec cannot be read), as Airflow does (#1705).
+func TestDagDetailsIsPausedUponCreation(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name   string
+		reader *fakeSpecReader
+		want   string
+	}{
+		{"set true", &fakeSpecReader{spec: domain.DAGSpec{DagID: "etl", IsPausedUponCreation: &yes}}, "true"},
+		{"set false", &fakeSpecReader{spec: domain.DAGSpec{DagID: "etl", IsPausedUponCreation: &no}}, "false"},
+		{"unset", &fakeSpecReader{spec: domain.DAGSpec{DagID: "etl"}}, "null"},
+		{"read error", &fakeSpecReader{err: errors.New("boom")}, "null"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := uiDagsServerWithSpecs([]domain.DAG{{DagID: "etl"}}, &fakeLatestRuns{}, tc.reader)
+			rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/details", "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("details = %d (%s)", rec.Code, rec.Body.String())
+			}
+			var d map[string]json.RawMessage
+			if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+				t.Fatal(err)
+			}
+			if got := string(d["is_paused_upon_creation"]); got != tc.want {
+				t.Errorf("is_paused_upon_creation = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
