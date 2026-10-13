@@ -1187,6 +1187,12 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		if cfg.Execution.WarmPoolsEnabled {
 			agentSrv.SetLeaderCheck(sched.IsLeading)
 		}
+		// scheduler.eager_promotion: a terminal report wakes this replica's
+		// scheduler for an early tick. Only a leader acts on it; a woken follower
+		// runs its usual empty tick.
+		if cfg.Scheduler.EagerPromotion {
+			agentSrv.SetSettledHook(sched.Wake)
+		}
 		// On shutdown, drain the buffered dispatch pool (if any) so in-flight
 		// dispatches settle (success or failed via the sink) instead of leaking
 		// workers and leaving TIs stuck `queued` (#133). nil in Lite/passthrough.
@@ -2323,6 +2329,12 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 	}
 	useExchange := cfg.Auth.AgentTokenTransport == config.AgentTokenTransportExchange
 	return func(t executor.WarmTarget) (executor.WarmPodSpec, error) {
+		// ActiveWarmTargets already drops a version whose image the execution
+		// allowlist refuses (issue #537 C2); refusing here too means no warm pod
+		// is built for such an image whatever the target source.
+		if err := defaults.ExecutionPolicy.CheckImage(t.Image); err != nil {
+			return executor.WarmPodSpec{}, err
+		}
 		spec := executor.WarmPodSpec{
 			DagVersionID:        t.DagVersionID,
 			Image:               t.Image,
@@ -2443,6 +2455,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		}
 	} else if cfg.Server.PoolsReadOnly {
 		logger.Warn("server.pools_read_only has no effect: pools are a Pro edition feature")
+	}
+	// Off by default (ADR 0062): see config.SchedulerSection.EagerPromotion.
+	if cfg.Scheduler.EagerPromotion {
+		sched.EnableEagerPromotion()
+		logger.Info("scheduler eager promotion enabled: same-tick promotion and early ticks on task completion")
 	}
 	// Native on-failure alerting (#424): the scheduler fires Slack/webhook rules
 	// declared in dexaflow.yaml when a run finalizes failed, resolving each rule's
@@ -2904,7 +2921,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// them off it is never constructed, so no warm pod is ever created and dispatch
 	// stays byte-for-byte today's dedicated pod-per-task.
 	if cfg.Execution.WarmPoolsEnabled {
-		store.SetWarmExecution(cfg.Execution)
+		store.SetWarmExecution(cfg.Execution, executionPolicy(cfg.Executor.Defaults))
 		// The busy set (running attempts durably bound to a warm worker) makes the
 		// reconciler busy-aware (ADR 0058 N1d-b): it scales the IDLE buffer and never
 		// deletes a worker with an in-flight attempt. store implements it.

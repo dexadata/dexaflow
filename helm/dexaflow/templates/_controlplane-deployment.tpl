@@ -532,6 +532,14 @@ spec:
             - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES
               value: {{ join "," .priorityClasses | quote }}
             {{- end }}
+            {{- if .serviceAccounts }}
+            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_SERVICE_ACCOUNTS
+              value: {{ join "," .serviceAccounts | quote }}
+            {{- end }}
+            {{- if .images }}
+            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES
+              value: {{ join "," .images | quote }}
+            {{- end }}
             {{- end }}
             # Agent-credential posture (ADR 0055) and warm worker pools (ADR 0058).
             # These three are always stamped, at their defaults too, for the same

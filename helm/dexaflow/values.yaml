@@ -146,6 +146,10 @@ executor:
       fields: ["*"]
       # -- When not empty, the only `priority_class_name` values a DAG may set. Empty (default) allows any.
       priorityClasses: []
+      # -- When not empty, the only `execution.service_account` values a DAG may name. A task that names none runs as the task ServiceAccount (`taskServiceAccount`), which is not checked. Empty (default) allows any.
+      serviceAccounts: []
+      # -- When not empty, the only DAG images that may run: exact references (`busybox:1.36`) or prefixes ending in `*` (`registry.example.com/team-a/*`). Empty (default) allows any.
+      images: []
   # Client-side rate limits of the control plane's Kubernetes clients. 0 (the
   # default) renders nothing and keeps client-go's QPS 5 / burst 10 on one client
   # shared by dispatch and maintenance. A large fan out is paced by `qps`: at 5,

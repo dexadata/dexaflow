@@ -26,6 +26,10 @@ type SchedulerStore struct {
 	// to resolve each active dag_version's effective warm target (ADR 0058 N1b2b).
 	// Zero value = warm pools off, so ActiveWarmTargets reports every target as 0.
 	warmExec config.ExecutionSection
+	// warmPolicy is the operator's execution allowlist (issue #537 C2).
+	// ActiveWarmTargets drops a version whose image it refuses, so no warm pod
+	// ever starts on an image dispatch would refuse. Nil allows every image.
+	warmPolicy *domain.ExecutionPolicy
 	// provisionalInfraMarks makes the reapers' infra marks provisional
 	// (infra_confirmed_at NULL) for the reconciler to confirm (ADR 0052
 	// amendment, part 2). Set only where a reconciler runs (Kubernetes); false
@@ -219,10 +223,14 @@ func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.
 }
 
 // SetWarmExecution records the operator's warm-pool config so ActiveWarmTargets
-// can resolve each active dag_version's effective warm target. main.go calls it
-// only when warm pools are enabled; left unset, warm pools read as off (every
-// target 0).
-func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection) { s.warmExec = exec }
+// can resolve each active dag_version's effective warm target, and the
+// execution allowlist so it skips a version whose image the allowlist refuses
+// (nil allows every image). main.go calls it only when warm pools are enabled;
+// left unset, warm pools read as off (every target 0).
+func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection, policy *domain.ExecutionPolicy) {
+	s.warmExec = exec
+	s.warmPolicy = policy
+}
 
 // SetProvisionalInfraMarks makes every reaper infra mark provisional until the
 // pod reconciler confirms it (ADR 0052 amendment, part 2). main.go calls it
@@ -294,9 +302,10 @@ type activeWarmVersion struct {
 // warmTargets dedupes the active versions (many runs share one immutable
 // dag_version) and resolves each to its effective warm target through the
 // operator's clamp/fallback/flag gate (config.ExecutionSection.EffectiveMinIdle).
-// The result is the executor.WarmTargetSource contract: one entry per distinct
-// active dag_version.
-func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection) []executor.WarmTarget {
+// A version whose image the operator's execution allowlist refuses gets no
+// target (issue #537 C2). The result is the executor.WarmTargetSource contract:
+// one entry per distinct active dag_version.
+func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, policy *domain.ExecutionPolicy) []executor.WarmTarget {
 	seen := make(map[string]bool, len(versions))
 	out := make([]executor.WarmTarget, 0, len(versions))
 	for _, v := range versions {
@@ -310,6 +319,11 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection) []e
 		}
 		if domain.SourceModeApplies(exec.SourceMode.RuntimeImage(), v.image, v.hasSource) {
 			// ADR 0067 §3: source-mode versions always run on cold pods.
+			continue
+		}
+		if policy.CheckImage(v.image) != nil {
+			// Issue #537 C2: dispatch refuses this version's tasks, and a warm
+			// pod would run the disallowed image before any task reached it.
 			continue
 		}
 		out = append(out, executor.WarmTarget{
@@ -362,7 +376,7 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			hasSource: spec.Source != "",
 		})
 	}
-	return warmTargets(versions, s.warmExec), nil
+	return warmTargets(versions, s.warmExec, s.warmPolicy), nil
 }
 
 // MaterializeTasks creates a none-state task instance for each task in the run,

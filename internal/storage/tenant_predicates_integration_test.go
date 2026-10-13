@@ -23,6 +23,7 @@ import (
 // task instance (on its third execution) and one XCom value, plus the id of a
 // second, empty tenant that the cross-tenant reads are made as.
 type tenantPredicateFixture struct {
+	pg       *storage.Postgres
 	q        *queries.Queries
 	owner    pgtype.UUID // the tenant that owns the run
 	other    pgtype.UUID // a second tenant with no runs
@@ -54,6 +55,7 @@ func newTenantPredicateFixture(t *testing.T) (tenantPredicateFixture, *storage.R
 		t.Fatalf("inserting tenant %s: %v", otherName, err)
 	}
 	f := tenantPredicateFixture{
+		pg:       pg,
 		q:        pg.Queries,
 		runID:    "r1",
 		taskID:   "extract",
