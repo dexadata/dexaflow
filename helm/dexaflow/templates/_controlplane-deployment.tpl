@@ -76,6 +76,15 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "leoflow.roleServiceAccountName" (dict "ctx" .ctx "role" .role) }}
+      {{- if eq .role "api" }}
+      # #537: the api role builds no Kubernetes client (no executor, no pod
+      # informer, no token exchange) and its ServiceAccount is bound to no Role,
+      # so the token would only be something to steal. The "all" and scheduler
+      # roles create task pods and keep it. Cloud identity (IRSA, EKS Pod
+      # Identity, GKE Workload Identity) uses its own projected token or the
+      # metadata server, not this mount.
+      automountServiceAccountToken: {{ .ctx.Values.split.api.automountServiceAccountToken }}
+      {{- end }}
       {{- with .ctx.Values.terminationGracePeriodSeconds }}
       # A voluntary eviction (drain, consolidation, upgrade) sends SIGTERM and
       # waits this long before SIGKILL. What the grace buys is headroom for the
@@ -247,6 +256,18 @@ spec:
             # Pairs with the cpu default above; either one alone is Burstable.
             - name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
               value: {{ .ctx.Values.executor.defaults.resources.memory | quote }}
+            {{- end }}
+            {{- with .ctx.Values.executor.defaults.limits }}
+            {{- if .cpu }}
+            # Default task CPU limit (#537), filled where a task's resources set
+            # none. Omitted when empty, which keeps the server default (no limit).
+            - name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
+              value: {{ .cpu | quote }}
+            {{- end }}
+            {{- if .memory }}
+            - name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
+              value: {{ .memory | quote }}
+            {{- end }}
             {{- end }}
             {{- with .ctx.Values.executor.unit }}
             {{- if or .cpu .memory }}

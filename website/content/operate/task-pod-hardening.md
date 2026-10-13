@@ -106,7 +106,8 @@ hybrid DAG whose dbt models materialized normally.
 ## Memory limits, and what happens without one
 
 A task pod gets the CPU, memory and ephemeral-storage `requests` and `limits` the
-DAG author declares under `resources`. Dexaflow adds none of its own.
+DAG author declares under `resources`. Unless the operator configures a default
+(below), Dexaflow adds none of its own.
 
 **If nobody declares a memory limit, there is none.** The pod inherits whatever
 the namespace imposes, and if the namespace imposes nothing the task can grow
@@ -119,6 +120,45 @@ is the operator-side answer; a declared limit is the author-side one.
 A pod with `requests` but no `limits` lands in QoS class `Burstable`. It runs
 fine until the node tightens and then becomes an eviction candidate, which means
 the failure shows up under load and not in testing.
+
+### Default task limits
+
+An operator can close that gap from the chart without touching any DAG:
+
+```yaml
+executor:
+  defaults:
+    limits:
+      cpu: "2"
+      memory: 4Gi
+```
+
+(`DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU` and `_MEMORY` outside Helm.) Each value
+fills the limit of its dimension on every task pod whose resources leave it
+empty, including a task that declares `requests` only. The rules:
+
+- A limit the DAG declares is never changed.
+- A request above the default raises the filled limit to that request, because
+  the apiserver rejects a request above its limit.
+- Where the request is empty too, Kubernetes sets it to the limit, exactly as a
+  `LimitRange` default does. A task that declares nothing therefore also
+  *requests* the default limit, so size it for what the nodes can schedule, or
+  pair it with `executor.defaults.resources` to give those tasks a smaller,
+  Guaranteed size first.
+- A task that declares only some requests gets the default limit in the other
+  dimension, and Kubernetes then sets that dimension's request to the limit too.
+  With `limits.memory: 4Gi`, a task declaring only `requests.cpu: 100m` also
+  requests 4Gi of memory, and may stay Pending on nodes with less free memory.
+  Declare the memory request (or limit) on such tasks to keep them small.
+- Either value may be set alone. Both empty (the default) adds no limit.
+- With warm pools on (`execution.warmPoolsEnabled`) and no `executor.unit`, the
+  same limits size every warm worker pod, so a task placed on a warm worker runs
+  under the same cap. Each warm pod therefore also requests the default limits
+  while it waits idle. A task whose own limit would be larger (a declared limit,
+  or a request, above the default) is not placed on a warm worker and takes a
+  dedicated pod, where it keeps that limit.
+- With `executor.unit` set, the unit already gives every task and every warm pod
+  both limits, and these values are not used.
 
 ### Reading an out-of-memory failure
 
