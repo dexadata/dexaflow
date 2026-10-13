@@ -78,3 +78,4 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0068: Patch content in 0.x is gated by safety, not by kind](/project/adrs/0068-patch-content-gated-by-safety/)
 - [ADR 0069: Contributor context is public and tool-agnostic; tool files stay local](/project/adrs/0069-contributor-context/)
 - [ADR 0070: Secrets reach a process by environment reference, never rendered into a command string](/project/adrs/0070-secrets-by-env-reference/)
+- [ADR 0071: Releases stage, verify, then promote; only a promote job moves public pointers](/project/adrs/0071-stage-verify-promote-releases/)

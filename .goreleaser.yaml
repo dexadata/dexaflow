@@ -226,6 +226,12 @@ release:
   # Pre-alpha tags (v0.x.y-alpha.N) are pre-releases; GoReleaser auto-detects the
   # prerelease suffix, but make it explicit.
   prerelease: auto
+  # Public but never Latest at publish time (ADR 0071). The smokes need the
+  # assets on the public download URL, so the release cannot be a draft, but
+  # install.sh without a pinned version follows /releases/latest, which must
+  # not move before the gate. The `promote` job in release.yaml marks a GA
+  # Latest once every gate is green, and only for the newest minor.
+  make_latest: false
   name_template: "{{ .Tag }}"
   # The body is not set here. GoReleaser creates the release, and a workflow
   # step then writes the body with `gh release edit` from
