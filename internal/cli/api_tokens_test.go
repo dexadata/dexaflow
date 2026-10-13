@@ -200,3 +200,21 @@ func TestTokensListAndRevoke(t *testing.T) {
 		t.Error("revoking an unknown token succeeded")
 	}
 }
+
+// TestTokenFlagHelpPointsAwayFromArgv: the commands that manage API tokens
+// steer a session JWT to DEXAFLOW_TOKEN or the saved session, since a value in
+// argv is visible in ps and shell history.
+func TestTokenFlagHelpPointsAwayFromArgv(t *testing.T) {
+	for _, args := range [][]string{{"auth", "create-token"}, {"auth", "tokens", "list"}, {"auth", "tokens", "revoke"}} {
+		cmd, _, err := NewRootCommand().Find(args)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		usage := cmd.Flags().Lookup("token").Usage
+		for _, want := range []string{"DEXAFLOW_TOKEN", "saved session", "shell history"} {
+			if !strings.Contains(usage, want) {
+				t.Errorf("%v --token help %q does not mention %q", args, usage, want)
+			}
+		}
+	}
+}

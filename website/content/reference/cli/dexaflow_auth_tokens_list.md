@@ -16,9 +16,9 @@ dexaflow auth tokens list [flags]
 ### Options
 
 ```
-  -h, --help            help for list
-      --server string   control plane base URL, over --target (default: the target in use, then server_url from the config file)
-      --token string    session JWT of a signed-in user (default: DEXAFLOW_TOKEN, then the saved session); an API token cannot manage tokens
+  -h, --help                        help for list
+      --server string               control plane base URL, over --target (default: the target in use, then server_url from the config file)
+      --token dexaflow auth login   session JWT of a signed-in user; prefer leaving it out: the command reads DEXAFLOW_TOKEN, then the saved session from dexaflow auth login, and a value passed here shows in ps and shell history. An API token cannot manage tokens
 ```
 
 ### Options inherited from parent commands

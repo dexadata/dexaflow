@@ -227,5 +227,11 @@ func newTokensRevokeCommand() *cobra.Command {
 // share. Managing tokens needs a signed-in user: an API token is refused.
 func addTokenServerFlags(cmd *cobra.Command, serverURL, token *string) {
 	cmd.Flags().StringVar(serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
-	cmd.Flags().StringVar(token, "token", "", "session JWT of a signed-in user (default: DEXAFLOW_TOKEN, then the saved session); an API token cannot manage tokens")
+	cmd.Flags().StringVar(token, "token", "", tokenFlagHelp)
 }
+
+// tokenFlagHelp describes --token on the token commands. Managing tokens needs
+// a signed-in user's session JWT, and argv is the wrong place for it.
+const tokenFlagHelp = "session JWT of a signed-in user; prefer leaving it out: the command reads DEXAFLOW_TOKEN, " +
+	"then the saved session from `dexaflow auth login`, and a value passed here shows in ps and shell history. " +
+	"An API token cannot manage tokens"

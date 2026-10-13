@@ -147,7 +147,7 @@ func newCreateTokenCommand() *cobra.Command {
 	cmd.Flags().StringVar(&scope, "scope", "", "create a long-lived API token with this scope instead of a session JWT: deploy (register versions, set the current version, read DAGs) or read")
 	cmd.Flags().StringVar(&name, "name", "", "name of the API token, unique among your live tokens (with --scope)")
 	cmd.Flags().StringVar(&ttl, "ttl", "", "lifetime of the API token, in days (90d) or as a duration (12h), from 1h to 365d (with --scope; default 90d)")
-	cmd.Flags().StringVar(&token, "token", "", "session JWT that creates the API token when no --username is given (with --scope; default: DEXAFLOW_TOKEN, then the saved session)")
+	cmd.Flags().StringVar(&token, "token", "", tokenFlagHelp)
 	return cmd
 }
 
