@@ -30,7 +30,7 @@ dexaflow deploy [path | dag_id] [flags]
       --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
       --server string        control plane base URL, over --target (default: the target in use, then server_url from the config file)
-      --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py
+      --skip-build           register the image already in the registry (no build or push; the digest is read from the registry) but still recompile dag.json from dexaflow.yaml/dag.py
       --timeout duration     with --follow, stop following after this long (e.g. 30m) and exit 3; the run keeps going (default: no limit)
       --token string         JWT bearer token (default: config token)
       --trigger              trigger a run immediately after registering

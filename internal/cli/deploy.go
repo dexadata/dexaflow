@@ -73,7 +73,7 @@ func newDeployCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&o.all, "all", false, "deploy every DAG project in the workspace")
-	cmd.Flags().BoolVar(&o.skipBuild, "skip-build", false, "reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py")
+	cmd.Flags().BoolVar(&o.skipBuild, "skip-build", false, "register the image already in the registry (no build or push; the digest is read from the registry) but still recompile dag.json from dexaflow.yaml/dag.py")
 	cmd.Flags().BoolVar(&o.trigger, "trigger", false, "trigger a run immediately after registering")
 	addFollowFlags(cmd, &o.follow, &o.timeout)
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt (for automation)")
@@ -563,7 +563,7 @@ func (d *deployRun) run() error {
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
 	}
-	digestRef, derr := deployedDigest(d.cmd, d.o.builder, image, built)
+	digestRef, derr := deployedDigest(d.cmd, image, built)
 	if derr != nil {
 		return derr
 	}

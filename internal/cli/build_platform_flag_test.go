@@ -9,20 +9,14 @@ import (
 	"testing"
 )
 
-// amd64AndArm64 is the `manifest inspect` answer for a list holding both.
-const amd64AndArm64 = `{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}`
+// amd64AndArm64 is the manifest of a list holding both platforms, what the
+// registry holds after a multi-platform push.
+const amd64AndArm64 = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}`
 
-// argvBuilder stands in for docker: it appends every argv to log, one call per
-// line, answers `inspect` with a digest-pinned reference of the image, so a
-// deploy can pin what it pushed, and `manifest inspect` with a list holding
-// linux/amd64 and linux/arm64.
+// argvBuilder stands in for docker: it appends every argv to log, one call
+// per line, and succeeds. The digest of what it "pushed" comes from the
+// project's registry (platformProjectWith), never from the tool.
 func argvBuilder(t *testing.T) (builder, log string) {
-	t.Helper()
-	return manifestBuilder(t, amd64AndArm64)
-}
-
-// manifestBuilder is argvBuilder answering `manifest inspect` with manifest.
-func manifestBuilder(t *testing.T, manifest string) (builder, log string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stubs are POSIX-only")
@@ -32,8 +26,6 @@ func manifestBuilder(t *testing.T, manifest string) (builder, log string) {
 	log = filepath.Join(dir, "argv.log")
 	script := "#!/bin/sh\n" +
 		"echo \"$*\" >> \"" + log + "\"\n" +
-		"if [ \"$1\" = inspect ]; then img=\"$4\"; printf '%s@sha256:0123abcd\\n' \"${img%:*}\"; fi\n" +
-		"if [ \"$1\" = manifest ]; then printf '%s\\n' '" + manifest + "'; fi\n" +
 		"exit 0\n"
 	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
 		t.Fatal(err)
@@ -54,12 +46,22 @@ func argvLines(t *testing.T, log string) []string {
 	return strings.Split(strings.TrimSpace(string(data)), "\n")
 }
 
-// platformProject is a project with a registry whose parser is stubbed.
+// platformProject is a project whose parser is stubbed and whose registry
+// holds a two-platform list under every tag.
 func platformProject(t *testing.T, extraYAML string) string {
 	t.Helper()
-	dir := versionProject(t, "registry:\n  url: reg.io/team\n  image_name: etl\n"+extraYAML)
-	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+	dir, _ := platformProjectWith(t, amd64AndArm64, extraYAML)
 	return dir
+}
+
+// platformProjectWith is platformProject whose registry holds manifest; the
+// registry is returned so a test can name the digest it serves.
+func platformProjectWith(t *testing.T, manifest, extraYAML string) (string, *fakeOCIRegistry) {
+	t.Helper()
+	reg := newFakeOCIRegistry(t, manifest)
+	dir := versionProject(t, "registry:\n  url: "+reg.host+"/team\n  image_name: etl\n"+extraYAML)
+	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+	return dir, reg
 }
 
 // linesStartingWith counts the lines of out that start with prefix.
@@ -82,7 +84,7 @@ func TestCompilePlatformFlagReachesTheBuilderAndNamesItsSource(t *testing.T) {
 		t.Fatalf("compile --build --platform: %v", err)
 	}
 	calls := argvLines(t, log)
-	if len(calls) != 1 || !strings.HasPrefix(calls[0], "build --platform linux/arm64 -t reg.io/team/etl:") {
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "build --platform linux/arm64 -t ") || !strings.Contains(calls[0], "/team/etl:") {
 		t.Fatalf("builder calls = %q, want one build for linux/arm64", calls)
 	}
 	for _, want := range []string{"platforms:  linux/arm64 (from --platform)", "builder:    local-daemon (" + builder + "), fallback"} {
@@ -138,16 +140,18 @@ func TestCompileHandsSeveralPlatformsToTheTool(t *testing.T) {
 		{"", []string{"--platform", "linux/amd64", "--platform", "linux/arm64"}},
 		{"build:\n  platforms: [linux/amd64, linux/arm64]\n", nil},
 	} {
-		dir := platformProject(t, c.yaml)
+		dir, reg := platformProjectWith(t, amd64AndArm64, c.yaml)
 		builder, log := argvBuilder(t)
 		out, _, err := run(t, append([]string{"compile", dir, "--build", "--push", "--builder", builder}, c.args...)...)
 		if err != nil {
 			t.Fatalf("%v: compile: %v\n%s", c.args, err, out)
 		}
 		calls := argvLines(t, log)
-		if len(calls) != 4 || !strings.HasPrefix(calls[0], "build --platform linux/amd64,linux/arm64 ") || !strings.HasPrefix(calls[1], "push ") ||
-			calls[3] != "manifest inspect reg.io/team/etl@sha256:0123abcd" {
-			t.Errorf("%v: builder calls = %q, want one build for both platforms, a push, and the push verified", c.args, calls)
+		if len(calls) != 2 || !strings.HasPrefix(calls[0], "build --platform linux/amd64,linux/arm64 ") || !strings.HasPrefix(calls[1], "push ") {
+			t.Errorf("%v: builder calls = %q, want one build for both platforms and a push", c.args, calls)
+		}
+		if reg.readCount() != 1 {
+			t.Errorf("%v: the registry was read %d time(s), want the push verified once", c.args, reg.readCount())
 		}
 	}
 }
@@ -321,9 +325,9 @@ func TestBuildCommandTakesThePlatformFlag(t *testing.T) {
 
 // The whole deploy path: the platform flag reaches the build, the output names
 // it once with its source and names the builder, and the image registered is
-// the digest the builder's result carried.
+// the digest the registry holds for what the builder pushed (ADR 0075).
 func TestDeployPlatformFlagAndBuilderLine(t *testing.T) {
-	dir := platformProject(t, "")
+	dir, reg := platformProjectWith(t, singleManifest, "")
 	builder, log := argvBuilder(t)
 	fake := &deployServer{}
 	srv := httptest.NewServer(fake)
@@ -340,23 +344,26 @@ func TestDeployPlatformFlagAndBuilderLine(t *testing.T) {
 	if !strings.Contains(out, "builder:    local-daemon ("+builder+"), fallback") {
 		t.Errorf("output does not name the builder path:\n%s", out)
 	}
-	if !strings.Contains(out, "image reg.io/team/etl@sha256:0123abcd") {
-		t.Errorf("the registered image is not the pinned result:\n%s", out)
+	if want := "image " + reg.host + "/team/etl@" + reg.digest; !strings.Contains(out, want) {
+		t.Errorf("the registered image is not the registry's pin %q:\n%s", want, out)
 	}
 	calls := argvLines(t, log)
-	if len(calls) != 3 || !strings.HasPrefix(calls[0], "build --platform linux/arm64 ") ||
-		!strings.HasPrefix(calls[1], "push ") || !strings.HasPrefix(calls[2], "inspect ") {
-		t.Errorf("builder calls = %q, want build, push, inspect once each", calls)
+	if len(calls) != 2 || !strings.HasPrefix(calls[0], "build --platform linux/arm64 ") || !strings.HasPrefix(calls[1], "push ") {
+		t.Errorf("builder calls = %q, want build and push once each, and no inspect", calls)
+	}
+	if reg.readCount() != 1 {
+		t.Errorf("the registry was read %d time(s), want once", reg.readCount())
 	}
 	if fake.registers != 1 {
 		t.Errorf("registered %d time(s), want once", fake.registers)
 	}
 }
 
-// --skip-build builds nothing: no builder line, and the digest still comes
-// from the image the tool already pushed.
+// --skip-build builds nothing: no builder line, the tool never runs, and the
+// digest comes from the registry, so an image any tool pushed (a CI job, a
+// cloud builder) deploys from a machine that never had it.
 func TestDeploySkipBuildPrintsNoBuilder(t *testing.T) {
-	dir := platformProject(t, "")
+	dir, reg := platformProjectWith(t, singleManifest, "")
 	builder, log := argvBuilder(t)
 	fake := &deployServer{}
 	srv := httptest.NewServer(fake)
@@ -370,12 +377,28 @@ func TestDeploySkipBuildPrintsNoBuilder(t *testing.T) {
 	if strings.Contains(out, "builder:") {
 		t.Errorf("--skip-build printed a builder:\n%s", out)
 	}
-	calls := argvLines(t, log)
-	if len(calls) != 1 || !strings.HasPrefix(calls[0], "inspect ") {
-		t.Errorf("builder calls = %q, want one inspect", calls)
+	if calls := argvLines(t, log); calls != nil {
+		t.Errorf("builder calls = %q, want none", calls)
 	}
-	if !strings.Contains(out, "image reg.io/team/etl@sha256:0123abcd") {
-		t.Errorf("the registered image is not pinned:\n%s", out)
+	if want := "image " + reg.host + "/team/etl@" + reg.digest; !strings.Contains(out, want) {
+		t.Errorf("the registered image is not the registry's pin %q:\n%s", want, out)
+	}
+}
+
+// --skip-build of an image the registry does not have stops before the
+// register, naming the image and where credentials come from.
+func TestDeploySkipBuildOfAMissingImageRegistersNothing(t *testing.T) {
+	dir := versionProject(t, "registry:\n  url: "+missingRegistry(t)+"/team\n  image_name: etl\n")
+	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+	fake := &deployServer{}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	_, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--force", "--skip-build")
+	if err == nil || !strings.Contains(err.Error(), "/team/etl:") || !strings.Contains(err.Error(), "docker login") {
+		t.Fatalf("err = %v, want the image and the credentials named", err)
+	}
+	if fake.registers != 0 {
+		t.Errorf("registered %d time(s) without a digest", fake.registers)
 	}
 }
 
@@ -394,10 +417,10 @@ func TestEmptyProjectPlatformsLeaveTheToolDefault(t *testing.T) {
 
 // A tool that builds and pushes only part of the requested platforms (podman
 // without --manifest keeps the last one under the tag) is caught after the
-// push, and nothing is registered.
+// push by reading the registry, and nothing is registered.
 func TestDeployRefusesAPushMissingAPlatform(t *testing.T) {
-	dir := platformProject(t, "")
-	builder, log := manifestBuilder(t, `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)
+	dir, reg := platformProjectWith(t, singleManifest, "")
+	builder, log := argvBuilder(t)
 	fake := &deployServer{}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
@@ -409,7 +432,7 @@ func TestDeployRefusesAPushMissingAPlatform(t *testing.T) {
 	if fake.registers != 0 {
 		t.Errorf("registered %d time(s) an image that does not cover the platforms", fake.registers)
 	}
-	if calls := argvLines(t, log); len(calls) != 4 || !strings.HasPrefix(calls[3], "manifest inspect ") {
-		t.Errorf("builder calls = %q, want the push verified", calls)
+	if calls := argvLines(t, log); len(calls) != 2 || reg.readCount() != 1 {
+		t.Errorf("builder calls = %q, registry reads = %d, want build, push and one registry read", calls, reg.readCount())
 	}
 }

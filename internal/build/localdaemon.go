@@ -1,7 +1,6 @@
 package build
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,12 +10,23 @@ import (
 )
 
 // LocalDaemon builds with a local container tool, docker, podman or nerdctl,
-// by shelling out to it: `<tool> build`, `<tool> push`, and `<tool> inspect`
-// for the digest. It is the last step of the resolution order, the fallback
-// for when no daemonless or remote builder applies.
+// by shelling out to it: `<tool> build` and `<tool> push`. The digest of what
+// it pushed is read from the registry, never from the tool's image store
+// (ADR 0075). It is the last step of the resolution order, the fallback for
+// when no daemonless or remote builder applies.
 type LocalDaemon struct {
 	// Tool is the executable to run, "docker" when empty.
 	Tool string
+	// Registry reads the pushed digest; the registry client when nil.
+	Registry Resolver
+}
+
+// registry returns the resolver, the registry client by default.
+func (b LocalDaemon) registry() Resolver {
+	if b.Registry == nil {
+		return Registry{}
+	}
+	return b.Registry
 }
 
 // tool returns the executable, docker by default.
@@ -48,8 +58,9 @@ func (b LocalDaemon) multiPlatformHint(platforms []string, err error) error {
 }
 
 // Build runs the build, then the push when asked, then reads the pushed
-// image's digest when a pin is asked for or several platforms were built,
-// and checks that such a push holds every platform (verifyPlatforms).
+// image's digest from the registry when a pin is asked for or several
+// platforms were built, and checks that such a push holds every platform
+// (verifyPlatforms).
 func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 	if req.Pin && !req.Push {
 		return Result{}, errors.New("a digest pin needs a push: an image that is not in a registry has no registry digest")
@@ -72,15 +83,19 @@ func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 	if !req.Pin && len(req.Platforms) < 2 {
 		return res, nil
 	}
-	ref, err := b.Digest(ctx, req.Image, req.Stderr)
+	pinned, err := b.registry().Resolve(ctx, req.Image)
 	if err != nil {
+		err = fmt.Errorf("reading the digest of the pushed image %q: %w", req.Image, err)
+		if len(req.Platforms) > 1 {
+			err = b.multiPlatformHint(req.Platforms, err)
+		}
 		return Result{}, err
 	}
-	if verr := b.verifyPlatforms(ctx, ref, req.Platforms, req.Stderr); verr != nil {
+	if verr := b.verifyPlatforms(pinned, req.Platforms); verr != nil {
 		return Result{}, verr
 	}
 	if req.Pin {
-		res.Ref = ref
+		res.Ref = pinned.Ref
 	}
 	return res, nil
 }
@@ -91,35 +106,16 @@ func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 // keeps only the last platform under the tag, and a push without
 // --all-platforms can send part of a list. Registering that digest would run
 // the wrong image, or none, on the missing platforms, so anything the check
-// cannot confirm, including a tool that cannot run `manifest inspect`, fails
-// the build. One platform is a plain image and is not checked.
-func (b LocalDaemon) verifyPlatforms(ctx context.Context, ref string, platforms []string, stderr io.Writer) error {
+// cannot confirm fails the build. One platform is a plain image, or an index
+// docker adds attestations to, and is not checked.
+func (b LocalDaemon) verifyPlatforms(pinned Pinned, platforms []string) error {
 	if len(platforms) < 2 {
 		return nil
 	}
-	var out bytes.Buffer
-	if err := b.run(ctx, &out, stderr, "manifest", "inspect", ref); err != nil {
-		return b.multiPlatformHint(platforms, fmt.Errorf("could not check that %s lists every platform with `%s manifest inspect %s`: %w", ref, b.tool(), ref, err))
-	}
-	if missing := missingPlatforms(out.Bytes(), platforms); len(missing) > 0 {
-		return b.multiPlatformHint(platforms, fmt.Errorf("the pushed image %s is not a manifest list holding every platform; missing %s", ref, strings.Join(missing, ",")))
+	if missing := missingPlatforms(pinned.Manifest, platforms); len(missing) > 0 {
+		return b.multiPlatformHint(platforms, fmt.Errorf("the pushed image %s is not a manifest list holding every platform; missing %s", pinned.Ref, strings.Join(missing, ",")))
 	}
 	return nil
-}
-
-// Digest reads the repo digest of an image the tool pushed, as a pinned
-// reference. RepoDigests is set only by a push, so an image that was never
-// pushed is an error, never an unpinned reference.
-func (b LocalDaemon) Digest(ctx context.Context, image string, stderr io.Writer) (string, error) {
-	var out bytes.Buffer
-	if err := b.run(ctx, &out, stderr, inspectDigestArgs(image)...); err != nil {
-		return "", fmt.Errorf("inspecting image %q with %q: %w", image, b.tool(), err)
-	}
-	ref, err := parseDigestRef(out.String())
-	if err != nil {
-		return "", fmt.Errorf("image %q: %w", image, err)
-	}
-	return ref, nil
 }
 
 // run executes the tool with args.
@@ -142,25 +138,4 @@ func buildArgs(image, dockerfile, contextDir string, platforms []string) []strin
 		args = append(args, "--platform", strings.Join(platforms, ","))
 	}
 	return append(args, "-t", image, "-f", dockerfile, contextDir)
-}
-
-// inspectDigestArgs assembles the argv that prints a pushed image's repo
-// digest (repo@sha256:...). docker, podman and nerdctl all expose RepoDigests
-// through `inspect --format`.
-func inspectDigestArgs(image string) []string {
-	return []string{"inspect", "--format", "{{index .RepoDigests 0}}", image}
-}
-
-// parseDigestRef trims the inspect output into a pinned reference. An empty
-// result means the image was never pushed; a result without an @sha256 digest
-// is not a pin. Both are errors, so a deploy never registers an unpinned image.
-func parseDigestRef(out string) (string, error) {
-	ref := strings.TrimSpace(out)
-	if ref == "" || ref == "<no value>" {
-		return "", fmt.Errorf("image has no repo digest (was it pushed?)")
-	}
-	if !strings.Contains(ref, "@sha256:") {
-		return "", fmt.Errorf("inspect returned %q, which is not a digest-pinned reference", ref)
-	}
-	return ref, nil
 }
