@@ -140,3 +140,17 @@ func TestNewRejectsAnInvalidDagID(t *testing.T) {
 		t.Error("want an error for a name that is not a dag_id")
 	}
 }
+
+func TestWorkspaceInitRefusesANestedWorkspace(t *testing.T) {
+	isolateCLIEnv(t)
+	outer := t.TempDir()
+	writeTree(t, filepath.Join(outer, workspaceFileName), workspaceFileTemplate)
+	t.Chdir(outer)
+	_, _, err := run(t, "workspace", "init", "inner", "--config", emptyConfig(t))
+	if err == nil || !strings.Contains(err.Error(), outer) {
+		t.Fatalf("err = %v, want a refusal naming the outer workspace", err)
+	}
+	if _, _, err := run(t, "workspace", "init", "inner", "--force", "--config", emptyConfig(t)); err != nil {
+		t.Errorf("--force: %v", err)
+	}
+}

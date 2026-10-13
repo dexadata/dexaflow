@@ -24,9 +24,11 @@ func newTargetCommand() *cobra.Command {
 		Long: "A target names a control plane. Inside a workspace, targets are kept in\n" +
 			"dexaflow.workspace.yaml and shared with everyone who clones it; outside a\n" +
 			"workspace, or with --global, they are kept in your config file.\n\n" +
-			"Every server command takes --target <name> (or DEXAFLOW_TARGET). Without\n" +
-			"either, the target selected with `dexaflow target use` is used, then the\n" +
-			"workspace's default_target, then the config file's server_url.\n\n" +
+			"Every server command takes --target <name>. The server a command calls is:\n" +
+			"--server or --server-url; then --target, then DEXAFLOW_TARGET; then\n" +
+			"DEXAFLOW_SERVER_URL; then the target chosen with `dexaflow target use` for this\n" +
+			"workspace, the workspace's default_target, or current_target from the config\n" +
+			"file; then server_url from the config file.\n\n" +
 			"Tokens are never stored in the workspace file: `dexaflow auth login --target\n" +
 			"<name>` saves one per server in your config file.",
 	}
@@ -39,6 +41,8 @@ type targetAddOptions struct {
 	defaults deployDefaults
 	global   bool
 	force    bool
+	// autoSelect lets a first target become the default; runTargetAdd sets it.
+	autoSelect bool
 }
 
 func newTargetAddCommand() *cobra.Command {
@@ -71,6 +75,10 @@ func runTargetAdd(cmd *cobra.Command, name, server string, o targetAddOptions) e
 		return err
 	}
 	out := cmd.OutOrStdout()
+	// A first target is selected automatically, unless the user already works
+	// against the config file's server_url: adding a target must not move
+	// their commands to another server behind their back.
+	o.autoSelect = tc.store.ServerURL == ""
 	var where string
 	var isDefault bool
 	if tc.ws != nil && !o.global {
@@ -84,10 +92,8 @@ func runTargetAdd(cmd *cobra.Command, name, server string, o targetAddOptions) e
 	if _, werr := fmt.Fprintf(out, "Added target %s (%s) to %s\n", name, server, where); werr != nil {
 		return werr
 	}
-	if isDefault {
-		if _, werr := fmt.Fprintf(out, "%s is now the default target.\n", name); werr != nil {
-			return werr
-		}
+	if werr := printSelectionNote(out, name, isDefault, o.autoSelect, tc.store.ServerURL); werr != nil {
+		return werr
 	}
 	if _, saved := tc.store.Session(server); saved {
 		_, err = fmt.Fprintf(out, "A session for %s is already saved.\n", server)
@@ -97,13 +103,27 @@ func runTargetAdd(cmd *cobra.Command, name, server string, o targetAddOptions) e
 	return err
 }
 
+// printSelectionNote says whether the new target is now the one in use, and
+// how to select it when server_url kept it from being selected.
+func printSelectionNote(out io.Writer, name string, isDefault, autoSelect bool, serverURL string) error {
+	switch {
+	case isDefault:
+		_, err := fmt.Fprintf(out, "%s is now the default target.\n", name)
+		return err
+	case !autoSelect:
+		_, err := fmt.Fprintf(out, "Commands keep using server_url (%s) from your config file; to use this target instead:\n  dexaflow target use %s\n", serverURL, name)
+		return err
+	}
+	return nil
+}
+
 // addWorkspaceTarget writes the target into the workspace file, making it the
 // default when the workspace has none.
 func addWorkspaceTarget(ws *workspaceLocation, name, server string, o targetAddOptions) (where string, isDefault bool, err error) {
 	if old := ws.Spec.Targets[name]; old != nil && !o.force {
 		return "", false, fmt.Errorf("target %q already exists in %s (server %s); pass --force to replace it", name, ws.File, old.Server)
 	}
-	isDefault = ws.Spec.DefaultTarget == ""
+	isDefault = ws.Spec.DefaultTarget == "" && o.autoSelect
 	err = editWorkspaceFile(ws.File, func(e *workspaceEditor) error {
 		if serr := e.setTarget(name, workspaceTarget{Server: server, deployDefaults: o.defaults}); serr != nil {
 			return serr
@@ -129,7 +149,7 @@ func addUserTarget(cmd *cobra.Command, name, server string, o targetAddOptions) 
 		}
 		s.SetTarget(config.UserTarget{Name: name, Server: server, Registry: o.defaults.Registry,
 			Platforms: o.defaults.Platforms, BaseImage: o.defaults.BaseImage})
-		if s.CurrentTarget == "" {
+		if s.CurrentTarget == "" && o.autoSelect {
 			s.CurrentTarget = name
 			isDefault = true
 		}
@@ -347,6 +367,12 @@ func runTargetRemove(cmd *cobra.Command, name string, global, logout bool) error
 		}
 		if logout {
 			forgot = s.RemoveSession(server)
+			// The single-server pair, when it is for the same server, is the
+			// same credential under its older name.
+			if s.Token != "" && sameServer(s.ServerURL, server) {
+				s.ServerURL, s.Token = "", ""
+				forgot = true
+			}
 		}
 	}); uerr != nil {
 		return uerr

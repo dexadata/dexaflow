@@ -91,6 +91,7 @@ func TestWorkspaceFileRejectsBadContent(t *testing.T) {
 		"server without scheme":   "targets: {dev: {server: dev.example}}\n",
 		"default names no target": "targets: {dev: {server: https://d}}\ndefault_target: prod\n",
 		"bad target name":         "targets: {\"Dev Box\": {server: https://d}}\n",
+		"credentials in the url":  "targets: {dev: {server: \"https://me:secret@d.example\"}}\n",
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -175,5 +176,64 @@ func TestGitRootOf(t *testing.T) {
 	}
 	if got := gitRootOf(t.Context(), t.TempDir()); got != "" {
 		t.Errorf("outside git: %q, want empty", got)
+	}
+}
+
+func TestFindWorkspaceResolvesSymlinks(t *testing.T) {
+	target := t.TempDir()
+	writeTree(t, filepath.Join(target, workspaceFileName), sampleWorkspace)
+	link := filepath.Join(t.TempDir(), "via-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	ws, err := findWorkspace(link)
+	if err != nil || ws == nil {
+		t.Fatalf("findWorkspace = %+v, %v", ws, err)
+	}
+	want, _ := filepath.EvalSymlinks(target)
+	if ws.Root != want {
+		t.Errorf("root = %q, want the resolved path %q", ws.Root, want)
+	}
+}
+
+// TestFindWorkspaceIgnoresAFileOfAnotherUser is the trust boundary: a
+// workspace file chooses servers and registries, so one another user planted
+// in a parent folder (a shared /tmp, a multi-user host) is ignored, like git's
+// safe.directory.
+func TestFindWorkspaceIgnoresAFileOfAnotherUser(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("changing a file's owner needs root")
+	}
+	outer := t.TempDir()
+	writeTree(t, filepath.Join(outer, workspaceFileName), sampleWorkspace)
+	inner := filepath.Join(outer, "inner")
+	writeTree(t, filepath.Join(inner, workspaceFileName), sampleWorkspace)
+	if err := os.Chown(filepath.Join(inner, workspaceFileName), 4242, 4242); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := findWorkspace(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws == nil || ws.Root != outer {
+		t.Errorf("workspace = %+v, want the inner file skipped and %s found", ws, outer)
+	}
+}
+
+func TestEditWorkspaceKeepsBlankLines(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, workspaceFileName)
+	writeTree(t, path, workspaceFileTemplate)
+	if err := editWorkspaceFile(path, func(e *workspaceEditor) error {
+		return e.setTarget("dev", workspaceTarget{Server: "https://dev.example"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "\n\n# Named control planes") {
+		t.Errorf("blank lines lost:\n%s", data)
+	}
+	if strings.Contains(string(data), blankLineMarker) {
+		t.Errorf("marker leaked:\n%s", data)
 	}
 }

@@ -33,6 +33,11 @@ func newLoginCommand() *cobra.Command {
 				return rerr
 			}
 			serverURL = choice.URL
+			// Before any password is asked for or read: a workspace file can
+			// name the server, so the user sees where the credentials go.
+			if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "Logging in to %s (%s)\n", serverURL, choice.Source); werr != nil {
+				return werr
+			}
 			var cerr error
 			if password, cerr = resolvePassword(cmd, password, passwordStdin); cerr != nil {
 				return cerr
@@ -60,7 +65,7 @@ func newLoginCommand() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL (default: config server_url)")
+	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&username, "username", os.Getenv("LEOFLOW_USERNAME"), "username")
 	cmd.Flags().StringVar(&password, "password", os.Getenv("LEOFLOW_PASSWORD"), "password")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the password from stdin instead of --password (avoids ps/shell-history exposure)")

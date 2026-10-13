@@ -21,7 +21,7 @@ dexaflow auth create-user [flags]
       --password string    password for the new user
       --password-stdin     read the password from stdin instead of --password (avoids ps/shell-history exposure)
       --role stringArray   existing role to grant (repeatable); empty grants none
-      --server string      control plane base URL (default: config server_url)
+      --server string      control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --token string       admin JWT bearer token (default: config token)
 ```
 

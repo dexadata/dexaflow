@@ -19,7 +19,7 @@ dexaflow auth create-token [flags]
   -h, --help              help for create-token
       --password string   password
       --password-stdin    read the password from stdin instead of --password (avoids ps/shell-history exposure)
-      --server string     control plane base URL (default: config server_url)
+      --server string     control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --username string   username
 ```
 

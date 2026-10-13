@@ -101,6 +101,43 @@ func TestRegistryFromTheUserConfigIsTheLastResort(t *testing.T) {
 	}
 }
 
+func TestOverlaySourcesAreReported(t *testing.T) {
+	isolateCLIEnv(t)
+	root, project := defaultsWorkspace(t, "dag_id: orders\n")
+	t.Chdir(root)
+	root2 := NewRootCommand()
+	cmd, rest, err := root2.Find([]string{"deploy", "--config", emptyConfig(t), "--target", "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perr := cmd.ParseFlags(rest); perr != nil {
+		t.Fatal(perr)
+	}
+	cfg, _ := loadProjectConfig(project)
+	prov, err := applyWorkspaceDefaults(cmd, project, cfg, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prov.platformsSource, `target "dev"`) || !strings.Contains(prov.baseImageSource, "defaults in") {
+		t.Errorf("sources = %+v", prov)
+	}
+}
+
+// TestWorkspaceDefaultsDoNotReachAProjectOutsideIt: with a target, the
+// workspace is the one around the current folder; its defaults are for its
+// own projects only.
+func TestWorkspaceDefaultsDoNotReachAProjectOutsideIt(t *testing.T) {
+	isolateCLIEnv(t)
+	root, _ := defaultsWorkspace(t, "dag_id: orders\n")
+	t.Chdir(root)
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	writeTree(t, filepath.Join(outside, projectConfigFile), "dag_id: elsewhere\n")
+	got, _, _, _, base := overlayFor(t, outside, "--config", emptyConfig(t), "--target", "bare")
+	if got != "" || base != "" {
+		t.Errorf("registry %q base %q: the workspace's defaults reached a project outside it", got, base)
+	}
+}
+
 func TestPlatformsAndBaseImageDefaults(t *testing.T) {
 	isolateCLIEnv(t)
 	root, project := defaultsWorkspace(t, "dag_id: orders\n")
@@ -149,5 +186,25 @@ func TestDeployReportsWhereTheRegistryCameFrom(t *testing.T) {
 	}
 	if !strings.Contains(out, "ghcr.io/acme/dev/orders") || !strings.Contains(out, `target "dev"`) {
 		t.Errorf("deploy must print the registry and its source:\n%s\nerr: %v", out, err)
+	}
+	for _, want := range []string{
+		"server:     http://127.0.0.1:1 (target dev, from --target)",
+		"platforms:  linux/amd64 (from the default)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("deploy output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCompileAndBuildTakeTheRegistryFlag(t *testing.T) {
+	for _, name := range []string{"compile", "build", "deploy"} {
+		cmd, _, err := NewRootCommand().Find([]string{name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Flags().Lookup("registry") == nil {
+			t.Errorf("%s has no --registry: its image would not match deploy's", name)
+		}
 	}
 }

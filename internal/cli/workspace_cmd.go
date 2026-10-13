@@ -59,6 +59,11 @@ func runWorkspaceInit(cmd *cobra.Command, dir string, gitInit, force bool) error
 	if existing := workspaceFileIn(abs); existing != "" && !force {
 		return fmt.Errorf("%s is already a workspace (%s); pass --force to replace the file", abs, existing)
 	}
+	// A workspace inside another one hides the outer file from every command
+	// run below it; that is rarely meant, so it takes --force.
+	if outer, oerr := findWorkspace(filepath.Dir(abs)); oerr == nil && outer != nil && !force {
+		return fmt.Errorf("%s is inside the workspace at %s (%s); commands run in the new one would no longer see the outer file. Add DAGs to the outer workspace with `dexaflow new`, or pass --force", abs, outer.Root, outer.File)
+	}
 	if err := os.MkdirAll(filepath.Join(abs, "dags"), 0o750); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Join(abs, "dags"), err)
 	}

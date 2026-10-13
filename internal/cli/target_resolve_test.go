@@ -22,6 +22,9 @@ func isolateCLIEnv(t *testing.T) {
 		t.Setenv("LEOFLOW_"+k, "")
 	}
 	t.Setenv("HOME", t.TempDir())
+	// Never the repository: the git-root fallback would otherwise make a
+	// command see every DAG of this checkout, and compile into it.
+	t.Chdir(t.TempDir())
 }
 
 // targetWorkspace writes a workspace with two targets, dev (the default) and
@@ -264,5 +267,49 @@ func TestServerCommandsSendEachTargetItsOwnToken(t *testing.T) {
 	}
 	if got["dev"] != "Bearer dev-tok" || got["prod"] != "Bearer prod-tok" {
 		t.Errorf("bearers = %v, want each server's own token", got)
+	}
+}
+
+// TestTheLegacyTokenNeverReachesAnOverriddenServer: the single-server token
+// goes only to the server it was saved with, whatever chose the server.
+func TestTheLegacyTokenNeverReachesAnOverriddenServer(t *testing.T) {
+	cases := map[string]struct {
+		env  map[string]string
+		args []string
+	}{
+		"--server":            {args: []string{"--server", "https://elsewhere.example"}},
+		"--server-url":        {args: []string{"--server-url", "https://elsewhere.example"}},
+		"DEXAFLOW_SERVER_URL": {env: map[string]string{"DEXAFLOW_SERVER_URL": "https://elsewhere.example"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			isolateCLIEnv(t)
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg := filepath.Join(t.TempDir(), "config.yaml")
+			writeTree(t, cfg, "server_url: https://pro.example\ntoken: legacy-tok\n")
+			_, tok, err := resolveVia(t, append([]string{"dags", "list", "--config", cfg}, tc.args...)...)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if tok != "" {
+				t.Errorf("token = %q: the token saved for pro.example must not go to elsewhere.example", tok)
+			}
+			msg := apiStatusError(401, []byte("{}")).Error()
+			if !strings.Contains(msg, "pro.example") || !strings.Contains(msg, "elsewhere.example") {
+				t.Errorf("a 401 must still explain the mismatch, got %q", msg)
+			}
+		})
+	}
+}
+
+func TestTheLegacyTokenWithoutAServerURLIsStillSent(t *testing.T) {
+	isolateCLIEnv(t)
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	writeTree(t, cfg, "token: legacy-tok\n")
+	_, tok, err := resolveVia(t, "dags", "list", "--config", cfg, "--server", "https://pro.example")
+	if err != nil || tok != "legacy-tok" {
+		t.Errorf("token = %q, %v; a token saved with no server_url has nothing to mismatch", tok, err)
 	}
 }

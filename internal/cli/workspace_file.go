@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
 	yaml "go.yaml.in/yaml/v3"
 )
@@ -102,6 +103,11 @@ func validateServerURL(raw string) error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("invalid server URL %q: want an absolute http:// or https:// URL", raw)
 	}
+	if u.User != nil {
+		// Credentials in a URL would be committed with the workspace file and
+		// sent on every request; sign in with `dexaflow auth login` instead.
+		return fmt.Errorf("invalid server URL %s: it carries credentials (user:password@); remove them and sign in with `dexaflow auth login`", u.Redacted())
+	}
 	return nil
 }
 
@@ -119,13 +125,25 @@ func workspaceFileIn(dir string) string {
 // findWorkspace walks up from start to the first directory holding a
 // workspace file and parses it. It returns nil, nil when no directory on the
 // way has one; a file that exists but is invalid is an error naming it.
+//
+// The walk starts from the symlink-resolved path, so a workspace reached
+// through a link has the same Root (and keeps the same `target use` choice)
+// as one reached directly. A workspace file owned by another user is skipped
+// with a warning, as git skips a repository it does not trust: the file
+// chooses the servers a token is sent to and the registry an image is pushed
+// to, and a parent folder on a shared host is not necessarily yours.
 func findWorkspace(start string) (*workspaceLocation, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return nil, fmt.Errorf("resolving %s: %w", start, err)
 	}
+	if resolved, rerr := filepath.EvalSymlinks(dir); rerr == nil {
+		dir = resolved
+	}
 	for {
-		if p := workspaceFileIn(dir); p != "" {
+		if p := workspaceFileIn(dir); p != "" && !ownedByCurrentUser(p) {
+			warnUntrustedWorkspace(p)
+		} else if p != "" {
 			spec, perr := parseWorkspaceFile(p)
 			if perr != nil {
 				return nil, perr
@@ -138,6 +156,19 @@ func findWorkspace(start string) (*workspaceLocation, error) {
 		}
 		dir = parent
 	}
+}
+
+// warnedUntrusted remembers the workspace files already warned about, so a
+// command that looks up the workspace several times says it once.
+var warnedUntrusted sync.Map
+
+// warnUntrustedWorkspace tells the user a workspace file was ignored.
+func warnUntrustedWorkspace(path string) {
+	if _, seen := warnedUntrusted.LoadOrStore(path, true); seen {
+		return
+	}
+	//nolint:errcheck // a warning that cannot be delivered must not fail the command.
+	fmt.Fprintf(os.Stderr, "warning: ignoring %s: it belongs to another user, and a workspace file chooses where tokens and images go. Take ownership of it (chown) to use it.\n", path)
 }
 
 // findWorkspaceFromCwd is findWorkspace from the process working directory.
@@ -215,6 +246,7 @@ func editWorkspaceFile(path string, edit func(*workspaceEditor) error) error {
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
+	data, marked := markBlankLines(data)
 	var doc yaml.Node
 	if uerr := yaml.Unmarshal(data, &doc); uerr != nil {
 		return fmt.Errorf("parsing %s: %w", path, uerr)
@@ -238,17 +270,55 @@ func editWorkspaceFile(path string, edit func(*workspaceEditor) error) error {
 	if err := enc.Close(); err != nil {
 		return fmt.Errorf("encoding %s: %w", path, err)
 	}
+	out := buf.Bytes()
+	if marked {
+		out = unmarkBlankLines(out)
+	}
 	var check workspaceSpec
-	if uerr := yaml.Unmarshal(buf.Bytes(), &check); uerr != nil {
+	if uerr := yaml.Unmarshal(out, &check); uerr != nil {
 		return fmt.Errorf("re-reading the edited %s: %w", path, uerr)
 	}
 	if verr := check.validate(); verr != nil {
 		return fmt.Errorf("%s: %w", path, verr)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil { //nolint:gosec // G306: a shared, committed file with no secrets.
+	if err := os.WriteFile(path, out, 0o644); err != nil { //nolint:gosec // G306: a shared, committed file with no secrets.
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil
+}
+
+// blankLineMarker stands in for a blank line while a workspace file goes
+// through the YAML node tree, which keeps comments but drops blank lines.
+const blankLineMarker = "#dexaflow-keep-blank-line"
+
+// blockScalarPattern finds a block scalar (| or >), whose blank lines are
+// content: a file with one is edited without the blank-line markers.
+var blockScalarPattern = regexp.MustCompile(`(?m):\s*[|>][-+0-9]*\s*(#.*)?$`)
+
+// markBlankLines replaces each blank line of data with blankLineMarker, a
+// comment the node tree keeps, and reports whether it did.
+func markBlankLines(data []byte) ([]byte, bool) {
+	if blockScalarPattern.Match(data) {
+		return data, false
+	}
+	lines := strings.Split(string(data), "\n")
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "" && i < len(lines)-1 {
+			lines[i] = blankLineMarker
+		}
+	}
+	return []byte(strings.Join(lines, "\n")), true
+}
+
+// unmarkBlankLines turns the markers back into blank lines.
+func unmarkBlankLines(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	for i, l := range lines {
+		if strings.TrimSpace(l) == blankLineMarker {
+			lines[i] = ""
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // mappingIndex returns the index of key's key node in mapping m, or -1.

@@ -17,7 +17,7 @@ dexaflow push <dag.json> [flags]
 
 ```
   -h, --help            help for push
-      --server string   control plane base URL (default: config server_url)
+      --server string   control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --token string    JWT bearer token (default: the session saved for the server)
 ```
 

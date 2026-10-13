@@ -22,8 +22,8 @@ dexaflow deploy [path | dag_id] [flags]
       --dockerfile string    Dockerfile path relative to the DAG directory (default "Dockerfile")
       --force                build, push and register even when the default content label is already deployed
   -h, --help                 help for deploy
-      --registry string      image registry prefix to push to, over every configured one (default: DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, then the config file)
-      --server string        control plane base URL (default: config server_url)
+      --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
+      --server string        control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py
       --token string         JWT bearer token (default: config token)
       --trigger              trigger a run immediately after registering

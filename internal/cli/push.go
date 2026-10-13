@@ -49,7 +49,7 @@ func newPushCommand() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL (default: config server_url)")
+	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: the session saved for the server)")
 	return cmd
 }

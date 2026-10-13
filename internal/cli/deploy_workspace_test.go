@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,9 @@ func TestDeployAllReadsTheWorkspaceAroundTheCwd(t *testing.T) {
 	}
 	if !strings.Contains(out, filepath.Join(root, "dags", "orders")) {
 		t.Errorf("deploy --all did not reach the workspace's project:\n%s\nerr: %v", out, err)
+	}
+	if !strings.Contains(out, "workspace: "+root+" (from "+filepath.Join(root, workspaceFileName)+")") {
+		t.Errorf("deploy --all must say which workspace it read and why:\n%s", out)
 	}
 }
 
@@ -91,5 +95,63 @@ func TestLiteWorkspaceIsTheWorkspaceFileRoot(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if got := liteWorkspace(cmd); got != defaultWorkspace(cmd) {
 		t.Errorf("outside a workspace, lite keeps its default; got %q", got)
+	}
+}
+
+// TestDeployAllDoesNotWidenToTheGitRoot: without a workspace file, --all
+// never deploys every DAG of a repository it happens to run in.
+func TestDeployAllDoesNotWidenToTheGitRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	isolateCLIEnv(t)
+	root := t.TempDir()
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if _, _, err := run(t, "init", filepath.Join(root, "pipelines", "orders")); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	t.Chdir(filepath.Join(root, "pipelines"))
+	out, _, err := run(t, "deploy", "--all", "--config", emptyConfig(t), "--server", "http://127.0.0.1:1")
+	if err == nil || !strings.Contains(err.Error(), "workspace init") {
+		t.Errorf("err = %v, want a refusal pointing at `workspace init`", err)
+	}
+	if strings.Contains(out, "deploying orders") {
+		t.Errorf("--all widened to the repository:\n%s", out)
+	}
+	t.Chdir(filepath.Join(root, "pipelines", "orders"))
+	out, _, _ = run(t, "deploy", "--all", "--config", emptyConfig(t), "--server", "http://127.0.0.1:1")
+	if !strings.Contains(out, "deploying orders") {
+		t.Errorf("in a project folder, --all covers that project:\n%s", out)
+	}
+}
+
+// TestBareDeployInAWorkspaceSubfolderRefuses: only the workspace root means
+// "every DAG"; anywhere else a folder that is not a project is an error.
+func TestBareDeployInAWorkspaceSubfolderRefuses(t *testing.T) {
+	isolateCLIEnv(t)
+	root := plainWorkspace(t)
+	t.Chdir(filepath.Join(root, "dags"))
+	out, _, err := run(t, "deploy", "--config", emptyConfig(t), "--server", "http://127.0.0.1:1")
+	if err == nil || !strings.Contains(err.Error(), "--all") {
+		t.Errorf("err = %v, want a not-a-project error suggesting --all", err)
+	}
+	if strings.Contains(out, "deploying orders") {
+		t.Errorf("a bare deploy in a subfolder deployed the workspace:\n%s", out)
+	}
+}
+
+func TestBareDeployAtAWorkspaceRootReachedThroughASymlink(t *testing.T) {
+	isolateCLIEnv(t)
+	root := plainWorkspace(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Chdir(link)
+	out, _, _ := run(t, "deploy", "--config", emptyConfig(t), "--server", "http://127.0.0.1:1")
+	if !strings.Contains(out, "deploying orders") {
+		t.Errorf("the root reached through a link is still the root:\n%s", out)
 	}
 }

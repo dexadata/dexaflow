@@ -32,8 +32,8 @@ acme-dags/
 ```
 
 It works without git; `--git` only adds `git init`. An existing `.gitignore`
-keeps its lines, and a second `init` over a workspace refuses without
-`--force`.
+keeps its lines. A second `init` over a workspace, or an `init` inside another
+workspace, refuses without `--force`.
 
 `dexaflow new <dag_id>` scaffolds `dags/<dag_id>/` in the workspace found from
 the current folder. It never overwrites a file without `--force`, refuses a
@@ -43,23 +43,35 @@ anywhere, as before.
 
 ## How commands find the workspace
 
-Every command walks up from the current folder to the first
-`dexaflow.workspace.yaml` (or `leoflow.workspace.yaml`, the name from before
-the rename). Running a command in `dags/orders_report/sql/` targets the same
-workspace as running it at the root.
+Every command walks up from the current folder (symlinks resolved) to the
+first `dexaflow.workspace.yaml` (or `leoflow.workspace.yaml`, the name from
+before the rename). Running a command in `dags/orders_report/sql/` targets the
+same workspace as running it at the root.
+
+A workspace file owned by another user is ignored with a warning, the way git
+ignores a repository it does not trust: the file decides which server your
+token goes to and which registry your images go to, and a parent folder on a
+shared machine is not necessarily yours. Take ownership of the file (`chown`)
+to use it.
 
 | Command | Where it reads DAGs |
 |---|---|
-| `dexaflow deploy --all`, `dexaflow deploy <dag_id>` | The workspace root; without a workspace file, the git repository around the current folder; else the current folder when it is a DAG project (a workspace of one); else the Lite workspace (`workspace:` in the config file, or `~/dexaflow`) |
-| `dexaflow deploy` with no argument | The current folder when it is a project; at a workspace root, every DAG of the workspace |
+| `dexaflow deploy <dag_id>` | The workspace root; without a workspace file, the git repository around the current folder; else the current folder when it is a DAG project; else the Lite workspace (`workspace:` in the config file, or `~/dexaflow`) |
+| `dexaflow deploy --all` | The workspace root; without a workspace file, the current folder when it is a DAG project (a workspace of one). Inside a git repository with no workspace file it refuses rather than deploy every DAG of the repository; outside one it keeps the Lite workspace |
+| `dexaflow deploy` with no argument | The current folder when it is a project; at the workspace root itself, every DAG of the workspace. Any other folder is an error that suggests `deploy <dag_id>` or `deploy --all` |
 | `dexaflow lite` with no argument | The workspace root; `~/dexaflow` (or the config's `workspace:`) only when no workspace file is found |
+
+Deploy prints the workspace it read and why (`workspace: <root> (from
+<source>)`) before it starts.
 
 ## Targets
 
 Inside a workspace, `dexaflow target add` writes the target into the
 workspace file, so everyone who clones the repository gets it. Outside a
 workspace, or with `--global`, it goes into your config file
-(`~/.dexaflow/config.yaml`). The first target added becomes the default.
+(`~/.dexaflow/config.yaml`). The first target added becomes the default,
+unless your config file has a `server_url`: then commands keep using it until
+you run `dexaflow target use <name>`.
 
 ```bash
 dexaflow target add prod https://flow.acme.dev --registry ghcr.io/acme/prod
@@ -81,30 +93,38 @@ control plane a command calls is, in order:
 5. `server_url` in your config file, then `http://localhost:8080`.
 
 A name that matches no target is an error that lists the known ones; the
-command never falls back to another server silently.
+command never falls back to another server silently. `dexaflow auth login`
+prints the server it signs in to, and what chose it, before it reads a
+password; `dexaflow deploy` prints the server, registry, platforms and base
+image it uses, each with its source, before it builds.
 
 ### Credentials
 
-Tokens are never written to the workspace file. `dexaflow auth login --target
-<name>` saves one token per server URL in your config file (kept at `0600`), and
-every command sends a server only the token saved for it. The token a command
-sends is, in order: `--token`, `DEXAFLOW_TOKEN` (or `LEOFLOW_TOKEN`), the token
-saved for that server, then the single `server_url`/`token` pair older
-versions saved. That pair keeps working exactly as before, but it is only sent
-to a target whose server is the one it was issued for: a target name in a
-shared file can point anywhere, and a token must not follow it.
+Tokens are never written to the workspace file. `dexaflow auth login` saves
+one token per server URL in your config file, which is rewritten atomically at
+`0600`, and every command sends a server only the token saved for it. The
+token a command sends is, in order: `--token`, `DEXAFLOW_TOKEN` (or
+`LEOFLOW_TOKEN`), the token saved for that server, then the single
+`server_url`/`token` pair older versions saved. That pair is only sent to the
+server it was saved with, whatever chose the server (`--server`,
+`DEXAFLOW_SERVER_URL` or a target); calling another server without a token of
+its own fails with a `401` that says so. A login without a target also keeps
+writing that pair, so older tools that read it keep working.
+`dexaflow target remove <name> --logout` forgets the token saved for the
+target's server, the pair included when it is for that server.
 
 A saved token is renewed in place when it nears expiry. A token from `--token`
 or an environment variable is never rewritten.
 
 ## Registry, platforms and base image
 
-A workspace states its registry once instead of in every `dexaflow.yaml`. When
-a project sets no `registry.url`, deploy, compile and build take it from, in
-order:
+A workspace states its registry once instead of in every `dexaflow.yaml`.
+`deploy`, `compile` and `build` take the registry url from the first of these
+that is set, so all three derive the same image:
 
-1. `--registry` (deploy);
-2. `DEXAFLOW_REGISTRY` (or `LEOFLOW_REGISTRY`);
+1. `--registry`;
+2. `DEXAFLOW_REGISTRY` (or `LEOFLOW_REGISTRY`), which overrides even the
+   project's own value;
 3. `registry.url` in the project's `dexaflow.yaml`;
 4. the target's `registry`;
 5. `defaults.registry` in the workspace file;
@@ -114,7 +134,9 @@ The image name defaults to the `dag_id` (lowercased), and `deploy` prints the
 registry it uses and where it came from before it builds. `build.platforms`
 and `base_image` follow the same idea: the project's own value, then the
 target's, then the workspace defaults. Lite applies the workspace defaults
-but never a target's.
+but never a target's. With a target, the workspace is the one around the
+current folder (the one the target came from), and its defaults apply only to
+projects inside it.
 
 ## The workspace file
 
@@ -137,9 +159,9 @@ defaults:                            # optional, for every DAG in the workspace
 ```
 
 Target names use lowercase letters, digits, `-` and `_`. Servers must be
-absolute `http://` or `https://` URLs. Unknown keys are refused with the file
+absolute `http://` or `https://` URLs without credentials in them. Unknown keys are refused with the file
 named, like in `dexaflow.yaml`. `target add`, `use --workspace-default` and
-`remove` edit the file in place and keep its comments.
+`remove` edit the file in place and keep its comments and blank lines.
 
 ## What stays in your config file
 

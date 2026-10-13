@@ -26,6 +26,7 @@ dexaflow build [workspace] [flags]
       --dag-version string   version recorded in each dag.json and used by the registry tag strategy (default: per project, git describe of its directory, or dev outside git, plus a hash of its content)
   -h, --help                 help for build
       --push                 push each built image to its registry
+      --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
       --sha string           commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)
 ```
 

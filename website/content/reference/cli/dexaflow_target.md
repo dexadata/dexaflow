@@ -15,9 +15,11 @@ A target names a control plane. Inside a workspace, targets are kept in
 dexaflow.workspace.yaml and shared with everyone who clones it; outside a
 workspace, or with --global, they are kept in your config file.
 
-Every server command takes --target <name> (or DEXAFLOW_TARGET). Without
-either, the target selected with `dexaflow target use` is used, then the
-workspace's default_target, then the config file's server_url.
+Every server command takes --target <name>. The server a command calls is:
+--server or --server-url; then --target, then DEXAFLOW_TARGET; then
+DEXAFLOW_SERVER_URL; then the target chosen with `dexaflow target use` for this
+workspace, the workspace's default_target, or current_target from the config
+file; then server_url from the config file.
 
 Tokens are never stored in the workspace file: `dexaflow auth login --target
 <name>` saves one per server in your config file.

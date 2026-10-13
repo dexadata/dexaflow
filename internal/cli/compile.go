@@ -76,6 +76,7 @@ func newCompileCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&o.output, "output", "o", "", "path to write the compiled dag.json (default <project>/dag.json)")
 	cmd.Flags().StringVar(&o.image, "image", "", "container image reference for the DAG")
+	cmd.Flags().String("registry", "", registryFlagUsage)
 	cmd.Flags().StringVar(&o.parserCmd, "parser-cmd", "", "override the parser command (default from config)")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
 	cmd.Flags().BoolVar(&o.build, "build", false, "build the DAG container image (requires --image)")

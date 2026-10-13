@@ -201,11 +201,72 @@ func TestLoginToATargetSavesItsOwnSession(t *testing.T) {
 	if !strings.Contains(out, "target dev") {
 		t.Errorf("output = %q, want the target named", out)
 	}
+	if !strings.HasPrefix(out, "Logging in to "+srv.URL+" (target dev, from --target)") {
+		t.Errorf("output = %q: the server and what chose it come first, before any password is read", out)
+	}
 	s, _ := config.ReadUserStore(cfg)
 	if tok, ok := s.Session(srv.URL); !ok || tok != "dev-tok" {
 		t.Errorf("session for dev = %q, %v", tok, ok)
 	}
 	if s.ServerURL != "https://prod.example" || s.Token != "prod-legacy" {
 		t.Errorf("a target login must leave the single-server session alone, got %q %q", s.ServerURL, s.Token)
+	}
+}
+
+func TestTargetUseSurvivesASymlinkedPath(t *testing.T) {
+	isolateCLIEnv(t)
+	root := targetWorkspace(t, "https://dev.example", "https://prod.example")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	cfg := emptyConfig(t)
+	t.Chdir(link)
+	if _, _, err := run(t, "target", "use", "prod", "--config", cfg); err != nil {
+		t.Fatalf("target use: %v", err)
+	}
+	t.Chdir(root)
+	if server, _, err := resolveVia(t, "dags", "list", "--config", cfg); err != nil || server != "https://prod.example" {
+		t.Errorf("through the real path: server = %q, err = %v; the choice made through the link must hold", server, err)
+	}
+}
+
+// TestTargetAddKeepsAnExistingServerURL: a user who works against server_url
+// today is not moved to a new target by adding one.
+func TestTargetAddKeepsAnExistingServerURL(t *testing.T) {
+	isolateCLIEnv(t)
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	writeTree(t, cfg, "server_url: https://pro.example\n")
+	out, _, err := run(t, "target", "add", "lab", "https://lab.example", "--config", cfg)
+	if err != nil {
+		t.Fatalf("target add: %v", err)
+	}
+	if s, _ := config.ReadUserStore(cfg); s.CurrentTarget != "" {
+		t.Errorf("current_target = %q, want none while server_url is set", s.CurrentTarget)
+	}
+	if !strings.Contains(out, "dexaflow target use lab") {
+		t.Errorf("output must say how to select it:\n%s", out)
+	}
+
+	root := t.TempDir()
+	writeTree(t, filepath.Join(root, workspaceFileName), workspaceFileTemplate)
+	t.Chdir(root)
+	if _, _, err := run(t, "target", "add", "dev", "https://dev.example", "--config", cfg); err != nil {
+		t.Fatalf("target add in a workspace: %v", err)
+	}
+	if ws, _ := findWorkspace(root); ws.Spec.DefaultTarget != "" {
+		t.Errorf("default_target = %q, want none while server_url is set", ws.Spec.DefaultTarget)
+	}
+}
+
+func TestTargetRemoveLogoutClearsTheMatchingLegacySession(t *testing.T) {
+	isolateCLIEnv(t)
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	writeTree(t, cfg, "server_url: https://lab.example/\ntoken: old\ntargets:\n  - {name: lab, server: https://lab.example}\n")
+	if _, _, err := run(t, "target", "remove", "lab", "--logout", "--config", cfg); err != nil {
+		t.Fatalf("target remove: %v", err)
+	}
+	if s, _ := config.ReadUserStore(cfg); s.Token != "" || s.ServerURL != "" {
+		t.Errorf("legacy pair = %q %q, want it forgotten with the target's server", s.ServerURL, s.Token)
 	}
 }

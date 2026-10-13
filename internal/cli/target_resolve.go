@@ -150,6 +150,8 @@ type serverChoice struct {
 	// Target is the target URL came from, nil when it came from a flag, the
 	// environment or the config file's server_url.
 	Target *activeTarget
+	// Source says what chose URL, in words a user can act on.
+	Source string
 	tc     *targetContext
 }
 
@@ -166,23 +168,31 @@ func resolveServer(cmd *cobra.Command, serverFlag string) (*serverChoice, error)
 		return nil, err
 	}
 	if serverFlag != "" {
-		return &serverChoice{URL: serverFlag, tc: tc}, nil
+		return &serverChoice{URL: serverFlag, Source: "--server", tc: tc}, nil
 	}
 	if f := cmd.Flag("server-url"); f != nil && f.Changed {
-		return &serverChoice{URL: f.Value.String(), tc: tc}, nil
+		return &serverChoice{URL: f.Value.String(), Source: "--server-url", tc: tc}, nil
 	}
 	t, err := tc.selectTarget(cmd)
 	if err != nil {
 		return nil, err
 	}
-	if _, envServer := envcompat.Lookup("SERVER_URL"); t != nil && (t.explicit || !envServer) {
-		return &serverChoice{URL: t.Server, Target: t, tc: tc}, nil
+	_, envServer := envcompat.Lookup("SERVER_URL")
+	if t != nil && (t.explicit || !envServer) {
+		return &serverChoice{URL: t.Server, Target: t, Source: fmt.Sprintf("target %s, from %s", t.Name, t.Origin), tc: tc}, nil
 	}
 	cfg, err := config.Load(configFilePath(cmd), cmd.Flags())
 	if err != nil {
 		return nil, err
 	}
-	return &serverChoice{URL: cfg.ServerURL, tc: tc}, nil
+	source := "the default"
+	switch {
+	case envServer:
+		source = "DEXAFLOW_SERVER_URL"
+	case tc.store.ServerURL != "":
+		source = "server_url in " + tc.storePath
+	}
+	return &serverChoice{URL: cfg.ServerURL, Source: source, tc: tc}, nil
 }
 
 // tokenSource says where resolveServerToken found the token.
@@ -197,9 +207,10 @@ const (
 
 // pickToken applies the token precedence for server: --token, then
 // DEXAFLOW_TOKEN (LEOFLOW_TOKEN), then the session saved for that server, then
-// the single-server session. The single-server token is only sent to a target
-// when the target is the server it was issued for: a target name in a shared
-// workspace file can point anywhere, and a token must never follow it there.
+// the single-server session. The single-server token is only sent to the
+// server it was saved with (or anywhere when it was saved with none): whatever
+// chose the server, a flag, a variable or a target name in a shared workspace
+// file, a token must never follow it to another control plane.
 func pickToken(choice *serverChoice, tokenFlag string) (string, tokenSource) {
 	if tokenFlag != "" {
 		return tokenFlag, tokenExternal
@@ -214,7 +225,7 @@ func pickToken(choice *serverChoice, tokenFlag string) (string, tokenSource) {
 	if store.Token == "" {
 		return "", tokenNone
 	}
-	if choice.Target != nil && !sameServer(store.ServerURL, choice.URL) {
+	if store.ServerURL != "" && !sameServer(store.ServerURL, choice.URL) {
 		return "", tokenNone
 	}
 	return store.Token, tokenLegacy

@@ -116,3 +116,46 @@ func TestUserStoreTargetsAndWorkspaceSelection(t *testing.T) {
 		t.Error("RemoveTarget must report whether it removed")
 	}
 }
+
+func TestUpdateUserStoreTightensTheMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("lite_port: 8088\n"), 0o644); err != nil { //nolint:gosec // the loose mode is the point.
+		t.Fatal(err)
+	}
+	if err := UpdateUserStore(path, func(s *UserStore) error { s.SetSession("https://a", "t"); return nil }); err != nil {
+		t.Fatalf("UpdateUserStore: %v", err)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600 once a token is in the file", info.Mode().Perm())
+	}
+}
+
+func TestUpdateUserStoreKeepsKeyOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("zeta: 1\n# a comment\nalpha: 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateUserStore(path, func(s *UserStore) error { s.CurrentTarget = "dev"; return nil }); err != nil {
+		t.Fatalf("UpdateUserStore: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	text := string(data)
+	if strings.Index(text, "zeta") > strings.Index(text, "alpha") || !strings.Contains(text, "# a comment") {
+		t.Errorf("order or comment lost:\n%s", text)
+	}
+}
+
+func TestUpdateUserStoreClearsTheLegacySession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("server_url: https://a\ntoken: t\nlite_port: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateUserStore(path, func(s *UserStore) error { s.ServerURL, s.Token = "", ""; return nil }); err != nil {
+		t.Fatalf("UpdateUserStore: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "server_url") || strings.Contains(string(data), "token") || !strings.Contains(string(data), "lite_port") {
+		t.Errorf("config = %q, want only the legacy pair removed", data)
+	}
+}

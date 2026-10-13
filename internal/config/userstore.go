@@ -58,10 +58,6 @@ type WorkspaceTarget struct {
 	Target    string `yaml:"target"`
 }
 
-// managedKeys are the config keys UpdateUserStore owns. Every other key in the
-// file (Lite settings, the legacy session) is written back untouched.
-var managedKeys = []string{"current_target", "targets", "sessions", "workspace_targets"}
-
 // NormalizeServer is the form a server URL is compared and stored in: trimmed,
 // without trailing slashes. Anything cleverer (default ports, host casing)
 // could make two different control planes share a token.
@@ -90,13 +86,15 @@ func ReadUserStore(path string) (*UserStore, error) {
 }
 
 // UpdateUserStore reads the store at path, lets update change it, and writes
-// the managed keys back, keeping every other key in the file. The file is
-// created when absent and kept at 0600, because it holds tokens.
+// the managed keys back (the per-server sessions, the targets, the selections
+// and the single-server server_url/token pair). Every other key, the order of
+// the keys and their comments are kept. The file is created when absent and
+// replaced atomically at 0600, whatever its mode was, because it holds tokens.
 func UpdateUserStore(path string, update func(*UserStore) error) error {
 	if path == "" {
 		return fmt.Errorf("updating config: no config file path")
 	}
-	values, err := readValues(path)
+	doc, err := readDocument(path)
 	if err != nil {
 		return err
 	}
@@ -107,69 +105,107 @@ func UpdateUserStore(path string, update func(*UserStore) error) error {
 	if uerr := update(s); uerr != nil {
 		return uerr
 	}
-	managed := map[string]any{
-		"current_target":    s.CurrentTarget,
-		"targets":           s.Targets,
-		"sessions":          s.Sessions,
-		"workspace_targets": s.WorkspaceTargets,
+	root := doc.Content[0]
+	managed := []struct {
+		key   string
+		value any
+		empty bool
+	}{
+		{"server_url", s.ServerURL, s.ServerURL == ""},
+		{"token", s.Token, s.Token == ""},
+		{"current_target", s.CurrentTarget, s.CurrentTarget == ""},
+		{"targets", s.Targets, len(s.Targets) == 0},
+		{"sessions", s.Sessions, len(s.Sessions) == 0},
+		{"workspace_targets", s.WorkspaceTargets, len(s.WorkspaceTargets) == 0},
 	}
-	for _, k := range managedKeys {
-		if isEmptyValue(managed[k]) {
-			delete(values, k)
+	for _, m := range managed {
+		if m.empty {
+			deleteKey(root, m.key)
 			continue
 		}
-		values[k] = managed[k]
+		var n yaml.Node
+		if eerr := n.Encode(m.value); eerr != nil {
+			return fmt.Errorf("encoding %s: %w", m.key, eerr)
+		}
+		setKey(root, m.key, &n)
 	}
-	return writeValues(path, values)
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	return writeSecretFile(path, out)
 }
 
-// readValues decodes the config file into a generic map, or an empty map when
-// the file does not exist.
-func readValues(path string) (map[string]any, error) {
-	values := map[string]any{}
+// readDocument parses the config file into a YAML document whose top level
+// is a mapping, or an empty one when the file does not exist or is empty.
+func readDocument(path string) (*yaml.Node, error) {
+	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	data, err := os.ReadFile(path) //nolint:gosec // G304: the CLI's own config file.
 	if os.IsNotExist(err) {
-		return values, nil
+		return doc, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading config %q: %w", path, err)
 	}
-	if uerr := yaml.Unmarshal(data, &values); uerr != nil {
+	var parsed yaml.Node
+	if uerr := yaml.Unmarshal(data, &parsed); uerr != nil {
 		return nil, fmt.Errorf("parsing existing config %q: %w", path, uerr)
 	}
-	if values == nil {
-		values = map[string]any{}
+	if len(parsed.Content) == 0 {
+		return doc, nil
 	}
-	return values, nil
+	if parsed.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parsing existing config %q: the top level is not a mapping", path)
+	}
+	return &parsed, nil
 }
 
-// writeValues encodes values into the config file at path, at 0600.
-func writeValues(path string, values map[string]any) error {
-	out, err := yaml.Marshal(values)
-	if err != nil {
-		return fmt.Errorf("encoding config: %w", err)
+// setKey sets key to value in mapping m, in place when it is already there.
+func setKey(m *yaml.Node, key string, value *yaml.Node) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = value
+			return
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+}
+
+// deleteKey removes key from mapping m.
+func deleteKey(m *yaml.Node, key string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content = append(m.Content[:i], m.Content[i+2:]...)
+			return
+		}
+	}
+}
+
+// writeSecretFile replaces path with data atomically: a 0600 temporary file in
+// the same directory, renamed over it, so a reader never sees half a file and
+// the result is 0600 even when the old file was not.
+func writeSecretFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
+	if err != nil {
 		return fmt.Errorf("writing config %q: %w", path, err)
 	}
-	return nil
-}
-
-func isEmptyValue(v any) bool {
-	switch x := v.(type) {
-	case string:
-		return x == ""
-	case []UserTarget:
-		return len(x) == 0
-	case []Session:
-		return len(x) == 0
-	case []WorkspaceTarget:
-		return len(x) == 0
+	name := tmp.Name()
+	defer os.Remove(name) //nolint:errcheck // gone after the rename; cleanup only on failure.
+	if _, werr := tmp.Write(data); werr != nil {
+		_ = tmp.Close() //nolint:errcheck // the write error is the one reported.
+		return fmt.Errorf("writing config %q: %w", path, werr)
 	}
-	return v == nil
+	if cerr := tmp.Close(); cerr != nil {
+		return fmt.Errorf("writing config %q: %w", path, cerr)
+	}
+	if rerr := os.Rename(name, path); rerr != nil {
+		return fmt.Errorf("writing config %q: %w", path, rerr)
+	}
+	return nil
 }
 
 // Session returns the token saved for server, if any.
@@ -244,8 +280,9 @@ func (s *UserStore) RemoveTarget(name string) bool {
 // WorkspaceTarget returns the target the user selected for the workspace at
 // root, or "".
 func (s *UserStore) WorkspaceTarget(root string) string {
+	root = filepath.Clean(root)
 	for _, w := range s.WorkspaceTargets {
-		if w.Workspace == root {
+		if filepath.Clean(w.Workspace) == root {
 			return w.Target
 		}
 	}
@@ -255,8 +292,9 @@ func (s *UserStore) WorkspaceTarget(root string) string {
 // SetWorkspaceTarget records name as the user's target for the workspace at
 // root; an empty name clears the selection.
 func (s *UserStore) SetWorkspaceTarget(root, name string) {
+	root = filepath.Clean(root)
 	for i := range s.WorkspaceTargets {
-		if s.WorkspaceTargets[i].Workspace == root {
+		if filepath.Clean(s.WorkspaceTargets[i].Workspace) == root {
 			if name == "" {
 				s.WorkspaceTargets = append(s.WorkspaceTargets[:i], s.WorkspaceTargets[i+1:]...)
 				return

@@ -17,11 +17,17 @@ body: |-
   image a project leaves unset, with the order `--registry`,
   `DEXAFLOW_REGISTRY`, `dexaflow.yaml`, the target, the workspace defaults,
   then the config file; `deploy` prints the registry and where it came from.
-  `deploy --all` and `deploy <dag_id>` now read the workspace around the
-  current folder (else its git repository) instead of failing with
-  `lstat ~/dexaflow` inside a repository, a bare `deploy` at a workspace root
-  deploys its DAGs, and `dexaflow lite` serves the workspace around the
-  current folder, keeping `~/dexaflow` only when there is none.
+  `deploy <dag_id>` now looks the id up in the workspace around the current
+  folder (else its git repository) instead of failing with `lstat ~/dexaflow`
+  inside a repository; `deploy --all` reads the workspace, or the current
+  project, and refuses inside a repository with no workspace file rather than
+  deploy all of it; a bare `deploy` at a workspace root deploys its DAGs; and
+  `dexaflow lite` serves the workspace around the current folder, keeping
+  `~/dexaflow` only when there is none. A workspace file owned by another user
+  is ignored with a warning. `--registry` is accepted by `compile`, `build` and
+  `deploy`, and deploy prints the server, registry, platforms and base image
+  it uses with their sources; `auth login` prints the server before it reads a
+  password.
   `leoflow.workspace.yaml` is read like `dexaflow.workspace.yaml` (#1704,
   #1102).
 time: 2026-10-13T18:00:00.000000000-03:00

@@ -37,7 +37,7 @@ error: deploy requires a container registry, but none is configured.
 
       dexaflow.yaml:              registry: {url: ghcr.io/<your-org>}
       dexaflow.workspace.yaml:    defaults: {registry: ghcr.io/<your-org>}
-      a target:                   dexaflow target add <name> <url> --registry ghcr.io/<your-org> --force
+      a target:                   registry: ghcr.io/<your-org> under targets.<name> in dexaflow.workspace.yaml
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
 
   The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io

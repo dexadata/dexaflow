@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,10 @@ type defaultsLayer struct {
 type defaultsProvenance struct {
 	// registrySource names where registry.url came from, "" when none is set.
 	registrySource string
+	// platformsSource and baseImageSource name where build.platforms and
+	// base_image came from; "" means the project or the built-in default.
+	platformsSource string
+	baseImageSource string
 }
 
 // applyWorkspaceDefaults fills what the project's dexaflow.yaml leaves unset
@@ -47,36 +52,54 @@ func applyWorkspaceDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowC
 		return defaultsProvenance{}, err
 	}
 	prov := defaultsProvenance{registrySource: applyRegistry(cmd, dir, cfg, layers, store, configFilePath(cmd))}
-	applyBuildDefaults(dir, cfg, layers)
+	prov.platformsSource, prov.baseImageSource = applyBuildDefaults(dir, cfg, layers)
 	return prov, nil
 }
 
-// defaultsLayers returns the target's defaults (when withTarget and a target
-// is in use) and the defaults of the workspace holding dir, most specific first.
+// defaultsLayers returns the target's defaults and the workspace's, most
+// specific first.
+//
+// With a target (withTarget), both come from the workspace around the current
+// folder, the one the target was resolved from, so a target and the defaults
+// it overrides always belong to the same file; that workspace's defaults apply
+// only to projects inside it. Without one (Lite), the defaults are those of
+// the workspace holding dir.
 func defaultsLayers(cmd *cobra.Command, dir string, withTarget bool) ([]defaultsLayer, error) {
-	var layers []defaultsLayer
-	if withTarget {
-		serverFlag, _ := cmd.Flags().GetString("server") //nolint:errcheck // a command without --server has no override.
-		choice, err := resolveServer(cmd, serverFlag)
-		if err != nil {
+	if !withTarget {
+		ws, err := findWorkspace(dir)
+		if err != nil || ws == nil {
 			return nil, err
 		}
-		if t := choice.Target; t != nil {
-			where := choice.tc.storePath
-			if t.Scope == scopeWorkspace {
-				where = choice.tc.ws.File
-			}
-			layers = append(layers, defaultsLayer{values: t.Defaults, name: fmt.Sprintf("target %q in %s", t.Name, where)})
-		}
+		return []defaultsLayer{{values: ws.Spec.Defaults, name: "defaults in " + ws.File}}, nil
 	}
-	ws, err := findWorkspace(dir)
+	serverFlag, _ := cmd.Flags().GetString("server") //nolint:errcheck // a command without --server has no override.
+	choice, err := resolveServer(cmd, serverFlag)
 	if err != nil {
 		return nil, err
 	}
-	if ws != nil {
+	var layers []defaultsLayer
+	ws := choice.tc.ws
+	if t := choice.Target; t != nil {
+		where := choice.tc.storePath
+		if t.Scope == scopeWorkspace {
+			where = ws.File
+		}
+		layers = append(layers, defaultsLayer{values: t.Defaults, name: fmt.Sprintf("target %q in %s", t.Name, where)})
+	}
+	if ws != nil && insideDir(dir, ws.Root) {
 		layers = append(layers, defaultsLayer{values: ws.Spec.Defaults, name: "defaults in " + ws.File})
 	}
 	return layers, nil
+}
+
+// insideDir reports whether dir is root or below it, symlinks resolved.
+func insideDir(dir, root string) bool {
+	d, err := resolvedDir(dir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, d)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // applyRegistry settles registry.url and image_name and returns the url's
@@ -119,24 +142,30 @@ func pickRegistry(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, lay
 }
 
 // applyBuildDefaults fills build.platforms and base_image from the layers when
-// the project sets neither.
-func applyBuildDefaults(dir string, cfg *domain.LeoflowConfig, layers []defaultsLayer) {
-	if !projectSetsPlatforms(dir) {
+// the project sets them not, and returns where each came from: the project's
+// file, a layer, or "" for the built-in default.
+func applyBuildDefaults(dir string, cfg *domain.LeoflowConfig, layers []defaultsLayer) (platforms, baseImage string) {
+	if projectSetsPlatforms(dir) {
+		platforms = projectConfigPath(dir)
+	} else {
 		for _, l := range layers {
 			if len(l.values.Platforms) > 0 {
 				cfg.Build.Platforms = append([]string(nil), l.values.Platforms...)
+				platforms = l.name
 				break
 			}
 		}
 	}
-	if cfg.BaseImage == "" {
-		for _, l := range layers {
-			if l.values.BaseImage != "" {
-				cfg.BaseImage = l.values.BaseImage
-				break
-			}
+	if cfg.BaseImage != "" {
+		return platforms, projectConfigPath(dir)
+	}
+	for _, l := range layers {
+		if l.values.BaseImage != "" {
+			cfg.BaseImage = l.values.BaseImage
+			return platforms, l.name
 		}
 	}
+	return platforms, ""
 }
 
 // projectSetsPlatforms reports whether the project's own file declares

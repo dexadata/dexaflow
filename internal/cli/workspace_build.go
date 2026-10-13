@@ -211,6 +211,7 @@ func newBuildCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&push, "push", false, "push each built image to its registry")
+	cmd.Flags().String("registry", "", registryFlagUsage)
 	cmd.Flags().StringVar(&builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&dagVersion, "dag-version", "", "version recorded in each dag.json and used by the registry tag strategy (default: per project, git describe of its directory, or dev outside git, plus a hash of its content)")
 	cmd.Flags().StringVar(&sha, "sha", "", "commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)")
