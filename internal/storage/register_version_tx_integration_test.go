@@ -252,3 +252,48 @@ func TestRegisterDagVersionConcurrentIdenticalRegisters(t *testing.T) {
 		}
 	}
 }
+
+// TestRegisterDagVersionConcurrentFirstRegisters: the same first version of a
+// DAG that does not exist yet, pushed concurrently, creates the DAG once and
+// registers once; the other pushes answer created=false without error (#1702).
+func TestRegisterDagVersionConcurrentFirstRegisters(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	for round := 0; round < 10; round++ {
+		dagID := fmt.Sprintf("reg_tx_first_%d_%d", round, time.Now().UnixNano())
+		spec := registerTxSpec(dagID, "v1", "a", 3, false)
+		hash, err := spec.CanonicalHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		const pushers = 4
+		var wg sync.WaitGroup
+		created := make([]bool, pushers)
+		errs := make([]error, pushers)
+		start := make(chan struct{})
+		for i := 0; i < pushers; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				created[i], errs[i] = repo.RegisterDagVersion(ctx, "default", spec, hash)
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		n := 0
+		for i := range created {
+			if errs[i] != nil {
+				t.Fatalf("round %d: pusher %d: %v", round, i, errs[i])
+			}
+			if created[i] {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("round %d: %d pushers created the version, want exactly 1", round, n)
+		}
+		if got, want := readDagMetadata(t, ctx, repo, dagID), specMetadata(t, spec); !reflect.DeepEqual(got, want) {
+			t.Fatalf("round %d: got %+v want %+v", round, got, want)
+		}
+	}
+}

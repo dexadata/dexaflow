@@ -563,7 +563,7 @@ func (q *Queries) ListDagsWithVersion(ctx context.Context, arg ListDagsWithVersi
 }
 
 const lockDagByDagID = `-- name: LockDagByDagID :one
-SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR UPDATE
+SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR NO KEY UPDATE
 `
 
 type LockDagByDagIDParams struct {
@@ -573,7 +573,9 @@ type LockDagByDagIDParams struct {
 
 // Locks the DAG's row for the rest of the transaction, so registers of the same
 // DAG are serialized: the spec-hash check of one register sees the version the
-// previous one committed.
+// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
+// another register, but not the KEY SHARE lock every dag_runs insert takes on
+// its DAG, so run creation is not blocked while a version registers.
 func (q *Queries) LockDagByDagID(ctx context.Context, arg LockDagByDagIDParams) (Dag, error) {
 	row := q.db.QueryRow(ctx, lockDagByDagID, arg.TenantID, arg.DagID)
 	var i Dag

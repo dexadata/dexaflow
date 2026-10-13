@@ -504,7 +504,9 @@ type Querier interface {
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
 	// Locks the DAG's row for the rest of the transaction, so registers of the same
 	// DAG are serialized: the spec-hash check of one register sees the version the
-	// previous one committed.
+	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
+	// another register, but not the KEY SHARE lock every dag_runs insert takes on
+	// its DAG, so run creation is not blocked while a version registers.
 	LockDagByDagID(ctx context.Context, arg LockDagByDagIDParams) (Dag, error)
 	// Share-locks every task instance of a run inside the reap transaction, before
 	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
