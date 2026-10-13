@@ -18,6 +18,7 @@ import (
 type fakeConnStore struct {
 	conns    map[string]domain.Connection
 	writeErr error
+	getErr   error
 }
 
 func (f *fakeConnStore) ListConnections(_ context.Context, _ string, _, _ int) ([]domain.Connection, int, error) {
@@ -29,6 +30,9 @@ func (f *fakeConnStore) ListConnections(_ context.Context, _ string, _, _ int) (
 }
 
 func (f *fakeConnStore) GetConnection(_ context.Context, _, id string) (domain.Connection, error) {
+	if f.getErr != nil {
+		return domain.Connection{}, f.getErr
+	}
 	if c, ok := f.conns[id]; ok {
 		return c, nil
 	}
@@ -482,5 +486,51 @@ func TestConnectionsEmptyStubWithoutStore(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &col)
 	if col["total_entries"].(float64) != 0 {
 		t.Errorf("nil store should yield empty collection, got %v", col)
+	}
+}
+
+// A connection whose extra no configured key opens (#1677) is listed with the
+// others, its extra masked and flagged extra_unreadable, so one bad row does not
+// fail GET /api/v2/connections for the whole tenant. Readable connections carry
+// no flag.
+func TestConnectionListMarksAnUnreadableExtra(t *testing.T) {
+	store := &fakeConnStore{conns: map[string]domain.Connection{
+		"lost": {ConnID: "lost", ConnType: "http", Host: "api.example.com", ExtraUnreadable: true},
+		"pg":   {ConnID: "pg", ConnType: "postgres", Extra: `{"sslmode":"require"}`},
+	}}
+	rec := authGet(connServer(store), http.MethodGet, "/api/v2/connections", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v2/connections = %d, body %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Connections []map[string]any `json:"connections"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]map[string]any{}
+	for _, c := range out.Connections {
+		got[c["connection_id"].(string)] = c
+	}
+	if lost := got["lost"]; lost == nil || lost["extra"] != secretMask || lost["extra_unreadable"] != true || lost["host"] != "api.example.com" {
+		t.Errorf("unreadable connection = %v, want its fields, a masked extra and extra_unreadable true", lost)
+	}
+	if pg := got["pg"]; pg == nil || pg["extra"] != `{"sslmode":"require"}` {
+		t.Errorf("readable connection = %v", pg)
+	} else if _, flagged := pg["extra_unreadable"]; flagged {
+		t.Errorf("readable connection carries extra_unreadable: %v", pg)
+	}
+}
+
+// Reading one unreadable connection is still an error, but its detail tells
+// the operator what happened instead of the generic internal-error phrase.
+func TestConnectionGetUnreadableExplainsTheError(t *testing.T) {
+	store := &fakeConnStore{getErr: domain.Safef(domain.ErrValueUnreadable, "connection %q is encrypted with a secret key this server does not have", "lost")}
+	rec := authGet(connServer(store), http.MethodGet, "/api/v2/connections/lost", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/v2/connections/lost = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `connection \"lost\" is encrypted with a secret key this server does not have`) {
+		t.Errorf("body %s does not explain the failure", body)
 	}
 }

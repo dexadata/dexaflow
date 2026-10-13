@@ -40,6 +40,8 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           HEAD_REF: ${{ github.head_ref }}
+          # Empty when the fork was deleted, which counts as a fork below.
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
           # Dependabot bumps and the pull requests cut-release.sh opens (the
@@ -56,6 +58,23 @@ jobs:
           m=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR" -q '.milestone.title // empty')
           if [[ "$m" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "planned for $m"; exit 0
+          fi
+          # Only users with triage access can set a milestone, so the author
+          # of a pull request from a fork never can: failing would leave the
+          # first outside pull request red for a reason its author cannot fix
+          # (#1560). It passes with a notice instead, and the maintainer sets
+          # the milestone before merging; this guard re-runs on `milestoned`
+          # and then reports it. scripts/release-gap.sh still lists, at the
+          # patch cut, any commit that reached main without one.
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "::notice::Pull request from a fork (${HEAD_REPO:-deleted}): a maintainer sets the vX.Y.Z milestone before merge."
+            {
+              echo "### Milestone not set yet"
+              echo
+              echo "This pull request comes from a fork, and only maintainers can set milestones."
+              echo "A maintainer sets the release milestone (vX.Y.Z) before merging it."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           echo "::error::Set this pull request's milestone to the release it is planned for (for example v0.5.1, or v0.5.2 to leave it on main until the next patch). Found: '${m:-none}'."
           exit 1

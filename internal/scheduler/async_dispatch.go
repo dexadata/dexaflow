@@ -65,7 +65,9 @@ func (a *AsyncDispatchFailures) HandleDispatchFailure(ctx context.Context, runID
 		a.logger.Error("buffered dispatch refused; failing task", "run", runID, "task", taskID, "error", cause)
 		return a.store.FailDispatchRefused(ctx, runID, taskID, refusedReason(cause))
 	}
-	counted := disp != executor.Backpressure
+	// Neither cluster backpressure nor a dispatch that never left the control
+	// plane (Deferred: the client rate limiter refused it) is a failed attempt.
+	counted := disp != executor.Backpressure && disp != executor.Deferred
 	if counted && attempts+1 >= dispatchMaxAttempts {
 		reason := fmt.Sprintf("dispatch_failed after %d attempts: %v", attempts+1, cause)
 		a.logger.Error("dispatch attempts exhausted; failing task",

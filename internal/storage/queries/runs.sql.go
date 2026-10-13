@@ -672,6 +672,43 @@ func (q *Queries) FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInst
 	return err
 }
 
+const failTaskInstanceInfraIfActive = `-- name: FailTaskInstanceInfraIfActive :exec
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = now(),
+    error_message = $1
+WHERE id = $2 AND try_number = $3
+  AND attempt_epoch = $4
+  AND state IN ('scheduled', 'queued', 'running')
+`
+
+type FailTaskInstanceInfraIfActiveParams struct {
+	ErrorMessage *string     `json:"error_message"`
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+}
+
+// Settle a task instance failed for an infrastructure reason from the pod
+// reconciler (ADR 0051, #1595): the cluster stopped the pod (an eviction, a
+// graceful node shutdown, a preemption), so the attempt goes to the infra
+// re-place rail and keeps the task's own retries. Confirmed at once: the
+// reconciler read the terminal pod and found no SUCCESS record, which is what
+// the confirmation pass would check (ADR 0052 amendment, part 2). Guarded like
+// FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
+// states.
+func (q *Queries) FailTaskInstanceInfraIfActive(ctx context.Context, arg FailTaskInstanceInfraIfActiveParams) error {
+	_, err := q.db.Exec(ctx, failTaskInstanceInfraIfActive,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
+	return err
+}
+
 const getDagRun = `-- name: GetDagRun :one
 SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3
 `
@@ -1579,9 +1616,17 @@ JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
   AND ti.warm_worker_id IS NULL
   AND ti.started_at <= now() - make_interval(secs => $1::float8)
-ORDER BY ti.started_at
-LIMIT 100
+  AND (ti.started_at, ti.id) > ($2::timestamptz, $3::uuid)
+ORDER BY ti.started_at, ti.id
+LIMIT $4
 `
+
+type ListRunningTasksParams struct {
+	GraceSeconds float64            `json:"grace_seconds"`
+	AfterAt      pgtype.Timestamptz `json:"after_at"`
+	AfterID      pgtype.UUID        `json:"after_id"`
+	PageSize     int32              `json:"page_size"`
+}
 
 type ListRunningTasksRow struct {
 	TaskInstanceID pgtype.UUID        `json:"task_instance_id"`
@@ -1607,11 +1652,19 @@ type ListRunningTasksRow struct {
 // slots of those past it; a NULL started_at is never listed (too poorly observed
 // to reap). The reaper re-checks grace and pod liveness per candidate in Go.
 // heartbeated lets Lite (no pods) judge a TI whose agent died before its first
-// heartbeat, which the agent-lost query never lists (#916). The
-// LIMIT bounds a single tick's reap work even after a large outage; the rest
-// are picked up next tick.
-func (q *Queries) ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error) {
-	rows, err := q.db.Query(ctx, listRunningTasks, graceSeconds)
+// heartbeat, which the agent-lost query never lists (#916). The page is
+// keyset-paged on (started_at, id) after the reaper's cursor (R-07, #1597):
+// with a fixed "oldest 100", 100 attempts with live pods hid a newer attempt
+// whose pod vanished forever. The reaper keeps the cursor across sweeps and
+// passes '-infinity' and the nil uuid to start over. The LIMIT bounds a single
+// sweep's reap work.
+func (q *Queries) ListRunningTasks(ctx context.Context, arg ListRunningTasksParams) ([]ListRunningTasksRow, error) {
+	rows, err := q.db.Query(ctx, listRunningTasks,
+		arg.GraceSeconds,
+		arg.AfterAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1754,9 +1807,18 @@ FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'queued'
-ORDER BY ti.queued_at NULLS LAST
-LIMIT 100
+  AND ti.queued_at <= now() - make_interval(secs => $1::float8)
+  AND (ti.queued_at, ti.id) > ($2::timestamptz, $3::uuid)
+ORDER BY ti.queued_at, ti.id
+LIMIT $4
 `
+
+type ListStaleQueuedTaskInstancesParams struct {
+	ThresholdSeconds float64            `json:"threshold_seconds"`
+	AfterAt          pgtype.Timestamptz `json:"after_at"`
+	AfterID          pgtype.UUID        `json:"after_id"`
+	PageSize         int32              `json:"page_size"`
+}
 
 type ListStaleQueuedTaskInstancesRow struct {
 	TaskInstanceID pgtype.UUID        `json:"task_instance_id"`
@@ -1769,11 +1831,16 @@ type ListStaleQueuedTaskInstancesRow struct {
 	WarmWorkerID   *string            `json:"warm_worker_id"`
 }
 
-// Lists every TI currently in `queued` alongside its queued_at timestamp for
-// the dispatch-lost reaper (#202). The reaper applies the threshold per
-// candidate so the SQL stays simple and the decision is purely in Go. The
-// LIMIT bounds a tick's reap work after a long outage; the rest are picked
-// up next tick (backstop, not sprint).
+// Lists one page of the TIs in `queued` for at least the dispatch-lost
+// threshold, with their queued_at, for the dispatch-lost reaper (#202). The
+// threshold is applied here, before the LIMIT, so attempts inside it never
+// take the slots of those past it; a NULL queued_at is never listed (too
+// poorly observed to reap). The reaper re-checks the threshold in Go.
+// The page is keyset-paged on (queued_at, id) after the reaper's cursor
+// (R-07, #1597): with a fixed "oldest 100", 100 queued attempts whose pods
+// are Pending (a capacity shortage) hid a newer lost dispatch forever. The
+// reaper keeps the cursor across sweeps and passes '-infinity' and the nil
+// uuid to start over. The LIMIT bounds a sweep's reap work.
 // warm_worker_id rides along (ADR 0058 N1d-a2, review finding H3): a queued warm
 // attempt whose serving warm worker is still alive is just slow to transition
 // queued->running, so the dispatch-lost reaper must DEFER it rather than fail it
@@ -1782,8 +1849,13 @@ type ListStaleQueuedTaskInstancesRow struct {
 // gate unchanged.
 // attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 // teardown name exactly the attempt that was listed.
-func (q *Queries) ListStaleQueuedTaskInstances(ctx context.Context) ([]ListStaleQueuedTaskInstancesRow, error) {
-	rows, err := q.db.Query(ctx, listStaleQueuedTaskInstances)
+func (q *Queries) ListStaleQueuedTaskInstances(ctx context.Context, arg ListStaleQueuedTaskInstancesParams) ([]ListStaleQueuedTaskInstancesRow, error) {
+	rows, err := q.db.Query(ctx, listStaleQueuedTaskInstances,
+		arg.ThresholdSeconds,
+		arg.AfterAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

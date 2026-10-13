@@ -33,7 +33,8 @@ const (
 	// bounded-backoff → dispatch_failed behavior (ADR 0031 Amendment A).
 	Rejected
 	// Deferred means the dispatch was never attempted: the control plane's own
-	// buffered dispatch queue was full (or shutting down). Nothing reached the
+	// buffered dispatch queue was full (or shutting down), or the Kubernetes
+	// client's own rate limiter refused the request before sending it. Nothing reached the
 	// runtime, so the scheduler leaves the task scheduled for a later tick and
 	// records nothing: no backoff, no dispatch-attempt increment, no
 	// dispatch_failed. It is local backpressure, not a failed dispatch.
@@ -97,6 +98,9 @@ func classifyDispatchError(err error) Disposition {
 		// path.
 		return Rejected
 	}
+	if isClientRateLimiterRefusal(err) {
+		return Deferred
+	}
 	if apierrors.IsTooManyRequests(err) {
 		return Backpressure
 	}
@@ -104,6 +108,24 @@ func classifyDispatchError(err error) Disposition {
 		return Backpressure
 	}
 	return Rejected
+}
+
+// clientRateLimiterRefusal is the prefix client-go puts on an error from its
+// own client-side rate limiter (rest.Request.tryThrottle). The limiter returns
+// it before the request is sent, when waiting for a token would run past the
+// caller's deadline, so nothing reached the apiserver. client-go leaves a plain
+// context cancellation or deadline unwrapped, so this marker never covers a
+// request that may have been sent.
+const clientRateLimiterRefusal = "client rate limiter Wait returned an error"
+
+// isClientRateLimiterRefusal reports whether err is the client-side rate
+// limiter refusing a request before sending it. That is local backpressure, the
+// same as a full dispatch buffer, so the task is Deferred: left scheduled for a
+// later tick without spending its dispatch-attempt budget (#1596). Counting it
+// as Rejected let a throttled wide fan-out fail healthy tasks as
+// dispatch_failed although no create was ever attempted.
+func isClientRateLimiterRefusal(err error) bool {
+	return strings.Contains(err.Error(), clientRateLimiterRefusal)
 }
 
 // isQuotaExceeded reports whether a Forbidden error is a ResourceQuota rejection

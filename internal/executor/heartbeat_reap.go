@@ -168,11 +168,16 @@ type agentLostReaper struct {
 	// ceilingStops tracks the background stops runPastCeiling starts, so a
 	// test can wait for them.
 	ceilingStops sync.WaitGroup
+	// ceilingPager and silentPager walk the running list across sweeps for
+	// the two Lite passes, so live attempts cannot hide the rest behind a full
+	// page (R-07, #1597).
+	ceilingPager reapPager
+	silentPager  reapPager
 }
 
 // runningLister is the ListRunningTasks slice of PodLostReapStore.
 type runningLister interface {
-	ListRunningTasks(ctx context.Context, grace time.Duration) ([]PodLostCandidate, error)
+	ListRunningTasks(ctx context.Context, grace time.Duration, after ReapCursor) ([]PodLostCandidate, error)
 }
 
 func newAgentLostReaper(store HeartbeatReapStore, logger *slog.Logger, threshold time.Duration, rec DecisionRecorder) *agentLostReaper {
@@ -234,10 +239,11 @@ func (r *agentLostReaper) runPastCeiling(ctx context.Context, now time.Time) err
 	if !ok || r.running == nil || r.ceiling <= 0 {
 		return nil
 	}
-	candidates, err := r.running.ListRunningTasks(ctx, r.ceiling)
+	candidates, err := r.running.ListRunningTasks(ctx, r.ceiling, r.ceilingPager.after())
 	if err != nil {
 		return err
 	}
+	advancePager(&r.ceilingPager, candidates)
 	for _, c := range candidates {
 		if c.RunningSince.IsZero() || now.Sub(c.RunningSince) <= r.ceiling {
 			continue
@@ -345,10 +351,11 @@ func (r *agentLostReaper) runNeverHeartbeated(ctx context.Context, now time.Time
 	if r.procs == nil || r.running == nil {
 		return nil
 	}
-	candidates, err := r.running.ListRunningTasks(ctx, r.threshold)
+	candidates, err := r.running.ListRunningTasks(ctx, r.threshold, r.silentPager.after())
 	if err != nil {
 		return err
 	}
+	advancePager(&r.silentPager, candidates)
 	for _, c := range candidates {
 		if c.Heartbeated || !IsPodLostCandidate(c, r.threshold, now) {
 			continue

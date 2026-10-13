@@ -222,13 +222,7 @@ func TestLimaBug3_TaskTriesIncludesArchivedAttemptsIntegration(t *testing.T) {
 // list query.
 func queuedAtOf(t *testing.T, sched *storage.SchedulerStore, ctx context.Context, runUUID, taskID string) time.Time {
 	t.Helper()
-	cands, err := sched.ListStaleQueuedCandidates(ctx)
-	if err != nil {
-		// The candidate query only lists `queued` TIs; for failed/none TIs
-		// we fall back to scanning ActiveRuns which only carries states,
-		// not timestamps. The honest answer is: zero (caller will catch).
-		return time.Time{}
-	}
+	cands := allStaleQueued(t, sched, ctx, 0)
 	for _, c := range cands {
 		if c.DagRunID == runUUID && c.TaskID == taskID {
 			return c.QueuedAt
@@ -241,10 +235,7 @@ func queuedAtOf(t *testing.T, sched *storage.SchedulerStore, ctx context.Context
 // resolved via the staging-store ID query the dispatcher uses.
 func taskInstanceID(t *testing.T, sched *storage.SchedulerStore, ctx context.Context, runUUID, taskID string) string {
 	t.Helper()
-	cands, err := sched.ListStaleQueuedCandidates(ctx)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedCandidates: %v", err)
-	}
+	cands := allStaleQueued(t, sched, ctx, 0)
 	for _, c := range cands {
 		if c.DagRunID == runUUID && c.TaskID == taskID {
 			return c.TaskInstanceID

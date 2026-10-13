@@ -102,10 +102,7 @@ func TestReaperMarksAreFencedOnTheEpoch(t *testing.T) {
 			"UPDATE task_instances SET started_at = now() - interval '1 hour' WHERE id=$1::uuid", f.tiID); err != nil {
 			t.Fatalf("backdate started_at: %v", err)
 		}
-		cands, err := f.sched.ListRunningTasks(f.ctx, time.Minute)
-		if err != nil {
-			t.Fatalf("ListRunningTasks: %v", err)
-		}
+		cands := allRunning(t, f.sched, f.ctx, time.Minute)
 		found := false
 		for _, c := range cands {
 			if c.TaskInstanceID == f.tiID {
@@ -135,10 +132,7 @@ func TestReaperMarksAreFencedOnTheEpoch(t *testing.T) {
 		f.setState(t, "scheduled")
 		cur := f.dispatch(t)
 		f.transition(t, domain.TaskStateQueued)
-		cands, err := f.sched.ListStaleQueuedCandidates(f.ctx)
-		if err != nil {
-			t.Fatalf("ListStaleQueuedCandidates: %v", err)
-		}
+		cands := allStaleQueued(t, f.sched, f.ctx, 0)
 		found := false
 		for _, c := range cands {
 			if c.TaskInstanceID == f.tiID {

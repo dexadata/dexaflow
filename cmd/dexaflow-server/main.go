@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -48,6 +47,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/observability"
 	"github.com/dexadata/dexaflow/internal/oidc"
+	"github.com/dexadata/dexaflow/internal/retention"
 	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/secrets"
 	"github.com/dexadata/dexaflow/internal/storage"
@@ -173,6 +173,7 @@ func run() error {
 	// A clear deletes the stored XCom of the attempts it clears, not just their
 	// index rows, since agents fetch values by key (#1131).
 	repo.SetXComBackend(xcomBackend)
+	configureRegistration(repo, cfg)
 	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
@@ -1197,6 +1198,9 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		// dispatches settle (success or failed via the sink) instead of leaking
 		// workers and leaving TIs stuck `queued` (#133). nil in Lite/passthrough.
 		drain = func() { drainDispatch(dispatchCloser, logger) }
+		// On the scheduler pool, with the loop and the other janitors: off the
+		// API pool and its statement_timeout (#1339).
+		startRetention(ctx, cfg.Retention, storage.NewRetentionStore(schedPG), sched.IsLeading, metrics, logger)
 		health = sched
 		podDispatch = dispatchOn
 	}
@@ -1648,19 +1652,16 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(agentrpc.RecoveryUnaryInterceptor(logger), inflight.UnaryInterceptor()),
 		grpc.ChainStreamInterceptor(agentrpc.RecoveryStreamInterceptor(logger), inflight.StreamInterceptor()),
-		// Tolerate a warm worker's keepalive pings on an otherwise idle assignment
-		// stream so gRPC does not GOAWAY it as abusive (ADR 0058 N1b). This only
-		// RELAXES the server's default client-ping enforcement (5m, streams-only),
-		// so it cannot change StreamLogs behavior — an active StreamLogs already
-		// satisfies both the old and new policy. Server-initiated keepalive
-		// (ServerParameters: MaxConnectionIdle / Time pings) is deliberately NOT
-		// added here: it would start pinging existing idle StreamLogs connections,
-		// a behavior change with no benefit until a real warm worker connects.
-		// Deferred to N1b1-place as a documented TODO.
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
+		// Tolerate the agents' keepalive pings, including on an otherwise idle
+		// connection or assignment stream, so gRPC does not GOAWAY them as
+		// abusive (ADR 0058 N1b, #946). This only RELAXES the server's default
+		// client-ping enforcement (5m, streams-only). Server-initiated keepalive
+		// (ServerParameters) is deliberately NOT added: the agent pings, and so
+		// detects a dead control plane itself; a vanished agent is found by the
+		// heartbeat reapers, and an assignment sent to a vanished warm worker is
+		// reclaimed when its ack lease expires. Server pings on every idle agent
+		// connection would cost something and detect nothing those miss.
+		grpc.KeepaliveEnforcementPolicy(agentrpc.KeepaliveEnforcementPolicy()),
 	}
 	secure := tlsCert != "" && tlsKey != ""
 	if secure {
@@ -2020,6 +2021,30 @@ func startXComSweep(ctx context.Context, backend *xcom.PostgresBackend, logger *
 			}
 		}
 	}()
+}
+
+// startRetention starts the retention janitor (D5) when any retention class is
+// configured and reports whether it did. Every class is off by default, so a
+// default install starts nothing and deletes nothing. The janitor runs on the
+// scheduler leader only and rechecks leadership before every batch.
+func startRetention(ctx context.Context, sec config.RetentionSection, store retention.Store, leading func() bool, rec retention.Recorder, logger *slog.Logger) bool {
+	if !sec.Enabled() {
+		return false
+	}
+	j := retention.New(store, retentionConfig(sec), rec, logger)
+	j.SetLeading(leading)
+	logger.Info("retention janitor enabled", "dag_runs_days", sec.DagRunsDays, "audit_log_days", sec.AuditLogDays,
+		"dry_run", sec.DryRun, "interval", sec.Interval, "batch_size", sec.BatchSize, "max_rows_per_cycle", sec.MaxRowsPerCycle)
+	startGatedTicker(ctx, "retention", sec.Interval, leading, logger, func() { j.RunCycle(ctx) })
+	return true
+}
+
+// retentionConfig maps the config section onto the janitor's settings.
+func retentionConfig(sec config.RetentionSection) retention.Config {
+	return retention.Config{
+		DagRunsDays: sec.DagRunsDays, AuditLogDays: sec.AuditLogDays, DryRun: sec.DryRun,
+		BatchSize: sec.BatchSize, BatchPause: sec.BatchPause, MaxRowsPerCycle: sec.MaxRowsPerCycle,
+	}
 }
 
 // startGatedTicker runs fn every interval on a background goroutine, but only
@@ -2441,6 +2466,10 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	sched := scheduler.NewScheduler(store, logger,
 		time.Duration(cfg.Scheduler.LoopIntervalMS)*time.Millisecond)
 	sched.SetRecorder(metrics)
+	// Bound the dispatch work of one tick, and of one tenant in a tick, so a
+	// wide fan-out cannot stall every other run and cron creation (#1596).
+	sched.SetDispatchTickBudget(cfg.Scheduler.Dispatch.TickBudget)
+	sched.SetDispatchTenantLimit(cfg.Scheduler.Dispatch.MaxPerTenantPerTick)
 	// Named pools are Pro-only (ADR 0053): enable the cross-DAG slot gate only on
 	// the Pro edition. Left off on Lite/non-Pro, the tick never queries pool
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
@@ -2548,6 +2577,32 @@ type leadershipChecker interface {
 	HoldsLock(ctx context.Context) (bool, error)
 }
 
+// leadershipAcquirer tries to take leadership without blocking.
+type leadershipAcquirer interface {
+	TryAcquire(ctx context.Context) (bool, error)
+}
+
+// tryLeadership runs one campaign attempt under a deadline. The leader pool
+// has no statement timeout, so on a black-holed session (the database host
+// gone without a TCP reset) an attempt with no deadline would block until the
+// kernel gives up on the socket, about 15 minutes by default (#1599). When the
+// deadline cuts the query, pgx closes that connection, so a lock the server
+// may have granted meanwhile goes with the session.
+func tryLeadership(ctx context.Context, acq leadershipAcquirer, timeout time.Duration) (bool, error) {
+	actx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return acq.TryAcquire(actx)
+}
+
+// checkLeadership is one watchdog check under a deadline: a check that cannot
+// confirm the lock within it fails, and counts toward stepping down, instead
+// of blocking the watchdog on a dead session (#1599).
+func checkLeadership(ctx context.Context, chk leadershipChecker, timeout time.Duration) (bool, error) {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return chk.HoldsLock(cctx)
+}
+
 // campaignAndRun acquires scheduler leadership (polling every leaderCheckInterval)
 // and runs the loop only while leader, so a single replica schedules at a time
 // (ADR 0009). If leadership is lost mid-run (the advisory lock dropped because the
@@ -2562,7 +2617,7 @@ func campaignAndRun(ctx context.Context, leader *scheduler.Leader, sched *schedu
 	// re-acquire latency (no churn happened yet).
 	var stepDownAt time.Time
 	for {
-		acquired, err := leader.TryAcquire(ctx)
+		acquired, err := tryLeadership(ctx, leader, leaderCheckInterval)
 		switch {
 		case err != nil:
 			logger.Error("acquiring leadership", "error", err)
@@ -2623,8 +2678,11 @@ func runAsLeader(ctx context.Context, leader *scheduler.Leader, sched *scheduler
 
 // watchLeadership cancels the run when leadership is lost: a definitive "not
 // held" steps down immediately, while transient check errors are tolerated up to
-// maxLeaderCheckFailures (a connection blip should not churn leadership). It
-// returns when the run context is canceled. The onStepDown callback fires
+// maxLeaderCheckFailures (a connection blip should not churn leadership). Each
+// check runs under a deadline of one interval, so a check that hangs on a
+// black-holed session is a failure too: the leader steps down within about
+// maxLeaderCheckFailures intervals of losing its database (#1599). It returns
+// when the run context is canceled. The onStepDown callback fires
 // once, BEFORE cancel(), with the step-down reason so the scheduler can
 // classify the cancel fanout (#311) and increment the per-reason counter.
 func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.Duration, cancel context.CancelFunc, logger *slog.Logger, onStepDown func(reason string)) {
@@ -2642,7 +2700,7 @@ func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			held, err := chk.HoldsLock(ctx)
+			held, err := checkLeadership(ctx, chk, interval)
 			switch {
 			case err != nil:
 				if ctx.Err() != nil {
@@ -2810,6 +2868,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// deleted it instead (ADR 0052 amendment).
 	if metrics != nil {
 		podExec.SetTeardownRecorder(metrics)
+		// Count every task pod create and observe its API latency (#1186).
+		podExec.SetPodMetrics(metrics)
 	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
 	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
@@ -3073,4 +3133,11 @@ func logEnvCompat(r envcompat.Report) {
 	if n := len(r.Legacy); n > 0 {
 		slog.Info("environment: variables set under their LEOFLOW_* names are also read as DEXAFLOW_*", "count", n)
 	}
+}
+
+// configureRegistration applies the settings DAG registration reads: whether a
+// DAG registered for the first time starts paused (dags_are_paused_at_creation,
+// #1705). A DAG's own is_paused_upon_creation still wins over it.
+func configureRegistration(repo *storage.Repository, cfg *config.ServerConfig) {
+	repo.SetDagsArePausedAtCreation(cfg.DagsArePausedAtCreation)
 }

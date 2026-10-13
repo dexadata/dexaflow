@@ -210,11 +210,21 @@ func resolveLiteProject(cmd *cobra.Command, args []string) (string, error) {
 		}
 		return p, nil
 	}
-	dir := defaultWorkspace(cmd)
+	dir := liteWorkspace(cmd)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("creating workspace %s: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// liteWorkspace is the workspace `dexaflow lite` runs with no argument: the one
+// around the current directory when a dexaflow.workspace.yaml is found, else
+// defaultWorkspace.
+func liteWorkspace(cmd *cobra.Command) string {
+	if ws, err := findWorkspaceFromCwd(); err == nil && ws != nil {
+		return ws.Root
+	}
+	return defaultWorkspace(cmd)
 }
 
 // defaultWorkspace returns the workspace from config (set by `dexaflow setup`),
@@ -1728,6 +1738,12 @@ func sharedServerEnv(p liteEnvParams) []string {
 		"LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=false",
 		"LEOFLOW_SECRET_KEY_MIGRATION_LOCK=true",
 		"LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true",
+		// The server pauses a new DAG by default, as Airflow does (#1705). Lite
+		// is the inner-dev loop: a DAG you run locally must start active, so
+		// its schedule runs without an unpause after the first save. A DAG's
+		// own is_paused_upon_creation still wins, and an exported
+		// DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION overrides this.
+		"LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION=false",
 	}
 	if adminHash != "" {
 		// Real auth: bootstrap the admin from the hash; no bypass.
@@ -2016,6 +2032,7 @@ func workspaceWatchPaths(ws *WorkspaceSpec) []string {
 func devCompileAndRegister(ctx context.Context, cmd *cobra.Command, dir string, opts compileOptions, token string, afterCompile func() error, uiURL string) error {
 	opts.output = filepath.Join(liteDevDir(), "dag.json")
 	opts.dagVersion = fmt.Sprintf("dev-%d", time.Now().UnixNano())
+	opts.lite = true
 	//nolint:contextcheck // runCompile derives its context from cmd; ctx here is used for registration.
 	if cerr := runCompile(cmd, dir, opts); cerr != nil {
 		return cerr

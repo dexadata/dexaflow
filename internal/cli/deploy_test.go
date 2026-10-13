@@ -34,7 +34,7 @@ func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
 	digest := "ghcr.io/org/etl@sha256:cafef00d"
 
 	var sb strings.Builder
-	dagID, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, digest, "v1")
+	dagID, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, digest, "v1", labelDefault)
 	if err != nil {
 		t.Fatalf("registerDeployedDAG: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
 	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1")
+	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1", labelDefault)
 	if err == nil {
 		t.Error("expected an error when the control plane rejects the register")
 	}
@@ -166,6 +166,7 @@ func TestResolveProjectDirFindsByDagID(t *testing.T) {
 }
 
 func TestDeployUnknownDagIDFails(t *testing.T) {
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
 	ws := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte("workspace: "+ws+"\n"), 0o600); err != nil {
@@ -177,7 +178,8 @@ func TestDeployUnknownDagIDFails(t *testing.T) {
 }
 
 func TestDeployAllEmptyWorkspaceFails(t *testing.T) {
-	ws := t.TempDir() // empty: no DAG projects
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
+	ws := t.TempDir()    // empty: no DAG projects
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte("workspace: "+ws+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -188,6 +190,7 @@ func TestDeployAllEmptyWorkspaceFails(t *testing.T) {
 }
 
 func TestDeployAllRejectsExtraArg(t *testing.T) {
+	t.Chdir(t.TempDir())
 	if _, _, err := run(t, "deploy", "somedir", "--all"); err == nil {
 		t.Error("expected --all combined with a path/dag_id to be rejected")
 	}
@@ -196,6 +199,9 @@ func TestDeployAllRejectsExtraArg(t *testing.T) {
 func TestDeployAllReportsPerProjectFailure(t *testing.T) {
 	// A workspace with one scaffolded project that has no registry: --all must
 	// iterate to it, fail it at the registry guard, and report a non-zero result.
+	// Run from a folder outside any workspace or repository, where the
+	// config's workspace is the one deploy reads.
+	t.Chdir(t.TempDir())
 	ws := t.TempDir()
 	if _, _, err := run(t, "init", filepath.Join(ws, "one")); err != nil {
 		t.Fatalf("init: %v", err)
@@ -210,6 +216,7 @@ func TestDeployAllReportsPerProjectFailure(t *testing.T) {
 }
 
 func TestDeployByDagIDReachesProjectThenGuard(t *testing.T) {
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
 	ws := t.TempDir()
 	if _, _, err := run(t, "init", filepath.Join(ws, "solo")); err != nil {
 		t.Fatalf("init: %v", err)
@@ -262,12 +269,12 @@ func TestDeployImageRef(t *testing.T) {
 		}}
 	}
 	// version strategy tags by the version label.
-	if got := deployImageRef(base("version"), "v3", "1a2b3c4"); got != "ghcr.io/org/etl:v3" {
+	if got := deployImageRef(base("version"), "v3", gitRevision{sha: "1a2b3c4"}); got != "ghcr.io/org/etl:v3" {
 		t.Errorf("version: ref = %q, want ghcr.io/org/etl:v3", got)
 	}
 	// git_sha strategy tags by the actual commit sha (the #2 fix — it used to
 	// collapse to the version label).
-	if got := deployImageRef(base("git_sha"), "v3", "1a2b3c4"); got != "ghcr.io/org/etl:1a2b3c4" {
+	if got := deployImageRef(base("git_sha"), "v3", gitRevision{sha: "1a2b3c4"}); got != "ghcr.io/org/etl:1a2b3c4" {
 		t.Errorf("git_sha: ref = %q, want ghcr.io/org/etl:1a2b3c4", got)
 	}
 }
