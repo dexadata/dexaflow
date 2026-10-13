@@ -89,8 +89,8 @@ pick up:
 
 - a new upstream release of a dependency without a pinned version
   (`pandas>=2`), or of a `base_image` given by tag;
-- anything the label does not hash, such as an environment variable or a
-  Variable read while the image is built.
+- anything the label does not hash, such as an environment variable the
+  image build reads.
 
 Pass `--rebuild` to build the image again. For images that are reproducible,
 pin dependencies to exact versions (or commit a lock) and give `base_image`
@@ -106,8 +106,12 @@ to that repository as deploy access:
 - give push rights only to the identity that deploys (the CI job or the
   operator), and pull rights to the cluster;
 - enable tag immutability where your registry offers it (ECR, Artifact
-  Registry, Harbor, ACR), so a tag that exists cannot be replaced;
-- pass `--rebuild` in a pipeline that must build what it ships, every time.
+  Registry, Harbor, ACR), so a tag that exists cannot be replaced.
+
+A pipeline that must build what it ships, every time, passes `--rebuild`
+when tags are mutable. With tag immutability on, `--rebuild` of a label that
+is already in the registry fails at the push; such a pipeline tags from git
+instead (`tag_strategy: git_sha`), which never reuses.
 
 The decision and its trade-offs are recorded in
 [ADR 0076](/project/adrs/0076-reuse-image-by-content-label/).

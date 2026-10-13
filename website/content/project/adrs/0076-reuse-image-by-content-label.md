@@ -54,7 +54,7 @@ already trusts it: when the label is the current version, nothing is built.
 - **The label decides, as it already does for "already deployed".** A
   dependency without a pinned version, or a `base_image` tag, that gained a
   release upstream is not picked up by a reuse; neither is a change the label
-  does not hash (an environment variable or a Variable read at build time).
+  does not hash (an environment variable the image build reads).
   `--rebuild` builds again. Projects that need reproducible images pin their
   dependencies and their base image by digest, or commit a lock.
 - **Push access to the image repository decides what a reusing deploy
@@ -63,7 +63,9 @@ already trusts it: when the label is the current version, nothing is built.
   runs. ADR 0073 accepts the same model for dependency images. The docs tell
   operators to limit push access to the deploy identity, and to enable tag
   immutability where the registry offers it, so a tag that exists cannot be
-  replaced.
+  replaced. With immutable tags, `--rebuild` of a label already in the
+  registry fails at the push; a pipeline that must always build tags from
+  git instead.
 - **The digest registered stays the one the registry returned** (ADR 0075):
   the reuse pins exactly the bytes it checked, so there is no window between
   the platform check and the pin.
