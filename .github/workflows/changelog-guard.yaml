@@ -73,6 +73,8 @@ jobs:
     # required and to be clearable.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Re-read the labels from the API rather than the event payload: the
       # payload is a snapshot of when the event fired, and a label applied at
       # creation time can land after it.
