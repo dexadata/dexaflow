@@ -198,9 +198,11 @@ accepted from first-time contributors** — open a discussion issue first.
   as a parameter and filters on it (`WHERE tenant_id = $1 AND ...`). Resolving
   the id inside the tenant first is not enough on its own: the predicate keeps
   a stray id from reaching another tenant's rows when some path skips the
-  resolve (#508). Background loops that work across every tenant (the
-  scheduler, the reapers, the janitors) are the exception. Not every query
-  follows the rule yet; #508 tracks the rest.
+  resolve (#508). An agent call takes the tenant from its token. The
+  exception is the server's own work across every tenant (the scheduler, the
+  dispatcher, the reapers and the janitors), whose ids come from its own
+  listings; its unscoped queries say so in their comments where a scoped
+  variant exists (`GetDagRunByID`, `GetDagVersionByID`).
 
 ## 6. The CI gates
 

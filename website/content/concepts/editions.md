@@ -11,7 +11,7 @@ description: The two editions (Lite and Pro) and the three runtime modes (Lite Â
 ---
 
 Dexaflow ships in **two editions** that share the same engine, the same
-Airflow-3.2.x UI, and the same DAG format (`dag.py` + `dexaflow.yaml`): **Lite**
+Airflow 3.3 UI, and the same DAG format (`dag.py` + `dexaflow.yaml`): **Lite**
 (the full control plane on one host â€” laptop, VM, or internal server) and **Pro**
 (Helm-installed on Kubernetes). You author a DAG once and it runs on either. A
 third, contributor-facing **Demo** mode is a production-shaped reference

@@ -43,5 +43,6 @@ ORDER BY x.key;
 -- carries no try number, so rows left behind would serve the cleared attempt's
 -- values to the next attempt's downstream.
 DELETE FROM xcom_index
-WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = ANY(sqlc.arg(task_ids)::text[])
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = ANY(sqlc.arg(task_ids)::text[])
 RETURNING redis_key;

@@ -290,6 +290,13 @@ type PlatformDefaultsSection struct {
 	// override nor the DAG set any (Kubernetes quantities, e.g. "250m"/"256Mi").
 	ResourcesCPU    string `mapstructure:"resources_cpu"`
 	ResourcesMemory string `mapstructure:"resources_memory"`
+	// LimitsCPU/LimitsMemory are the default task limits (#537): the CPU and
+	// memory limit a task pod gets in a dimension its resources leave without
+	// one, including a task that declares requests only. Empty (the default)
+	// sets no limit, as before. Either may be set alone. Not applied with
+	// executor.unit, which always sets both limits.
+	LimitsCPU    string `mapstructure:"limits_cpu"`
+	LimitsMemory string `mapstructure:"limits_memory"`
 	// RunTasksAsNonRoot refuses to start a task container whose image resolves
 	// to UID 0, completing Pod Security Admission's `restricted` set. On by
 	// default now that the images this repo ships carry a numeric non-root UID:
@@ -690,7 +697,20 @@ type TrustedIssuerSection struct {
 	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
 	// 900-second default; at most 3600.
 	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
+	// HostPattern binds a browser session to its tenant's host (#1463), for
+	// an operator that serves each tenant on its own host in front of one
+	// engine, for example "{tenant}.example.com". When set, a handoff is
+	// accepted only on the host the pattern names for the token's tenant, and
+	// a request that authenticates with the session cookie only on the host
+	// for the session's tenant. The host is the request's Host, or
+	// X-Forwarded-Host from a peer in server.trusted_proxies. A bearer in the
+	// Authorization header is not bound. Empty (the default) binds nothing.
+	HostPattern string `mapstructure:"host_pattern"`
 }
+
+// HostPatternTenant is the placeholder auth.trusted_issuer.host_pattern
+// replaces with the session's tenant.
+const HostPatternTenant = "{tenant}"
 
 // Enabled reports whether a trusted issuer is configured.
 func (s TrustedIssuerSection) Enabled() bool { return s.Issuer != "" }
@@ -1222,6 +1242,10 @@ var serverDefaults = map[string]any{
 	// configures one. Scalars (Kubernetes quantities, e.g. "250m"/"256Mi").
 	"executor.defaults.resources_cpu":    "",
 	"executor.defaults.resources_memory": "",
+	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU /
+	// _MEMORY (#537). Empty sets no default task limit.
+	"executor.defaults.limits_cpu":    "",
+	"executor.defaults.limits_memory": "",
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_UNIT_CPU / _MEMORY. Empty
 	// (both) means no resource unit (ADR 0066).
 	"executor.unit.cpu":                                "",
@@ -1287,6 +1311,7 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.allowed_origins":             []string{},
 	"auth.trusted_issuer.bearer_audiences":            []string{},
 	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
+	"auth.trusted_issuer.host_pattern":                "",
 	"auth.external_signin_url":                        "",
 	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
@@ -1671,8 +1696,14 @@ func (c *ServerConfig) validateExecution() error {
 // quantities valid and positive, enforce refuse or warn, max_size positive.
 // It combines with warm pools: a warm pod is then one unit and serves only
 // size-1 tasks that declare no resources.
+//
+// It also checks the default task limits (executor.defaults.limits_*, #537),
+// the other operator-set bound on task resources: unset, or valid and positive.
 func (c *ServerConfig) validateExecutorUnit() error {
-	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	if _, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig()); err != nil {
+		return err
+	}
+	_, err := domain.ParseDefaultLimits(c.Executor.Defaults.LimitsCPU, c.Executor.Defaults.LimitsMemory)
 	return err
 }
 
@@ -1906,7 +1937,7 @@ var issuerNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
 // Every missing or malformed key is reported in one error, so first-time setup
 // is one edit rather than a chain of restarts.
 func validateTrustedIssuer(s TrustedIssuerSection) error {
-	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 {
+	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 && s.HostPattern == "" {
 		return nil
 	}
 	checks := []struct {
@@ -1923,6 +1954,7 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{originsValid(s.AllowedOrigins), "auth.trusted_issuer.allowed_origins (one or more scheme://host[:port], no path)"},
 		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
 		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
+		{hostPatternValid(s.HostPattern), "auth.trusted_issuer.host_pattern (empty, or a host[:port] with exactly one {tenant}, such as {tenant}.example.com)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -2047,6 +2079,23 @@ func originsValid(list []string) bool {
 		}
 	}
 	return true
+}
+
+// hostPatternChars is what a host pattern may hold once {tenant} is taken
+// out: a host name and an optional port. No scheme, path or wildcard, so the
+// pattern names exactly one host per tenant.
+var hostPatternChars = regexp.MustCompile(`^[A-Za-z0-9.-]*(:\d{1,5})?$`)
+
+// hostPatternValid accepts an empty pattern (no binding), or a host[:port]
+// holding exactly one {tenant}.
+func hostPatternValid(p string) bool {
+	if p == "" {
+		return true
+	}
+	if strings.Count(p, HostPatternTenant) != 1 {
+		return false
+	}
+	return hostPatternChars.MatchString(strings.Replace(p, HostPatternTenant, "t", 1))
 }
 
 // jwksURLAllowed accepts an https URL with a host, or http on a loopback host

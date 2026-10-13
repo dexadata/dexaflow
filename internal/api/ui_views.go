@@ -28,6 +28,9 @@ type gridRunDTO struct {
 	RunType           string     `json:"run_type"`
 	HasMissedDeadline bool       `json:"has_missed_deadline"`
 	Duration          float64    `json:"duration"`
+	// HasNote is required by the Airflow 3.3 GridRunsResponse; the grid
+	// shades the bar of a run that has a note.
+	HasNote bool `json:"has_note"`
 }
 
 func toGridRunDTO(r domain.DagRun) gridRunDTO {
@@ -42,6 +45,7 @@ func toGridRunDTO(r domain.DagRun) gridRunDTO {
 		RunType:           r.RunType,
 		HasMissedDeadline: false,
 		Duration:          runDurationSeconds(r),
+		HasNote:           r.Note != "",
 	}
 }
 

@@ -68,11 +68,13 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 > scripts/check-chart-version-matches-tag.sh vX.Y.Z   # or $GITHUB_REF_NAME in CI
 > ```
 >
-> The same gate runs automatically on every `v*` tag in
-> `.github/workflows/helm-release.yaml`, so a cut with a stale chart fails the
-> Helm chart release job rather than shipping wrong image defaults. Once tagged,
-> install the **published OCI chart** (`--version` = tag without the `v`) rather
-> than a source checkout — see the [chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#quick-start).
+> The same gate runs automatically on every `v*` tag, in the first job of
+> `.github/workflows/release.yaml`, so a cut with a stale chart fails the
+> release run before anything is published rather than shipping wrong image
+> defaults. The chart itself is pushed by the run's `promote` job, after the
+> release gate is green (ADR 0071), so it appears some time after the tag. Once
+> it is there, install the **published OCI chart** (`--version` = tag without
+> the `v`) rather than a source checkout — see the [chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#quick-start).
 
 Confirmed chart value keys used below (defaults in parens) — see the chart README
 for the datastore/secret keys this runbook intentionally does not spell out:

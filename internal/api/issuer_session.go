@@ -30,7 +30,10 @@ const (
 	issuerErrRateLimited      = "rate_limited"
 	issuerErrOriginNotAllowed = "origin_not_allowed"
 	issuerErrTokenMissing     = "token_missing"
-	issuerErrServer           = "server_error"
+	// issuerErrHostTenantMismatch is a token for a tenant posted on another
+	// tenant's host (#1463).
+	issuerErrHostTenantMismatch = "host_tenant_mismatch"
+	issuerErrServer             = "server_error"
 )
 
 // TrustedIssuer verifies handoff tokens from the operator's trusted issuer.
@@ -58,6 +61,8 @@ type issuerSessionDeps struct {
 	tokenTTL  time.Duration
 	logger    *slog.Logger
 	session   sessionCookieSpec
+	// hosts binds a session to its tenant's host; nil binds nothing.
+	hosts *hostBinding
 	// signIn is auth.external_signin_url (#1288), parsed once. When set, a
 	// refusal sends the browser back there instead of answering problem+json.
 	// It is the only place a refusal redirects to: nothing from the request
@@ -89,8 +94,8 @@ func issuerSignInTarget(raw string) *url.URL {
 // It never creates a user and never takes roles from the token: the user must
 // already be linked to the issuer, and its roles are the ones Dexaflow holds.
 // Refusals set no cookie, answer with a status that says which side is wrong
-// (401 token, 403 user or origin, 500 Dexaflow, 503 when the issuer's keys
-// cannot be downloaded), and log the reason server-side only.
+// (401 token, 403 user, origin or host, 500 Dexaflow, 503 when the issuer's
+// keys cannot be downloaded), and log the reason server-side only.
 //
 // With an external sign-in URL configured, a refusal instead redirects the
 // browser there with the stable reason code (see refuse), so the person lands
@@ -127,6 +132,14 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 			reason := issuerReason(err)
 			d.record(c, auditIssuerLoginFailure, "", "", "", map[string]string{"reason": reason})
 			d.refuse(c, http.StatusUnauthorized, reason, "unauthorized", "the sign-in token was not accepted")
+			return
+		}
+		// With a host binding (#1463), a token for one tenant opens no session
+		// on another tenant's host.
+		if !d.hosts.allows(c, id.Tenant) {
+			d.logger.Warn("trusted issuer sign-in refused: host", "tenant", logSafe(id.Tenant), "host", logSafe(d.hosts.requestHost(c)))
+			d.record(c, auditIssuerLoginFailure, id.Tenant, "", id.Email, map[string]string{"reason": issuerErrHostTenantMismatch})
+			d.refuse(c, http.StatusForbidden, issuerErrHostTenantMismatch, "forbidden", "this sign-in is not for this host")
 			return
 		}
 		user, ok := d.resolve(c, id)

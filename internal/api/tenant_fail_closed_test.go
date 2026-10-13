@@ -119,7 +119,7 @@ func TestShellSessionRejectsATenantlessPrincipal(t *testing.T) {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody)
 		c.Request.Header.Set("Authorization", "Bearer "+token)
-		if got := shellSessionValid(c, mixedAuthn{}, authTokenCookie); got != want {
+		if got := shellSessionValid(c, mixedAuthn{}, authTokenCookie, nil); got != want {
 			t.Errorf("token %s: shellSessionValid = %v, want %v", token, got, want)
 		}
 	}

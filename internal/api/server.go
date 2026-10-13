@@ -188,6 +188,10 @@ type Dependencies struct {
 	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
 	// (scheme://host[:port]), so another site cannot sign a browser in.
 	TrustedIssuerOrigins []string
+	// TrustedIssuerHostPattern is auth.trusted_issuer.host_pattern (#1463),
+	// such as "{tenant}.example.com": when set, a handoff and a session cookie
+	// are accepted only on the host of their tenant. Empty binds nothing.
+	TrustedIssuerHostPattern string
 	// ServiceToken, when set, enables the operator service API under
 	// /api/v2/service/ (#1283), authenticated by this bearer token instead of a
 	// user session. ServiceTenants is its storage (the repo).
@@ -232,12 +236,17 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// default trusts none, so c.ClientIP() is the direct peer and a spoofed XFF
 	// cannot forge it (audit H1). An invalid CIDR fails SECURE — trust none — not
 	// open.
+	trustedProxies := deps.TrustedProxies
 	if err := r.SetTrustedProxies(deps.TrustedProxies); err != nil {
 		deps.Logger.Error("invalid trusted_proxies; trusting no proxy", "error", err)
+		trustedProxies = nil
 		if resetErr := r.SetTrustedProxies(nil); resetErr != nil {
 			deps.Logger.Error("resetting trusted proxies to none failed", "error", resetErr)
 		}
 	}
+	// The host binding (#1463) reads X-Forwarded-Host from the same proxies
+	// the router trusts, and from none when that list was refused.
+	binding := newHostBinding(deps.TrustedIssuerHostPattern, trustedProxies)
 	// Disable auto-redirect on trailing slash (#291): the 301 it writes
 	// bypasses NoStoreOnVolatileRoutes, so the browser can cache the bare
 	// 301 and short-circuit the next request. Bare paths register explicit
@@ -259,7 +268,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	if deps.DevNoAuth {
 		r.Use(DevBypassAuth())
 	} else {
-		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps), deps.sessionCookie().cookieName()))
+		r.Use(jwtAuth(deps.Authenticator, newIssuerBearerAuth(deps), deps.sessionCookie(), binding))
 	}
 
 	r.GET("/healthz", livenessHandler)
@@ -315,6 +324,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 			tokenTTL:  time.Duration(deps.TokenTTLSecs) * time.Second,
 			logger:    deps.Logger,
 			session:   deps.sessionCookie(),
+			hosts:     binding,
 			signIn:    issuerSignInTarget(deps.ExternalSignInURL),
 		}
 		r.POST("/api/v2/auth/session", rateLimitByIPWith(issuerLimiter, handoff.refuseRateLimited), issuerSessionHandler(handoff))
@@ -348,6 +358,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
+	registerUIGantt(r, deps.Tasks)
 	registerUITasks(r, deps.Specs)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)
@@ -360,12 +371,13 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)
 	registerUIStubs(r)
 	registerAPIStubs(r)
+	registerAirflow33Unserved(r)
 	if deps.UI != nil {
 		static := gin.WrapH(http.StripPrefix("/static", deps.UI.StaticHandler()))
 		r.GET("/static/*filepath", static)
 		r.HEAD("/static/*filepath", static)
 	}
-	r.NoRoute(uiNoRoute(deps.UI, deps.Authenticator, deps.DevNoAuth, deps.sessionCookie().cookieName()))
+	r.NoRoute(uiNoRoute(deps.UI, deps.Authenticator, deps.DevNoAuth, deps.sessionCookie(), binding))
 
 	return r
 }

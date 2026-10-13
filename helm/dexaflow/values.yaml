@@ -39,6 +39,8 @@ split:
   api:
     # -- API Deployment replicas (active-active; HPA-friendly). Ignored unless split.enabled.
     replicaCount: 2
+    # -- Mount the ServiceAccount token into the api pods. Off: the api role never calls the Kubernetes API and its ServiceAccount is bound to no Role, so the token is unused. Turn it on only for a sidecar that reads the default token mount. The scheduler (and the single `all` Deployment when split is off) always keeps its token, because it creates the task pods. Ignored unless split.enabled.
+    automountServiceAccountToken: false
   scheduler:
     # -- Scheduler Deployment replicas. Pinned to 1 by the chart regardless of this value — the scheduler is a single leader (ADR 0009); a field is kept only for clarity. Ignored unless split.enabled.
     replicaCount: 1
@@ -118,6 +120,12 @@ executor:
       # -- Default CPU request+limit (e.g. `250m`, `1`). Empty = unset. Set together with `memory`.
       cpu: ""
       # -- Default memory request+limit (e.g. `256Mi`, `1Gi`). Empty = unset. Set together with `cpu`.
+      memory: ""
+    # -- Default CPU and memory **limit** for every task pod whose resources leave that limit empty, including a task that declares requests only (#537). A declared limit is never changed, a request above the default raises the filled limit to the request, and where the request is empty too Kubernetes sets it to the limit (as a `LimitRange` default does). A task declaring only a CPU request therefore also requests the default memory limit, and the other way round. Without `executor.unit` the same limits size the warm worker pods (`execution.warmPoolsEnabled`), and a task whose own limit would be larger takes a dedicated pod. Either may be set alone. Empty (default) sets no limit. Not applied with `executor.unit`, which always sets both limits. Kubernetes quantities.
+    limits:
+      # -- Default CPU limit (e.g. `2`). Empty = no default limit.
+      cpu: ""
+      # -- Default memory limit (e.g. `4Gi`). Empty = no default limit.
       memory: ""
     # -- Default size + StorageClass for the per-run staging volume when the DAG
     # enabled staging without pinning them (#743). Env-only override path: the
@@ -359,6 +367,8 @@ auth:
     bearerAudiences: []
     # -- Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600.
     bearerMaxLifetimeSeconds: 0
+    # -- Binds every browser session to its tenant's host when each tenant is served on its own host, for example `{tenant}.example.com` (#1463). A handoff is then accepted only on the host of the token's tenant, and a session cookie only on the host of the session's tenant; the `Authorization` header is not bound. Behind an ingress that rewrites `Host`, list it in `config.trustedProxies` so its `X-Forwarded-Host` is used. Empty (the default) binds nothing.
+    hostPattern: ""
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
@@ -491,6 +501,12 @@ execution:
   maxWarmPodsPerTenant: 100
   # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
   warmReadOnlyRootFilesystem: false
+  # Pro source mode (ADR 0067): a DAG version whose `image` is exactly `sourceMode.image` and that carries its `dag.py` as `source` runs from that file on this runtime image, with no image build. See the docs page "Source mode" for what such a DAG can and cannot do, and exclude the `leoflow.io/dag-source` pod annotation in your log shipper before turning it on.
+  sourceMode:
+    # -- Turn Pro source mode on (ADR 0067). OFF by default: Pro ignores a version's source and nothing below reaches the server. Renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
+    enabled: false
+    # -- The runtime image source-mode versions name as their `image`, pinned by a full digest: `name@sha256:` and 64 lowercase hex characters. A source-mode version must name this exact string as its image, byte for byte (pass it to `dexaflow compile` as the image). Required when `enabled`; the chart refuses a tag alone or a short digest, as the server does at boot. Ignored while `enabled` is false.
+    image: ""
   # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
   warmPoolEventRefill: false
 

@@ -196,7 +196,7 @@ func uiMenusHandler() gin.HandlerFunc {
 // writes). An unmatched /api path is a 404. Any other GET falls back to the SPA
 // shell so the React router can handle client-side routes; without a UI server,
 // or for non-GET, it is a 404.
-func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool, cookieName string) gin.HandlerFunc {
+func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool, session sessionCookieSpec, hosts *hostBinding) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 		switch {
@@ -219,7 +219,12 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool, cookieN
 			// (which 401) before redirecting — flashing the whole UI and lighting
 			// the log with 401s. Redirecting here keeps the shell off-screen until
 			// there is a valid session. Skipped under dev no-auth.
-			if !devNoAuth && !shellSessionValid(c, authn, cookieName) {
+			if !devNoAuth && !shellSessionValid(c, authn, session.cookieName(), hosts) {
+				if hosts != nil {
+					// The cookie may be a valid session of another tenant
+					// than this host's (#1463); it can never work here.
+					clearSessionCookie(c, session)
+				}
 				c.Redirect(http.StatusFound, "/api/v2/auth/login?next="+url.QueryEscape(path))
 				return
 			}
@@ -233,15 +238,21 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool, cookieN
 // shellSessionValid reports whether the request carries a token (bearer or the
 // session cookie named cookieName) that authenticates: the same check JWTAuth
 // applies to data routes, reused to gate the SPA shell so the gate and the
-// data plane agree on what "logged in" means.
-func shellSessionValid(c *gin.Context, authn auth.Authenticator, cookieName string) bool {
+// data plane agree on what "logged in" means. That includes the host binding
+// (#1463): a session cookie of another tenant than the host's does not count.
+func shellSessionValid(c *gin.Context, authn auth.Authenticator, cookieName string, hosts *hostBinding) bool {
 	if authn == nil {
 		return false
 	}
-	for _, token := range candidateTokens(c, cookieName) {
+	fromHeader := bearerToken(c.GetHeader("Authorization")) != ""
+	for i, token := range candidateTokens(c, cookieName) {
 		// Same rule as JWTAuth: a principal with no tenant is no session, so
 		// the shell gate and the data plane never disagree about it.
-		if u, err := authn.Authenticate(c.Request.Context(), token); err == nil && u.TenantID != "" {
+		u, err := authn.Authenticate(c.Request.Context(), token)
+		if err != nil || u.TenantID == "" {
+			continue
+		}
+		if (fromHeader && i == 0) || hosts.allows(c, u.TenantID) {
 			return true
 		}
 	}

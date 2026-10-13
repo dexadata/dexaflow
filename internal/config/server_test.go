@@ -799,6 +799,7 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS", "https://portal.example.com,http://localhost:3000")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES", "leoflow-mcp,other-mcp")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS", "600")
+	t.Setenv("DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN", "{tenant}.example.com")
 	c, err = LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
@@ -811,7 +812,8 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	if got.Name != want.Name || got.Issuer != want.Issuer || got.JWKSURL != want.JWKSURL || got.Audience != want.Audience ||
 		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 ||
 		strings.Join(got.AllowedOrigins, ",") != "https://portal.example.com,http://localhost:3000" ||
-		strings.Join(got.BearerAudiences, ",") != "leoflow-mcp,other-mcp" || got.BearerMaxLifetimeSeconds != 600 {
+		strings.Join(got.BearerAudiences, ",") != "leoflow-mcp,other-mcp" || got.BearerMaxLifetimeSeconds != 600 ||
+		got.HostPattern != "{tenant}.example.com" {
 		t.Errorf("TrustedIssuer = %+v, want %+v", got, want)
 	}
 }
@@ -853,6 +855,17 @@ func TestValidateTrustedIssuer(t *testing.T) {
 		{"bearer lifetime at the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3600 }, nil},
 		{"bearer lifetime above the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3601 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
 		{"negative bearer lifetime", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = -1 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
+		{"host pattern", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.example.com" }, nil},
+		{"host pattern with a port", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.example.com:8443" }, nil},
+		{"host pattern in the middle", func(s *TrustedIssuerSection) { s.HostPattern = "flow-{tenant}.example.com" }, nil},
+		{"host pattern without tenant", func(s *TrustedIssuerSection) { s.HostPattern = "flow.example.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with two tenants", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.{tenant}.example.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with a scheme", func(s *TrustedIssuerSection) { s.HostPattern = "https://{tenant}.example.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with a path", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.example.com/ui" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with a wildcard", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.*.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern without an issuer", func(s *TrustedIssuerSection) {
+			*s = TrustedIssuerSection{TenantClaim: "tenant_id", HostPattern: "{tenant}.example.com"}
+		}, []string{"auth.trusted_issuer.issuer"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
