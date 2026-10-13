@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_dags_delete/
 title: "dexaflow dags delete"
 linkTitle: "dags delete"
-weight: 29
+weight: 32
 ---
 
 Clear a DAG's run history, or fully deregister it with --deregister.

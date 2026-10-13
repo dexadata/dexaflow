@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_completion_fish/
 title: "dexaflow completion fish"
 linkTitle: "completion fish"
-weight: 20
+weight: 23
 ---
 
 Generate the autocompletion script for fish

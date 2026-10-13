@@ -300,13 +300,15 @@ func bearerToken(header string) string {
 // Authorization bearer first, then the session cookie named cookieName. Both are
 // returned (not just the first present) so JWTAuth can fall back to the cookie
 // when the bearer is stale/invalid — the SPA-refresh case — rather than failing
-// on the bearer alone.
+// on the bearer alone. A cookie holding an API token is skipped.
 func candidateTokens(c *gin.Context, cookieName string) []string {
 	var tokens []string
 	if t := bearerToken(c.GetHeader("Authorization")); t != "" {
 		tokens = append(tokens, t)
 	}
-	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" {
+	// An API token (ADR 0074) is a bearer credential for clients, never a
+	// browser session: in the cookie it is ignored.
+	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" && !auth.IsAPIToken(cookie.Value) {
 		tokens = append(tokens, cookie.Value)
 	}
 	return tokens
@@ -350,15 +352,55 @@ func RequireScope(scope string) gin.HandlerFunc {
 	return permissionGate{scope: scope}.check
 }
 
+// RequireDeployPermission guards the routes that deploy a DAG: registering a
+// version and setting the current version (ADR 0074). deploy:dag, the
+// deployer role's grant, allows them, and so does write:dag, so a role that
+// deployed before deploy:dag existed, a custom one included, still does. A
+// scoped token also needs dexaflow:deploy.
+func RequireDeployPermission() gin.HandlerFunc {
+	return permissionGate{action: "deploy", alt: "write", resource: "dag", scope: auth.ScopeDeploy}.check
+}
+
+// RequireDeployRead guards a DAG read that a deploy needs: the DAG list, a
+// DAG, its details and its versions (ADR 0074). It needs read:dag, and a
+// scoped token needs dexaflow:read or dexaflow:deploy, so a deploy token
+// reads what it deploys and none of the other reads its owner may have.
+func RequireDeployRead() gin.HandlerFunc {
+	return permissionGate{action: "read", resource: "dag", scope: auth.ScopeRead, altScope: auth.ScopeDeploy}.check
+}
+
 func requirePermission(action, resource, scope string) gin.HandlerFunc {
 	return permissionGate{action: action, resource: resource, scope: scope}.check
 }
 
-// permissionGate checks the role permission (when action is set), then, for
-// a scoped principal, the route's scope; an empty scope means no scope grants
-// the route. Its check is a method value rather than a closure so jwtAuth can
-// find it in a route's handler chain (scopeGated).
-type permissionGate struct{ action, resource, scope string }
+// permissionGate checks the role permission (when action is set; alt, when
+// set, is a second action on the same resource that also passes), then, for
+// a scoped principal, the route's scope (or altScope, when set); an empty
+// scope means no scope grants the route. Its check is a method value rather
+// than a closure so jwtAuth can find it in a route's handler chain
+// (scopeGated).
+type permissionGate struct{ action, alt, resource, scope, altScope string }
+
+// scopeAllows reports whether a scoped user's token carries the route's scope.
+func (g permissionGate) scopeAllows(user *auth.User) bool {
+	return user.HasScope(g.scope) || (g.altScope != "" && user.HasScope(g.altScope))
+}
+
+// allows reports whether user holds the gate's permission.
+func (g permissionGate) allows(user *auth.User) bool {
+	if user.HasPermission(g.action, g.resource) {
+		return true
+	}
+	return g.alt != "" && user.HasPermission(g.alt, g.resource)
+}
+
+// missing names the permission a refused user lacks.
+func (g permissionGate) missing() string {
+	if g.alt == "" {
+		return g.action + ":" + g.resource
+	}
+	return g.action + ":" + g.resource + " or " + g.alt + ":" + g.resource
+}
 
 func (g permissionGate) check(c *gin.Context) {
 	user, ok := UserFromContext(c)
@@ -366,15 +408,15 @@ func (g permissionGate) check(c *gin.Context) {
 		AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no authenticated user")
 		return
 	}
-	if g.action != "" && !user.HasPermission(g.action, g.resource) {
-		AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+g.action+":"+g.resource)
+	if g.action != "" && !g.allows(user) {
+		AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+g.missing())
 		return
 	}
 	if user.Scoped && g.scope == "" {
 		AbortProblem(c, http.StatusForbidden, "forbidden", scopedRouteRefusal)
 		return
 	}
-	if user.Scoped && !user.HasScope(g.scope) {
+	if user.Scoped && !g.scopeAllows(user) {
 		AbortProblem(c, http.StatusForbidden, "forbidden", "missing scope "+g.scope)
 		return
 	}

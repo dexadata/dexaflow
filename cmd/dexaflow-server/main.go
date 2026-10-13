@@ -1439,8 +1439,10 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 	go uiSrv.Precompress()
 
 	handler := api.NewServer(api.Dependencies{
-		Logger:                       tel.Logger,
-		Authenticator:                authn,
+		Logger: tel.Logger,
+		// API tokens (ADR 0074) are checked first; every other bearer goes on
+		// to the JWT authenticator.
+		Authenticator:                auth.NewAPITokenAuthenticator(authn, repo, repo),
 		RateLimiter:                  auth.NewRateLimiter(loginRateLimit(cfg), time.Minute),
 		Registry:                     tel.Registry,
 		Metrics:                      tel.Metrics,
@@ -1480,6 +1482,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Variables:       repo,
 		Users:           repo,
 		UserAudit:       repo,
+		APITokens:       repo,
 		Connections:     repo,
 		Pools:           repo,
 		Favorites:       repo,
