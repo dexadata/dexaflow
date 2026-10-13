@@ -67,7 +67,7 @@ packages your teams need.
 ## Registering a source-mode version
 
 `dexaflow deploy` always builds or pins a DAG image, so a source-mode version
-is registered on the API, by hand or by your own deploy flow (ADR 0067 §4):
+is registered with `dexaflow compile` and `dexaflow push` instead (ADR 0067 §4):
 
 1. Compile the DAG with the runtime image and no build:
 
@@ -82,8 +82,15 @@ is registered on the API, by hand or by your own deploy flow (ADR 0067 §4):
    `ModuleNotFoundError: No module named 'dag'`.
 2. Check that `dag.json` carries `source` (the `dag.py` text the compiler
    captures) and that it is at most 131072 bytes.
-3. `POST /api/v2/dags/{dag_id}/versions` with that JSON and a token that may
-   write the DAG (with a scoped issuer token, `dexaflow:deploy`).
+3. Register it:
+
+   ```bash
+   dexaflow push dag.json --server https://pro.example.com
+   ```
+
+   `push` sends the file as it is to `POST /api/v2/dags/{dag_id}/versions`,
+   so any deploy flow of your own can make the same call. The token must be
+   allowed to write the DAG (with a scoped issuer token, `dexaflow:deploy`).
 
 A `400` names the problem: no source, or a source over the cap.
 

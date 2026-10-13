@@ -169,6 +169,13 @@ no `--platform`), so a Mac-built image would crash the task pod with
   Non-Docker-Desktop runtimes (Colima/Lima/podman) may need a one-time
   `docker run --privileged tonistiigi/binfmt --install all`.
 
+> **Note (2026-10, #1709).** `deploy` shipped without a `--platform` flag. The
+> target platform comes from `build.platforms` in `dexaflow.yaml` (default
+> `linux/amd64`), passed to the builder as `--platform`, so a Graviton cluster
+> sets `build: {platforms: [linux/arm64]}`. The multi-arch routing through
+> `buildx ... --push` described above was not built either: the CLI runs
+> `<builder> build --platform <list>` and then `<builder> push`.
+
 ### What the artifact does NOT carry — connections & variables
 
 The DAG **image + `dag.json`** travel; **connections and variables do not** — they
