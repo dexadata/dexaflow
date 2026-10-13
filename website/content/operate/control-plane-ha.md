@@ -183,18 +183,23 @@ from the workers' side:
   sitting idle treats that as a clean recycle: it exits `0`, with no `ERROR`
   line and no failed pod. A hard-killed leader is the same *code* but not the
   same *timing*. A killed process has its sockets torn down by the kernel, so
-  the worker's blocked receive fails promptly with `Unavailable` too; a lost
-  **node** closes nothing, and nothing pings — the agent's dial configures no
-  gRPC keepalive, and the control plane deliberately enables no server-initiated
-  keepalive either (it only *permits* a client's pings on an otherwise idle
-  stream, so gRPC does not `GOAWAY` them as abusive). "Nothing pings" is true of
-  gRPC only: Go's dialer still enables TCP keepalive at a 15s period, so the
-  kernel gives up after roughly 2.5 minutes on Linux defaults rather than never,
-  and the assignment stream's own idle TTL (5 minutes by default) is a second
-  backstop. So that worker sits blocked on a stream to a control plane that is
-  already gone for minutes, not seconds — bounded, but far longer than the
-  prompt failure a killed process produces. Tracked as
-  [#946](https://github.com/dexadata/dexaflow/issues/946). The new leader's warm-pool
+  the worker's blocked receive fails promptly with `Unavailable` too. A lost
+  **node** closes nothing, so the agent finds out by pinging: its gRPC channel
+  sends a keepalive ping after 20 seconds without traffic, including on an idle
+  assignment stream, and closes the connection when a ping goes unanswered for
+  10 seconds, so the worker sees `Unavailable` within about 30 seconds and
+  recycles. The control plane permits those pings (one every 10 seconds at
+  most, with or without an active stream) and sends none of its own: a
+  vanished agent is found by the heartbeat reapers, and an assignment sent to
+  a vanished warm worker is reclaimed when its ack lease expires.
+- **No agent call waits on a silent control plane.** Every unary call the
+  agent makes carries a deadline: 10 seconds for a heartbeat, so one
+  unanswered heartbeat never stalls the heartbeat loop into an `agent_lost`
+  reap of a healthy task, and 30 seconds for the rest (task spec, state
+  reports, XCom, secrets). A state report that times out is retried like any
+  other transient failure. These are fixed values, not settings
+  ([#946](https://github.com/dexadata/dexaflow/issues/946)).
+- **The warm-pool reconciler rebuilds the buffer.** The new leader's warm-pool
   reconciler is leader-gated as well, and it counts live warm pods from the
   **apiserver** and busy ones from the durable `warm_worker_id` binding, never
   from the registry, so it rebuilds each active DAG version's
@@ -590,6 +595,31 @@ boot-time check of the timing ladder they depend on, described in
 [scheduler resilience](/operate/scheduler-resilience/) — is what keeps the tasks
 that were in flight during the window from being falsely failed. HA shortens the
 window; the resilience mechanisms make the remaining window survivable. Run both.
+
+### When the database disappears without a reset
+
+A managed failover that moves the database address, a network partition or a
+lost database node can leave the leader's lock session open on a socket that
+no longer answers. Two settings bound how long that lasts:
+
+- **On the scheduler.** Every leadership check, and every attempt to take
+  leadership, runs under a deadline of one check interval (5 s). A check that
+  cannot confirm the lock in time counts as failed, and after 3 failed checks
+  in a row the leader steps down (reason `check_timeout`) and campaigns again,
+  so a leader cut off from its database stops scheduling within about 15 to
+  30 seconds. Before, the check waited for the kernel to give up on the socket
+  (about 15 minutes with the default `tcp_retries2`), while a follower on the
+  new primary could already lead.
+- **On the database server.** The leader session sets `tcp_keepalives_idle =
+  30`, `tcp_keepalives_interval = 10`, `tcp_keepalives_count = 3` and
+  `tcp_user_timeout = 60000` for itself, so Postgres ends a session whose
+  client vanished within about a minute and the advisory lock is free for the
+  next leader. With the operating system defaults that takes about two hours,
+  and no replica can lead in the meantime. The settings are sent with `SET`
+  (not as startup parameters, which PgBouncer refuses), apply to the leader
+  session only, and are skipped with a warning where the server refuses one.
+
+Nothing needs configuring: both apply to every install.
 
 ## Related
 

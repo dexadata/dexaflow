@@ -85,6 +85,15 @@ type Querier interface {
 	CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error)
 	// Same newest-run lookup as ListDagsFiltered.
 	CountDagsFiltered(ctx context.Context, arg CountDagsFilteredParams) (int64, error)
+	// The dry-run count for one tenant: the same predicate as
+	// LockExpiredSettledRuns, with no lock, through the same partial index, and
+	// stopped after max_runs runs so its cost stays bounded however long the
+	// history is. The janitor reports a total that reached the cap as a lower bound.
+	CountExpiredSettledRunsOfTenant(ctx context.Context, arg CountExpiredSettledRunsOfTenantParams) (CountExpiredSettledRunsOfTenantRow, error)
+	// System audit rows (no tenant) older than the cutoff, at most max_rows.
+	CountExpiredSystemAuditLog(ctx context.Context, arg CountExpiredSystemAuditLogParams) (int64, error)
+	// Audit rows of one tenant older than the cutoff, at most max_rows.
+	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
 	// with no password row is an escape hatch that does not open, which is worse
@@ -129,11 +138,27 @@ type Querier interface {
 	DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, error)
 	// Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
 	DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error)
+	// Removes the locked runs whose children are all gone, up to row_limit.
+	DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
 	// The implicit default pool is never deletable (Airflow parity): the guard is in
 	// the query so a direct call cannot orphan the fallback pool the gate resolves to.
 	DeletePool(ctx context.Context, arg DeletePoolParams) (int64, error)
+	DeleteSystemAuditLog(ctx context.Context, arg DeleteSystemAuditLogParams) (int64, error)
+	DeleteTaskInstanceHistoryOfRuns(ctx context.Context, arg DeleteTaskInstanceHistoryOfRunsParams) (int64, error)
+	// Deletes the task instances of whole runs only, never part of a run's: a run
+	// left with some of its task instances could be cleared between two batches,
+	// and the clear re-opens it resetting only the instances it finds, so the
+	// deleted tasks would never run and the run would never settle. A run whose
+	// task instances are all gone is safe to clear: it re-opens queued with none,
+	// and the scheduler materializes it again. Runs are taken in id order while
+	// their task instances fit row_limit; first_run_always lets the first run go
+	// whole even when it alone exceeds the limit, so a run larger than a batch is
+	// still deleted (the janitor sets it when the batch has its whole limit left).
+	DeleteTaskInstancesOfRuns(ctx context.Context, arg DeleteTaskInstancesOfRunsParams) (int64, error)
+	DeleteTaskStateHistoryOfRuns(ctx context.Context, arg DeleteTaskStateHistoryOfRunsParams) (int64, error)
+	DeleteTenantAuditLog(ctx context.Context, arg DeleteTenantAuditLogParams) (int64, error)
 	// Remove every role grant for a user: the delete half of the IdP-authoritative
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
@@ -143,9 +168,19 @@ type Querier interface {
 	// carries no try number, so rows left behind would serve the cleared attempt's
 	// values to the next attempt's downstream.
 	DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error)
+	DeleteXComIndexOfRuns(ctx context.Context, arg DeleteXComIndexOfRunsParams) (int64, error)
 	// The consecutive dispatch-failure count of a task still waiting to run
 	// (scheduled or queued); no row means it has moved on.
 	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
+	// Creates the dags row of a DAG registered for the first time, with the
+	// metadata of the spec that will become its first version. An existing row is
+	// left untouched (no write, no lock): RegisterDagVersion then locks it with
+	// LockDagByDagID and rewrites the metadata only when a new version becomes
+	// current (UpdateDagMetadata). A concurrent first insert of the same dag_id
+	// waits on the unique index until the other transaction ends.
+	// is_paused is set only here, on creation (dags_are_paused_at_creation or the
+	// spec's is_paused_upon_creation, #1705): a redeploy never changes it.
+	EnsureDag(ctx context.Context, arg EnsureDagParams) error
 	// The subset of the given conn_ids that exist for the tenant. Used to reject a
 	// DAG that declares an unknown connection at registration (ADR 0055 D6); a name
 	// absent from the result does not exist.
@@ -178,6 +213,15 @@ type Querier interface {
 	// comes from its leoflow.io/attempt-epoch label, absent meaning 0. The
 	// active-state guard prevents clobbering a terminal row.
 	FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInstanceIfActiveParams) error
+	// Settle a task instance failed for an infrastructure reason from the pod
+	// reconciler (ADR 0051, #1595): the cluster stopped the pod (an eviction, a
+	// graceful node shutdown, a preemption), so the attempt goes to the infra
+	// re-place rail and keeps the task's own retries. Confirmed at once: the
+	// reconciler read the terminal pod and found no SUCCESS record, which is what
+	// the confirmation pass would check (ADR 0052 amendment, part 2). Guarded like
+	// FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
+	// states.
+	FailTaskInstanceInfraIfActive(ctx context.Context, arg FailTaskInstanceInfraIfActiveParams) error
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
 	GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (Dag, error)
@@ -413,10 +457,13 @@ type Querier interface {
 	// slots of those past it; a NULL started_at is never listed (too poorly observed
 	// to reap). The reaper re-checks grace and pod liveness per candidate in Go.
 	// heartbeated lets Lite (no pods) judge a TI whose agent died before its first
-	// heartbeat, which the agent-lost query never lists (#916). The
-	// LIMIT bounds a single tick's reap work even after a large outage; the rest
-	// are picked up next tick.
-	ListRunningTasks(ctx context.Context, graceSeconds float64) ([]ListRunningTasksRow, error)
+	// heartbeat, which the agent-lost query never lists (#916). The page is
+	// keyset-paged on (started_at, id) after the reaper's cursor (R-07, #1597):
+	// with a fixed "oldest 100", 100 attempts with live pods hid a newer attempt
+	// whose pod vanished forever. The reaper keeps the cursor across sweeps and
+	// passes '-infinity' and the nil uuid to start over. The LIMIT bounds a single
+	// sweep's reap work.
+	ListRunningTasks(ctx context.Context, arg ListRunningTasksParams) ([]ListRunningTasksRow, error)
 	// Returns each cron-scheduled DAG with the bits the scheduler needs to decide
 	// both "is there a slot due?" (schedule + last_logical), "how many slots
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
@@ -433,11 +480,16 @@ type Querier interface {
 	// from the pods' tenant and run labels; a pair whose tenant does not own the
 	// run matches nothing.
 	ListSettledRunIDs(ctx context.Context, arg ListSettledRunIDsParams) ([]ListSettledRunIDsRow, error)
-	// Lists every TI currently in `queued` alongside its queued_at timestamp for
-	// the dispatch-lost reaper (#202). The reaper applies the threshold per
-	// candidate so the SQL stays simple and the decision is purely in Go. The
-	// LIMIT bounds a tick's reap work after a long outage; the rest are picked
-	// up next tick (backstop, not sprint).
+	// Lists one page of the TIs in `queued` for at least the dispatch-lost
+	// threshold, with their queued_at, for the dispatch-lost reaper (#202). The
+	// threshold is applied here, before the LIMIT, so attempts inside it never
+	// take the slots of those past it; a NULL queued_at is never listed (too
+	// poorly observed to reap). The reaper re-checks the threshold in Go.
+	// The page is keyset-paged on (queued_at, id) after the reaper's cursor
+	// (R-07, #1597): with a fixed "oldest 100", 100 queued attempts whose pods
+	// are Pending (a capacity shortage) hid a newer lost dispatch forever. The
+	// reaper keeps the cursor across sweeps and passes '-infinity' and the nil
+	// uuid to start over. The LIMIT bounds a sweep's reap work.
 	// warm_worker_id rides along (ADR 0058 N1d-a2, review finding H3): a queued warm
 	// attempt whose serving warm worker is still alive is just slow to transition
 	// queued->running, so the dispatch-lost reaper must DEFER it rather than fail it
@@ -446,7 +498,7 @@ type Querier interface {
 	// gate unchanged.
 	// attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 	// teardown name exactly the attempt that was listed.
-	ListStaleQueuedTaskInstances(ctx context.Context) ([]ListStaleQueuedTaskInstancesRow, error)
+	ListStaleQueuedTaskInstances(ctx context.Context, arg ListStaleQueuedTaskInstancesParams) ([]ListStaleQueuedTaskInstancesRow, error)
 	// Returns every attempt for (run, task), oldest first. UNIONs the current
 	// task_instances row with all archived task_instance_history rows so the UI's
 	// /tries endpoint can render one navigable tab per attempt (Lima bug #241).
@@ -465,6 +517,9 @@ type Querier interface {
 	// come grouped by run and, within a run, in the same task_id order the per-run
 	// query returns, so the caller can split them without re-sorting.
 	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
+	// Retention janitor (performance item D5). Every statement is tenant scoped and
+	// bounded; the janitor in internal/retention paces and caps them.
+	ListTenantIDs(ctx context.Context) ([]pgtype.UUID, error)
 	// "role:action:resource" for every grant of a tenant's built-in roles.
 	ListTenantRolePermissions(ctx context.Context, name string) ([]string, error)
 	// One row per user in the tenant, newest first, with every granted role name
@@ -495,6 +550,27 @@ type Querier interface {
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
+	// Locks the DAG's row for the rest of the transaction, so registers of the same
+	// DAG are serialized: the spec-hash check of one register sees the version the
+	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
+	// another register, but not the KEY SHARE lock every dag_runs insert takes on
+	// its DAG, so run creation is not blocked while a version registers.
+	LockDagByDagID(ctx context.Context, arg LockDagByDagIDParams) (Dag, error)
+	// A tenant's runs that settled (success or failed) before the cutoff, oldest
+	// first, whose task instances are all settled and that no live staging volume
+	// still points at. "Settled" is the predicate the pod reconciler's settled-run
+	// collection uses too: run in success or failed, and no task instance outside
+	// success, failed, skipped and upstream_failed. none is unsettled on purpose:
+	// it is a task a clear just reset, waiting to be scheduled, while the run row
+	// still says success until the clear reopens it. Any state added later counts
+	// as unsettled, so it is kept rather than deleted. The janitor calls this once
+	// per batch, so a run whose children span several batches is re-checked each
+	// time. FOR UPDATE keeps the run row itself from changing, and SKIP LOCKED
+	// lets the janitor pass over a run another transaction holds. It does NOT stop
+	// a clear: a clear resets task_instances before it touches the run row, so the
+	// janitor then locks and re-checks the task instances
+	// (LockTaskInstancesOfRuns) before it deletes anything.
+	LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error)
 	// Share-locks every task instance of a run inside the reap transaction, before
 	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
 	// snapshot under READ COMMITTED) sees committed state and no TI of the run can
@@ -505,6 +581,17 @@ type Querier interface {
 	// several TIs of the run in another order (a multi-task clear, a batched
 	// scheduler transition); a reap that never waits on a TI cannot be in one.
 	LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error
+	// Locks every task instance of the locked runs and reports whether each is
+	// still settled. A clear resets task instances without locking the run row
+	// first, so the run lock alone does not keep it out: a clear that committed
+	// since LockExpiredSettledRuns shows here as an unsettled state, and the
+	// janitor drops that run from the batch. Once these locks are held no clear can
+	// change the rows until the batch commits. NOWAIT: a task instance another
+	// transaction is writing (a clear in flight) fails the lock with
+	// lock_not_available instead of waiting, because that clear will next update
+	// the run row the janitor holds, and waiting would deadlock; the janitor skips
+	// the batch and retries on a later cycle.
+	LockTaskInstancesOfRuns(ctx context.Context, arg LockTaskInstancesOfRunsParams) ([]LockTaskInstancesOfRunsRow, error)
 	// Stamp a run's on-failure alert as DELIVERED. Called only after a successful
 	// send, which is the whole point of the split: alerted_at now answers "did the
 	// page get through", not "did we try".
@@ -607,6 +694,9 @@ type Querier interface {
 	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 	// ResetTaskInstanceToNone.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
+	// One audit entry per scope a retention cycle purged audit rows from, so the
+	// purge itself is on the record. tenant_id NULL is the system rows.
+	RecordRetentionPurge(ctx context.Context, arg RecordRetentionPurgeParams) error
 	RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error
 	// Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
 	// (dag_run_id, task_id, try_number) tuple to match the agent's identity. The
@@ -886,6 +976,10 @@ type Querier interface {
 	// looks freshly written. Reachable whenever more than one replica serves, which
 	// the chart calls the recommended production posture.
 	UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) (int64, error)
+	// Applies the spec of the version that is becoming current to the dags row, in
+	// the same transaction as SetCurrentDagVersion. is_paused is never touched:
+	// pausing is an operator decision, not a deploy one.
+	UpdateDagMetadata(ctx context.Context, arg UpdateDagMetadataParams) error
 	UpdateDagRunState(ctx context.Context, arg UpdateDagRunStateParams) (DagRun, error)
 	UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskInstanceStateParams) (TaskInstance, error)
 	// Stamps the per-state entry timestamps the UI shows (scheduled_when /
@@ -920,7 +1014,6 @@ type Querier interface {
 	// overwrites (#874). conn_type is required on every write, so it is a plain
 	// overwrite.
 	UpsertConnection(ctx context.Context, arg UpsertConnectionParams) error
-	UpsertDag(ctx context.Context, arg UpsertDagParams) (Dag, error)
 	// Sizes a tenant's default pool to an explicit slot count: inserts it under the
 	// given name with the seed description, or re-sizes the row already there. A
 	// row with that name left without is_default (a tenant created before the

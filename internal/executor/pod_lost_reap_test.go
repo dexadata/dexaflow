@@ -17,7 +17,7 @@ type fakePodLostStore struct {
 	listGrace  []time.Duration
 }
 
-func (f *fakePodLostStore) ListRunningTasks(_ context.Context, grace time.Duration) ([]PodLostCandidate, error) {
+func (f *fakePodLostStore) ListRunningTasks(_ context.Context, grace time.Duration, _ ReapCursor) ([]PodLostCandidate, error) {
 	f.listGrace = append(f.listGrace, grace)
 	return f.candidates, f.listErr
 }

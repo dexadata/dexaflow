@@ -164,7 +164,6 @@ func toDagDetailsDTO(d domain.DAG) dagDetailsDTO {
 		Owners:               []string{owner},
 		Catchup:              d.Catchup,
 		StartDate:            rfc3339Ptr(d.StartDate),
-		IsPausedUponCreation: boolPtr(false),
 		Params:               &emptyObj,
 		DefaultArgs:          &emptyObj,
 		Timezone:             &tz,
@@ -225,9 +224,6 @@ func rfc3339Ptr(t *time.Time) *string {
 	return &s
 }
 
-// boolPtr returns a pointer to b.
-func boolPtr(b bool) *bool { return &b }
-
 // dagDetailsHandler implements GET /api/v2/dags/{dag_id}/details. It populates
 // latest_dag_version from the version lister — the Graph view reads the
 // version_number from there to fetch version-scoped structure, so a null version
@@ -245,10 +241,16 @@ func dagDetailsHandler(repo DagRepository, versions DagVersionLister, specs DagS
 		// the trigger dialog renders its native typed form. This read is
 		// best-effort: any spec-read failure leaves params as {} and the dialog
 		// falls back to JSON-only — details must never break on it.
+		// The same read carries the DAG's own is_paused_upon_creation (#1705),
+		// null when it does not set it or the spec cannot be read, as Airflow
+		// reports an unset argument.
 		if specs != nil {
-			if spec, serr := specs.GetCurrentSpec(c.Request.Context(), tenantOf(c), dagID); serr == nil && len(spec.Params) > 0 {
-				raw := paramsToAirflowDict(spec.Params)
-				dto.Params = &raw
+			if spec, serr := specs.GetCurrentSpec(c.Request.Context(), tenantOf(c), dagID); serr == nil {
+				if len(spec.Params) > 0 {
+					raw := paramsToAirflowDict(spec.Params)
+					dto.Params = &raw
+				}
+				dto.IsPausedUponCreation = spec.IsPausedUponCreation
 			}
 		}
 		if versions != nil {

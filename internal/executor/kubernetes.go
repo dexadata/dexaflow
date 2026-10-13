@@ -30,7 +30,22 @@ type KubernetesExecutor struct {
 	// teardown meters a reap teardown that fell back from stop-in-place to
 	// delete (ADR 0052 amendment); nil leaves it unmetered.
 	teardown DecisionRecorder
+	// pods meters every task pod create (count by result, API latency); nil
+	// leaves it unmetered.
+	pods PodCreationRecorder
 }
+
+// PodCreationRecorder meters task pod creates. observability.Metrics
+// implements it.
+type PodCreationRecorder interface {
+	// ObservePodCreation records one pod create for dagID: result is "success"
+	// or "error" (ADR 0010), d the API call's latency.
+	ObservePodCreation(dagID, result string, d time.Duration)
+}
+
+// SetPodMetrics wires the recorder that meters task pod creates
+// (dexaflow_pods_created_total, dexaflow_task_pod_creation_duration_seconds).
+func (e *KubernetesExecutor) SetPodMetrics(r PodCreationRecorder) { e.pods = r }
 
 // SetTeardownRecorder wires the recorder that meters
 // reap_teardown_delete_fallback: a started pod a reap could not stop in place
@@ -81,11 +96,22 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposit
 		}
 	}
 	pod := BuildPod(req)
-	if _, err := e.clientset.CoreV1().Pods(e.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		cause := fmt.Errorf("creating pod for task %s: %w", req.TaskID, err)
-		return classifyDispatchError(cause), cause
+	start := time.Now()
+	_, err := e.clientset.CoreV1().Pods(e.namespace).Create(ctx, pod, metav1.CreateOptions{})
+	disp := Dispatched
+	var cause error
+	if err != nil {
+		cause = fmt.Errorf("creating pod for task %s: %w", req.TaskID, err)
+		disp = classifyDispatchError(cause)
 	}
-	return Dispatched, nil
+	if e.pods != nil {
+		result := "success"
+		if cause != nil {
+			result = "error"
+		}
+		e.pods.ObservePodCreation(req.DagID, result, time.Since(start))
+	}
+	return disp, cause
 }
 
 // terminationMessagePath is where the task container surfaces its termination
@@ -116,7 +142,10 @@ func BuildPod(req Request) *corev1.Pod {
 				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
 				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
-			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
+			Annotations: map[string]string{
+				"leoflow.io/task-instance-id": req.TaskInstanceID,
+				podAnnotationRawTaskID:        req.TaskID,
+			},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,

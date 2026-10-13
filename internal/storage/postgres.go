@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -354,7 +355,42 @@ func leaderPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	pc.MaxConnLifetime = leaderConnLifetime
 	pc.MaxConnIdleTime = leaderConnLifetime
 	pc.MaxConnLifetimeJitter = 0
+	pc.AfterConnect = setLeaderKeepalives
 	return pc, nil
+}
+
+// leaderSessionSettings make the server notice a leader that vanished without
+// a TCP reset (a partition, a lost node, a failover that moved the address)
+// within about a minute: keepalive probes after 30 s of silence, every 10 s,
+// 3 unanswered probes, and 60 s for unacknowledged data. With the operating
+// system defaults the server keeps the dead session, and the scheduler
+// advisory lock with it, for about two hours, and no other replica can take
+// leadership in the meantime (#1599). The client side needs no setting: every
+// leadership query runs under a deadline, and pgx closes the connection when
+// one expires.
+var leaderSessionSettings = []string{
+	"SET tcp_keepalives_idle = 30",
+	"SET tcp_keepalives_interval = 10",
+	"SET tcp_keepalives_count = 3",
+	"SET tcp_user_timeout = 60000",
+}
+
+// setLeaderKeepalives applies leaderSessionSettings as each leader connection
+// opens. They are sent with SET, not as startup parameters, for the PgBouncer
+// reason given on mainPoolConfig. They are best effort: a server or platform
+// that refuses one (tcp_user_timeout before Postgres 12, keepalive counts on
+// Windows) keeps its default for it, and the session is used as it always was.
+// On a Unix socket Postgres accepts and ignores them.
+func setLeaderKeepalives(ctx context.Context, conn *pgx.Conn) error {
+	for _, set := range leaderSessionSettings {
+		if _, err := conn.Exec(ctx, set); err != nil {
+			if ctx.Err() != nil || conn.IsClosed() {
+				return fmt.Errorf("configuring the leader session: %w", err)
+			}
+			slog.Warn("leader session setting not applied; the server keeps its default", "statement", set, "error", err)
+		}
+	}
+	return nil
 }
 
 // ForScheduler returns the handle the scheduler side should use, and a func

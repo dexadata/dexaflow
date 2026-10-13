@@ -17,39 +17,43 @@ same pipeline.
 {{% /alert %}}
 
 Deploying a Dexaflow DAG is the same everywhere because a DAG is an **immutable
-artifact** — a `dag.json` + a container image, versioned together (ADR 0003).
+artifact**: a `dag.json` + a container image, versioned together (ADR 0003).
 
-**By hand or for a team without a pipeline,** one command does it all:
+**By hand or in a pipeline,** one command does it all:
 
 ```bash
-dexaflow auth login --server "$DEXAFLOW_SERVER"   # once; stores the token
-dexaflow deploy --yes                            # compile → build → push → register
+dexaflow auth login --server https://pro.example.com   # by hand, once; stores the session
+dexaflow deploy --yes                                  # compile → build → push → pin digest → register
 ```
 
-`dexaflow deploy` is the [pipeline-less promotion](/project/adrs/0041-leoflow-deploy-pipelineless/)
-— it cross-builds for the cluster, pins the image by digest, and registers the
-artifact. `--yes` skips the confirmation prompt (use it in automation).
+`dexaflow deploy` is the [pipeline-less promotion](/project/adrs/0041-leoflow-deploy-pipelineless/):
+it builds for the cluster's architecture (`build.platforms` in `dexaflow.yaml`,
+`linux/amd64` when unset), pins the image by digest, and registers the artifact.
+`--yes` skips the confirmation prompt (use it in automation). **It is the
+recommended command in CI too**, and the recipes below use it.
 
-**In a pipeline,** the same three boundaries are explicit so each can be cached,
-gated, and audited independently:
+**The explicit steps** are still available when a pipeline wants the build and
+the register as separate stages:
 
 ```mermaid
 flowchart LR
-  E[edit dag.py + dexaflow.yaml] --> C[dexaflow compile --build]
-  C --> P[push image → registry]
-  P --> R[dexaflow push dag.json → control plane]
+  E[edit dag.py + dexaflow.yaml] --> C[dexaflow compile --build --push]
+  C --> R[dexaflow push dag.json → control plane]
 ```
 
-1. **`dexaflow compile --build`** — parse `dag.py`, overlay `dexaflow.yaml`, run the
-   **guardrails** (unknown `task_id`, unsupported operator, duplicate keys), and
-   build the DAG image.
-2. **push the image** to your registry, tagged by git SHA (immutable).
-3. **`dexaflow push dag.json`** — register the artifact with the control plane.
+1. **`dexaflow compile --build --push`**: parse `dag.py`, overlay
+   `dexaflow.yaml`, run the **guardrails** (unknown `task_id`, unsupported
+   operator, duplicate keys), build the DAG image and push it.
+2. **`dexaflow push dag.json`**: register the artifact with the control plane.
 
-{{% alert title="`deploy` vs. the three explicit steps" color="info" %}}
-They do the same thing. A pipeline can run the one-liner (`dexaflow deploy
---yes`) just as well; the explicit steps are shown because most CI systems want
-the build and the register as separate, individually-cacheable stages.
+{{% alert title="Only `deploy` pins the digest" color="warning" %}}
+`compile --build --push` writes the image **tag** it pushed into `dag.json`
+(`registry/image:tag`), and `push` registers that file as it is. The control
+plane then pulls by tag, so a tag that is rebuilt later can run different bytes
+under the same version. `dexaflow deploy` is the only command that resolves the
+pushed image's digest and registers `registry/image@sha256:…`. Prefer `deploy`
+in CI; if you split the steps, tag by commit (`tag_strategy: git_sha`) and never
+reuse a tag.
 {{% /alert %}}
 
 {{% alert title="The guardrails are your CI gate" color="success" %}}
@@ -58,26 +62,26 @@ bad `dag_id`/`task_id` binding or an unsupported operator never reaches prod.
 {{% /alert %}}
 
 {{% alert title="First time? Do it by hand once" color="info" %}}
-The [**first Pro DAG walkthrough**](/operate/first-pro-dag/) runs these three steps
-manually so you can watch the DAG cross each boundary. Come back here to wire
-the same steps into CI.
+The [**first Pro DAG walkthrough**](/operate/first-pro-dag/) runs `deploy` by
+hand so you can watch the DAG cross each boundary. Come back here to wire the
+same command into CI.
 {{% /alert %}}
 
 {{% alert title="A CI run failing? Check the prerequisites" color="info" %}}
 Registry auth, RBAC scope, non-root images, private-registry pulls, and the
 `--dag-version`/`409` gotcha are exactly the errors CI hits first, since a
 runner has none of a laptop's ambient state (no `docker login`, no
-`dexaflow auth login` session, no git history for `--dag-version` to resolve
-against). **[Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/)**
+`dexaflow auth login` session, often a shallow clone with no tags for the
+default version label to start from). **[Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/)**
 has the exact error and fix for each.
 {{% /alert %}}
 
 ## Your repo of DAGs (CI is the recommended path)
 
-In Pro you keep your DAGs in a Git repository — one directory per DAG — and **CI**
+In Pro you keep your DAGs in a Git repository, one directory per DAG, and **CI**
 turns each into an artifact when it changes. This is the recommended path: a push
-triggers the pipeline, no one builds by hand. Each DAG is just **two files** — no
-Dockerfile, no `requirements.txt`:
+triggers the pipeline, no one builds by hand. Each DAG is just **two files**, no
+Dockerfile and no `requirements.txt`:
 
 ```text
 my-dags/                      # your Git repo
@@ -92,16 +96,17 @@ my-dags/                      # your Git repo
         └── dexaflow.yaml
 ```
 
-`dexaflow compile --build` **synthesizes the image from `dexaflow.yaml`** — `FROM`
-the published Dexaflow base, your deps/connectors installed, your DAG copied in.
-No Dockerfile to maintain. (Ship your own `Dockerfile` only if you want full
-control; it is then used verbatim. Our [examples](/author-dags/examples/) ship one so you can
-`docker build` and inspect them by hand.)
+`dexaflow deploy` (and `compile --build`) **generates the Dockerfile from
+`dexaflow.yaml`**: `FROM` the published Dexaflow base, your deps/connectors
+installed, your DAG copied in. No Dockerfile to maintain. A `Dockerfile` in the
+DAG directory is used verbatim instead and the yaml's dependencies then do not
+reach the image, so ship one only if you want full control (see
+[your own Dockerfile](/operate/first-pro-dag/#advanced-your-own-dockerfile)).
 
-The built image is **your** artifact — push it wherever you like (Docker Hub, ECR,
+The built image is **your** artifact: push it wherever you like (Docker Hub, ECR,
 Artifact Registry, ACR, GHCR, a private registry), via the `registry:` block in
-`dexaflow.yaml` or `--image`. The only image Dexaflow owns is the base your DAG
-layers on.
+`dexaflow.yaml`. `deploy` requires that block; it has no `--image` flag. The
+only image Dexaflow owns is the base your DAG layers on.
 
 **The mental model:** a push that touches `dags/my_pipeline/**` triggers CI for
 *that* DAG only (the `paths:` filter), which compiles → builds (from yaml) →
@@ -109,17 +114,24 @@ pushes the image to your registry → registers `dag.json`. The control plane ru
 the new version on the next trigger. One DAG per pipeline keeps blast radius
 small: a broken `another_pipeline` never blocks `my_pipeline`.
 
+The first registration of a DAG leaves it **paused**, as in Airflow: its
+schedule creates no run until someone unpauses it (UI switch, or
+`dexaflow admin dags unpause <dag_id>`). Later registrations never change that,
+so a pipeline that redeploys an active DAG keeps it active. A DAG that should
+start active sets `is_paused_upon_creation=False`; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
+
 {{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The per-DAG pipeline above stays the recommendation, and the `paths:` filter is
-the point of it — one DAG per pipeline is what keeps a broken DAG from blocking
+the point of it: one DAG per pipeline is what keeps a broken DAG from blocking
 its neighbours.
 
 `dexaflow build [workspace]` is for the times you are **not** in that pipeline:
 after a base-image bump that every DAG must pick up, when you clone the repo onto
 a new machine, or when you want to see all the images a change produces before
 pushing anything. It walks the workspace and builds each project with the image
-that project's own `registry:` block derives — the same derivation `deploy` uses,
-so nothing about naming is new:
+that project's own `registry:` block derives (the same derivation `deploy` uses,
+so nothing about naming is new):
 
 ```bash
 dexaflow build my-dags/           # build every project under my-dags/
@@ -132,84 +144,130 @@ Two behaviours matter more than the loop itself:
   quietly. A command that covers less than the workspace without saying so leaves
   you believing images exist.
 - A failure **stops** the run, names the project, and lists what was already
-  built. A half-built workspace — some images new, some stale — is invisible
+  built. A half-built workspace (some images new, some stale) is invisible
   afterwards.
 
-With no `--dag-version` / `--sha` it derives them the same way `deploy` does —
-`git describe`, and the short commit hash. (`deploy` has no `--sha` flag at all;
-it always derives the sha.)
+With no `--dag-version` / `--sha` it derives them the same way `deploy` does,
+per project: the version label from `git describe` in the project's directory
+plus a hash of that project's content, and the short commit hash of that
+directory. (`deploy` has no `--sha` flag at all; it always derives the sha.)
 
 Using it **as** your CI, in place of per-DAG pipelines, is a deliberate trade:
 one job rebuilds everything on any change, so blast radius and build time both
 grow with the repo. Choose it only if you want that.
 {{% /alert %}}
 
-{{% alert title="Tag images immutably" color="success" %}}
-The recipes tag by git SHA (`my_pipeline:$GIT_SHA`), never `:latest`. The
-image a `dag.json` points at is then frozen — re-running an old DAG version
-pulls exactly the bytes it shipped with, and a rollback is a re-`push` of the
-older `dag.json`.
-{{% /alert %}}
+## Rolling back
+
+There is **no rollback command yet** (tracked in
+[#1702](https://github.com/dexadata/dexaflow/issues/1702)), and nothing makes an
+older version current again by itself:
+
+- Re-running `dexaflow push` with an older `dag.json` does **not** roll back.
+  Content the control plane already has is a no-op: it answers `created:
+  false`, the newer version stays current, and nothing else changes, the
+  schedule included.
+- Retagging an image in the registry does not roll back either: a version
+  registered by `deploy` names its image by digest.
+
+What works today is registering the old code **as a new version**, under a new
+version label and on the old image digest. From the commit you want back:
+
+```bash
+git checkout <old-commit>
+dexaflow compile dags/my_pipeline -o dag.json \
+  --image "ghcr.io/your-org/my-pipeline@sha256:<old-digest>" \
+  --dag-version "<old-version>-rollback-1"
+dexaflow push dag.json --server "$DEXAFLOW_SERVER_URL"
+```
+
+The old digest is in the `image …@sha256:…` line `deploy` printed for that
+version, and in the `dag.json` it wrote; keeping that file as a CI artifact makes
+a rollback a lookup. Runs already in flight keep the version they started with.
 
 ## Prerequisites
+
 - The `dexaflow` CLI on the runner (download the release binary, or `go install`).
-- **Python 3.11+ on the runner** (`dexaflow compile` invokes the stdlib-only
-  parser shim — [ADR 0024](/project/adrs/0024-dag-parsing-structural-shim/) — to turn `dag.py`
-  into `dag.json`). See [Python on the runner](#python-on-the-runner) below.
-- A container registry your cluster can pull from.
-- `DEXAFLOW_SERVER` (control plane URL) and `DEXAFLOW_TOKEN` (a push token) as CI secrets.
+- **Python 3.11 to 3.13 on the runner** (`dexaflow compile` invokes the
+  stdlib-only parser shim, [ADR 0024](/project/adrs/0024-dag-parsing-structural-shim/),
+  to turn `dag.py` into `dag.json`). See [Python on the runner](#python-on-the-runner) below.
+- A container registry your cluster can pull from, and the builder logged in to
+  it (`docker login`).
+- The control plane URL, passed as `--server` or exported as
+  `DEXAFLOW_SERVER_URL` (the pre-rename `LEOFLOW_SERVER_URL` still works). The
+  CLI reads no other variable for it: a pipeline that exports something else
+  (`DEXAFLOW_SERVER`, for instance) silently targets the default,
+  `http://localhost:8080`.
+- A CI credential for the control plane, below.
+
+## Credentials for the control plane
+
+A control-plane token **expires after one hour** (`auth.jwt.token_ttl_seconds`,
+3600 by default), so a token stored as a CI secret stops working the same
+afternoon. Store a **password** instead, and mint a fresh token at the start of
+each job:
+
+1. Once, as an admin, create a service user for CI with a role that grants
+   `write:dag`, and store its password as a CI secret
+   (`DEXAFLOW_CI_PASSWORD` below):
+
+   ```bash
+   dexaflow auth create-user --email ci-deploy@example.com --password-stdin \
+     --role "$DEPLOY_ROLE" < password.txt
+   ```
+
+2. In each job, exchange it for a token. `deploy`, `push` and the other
+   commands read `DEXAFLOW_TOKEN`:
+
+   ```bash
+   export DEXAFLOW_SERVER_URL=https://pro.example.com
+   DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
+     dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+   export DEXAFLOW_TOKEN
+   ```
+
+The token never leaves the job. `deploy` uses the token it started with for the
+register at the end, so a build that can take longer than an hour should run
+the steps apart: `dexaflow compile --build --push`, then mint the token, then
+`dexaflow push` (which registers the tag; see the warning at the top).
 
 ## Python on the runner
 
-The `dexaflow compile` step needs Python 3.11, 3.12, or 3.13 to parse `dag.py`.
-**Bring your own Python** on the runner — do not rely on `dexaflow setup` to
-download a managed CPython in CI (that path is designed for first-touch on a
-developer laptop, not for build pipelines, where it adds ~50 MB to every run
-and bypasses your runner's pin/caching).
+The `dexaflow compile` step (which `deploy` runs) needs Python 3.11, 3.12, or
+3.13 on `PATH` as `python3` to parse `dag.py`. **Bring your own Python** on the
+runner; the managed CPython that `dexaflow setup` can download is meant for a
+developer laptop, not for build pipelines, where it adds ~50 MB to every run and
+bypasses your runner's pin/caching.
 
 The recommended path on each runner type:
 
 | Runner | Recipe |
 |---|---|
 | **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing dexaflow. Cached automatically. |
-| **GitLab CI** | Use a `python:3.12-slim` (or `python:3.12-bookworm`) base image instead of a bare `alpine`/`ubuntu`. |
-| **Cloud Build / CodeBuild** | Use a `python:3.x-slim` build step, or one of the cloud-provider's "python3.12" images. |
+| **GitLab CI** | Install `python3` in the job image (`apk add python3` on `docker:27`), or use an image that ships both Python and the Docker CLI. |
+| **Cloud Build / CodeBuild** | Run the step on a `python:3.12-slim` image and install the Docker CLI there (the recipe below). `gcr.io/cloud-builders/docker` is Ubuntu 20.04, whose `python3` is 3.8. |
 | **Self-hosted runners** | Pin Python via your image baseline (`apt install python3.12` or `pyenv`) and version-lock in your runner provisioning. |
 | **Generic Docker-in-Docker** | Base your build container on `python:3.12-slim` (gives you Python + a Debian userland for the `docker build` shell). |
 
-Older Python (≤3.10) fails the compile cleanly — `dexaflow compile` errors out
-with the version requirement, not a confusing traceback. Newer Python (3.14+)
-is accepted by the upper end of the detection range; the range is bumped per
-release once the parser shim is re-verified against it.
+Older Python (≤3.10) fails the compile cleanly: `dexaflow compile` errors out
+with the version requirement, not a confusing traceback.
 
-### One more step: `dexaflow setup` extracts the parser
+### No `dexaflow setup` in CI
 
-After the `dexaflow` binary lands on the runner and Python is in scope, run
-`dexaflow setup` ONCE per runner. The CLI ships the parser source embedded;
-`setup` extracts it under `~/.dexaflow/pysrc/parser/` and writes a config
-file pointing the `compile` command at the chosen interpreter. Without this
-step `dexaflow compile` fails with `No module named leoflow_parser` (the
-runner's Python has no idea where the parser lives).
+`dexaflow compile` and `dexaflow deploy` extract the parser bundled in the binary
+into `~/.dexaflow/pysrc/` on their own the first time they run (and again after a
+binary upgrade), so a runner needs no setup step. Install the binary with
+`DEXAFLOW_NO_SETUP=1`: `dexaflow setup` would also prepare Lite (credentials,
+datastore) and may download a managed Python, none of which a pipeline uses.
 
-The snippets below all show `dexaflow setup` as the step after the install,
-before `dexaflow compile`. The follow-up to make this implicit (auto-bootstrap
-on first compile, or embed the parser execution inside the Go binary) is
-tracked separately; for now, calling it explicitly is the
-recommended path because it's the operation that decides whether managed
-CPython is downloaded, and that's a step CI operators should consciously opt
-into.
-
-{{% alert title="Cache `~/.dexaflow/` between CI runs" color="success" %}}
-Ephemeral CI runners re-extract the parser on every build (~3-5 s).
-Cache the directory keyed by the dexaflow binary version (or the dexaflow
-release URL) to skip it on warm runs:
-`actions/cache` on GitHub Actions, `cache:` keys on GitLab CI, the
-workspace cache on Cloud Build. With Python on PATH, the cache hit makes
-`dexaflow setup` a near-no-op. Skip the cache if your runner image
-already bakes `~/.dexaflow/pysrc/` in (some self-hosted setups do).
-{{% /alert %}}
+Caching `~/.dexaflow/pysrc/` between runs is optional; the extraction takes a
+few seconds.
 
 ## Examples
+
+Each recipe deploys `dags/my_pipeline`, whose `dexaflow.yaml` carries the
+`registry:` block (`url` + `image_name`). Replace `https://pro.example.com` with
+your control plane.
 
 {{< tabpane text=true >}}
 {{% tab header="GitHub Actions" %}}
@@ -224,9 +282,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
+    env:
+      DEXAFLOW_SERVER_URL: https://pro.example.com
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5     # BYO Python — see #python-on-the-runner
+        with: { fetch-depth: 0 }          # git describe needs history and tags
+      - uses: actions/setup-python@v5     # BYO Python, see #python-on-the-runner
         with: { python-version: '3.12' }
       - uses: docker/login-action@v3
         with:
@@ -235,98 +296,138 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install dexaflow
         run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
-      - name: Bootstrap the parser (uses the BYO Python from above)
-        run: dexaflow setup
-      - name: Compile + build + push image
+      - name: Deploy
+        env:
+          DEXAFLOW_CI_PASSWORD: ${{ secrets.DEXAFLOW_CI_PASSWORD }}
         run: |
-          IMAGE=ghcr.io/${{ github.repository }}/my_pipeline:${{ github.sha }}
-          dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
-      - name: Register with the control plane
-        env: { DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }} }
-        run: dexaflow push dag.json --server ${{ secrets.DEXAFLOW_SERVER }}
+          DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
+            dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+          export DEXAFLOW_TOKEN
+          dexaflow deploy dags/my_pipeline --yes
 ```
+
+GHCR refuses image names with upper-case letters, so keep `registry.url` and
+`registry.image_name` lower case. If you build the name from
+`${{ github.repository }}` (for `compile --image`, say), lower-case it first:
+`IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/my_pipeline:${GITHUB_SHA}"`.
+
+Do not add `docker/setup-buildx-action` to this job. It makes a
+`docker-container` builder the default, whose builds stay in the builder's
+cache instead of the local image store; the CLI runs a plain `docker build`
+without `--load`, so the `docker push` that follows finds no image.
+
 {{% /tab %}}
 {{% tab header="GitLab CI" %}}
 
 ```yaml title=".gitlab-ci.yml"
 deploy_dag:
-  # Default docker:27 is Alpine-based; install python3 before dexaflow compile.
-  # Alternative: a custom base image that bakes Python+Docker together.
-  # See #python-on-the-runner for the rationale.
   image: docker:27
   services: [docker:27-dind]
+  variables:
+    # Talk to the dind service over TLS; the runner shares /certs/client.
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DEXAFLOW_SERVER_URL: https://pro.example.com
   before_script:
-    - apk add --no-cache python3   # 3.12 on Alpine 3.20+; see #python-on-the-runner
+    - apk add --no-cache python3 git   # BYO Python, see #python-on-the-runner
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       changes: ["dags/my_pipeline/**/*"]
-  variables:
-    IMAGE: $CI_REGISTRY_IMAGE/my_pipeline:$CI_COMMIT_SHA
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - wget -qO- https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
-    - dexaflow setup        # extracts the parser into ~/.dexaflow/ using the python3 from before_script
-    - dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
-    - dexaflow push dag.json --server "$DEXAFLOW_SERVER"   # DEXAFLOW_TOKEN from CI vars
+    - DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" | dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+    - export DEXAFLOW_TOKEN
+    - dexaflow deploy dags/my_pipeline --yes
 ```
-{{% /tab %}}
-{{% tab header="Google Cloud Build + Cloud Run" %}}
 
-Build/push on Cloud Build; register against a control plane on Cloud Run. The
-DAG image runs as task pods on GKE (pods are the execution unit, not Cloud Run).
+`docker:dind` runs only on a runner configured with `privileged = true` (and,
+for the TLS variables above, `volumes = ["/certs/client"]`) in its
+`config.toml`; GitLab's shared SaaS runners are. `DEXAFLOW_CI_PASSWORD` is a
+masked CI/CD variable. `registry.url` in `dexaflow.yaml` is your project's
+`$CI_REGISTRY_IMAGE`, written out (for example
+`registry.gitlab.com/your-group/my-dags`).
+
+{{% /tab %}}
+{{% tab header="Google Cloud Build" %}}
+
+Build, push and register on Cloud Build; the DAG image runs as task pods on your
+cluster. The build's service account is already authorized to push to Artifact
+Registry in the same project, so `registry.url` in `dexaflow.yaml` is
+`us-central1-docker.pkg.dev/<project>/dags`. The CI password lives in Secret
+Manager.
+
+`gcloud builds submit` uploads the source without `.git`, so `git describe`
+cannot name the version and every build would get the label `dev`; a second
+deploy with changed content is then refused with `409`. The recipe passes the
+build id as `--dag-version` to keep each build's label unique.
 
 ```yaml title="cloudbuild.yaml"
 steps:
-  - name: gcr.io/cloud-builders/docker
+  - name: python:3.12-slim
     entrypoint: bash
+    secretEnv: ["DEXAFLOW_CI_PASSWORD"]
+    env:
+      - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}
     args:
       - -c
       - |
-        # BYO Python — Cloud Builders' docker image is Debian; install python3.
-        # See #python-on-the-runner for the rationale.
-        apt-get update -qq && apt-get install -y --no-install-recommends python3
+        set -euo pipefail
+        # Python 3.12 from the step image; add the Docker CLI and curl. Cloud
+        # Build mounts the Docker socket and its registry credentials into
+        # every step, so docker build/push work from this image too.
+        apt-get update -qq && apt-get install -y --no-install-recommends docker.io curl ca-certificates git
         curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/bin sh
-        dexaflow setup    # extracts the parser into ~/.dexaflow/ using the python3 just installed
-        IMAGE="$_REGION-docker.pkg.dev/$PROJECT_ID/dags/my_pipeline:$SHORT_SHA"
-        dexaflow compile dags/my_pipeline --image "$$IMAGE" --build --push -o dag.json
-        dexaflow push dag.json --server "$_DEXAFLOW_SERVER"
+        DEXAFLOW_TOKEN="$(printf '%s\n' "$$DEXAFLOW_CI_PASSWORD" |
+          dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+        export DEXAFLOW_TOKEN
+        dexaflow deploy dags/my_pipeline --yes --dag-version "$BUILD_ID"
 substitutions:
-  _REGION: us-central1
-  _DEXAFLOW_SERVER: https://leoflow.run.app
+  _DEXAFLOW_SERVER_URL: https://pro.example.com
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/dexaflow-ci-password/versions/latest
+      env: DEXAFLOW_CI_PASSWORD
 options: { logging: CLOUD_LOGGING_ONLY }
 ```
 
 {{% alert title="Restricted networks (Cloud Shell): run the build inside Cloud Build" color="success" %}}
-{{% /tab %}}
-{{< /tabpane >}}
-
-When the local Docker daemon can't reach Google's IPs — e.g. in Cloud
-Shell — don't build locally at all. The `cloudbuild.yaml` above runs
-`dexaflow compile --build --push` **inside Cloud Build** (Google's network,
-not your machine): serverless, still yaml-driven, no Dockerfile, no local
-egress. Trigger it from Cloud Shell with:
+When the local Docker daemon can't reach Google's IPs (in Cloud Shell, for
+example), don't build locally at all. The `cloudbuild.yaml` above runs the
+whole deploy **inside Cloud Build** (Google's network, not your machine):
+serverless, still yaml-driven, no Dockerfile, no local egress. Trigger it from
+Cloud Shell with:
 
 ```bash
 gcloud builds submit --config cloudbuild.yaml .
 ```
 
-Cloud Build checks out the source, runs compile + build + push there, and
-pushes to Artifact Registry — your machine never touches a Docker daemon.
-(Use `gcloud builds submit --tag …` only if you ship your own Dockerfile;
-the yaml-driven path has none for it to build.)
-    {{% /alert %}}
+Cloud Build receives the source, builds, pushes to Artifact Registry and
+registers there; your machine never touches a Docker daemon. (Use
+`gcloud builds submit --tag …` only if you ship your own Dockerfile; the
+yaml-driven path has none for it to build.)
+{{% /alert %}}
 
-{{< tabpane text=true >}}
+{{% /tab %}}
 {{% tab header="Generic / Makefile" %}}
 
 Any runner with Docker, **Python 3.11+**, and the `dexaflow` CLI
 (see [Python on the runner](#python-on-the-runner)):
 
 ```bash
-dexaflow setup    # one-shot per runner: extracts the parser into ~/.dexaflow/
-IMAGE="$REGISTRY/my_pipeline:$(git rev-parse --short HEAD)"
-dexaflow compile dags/my_pipeline --image "$IMAGE" --build --push -o dag.json
-dexaflow push dag.json --server "$DEXAFLOW_SERVER" --token "$DEXAFLOW_TOKEN"
+export DEXAFLOW_SERVER_URL=https://pro.example.com
+DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
+  dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+export DEXAFLOW_TOKEN
+dexaflow deploy dags/my_pipeline --yes
+```
+
+Split into a build stage and a register stage, the same pipeline registers the
+image **tag** rather than its digest (see the warning at the top):
+
+```bash
+dexaflow compile dags/my_pipeline --build --push -o dag.json   # image from registry: in dexaflow.yaml
+dexaflow push dag.json
 ```
 {{% /tab %}}
 {{< /tabpane >}}

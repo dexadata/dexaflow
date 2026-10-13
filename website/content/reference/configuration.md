@@ -80,7 +80,7 @@ There are two ways to resolve to it, and they have different fixes:
 - **You set `python_version: "3.10"`.** Set `python_version: "3.11"` (or later)
   and rebuild.
 - **You pinned `base_image` to a published `py3.10` tag** (`…:py3.10`,
-  `…:py3.10-v0.4.5`). Repoint `base_image` to the matching `py3.11` tag and
+  `…:py3.10-v0.4.5`<!-- stale-version-ok: py3.10 runtimes stopped at 0.4.x -->). Repoint `base_image` to the matching `py3.11` tag and
   rebuild. Changing `python_version` here does nothing: when `base_image` is
   set it is used verbatim and `python_version` is not consulted for the `FROM`.
 
@@ -243,6 +243,17 @@ rows only the old key opens.
 A row that **no** configured key can open is left untouched and reported at
 `ERROR`. Its ciphertext is the only copy of that credential, so the rotation
 never overwrites or deletes it; put the missing key in the list and restart.
+Until then the server logs a warning naming the connection, and:
+
+- the connections list (`GET /api/v2/connections`) still returns every
+  connection of the tenant, and shows this one with its `extra` masked (`***`)
+  and `extra_unreadable: true`;
+- reading it alone (`GET /api/v2/connections/<connection_id>`), or updating
+  it, answers `500` with a message that names the connection;
+- delivery to a task pod skips it with a warning, so only the tasks that use
+  it fail.
+
+If the old key is lost, delete the connection and set it again.
 
 Trying keys in order is safe because AES-256-GCM is authenticated: a wrong key
 fails to open rather than returning plausible garbage.
@@ -371,7 +382,7 @@ roadmap item.
 | `build.dockerfile` | *unset* | A Dockerfile the project ships, used as-is instead of the generated one when the file exists (a missing file falls back to the generated Dockerfile). It is relative to the directory holding `dexaflow.yaml` and must stay inside it: an absolute path, or one escaping the project (`../x`), is refused by `dexaflow validate` and `compile`, and `compile --build` refuses one that a symlink leads out of the project. A Dockerfile outside the project is not reviewed with it, and it skips every check described in [Values that reach the generated Dockerfile](#values-that-reach-the-generated-dockerfile). The `--dockerfile` flag is not confined: it is the operator's own choice on the command line, and it wins over this field. |
 | `build.platforms` | `["linux/amd64"]` | Multi-arch via `["linux/amd64","linux/arm64"]`. |
 | `registry.auth_method` | `"docker_config"` | Credential source for `compile --push`. |
-| `registry.tag_strategy` | `"version"` | How `dag_version` is mapped to image tag. |
+| `registry.tag_strategy` | `"version"` | How the image tag is picked. `version` and `custom`: the DAG version label, the `--dag-version` you pass or else the default `<git describe>-<content hash>` (see [the version label](/operate/deploy-prerequisites/#8-the-version-label-and-its-409)). `git_sha`: the short commit of the project directory. `git_tag`: the git tag on the project's `HEAD`. `git_sha` and `git_tag` fall back to the version label, with a warning, when there is no commit or no tag on `HEAD`. Characters an image tag cannot carry become `-`. |
 | `staging.enabled` | `false` | Opt-in per-run RWX volume — ADR 0022. |
 | `defaults.*` | *unset* | DAG-level task defaults; layered under task overrides — ADR 0023. |
 | `tasks.<id>` | *unset* | Per-task overrides; must reference a `task_id` present in the compiled DAG. |
@@ -570,6 +581,12 @@ answers the same generic 403 it answers for every other failure. The server logs
 a WARN at boot when the secret is empty.
 {{% /alert %}}
 
+### DAG registration
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` | `true` | both | Start a DAG paused when it is registered for the first time, so its schedule creates no run until someone unpauses it. Airflow's setting of the same name. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. `false` registers new DAGs active, as releases before 0.5.4 did. `dexaflow lite` sets it to `false`. Config key `dags_are_paused_at_creation`. Helm: set the chart value `config.dagsArePausedAtCreation` (not `extraEnv`); the chart always renders this variable. A DAG deleted and deployed again comes back paused. See [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused). |
+
 ### Scheduler (`scheduler.*`)
 
 | Variable | Default | Edition | Purpose |
@@ -580,6 +597,8 @@ a WARN at boot when the secret is empty.
 | `DEXAFLOW_SCHEDULER_EAGER_PROMOTION` | `false` | both | Dispatches downstream tasks sooner after their upstreams settle. Within one tick, a task that becomes ready is queued at once instead of on the next tick, and skips or upstream failures cascade down the DAG (bounded passes per run, the rest continues next tick). A task's final state report also triggers an early tick on the replica that receives it, started at least 100 ms, and at least twice the previous tick's duration, after the previous tick began; the loop interval stays the upper bound. `dexaflow_scheduler_woken_ticks_total` (also exported as `leoflow_scheduler_woken_ticks_total`) counts those early ticks. Max active tasks and pool limits apply across the extra passes. Off by default. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE` | `0` | both | Depth of the queued-dispatches channel ([ADR 0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch synchronous with the tick (right for Lite); `>0` enables the worker pool (right for Pro, where K8s API calls add latency): the tick only enqueues, and a full buffer leaves the task scheduled for the next tick. Recommended for a busy cluster: `512` with 16 workers. Helm: `config.scheduler.dispatch.bufferSize`. |
 | `DEXAFLOW_SCHEDULER_DISPATCH_WORKERS` | `0` | both | Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise floored to 1. Helm: `config.scheduler.dispatch.workers`. |
+| `DEXAFLOW_SCHEDULER_DISPATCH_TICK_BUDGET` | `5s` | both | Wall time one scheduler tick may spend dispatching. Once it is spent the tick stops dispatching: the remaining ready tasks stay `scheduled` with no dispatch attempt charged, and the next tick starts at the run after the one that was cut, so one wide fan-out (for example under the Kubernetes client limit of `EXECUTOR_KUBE_CLIENT_QPS`) cannot hold every other run of every tenant for minutes. Due cron runs are created before the tick dispatches. `0s` dispatches every ready task in the tick however long it takes (the behavior before 0.5.4); negative fails boot. |
+| `DEXAFLOW_SCHEDULER_DISPATCH_MAX_PER_TENANT_PER_TICK` | `0` | both | Most tasks one tenant may dispatch in one tick, so a tenant with a wide fan-out or many runs leaves dispatch room for the others; the rest wait for the next tick with no attempt charged. `0` means no cap; negative fails boot. |
 | `DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS` | `false` | both | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses. See [Alert destinations](#alert-destinations). |
 | `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | *(empty)* | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Applied only while the block is on, but validated at startup either way: an invalid entry fails startup. |
 
@@ -588,7 +607,7 @@ a WARN at boot when the secret is empty.
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
 | `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `dexaflow lite` sets it). |
-| `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). |
+| `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). The Helm chart always sets it (to the release namespace by default, #1682), so the `leoflow` default applies only to installs that do not use the chart. |
 | `DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR` | _(empty → `server.grpc_addr`)_ | both | gRPC address task pods dial back to. In a local k3d/kind cluster set it to a host-reachable address such as `host.k3d.internal:9091`. |
 | `DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP` | _(empty)_ | Pro | Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel (dev). |
 | `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` | _(empty)_ | Pro | Names a Kubernetes Secret mounted read-only into every task pod, so a task can read a cluster-stored credential (e.g. a GCP SA key) referenced by a connection's `key_path` ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)). Empty = no secret mounted. |
@@ -692,6 +711,55 @@ before enabling it in production.
 |---|---|---|---|
 | `DEXAFLOW_SECRETS_BACKEND` | _(empty — disabled)_ | Pro (K8s) | Provider secrets-backend class the in-pod resolver drives (e.g. `airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend`). When set, a Connection/Variable a DAG declares can be resolved pod-side from the provider store under the pod's keyless identity. Helm: `secrets.backend`. |
 | `DEXAFLOW_SECRETS_BACKEND_KWARGS` | _(empty — treated as `{}`)_ | Pro (K8s) | Provider kwargs as a JSON **object string** (`connections_prefix`, `variables_prefix`, `region_name`, …), delivered to the pod verbatim. A kind is served only if its `*_prefix` kwarg is present. A JSON string rather than a map so a single env var sets it, matching the env-only control-plane chart. Keyless auth (IRSA / Workload Identity) uses the task pod's ServiceAccount — set `executor.task_service_account` accordingly. Helm: `secrets.backendKwargs`. |
+
+### Retention (`retention.*`)
+
+The retention janitor deletes metadata rows past an age you choose, per data
+class. Every class is off by default (`0` days): a default install never
+deletes a row. It runs on the scheduler leader only and rechecks leadership
+before every batch. A run is eligible once it settled (`success` or `failed`)
+more than `dag_runs_days` ago, every task instance of it is settled
+(`success`, `failed`, `skipped` or `upstream_failed`; a task in `none` is
+waiting to be scheduled, for example after a clear, so its run is kept), and
+no staging volume of it is still live. It goes with its task instances, state
+history, attempt history and XCom index rows, children first. Every batch is
+one short transaction of at most `batch_size` rows, run rows included; a run
+with more rows than that is finished by later batches, each of which checks
+again that the run is still eligible. A run's task instances are deleted all
+together or not at all, so a clear between two batches never re-opens a run
+missing some of its tasks (a run whose task instances are all gone re-runs
+from scratch); a run with more task instances than `batch_size` has them
+removed alone in one batch, which is the only time a batch exceeds it.
+Before deleting, a batch locks the task instances of its runs and checks them
+again, so a run a clear touched after it was selected is kept whole; a run a clear is writing at that moment is skipped
+until a later cycle instead of waited on. Active and recent runs are never
+touched. The janitor sleeps `batch_pause` between batches and a cycle stops
+once it deleted `max_rows_per_cycle` rows; the rest waits for the next cycle.
+Each tenant's runs and each tenant's audit rows take turns, one batch each,
+so no tenant and neither class waits behind another's backlog. Every cycle
+that deletes audit rows writes a `retention.purge` audit entry in the same
+scope with the row count and the cutoff. Turn on `dry_run` first to see what
+a cycle would delete: it only counts (summed across all tenants, at most
+10000 runs and 10000 audit rows per tenant, so its cost stays bounded; the
+log says `lower_bound=true` when a tenant reached that cap), logs the counts
+and sets `dexaflow_retention_rows_eligible`, which a deleting cycle
+resets to zero. Metrics: `dexaflow_retention_rows_deleted_total{table}`,
+`dexaflow_retention_rows_eligible{table}` and
+`dexaflow_retention_cycle_duration_seconds`. What the janitor does not delete:
+task logs, which the `disk` log backend prunes after 30 days and an object
+store keeps by its bucket lifecycle policy, and the bookkeeping rows of
+staging volumes already marked deleted. The chart has no values for these
+keys; set them through `extraEnv`.
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `0` (off) | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. `0` keeps every run. |
+| `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `0` (off) | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. |
+| `DEXAFLOW_RETENTION_DRY_RUN` | `false` | both | Only count what a cycle would delete; delete nothing. |
+| `DEXAFLOW_RETENTION_INTERVAL` | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |
+| `DEXAFLOW_RETENTION_BATCH_SIZE` | `1000` | both | Most rows one DELETE statement removes (1 to 50000), except the task instances of a single run larger than that, which go together. Also caps the runs per batch at 100. |
+| `DEXAFLOW_RETENTION_BATCH_PAUSE` | `100ms` | both | Sleep between two batches, so the janitor never keeps the database busy. |
+| `DEXAFLOW_RETENTION_MAX_ROWS_PER_CYCLE` | `100000` | both | A cycle starts no new batch once it deleted this many rows, children included. |
 
 ### Observability (`observability.*`)
 

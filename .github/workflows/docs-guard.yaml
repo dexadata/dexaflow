@@ -70,3 +70,10 @@ jobs:
           SKIP_DOCS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-docs') && '1' || '0' }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: bash scripts/check-docs-updated.sh HEAD /tmp/changed.txt
+      # No page may tell a reader to install a release older than the newest GA
+      # (#1555). Reads website/scripts/ci/versions.json, so it needs no network
+      # and judges the whole tree, not only the files this PR changed: a GA
+      # that lands makes every leftover pin stale at once, and the docs
+      # promotion PR, which bumps the README pins, is where that shows.
+      - name: No page pins a release older than the newest GA
+        run: bash scripts/check-stale-versions.sh

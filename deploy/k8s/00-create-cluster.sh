@@ -79,7 +79,8 @@ log "Fetching cluster credentials (writes to ~/.kube/config)"
 gcloud container clusters get-credentials "$CLUSTER" --zone="$ZONE" --project="$PROJECT"
 
 # ---- 4. Create the leoflow namespace ---------------------------------------
-# The server creates task pods in 'leoflow' (see helm values.yaml: taskNamespace).
+# The scripts install the release in 'leoflow', and the chart creates task pods
+# in the release namespace unless taskNamespace says otherwise.
 log "Ensuring 'leoflow' namespace exists"
 kubectl create namespace leoflow --dry-run=client -o yaml | kubectl apply -f -
 
