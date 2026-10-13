@@ -53,10 +53,38 @@ helm install lf ./helm/dexaflow -n leoflow \
   --set bootstrap.password='admin'
 ```
 
-Task pods are created in `taskNamespace` (default `leoflow`, which must match the
-namespace the server targets). Agents dial the control plane gRPC at the
+Task pods are created in `taskNamespace`, which defaults to the release namespace
+(`-n`). The chart grants the executor Role there and tells the server the same
+namespace, so the two always match. Agents dial the control plane gRPC at the
 in-cluster Service DNS automatically (override with
 `config.agentControlPlaneAddr`).
+
+## Task namespace on upgrade (0.5.4)
+
+Charts before 0.5.4 defaulted `taskNamespace` to the literal `leoflow`, whatever
+the release namespace was (#1682). From 0.5.4 an unset value means the release
+namespace on a fresh install. On `helm upgrade` an unset value keeps the
+namespace the release's running control plane already uses, read from its
+Deployment, so an upgrade never moves task pods, their staging PVCs, the
+executor Role or the agent CA ConfigMap on its own. `NOTES` says so when it
+happens.
+
+- **Installed with `-n leoflow`, or with `taskNamespace` set:** nothing changes.
+- **Installed in another namespace and relying on the old default:** the upgrade
+  keeps `leoflow`. Pin it with `--set taskNamespace=leoflow` to make that
+  explicit.
+- **Rendering with `helm template`, ArgoCD or Flux:** the renderer cannot read
+  the live release, so an unset value renders the release namespace. Set
+  `taskNamespace: leoflow` in your values before upgrading if your task pods run
+  there today.
+
+To move task pods to the release namespace, let running tasks finish (or pause
+the DAGs), then upgrade with `--set taskNamespace=<release namespace>`. Helm
+removes the old Role, RoleBinding and CA ConfigMap from `leoflow`, and the
+control plane stops watching that namespace, so it no longer cleans it up. List
+what is left with `kubectl -n leoflow get pods,pvc,configmaps -l leoflow.io/run-id`
+(warm-pool anchors carry `leoflow.io/warm-anchor=true` instead) and delete it
+once it has finished.
 
 ## Upgrading a release installed before the rename
 

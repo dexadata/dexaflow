@@ -28,6 +28,14 @@ const (
 	// label selector cannot say "equals 0 or absent". It is filtered in Go by
 	// podMatchesEpoch instead.
 	podLabelAttemptEpoch = "leoflow.io/attempt-epoch"
+	// podAnnotationRawTaskID carries the task id exactly as declared. The
+	// task-id label is lossy (labelValue lowercases it and maps '_' and '.' to
+	// '-'), so two tasks of one run such as load_a and load-a share it; the
+	// attempt filters compare this annotation instead (R-10, #1598). It is an
+	// annotation, not a label, because a label value cannot hold every valid
+	// task id, and it is not in any selector, so a pod created before it
+	// existed still matches on its labels (podMatchesTask).
+	podAnnotationRawTaskID = "leoflow.io/raw-task-id"
 )
 
 // errCacheNotSynced is returned by SnapshotTaskPods before the informer's initial
@@ -150,7 +158,7 @@ func (p *PodInformer) CachedPodActive(a Attempt) bool {
 		return false
 	}
 	for _, pod := range pods {
-		if !podMatchesEpoch(pod, a.AttemptEpoch) {
+		if !podMatchesAttempt(pod, a) {
 			continue
 		}
 		if phase := pod.Status.Phase; phase == corev1.PodPending || phase == corev1.PodRunning {

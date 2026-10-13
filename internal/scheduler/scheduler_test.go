@@ -34,6 +34,8 @@ type fakeStore struct {
 	createdTenants []string
 	notes          map[string]string
 	createErr      bool
+	// scheduledErr makes ScheduledDAGs fail, as a broken run-creation query.
+	scheduledErr error
 	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
 	// these tenants, as the store does once a tenant's daily run cap is reached.
 	limitedTenants       map[string]bool
@@ -77,6 +79,9 @@ func (f *fakeStore) ActiveRuns(context.Context) ([]RunState, error) {
 	return f.runs, nil
 }
 func (f *fakeStore) ScheduledDAGs(context.Context) ([]ScheduledDAG, error) {
+	if f.scheduledErr != nil {
+		return nil, f.scheduledErr
+	}
 	return f.scheduled, nil
 }
 func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {

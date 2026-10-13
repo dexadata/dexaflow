@@ -53,10 +53,38 @@ helm install lf ./helm/dexaflow -n leoflow \
   --set bootstrap.password='admin'
 ```
 
-Task pods are created in `taskNamespace` (default `leoflow`, which must match the
-namespace the server targets). Agents dial the control plane gRPC at the
+Task pods are created in `taskNamespace`, which defaults to the release namespace
+(`-n`). The chart grants the executor Role there and tells the server the same
+namespace, so the two always match. Agents dial the control plane gRPC at the
 in-cluster Service DNS automatically (override with
 `config.agentControlPlaneAddr`).
+
+## Task namespace on upgrade (0.5.4)
+
+Charts before 0.5.4 defaulted `taskNamespace` to the literal `leoflow`, whatever
+the release namespace was (#1682). From 0.5.4 an unset value means the release
+namespace on a fresh install. On `helm upgrade` an unset value keeps the
+namespace the release's running control plane already uses, read from its
+Deployment, so an upgrade never moves task pods, their staging PVCs, the
+executor Role or the agent CA ConfigMap on its own. `NOTES` says so when it
+happens.
+
+- **Installed with `-n leoflow`, or with `taskNamespace` set:** nothing changes.
+- **Installed in another namespace and relying on the old default:** the upgrade
+  keeps `leoflow`. Pin it with `--set taskNamespace=leoflow` to make that
+  explicit.
+- **Rendering with `helm template`, ArgoCD or Flux:** the renderer cannot read
+  the live release, so an unset value renders the release namespace. Set
+  `taskNamespace: leoflow` in your values before upgrading if your task pods run
+  there today.
+
+To move task pods to the release namespace, let running tasks finish (or pause
+the DAGs), then upgrade with `--set taskNamespace=<release namespace>`. Helm
+removes the old Role, RoleBinding and CA ConfigMap from `leoflow`, and the
+control plane stops watching that namespace, so it no longer cleans it up. List
+what is left with `kubectl -n leoflow get pods,pvc,configmaps -l leoflow.io/run-id`
+(warm-pool anchors carry `leoflow.io/warm-anchor=true` instead) and delete it
+once it has finished.
 
 ## Upgrading a release installed before the rename
 
@@ -521,6 +549,7 @@ differ from what's committed.
 | config.alerts.allowedCIDRs | list | `[]` | CIDRs or single addresses exempted from `blockPrivateDestinations` (`scheduler.alerts.allowed_cidrs`), e.g. an on-premises chat server. Rendered as a comma-joined `LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS`. An invalid entry fails server startup. |
 | config.alerts.blockPrivateDestinations | bool | `false` | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses (`scheduler.alerts.block_private_destinations`). An alert's URL and headers come from a tenant's connection, so turn this on when tenants that do not trust each other share the engine. The check runs on the address actually dialed, after DNS resolution and on every redirect; with it on, alert requests ignore `HTTP_PROXY`/`HTTPS_PROXY`. Off by default, so an existing in-cluster alert endpoint keeps working. |
 | config.cors.allowedOrigins | list | `[]` | CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list. |
+| config.dagsArePausedAtCreation | bool | `true` | Start a DAG paused when it is registered for the first time (`dags_are_paused_at_creation`, Airflow's setting of the same name), so its schedule creates no run until someone unpauses it. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. Set `false` to register new DAGs active, as releases before 0.5.4 did. Rendered as `LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION`. |
 | config.logsDir | string | `"/var/log/leoflow"` | Directory inside the pod where task logs are written. Mounted from `logs.persistence` (a PVC by default) so logs survive pod restarts. Set `logs.persistence.enabled: false` to fall back to an ephemeral emptyDir (dev only). |
 | config.poolsReadOnly | bool | `false` | Make the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer 403 for every role, tenant `admin` included; list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools, so no tenant can raise its own slot budget. It also makes a task naming a pool its tenant has not defined draw on `default_pool` instead of running unlimited. False (the default) renders nothing and keeps pools writable under `write:pool`. |
 | config.scheduler.dispatch.bufferSize | int | `0` | Depth of the queued-dispatches channel (`scheduler.dispatch.buffer_size`). 0 = synchronous dispatch inside the tick (server default). |
@@ -667,7 +696,7 @@ differ from what's committed.
 | split.api.replicaCount | int | `2` | API Deployment replicas (active-active; HPA-friendly). Ignored unless split.enabled. |
 | split.enabled | bool | `false` | Render separate `api` and `scheduler` Deployments instead of one `all` Deployment. Pro-only (Lite is single-host and never splits). |
 | split.scheduler.replicaCount | int | `1` | Scheduler Deployment replicas. Pinned to 1 by the chart regardless of this value — the scheduler is a single leader (ADR 0009); a field is kept only for clarity. Ignored unless split.enabled. |
-| taskNamespace | string | `"leoflow"` | Namespace where the control plane creates task pods + per-run staging PVCs. The chart wires this into both the executor RBAC (Role/RoleBinding) AND the server (LEOFLOW_EXECUTOR_TASK_NAMESPACE), so the server acts on exactly the namespace it is granted — override it freely (#480). |
+| taskNamespace | string | `""` (the release namespace) | Namespace where the control plane creates task pods + per-run staging PVCs. The chart wires this into both the executor RBAC (Role/RoleBinding) AND the server (LEOFLOW_EXECUTOR_TASK_NAMESPACE), so the server acts on exactly the namespace it is granted (#480). Empty (the default) means the release namespace on a fresh install. On `helm upgrade`, empty keeps the namespace the running control plane already uses (charts before 0.5.4 defaulted to `leoflow`), so an upgrade never moves task pods on its own; `helm template` and GitOps renderers cannot read the live release, so set it explicitly there (#1682). |
 | taskNetworkPolicy.allowMetadataEgress | list | `[]` | Host CIDRs within the always-blocked cloud-metadata range to RE-ALLOW, scoped to a single host each. Needed for keyless external-secrets auth that reaches a metadata/link-local endpoint: GKE Workload Identity (`169.254.169.254/32`) and EKS Pod Identity (`169.254.170.23/32`). AWS IRSA needs nothing here (it uses the public STS endpoint). Empty keeps the full metadata block. **One host per entry is enforced, not merely documented: the render FAILS on anything wider than an IPv4 `/32` or an IPv6 `/128`** — and on a bare address, a malformed CIDR or a scalar instead of a list. A wider entry would not widen the hatch, it would remove the block: NetworkPolicy egress rules are additive, so a rule allowing `169.254.0.0/16` overrides the `except` in the allow-all rule and the manifest still shows a block that no longer exists. To reach a wider range that is NOT the metadata range, use `extraEgress`. |
 | taskNetworkPolicy.blockPrivateNetworks | bool | `false` | ALSO deny RFC1918 private ranges, which on most clusters takes the apiserver with them — but not always: GKE's newer default Service range (34.118.224.0/20) is outside RFC1918, so print your own Service CIDR before assuming. IPv4 only, so on dual-stack an IPv6 metadata or apiserver endpoint is unaffected. OFF by default: a DAG calling an internal service is legitimate, and the policy cannot tell that from the apiserver by IP (ADR 0047). Turn on for high-security clusters; the control-plane gRPC is re-allowed explicitly. |
 | taskNetworkPolicy.enabled | bool | `false` | Enable the task-pod egress NetworkPolicy in `taskNamespace`. Denies ingress, allows DNS + the control-plane gRPC, then all other egress except the blocked ranges below. |

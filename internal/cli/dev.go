@@ -1728,6 +1728,12 @@ func sharedServerEnv(p liteEnvParams) []string {
 		"LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=false",
 		"LEOFLOW_SECRET_KEY_MIGRATION_LOCK=true",
 		"LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true",
+		// The server pauses a new DAG by default, as Airflow does (#1705). Lite
+		// is the inner-dev loop: a DAG you run locally must start active, so
+		// its schedule runs without an unpause after the first save. A DAG's
+		// own is_paused_upon_creation still wins, and an exported
+		// DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION overrides this.
+		"LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION=false",
 	}
 	if adminHash != "" {
 		// Real auth: bootstrap the admin from the hash; no bypass.

@@ -135,10 +135,7 @@ func TestRequeueDispatchClearsQueuedAtIntegration(t *testing.T) {
 		t.Fatalf("MarkQueued after re-offer: ok=%v err=%v", ok, err)
 	}
 
-	cands, err := sched.ListStaleQueuedCandidates(ctx)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedCandidates: %v", err)
-	}
+	cands := allStaleQueued(t, sched, ctx, 0)
 	for _, c := range cands {
 		if c.DagRunID != runID || c.TaskID != "load" {
 			continue
