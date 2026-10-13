@@ -52,7 +52,7 @@ func newPushCommand() *cobra.Command {
 				return err
 			}
 			if status >= http.StatusMultipleChoices {
-				return apiStatusError(status, []byte(body))
+				return versionConflictHint(apiStatusError(status, []byte(body)), spec.DagVersion, labelUnknown)
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Registered %q with %s (HTTP %d)\n", spec.DagID, serverURL, status)
 			return err

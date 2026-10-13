@@ -188,10 +188,13 @@ type Connection struct {
 	ConnectionId string  `json:"connection_id"`
 	Description  *string `json:"description,omitempty"`
 	Extra        *string `json:"extra,omitempty"`
-	Host         *string `json:"host,omitempty"`
-	Login        *string `json:"login,omitempty"`
-	Port         *int    `json:"port,omitempty"`
-	Schema       *string `json:"schema,omitempty"`
+
+	// ExtraUnreadable Present and true in a listing when the extra is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The extra is then masked. Reading the connection alone answers 500 with a message naming it.
+	ExtraUnreadable *bool   `json:"extra_unreadable,omitempty"`
+	Host            *string `json:"host,omitempty"`
+	Login           *string `json:"login,omitempty"`
+	Port            *int    `json:"port,omitempty"`
+	Schema          *string `json:"schema,omitempty"`
 }
 
 // ConnectionBody Connection create/replace payload. connection_id is required on POST (taken from the path on PATCH). password and extra are write-only. Every optional field is tri-state: omit the key to preserve the stored value (a partial write never wipes a field it does not mention, so the unreadable password survives a `--host`-only edit), send an empty string to clear the field, or send a value to set it. A password equal to the mask `***`, and any key inside `extra` whose value is exactly `***`, is treated as "unchanged" — so re-submitting a connection read back from GET (whose secrets are masked) never overwrites the real secret with the mask.

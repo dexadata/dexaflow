@@ -13,6 +13,11 @@ type Connection struct {
 	Port        *int
 	Extra       string
 	Description string
+	// ExtraUnreadable reports a stored extra that no configured secret key
+	// opens (the key was rotated without keeping the old one, for example).
+	// Extra is empty then. Only listings set it; reading the connection alone
+	// is an ErrValueUnreadable error (#1677).
+	ExtraUnreadable bool
 }
 
 // ConnectionPatch is a tri-state write to a Connection (#887). Each nullable

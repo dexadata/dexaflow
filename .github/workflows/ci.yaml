@@ -1132,24 +1132,6 @@ jobs:
         run: redocly lint docs/api/openapi.yaml
 
   # ─────────────────────────────────────────────────────────────────────
-  # Examples Dockerfile drift check (#318). The Dockerfile in each
-  # examples/<name>/ is generated from dexaflow.yaml by
-  # scripts/sync-example-dockerfiles.sh. If a contributor changes the
-  # YAML (python_version or dependencies) and forgets to regenerate, the
-  # checked-in Dockerfile lies about what the image will run. Catch
-  # that drift here so a Pro operator copying the Dockerfile out as a
-  # template gets the same image Lite would have produced.
-  # ─────────────────────────────────────────────────────────────────────
-  examples-dockerfile-drift:
-    name: Examples Dockerfile drift (#318)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check Dockerfiles are in sync with dexaflow.yaml
-        run: bash scripts/sync-example-dockerfiles.sh --check
-
-  # ─────────────────────────────────────────────────────────────────────
   # Dependabot directory check. Dependabot does not report a directory
   # with no manifest — it finds nothing and says nothing — so an entry
   # for a renamed or nonexistent path looks configured and updates

@@ -75,16 +75,13 @@ delta observed during each window. The harness cleans up every DAG it created on
 exit (best-effort); a fresh `migrate up` on an empty database is always the clean
 slate.
 
-### Known limitation: `dexaflow_scheduler_loop_duration_seconds` is not wired
+### Loop duration: the harness times `Step` itself
 
-The declared SLI `dexaflow_scheduler_loop_duration_seconds` is **defined** in
-`internal/observability/metrics.go` but is **never `Observe`d inside the scheduler
-loop** (grep confirms: only `metrics_test.go` observes it). A `/metrics` scrape
-today would therefore report an empty histogram for it. Until that observation is
-wired into `Scheduler.tick`/`Step`, this harness times `Step` **directly** (the
-faithful equivalent) and also feeds each measured duration into the real
-histogram object, so a future scrape — or a one-line follow-up that moves the
-`Observe` into the loop — sees the same distribution. `dexaflow_scheduler_step_downs_total`
+Since 0.5.4 the product observes `dexaflow_scheduler_loop_duration_seconds` around
+every leader tick (`Scheduler.tick`, #1186), so a `/metrics` scrape of a running
+leader shows the real distribution. This harness calls `Step` directly instead of
+going through the tick loop, so it times each `Step` itself and feeds the measured
+duration into the same histogram object; the two measure the same work. `dexaflow_scheduler_step_downs_total`
 **is** scraped from the live registry (it stays 0 here: leadership never churns in
 the harness). `dexaflow_dispatch_queue_depth` is a dispatcher gauge and is out of
 scope for Experiment 1 (no dispatcher is wired).

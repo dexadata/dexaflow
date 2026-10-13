@@ -40,8 +40,15 @@ type Repository struct {
 	// is off, the plaintext form every earlier release wrote.
 	varEncryption VariableEncryption
 	extCoverage   externalSecretCoverage
-	xcomValues    XComValueDeleter
-	specs         *specCache
+	// pausedAtCreation is the server's dags_are_paused_at_creation (#1705):
+	// whether a DAG registered for the first time starts paused when its spec
+	// does not say. The zero value is false (new DAGs registered active), which
+	// is what tools and tests that build a Repository directly get; the server
+	// sets it from its configuration (default true) through
+	// SetDagsArePausedAtCreation.
+	pausedAtCreation bool
+	xcomValues       XComValueDeleter
+	specs            *specCache
 	// tenants caches tenant name -> id (see tenantID). Bounded by the number
 	// of tenants that exist, since only successful lookups are stored.
 	tenants *sync.Map
@@ -72,6 +79,14 @@ type externalSecretCoverage interface {
 func NewRepository(pg *Postgres) *Repository {
 	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
 }
+
+// SetDagsArePausedAtCreation sets whether a DAG registered for the first time
+// starts paused when its spec has no is_paused_upon_creation (the server's
+// dags_are_paused_at_creation, #1705). It never affects a DAG that exists.
+func (r *Repository) SetDagsArePausedAtCreation(paused bool) { r.pausedAtCreation = paused }
+
+// DagsArePausedAtCreation reports the setting SetDagsArePausedAtCreation set.
+func (r *Repository) DagsArePausedAtCreation() bool { return r.pausedAtCreation }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
 // 0019). Without it, connection writes fail rather than storing plaintext.
@@ -1178,8 +1193,18 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 	return spec, nil
 }
 
-// RegisterDagVersion upserts the DAG and inserts a version keyed by specHash,
-// setting it as current. It is idempotent: an existing hash yields created=false.
+// RegisterDagVersion inserts a version of the DAG keyed by specHash and makes
+// it current, creating the DAG on its first registration. It is idempotent: an
+// existing hash yields created=false and writes nothing, even when that hash is
+// an older version than the current one.
+//
+// Everything runs in one transaction that holds the DAG's row lock, so
+// registers of one DAG are serialized and a refused or failed register leaves
+// no partial state (#1702). The dags row's metadata (schedule, catchup,
+// start_date, max_active_runs, description, owner, tags) is rewritten only when
+// the new version becomes current, so it always describes the current version.
+// is_paused is set only when this register creates the DAG (pausedOnCreation);
+// a new version of an existing DAG never changes it.
 func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec domain.DAGSpec, specHash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
@@ -1197,35 +1222,45 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 	if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
 		return false, lerr
 	}
-	maxRuns := spec.MaxActiveRuns
-	if maxRuns == 0 {
-		maxRuns = defaultMaxActiveRuns
-	}
-	dag, err := r.q.UpsertDag(ctx, queries.UpsertDagParams{
-		TenantID:         tid,
-		DagID:            spec.DagID,
-		Description:      strPtr(spec.Description),
-		Owner:            strPtr(spec.Owner),
-		Tags:             spec.Tags,
-		Schedule:         spec.Schedule,
-		ScheduleTimezone: strPtr(spec.ScheduleTZ),
-		StartDate:        parseTimestamptz(spec.StartDate),
-		MaxActiveRuns:    toInt32(maxRuns),
-		Catchup:          spec.Catchup,
-	})
-	if err != nil {
-		return false, fmt.Errorf("upserting dag: %w", err)
-	}
-	if _, verr := r.q.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
-		return false, nil
-	} else if !errors.Is(verr, pgx.ErrNoRows) {
-		return false, fmt.Errorf("checking existing version: %w", verr)
-	}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return false, fmt.Errorf("encoding spec: %w", err)
 	}
-	version, err := r.q.InsertDagVersion(ctx, queries.InsertDagVersionParams{
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("beginning register tx: %w", err)
+	}
+	// Rollback after a successful commit is a no-op; on any early return (409,
+	// identical hash, failed write) it undoes everything this register wrote.
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, spec, specHash, specJSON, r.pausedOnCreation(spec))
+	if err != nil || !created {
+		return false, err
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return false, fmt.Errorf("committing register tx: %w", cerr)
+	}
+	return true, nil
+}
+
+// registerDagVersionTx is the body of RegisterDagVersion, run on a transaction:
+// create the DAG if missing, lock its row, decide on the hash, insert the
+// version, then make it current and apply its metadata.
+//
+// paused is is_paused for a DAG this register creates; it is ignored when the
+// DAG exists, so a redeploy never pauses or unpauses it.
+func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, specHash string, specJSON []byte, paused bool) (bool, error) {
+	meta := dagMetadataOf(spec)
+	dag, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, paused)
+	if err != nil {
+		return false, err
+	}
+	if _, verr := qtx.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
+		return false, nil
+	} else if !errors.Is(verr, pgx.ErrNoRows) {
+		return false, fmt.Errorf("checking existing version: %w", verr)
+	}
+	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
 		TenantID:       tid,
 		Version:        spec.DagVersion,
@@ -1244,10 +1279,14 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 		// push new content.
 		return false, fmt.Errorf("inserting version: %w", mapConflict(err))
 	}
-	if err := r.q.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
+	meta.ID, meta.TenantID = dag.ID, tid
+	if err := qtx.UpdateDagMetadata(ctx, meta); err != nil {
+		return false, fmt.Errorf("updating dag metadata: %w", err)
+	}
+	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
 		return false, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := r.q.CreateAuditLog(ctx, queries.CreateAuditLogParams{
+	if err := qtx.CreateAuditLog(ctx, queries.CreateAuditLogParams{
 		TenantID:     tid,
 		Action:       "dag.version.register",
 		ResourceType: strPtr("dag"),
@@ -1256,6 +1295,62 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 		return false, fmt.Errorf("writing audit log: %w", err)
 	}
 	return true, nil
+}
+
+// pausedOnCreation is whether spec's DAG starts paused if this register creates
+// it: the spec's is_paused_upon_creation when set, else the server's
+// dags_are_paused_at_creation, as in Airflow (#1705).
+func (r *Repository) pausedOnCreation(spec domain.DAGSpec) bool {
+	if spec.IsPausedUponCreation != nil {
+		return *spec.IsPausedUponCreation
+	}
+	return r.pausedAtCreation
+}
+
+// ensureAndLockDag creates the DAG's row when it is missing and locks it. A
+// DeleteDag that commits between the two statements leaves nothing to lock;
+// the pair is then tried once more, which creates the DAG again. A DAG that is
+// gone a second time is reported as a conflict for the caller to retry.
+// paused is is_paused for a DAG this call creates.
+func ensureAndLockDag(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, meta queries.UpdateDagMetadataParams, paused bool) (queries.Dag, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
+			TenantID: tid, DagID: dagID,
+			Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
+			Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
+			MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup, IsPaused: paused,
+		}); err != nil {
+			return queries.Dag{}, fmt.Errorf("creating dag: %w", err)
+		}
+		dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
+		if err == nil {
+			return dag, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return queries.Dag{}, fmt.Errorf("locking dag: %w", err)
+		}
+	}
+	return queries.Dag{}, domain.Safef(domain.ErrConflict,
+		"dag %q was deleted while this version was being registered; push it again", dagID)
+}
+
+// dagMetadataOf maps a spec to the dags-row columns it owns while it is the
+// current version. ID and TenantID are left for the caller.
+func dagMetadataOf(spec domain.DAGSpec) queries.UpdateDagMetadataParams {
+	maxRuns := spec.MaxActiveRuns
+	if maxRuns == 0 {
+		maxRuns = defaultMaxActiveRuns
+	}
+	return queries.UpdateDagMetadataParams{
+		Description:      strPtr(spec.Description),
+		Owner:            strPtr(spec.Owner),
+		Tags:             spec.Tags,
+		Schedule:         spec.Schedule,
+		ScheduleTimezone: strPtr(spec.ScheduleTZ),
+		StartDate:        parseTimestamptz(spec.StartDate),
+		MaxActiveRuns:    toInt32(maxRuns),
+		Catchup:          spec.Catchup,
+	}
 }
 
 // validateDeclaredSecrets rejects a spec that declares a variable or connection
@@ -2104,15 +2199,11 @@ func (r *Repository) GetConnection(ctx context.Context, tenant, connID string) (
 	if err != nil {
 		return domain.Connection{}, mapNotFound(err)
 	}
-	extra, err := r.decryptExtra(row.Extra)
-	if err != nil {
-		return domain.Connection{}, err
-	}
-	return domain.Connection{
+	return r.toConnection(domain.Connection{
 		ConnID: row.ConnID, ConnType: row.ConnType, Host: strOrEmpty(row.Host),
 		Schema: strOrEmpty(row.ConnSchema), Login: strOrEmpty(row.Login),
-		Port: int32PtrToInt(row.Port), Extra: extra, Description: strOrEmpty(row.Description),
-	}, nil
+		Port: int32PtrToInt(row.Port), Description: strOrEmpty(row.Description),
+	}, row.Extra)
 }
 
 // ListConnections returns a page of connections (no passwords) and the total.
@@ -2131,17 +2222,43 @@ func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, 
 	}
 	out := make([]domain.Connection, 0, len(rows))
 	for _, row := range rows {
-		extra, derr := r.decryptExtra(row.Extra)
-		if derr != nil {
-			return nil, 0, derr
-		}
-		out = append(out, domain.Connection{
+		out = append(out, r.listConnection(domain.Connection{
 			ConnID: row.ConnID, ConnType: row.ConnType, Host: strOrEmpty(row.Host),
 			Schema: strOrEmpty(row.ConnSchema), Login: strOrEmpty(row.Login),
-			Port: int32PtrToInt(row.Port), Extra: extra, Description: strOrEmpty(row.Description),
-		})
+			Port: int32PtrToInt(row.Port), Description: strOrEmpty(row.Description),
+		}, row.Extra))
 	}
 	return out, int(total), nil
+}
+
+// toConnection completes a connection read alone with its decrypted extra. An
+// extra no configured key opens is a domain.ErrValueUnreadable error whose
+// client message names the connection and the way out, the rule Variables
+// follow (toVariable).
+func (r *Repository) toConnection(c domain.Connection, extra *string) (domain.Connection, error) {
+	plain, err := r.decryptExtra(extra)
+	if err != nil {
+		return domain.Connection{}, fmt.Errorf("%w: %w", domain.Safef(domain.ErrValueUnreadable,
+			"connection %q is encrypted with a secret key this server does not have; add that key back as a later secret key entry, or delete the connection and set it again", c.ConnID), err)
+	}
+	c.Extra = plain
+	return c, nil
+}
+
+// listConnection completes a connection for a listing. An extra no configured
+// key opens does not fail the listing (#1677): the connection is returned
+// marked ExtraUnreadable with no extra, and a warning is logged, the rule
+// delivery to task pods follows (SecretConnections).
+func (r *Repository) listConnection(c domain.Connection, extra *string) domain.Connection {
+	got, err := r.toConnection(c, extra)
+	if err != nil {
+		slog.Warn("listing connection without its extra: decrypt failed (key rotated or wrong DEXAFLOW_SECRET_KEY?)",
+			"conn_id", c.ConnID, "error", err)
+		c.Extra = ""
+		c.ExtraUnreadable = true
+		return c
+	}
+	return got
 }
 
 // decryptExtra decrypts a stored extra blob, tolerating a nil cipher (returns

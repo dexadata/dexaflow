@@ -121,14 +121,27 @@ If your pipeline imported a library (say `pandas`), you would add it under
 
 ## 4 · Validate it
 
-Before running, check the project parses and matches the schema:
+Before running, check the project matches the schema:
 
 ```bash
 dexaflow validate taskflow_sales
 ```
 
 A clean run prints no errors. If you mistyped something in `dexaflow.yaml` or
-`dag.py`, this is where you find out — fix it and rerun until it passes.
+left a syntax error in `dag.py`, this is where you find out: fix it and rerun
+until it passes.
+
+By default `validate` does not import `dag.py`, so code that is valid Python but
+fails when it runs (a misspelled attribute, a missing import) still passes. Add
+`--parse` to load the DAG the way `compile` does and catch those too:
+
+```bash
+dexaflow validate taskflow_sales --parse
+```
+
+It needs the DAG's dependencies installed where you run it, which is why it is
+not the default: a CI step that only lints `dexaflow.yaml` keeps working on a
+runner without them.
 
 ## 5 · Run it
 

@@ -34,6 +34,8 @@ type fakeStore struct {
 	createdTenants []string
 	notes          map[string]string
 	createErr      bool
+	// scheduledErr makes ScheduledDAGs fail, as a broken run-creation query.
+	scheduledErr error
 	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
 	// these tenants, as the store does once a tenant's daily run cap is reached.
 	limitedTenants       map[string]bool
@@ -66,6 +68,10 @@ type fakeStore struct {
 	// moved on (a buffered worker failed or re-offered it, or the agent reported).
 	queuedExpect     map[string]*time.Time
 	queuedSuperseded map[string]bool
+	// activeRunsErr makes ActiveRuns fail; retryNoop makes ResetForRetry find
+	// the task no longer up_for_retry (a lost race).
+	activeRunsErr error
+	retryNoop     bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -74,9 +80,15 @@ func newFakeStore(runs ...RunState) *fakeStore {
 
 func (f *fakeStore) ActiveRuns(context.Context) ([]RunState, error) {
 	f.activeRunsCalls++
+	if f.activeRunsErr != nil {
+		return nil, f.activeRunsErr
+	}
 	return f.runs, nil
 }
 func (f *fakeStore) ScheduledDAGs(context.Context) ([]ScheduledDAG, error) {
+	if f.scheduledErr != nil {
+		return nil, f.scheduledErr
+	}
 	return f.scheduled, nil
 }
 func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
@@ -128,6 +140,9 @@ func (f *fakeStore) ApplyTransitions(_ context.Context, runID string, taskIDs []
 	return nil
 }
 func (f *fakeStore) ResetForRetry(_ context.Context, runID, taskID string) (bool, error) {
+	if f.retryNoop {
+		return false, nil
+	}
 	f.retried = append(f.retried, transition{runID, taskID, domain.TaskStateNone})
 	return true, nil
 }
@@ -804,6 +819,8 @@ func (r *fakeRecorder) RecordSchedulerDecision(d string) {
 	r.decisions = append(r.decisions, d)
 }
 func (r *fakeRecorder) RecordTaskTransition(_, _, _ string) {}
+func (r *fakeRecorder) ObserveSchedulerLoop(time.Duration)  {}
+func (r *fakeRecorder) RecordTaskRetry(_, _ string)         {}
 func (r *fakeRecorder) RecordUndispatchable(reason string) {
 	r.undispatchable = append(r.undispatchable, reason)
 }
