@@ -107,8 +107,8 @@ func run() error {
 	fmt.Printf("# Experiment 1: scheduler ceiling\n")
 	fmt.Printf("# db=%s window=%s tasks/run=%d warmup=%d dagPrefix=%s\n",
 		redactURL(*dbURL), *window, *tasksPerRun, *warmup, prefix)
-	fmt.Printf("# NOTE: the product does not yet Observe leoflow_scheduler_loop_duration_seconds\n")
-	fmt.Printf("#       inside the loop, so this harness times Step() directly (see README).\n\n")
+	fmt.Printf("# NOTE: the product observes dexaflow_scheduler_loop_duration_seconds around each\n")
+	fmt.Printf("#       leader tick; this harness calls Step() directly, so it times it itself (see README).\n\n")
 
 	seeded := 0
 	var rows []result
@@ -235,8 +235,8 @@ func measure(ctx context.Context, sched *scheduler.Scheduler, metrics *observabi
 			return result{}, fmt.Errorf("step: %w", err)
 		}
 		samples = append(samples, d)
-		// Feed the real histogram too, so a future /metrics scrape (or a follow-up
-		// that wires Observe into the loop) sees the same distribution.
+		// Feed the real histogram too: the product observes it in Scheduler.tick,
+		// which this harness bypasses by calling Step directly.
 		metrics.SchedulerLoopDuration.Observe(d.Seconds())
 	}
 	if len(samples) == 0 {

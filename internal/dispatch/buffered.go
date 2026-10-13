@@ -87,6 +87,8 @@ const defaultDrainTimeout = 15 * time.Second
 type dispatchRequest struct {
 	runID, dagID, dagVersionID string
 	task                       domain.TaskSpec
+	// enqueuedAt starts the dispatch latency the worker observes.
+	enqueuedAt time.Time
 }
 
 // BufferedDispatcher fronts a synchronous Inner dispatcher with a bounded
@@ -165,7 +167,7 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 		return executor.Deferred, ErrAtCapacity
 	}
 	select {
-	case b.queue <- dispatchRequest{runID: runID, dagID: dagID, dagVersionID: dagVersionID, task: task}:
+	case b.queue <- dispatchRequest{runID: runID, dagID: dagID, dagVersionID: dagVersionID, task: task, enqueuedAt: time.Now()}:
 		if b.metrics != nil {
 			b.metrics.RecordDispatchQueueDepth(len(b.queue))
 		}
@@ -225,6 +227,11 @@ func (b *BufferedDispatcher) Close() error {
 func (b *BufferedDispatcher) worker() {
 	defer b.wg.Done()
 	for req := range b.queue {
+		// The depth gauge follows the queue down as well as up; set only on
+		// enqueue, it kept its last high value after the workers drained it.
+		if b.metrics != nil {
+			b.metrics.RecordDispatchQueueDepth(len(b.queue))
+		}
 		b.dispatchOne(req)
 	}
 }
@@ -250,6 +257,9 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 	// The disposition goes to a RetrySink, which re-offers backpressure and
 	// transient errors like the synchronous path does; a plain sink fails the TI.
 	disp, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task) //nolint:contextcheck // worker intentionally detaches from the caller's ctx
+	if b.metrics != nil {
+		b.metrics.RecordDispatchLatencySeconds(time.Since(req.enqueuedAt).Seconds())
+	}
 	if err == nil {
 		return
 	}
