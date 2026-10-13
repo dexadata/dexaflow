@@ -6,19 +6,24 @@ import (
 	"github.com/dexadata/dexaflow/internal/build"
 )
 
-// imageDigest resolves the pinned repo digest of an image the builder tool
-// already pushed, for `deploy --skip-build`, which builds nothing and so has
-// no builder result to read it from (ADR 0015: shelled out, no Docker SDK).
-func imageDigest(cmd *cobra.Command, builder, image string) (string, error) {
-	return build.LocalDaemon{Tool: builder}.Digest(cmdContext(cmd), image, cmd.ErrOrStderr())
+// imageDigest reads the pinned reference of an image already in its
+// registry, for `deploy --skip-build`, which builds nothing and so has no
+// builder result to read it from. It asks the registry, not a local image
+// store, so an image any tool pushed can be deployed (ADR 0075).
+func imageDigest(cmd *cobra.Command, image string) (string, error) {
+	pinned, err := build.Registry{}.Resolve(cmdContext(cmd), image)
+	if err != nil {
+		return "", err
+	}
+	return pinned.Ref, nil
 }
 
 // deployedDigest returns the pinned reference deploy registers: the one the
 // builder's result carries when this deploy built and pushed the image, else
-// the digest of the image already pushed.
-func deployedDigest(cmd *cobra.Command, builder, image string, built build.Result) (string, error) {
+// the digest of the image already in the registry.
+func deployedDigest(cmd *cobra.Command, image string, built build.Result) (string, error) {
 	if built.Ref != "" {
 		return built.Ref, nil
 	}
-	return imageDigest(cmd, builder, image)
+	return imageDigest(cmd, image)
 }

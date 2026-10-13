@@ -84,6 +84,7 @@ this page.
 - [ADR 0072: CodeQL blocks a pull request only for the high or critical alerts it introduces](/project/adrs/0072-codeql-gate-on-introduced-alerts/)
 - [ADR 0073: DAG images are built without a container daemon first; a local daemon is the fallback](/project/adrs/0073-daemonless-image-builds/)
 - [ADR 0074: CI deploys with named, scoped, revocable API tokens and a built-in deployer role](/project/adrs/0074-scoped-api-tokens/)
+- [ADR 0075: The daemonless build of ADR 0073 ships in 0.5.4, and pushed images are read back through the registry](/project/adrs/0075-daemonless-builds-in-0-5-4/)
 
 ## Template
 

@@ -182,10 +182,16 @@ func TestCheckDeployed(t *testing.T) {
 
 func deployFixture(t *testing.T) (dir, builder, log string) {
 	t.Helper()
+	return deployFixtureAt(t, "reg.io/team")
+}
+
+// deployFixtureAt is deployFixture whose registry is registryURL.
+func deployFixtureAt(t *testing.T, registryURL string) (dir, builder, log string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stubs are POSIX-only")
 	}
-	dir = versionProject(t, "registry:\n  url: reg.io/team\n  image_name: etl\n")
+	dir = versionProject(t, "registry:\n  url: "+registryURL+"\n  image_name: etl\n")
 	bin := t.TempDir()
 	log = filepath.Join(bin, "builder.log")
 	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(bin, "parser.log")))
