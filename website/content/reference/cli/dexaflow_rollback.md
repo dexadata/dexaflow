@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_rollback/
 title: "dexaflow rollback"
 linkTitle: "rollback"
-weight: 46
+weight: 47
 ---
 
 Make an earlier registered version of a DAG current again.
@@ -32,6 +32,7 @@ dexaflow rollback <dag_id> [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

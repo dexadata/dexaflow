@@ -37,8 +37,8 @@ helm install lf oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leof
   --set bootstrap.password='admin'
 ```
 
-Use the release tag **without** the leading `v` as `--version` (tag `v0.4.0` →
-`--version 0.4.0`); the chart `version`/`appVersion` move in lockstep with the
+Use the release tag **without** the leading `v` as `--version` (tag `vX.Y.Z` →
+`--version X.Y.Z`); the chart `version`/`appVersion` move in lockstep with the
 tag. The chart is cosign-signed by digest — verify it with
 `cosign verify ghcr.io/dexadata/charts/dexaflow --certificate-identity-regexp '…' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 

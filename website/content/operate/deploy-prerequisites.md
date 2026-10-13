@@ -28,21 +28,24 @@ CI-bypassing request cannot sneak an invalid artifact past compile-time checks.
 
 Pro has no single-node image-import path — Kubernetes pulls images from a
 registry, so a Pro deploy needs one, full stop (Lite runs locally and needs
-none). Missing `registry:` in `dexaflow.yaml` fails immediately:
+none). With no registry from any source, deploy fails immediately:
 
 ```
 error: deploy requires a container registry, but none is configured.
   A Pro deploy pushes the DAG image to a registry your cluster can pull from
-  (Lite runs locally and needs none). Add to dexaflow.yaml:
+  (Lite runs locally and needs none). Set one, for one DAG or for all:
 
-      registry:
-        url: ghcr.io/<your-org>     # or ECR / Artifact Registry / ACR / private
-        image_name: <name>
+      dexaflow.yaml:              registry: {url: ghcr.io/<your-org>}
+      dexaflow.workspace.yaml:    defaults: {registry: ghcr.io/<your-org>}
+      a target:                   registry: ghcr.io/<your-org> under targets.<name> in dexaflow.workspace.yaml
+      this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
 
-  Then authenticate your builder once:  docker login ghcr.io
+  The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io
 ```
 
-**Fix:** add the `registry:` block, then `docker login <registry>` once (builder
+**Fix:** set a registry in one of those places (the order is in
+[Workspaces and targets](/operate/workspaces-and-targets/#registry-platforms-and-base-image)),
+then `docker login <registry>` once (builder
 auth is separate from the control-plane login — see [gate 5](#5-auth--writedag-rbac-scope)).
 See [ADR 0041](/project/adrs/0041-leoflow-deploy-pipelineless/).
 

@@ -237,8 +237,8 @@ func handleRepoError(c *gin.Context, err error) {
 	// this tenant, and the storage layer names the limit with domain.Safef.
 	case errors.Is(err, domain.ErrLimitExceeded):
 		AbortProblemCause(c, http.StatusForbidden, "limit exceeded", safeDetail(err, detailLimitExceeded), err)
-	// A stored secret no configured key opens (a Variable after a key rotation
-	// that dropped the old key): still a server fault, but the storage layer
+	// A stored secret no configured key opens (a Variable or a connection extra
+	// after a key rotation that dropped the old key): still a server fault, but the storage layer
 	// names the value and the way out with domain.Safef.
 	case errors.Is(err, domain.ErrValueUnreadable):
 		AbortProblemCause(c, http.StatusInternalServerError, "internal error", safeDetail(err, detailInternal), err)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storeerr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -43,9 +44,16 @@ func safeMessage(err error, fallback string) string {
 }
 
 // internalStatus is the single sanctioned way to turn a failure the agent
-// cannot act on into the status it receives. It returns codes.Internal with op
-// plus a client-safe phrase, and hands the real error to the control-plane log
-// under a cause field, alongside attrs.
+// cannot act on into the status it receives. It returns op plus a client-safe
+// phrase, and hands the real error to the control-plane log under a cause
+// field, alongside attrs.
+//
+// The code is codes.Unavailable when the cause is a store outage a retry can
+// outlast (storeerr.Transient: a database failover or restart, a full
+// connection pool, a Redis blip), and codes.Internal otherwise (R-01, #1594).
+// The agent retries Unavailable, so a control-plane store outage of a few
+// seconds no longer fails a task as the user's failure. The message is the same
+// redacted phrase either way: only the code carries the classification.
 //
 // op is a constant written at the call site, never derived from an error, so
 // the agent's own log — the one an operator reads in the task's output — still
@@ -58,7 +66,11 @@ func safeMessage(err error, fallback string) string {
 // error-named value reaching a status constructor.
 func internalStatus(op string, cause error, attrs ...any) error {
 	slog.Error(op, causeArgs(cause, attrs)...)
-	return redactedStatus(op, cause)
+	code := codes.Internal
+	if storeerr.Transient(cause) {
+		code = codes.Unavailable
+	}
+	return redactedStatus(code, op, cause)
 }
 
 // peerStatus is internalStatus for a failure the PEER caused rather than the
@@ -69,13 +81,13 @@ func internalStatus(op string, cause error, attrs ...any) error {
 // line for an operator to chase.
 func peerStatus(op string, cause error, attrs ...any) error {
 	slog.Warn(op, causeArgs(cause, attrs)...)
-	return redactedStatus(op, cause)
+	return redactedStatus(codes.Internal, op, cause)
 }
 
 // redactedStatus is the message both build: the operation, then either the
 // phrase Dexaflow composed for this failure or the constant.
-func redactedStatus(op string, cause error) error {
-	return status.Error(codes.Internal, op+": "+safeMessage(cause, detailInternal))
+func redactedStatus(code codes.Code, op string, cause error) error {
+	return status.Error(code, op+": "+safeMessage(cause, detailInternal))
 }
 
 // causeArgs puts the real error first on the log line, ahead of the caller's

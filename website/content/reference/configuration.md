@@ -80,7 +80,7 @@ There are two ways to resolve to it, and they have different fixes:
 - **You set `python_version: "3.10"`.** Set `python_version: "3.11"` (or later)
   and rebuild.
 - **You pinned `base_image` to a published `py3.10` tag** (`…:py3.10`,
-  `…:py3.10-v0.4.5`). Repoint `base_image` to the matching `py3.11` tag and
+  `…:py3.10-v0.4.5`<!-- stale-version-ok: py3.10 runtimes stopped at 0.4.x -->). Repoint `base_image` to the matching `py3.11` tag and
   rebuild. Changing `python_version` here does nothing: when `base_image` is
   set it is used verbatim and `python_version` is not consulted for the `FROM`.
 
@@ -243,6 +243,17 @@ rows only the old key opens.
 A row that **no** configured key can open is left untouched and reported at
 `ERROR`. Its ciphertext is the only copy of that credential, so the rotation
 never overwrites or deletes it; put the missing key in the list and restart.
+Until then the server logs a warning naming the connection, and:
+
+- the connections list (`GET /api/v2/connections`) still returns every
+  connection of the tenant, and shows this one with its `extra` masked (`***`)
+  and `extra_unreadable: true`;
+- reading it alone (`GET /api/v2/connections/<connection_id>`), or updating
+  it, answers `500` with a message that names the connection;
+- delivery to a task pod skips it with a warning, so only the tasks that use
+  it fail.
+
+If the old key is lost, delete the connection and set it again.
 
 Trying keys in order is safe because AES-256-GCM is authenticated: a wrong key
 fails to open rather than returning plausible garbage.

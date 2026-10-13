@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_runs_logs/
 title: "dexaflow runs logs"
 linkTitle: "runs logs"
-weight: 49
+weight: 50
 ---
 
 Stream a task attempt's logs (the latest attempt by default).
@@ -29,6 +29,7 @@ dexaflow runs logs <dag_id> <run_id> <task_id> [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

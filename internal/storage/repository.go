@@ -2272,15 +2272,11 @@ func (r *Repository) GetConnection(ctx context.Context, tenant, connID string) (
 	if err != nil {
 		return domain.Connection{}, mapNotFound(err)
 	}
-	extra, err := r.decryptExtra(row.Extra)
-	if err != nil {
-		return domain.Connection{}, err
-	}
-	return domain.Connection{
+	return r.toConnection(domain.Connection{
 		ConnID: row.ConnID, ConnType: row.ConnType, Host: strOrEmpty(row.Host),
 		Schema: strOrEmpty(row.ConnSchema), Login: strOrEmpty(row.Login),
-		Port: int32PtrToInt(row.Port), Extra: extra, Description: strOrEmpty(row.Description),
-	}, nil
+		Port: int32PtrToInt(row.Port), Description: strOrEmpty(row.Description),
+	}, row.Extra)
 }
 
 // ListConnections returns a page of connections (no passwords) and the total.
@@ -2299,17 +2295,43 @@ func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, 
 	}
 	out := make([]domain.Connection, 0, len(rows))
 	for _, row := range rows {
-		extra, derr := r.decryptExtra(row.Extra)
-		if derr != nil {
-			return nil, 0, derr
-		}
-		out = append(out, domain.Connection{
+		out = append(out, r.listConnection(domain.Connection{
 			ConnID: row.ConnID, ConnType: row.ConnType, Host: strOrEmpty(row.Host),
 			Schema: strOrEmpty(row.ConnSchema), Login: strOrEmpty(row.Login),
-			Port: int32PtrToInt(row.Port), Extra: extra, Description: strOrEmpty(row.Description),
-		})
+			Port: int32PtrToInt(row.Port), Description: strOrEmpty(row.Description),
+		}, row.Extra))
 	}
 	return out, int(total), nil
+}
+
+// toConnection completes a connection read alone with its decrypted extra. An
+// extra no configured key opens is a domain.ErrValueUnreadable error whose
+// client message names the connection and the way out, the rule Variables
+// follow (toVariable).
+func (r *Repository) toConnection(c domain.Connection, extra *string) (domain.Connection, error) {
+	plain, err := r.decryptExtra(extra)
+	if err != nil {
+		return domain.Connection{}, fmt.Errorf("%w: %w", domain.Safef(domain.ErrValueUnreadable,
+			"connection %q is encrypted with a secret key this server does not have; add that key back as a later secret key entry, or delete the connection and set it again", c.ConnID), err)
+	}
+	c.Extra = plain
+	return c, nil
+}
+
+// listConnection completes a connection for a listing. An extra no configured
+// key opens does not fail the listing (#1677): the connection is returned
+// marked ExtraUnreadable with no extra, and a warning is logged, the rule
+// delivery to task pods follows (SecretConnections).
+func (r *Repository) listConnection(c domain.Connection, extra *string) domain.Connection {
+	got, err := r.toConnection(c, extra)
+	if err != nil {
+		slog.Warn("listing connection without its extra: decrypt failed (key rotated or wrong DEXAFLOW_SECRET_KEY?)",
+			"conn_id", c.ConnID, "error", err)
+		c.Extra = ""
+		c.ExtraUnreadable = true
+		return c
+	}
+	return got
 }
 
 // decryptExtra decrypts a stored extra blob, tolerating a nil cipher (returns

@@ -40,7 +40,7 @@ type projectLabel struct {
 func buildTargets(projects []Project, label func(Project) projectLabel) (targets []buildTarget, skipped []string) {
 	for _, p := range projects {
 		if !hasRegistry(p) {
-			skipped = append(skipped, fmt.Sprintf("%s (no registry.url/registry.image_name in its dexaflow.yaml — `dexaflow compile %s --image <ref> --build` builds it by hand)", p.DagID, p.Path))
+			skipped = append(skipped, fmt.Sprintf("%s (no registry in its dexaflow.yaml, the workspace or the target; `dexaflow compile %s --image <ref> --build` builds it by hand)", p.DagID, p.Path))
 			continue
 		}
 		l := label(p)
@@ -82,6 +82,10 @@ func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sh
 		if version == "" {
 			cfg, err := loadProjectConfig(p.Path)
 			if err != nil {
+				return nil, fmt.Errorf("labeling %s: %w", p.DagID, err)
+			}
+			// Hashed as deploy hashes it, so both commands agree on the label.
+			if _, err = applyWorkspaceDefaults(cmd, p.Path, cfg, true); err != nil {
 				return nil, fmt.Errorf("labeling %s: %w", p.DagID, err)
 			}
 			version, err = defaultDAGVersion(ctx, p.Path, cfg, "Dockerfile", filepath.Join(p.Path, "dag.json"))
@@ -131,6 +135,15 @@ func newBuildCommand() *cobra.Command {
 			spec, derr := DiscoverProjects(ws)
 			if derr != nil {
 				return derr
+			}
+			// The same registry, platforms and base image deploy would use.
+			for _, p := range spec {
+				if p.Config == nil {
+					continue
+				}
+				if _, aerr := applyWorkspaceDefaults(cmd, p.Path, p.Config, true); aerr != nil {
+					return aerr
+				}
 			}
 			// Resolve exactly as `dexaflow deploy` does before deriving the
 			// reference. Handing the raw flags to deployImageRef means the
@@ -198,6 +211,7 @@ func newBuildCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&push, "push", false, "push each built image to its registry")
+	cmd.Flags().String("registry", "", registryFlagUsage)
 	cmd.Flags().StringVar(&builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&dagVersion, "dag-version", "", "version recorded in each dag.json and used by the registry tag strategy (default: per project, git describe of its directory, or dev outside git, plus a hash of its content)")
 	cmd.Flags().StringVar(&sha, "sha", "", "commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)")
