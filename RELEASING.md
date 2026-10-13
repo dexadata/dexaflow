@@ -106,7 +106,8 @@ no user-facing change (release-prep, chore, dependabot, docs-only) carries the
    **confirmation gate**, tags and pushes.
 5. **Watch**: writes `.release-<tag>.log` the moment the tag is pushed, then
    follows the tag's release workflows to **PUBLISHED**, un-drafting +
-   re-running if the gate retracts on a flake (#862).
+   re-running if the gate retracts on a flake (#862). PUBLISHED means the
+   release run is green, which includes its `promote` job (see below).
 6. **Publish the docs root** (**GA** only, and only if step 5 reached
    PUBLISHED): opens a `docs/promote-<tag>` PR repointing
    `website/scripts/ci/versions.json`, waits for it green and merges it. It runs
@@ -117,6 +118,39 @@ no user-facing change (release-prep, chore, dependabot, docs-only) carries the
    targets `main`, also for a patch tagged on `release-X.Y`, and it leaves the
    root alone when the GA being cut is older than the one the root serves. See
    below.
+
+## What becomes public, and when
+
+A tag stages, the gate verifies, and one job promotes
+([ADR 0071](https://dexaflow.dexadata.ai/project/adrs/0071-stage-verify-promote-releases/)).
+Everything `release.yaml` pushes before its `gate` job is immutable and
+versioned; only the `promote` job, which needs a green gate, moves a pointer
+that people follow without naming a version.
+
+| What | Who follows it | Moved by | rc | GA, newest minor | GA, older minor |
+|---|---|---|---|---|---|
+| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs | `release`, `migrate-image`, `runtime-image` | yes | yes | yes |
+| GitHub release, public, not Latest | pinned `install.sh`, the smokes | GoReleaser (`make_latest: false`) | prerelease | yes | yes |
+| Helm chart `X.Y.Z` (`charts/dexaflow`, `charts/leoflow`) | `helm install`, `helm upgrade` | `promote` | yes | yes | yes |
+| `dexaflow-runtime:py3.N`, `leoflow-runtime:py3.N` | development builds, the docs | `promote` | no | yes | no |
+| GitHub release marked Latest | `install.sh` without a pinned version, Renovate, Dependabot | `promote` | no | yes | no |
+| Docs root | the docs site | `cut-release.sh`, after PUBLISHED | no | yes | no |
+
+"Newest minor" means the tag is not older than any published GA
+(`scripts/release-promote-plan.sh`, the same rule the docs root uses).
+`promote` first checks with cosign that every image the chart and the moving
+tags reference exists and carries this repository's release signature
+(`scripts/release-verify-images.sh`), then pushes, signs and verifies the charts, moves
+the `py3.N` tags and marks Latest last. Every step is idempotent: a failed
+`promote` is recovered by re-running that job alone.
+
+Every un-draft, the gate's and the one `cut-release.sh` does on a flake, passes
+`--latest=false`: GitHub marks a release Latest by default when it leaves draft,
+which would move the pointer before `promote` ran.
+
+`helm-release.yaml` no longer runs on tags. Dispatch it from a release tag only
+when the release run can no longer be re-run and a chart has to be published
+again; it runs the same image check first.
 
 ## If the cut dies after the prepare PR merged
 
@@ -237,6 +271,11 @@ promote-artifact model is tracked in #878.
   the empty output as "no flake pattern matched". It now falls back to the job
   logs API and treats a still-unreadable log as *unknown*, which reruns rather
   than stops (#978, #1007).
+- **`promote` failed** (a registry blip, an image that is not signed) — the
+  gate already passed, so nothing needs retracting: the release is public but
+  not Latest, and no chart was pushed. Fix the cause and re-run the failed
+  `promote` job. The job summary says which pointers it moved, and why it left
+  Latest and `py3.N` alone for an rc or an older minor.
 - **`no merge base`** in the heavy-E2E gate — rebase the branch onto current
   `main` (tracked: #876).
 
