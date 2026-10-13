@@ -91,7 +91,7 @@ jobs:
           category: "/language:${{ matrix.language }}"
 
   # ─────────────────────────────────────────────────────────────────────
-  # CodeQL high-alert gate (ADR 0014, #494)
+  # CodeQL high-alert gate (ADR 0072, amending ADR 0014; #494)
   # The analysis above only uploads: it is green whatever it finds. This job
   # reads the alerts the upload produced and fails when the pull request
   # introduces an open alert of high or critical security severity. Alerts
@@ -127,6 +127,8 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The base branch goes through the environment, never into the command
       # text: git refnames permit characters the shell would act on (#970).
       - name: Fail on new high or critical CodeQL alerts

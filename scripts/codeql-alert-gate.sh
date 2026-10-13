@@ -8,6 +8,7 @@
 # could merge carrying a new high alert, and `internal/logs/logs.go` carried a
 # `high` go/path-injection alert from the repository's first day until a manual
 # triage found it (#491).
+# ADR 0072 records this gate as an amendment to ADR 0014's CodeQL policy.
 #
 # What counts. An alert is a repository-level object with one stable number;
 # each analysed ref holds instances of it. The pull request's merge ref

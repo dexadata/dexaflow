@@ -63,7 +63,7 @@ We accept Trivy's "paranoid mode" false positives at the image layer because the
 
 GitHub's semantic analysis engine. Runs weekly on the main branch and on every PR for free (public repos). Catches issues that pattern-based scanners miss: taint analysis, control-flow vulnerabilities, deserialization chains.
 
-Configured in `.github/workflows/security.yaml` (job `CodeQL`) with the `security-extended` and `security-and-quality` query suites. The analysis only uploads its results and is green whatever it finds, so a second job, `CodeQL high-alert gate` (`scripts/codeql-alert-gate.sh`), reads the alerts the upload produced and fails a pull request that introduces an open alert of high or critical security severity. An alert already open on the base branch is reported as a warning and does not block: it is tracked in the Security tab, not charged to whichever pull request comes next. A false positive is cleared by dismissing the alert with a reason and re-running the gate.
+Configured via `.github/workflows/codeql.yaml` with the `security-extended` query suite.
 
 ### OpenSSF Scorecard
 
@@ -136,9 +136,7 @@ A PR cannot be merged if any of the following fail:
 - `go test ./...` (any failing test)
 - Coverage below the per-phase floor (see ADR 0011)
 - Go Report Card grade below A+ (see ADR 0012)
-- CodeQL alerts of severity high or critical introduced by the PR (`CodeQL high-alert gate`)
-
-Enforcement lives in the `protect-main` and `protect-release-branches` rulesets: a check blocks a merge only when the ruleset lists it as required. Every other check is advisory until it is added there. The list of required checks is a repository setting, not a file, so this summary states intent; the ruleset is the source of truth.
+- CodeQL alerts of severity high or critical
 
 ## What This Does NOT Cover
 
