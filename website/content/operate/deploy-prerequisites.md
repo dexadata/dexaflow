@@ -51,11 +51,15 @@ See [ADR 0041](/project/adrs/0041-leoflow-deploy-pipelineless/).
 A DAG is an **immutable artifact**: `dag.json` + a container image, versioned
 together ([ADR 0003](/project/adrs/0003-dag-as-image/)). `deploy` captures the
 pushed image's **digest** and rewrites it into `dag.json` as `registry/image@sha256:…`
-before registering — Pro never resolves a tag at pull time, so there is no
-`:latest` drift and no way to point a DAG version at a moving target. This is
-automatic; there is nothing to configure, but it explains why re-running the
-same tag with different content produces a **new**, distinct artifact rather
-than silently replacing the old one.
+before registering, so a version registered by `deploy` never resolves a tag at
+pull time: there is no `:latest` drift and no way to point that version at a
+moving target. This is automatic; there is nothing to configure.
+
+Only `deploy` does this. `compile --build --push` followed by `push` registers
+the image reference exactly as `dag.json` holds it, which is the **tag** that was
+pushed, and the control plane accepts it: that version then follows whatever the
+tag points at when a node pulls it. Use `deploy` when the registered artifact has
+to be pinned (see [CI/CD & deploy examples](/operate/cicd-deploy/)).
 
 ### 3. Supported task types only
 

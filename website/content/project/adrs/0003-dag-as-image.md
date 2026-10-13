@@ -108,6 +108,15 @@ Each contains:
 - **Accessible to juniors.** Through `leoflow.yaml`, devs do not need Docker knowledge.
 - **Open for advanced users.** Custom Dockerfiles and pre-built images are both first-class.
 
+> **Note (2026-10, #1709).** "Rollback is a registry tag change" does not hold
+> for the system as built. `dexaflow deploy` registers the image by digest, so
+> retagging changes nothing for a registered version, and re-registering an older
+> `dag.json` is a no-op that leaves the newer version current. Rolling back today
+> means registering the old code as a new version on the old digest; see
+> [Rolling back](/operate/cicd-deploy/#rolling-back). A rollback command is
+> tracked in #1702. The sentence is kept because a decision record states what
+> was decided.
+
 ## Consequences
 
 - **Three Docker images must be maintained.** The project commits to publishing and patching base images for Python 3.10/3.11/3.12.
