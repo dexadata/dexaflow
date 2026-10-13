@@ -3,14 +3,20 @@ body: |-
   **The default DAG version label follows the DAG's content.** Without
   `--dag-version`, `dexaflow compile`, `deploy` and `build` now label a DAG
   `<git describe --tags --always>-<hash>`, or `dev-<hash>` outside git, where
-  the hash covers the DAG source, `include_paths`, the dbt project, a project
-  Dockerfile, the resolved `dexaflow.yaml` and the CLI version. Deploying edited
-  code again, from a dirty tree or from a folder outside git, no longer fails
-  with `409` after a full build and push; unchanged content gets the same label
-  and stays a no-op; each DAG of a workspace gets its own label. The label is a
-  valid image tag, so a git tag like `release/v1` or `v1+build` no longer breaks
-  `tag_strategy: version`. `tag_strategy: git_tag` now tags with the git tag on
-  the project's `HEAD` and `custom` with the version label; both used to act as
-  `git_sha`. A `409` on `deploy` or `push` now explains which way out applies.
-  An explicit `--dag-version` is used unchanged. (#1703)
+  the hash covers the DAG source, `include_paths`, the dbt project and
+  `dbt.manifest`, a project Dockerfile and `.dockerignore`, the resolved
+  `dexaflow.yaml` and the CLI version. Deploying edited code again, from a
+  dirty tree or from a folder outside git, no longer fails with `409` after a
+  full build and push, and each DAG of a workspace gets its own label. Before
+  building, `deploy` now checks whether the DAG already has that label
+  registered and, if so, prints `already deployed as <label>` and skips the
+  build, push and register (`--trigger` still runs), so re-running a CI job on
+  unchanged sources succeeds. The label is a valid image tag, so a git tag like
+  `release/v1` or `v1+build` no longer breaks `tag_strategy: version`. With
+  that default strategy a tagged release is now pushed as `:v1.2.3-<hash>`
+  instead of `:v1.2.3`; set `tag_strategy: git_tag` to keep the plain release
+  tag. `git_tag` now tags with the git tag on the project's `HEAD` and `custom`
+  with the version label; both used to act as `git_sha`. A `409` on `deploy` or
+  `push` now explains which way out applies. An explicit `--dag-version` is
+  used unchanged and never checked. (#1703)
 time: 2026-10-13T12:00:00.000000000+00:00

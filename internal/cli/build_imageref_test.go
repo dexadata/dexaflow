@@ -36,8 +36,12 @@ func TestResolveImageTagByStrategy(t *testing.T) {
 		{"git_tag", "v1", noGit, "v1"},
 		// custom tags with the label the caller chose with --dag-version.
 		{"custom", "v1", inGit, "v1"},
-		// The default the config applies is version; an unset value means the same.
-		{"", "v1", inGit, "v1"},
+		// Values outside the schema enum (a config built before validation, or
+		// "sha" in an old file) keep their earlier meaning: the sha, else the
+		// version label.
+		{"", "v1", inGit, "sha9"},
+		{"sha", "v1", inGit, "sha9"},
+		{"sha", "v1", noGit, "v1"},
 	}
 	for _, c := range cases {
 		if got := resolveImageTag(c.strategy, c.version, c.rev); got != c.want {

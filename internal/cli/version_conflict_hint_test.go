@@ -21,7 +21,7 @@ func TestVersionConflictHintNamesTheWayOut(t *testing.T) {
 		want   []string
 	}{
 		{labelExplicit, []string{`"v1"`, "--dag-version", "omit it"}},
-		{labelDefault, []string{`"v1"`, "unchanged", "new digest"}},
+		{labelDefault, []string{`"v1"`, "unchanged", "new digest", "add them to include_paths"}},
 		{labelUnknown, []string{`"v1"`, "--dag-version", "omit it", "new digest"}},
 	}
 	for _, c := range cases {

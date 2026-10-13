@@ -22,17 +22,21 @@ func composeImageRef(url, imageName, tag string) string {
 //     label.
 //   - custom: the version label, which is the tag the caller chose with
 //     --dag-version.
+//   - any other value, which the schema refuses but a config built in code or
+//     an old file may still carry (an unset value, "sha"): the sha, else the
+//     version label, as every value outside version did before.
 //
 // tagStrategyFallback says when git_sha or git_tag fell back.
 func resolveImageTag(strategy, version string, rev gitRevision) string {
 	switch strategy {
-	case "git_sha", "git-sha":
-		if rev.sha != "" {
-			return sanitizeImageTag(rev.sha)
-		}
+	case "version", "custom":
 	case "git_tag":
 		if tag := sanitizeImageTag(rev.exactTag); tag != "" {
 			return tag
+		}
+	default:
+		if rev.sha != "" {
+			return sanitizeImageTag(rev.sha)
 		}
 	}
 	return sanitizeImageTag(version)

@@ -275,6 +275,10 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 	}
 	co.image = image
 	version := co.dagVersion
+	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
+	if origin == labelDefault && alreadyDeployed(ctx, cmd.ErrOrStderr(), serverURL, token, cfg.DagID, version) {
+		return reportAlreadyDeployed(ctx, out, serverURL, token, cfg.DagID, version, o.trigger)
+	}
 	if cerr := runCompile(cmd, dir, co); cerr != nil {
 		return cerr
 	}
@@ -283,13 +287,25 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 	if derr != nil {
 		return derr
 	}
-	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
 	dagID, rerr := registerDeployedDAG(ctx, out, serverURL, token, output, digestRef, version, origin)
 	if rerr != nil {
 		return rerr
 	}
 	surfaceConnections(out, output)
 	if o.trigger {
+		return triggerDeployRun(ctx, out, serverURL, token, dagID)
+	}
+	return nil
+}
+
+// reportAlreadyDeployed ends a deploy whose content label is already
+// registered: nothing is built, pushed or registered, and --trigger still
+// starts a run of the version that is there.
+func reportAlreadyDeployed(ctx context.Context, out io.Writer, serverURL, token, dagID, version string, trigger bool) error {
+	if _, err := fmt.Fprintf(out, "%s already deployed as %s: nothing to build, push or register\n", dagID, version); err != nil {
+		return err
+	}
+	if trigger {
 		return triggerDeployRun(ctx, out, serverURL, token, dagID)
 	}
 	return nil

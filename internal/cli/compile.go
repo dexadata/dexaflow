@@ -746,18 +746,17 @@ func resolveVersionAndImage(cmd *cobra.Command, dir string, o *compileOptions, c
 		}
 		o.dagVersion = label
 	}
-	if o.image != "" {
+	if o.image != "" || cfg.Registry == nil || cfg.Registry.URL == "" || cfg.Registry.ImageName == "" {
+		// No reference to derive: the flag, or nothing (checkImageFlags names
+		// what is missing), so git has nothing to say.
 		return o.image, nil
 	}
 	rev := readGitRevision(ctx, dir)
-	image := resolveBuildImage("", cfg, o.dagVersion, rev)
-	if image != "" {
-		if msg := tagStrategyFallback(cfg.Registry.TagStrategy, rev); msg != "" {
-			//nolint:errcheck // a warning that cannot be delivered must not fail the compile
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", msg)
-		}
+	if msg := tagStrategyFallback(cfg.Registry.TagStrategy, rev); msg != "" {
+		//nolint:errcheck // a warning that cannot be delivered must not fail the compile
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", msg)
 	}
-	return image, nil
+	return resolveBuildImage("", cfg, o.dagVersion, rev), nil
 }
 
 // resolveParserCommand returns the explicit --parser-cmd value when set,

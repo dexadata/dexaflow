@@ -190,29 +190,48 @@ Without `--dag-version`, the label is derived from the DAG itself:
 the DAG is built from:
 
 - the DAG source (`dag.py`, or the dbt project directories), the files under
-  `include_paths`, and `dbt.manifest` when set;
+  `include_paths`, and `dbt.manifest` when set, wherever it lives;
 - the whole project directory when the project ships its own Dockerfile,
   which can `COPY` anything, and that Dockerfile itself;
+- the project's `.dockerignore`;
 - the resolved `dexaflow.yaml` (dependencies, connectors, `python_version`,
   `base_image`, task overrides) and the CLI version.
 
-It leaves out `.git`, `exclude_paths`, the compiled `dag.json` and the
-`target/` and `logs/` that `dbt parse` writes, and never looks at file times.
+It leaves out `.git`, what `exclude_paths` and `.dockerignore` keep out of the
+build, the compiled `dag.json`, and the files `dbt parse` rewrites on every run
+(`target/manifest.json` and its siblings, `logs/`, `.user.yml`) unless
+`dbt.manifest` points at one of them. Anything else under `target/` counts,
+because it ships in the image. A symlink counts as the path it points to,
+never followed. File times and modes never count. A file the label cannot read
+stops the compile with its name: add it to `exclude_paths`, or pass
+`--dag-version`.
+
 So editing code and deploying again, from a dirty tree or from a folder
 outside git, gets a new label, and deploying unchanged content gets the same
 one. Every DAG of a monorepo gets its own. The label is also a valid image tag
 (characters a tag cannot carry become `-`), since `tag_strategy: version` tags
-the image with it.
+the image with it. A release tagged `v1.2.3` is therefore pushed as
+`:v1.2.3-<hash>` under the default strategy; set `tag_strategy: git_tag` to
+tag the image with the git tag itself.
 
-With that default, a 409 has two causes, and the hint names the one that
-applies:
+Before building, `dexaflow deploy` asks the control plane whether the DAG
+already has a version with the default label. If it does, the content is
+already deployed: it prints `already deployed as <label>` and skips the build,
+the push and the register (`--trigger` still starts a run). This is what makes
+a re-run CI job succeed: rebuilding the same sources would produce a new image
+digest under the same label, which the server refuses. If the check cannot be
+made (network, auth), the deploy proceeds as before. An explicit
+`--dag-version` is never checked.
+
+A 409 can still happen, and the hint names the cause that applies:
 
 - **An explicit `--dag-version` was reused** for different content. Pass a new
   one, or omit it.
-- **The sources are unchanged but the image was rebuilt** to a new digest, for
-  example a re-run CI job: the registered version already runs this code, so
-  there is nothing to deploy. Pass a new `--dag-version` to register the new
-  image anyway.
+- **The hashed inputs are unchanged**, as after `compile --build --push`
+  followed by `push` of the same sources: either the image was rebuilt to a
+  new digest, or the DAG reads files outside its source and `include_paths`
+  (add them to `include_paths`). Pass a new `--dag-version` to register
+  anyway.
 
 ## From here
 
