@@ -39,9 +39,24 @@ DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE=ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha
 The legacy `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and
 `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` names still work; when both forms are
 set, the `DEXAFLOW_` one wins. The same keys can go in the server config file
-as `execution.source_mode.enabled` and `execution.source_mode.image`. The Helm
-chart has no dedicated values for them yet: set the variables through
-`extraEnv`.
+as `execution.source_mode.enabled` and `execution.source_mode.image`.
+
+With the Helm chart, set the two values under `execution.sourceMode`:
+
+```yaml
+execution:
+  sourceMode:
+    enabled: true
+    image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>
+```
+
+The chart renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and
+`LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` on every control-plane Deployment (the
+`api` and the `scheduler` of a split install too) only while `enabled` is
+true, and refuses to render an image that is not pinned by a full digest, the
+same check the server makes at boot. An install that set the variables through
+`extraEnv` keeps working: `extraEnv` renders after the chart's entries, so its
+value wins. Move them to the values above and drop the `extraEnv` entries.
 
 The image must be pinned by a full digest, `@sha256:` followed by 64
 lowercase hex characters; the server refuses to start with a tag alone or a

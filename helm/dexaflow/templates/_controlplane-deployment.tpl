@@ -576,6 +576,16 @@ spec:
               value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
             {{- end }}
             {{- end }}
+            {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}
+            # Pro source mode (ADR 0067). Stamped only when on, so an install that
+            # never turns it on renders the env it had before (the server default
+            # is off). deployment.yaml has already refused an image that is not
+            # pinned by a full digest.
+            - name: LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED
+              value: "true"
+            - name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+              value: {{ .ctx.Values.execution.sourceMode.image | quote }}
+            {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:
                 secretKeyRef:
