@@ -16,10 +16,13 @@ import (
 )
 
 type fakeVersionRepo struct {
-	created bool
-	seen    []string
-	actors  []string
-	err     error
+	created    bool
+	dagCreated bool
+	paused     bool // is_paused the fake reports when no override is asked
+	seen       []string
+	actors     []string
+	asked      []*bool // the is_paused override of each register
+	err        error
 
 	// The set-current side: the specs by label the fake holds, the change it
 	// answers, and what the handler asked for.
@@ -31,13 +34,18 @@ type fakeVersionRepo struct {
 	admitErr   error
 }
 
-func (f *fakeVersionRepo) RegisterDagVersionBy(_ context.Context, _, actor string, _ domain.DAGSpec, hash string) (bool, error) {
-	f.seen = append(f.seen, hash)
-	f.actors = append(f.actors, actor)
+func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg domain.DagRegistration) (domain.DagRegistered, error) {
+	f.seen = append(f.seen, reg.SpecHash)
+	f.actors = append(f.actors, reg.ActorUserID)
+	f.asked = append(f.asked, reg.IsPaused)
 	if f.err != nil {
-		return false, f.err
+		return domain.DagRegistered{}, f.err
 	}
-	return f.created, nil
+	paused := f.paused
+	if reg.IsPaused != nil {
+		paused = *reg.IsPaused
+	}
+	return domain.DagRegistered{Created: f.created, DagCreated: f.dagCreated, IsPaused: paused}, nil
 }
 
 func (f *fakeVersionRepo) SetCurrentDagVersion(_ context.Context, tenant, _ string, sel domain.DagVersionSelector, actor string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
@@ -336,6 +344,111 @@ func TestRegisterVersionPassesTheUser(t *testing.T) {
 	}
 }
 
+// TestRegisterVersionIsPausedQuery: ?is_paused=true|false reaches the
+// repository as the override and the answer reports the resulting state;
+// without it no override is asked and the state is still reported; any other
+// value is refused before anything is registered (#1705).
+func TestRegisterVersionIsPausedQuery(t *testing.T) {
+	for _, tc := range []struct {
+		query      string
+		wantCode   int
+		wantAsked  string // "nil", "true" or "false"
+		wantPaused bool
+	}{
+		{"", http.StatusCreated, "nil", true},
+		{"?is_paused=false", http.StatusCreated, "false", false},
+		{"?is_paused=true", http.StatusCreated, "true", true},
+		{"?is_paused=yes", http.StatusBadRequest, "", false},
+		{"?is_paused=", http.StatusBadRequest, "", false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			repo := &fakeVersionRepo{created: true, paused: true}
+			rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions"+tc.query, validSpecJSON)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("register = %d, want %d (%s)", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if tc.wantCode != http.StatusCreated {
+				if len(repo.asked) != 0 {
+					t.Errorf("a refused query still registered: %v", repo.asked)
+				}
+				if !strings.Contains(rec.Body.String(), "is_paused") {
+					t.Errorf("refusal %s does not name is_paused", rec.Body.String())
+				}
+				return
+			}
+			got := "nil"
+			if len(repo.asked) == 1 && repo.asked[0] != nil {
+				got = fmt.Sprint(*repo.asked[0])
+			}
+			if got != tc.wantAsked {
+				t.Errorf("override asked = %s, want %s", got, tc.wantAsked)
+			}
+			var resp map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp["is_paused"] != tc.wantPaused {
+				t.Errorf("response is_paused = %v, want %v (%s)", resp["is_paused"], tc.wantPaused, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestRegisterVersionReportsDagCreated: the answer tells a register that
+// created the DAG from a new version of an existing one.
+func TestRegisterVersionReportsDagCreated(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		rec := authGet(versionServer(&fakeVersionRepo{created: true, dagCreated: want}), http.MethodPost, "/api/v2/dags/etl/versions", validSpecJSON)
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp["dag_created"] != want {
+			t.Errorf("dag_created = %v, want %v (%s)", resp["dag_created"], want, rec.Body.String())
+		}
+	}
+}
+
+// TestRegisterVersionIsPausedNeedsTheRunScope: pausing is a run-state write,
+// granted by dexaflow:run on PATCH /dags/{dag_id}; a deploy-only token must
+// not get it through the register's is_paused (#1705).
+func TestRegisterVersionIsPausedNeedsTheRunScope(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		scopes   []string
+		query    string
+		wantCode int
+	}{
+		{"deploy only, no override", []string{auth.ScopeDeploy}, "", http.StatusCreated},
+		{"deploy only, override", []string{auth.ScopeDeploy}, "?is_paused=false", http.StatusForbidden},
+		{"deploy and run, override", []string{auth.ScopeDeploy, auth.ScopeRun}, "?is_paused=true", http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeVersionRepo{created: true}
+			srv := NewServer(Dependencies{
+				Logger: discardLogger(),
+				Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"},
+					Scoped: true, Scopes: tc.scopes}},
+				RateLimiter: auth.NewRateLimiter(100, time.Minute),
+				CORSOrigins: []string{"*"},
+				Versions:    repo,
+			})
+			rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions"+tc.query, validSpecJSON)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("register = %d, want %d (%s)", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if tc.wantCode == http.StatusForbidden {
+				if !strings.Contains(rec.Body.String(), "missing scope "+auth.ScopeRun) {
+					t.Errorf("refusal %s does not name %s", rec.Body.String(), auth.ScopeRun)
+				}
+				if len(repo.asked) != 0 {
+					t.Errorf("a refused override still registered: %v", repo.asked)
+				}
+			}
+		})
+	}
+}
+
 // rollbackChange is v2 -> v1 of etl, as the repository reports it.
 func rollbackChange() domain.CurrentVersionChange {
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -503,5 +616,45 @@ func TestSetCurrentVersionCountsAMisfitAtItsOwnStage(t *testing.T) {
 	}
 	if len(misfits.stages) != 1 || misfits.stages[0] != "set_current" {
 		t.Errorf("misfits recorded = %v, want one at set_current", misfits.stages)
+	}
+}
+
+// TestRegisterVersionIsPausedNeedsWriteOnDags: the deployer role registers
+// versions with deploy:dag and may not pause, so is_paused on a register
+// needs write:dag as PATCH /dags/{dag_id} does, else a deployer could pause
+// or unpause through the register.
+func TestRegisterVersionIsPausedNeedsWriteOnDags(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		perms    []auth.Permission
+		query    string
+		wantCode int
+	}{
+		{"deployer, no override", []auth.Permission{{Action: "deploy", Resource: "dag"}}, "", http.StatusCreated},
+		{"deployer, override", []auth.Permission{{Action: "deploy", Resource: "dag"}}, "?is_paused=false", http.StatusForbidden},
+		{"writer, override", []auth.Permission{{Action: "write", Resource: "dag"}}, "?is_paused=true", http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeVersionRepo{created: true}
+			srv := NewServer(Dependencies{
+				Logger:        discardLogger(),
+				Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Permissions: tc.perms}},
+				RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+				CORSOrigins:   []string{"*"},
+				Versions:      repo,
+			})
+			rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions"+tc.query, validSpecJSON)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("register = %d, want %d (%s)", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if tc.wantCode == http.StatusForbidden {
+				if !strings.Contains(rec.Body.String(), "write:dag") {
+					t.Errorf("refusal %s does not name write:dag", rec.Body.String())
+				}
+				if len(repo.asked) != 0 {
+					t.Errorf("a refused override still registered: %v", repo.asked)
+				}
+			}
+		})
 	}
 }

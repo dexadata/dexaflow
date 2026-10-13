@@ -69,6 +69,29 @@ type CurrentVersionChange struct {
 	Changed bool
 }
 
+// DagRegistration is one register of a compiled DAG version: the spec, its
+// canonical hash, the registering user (empty when none) and an optional
+// is_paused for the DAG. IsPaused nil keeps Airflow's rule: a DAG the
+// register creates starts paused per its is_paused_upon_creation or the
+// server's dags_are_paused_at_creation, and an existing DAG keeps its state.
+// IsPaused set is the DAG's state after the register, created or not.
+type DagRegistration struct {
+	Spec        DAGSpec
+	SpecHash    string
+	ActorUserID string
+	IsPaused    *bool
+}
+
+// DagRegistered is the outcome of a register: whether a new version was
+// created (false when the content was already registered), whether the
+// register created the DAG itself (its first version), and the DAG's
+// is_paused afterwards.
+type DagRegistered struct {
+	Created    bool
+	DagCreated bool
+	IsPaused   bool
+}
+
 // DagRun is an execution of a DAG, identified by dag_id + run_id.
 type DagRun struct {
 	DagID       string
