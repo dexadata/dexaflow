@@ -146,6 +146,13 @@ type Querier interface {
 	// The consecutive dispatch-failure count of a task still waiting to run
 	// (scheduled or queued); no row means it has moved on.
 	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
+	// Creates the dags row of a DAG registered for the first time, with the
+	// metadata of the spec that will become its first version. An existing row is
+	// left untouched (no write, no lock): RegisterDagVersion then locks it with
+	// LockDagByDagID and rewrites the metadata only when a new version becomes
+	// current (UpdateDagMetadata). A concurrent first insert of the same dag_id
+	// waits on the unique index until the other transaction ends.
+	EnsureDag(ctx context.Context, arg EnsureDagParams) error
 	// The subset of the given conn_ids that exist for the tenant. Used to reject a
 	// DAG that declares an unknown connection at registration (ADR 0055 D6); a name
 	// absent from the result does not exist.
@@ -495,6 +502,12 @@ type Querier interface {
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
+	// Locks the DAG's row for the rest of the transaction, so registers of the same
+	// DAG are serialized: the spec-hash check of one register sees the version the
+	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
+	// another register, but not the KEY SHARE lock every dag_runs insert takes on
+	// its DAG, so run creation is not blocked while a version registers.
+	LockDagByDagID(ctx context.Context, arg LockDagByDagIDParams) (Dag, error)
 	// Share-locks every task instance of a run inside the reap transaction, before
 	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
 	// snapshot under READ COMMITTED) sees committed state and no TI of the run can
@@ -886,6 +899,10 @@ type Querier interface {
 	// looks freshly written. Reachable whenever more than one replica serves, which
 	// the chart calls the recommended production posture.
 	UpdateConnectionCiphertext(ctx context.Context, arg UpdateConnectionCiphertextParams) (int64, error)
+	// Applies the spec of the version that is becoming current to the dags row, in
+	// the same transaction as SetCurrentDagVersion. is_paused is never touched:
+	// pausing is an operator decision, not a deploy one.
+	UpdateDagMetadata(ctx context.Context, arg UpdateDagMetadataParams) error
 	UpdateDagRunState(ctx context.Context, arg UpdateDagRunStateParams) (DagRun, error)
 	UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskInstanceStateParams) (TaskInstance, error)
 	// Stamps the per-state entry timestamps the UI shows (scheduled_when /
@@ -920,7 +937,6 @@ type Querier interface {
 	// overwrites (#874). conn_type is required on every write, so it is a plain
 	// overwrite.
 	UpsertConnection(ctx context.Context, arg UpsertConnectionParams) error
-	UpsertDag(ctx context.Context, arg UpsertDagParams) (Dag, error)
 	// Sizes a tenant's default pool to an explicit slot count: inserts it under the
 	// given name with the seed description, or re-sizes the row already there. A
 	// row with that name left without is_default (a tenant created before the
