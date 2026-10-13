@@ -30,7 +30,7 @@ helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
   -f values.yaml
 ```
 
-Pass the release tag **without** the leading `v` (tag `v0.4.0` → `--version 0.4.0`):
+Pass the release tag **without** the leading `v` (tag `vX.Y.Z` → `--version X.Y.Z`):
 the chart `version`/`appVersion` move in lockstep with the tag, so this also pins
 the control-plane image. Installing from a source checkout
 (`helm install ./helm/dexaflow`) is still supported for unreleased branches — see
