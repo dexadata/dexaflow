@@ -425,7 +425,11 @@ func TestCompileBuildRequiresImage(t *testing.T) {
 func TestRunsTrigger(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.Path
+		// The trigger is the first request; a read of the DAG (is it
+		// paused?) may follow it.
+		if gotMethod == "" {
+			gotMethod, gotPath = r.Method, r.URL.Path
+		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"dag_run_id":"run-123","state":"queued"}`))
 	}))

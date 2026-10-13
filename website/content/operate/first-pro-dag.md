@@ -183,6 +183,21 @@ and the Airflow UI shows state and logs. From now on, `dexaflow deploy
 --trigger --follow` deploys, triggers and follows in one command; later
 deploys leave the DAG unpaused.
 
+If you trigger while the DAG is still paused, the command says so and the run
+waits:
+
+```console
+$ dexaflow deploy --trigger --follow
+…
+  triggered run manual__1717525200
+Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
+  https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
+note: first_pro_dag is paused: this run waits in queued until you unpause it: dexaflow admin dags unpause first_pro_dag
+```
+
+Run the unpause from another terminal (or the switch in the UI) and the
+followed run starts.
+
 `--follow` prints each task state change and the logs of each attempt as it
 finishes, with the link to the run in the UI, and exits with the result of the
 run, so a script or a CI job can rely on it:
@@ -197,10 +212,11 @@ run, so a script or a CI job can rely on it:
 
 Ctrl-C and `--timeout` only stop following: the run keeps going, and
 `dexaflow runs status first_pro_dag --run <run_id>` shows it later. A run that
-stays queued for two minutes gets a note saying no task has started and where
-to look. `dexaflow runs trigger <dag_id> --follow` and `dexaflow deploy
---trigger --follow` follow a run the same way, and `dexaflow runs logs
-<dag_id>` prints the logs of every task of the latest run.
+stays queued for two minutes gets a note: the pause when the DAG is paused,
+otherwise that no task has started and where to look. `dexaflow runs trigger
+<dag_id> --follow` and `dexaflow deploy --trigger --follow` follow a run the
+same way, and `dexaflow runs logs <dag_id>` prints the logs of every task of
+the latest run.
 
 ## When it doesn't work
 
