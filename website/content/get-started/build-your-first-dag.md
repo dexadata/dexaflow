@@ -2,7 +2,7 @@
 title: Build your first DAG
 linkTitle: Build your first DAG
 weight: 20
-description: A guided walk from an empty workspace to a running DAG: scaffold, author, validate, run.
+description: "A guided walk from an empty workspace to a running DAG: scaffold, author, validate, run."
 ---
 
 This is a hands-on tutorial. By the end you will have **authored and run a
