@@ -151,6 +151,19 @@ func (ns NullTaskState) Value() (driver.Value, error) {
 	return string(ns.TaskState), nil
 }
 
+type ApiToken struct {
+	ID         pgtype.UUID        `json:"id"`
+	TenantID   pgtype.UUID        `json:"tenant_id"`
+	UserID     pgtype.UUID        `json:"user_id"`
+	Name       string             `json:"name"`
+	TokenHash  string             `json:"token_hash"`
+	Scopes     []string           `json:"scopes"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type AuditLog struct {
 	ID           int64              `json:"id"`
 	TenantID     pgtype.UUID        `json:"tenant_id"`

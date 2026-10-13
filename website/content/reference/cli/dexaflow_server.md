@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_server/
 title: "dexaflow server"
 linkTitle: "server"
-weight: 53
+weight: 56
 ---
 
 Information about running the control plane.

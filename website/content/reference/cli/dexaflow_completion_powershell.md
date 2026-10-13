@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_completion_powershell/
 title: "dexaflow completion powershell"
 linkTitle: "completion powershell"
-weight: 21
+weight: 24
 ---
 
 Generate the autocompletion script for powershell

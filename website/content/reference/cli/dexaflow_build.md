@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_build/
 title: "dexaflow build"
 linkTitle: "build"
-weight: 16
+weight: 19
 ---
 
 Build the container image of every DAG project in a workspace.
