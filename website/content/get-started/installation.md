@@ -546,7 +546,9 @@ pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate`, each
 `dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names, which share their
 digests) carries a [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
 attestation, and each archive's SPDX SBOM is attested against that archive.
-Check them with the [GitHub CLI](https://cli.github.com/):
+The Helm chart is cosign-signed (see [the chart page](/operate/helm-chart/))
+but carries no build provenance attestation yet (#1562).
+Check the archive and image attestations with the [GitHub CLI](https://cli.github.com/):
 
 ```bash
 TAG=v0.5.4
