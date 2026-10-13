@@ -199,7 +199,9 @@ The image is built for your machine's architecture, which is also the k3d
 node's. Do not copy a `build.platforms: [linux/amd64]` setting from a cloud
 project onto an arm64 laptop: the task pod would fail with `exec format error`.
 
-Watch the run and the task pod:
+Add `--follow` to stay with the run until it ends: it prints the task states
+and logs and exits non-zero when the run fails. Or watch the run and the task
+pod:
 
 ```bash
 dexaflow runs status hello_local

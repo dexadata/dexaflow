@@ -173,8 +173,9 @@ the control plane's log sink. Read it from:
 
 - **The UI** — the task instance's log drill-down (Airflow-compatible).
 - **The API** — `GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}`.
-- **The CLI** — `dexaflow runs logs <dag_id> <run_id> <task_id> [--try N] [-f/--follow]`,
-  landing in v0.4.1 (reads the same endpoint as the UI, so it works over a
+- **The CLI**: `dexaflow runs logs <dag_id> [<run_id> [<task_id>]] [--try N] [-f/--follow]`:
+  every task of the latest run by default, or one run, or one task's attempt
+  (reads the same endpoint as the UI, so it works over a
   plain `--server`/token session with no cluster access needed).
 
 See [Troubleshooting → Logs](/operate/troubleshooting/#logs) for where the sink
