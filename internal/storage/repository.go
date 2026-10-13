@@ -439,15 +439,55 @@ func (r *Repository) GetDag(ctx context.Context, tenant, dagID string) (domain.D
 
 // SetPaused toggles the paused flag of a DAG.
 func (r *Repository) SetPaused(ctx context.Context, tenant, dagID string, paused bool) (domain.DAG, error) {
+	return r.SetPausedBy(ctx, tenant, "", dagID, paused)
+}
+
+// SetPausedBy is SetPaused on behalf of the user actorUserID: a change of
+// is_paused is audited as dag.pause or dag.unpause in the same transaction;
+// a request for the state the DAG is already in records nothing.
+func (r *Repository) SetPausedBy(ctx context.Context, tenant, actorUserID, dagID string, paused bool) (domain.DAG, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return domain.DAG{}, err
 	}
-	d, err := r.q.SetDagPaused(ctx, queries.SetDagPausedParams{TenantID: tid, DagID: dagID, IsPaused: paused})
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.DAG{}, fmt.Errorf("beginning pause tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	before, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
 	if err != nil {
 		return domain.DAG{}, mapNotFound(err)
 	}
+	d, err := qtx.SetDagPaused(ctx, queries.SetDagPausedParams{TenantID: tid, DagID: dagID, IsPaused: paused})
+	if err != nil {
+		return domain.DAG{}, mapNotFound(err)
+	}
+	if before.IsPaused != paused {
+		actor, aerr := tenantActor(ctx, qtx, tid, actorUUID(actorUserID))
+		if aerr != nil {
+			return domain.DAG{}, aerr
+		}
+		if werr := writePauseAudit(ctx, qtx, tid, actor, dagID, paused, map[string]any{"via": "api"}); werr != nil {
+			return domain.DAG{}, werr
+		}
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return domain.DAG{}, fmt.Errorf("committing pause tx: %w", cerr)
+	}
 	return mapDag(d), nil
+}
+
+// writePauseAudit records a change of is_paused on dagID as dag.pause or
+// dag.unpause, with fields added to the metadata.
+func writePauseAudit(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID, dagID string, paused bool, fields map[string]any) error {
+	action := "dag.unpause"
+	if paused {
+		action = "dag.pause"
+	}
+	fields["is_paused"] = paused
+	return writeDagAudit(ctx, qtx, tid, actor, action, dagID, fields)
 }
 
 func (r *Repository) resolveDag(ctx context.Context, tenant, dagID string) (queries.Dag, error) {
@@ -1222,67 +1262,103 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 // the version's created_by and its audit entry name that user. An actor that is
 // not a user id (empty, or Lite's dev principal) leaves both without a user.
 func (r *Repository) RegisterDagVersionBy(ctx context.Context, tenant, actorUserID string, spec domain.DAGSpec, specHash string) (bool, error) {
+	got, err := r.RegisterDagVersionAs(ctx, tenant, domain.DagRegistration{Spec: spec, SpecHash: specHash, ActorUserID: actorUserID})
+	return got.Created, err
+}
+
+// RegisterDagVersionAs is RegisterDagVersionBy with an optional is_paused
+// (reg.IsPaused): when set, the DAG ends the register in that state, whether
+// the register creates it, adds a version or finds the content already
+// registered. A change to an existing DAG is audited as dag.pause or
+// dag.unpause in the same transaction, and the register's own audit entry
+// records the requested state. It reports whether a version was created and
+// the DAG's is_paused afterwards.
+func (r *Repository) RegisterDagVersionAs(ctx context.Context, tenant string, reg domain.DagRegistration) (domain.DagRegistered, error) {
+	spec := reg.Spec
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
-		return false, err
+		return domain.DagRegistered{}, err
 	}
 	// A DAG may not declare a variable/connection that does not exist for the
 	// tenant (ADR 0055 D6). Checked before any write so a bad declaration fails
 	// fast with no partial state. An empty declaration is always valid, so no
 	// pre-declaration DAG is ever rejected.
 	if verr := r.validateDeclaredSecrets(ctx, tid, spec); verr != nil {
-		return false, verr
+		return domain.DagRegistered{}, verr
 	}
 	// The tenant's limits (max_dags, min_schedule_interval_seconds), also
 	// before any write.
 	if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
-		return false, lerr
+		return domain.DagRegistered{}, lerr
 	}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
-		return false, fmt.Errorf("encoding spec: %w", err)
+		return domain.DagRegistered{}, fmt.Errorf("encoding spec: %w", err)
+	}
+	paused := r.pausedOnCreation(spec)
+	if reg.IsPaused != nil {
+		paused = *reg.IsPaused
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("beginning register tx: %w", err)
+		return domain.DagRegistered{}, fmt.Errorf("beginning register tx: %w", err)
 	}
 	// Rollback after a successful commit is a no-op; on any early return (409,
 	// identical hash, failed write) it undoes everything this register wrote.
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
-	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, registration{
-		spec: spec, specHash: specHash, specJSON: specJSON,
-		paused: r.pausedOnCreation(spec), actor: actorUUID(actorUserID),
+	got, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, registration{
+		spec: spec, specHash: reg.SpecHash, specJSON: specJSON,
+		paused: paused, pausedOverride: reg.IsPaused != nil, actor: actorUUID(reg.ActorUserID),
 	})
-	if err != nil || !created {
-		return false, err
+	if err != nil {
+		return domain.DagRegistered{}, err
+	}
+	if !got.wrote {
+		return got.DagRegistered, nil
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return false, fmt.Errorf("committing register tx: %w", cerr)
+		return domain.DagRegistered{}, fmt.Errorf("committing register tx: %w", cerr)
 	}
-	return true, nil
+	return got.DagRegistered, nil
+}
+
+// registerOutcome is what registerDagVersionTx did: the caller's outcome, and
+// whether anything was written that needs a commit.
+type registerOutcome struct {
+	domain.DagRegistered
+	wrote bool
 }
 
 // registerDagVersionTx is the body of RegisterDagVersion, run on a transaction:
-// create the DAG if missing, lock its row, decide on the hash, insert the
-// version, then make it current and apply its metadata.
+// create the DAG if missing, lock its row, apply an explicit is_paused, decide
+// on the hash, insert the version, then make it current and apply its
+// metadata.
 //
-// reg.paused is is_paused for a DAG this register creates; it is ignored when
-// the DAG exists, so a redeploy never pauses or unpauses it.
-func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, reg registration) (bool, error) {
+// reg.paused is is_paused for a DAG this register creates; when the DAG exists
+// it is applied only with reg.pausedOverride, so a plain redeploy never pauses
+// or unpauses it.
+func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, reg registration) (registerOutcome, error) {
 	spec, specHash := reg.spec, reg.specHash
 	meta := dagMetadataOf(spec)
-	dag, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, reg.paused)
+	dag, dagCreated, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, reg.paused)
 	if err != nil {
-		return false, err
-	}
-	if _, verr := qtx.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
-		return false, nil
-	} else if !errors.Is(verr, pgx.ErrNoRows) {
-		return false, fmt.Errorf("checking existing version: %w", verr)
+		return registerOutcome{}, err
 	}
 	actor, err := tenantActor(ctx, qtx, tid, reg.actor)
 	if err != nil {
-		return false, err
+		return registerOutcome{}, err
+	}
+	out := registerOutcome{DagRegistered: domain.DagRegistered{IsPaused: dag.IsPaused, DagCreated: dagCreated}}
+	if reg.pausedOverride && dag.IsPaused != reg.paused {
+		if perr := setPausedByRegister(ctx, qtx, tid, actor, spec, reg.paused); perr != nil {
+			return registerOutcome{}, perr
+		}
+		out.IsPaused, out.wrote = reg.paused, true
+	}
+	if _, verr := qtx.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
+		return out, nil
+	} else if !errors.Is(verr, pgx.ErrNoRows) {
+		return registerOutcome{}, fmt.Errorf("checking existing version: %w", verr)
 	}
 	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
@@ -1301,31 +1377,47 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 		// so the API answers 409 instead of 500 (#746 — where it also leaked the
 		// raw 23505, which #961 closed for every code). Bump --dag-version to
 		// push new content.
-		return false, fmt.Errorf("inserting version: %w", mapConflict(err))
+		return registerOutcome{}, fmt.Errorf("inserting version: %w", mapConflict(err))
 	}
 	meta.ID, meta.TenantID = dag.ID, tid
 	if err := qtx.UpdateDagMetadata(ctx, meta); err != nil {
-		return false, fmt.Errorf("updating dag metadata: %w", err)
+		return registerOutcome{}, fmt.Errorf("updating dag metadata: %w", err)
 	}
 	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
-		return false, fmt.Errorf("setting current version: %w", err)
+		return registerOutcome{}, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, map[string]any{
-		"version": spec.DagVersion, "image": spec.Image, "spec_hash": specHash,
-	}); err != nil {
-		return false, err
+	fields := map[string]any{"version": spec.DagVersion, "image": spec.Image, "spec_hash": specHash}
+	if reg.pausedOverride {
+		fields["is_paused"] = reg.paused
 	}
-	return true, nil
+	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, fields); err != nil {
+		return registerOutcome{}, err
+	}
+	out.Created, out.wrote = true, true
+	return out, nil
+}
+
+// setPausedByRegister sets is_paused of an existing DAG for a register that
+// asked for it, and audits the change as dag.pause or dag.unpause.
+func setPausedByRegister(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID, spec domain.DAGSpec, paused bool) error {
+	if _, err := qtx.SetDagPaused(ctx, queries.SetDagPausedParams{TenantID: tid, DagID: spec.DagID, IsPaused: paused}); err != nil {
+		return fmt.Errorf("setting is_paused: %w", err)
+	}
+	return writePauseAudit(ctx, qtx, tid, actor, spec.DagID, paused, map[string]any{
+		"via": "register", "version": spec.DagVersion,
+	})
 }
 
 // registration is what one register writes: the spec, its hash and encoding,
-// is_paused for a DAG it creates, and the registering user (null when none).
+// is_paused for a DAG it creates (or for any DAG with pausedOverride), and the
+// registering user (null when none).
 type registration struct {
-	spec     domain.DAGSpec
-	specHash string
-	specJSON []byte
-	paused   bool
-	actor    pgtype.UUID
+	spec           domain.DAGSpec
+	specHash       string
+	specJSON       []byte
+	paused         bool
+	pausedOverride bool
+	actor          pgtype.UUID
 }
 
 // actorUUID is the user id of an acting principal, or a null UUID when the
@@ -1384,26 +1476,29 @@ func (r *Repository) pausedOnCreation(spec domain.DAGSpec) bool {
 // DeleteDag that commits between the two statements leaves nothing to lock;
 // the pair is then tried once more, which creates the DAG again. A DAG that is
 // gone a second time is reported as a conflict for the caller to retry.
-// paused is is_paused for a DAG this call creates.
-func ensureAndLockDag(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, meta queries.UpdateDagMetadataParams, paused bool) (queries.Dag, error) {
+// paused is is_paused for a DAG this call creates; created reports whether
+// it created the row.
+func ensureAndLockDag(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, meta queries.UpdateDagMetadataParams, paused bool) (dag queries.Dag, created bool, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
+		inserted, eerr := qtx.EnsureDag(ctx, queries.EnsureDagParams{
 			TenantID: tid, DagID: dagID,
 			Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
 			Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
 			MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup, IsPaused: paused,
-		}); err != nil {
-			return queries.Dag{}, fmt.Errorf("creating dag: %w", err)
+		})
+		if eerr != nil {
+			return queries.Dag{}, false, fmt.Errorf("creating dag: %w", eerr)
 		}
-		dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
+		created = created || inserted > 0
+		dag, err = qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
 		if err == nil {
-			return dag, nil
+			return dag, created, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return queries.Dag{}, fmt.Errorf("locking dag: %w", err)
+			return queries.Dag{}, false, fmt.Errorf("locking dag: %w", err)
 		}
 	}
-	return queries.Dag{}, domain.Safef(domain.ErrConflict,
+	return queries.Dag{}, false, domain.Safef(domain.ErrConflict,
 		"dag %q was deleted while this version was being registered; push it again", dagID)
 }
 
