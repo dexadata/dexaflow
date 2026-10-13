@@ -1,0 +1,64 @@
+suite: control-plane pods mount a ServiceAccount token only where they call the apiserver (#537)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+# The pre-rename naming (what charts/leoflow renders), which existing
+# installs depend on; default dexaflow naming is in chart_name_test.yaml.
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  # The "all" role runs the executor: it creates task pods, so it needs the token.
+  - it: leaves the token mounted on the single "all" Deployment
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.automountServiceAccountToken
+
+  # The api role builds no Kubernetes client (no executor, no informer, no token
+  # exchange) and its ServiceAccount is bound to nothing, so the token is unused.
+  - it: does not mount the token on the split api Deployment
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-api
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+
+  - it: leaves the token mounted on the split scheduler Deployment, which creates task pods
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+      - notExists:
+          path: spec.template.spec.automountServiceAccountToken
+
+  - it: mounts the token on the split api Deployment when the operator opts back in
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      split.api.automountServiceAccountToken: true
+      logs.persistence.accessMode: ReadWriteMany
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: true

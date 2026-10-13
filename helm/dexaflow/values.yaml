@@ -39,6 +39,8 @@ split:
   api:
     # -- API Deployment replicas (active-active; HPA-friendly). Ignored unless split.enabled.
     replicaCount: 2
+    # -- Mount the ServiceAccount token into the api pods. Off: the api role never calls the Kubernetes API and its ServiceAccount is bound to no Role, so the token is unused. Turn it on only for a sidecar that reads the default token mount. The scheduler (and the single `all` Deployment when split is off) always keeps its token, because it creates the task pods. Ignored unless split.enabled.
+    automountServiceAccountToken: false
   scheduler:
     # -- Scheduler Deployment replicas. Pinned to 1 by the chart regardless of this value — the scheduler is a single leader (ADR 0009); a field is kept only for clarity. Ignored unless split.enabled.
     replicaCount: 1
@@ -119,6 +121,12 @@ executor:
       cpu: ""
       # -- Default memory request+limit (e.g. `256Mi`, `1Gi`). Empty = unset. Set together with `cpu`.
       memory: ""
+    # -- Default CPU and memory **limit** for every task pod whose resources leave that limit empty, including a task that declares requests only (#537). A declared limit is never changed, a request above the default raises the filled limit to the request, and where the request is empty too Kubernetes sets it to the limit (as a `LimitRange` default does). A task declaring only a CPU request therefore also requests the default memory limit, and the other way round. Without `executor.unit` the same limits size the warm worker pods (`execution.warmPoolsEnabled`), and a task whose own limit would be larger takes a dedicated pod. Either may be set alone. Empty (default) sets no limit. Not applied with `executor.unit`, which always sets both limits. Kubernetes quantities.
+    limits:
+      # -- Default CPU limit (e.g. `2`). Empty = no default limit.
+      cpu: ""
+      # -- Default memory limit (e.g. `4Gi`). Empty = no default limit.
+      memory: ""
     # -- Default size + StorageClass for the per-run staging volume when the DAG
     # enabled staging without pinning them (#743). Env-only override path: the
     # chart mounts no server config file, so these render as LEOFLOW_* env. Empty
@@ -138,6 +146,10 @@ executor:
       fields: ["*"]
       # -- When not empty, the only `priority_class_name` values a DAG may set. Empty (default) allows any.
       priorityClasses: []
+      # -- When not empty, the only `execution.service_account` values a DAG may name. A task that names none runs as the task ServiceAccount (`taskServiceAccount`), which is not checked. Empty (default) allows any.
+      serviceAccounts: []
+      # -- When not empty, the only DAG images that may run: exact references (`busybox:1.36`) or prefixes ending in `*` (`registry.example.com/team-a/*`). Empty (default) allows any.
+      images: []
   # Client-side rate limits of the control plane's Kubernetes clients. 0 (the
   # default) renders nothing and keeps client-go's QPS 5 / burst 10 on one client
   # shared by dispatch and maintenance. A large fan out is paced by `qps`: at 5,

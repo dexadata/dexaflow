@@ -29,6 +29,11 @@ func TestDispatchDefaultsTaskServiceAccount(t *testing.T) {
 		if exec.req.Execution.ServiceAccount != "leoflow-task" {
 			t.Errorf("default SA not applied; got %q", exec.req.Execution.ServiceAccount)
 		}
+		// The executor is told which account is the operator default, so it
+		// re-checks the allowlist on any other account (issue #537 C2).
+		if exec.req.DefaultServiceAccount != "leoflow-task" {
+			t.Errorf("DefaultServiceAccount = %q, want leoflow-task", exec.req.DefaultServiceAccount)
+		}
 	})
 
 	t.Run("explicit per-task service_account wins", func(t *testing.T) {
