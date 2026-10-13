@@ -84,6 +84,10 @@
       "type": "boolean",
       "default": false
     },
+    "is_paused_upon_creation": {
+      "type": "boolean",
+      "description": "Airflow's is_paused_upon_creation: whether the DAG starts paused when it is registered for the first time. Overrides the server's dags_are_paused_at_creation; when absent, that setting decides. Ignored for a DAG that already exists."
+    },
     "default_args": {
       "type": "object",
       "properties": {

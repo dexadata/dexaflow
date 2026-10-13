@@ -309,6 +309,7 @@ self_test() {
     # directory being populated.
     mkdir -p "$1/website/scripts/ci"
     cp "$REPO_ROOT/website/scripts/ci/render-version-config.py" "$1/website/scripts/ci/"
+    mkdir -p "$1/scripts" && cp "$REPO_ROOT/scripts/check-stale-versions.sh" "$1/scripts/"
     printf '%s\n' '[params]' '  [[params.versions]]' '    version = "seed"' '    url = "https://example.invalid/"' > "$1/website/hugo.toml"
   }
   _promote() { ( ROOT="$vt" && _fixture_docs "$vt" && cp "$vt/versions.json" "$vt/website/scripts/ci/versions.json" && promote_docs_version "$1" >/dev/null && cat "$vt/website/scripts/ci/versions.json" ); }
@@ -348,6 +349,17 @@ self_test() {
   out="$(_promote v2.0.0)"
   _eq "$(printf '%s' "$out" | jq -r '.versions[] | select(.id=="latest") | .ref')" "v2.0.0" "promoting the current root is a no-op"
 
+  # The promotion also bumps README.md's install pins (#1555): the docs guard
+  # runs check-stale-versions.sh against the new latest leg, so a promotion
+  # that left them behind would fail its own pull request.
+  _versions '{"root_url":"https://example.invalid/","versions":[{"id":"latest","ref":"v1.0.0","subpath":"","label":"latest","archived":false}]}'
+  printf '%s\n' 'helm install x oci://ghcr.io/dexadata/charts/dexaflow --version 1.0.0 \' '  --set image.tag=v1.0.0' 'Since v1.0.0 it is renamed.' >"$vt/README.md"
+  _promote v2.0.0 >/dev/null
+  _eq "$(sed -n 1p "$vt/README.md" | grep -o -- '--version [0-9.]*')" "--version 2.0.0" "promotion bumps the README chart pin"
+  _eq "$(sed -n 2p "$vt/README.md")" "  --set image.tag=v2.0.0" "promotion bumps the README image pin"
+  _eq "$(sed -n 3p "$vt/README.md")" "Since v1.0.0 it is renamed." "promotion leaves README history alone"
+  rm -f "$vt/README.md"
+
   # With release branches a GA can be OLDER than the docs root: a security
   # patch on release-1.0 after v2.0.0 shipped. Promoting it would point the site
   # root back at the previous minor and archive the current one.
@@ -368,11 +380,13 @@ self_test() {
     mkdir -p "$rf/website/scripts/ci" && printf '{"v":1}\n' >"$rf/website/scripts/ci/versions.json"
     cd "$rf" && git -c init.defaultBranch=main init -q . &&
     git config user.email t@example.invalid && git config user.name tester &&
+    printf 'pin 1\n' >README.md && printf '<x/>\n' >website/hugo.toml &&
     git add -A && git commit -qm base &&
-    printf '{"v":2}\n' >website/scripts/ci/versions.json && git add website/scripts/ci/versions.json
+    printf '{"v":2}\n' >website/scripts/ci/versions.json && git add website/scripts/ci/versions.json &&
+    printf 'pin 2\n' >README.md && git add README.md && printf '<y/>\n' >website/hugo.toml
   ) >/dev/null 2>&1 || { echo "  FAIL restore_docs_file: could not build the fixture"; fail=1; }
   local rfroot="$ROOT"; ROOT="$rf"; restore_docs_file; ROOT="$rfroot"
-  _eq "$(cd "$rf" && git status --porcelain)" "" "restore_docs_file also drops a STAGED versions.json"
+  _eq "$(cd "$rf" && git status --porcelain)" "" "restore_docs_file also drops a STAGED versions.json, README.md and hugo.toml"
   rm -rf "$rf"
 
   # promote_docs_version must RETURN on a bad input, never die. It runs after
@@ -531,6 +545,8 @@ self_test() {
       git config user.email t@example.invalid && git config user.name tester &&
       mkdir -p website/scripts/ci &&
       cp "$REPO_ROOT/website/scripts/ci/render-version-config.py" website/scripts/ci/ &&
+      mkdir -p scripts && cp "$REPO_ROOT/scripts/check-stale-versions.sh" scripts/ &&
+      printf '%s\n' "helm install x --version ${1#v}" > README.md &&
       printf '%s\n' '[params]' '  [[params.versions]]' '    version = "seed"' '    url = "https://example.invalid/"' > website/hugo.toml &&
       printf '{"root_url":"https://example.invalid/","versions":[{"id":"latest","ref":"%s","subpath":"","label":"latest","archived":false}]}\n' "$1" \
         >website/scripts/ci/versions.json &&
@@ -581,6 +597,8 @@ self_test() {
     "the happy path actually pushes the branch"
   _eq "$(git -C "$pp/origin" show refs/heads/docs/promote-v2.0.0:website/scripts/ci/versions.json 2>/dev/null | jq -r '.versions[] | select(.id=="latest") | .ref')" \
     "v2.0.0" "and what it pushed is the repointed root"
+  _eq "$(git -C "$pp/origin" show refs/heads/docs/promote-v2.0.0:README.md 2>/dev/null)" \
+    "helm install x --version 2.0.0" "and the bumped README pins ride the same commit"
   rm -rf "$pp"
 
   # promote_docs_version must leave BOTH version menus agreeing, which is the
@@ -908,7 +926,9 @@ resume_target() { # <chart-version> <tag> [base]
 # cut died on "working tree not clean". Split out from promote_docs_pr so the
 # self-test can drive it — the hole was in a closure no test could reach.
 restore_docs_file() {
-  git -C "$ROOT" restore --staged --worktree -- website/scripts/ci/versions.json 2>/dev/null || true
+  # Every file promote_docs_version writes. hugo.toml was missing here since
+  # the menu sync moved into the promotion, and README.md joined with #1555.
+  git -C "$ROOT" restore --staged --worktree -- website/scripts/ci/versions.json website/hugo.toml README.md 2>/dev/null || true
 }
 
 promote_docs_pr() { # <tag>
@@ -944,13 +964,13 @@ promote_docs_pr() { # <tag>
   # tree left behind. Check the exit.
   # Both menus, or the promotion PR ships one and leaves the other dirty in the
   # operator's tree, which is how the gate failed every GA (#1242).
-  git -C "$ROOT" add website/scripts/ci/versions.json website/hugo.toml || { warn "docs promotion: could not stage the version menus"; _restore "$orig"; return 0; }
+  git -C "$ROOT" add website/scripts/ci/versions.json website/hugo.toml README.md || { warn "docs promotion: could not stage the version menus"; _restore "$orig"; return 0; }
   if git -C "$ROOT" diff --cached --quiet -- website/scripts/ci/versions.json; then log "docs: root already serves $tag"; _restore "$orig"; return 0; fi
-  git -C "$ROOT" commit -q -m "docs: publish $tag at the documentation root" -- website/scripts/ci/versions.json website/hugo.toml || { warn "docs promotion: commit failed"; _restore "$orig"; return 0; }
+  git -C "$ROOT" commit -q -m "docs: publish $tag at the documentation root" -- website/scripts/ci/versions.json website/hugo.toml README.md || { warn "docs promotion: commit failed"; _restore "$orig"; return 0; }
   git push -u origin "$branch" -q || { warn "docs promotion: push failed — open the PR by hand from $branch"; _restore "$orig"; return 0; }
   gh pr create --repo "$REPO" --base main --head "$branch" --label skip-changelog \
     --title "docs: publish $tag at the documentation root" \
-    --body "Repoints website/scripts/ci/versions.json's \`latest\` leg at $tag, archives the one it replaces, and renders the matching \`[[params.versions]]\` block into website/hugo.toml so check-docs-version-menu.sh agrees. Opened by cut-release.sh after the tag was pushed, because the deploy checks the tag out, so this cannot ride in the prepare commit." >/dev/null || { warn "docs promotion: gh pr create failed"; _restore "$orig"; return 0; }
+    --body "Repoints website/scripts/ci/versions.json's \`latest\` leg at $tag, archives the one it replaces, and renders the matching \`[[params.versions]]\` block into website/hugo.toml so check-docs-version-menu.sh agrees, and bumps the README install pins to $tag so check-stale-versions.sh agrees. Opened by cut-release.sh after the tag was pushed, because the deploy checks the tag out, so this cannot ride in the prepare commit." >/dev/null || { warn "docs promotion: gh pr create failed"; _restore "$orig"; return 0; }
   pr="$(gh pr view "$branch" --json number -q .number 2>/dev/null)"
   log "docs promotion PR #$pr — waiting for CI"
   # Its own budget: wait_sha_green restarts the clock per call, so the default
@@ -1040,7 +1060,14 @@ promote_docs_version() { # <tag>
     --versions-file "$f" --sync-hugo-config "$ROOT/website/hugo.toml" >/dev/null ||
     { warn "could not sync website/hugo.toml from versions.json"; return 1; }
 
-  log "docs: root now built from $tag (archived $prev), both menus rendered"
+  # README.md is rendered by GitHub, not Hugo, so it cannot use the
+  # latest-version shortcode and pins the release by number. Bump it here, or
+  # the docs guard's check-stale-versions.sh, which judges against the latest
+  # leg just repointed above, fails this promotion's own pull request (#1555).
+  bash "$ROOT/scripts/check-stale-versions.sh" --bump "$tag" "$ROOT" >/dev/null ||
+    { warn "could not bump the README install pins to $tag"; return 1; }
+
+  log "docs: root now built from $tag (archived $prev), both menus rendered, README pins bumped"
 }
 
 read_chart_version() { awk '/^version:/{print $2; exit}' "$CHART"; }

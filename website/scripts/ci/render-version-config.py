@@ -101,6 +101,33 @@ def sync_hugo_config(path: str, root_url: str, entries: list) -> int:
     return 0
 
 
+def latest_release(entries: list) -> str:
+    """The newest GA without its leading v: the `latest` leg's ref."""
+    ref = next((e.get("ref", "") for e in entries if e.get("id") == "latest"), "")
+    return ref[1:] if ref.startswith("v") else ref
+
+
+def render_overlay(root_url: str, entries: list, leg_id: str) -> str:
+    """The Hugo config overlay for one leg. Raises KeyError for an unknown leg."""
+    this = next((e for e in entries if e["id"] == leg_id), None)
+    if this is None:
+        raise KeyError(leg_id)
+    lines = [
+        f"baseURL = {toml_string(build_url(root_url, this['subpath']))}",
+        "[params]",
+        f"  version = {toml_string(this['label'])}",
+        '  version_menu = "Releases"',
+        f"  archived_version = {'true' if this['archived'] else 'false'}",
+        f"  url_latest_version = {toml_string(root_url)}",
+        f"  latest_release = {toml_string(latest_release(entries))}",
+    ]
+    for e in entries:
+        lines.append("  [[params.versions]]")
+        lines.append(f"    version = {toml_string(e['label'])}")
+        lines.append(f"    url = {toml_string(build_url(root_url, e['subpath']))}")
+    return "\n".join(lines) + "\n"
+
+
 def self_test() -> int:
     import tempfile, os
     fails = []
@@ -113,10 +140,20 @@ def self_test() -> int:
             fails.append(name)
 
     entries = [
-        {"id": "latest", "subpath": "", "label": "v9.9.9 (latest)", "archived": False},
-        {"id": "v9.9.8", "subpath": "v9.9.8", "label": "v9.9.8", "archived": True},
+        {"id": "latest", "ref": "v9.9.9", "subpath": "", "label": "v9.9.9 (latest)", "archived": False},
+        {"id": "v9.9.8", "ref": "v9.9.8", "subpath": "v9.9.8", "label": "v9.9.8", "archived": True},
     ]
     root = "https://example.invalid/leoflow/"
+
+    # Every leg learns the newest GA, whatever ref it is built from: the
+    # {{< latest-version >}} shortcode prints it (#1555). The latest leg is
+    # built from the GA's own tag, whose versions.json still names the GA
+    # before it, so the value has to come from this overlay.
+    eq(latest_release(entries), "9.9.9", "the newest GA is the latest leg's ref, without the v")
+    eq(latest_release([{"id": "dev", "ref": ""}]), "", "no latest leg gives no value")
+    for leg in ("latest", "v9.9.8"):
+        overlay = render_overlay(root, entries, leg)
+        eq('  latest_release = "9.9.9"' in overlay.splitlines(), True, f"the {leg} overlay carries latest_release")
 
     eq(build_url(root, ""), "https://example.invalid/leoflow/", "root leg keeps the root url")
     eq(build_url(root, "v9.9.8"), "https://example.invalid/leoflow/v9.9.8/", "an archived leg gets its subpath")
@@ -177,29 +214,15 @@ def main() -> int:
     if not args.leg_id or not args.out:
         ap.error("--leg-id and --out are required unless --sync-hugo-config is given")
 
-    this = next((e for e in entries if e["id"] == args.leg_id), None)
-    if this is None:
+    try:
+        overlay = render_overlay(root_url, entries, args.leg_id)
+    except KeyError:
         print(f"error: leg id {args.leg_id!r} not found in {args.versions_file}", file=sys.stderr)
         return 1
-
-    leg_url = build_url(root_url, this["subpath"])
-
-    lines = [
-        f"baseURL = {toml_string(leg_url)}",
-        "[params]",
-        f"  version = {toml_string(this['label'])}",
-        '  version_menu = "Releases"',
-        f"  archived_version = {'true' if this['archived'] else 'false'}",
-        f"  url_latest_version = {toml_string(root_url)}",
-    ]
-    for e in entries:
-        entry_url = build_url(root_url, e["subpath"])
-        lines.append("  [[params.versions]]")
-        lines.append(f"    version = {toml_string(e['label'])}")
-        lines.append(f"    url = {toml_string(entry_url)}")
+    leg_url = build_url(root_url, next(e for e in entries if e["id"] == args.leg_id)["subpath"])
 
     with open(args.out, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write(overlay)
 
     print(f"render-version-config: wrote {args.out} (leg={args.leg_id}, baseURL={leg_url})")
     return 0

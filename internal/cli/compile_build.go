@@ -108,10 +108,10 @@ func releaseBaseTag(v string) string {
 
 // resolveBuildImage decides the image reference for a build. An explicit --image
 // flag always wins so a caller can pin any tag. Otherwise the reference is
-// derived from the registry block (url/image_name:version); a missing url or
-// image_name yields "" so the caller can fail with an actionable message rather
-// than building an untagged image.
-func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion, gitSHA string) string {
+// derived from the registry block (url/image_name:tag, the tag picked by
+// tag_strategy); a missing url or image_name yields "" so the caller can fail
+// with an actionable message rather than building an untagged image.
+func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion string, rev gitRevision) string {
 	if flagImage != "" {
 		return flagImage
 	}
@@ -129,7 +129,7 @@ func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion, 
 	//
 	// resolveImageTag was correct and had its own test the whole time. It just
 	// had one caller.
-	tag := resolveImageTag(cfg.Registry.TagStrategy, dagVersion, gitSHA)
+	tag := resolveImageTag(cfg.Registry.TagStrategy, dagVersion, rev)
 	return composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, tag)
 }
 

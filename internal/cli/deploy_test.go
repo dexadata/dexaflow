@@ -34,7 +34,7 @@ func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
 	digest := "ghcr.io/org/etl@sha256:cafef00d"
 
 	var sb strings.Builder
-	dagID, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, digest, "v1")
+	dagID, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, digest, "v1", labelDefault)
 	if err != nil {
 		t.Fatalf("registerDeployedDAG: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
 	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1")
+	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1", labelDefault)
 	if err == nil {
 		t.Error("expected an error when the control plane rejects the register")
 	}
@@ -262,12 +262,12 @@ func TestDeployImageRef(t *testing.T) {
 		}}
 	}
 	// version strategy tags by the version label.
-	if got := deployImageRef(base("version"), "v3", "1a2b3c4"); got != "ghcr.io/org/etl:v3" {
+	if got := deployImageRef(base("version"), "v3", gitRevision{sha: "1a2b3c4"}); got != "ghcr.io/org/etl:v3" {
 		t.Errorf("version: ref = %q, want ghcr.io/org/etl:v3", got)
 	}
 	// git_sha strategy tags by the actual commit sha (the #2 fix — it used to
 	// collapse to the version label).
-	if got := deployImageRef(base("git_sha"), "v3", "1a2b3c4"); got != "ghcr.io/org/etl:1a2b3c4" {
+	if got := deployImageRef(base("git_sha"), "v3", gitRevision{sha: "1a2b3c4"}); got != "ghcr.io/org/etl:1a2b3c4" {
 		t.Errorf("git_sha: ref = %q, want ghcr.io/org/etl:1a2b3c4", got)
 	}
 }

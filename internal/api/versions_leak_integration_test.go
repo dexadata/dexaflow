@@ -24,7 +24,7 @@ import (
 //
 // A NUL byte in the DAG description is the cheapest way to make the server
 // itself raise an error mapConflict has never heard of: Postgres refuses it
-// with 22021 (invalid byte sequence for encoding "UTF8") on the UpsertDag
+// with 22021 (invalid byte sequence for encoding "UTF8") on the EnsureDag
 // write. Before #961 that reached the tenant as
 // "upserting dag: ERROR: ... (SQLSTATE 22021)".
 func TestRegisterVersionUnmappedSQLSTATEIsOpaqueIntegration(t *testing.T) {

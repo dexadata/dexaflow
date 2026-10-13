@@ -39,7 +39,7 @@ func TestListRunningTasksIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cands, err := sched.ListRunningTasks(ctx, 0)
+	cands, err := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "t", domain.TaskStateRunning); err != nil {
 		t.Fatal(err)
 	}
-	cands, _ := sched.ListRunningTasks(ctx, 0)
+	cands, _ := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	c := findPodLostCandidate(cands, runUUID, "t")
 	if c == nil {
 		t.Fatalf("expected a running candidate")
@@ -96,7 +96,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 		t.Errorf("after MarkTaskPodLost, TI state = %+v, want failed", tis)
 	}
 	// A failed TI is no longer in the running candidate set.
-	cands, _ = sched.ListRunningTasks(ctx, 0)
+	cands, _ = sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if findPodLostCandidate(cands, runUUID, "t") != nil {
 		t.Errorf("a failed TI must no longer appear in ListRunningTasks")
 	}
@@ -142,7 +142,7 @@ func TestListRunningTasksExcludesWarmAttemptsIntegration(t *testing.T) {
 		t.Fatalf("BindWarmAttempt: %v", err)
 	}
 
-	cands, err := sched.ListRunningTasks(ctx, 0)
+	cands, err := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -175,14 +175,14 @@ func TestListRunningTasksAppliesGraceBeforeLimitIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cands, err := sched.ListRunningTasks(ctx, time.Hour)
+	cands, err := sched.ListRunningTasks(ctx, time.Hour, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
 	if findPodLostCandidate(cands, runUUID, "fresh") != nil {
 		t.Errorf("an attempt running for less than the grace period must not be listed")
 	}
-	cands, err = sched.ListRunningTasks(ctx, 0)
+	cands, err = sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestListRunningTasksReportsHeartbeatIntegration(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "t", domain.TaskStateRunning); err != nil {
 		t.Fatal(err)
 	}
-	cands, err := sched.ListRunningTasks(ctx, 0)
+	cands, err := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestListRunningTasksReportsHeartbeatIntegration(t *testing.T) {
 	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{TenantID: defaultTenantID(), RunID: runUUID, TaskID: "t", TryNumber: 1}); err != nil {
 		t.Fatalf("RecordHeartbeat: %v", err)
 	}
-	cands, _ = sched.ListRunningTasks(ctx, 0)
+	cands, _ = sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if c = findPodLostCandidate(cands, runUUID, "t"); c == nil || !c.Heartbeated {
 		t.Fatalf("a TI that heartbeated must report Heartbeated=true: %+v", c)
 	}
