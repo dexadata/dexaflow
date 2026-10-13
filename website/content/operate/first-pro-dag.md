@@ -133,8 +133,15 @@ That one command crossed every boundary:
    now pulls **exactly** the bytes you built — no `:latest` drift.
 
 {{% alert title="It registers, it doesn't run — by default" color="info" %}}
-`deploy` publishes the artifact; a scheduled DAG then runs on its schedule.
-Add `--trigger` to kick a run immediately, or trigger from the Airflow UI.
+`deploy` publishes the artifact. A DAG deployed for the first time starts
+**paused**, as in Airflow: its schedule creates no run until you unpause it
+with the switch in the UI or `dexaflow admin dags unpause first_pro_dag`.
+Add `--trigger` to kick a run immediately (a manual trigger runs even while the
+DAG is paused), or trigger from the Airflow UI. Later deploys keep the DAG
+paused or active as you left it. To have new DAGs start active, set
+`is_paused_upon_creation=False` on the DAG or ask the operator to set
+`DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false`; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 {{% /alert %}}
 
 ## Step 3 — trigger and watch it run

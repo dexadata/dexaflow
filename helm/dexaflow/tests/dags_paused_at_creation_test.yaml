@@ -1,0 +1,53 @@
+suite: new DAGs paused at creation (dags_are_paused_at_creation, #1705)
+templates:
+  # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
+  # resolve its `include` reference (same reason as deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  - it: pauses new DAGs by default, as Airflow does
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+            value: "true"
+
+  - it: registers new DAGs active when config.dagsArePausedAtCreation is false
+    template: deployment.yaml
+    set:
+      config.dagsArePausedAtCreation: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+            value: "false"
+
+  # Registration is served by the api role; both Deployments share the env
+  # block, so a split control plane gets the same setting on both.
+  - it: reaches both Deployments when the control plane is split
+    template: deployment.yaml
+    set:
+      config.dagsArePausedAtCreation: false
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+            value: "false"

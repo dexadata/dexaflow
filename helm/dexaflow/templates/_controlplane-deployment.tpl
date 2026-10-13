@@ -252,6 +252,11 @@ spec:
             - name: LEOFLOW_SERVER_POOLS_READ_ONLY
               value: "true"
             {{- end }}
+            # New DAGs start paused unless the DAG says otherwise
+            # (dags_are_paused_at_creation, #1705). Rendered either way, so the
+            # chart value, not the server build, decides.
+            - name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+              value: {{ .ctx.Values.config.dagsArePausedAtCreation | toString | quote }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set

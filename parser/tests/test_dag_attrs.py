@@ -64,3 +64,43 @@ def test_catchup_false_is_omitted(monkeypatch, tmp_path):
             a()
     """)
     assert "catchup" not in spec
+
+
+def test_is_paused_upon_creation_true_and_false_are_emitted(monkeypatch, tmp_path):
+    # Airflow's DAG kwarg overrides the server's dags_are_paused_at_creation when
+    # the DAG is first registered, in both directions, so both values are kept.
+    for value in (True, False):
+        spec = _compile(monkeypatch, tmp_path, f"""
+            from airflow.sdk import DAG, task
+            @task
+            def a() -> None: ...
+            with DAG("g", is_paused_upon_creation={value}):
+                a()
+        """)
+        assert spec["is_paused_upon_creation"] is value
+
+
+def test_is_paused_upon_creation_omitted_when_unset(monkeypatch, tmp_path):
+    # Unset (Airflow's None) leaves the decision to the server setting, and keeps
+    # the compiled shape, and so the spec hash, of a DAG that does not use it.
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+        @task
+        def a() -> None: ...
+        with DAG("g", is_paused_upon_creation=None):
+            a()
+    """)
+    assert "is_paused_upon_creation" not in spec
+
+
+def test_is_paused_upon_creation_from_dag_decorator(monkeypatch, tmp_path):
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import dag, task
+        @task
+        def a() -> None: ...
+        @dag(dag_id="g", is_paused_upon_creation=False)
+        def g():
+            a()
+        g()
+    """)
+    assert spec["is_paused_upon_creation"] is False

@@ -107,6 +107,12 @@ with DAG("my_pipeline", schedule="@daily", catchup=False, tags=["etl"]):
     transform(extract())
 ```
 
+A DAG starts **paused** the first time it is deployed to Pro, as in Airflow, so
+its schedule waits for an unpause. Pass `is_paused_upon_creation=False` to
+`DAG(...)` or `@dag(...)` to have it start active (`True` keeps it paused on a
+server configured otherwise). It only matters on that first deploy; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
+
 `from airflow.sdk import …` is the canonical Airflow 3 spelling and what we
 recommend. The deprecated-but-still-valid Airflow 3 aliases resolve to the same
 objects, so a migrated DAG compiles unchanged:
