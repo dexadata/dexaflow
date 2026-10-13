@@ -18,6 +18,9 @@ on:
   pull_request:
     branches: [main, "release-*"]
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  # The merge queue (#1569): see docs-guard-queue below.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -45,7 +48,7 @@ jobs:
     # CHANGELOG guard documents: keying on the author keeps one mechanism and
     # survives a label being removed. The skip-docs label no longer skips the
     # job: the script accepts it only with a reason in the description.
-    if: ${{ github.event.pull_request.user.login != 'dependabot[bot]' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,3 +82,15 @@ jobs:
       # promotion PR, which bumps the README pins, is where that shows.
       - name: No page pins a release older than the newest GA
         run: bash scripts/check-stale-versions.sh
+
+  # Same name in the merge queue, so the check can be made required. The docs
+  # were judged on the pull request against its own diff; the queue commit
+  # adds only the base's newer commits, which were judged on theirs.
+  docs-guard-queue:
+    name: Docs updated for user-facing changes
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Judged on the pull request
+        run: echo "The docs were checked on the pull request; nothing to re-check in the merge queue."
