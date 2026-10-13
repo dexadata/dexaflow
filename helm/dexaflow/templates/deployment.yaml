@@ -202,6 +202,20 @@ vocabulary, so the operator sees which values to change.
 {{- end -}}
 {{- end -}}
 {{- /*
+Pro source mode (ADR 0067) runs every source-mode task on the runtime image the
+operator vetted, so the server refuses to boot unless that image is pinned by a
+full sha256 digest (internal/config validateSourceMode, domain.IsDigestPinned).
+The pattern here is the server's, byte for byte, so a value the chart accepts is
+one the server accepts. Refuse at render rather than ship a CrashLoopBackOff.
+*/ -}}
+{{- $sourceMode := .Values.execution.sourceMode | default dict -}}
+{{- if $sourceMode.enabled -}}
+{{- $sourceImage := toString $sourceMode.image -}}
+{{- if not (regexMatch "^[^@]+@sha256:[a-f0-9]{64}$" $sourceImage) -}}
+{{- fail (printf "execution.sourceMode.image must be pinned by a full digest when execution.sourceMode.enabled: name@sha256: followed by 64 lowercase hex characters (got %q). The server refuses to start with a tag alone or a short digest, so every source-mode task runs the exact image you vetted (ADR 0067). Resolve the digest with `docker buildx imagetools inspect <image>` or `crane digest <image>`." $sourceImage) -}}
+{{- end -}}
+{{- end -}}
+{{- /*
 extraEnv is an escape hatch for settings the chart does not model — not a way
 around the guard above. These three variables are the ones the chart validates
 against each other, so an extraEnv entry redefining any of them could enable

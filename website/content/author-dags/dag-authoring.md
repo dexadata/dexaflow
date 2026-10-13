@@ -150,7 +150,48 @@ in your own quotes:
 - A value can no longer expand into multiple shell words/flags; if you need
   that, pass the pieces as separate `params` and interpolate each. For secrets,
   reference `$AIRFLOW_VAR_*` / `$AIRFLOW_CONN_*` env vars instead of rendering
-  them into the command.
+  them into the command (see below).
+{{% /alert %}}
+
+{{% alert title="Never render a secret into a bash command" color="danger" %}}
+Quoting stops a value from becoming shell syntax, but a rendered value is still
+**part of the command line**. The command line is `argv` of the `bash` process:
+anything that can list processes in the same container (`ps`,
+`/proc/<pid>/cmdline`, a debug sidecar, node tooling with host PID access, or
+any process of the same user on a Lite host) reads it, and `set -x`, error
+messages and argument-logging wrappers copy it into the task log.
+
+A Variable or Connection the task receives is already in its environment as
+`AIRFLOW_VAR_<KEY>` or `AIRFLOW_CONN_<ID>`, so reference it by name and let bash
+expand it at run time. On an install that runs `auth.secret_scoping: enforce`,
+the task receives only the names its DAG declares in `dexaflow.yaml`
+([Declare what a task consumes](/author-dags/variables-connections/#declare-what-a-task-consumes)),
+and an undeclared one expands to an empty string. The templated form has the
+same requirement, so declare what the command uses either way:
+
+```python
+# Wrong: the token is rendered into the command line.
+BashOperator(task_id="deploy", bash_command="deploy-tool --token {{ var.value.api_token }}")
+
+# Right: the command line carries only the variable name.
+BashOperator(task_id="deploy", bash_command='DEPLOY_TOKEN="$AIRFLOW_VAR_API_TOKEN" deploy-tool')
+```
+
+- `{{ var.value.x }}` and `{{ conn.x }}` stay supported for **non-secret**
+  configuration (a bucket name, a schema, a host), for Airflow parity.
+- A Variable is `$AIRFLOW_VAR_<KEY>` (key uppercased); a Connection is
+  `$AIRFLOW_CONN_<ID>`, a URI. In a `@task`, use `Variable.get` and
+  `BaseHook.get_connection` instead.
+- Put the reference in double quotes (`"$AIRFLOW_VAR_API_KEY"`) so bash does not
+  split a value with spaces.
+- The second example hands the token to the tool through its own
+  environment variable. A tool that only takes a secret as a flag
+  (`--token "$AIRFLOW_VAR_API_TOKEN"`) still receives it in its own `argv`, so
+  prefer the tool's environment variable or a file (in the task's scratch, never
+  the project directory) when it offers one.
+
+The rule and its reasoning are in
+[ADR 0070](/project/adrs/0070-secrets-by-env-reference/).
 {{% /alert %}}
 
 Also supported:
