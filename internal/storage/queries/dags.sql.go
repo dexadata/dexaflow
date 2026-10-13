@@ -273,6 +273,24 @@ func (q *Queries) GetDagWithVersion(ctx context.Context, arg GetDagWithVersionPa
 	return i, err
 }
 
+const getTenantUserID = `-- name: GetTenantUserID :one
+SELECT id FROM users WHERE id = $1 AND tenant_id = $2
+`
+
+type GetTenantUserIDParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// The id of a user of the tenant: no row when the user is gone or belongs to
+// another tenant, so a stale token's subject records no creator.
+func (q *Queries) GetTenantUserID(ctx context.Context, arg GetTenantUserIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getTenantUserID, arg.ID, arg.TenantID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertDagVersion = `-- name: InsertDagVersion :one
 INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by)
 SELECT d.id, $1::text, $2::text, $3::jsonb,
@@ -319,7 +337,9 @@ func (q *Queries) InsertDagVersion(ctx context.Context, arg InsertDagVersionPara
 }
 
 const listDagVersions = `-- name: ListDagVersions :many
-SELECT v.id, v.version, v.created_at,
+SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash,
+       COALESCE(v.id = d.current_version_id, false)::boolean AS is_current,
+       COALESCE(v.created_by::text, '')::text AS created_by,
        row_number() OVER (ORDER BY v.created_at, v.version) AS version_number
 FROM dag_versions v
 JOIN dags d ON d.id = v.dag_id
@@ -333,12 +353,19 @@ type ListDagVersionsParams struct {
 }
 
 type ListDagVersionsRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	Version       string             `json:"version"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	VersionNumber int64              `json:"version_number"`
+	ID             pgtype.UUID        `json:"id"`
+	Version        string             `json:"version"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ImageReference string             `json:"image_reference"`
+	SpecHash       string             `json:"spec_hash"`
+	IsCurrent      bool               `json:"is_current"`
+	CreatedBy      string             `json:"created_by"`
+	VersionNumber  int64              `json:"version_number"`
 }
 
+// created_by is the registering user's id (empty when the register had no
+// user), not their email: any reader of the DAG sees it. is_current marks the
+// version new runs are created with.
 func (q *Queries) ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listDagVersions, arg.TenantID, arg.DagID)
 	if err != nil {
@@ -352,6 +379,10 @@ func (q *Queries) ListDagVersions(ctx context.Context, arg ListDagVersionsParams
 			&i.ID,
 			&i.Version,
 			&i.CreatedAt,
+			&i.ImageReference,
+			&i.SpecHash,
+			&i.IsCurrent,
+			&i.CreatedBy,
 			&i.VersionNumber,
 		); err != nil {
 			return nil, err

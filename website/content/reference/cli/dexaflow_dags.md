@@ -29,4 +29,5 @@ Manage registered DAGs.
 * [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow dags delete](/reference/cli/dexaflow_dags_delete/)	 - Clear a DAG's run history, or fully deregister it with --deregister.
 * [dexaflow dags list](/reference/cli/dexaflow_dags_list/)	 - List registered DAGs.
+* [dexaflow dags versions](/reference/cli/dexaflow_dags_versions/)	 - List a DAG's registered versions, marking the current one.
 

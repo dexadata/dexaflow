@@ -97,7 +97,12 @@ JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.dag_id = $2;
 
 -- name: ListDagVersions :many
-SELECT v.id, v.version, v.created_at,
+-- created_by is the registering user's id (empty when the register had no
+-- user), not their email: any reader of the DAG sees it. is_current marks the
+-- version new runs are created with.
+SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash,
+       COALESCE(v.id = d.current_version_id, false)::boolean AS is_current,
+       COALESCE(v.created_by::text, '')::text AS created_by,
        row_number() OVER (ORDER BY v.created_at, v.version) AS version_number
 FROM dag_versions v
 JOIN dags d ON d.id = v.dag_id
@@ -144,3 +149,8 @@ WHERE d.tenant_id = $1 AND d.is_active = true
 
 -- name: ClearDagRuns :execrows
 DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;
+
+-- name: GetTenantUserID :one
+-- The id of a user of the tenant: no row when the user is gone or belongs to
+-- another tenant, so a stale token's subject records no creator.
+SELECT id FROM users WHERE id = $1 AND tenant_id = $2;
