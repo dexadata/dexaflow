@@ -3,7 +3,8 @@ body: |-
   Behavior change: **New DAGs are now paused at creation, as in Airflow.** A DAG registered for
   the first time starts paused, so its schedule creates no run, catchup
   included, until someone unpauses it (UI switch or `dexaflow admin dags
-  unpause <dag_id>`); manual triggers still run. Until now a new DAG started
+  unpause <dag_id>`); a manual trigger is accepted and its run waits in
+  `queued` until the unpause. Until now a new DAG started
   active and a scheduled one began creating runs right after its first deploy.
   The server setting `dags_are_paused_at_creation`
   (`DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION`; on Helm the chart value

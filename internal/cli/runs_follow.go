@@ -189,7 +189,7 @@ func followRun(ctx context.Context, out io.Writer, t followTarget, o followOptio
 			return f.finish(state)
 		default:
 			failures = 0
-			f.hintStall(state, stallAfter)
+			f.hintStall(ctx, state, stallAfter)
 		}
 		wait = nextFollowWait(wait, changed)
 		if werr := f.sleep(ctx, wait); werr != nil {
@@ -236,38 +236,51 @@ func (f *follower) stopped(ctx context.Context) error {
 }
 
 // header prints which run is followed, its UI link, and a note when the DAG
-// is paused. The scheduler starts manual runs of a paused DAG (pause only
-// stops the runs its schedule would create), so the note says the run starts
-// anyway and how to turn the schedule on.
+// is paused: the scheduler holds every run of a paused DAG in queued, manual
+// runs included (Airflow semantics), so the note says the run waits and how to
+// unpause the DAG.
 func (f *follower) header(ctx context.Context) error {
 	if _, err := fmt.Fprintf(f.out, "Following run %s of %s (Ctrl-C stops following; the run keeps going)\n  %s\n",
 		f.t.runID, f.t.dagID, f.t.uiRunURL()); err != nil {
 		return err
 	}
-	if !f.dagPaused(ctx) {
+	return notePausedRun(ctx, f.out, f.t.base, f.t.token, f.t.dagID)
+}
+
+// notePausedRun prints, when dagID is paused, that a run just triggered waits
+// in queued until the DAG is unpaused, with the command that unpauses it.
+func notePausedRun(ctx context.Context, out io.Writer, base, token, dagID string) error {
+	if !dagPaused(ctx, base, token, dagID) {
 		return nil
 	}
-	_, err := fmt.Fprintf(f.out, "note: %s is paused: this manual run starts anyway, but its schedule creates no run until you unpause it: dexaflow admin dags unpause %s\n",
-		f.t.dagID, f.t.dagID)
+	_, err := fmt.Fprintf(out, "note: %s is paused: this run waits in queued until you unpause it: dexaflow admin dags unpause %s\n",
+		dagID, dagID)
 	return err
 }
 
 // dagPaused reports whether the DAG is paused. The answer only decides
 // whether a note is printed, so a failed read counts as not paused.
-func (f *follower) dagPaused(ctx context.Context) bool {
+func dagPaused(ctx context.Context, base, token, dagID string) bool {
 	var dag struct {
 		IsPaused bool `json:"is_paused"`
 	}
-	dagURL := strings.TrimRight(f.t.base, "/") + "/api/v2/dags/" + url.PathEscape(f.t.dagID)
-	return getJSON(ctx, dagURL, f.t.token, &dag) == nil && dag.IsPaused
+	dagURL := strings.TrimRight(base, "/") + "/api/v2/dags/" + url.PathEscape(dagID)
+	return getJSON(ctx, dagURL, token, &dag) == nil && dag.IsPaused
 }
 
-// hintStall says once that the run is still queued after stallAfter.
-func (f *follower) hintStall(state string, stallAfter time.Duration) {
+// hintStall says once that the run is still queued after stallAfter. When
+// the DAG is paused at that moment the pause is the cause, and the note says
+// so; otherwise it points at the agents and max_active_runs.
+func (f *follower) hintStall(ctx context.Context, state string, stallAfter time.Duration) {
 	if f.hinted || state != "queued" || time.Since(f.started) < stallAfter {
 		return
 	}
 	f.hinted = true
+	if dagPaused(ctx, f.t.base, f.t.token, f.t.dagID) {
+		f.printf("note: run %s is still queued after %s because %s is paused; it starts once you unpause it: dexaflow admin dags unpause %s\n",
+			f.t.runID, stallAfter.Round(time.Second), f.t.dagID, f.t.dagID)
+		return
+	}
 	f.printf("note: run %s is still queued after %s and no task has started. "+
 		"Check that an agent is connected and has room (dexaflow admin health) and that no other run of %s holds its max_active_runs.\n",
 		f.t.runID, stallAfter.Round(time.Second), f.t.dagID)

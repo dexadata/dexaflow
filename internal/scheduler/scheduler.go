@@ -59,7 +59,17 @@ type RunState struct {
 	DagVersionID string
 	TenantID     string
 	State        domain.DagRunState
-	Tasks        []domain.TaskSpec
+	// Held reports that the run's DAG is paused. A held run that is still
+	// queued waits: the tick does not start it, materialize its task instances
+	// or dispatch anything for it until the DAG is unpaused, as Airflow 3 does
+	// (#1705). A held run that is already running advances as usual, so the
+	// tasks it started finish. Either way a held run stays in the tick's
+	// snapshot: it counts toward max_active_runs, and its queued and running
+	// task instances count toward max_active_tasks and the pool caps (ADR
+	// 0053, ADR 0066). A clear on a running run puts it back in queued while
+	// other tasks of it may still run, so a queued held run can hold slots.
+	Held  bool
+	Tasks []domain.TaskSpec
 	// Graph is the task index for Tasks, built once per dag_version by the store
 	// and shared read-only by every run of that version. Nil means "build it
 	// when needed", so callers that construct a RunState by hand need not set it.
@@ -720,6 +730,9 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	s.openDispatchWindow()
 	for k := range runs {
 		run := runs[(start+k)%len(runs)]
+		if run.waitsForUnpause() {
+			continue
+		}
 		key := dagRef{run.TenantID, run.DagID}
 		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
 		run.PoolsEnabled = s.poolsEnabled
@@ -740,6 +753,13 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		s.recordPoolWaits(s.clock(), runs, waits, poolBudgets)
 	}
 	return createErr
+}
+
+// waitsForUnpause reports whether the tick must leave the run untouched: a
+// queued run of a paused DAG is not started until the DAG is unpaused (#1705).
+// It stays in the snapshot the caps are computed from (see RunState.Held).
+func (r RunState) waitsForUnpause() bool {
+	return r.Held && r.State == domain.DagRunStateQueued
 }
 
 // openDispatchWindow starts the tick's dispatch accounting: the deadline the

@@ -92,7 +92,7 @@ variables:
   - canary_region
 ```
 
-Compile, push, and trigger it (`dexaflow compile … && dexaflow push … && curl -X POST …/dagRuns`).
+Compile, push, unpause, and trigger it (`dexaflow compile … && dexaflow push … && dexaflow admin dags unpause canary_secrets && curl -X POST …/dagRuns`). A DAG registered for the first time starts paused, and its triggered run waits in `queued` until the unpause.
 
 ## 4. Assert — the four things only a real cluster proves
 

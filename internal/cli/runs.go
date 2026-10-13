@@ -70,8 +70,12 @@ func newRunsTriggerCommand() *cobra.Command {
 			if jerr := json.Unmarshal(raw, &r); jerr != nil {
 				return fmt.Errorf("parsing response: %w", jerr)
 			}
-			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Triggered run %s for %q (state %s)\n", r.DagRunID, args[0], r.State); err != nil || !follow {
+			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Triggered run %s for %q (state %s)\n", r.DagRunID, args[0], r.State); err != nil {
 				return err
+			}
+			if !follow {
+				// With --follow the follower prints this note in its header.
+				return notePausedRun(cmdContext(cmd), cmd.OutOrStdout(), base, bearer, args[0])
 			}
 			return followWithSignals(cmdContext(cmd), cmd.OutOrStdout(),
 				followTarget{base: base, token: bearer, dagID: args[0], runID: r.DagRunID}, followOptions{timeout: timeout})
