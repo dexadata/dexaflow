@@ -33,12 +33,15 @@ type txBeginner interface {
 // Repository implements the API resource and auth user-store interfaces over
 // Postgres using the sqlc-generated query set.
 type Repository struct {
-	q           *queries.Queries
-	pool        txBeginner
-	cipher      secrets.Cipher
-	extCoverage externalSecretCoverage
-	xcomValues  XComValueDeleter
-	specs       *specCache
+	q      *queries.Queries
+	pool   txBeginner
+	cipher secrets.Cipher
+	// varEncryption is how Variable values are stored (#507); the zero value
+	// is off, the plaintext form every earlier release wrote.
+	varEncryption VariableEncryption
+	extCoverage   externalSecretCoverage
+	xcomValues    XComValueDeleter
+	specs         *specCache
 	// tenants caches tenant name -> id (see tenantID). Bounded by the number
 	// of tenants that exist, since only successful lookups are stored.
 	tenants *sync.Map
@@ -1675,7 +1678,7 @@ func (r *Repository) ListVariables(ctx context.Context, tenant string, limit, of
 	}
 	out := make([]domain.Variable, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, domain.Variable{Key: v.Key, Value: v.Value, Description: strOrEmpty(v.Description)})
+		out = append(out, r.listVariable(v.Key, v.Value, v.Description))
 	}
 	return out, int(total), nil
 }
@@ -1705,7 +1708,7 @@ func (r *Repository) SecretVariables(ctx context.Context, tenantID string) (map[
 	}
 	out := make(map[string]string, len(rows))
 	for _, v := range rows {
-		out[v.Key] = v.Value
+		r.deliverVariable(out, v.Key, v.Value)
 	}
 	return out, nil
 }
@@ -1770,7 +1773,7 @@ func (r *Repository) SecretVariablesScoped(ctx context.Context, tenantID string,
 	}
 	out := make(map[string]string, len(rows))
 	for _, v := range rows {
-		out[v.Key] = v.Value
+		r.deliverVariable(out, v.Key, v.Value)
 	}
 	return out, nil
 }
@@ -1913,7 +1916,7 @@ func (r *Repository) GetVariable(ctx context.Context, tenant, key string) (domai
 	if err != nil {
 		return domain.Variable{}, mapNotFound(err)
 	}
-	return domain.Variable{Key: v.Key, Value: v.Value, Description: strOrEmpty(v.Description)}, nil
+	return r.toVariable(v.Key, v.Value, v.Description)
 }
 
 // SetVariable creates or updates a variable, always overwriting the value and
@@ -1925,8 +1928,12 @@ func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Va
 	if err != nil {
 		return err
 	}
+	stored, err := r.sealVariable(v.Value)
+	if err != nil {
+		return err
+	}
 	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: v.Key, Value: v.Value, Description: strPtr(v.Description),
+		TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
 	}); err != nil {
 		return fmt.Errorf("upserting variable: %w", err)
 	}
@@ -1949,8 +1956,12 @@ func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p doma
 	if p.Value != nil {
 		value = *p.Value
 	}
+	stored, err := r.sealVariable(value)
+	if err != nil {
+		return err
+	}
 	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: p.Key, Value: value, Description: p.Description,
+		TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
 	}); err != nil {
 		return fmt.Errorf("upserting variable: %w", err)
 	}

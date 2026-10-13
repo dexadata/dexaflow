@@ -251,16 +251,16 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 	}
 }
 
-// logoutHandler implements GET /api/v2/auth/logout: it clears the _token cookie
+// logoutHandler implements GET /api/v2/auth/logout: it clears the session cookie
 // and returns to the login page, or to the operator's external sign-out when
 // one is configured (#1288). It clears through the same helper both login
 // paths set through, so the deletion can never disagree with the cookie it is
 // deleting.
-func logoutHandler(insecureCookies bool, externalSignOut string) gin.HandlerFunc {
+func logoutHandler(session sessionCookieSpec, externalSignOut string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Both halves are needed and they are about different things. The helper
 		// is how the deletion can never disagree with the cookie it deletes.
-		clearSessionCookie(c, insecureCookies)
+		clearSessionCookie(c, session)
 		if externalSignOut != "" {
 			c.Redirect(http.StatusFound, externalSignOut)
 			return

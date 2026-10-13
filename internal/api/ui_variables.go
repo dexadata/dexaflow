@@ -71,14 +71,18 @@ func buildVariablePatch(key string, value, desc *string, stored domain.Variable,
 	return p
 }
 
-// variableDTO is the Airflow 3.2.1 VariableResponse. Dexaflow stores variables in
-// plaintext for now (is_encrypted is false) and has no teams (team_name null).
+// variableDTO is the Airflow 3.2.1 VariableResponse. is_encrypted reports whether
+// the value is sealed at rest (variable_encryption, #507); there are no teams.
 type variableDTO struct {
 	Key         string  `json:"key"`
 	Value       string  `json:"value"`
 	Description *string `json:"description"`
 	IsEncrypted bool    `json:"is_encrypted"`
 	TeamName    *string `json:"team_name"`
+	// ValueUnreadable marks a variable whose stored value no configured secret
+	// key opens (#507); its value is masked. Omitted otherwise, so a readable
+	// variable renders exactly as Airflow's VariableResponse.
+	ValueUnreadable bool `json:"value_unreadable,omitempty"`
 }
 
 type variableCollectionDTO struct {
@@ -87,12 +91,17 @@ type variableCollectionDTO struct {
 }
 
 func toVariableDTO(v domain.Variable) variableDTO {
+	value := maskedValue(v.Key, v.Value)
+	if v.Unreadable {
+		value = secretMask
+	}
 	return variableDTO{
-		Key:         v.Key,
-		Value:       maskedValue(v.Key, v.Value),
-		Description: strPtrOrNil(v.Description),
-		IsEncrypted: false,
-		TeamName:    nil,
+		Key:             v.Key,
+		Value:           value,
+		Description:     strPtrOrNil(v.Description),
+		IsEncrypted:     v.Encrypted,
+		TeamName:        nil,
+		ValueUnreadable: v.Unreadable,
 	}
 }
 

@@ -138,8 +138,9 @@ func CORS(allowed []string) gin.HandlerFunc {
 // in its own route group instead of a user session.
 var alwaysPublic = []string{"/auth/", "/api/v2/auth/", "/api/v2/service/", "/healthz", "/readyz", "/docs", "/openapi", "/ui/config"}
 
-// authTokenCookie is the cookie the Airflow 3.2.1 UI carries the JWT in (set by
-// the login flow). JWTAuth accepts it as a fallback to the Authorization header.
+// authTokenCookie is the default name of the cookie the UI carries the JWT in
+// (set by the login flow); auth.session_cookie_name renames it (#1405). JWTAuth
+// accepts it as a fallback to the Authorization header.
 const authTokenCookie = "_token"
 
 // dataPlanePrefixes require a bearer token. Everything outside them — the static
@@ -178,19 +179,19 @@ func DevBypassAuth() gin.HandlerFunc {
 
 // JWTAuth validates the bearer token on protected routes and stores the user.
 func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
-	return jwtAuth(authn, nil)
+	return jwtAuth(authn, nil, authTokenCookie)
 }
 
 // jwtAuth is JWTAuth with an optional trusted-issuer bearer (#1468): a bearer
 // in the Authorization header that is not a valid engine token is then also
 // checked against the trusted issuer. A nil bearer leaves JWTAuth unchanged.
-func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth) gin.HandlerFunc {
+func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, cookieName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublic(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
-		tokens := candidateTokens(c)
+		tokens := candidateTokens(c, cookieName)
 		if len(tokens) == 0 {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
@@ -269,16 +270,16 @@ func bearerToken(header string) string {
 }
 
 // candidateTokens returns the JWTs to try authenticating, in order: the
-// Authorization bearer first, then the Airflow UI's _token cookie. Both are
+// Authorization bearer first, then the session cookie named cookieName. Both are
 // returned (not just the first present) so JWTAuth can fall back to the cookie
 // when the bearer is stale/invalid — the SPA-refresh case — rather than failing
 // on the bearer alone.
-func candidateTokens(c *gin.Context) []string {
+func candidateTokens(c *gin.Context, cookieName string) []string {
 	var tokens []string
 	if t := bearerToken(c.GetHeader("Authorization")); t != "" {
 		tokens = append(tokens, t)
 	}
-	if cookie, err := c.Request.Cookie(authTokenCookie); err == nil && cookie.Value != "" {
+	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" {
 		tokens = append(tokens, cookie.Value)
 	}
 	return tokens

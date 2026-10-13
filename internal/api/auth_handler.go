@@ -110,7 +110,7 @@ type tokenResponse struct {
 // the body is unchanged. A cross-origin caller gets the body and no cookie at
 // all; see browserMaySetSession for why setting one there would be a login-CSRF
 // hole that this endpoint did not have while it answered with a body only.
-func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSeconds int, bg *breakGlass, insecureCookies bool) gin.HandlerFunc {
+func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSeconds int, bg *breakGlass, session sessionCookieSpec) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Peek the limiter up front but DON'T count this attempt yet: only failed
 		// logins consume the budget (recorded below). This is what keeps a user who
@@ -174,7 +174,7 @@ func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSe
 		// browser in as an account it holds credentials for; see
 		// browserMaySetSession. The body is unchanged either way.
 		if browserMaySetSession(c) {
-			setSessionCookie(c, token, time.Duration(ttlSeconds)*time.Second, insecureCookies)
+			setSessionCookie(c, token, time.Duration(ttlSeconds)*time.Second, session)
 		}
 		c.JSON(http.StatusOK, tokenResponse{AccessToken: token, TokenType: "bearer", ExpiresIn: ttlSeconds})
 	}

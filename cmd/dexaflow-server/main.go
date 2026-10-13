@@ -1447,6 +1447,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		ResourceUnit:                 resourceUnit(cfg),
 		UnitMisfits:                  unitMisfits(tel.Metrics),
 		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
+		ExecutionPolicy:              executionPolicy(cfg.Executor.Defaults),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -1500,6 +1501,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		ServiceAllowedTenants: cfg.Auth.TrustedIssuer.AllowedTenants,
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
+		SessionCookieName:     cfg.Auth.SessionCookieName,
 	})
 	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg)
 }
@@ -2876,6 +2878,18 @@ func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
 	return unit
 }
 
+// executionPolicy is the parsed executor.defaults.execution_allowlist (issue
+// #629), nil when it allows everything. ServerConfig.Validate parses the same
+// values and fails boot on an error, so none reaches here; should one, the
+// most restrictive reading (no field allowed) is the safe one.
+func executionPolicy(c config.PlatformDefaultsSection) *domain.ExecutionPolicy {
+	policy, err := domain.ParseExecutionPolicy(c.ExecutionAllowlist.ExecutionPolicyConfig())
+	if err != nil {
+		return domain.DenyAllExecutionPolicy()
+	}
+	return policy
+}
+
 // unitMisfits is the API's misfit counter, nil (not a typed nil) without
 // metrics so the handler's nil check holds.
 func unitMisfits(m *observability.Metrics) api.UnitMisfitRecorder {
@@ -2903,6 +2917,7 @@ func platformDefaults(c config.PlatformDefaultsSection) dispatch.PlatformDefault
 			RunAsNonRoot:           c.RunTasksAsNonRoot,
 			ReadOnlyRootFilesystem: c.ReadOnlyTaskRootFilesystem,
 		},
+		ExecutionPolicy: executionPolicy(c),
 	}
 	if c.ResourcesCPU != "" || c.ResourcesMemory != "" {
 		// Set requests AND limits to the same quantity so a task that relies on the

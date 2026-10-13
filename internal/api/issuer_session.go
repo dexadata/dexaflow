@@ -50,14 +50,14 @@ type TrustedIssuerUserStore interface {
 
 // issuerSessionDeps is what the handoff handler needs.
 type issuerSessionDeps struct {
-	issuer          TrustedIssuer
-	users           TrustedIssuerUserStore
-	origins         []string
-	audit           AuthAuditWriter
-	jwtSecret       string
-	tokenTTL        time.Duration
-	logger          *slog.Logger
-	insecureCookies bool
+	issuer    TrustedIssuer
+	users     TrustedIssuerUserStore
+	origins   []string
+	audit     AuthAuditWriter
+	jwtSecret string
+	tokenTTL  time.Duration
+	logger    *slog.Logger
+	session   sessionCookieSpec
 	// signIn is auth.external_signin_url (#1288), parsed once. When set, a
 	// refusal sends the browser back there instead of answering problem+json.
 	// It is the only place a refusal redirects to: nothing from the request
@@ -131,7 +131,7 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 			d.refuse(c, http.StatusInternalServerError, issuerErrServer, "internal error", "could not open a session")
 			return
 		}
-		setSessionCookie(c, token, d.tokenTTL, d.insecureCookies)
+		setSessionCookie(c, token, d.tokenTTL, d.session)
 		d.record(c, auditIssuerLoginSuccess, user.TenantID, user.ID, user.Email, nil)
 		c.Redirect(http.StatusSeeOther, sanitizeNext(c.PostForm("next")))
 	}
