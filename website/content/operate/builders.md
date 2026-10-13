@@ -20,14 +20,14 @@ no container daemon on your machine.
 
 | Order | Builder | Used when | Status |
 |---|---|---|---|
-| 1 | `skip` | The image of your dependencies is already in the registry and the code did not change | Planned (#1706) |
+| 1 | `skip` | The image for this content is already in the registry: today the whole DAG image under its content label ([see below](#reusing-an-image-already-in-the-registry)); later the image of your dependencies, when only the code changed | Available for `deploy` (whole image) |
 | 2 | `code-layer` | Only your DAG code changed: it is added as one layer on the cached dependency image, through the registry | Planned (#1706) |
 | 3 | `dependency-layer` | Every dependency has a wheel for the target platform: they are installed for that platform and added as a layer on the runtime base, with no daemon and no emulation | Planned (#1706) |
 | 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`): a build pod in your cluster, or a cloud builder | Planned (#1706) |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
-Until the first four land, every build falls back to `local-daemon`, and the
-output says so before the build starts:
+Until paths 2 to 4 land, every build that is not skipped falls back to
+`local-daemon`, and the output says so before the build starts:
 
 ```console
 $ dexaflow deploy --server https://pro.example.com --yes
@@ -44,6 +44,78 @@ Deployed first_pro_dag -> https://pro.example.com
 `compile --build` and `build` print the same two lines, `platforms:` with its
 source and `builder:`. With `deploy --skip-build` nothing is built and no
 builder line is printed.
+
+## Reusing an image already in the registry
+
+The default version label is a hash of everything the image is built from
+(`dexaflow.yaml`, the files the image copies, the CLI version). With
+`tag_strategy: version`, the default, the image tag is that label, so an
+image the registry already holds under it was built from the same inputs.
+`deploy` then pins that image and registers it without building or pushing:
+
+```console
+builder:    skip, the registry already holds the image for this content label (pass --rebuild to build it again)
+```
+
+This happens when the same content was pushed before but is not the current
+version on this control plane: a deploy to a second target that shares the
+registry, a CI job that already built the image, or a deploy whose register
+step failed. When the content is already the current version, `deploy` stops
+earlier and says so.
+
+The image is reused only when it holds every requested platform. It is never
+reused for an explicit `--dag-version`, for a tag from git
+(`tag_strategy: git_sha` or `git_tag`, unless it fell back to the version
+label outside git or with no tag on `HEAD`), or with `--rebuild` or
+`--force`.
+The checks that run before a build still run: a `build.dockerfile` that
+resolves outside the project is refused, and secrets the image would carry
+are reported. Any registry error (a missing tag, `401`, a timeout) means a
+normal build, and the `builder:` line names the error.
+
+`deploy --plan` reads the registry too and says when the image would be
+reused:
+
+```console
+  build       no
+  push        no
+  why         content changed: ...; the registry already holds the image for this content label, so it is pinned without a build or push (--rebuild builds it again)
+```
+
+### What the label does not cover
+
+Like the "already deployed" check, a reuse trusts the label. It does not
+pick up:
+
+- a new upstream release of a dependency without a pinned version
+  (`pandas>=2`), or of a `base_image` given by tag;
+- anything the label does not hash, such as an environment variable the
+  image build reads.
+
+Pass `--rebuild` to build the image again. For images that are reproducible,
+pin dependencies to exact versions (or commit a lock) and give `base_image`
+by digest.
+
+### Who decides what a reused image contains
+
+The tag of a reused image is predictable from the sources, so anyone who can
+push to the DAG's image repository can place an image under a label before
+the deploy of that label runs, and the deploy registers it. Treat push access
+to that repository as deploy access:
+
+- give push rights only to the identity that deploys (the CI job or the
+  operator), and pull rights to the cluster;
+- enable tag immutability where your registry offers it (ECR, Artifact
+  Registry, Harbor, ACR), so a tag that exists cannot be replaced.
+
+A pipeline that must build what it ships, every time, passes `--rebuild`
+when tags are mutable. With tag immutability on, `--rebuild` of a label that
+is already in the registry fails at the push; such a pipeline gives every
+build its own label instead, for example `--dag-version "$CI_PIPELINE_ID"`,
+which never reuses and never collides.
+
+The decision and its trade-offs are recorded in
+[ADR 0076](/project/adrs/0076-reuse-image-by-content-label/).
 
 ## Choosing the platform
 

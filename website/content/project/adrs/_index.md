@@ -85,6 +85,7 @@ this page.
 - [ADR 0073: DAG images are built without a container daemon first; a local daemon is the fallback](/project/adrs/0073-daemonless-image-builds/)
 - [ADR 0074: CI deploys with named, scoped, revocable API tokens and a built-in deployer role](/project/adrs/0074-scoped-api-tokens/)
 - [ADR 0075: The daemonless build of ADR 0073 ships in 0.5.4, and pushed images are read back through the registry](/project/adrs/0075-daemonless-builds-in-0-5-4/)
+- [ADR 0076: deploy reuses the image already in the registry under the content label](/project/adrs/0076-reuse-image-by-content-label/)
 
 ## Template
 

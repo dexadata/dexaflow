@@ -62,6 +62,10 @@ type compileOptions struct {
 	// built, when set, receives the builder's result, and asks the builder to
 	// pin the pushed image by digest (deploy registers that pin).
 	built *build.Result
+	// reuse allows the skip path: the image tag is the default content label,
+	// so an image the registry holds under it can be pinned instead of built
+	// (ADR 0076). deploy sets it; --rebuild and --force clear it.
+	reuse bool
 }
 
 func newCompileCommand() *cobra.Command {
@@ -589,52 +593,65 @@ func writeDAGFile(path string, spec *domain.DAGSpec) error {
 // afterward so the workspace stays clean. A push always follows a build
 // (checkImageFlags refuses --push without --build).
 func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
-	if o.build {
-		name, fromConfig := resolveDockerfileName(cmd, o, cfg)
-		if fromConfig {
-			if cerr := checkConfiguredDockerfile(dir, name); cerr != nil {
-				return cerr
-			}
+	if !o.build {
+		return nil
+	}
+	b, reason := selectBuilder(cmdContext(cmd), o, cfg, image)
+	return buildImage(cmd, dir, o, cfg, image, b, reason)
+}
+
+// buildImage runs builder b on the project, from its own Dockerfile or one
+// generated from dexaflow.yaml, and pushes when asked. The checks before the
+// build (a build.dockerfile outside the project, exclude_paths, secrets the
+// image would carry) run on the skip path too, where b builds nothing: the
+// image it reuses was built from the same inputs, so what they refuse or warn
+// about holds for it as well.
+func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string, b build.Builder, reason string) error {
+	name, fromConfig := resolveDockerfileName(cmd, o, cfg)
+	if fromConfig {
+		if cerr := checkConfiguredDockerfile(dir, name); cerr != nil {
+			return cerr
 		}
-		dockerfile, cleanup, derr := ensureDockerfile(dir, name, cfg, dagSourcePath(dir, cfg))
-		if derr != nil {
-			return derr
-		}
-		defer cleanup()
-		// A project that ships its own Dockerfile gets the exclusions too, but
-		// we cannot read its COPY lines — so the secret warning softens rather
-		// than claiming what ships.
-		ownDockerfile := dockerfile != filepath.Join(dir, generatedDockerfileName)
-		// Applies whether or not the project ships its own Dockerfile: exclude_paths
-		// is a statement about what may enter the image, and it does not become
-		// less true because the author wrote the Dockerfile themselves.
-		ignoreCleanup, baked, ierr := ensureDockerignore(cmd.ErrOrStderr(), dir, cfg, ownDockerfile)
-		if ierr != nil {
-			return ierr
-		}
-		defer ignoreCleanup()
-		b, reason := selectBuilder(o)
-		if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
-			return perr
-		}
-		res, berr := b.Build(cmdContext(cmd), build.Request{
-			Image:      image,
-			Dockerfile: dockerfile,
-			ContextDir: dir,
-			Platforms:  buildPlatforms(cfg),
-			Push:       o.push,
-			Pin:        o.push && o.built != nil,
-			Stdout:     cmd.OutOrStdout(),
-			Stderr:     cmd.ErrOrStderr(),
-		})
-		if berr != nil {
-			return berr
-		}
-		if o.built != nil {
-			*o.built = res
-		}
-		// After the build, where the eye lands: the warning above is minutes of
-		// layer output away by now.
+	}
+	dockerfile, cleanup, derr := ensureDockerfile(dir, name, cfg, dagSourcePath(dir, cfg))
+	if derr != nil {
+		return derr
+	}
+	defer cleanup()
+	// A project that ships its own Dockerfile gets the exclusions too, but
+	// we cannot read its COPY lines, so the secret warning softens rather
+	// than claiming what ships.
+	ownDockerfile := dockerfile != filepath.Join(dir, generatedDockerfileName)
+	// Applies whether or not the project ships its own Dockerfile: exclude_paths
+	// is a statement about what may enter the image, and it does not become
+	// less true because the author wrote the Dockerfile themselves.
+	ignoreCleanup, baked, ierr := ensureDockerignore(cmd.ErrOrStderr(), dir, cfg, ownDockerfile)
+	if ierr != nil {
+		return ierr
+	}
+	defer ignoreCleanup()
+	if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
+		return perr
+	}
+	res, berr := b.Build(cmdContext(cmd), build.Request{
+		Image:      image,
+		Dockerfile: dockerfile,
+		ContextDir: dir,
+		Platforms:  buildPlatforms(cfg),
+		Push:       o.push,
+		Pin:        o.push && o.built != nil,
+		Stdout:     cmd.OutOrStdout(),
+		Stderr:     cmd.ErrOrStderr(),
+	})
+	if berr != nil {
+		return berr
+	}
+	if o.built != nil {
+		*o.built = res
+	}
+	// After the build, where the eye lands: the warning above is minutes of
+	// layer output away by now. A reused image printed no build output.
+	if res.Path != build.PathSkip {
 		remindBakedSecretsAfterBuild(cmd.ErrOrStderr(), baked)
 	}
 	return nil

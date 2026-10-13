@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/dexadata/dexaflow/internal/build"
 )
 
 // deployPlan is what deploy --plan says one DAG's deploy would do, and why.
@@ -32,6 +34,10 @@ type planInput struct {
 	origin           labelOrigin
 	skipBuild, force bool
 	paused           *bool
+	// reuse and platforms let the plan check the skip path as the deploy
+	// would: whether the registry already holds the image for this label.
+	reuse     bool
+	platforms []string
 }
 
 // serverDag is what the plan learns about the DAG from the server's details:
@@ -98,7 +104,22 @@ func planDeploy(ctx context.Context, warn io.Writer, in planInput) (deployResult
 		p.CurrentVersion = current
 		planFromState(&res, state, current, in)
 	}
+	planReuse(ctx, p, in)
 	return res, nil
+}
+
+// planReuse turns a planned build into a reuse when the deploy would take
+// the skip path: the registry already holds the image for this content
+// label. It reads the registry, as the deploy would, and changes nothing.
+func planReuse(ctx context.Context, p *deployPlan, in planInput) {
+	if !p.Build || !in.reuse {
+		return
+	}
+	if b, _ := build.Select(ctx, build.Options{Reuse: true}, in.image, in.platforms); b.Path() != build.PathSkip {
+		return
+	}
+	p.Build, p.Push = false, false
+	p.Reason += "; the registry already holds the image for this content label, so it is pinned without a build or push (--rebuild builds it again)"
 }
 
 // planFromState fills the plan from the pre-check's verdict on the content

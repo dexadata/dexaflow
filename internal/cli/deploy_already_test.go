@@ -182,7 +182,8 @@ func TestCheckDeployed(t *testing.T) {
 
 func deployFixture(t *testing.T) (dir, builder, log string) {
 	t.Helper()
-	return deployFixtureAt(t, "reg.io/team")
+	// A local registry with no image, so no test reaches a real registry.
+	return deployFixtureAt(t, missingRegistry(t)+"/team")
 }
 
 // deployFixtureAt is deployFixture whose registry is registryURL.

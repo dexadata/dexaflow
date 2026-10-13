@@ -244,7 +244,10 @@ and which labels it has registered:
   [Rolling back](/operate/cicd-deploy/#rolling-back)). To register the same
   content as a new version instead, pass a new `--dag-version`.
 - **The label is unknown**, the DAG has never been registered (`404`), or it
-  has no current version: deploy builds and registers as usual.
+  has no current version: deploy builds and registers as usual, unless the
+  registry already holds the image for this label, which it then registers
+  without building (see
+  [Reusing an image already in the registry](/operate/builders/#reusing-an-image-already-in-the-registry)).
 
 A `403`, a network error, or a `5xx` that one retry does not cure lets the
 deploy proceed with a note. A `401` stops it with the sign-in hint, and any
