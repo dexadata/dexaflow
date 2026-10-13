@@ -200,9 +200,9 @@ scope too.
 | Tool | What it does | Plan first when |
 |---|---|---|
 | `trigger_run` | Triggers a run (`dag_id`, optional `conf` and `note`); on a paused DAG it waits in `queued` until the unpause. | never |
-| `clear_task` | Clears task instances of a run so they run again: `dag_id`, `run_id`, optional `task_ids`, `include_downstream`, `include_upstream`, `only_failed` (default true) and `run_on_latest_version`. It previews the clear first. | the clear touches more than one task instance |
+| `clear_task` | Clears task instances of a run so they run again: `dag_id`, `run_id`, optional `task_ids`, `include_downstream`, `include_upstream`, `only_failed` (default true) and `run_on_latest_version`. It previews the clear first. On a paused DAG the cleared tasks wait until the unpause. | the clear touches more than one task instance |
 | `pause_dag` | Pauses a DAG. | never |
-| `unpause_dag` | Unpauses a DAG. | the DAG has a schedule, since unpausing starts runs |
+| `unpause_dag` | Unpauses a DAG. The plan says how many queued runs will start. | the DAG has a schedule, or has queued runs waiting for the unpause (triggered or cleared while it was paused), since unpausing starts runs |
 | `apply_plan` | Carries out a plan (`plan_id`). | — |
 
 A call that needs a plan changes nothing. It returns what would happen and a
@@ -219,8 +219,8 @@ A call that needs a plan changes nothing. It returns what would happen and a
   email changed, still applies the plan; the control plane checks the
   caller's permissions on the apply call itself.
 - **Apply checks again before acting.** If the task instances are no longer in
-  the states the plan showed, or the DAG's paused flag or schedule changed,
-  `apply_plan` refuses and asks for a new plan. A plan therefore applies once.
+  the states the plan showed, or the DAG's paused flag or schedule changed, or
+  more runs are queued than the plan showed, `apply_plan` refuses and asks for a new plan. A plan therefore applies once.
 - **A clear over more than 200 task instances is refused.** Narrow it with
   `task_ids` or use the UI.
 - **A clear runs only what its preview showed.** The clear that follows a
