@@ -89,6 +89,7 @@ this page.
 - [ADR 0074: CI deploys with named, scoped, revocable API tokens and a built-in deployer role](/project/adrs/0074-scoped-api-tokens/)
 - [ADR 0075: The daemonless build of ADR 0073 ships in 0.5.4, and pushed images are read back through the registry](/project/adrs/0075-daemonless-builds-in-0-5-4/)
 - [ADR 0076: deploy reuses the image already in the registry under the content label](/project/adrs/0076-reuse-image-by-content-label/)
+- [ADR 0077: a pushed build splits into a dependency image and a code layer](/project/adrs/0077-dependency-image-and-code-layer/)
 
 ## Template
 

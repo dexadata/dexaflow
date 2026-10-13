@@ -66,6 +66,9 @@ type compileOptions struct {
 	// so an image the registry holds under it can be pinned instead of built
 	// (ADR 0076). deploy sets it; --rebuild and --force clear it.
 	reuse bool
+	// rebuild builds the dependency image of a split build again even when
+	// the registry holds one for its key (deploy --rebuild).
+	rebuild bool
 }
 
 func newCompileCommand() *cobra.Command {
@@ -596,7 +599,8 @@ func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.
 	if !o.build {
 		return nil
 	}
-	b, reason := selectBuilder(cmdContext(cmd), o, cfg, image)
+	name, _ := resolveDockerfileName(cmd, o, cfg)
+	b, reason := selectBuilder(cmdContext(cmd), dir, name, o, cfg, image)
 	return buildImage(cmd, dir, o, cfg, image, b, reason)
 }
 
@@ -633,6 +637,14 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
 		return perr
 	}
+	var code []build.LayerFile
+	if _, split := b.(build.CodeLayer); split {
+		files, cerr := codeLayerFiles(dir, cfg, o.output)
+		if cerr != nil {
+			return cerr
+		}
+		code = files
+	}
 	res, berr := b.Build(cmdContext(cmd), build.Request{
 		Image:      image,
 		Dockerfile: dockerfile,
@@ -640,6 +652,7 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 		Platforms:  buildPlatforms(cfg),
 		Push:       o.push,
 		Pin:        o.push && o.built != nil,
+		Code:       code,
 		Stdout:     cmd.OutOrStdout(),
 		Stderr:     cmd.ErrOrStderr(),
 	})

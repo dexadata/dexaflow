@@ -20,14 +20,14 @@ no container daemon on your machine.
 
 | Order | Builder | Used when | Status |
 |---|---|---|---|
-| 1 | `skip` | The image for this content is already in the registry: today the whole DAG image under its content label ([see below](#reusing-an-image-already-in-the-registry)); later the image of your dependencies, when only the code changed | Available for `deploy` (whole image) |
-| 2 | `code-layer` | Only your DAG code changed: it is added as one layer on the cached dependency image, through the registry | Planned (#1706) |
+| 1 | `skip` | The whole DAG image for this content is already in the registry under its content label ([see below](#reusing-an-image-already-in-the-registry)) | Available for `deploy` |
+| 2 | `code-layer` | The image of your dependencies is already in the registry: only your DAG code is pushed, as one layer on it, through the registry ([see below](#pushing-only-the-dag-code)) | Available for pushed builds with pinned dependencies |
 | 3 | `dependency-layer` | Every dependency has a wheel for the target platform: they are installed for that platform and added as a layer on the runtime base, with no daemon and no emulation | Planned (#1706) |
 | 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`): a build pod in your cluster, or a cloud builder | Planned (#1706) |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
-Until paths 2 to 4 land, every build that is not skipped falls back to
-`local-daemon`, and the output says so before the build starts:
+Until paths 3 and 4 land, a build that neither path 1 nor path 2 covers
+falls back to `local-daemon`, and the output says so before the build starts:
 
 ```console
 $ dexaflow deploy --server https://pro.example.com --yes
@@ -116,6 +116,81 @@ which never reuses and never collides.
 
 The decision and its trade-offs are recorded in
 [ADR 0076](/project/adrs/0076-reuse-image-by-content-label/).
+
+## Pushing only the DAG code
+
+A pushed build of the Dockerfile Dexaflow generates is made of two images:
+
+- the **dependency image**: the base image, `system_packages` and your
+  Python dependencies, with `PYTHONPATH` and the non-root user. It is the
+  generated Dockerfile without its `COPY` lines;
+- the **DAG image**: the dependency image plus one layer holding your DAG
+  code, the files those `COPY` lines take.
+
+The dependency image is stored in the DAG's own repository under a tag
+derived from what it contains, `deps-<key>`. The key covers the base image
+digest, `system_packages`, `dependencies` and `connectors`, and the
+platforms. When the registry already holds the dependency image for the
+key, no container daemon runs: the code layer is added to it through the
+registry API and pushed under the DAG image tag.
+
+```console
+builder:    code-layer, the registry holds the dependency image ghcr.io/your-org/etl:deps-4f1c... for this build, so only the DAG code is pushed, as a layer on it (pass --rebuild to build the dependency image again)
+```
+
+The first build of a key, or a build with `--rebuild`, has the local daemon
+build and push the dependency image first, then adds the code layer:
+
+```console
+builder:    local-daemon (docker) for the dependency image, then code-layer, no dependency image ghcr.io/your-org/etl:deps-4f1c... in the registry (...): the daemon builds and pushes it, then the DAG code is appended to it
+```
+
+The dependency image is built from an empty directory, so no project file
+reaches that build. Every later deploy that changes only DAG code, from any
+machine or CI runner that can reach the registry, skips the daemon.
+
+### When the build stays whole
+
+The whole image is built by the local daemon, as before, and the `builder:`
+line says why, when:
+
+- a Python dependency is not pinned to one version. Pin each one
+  (`pandas==2.2.3`); a connector's provider package is pinned by listing it
+  pinned in `dependencies` too (`apache-airflow-providers-amazon==9.1.0`);
+- the project ships its own Dockerfile;
+- `dag_source` is in a subdirectory;
+- the digest of the base image cannot be read (no network or no credentials
+  for its registry);
+- the build is not pushed (`compile --build` without `--push`), or has no
+  platform.
+
+### What the code layer contains
+
+The layer holds the files the generated Dockerfile copies: the DAG source,
+`include_paths`, the dbt project and the directories of `dbt_groups`, with
+the same `.dockerignore` and `exclude_paths` rules as the version label.
+`.git` never ships. Symlinks inside a copied directory stay links. Every
+entry is owned by root, with a fixed date, mode `0755` for directories and
+executables and `0644` for other files, so the same files always make the
+same layer and the non-root task user can read every file.
+
+### Keeping dependency images current
+
+A dependency image is reused for as long as its key holds. Its transitive
+dependencies (the packages your pinned ones pull in) are the versions pip
+resolved when it was first built. Pass `--rebuild` to build the dependency
+image again. A base image given by tag is read by digest on every build, so
+a new image under that tag gives a new key and a new dependency image.
+
+`deps-*` tags accumulate in the DAG repository, one per set of dependencies.
+A retention rule of your registry can expire old ones; a deploy whose
+dependency image is gone builds it again. The access rules of
+[Who decides what a reused image contains](#who-decides-what-a-reused-image-contains)
+cover these tags too: with tag immutability on, `--rebuild` of dependencies
+that are already in the registry fails at the dependency push.
+
+The decision is recorded in
+[ADR 0077](/project/adrs/0077-dependency-image-and-code-layer/).
 
 ## Choosing the platform
 

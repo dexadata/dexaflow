@@ -79,7 +79,7 @@ func newDeployCommand() *cobra.Command {
 	addFollowFlags(cmd, &o.follow, &o.timeout)
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt (for automation)")
 	cmd.Flags().BoolVar(&o.force, "force", false, "build, push and register even when the default content label is already deployed")
-	cmd.Flags().BoolVar(&o.rebuild, "rebuild", false, "build and push the image even when the registry already holds one for this content label")
+	cmd.Flags().BoolVar(&o.rebuild, "rebuild", false, "build and push the image even when the registry already holds one for this content label, and build its dependency image again")
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
 	cmd.Flags().String("registry", "", registryFlagUsage)
@@ -551,6 +551,7 @@ func (d *deployRun) run() error {
 	co.image = image
 	version := co.dagVersion
 	co.reuse = d.mayReuse(image, version, origin)
+	co.rebuild = d.o.rebuild
 	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
 	if d.o.plan {
 		return d.plan(ctx, version, image, origin)
