@@ -74,6 +74,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
   HUGO_VERSION: "0.165.0"
 
 jobs:
@@ -132,6 +137,12 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: src/website/go.mod
+          # Every leg checks its version out under src/, so the default cache
+          # key (go.sum at the workspace root) found nothing and each of the
+          # dozen legs downloaded every module at once.
+          cache-dependency-path: |
+            src/go.sum
+            src/website/go.sum
 
       - name: Setup Node (Docsy PostCSS/autoprefixer)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
