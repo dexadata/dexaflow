@@ -121,6 +121,26 @@ The label alone, without the line, fails the guard. The release cut reads the
 reason back (`scripts/docs-gap.sh`), so write it for the person cutting the
 release.
 
+The **API compatibility** check (`scripts/api-compat.sh`) compares the three
+public APIs with the base branch: the agent protocol in `proto/` (`buf
+breaking`, with the rules in `buf.yaml`), the REST API in
+`docs/api/openapi.yaml` (`oasdiff breaking`), and the Go client in `pkg/client`
+(`apidiff`). Removing or renaming a proto field, an OpenAPI path or parameter,
+or an exported `pkg/client` symbol fails it. When the break is intended, the
+PR needs both:
+
+- the **`breaking-change`** label, which a maintainer applies after agreeing
+  to the break, and
+- a changelog fragment of kind `Changed` or `Removed` that names what broke and
+  what users do about it.
+
+Run it locally against `main` before pushing:
+
+```bash
+git worktree add /tmp/base origin/main
+scripts/api-compat.sh /tmp/base    # needs buf, oasdiff and apidiff on PATH
+```
+
 #### 5. Pull Request Process
 
 1. Fork the repository and create your branch.
