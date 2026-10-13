@@ -21,6 +21,14 @@ updates:
       interval: weekly
       day: monday
     labels: ["dependencies", "ci"]
+    groups:
+      # init, autobuild, analyze and upload-sarif are one release of
+      # github/codeql-action and must move together: bumped one by one, analyze
+      # refuses the configuration init wrote ("Loaded a configuration file for
+      # version 4.38.2, but running version 4.38.3") and every CodeQL job fails.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Docker base images.
   #
