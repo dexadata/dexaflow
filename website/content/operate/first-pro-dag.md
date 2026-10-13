@@ -174,10 +174,15 @@ collects every gate `deploy`/`push` enforce, with the exact error and the fix.
 ## Deploy more than one DAG
 
 ```bash
-dexaflow deploy <dag_id>     # a specific DAG in a multi-DAG workspace
+dexaflow deploy <dag_id>     # a specific DAG of the workspace around the current folder
 dexaflow deploy --all        # every DAG in the workspace (best-effort; non-zero exit if any fail)
 dexaflow deploy --skip-build # reuse the existing image (skip docker build/push); dag.json is still recompiled from dexaflow.yaml/dag.py
 ```
+
+The workspace is the folder holding `dexaflow.workspace.yaml` above the current
+folder, else the git repository around it. To keep many DAGs in one repository
+with named control planes (`--target dev`, `--target prod`) and one shared
+registry, see [Workspaces and targets](/operate/workspaces-and-targets/).
 
 ## Build in one CI job, deploy in another
 
