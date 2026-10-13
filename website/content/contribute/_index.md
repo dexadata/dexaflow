@@ -28,8 +28,14 @@ How to work on Dexaflow itself.
   <a class="lf-card" href="/contribute/recipes/">
     <span class="lf-card__icon"><i class="fa-solid fa-list-check"></i></span>
     <span class="lf-card__title">Recipes</span>
-    <span class="lf-card__desc">Step by step for the common changes: add a migration, record a change, backport to a release branch.</span>
+    <span class="lf-card__desc">Step by step for the common changes: a migration, a setting, an API endpoint, a Helm value, a CLI flag, a connector, a backport, a release candidate.</span>
     <span class="lf-card__more">Follow a recipe →</span>
+  </a>
+  <a class="lf-card" href="/contribute/review-checklists/">
+    <span class="lf-card__icon"><i class="fa-solid fa-clipboard-check"></i></span>
+    <span class="lf-card__title">Review checklists</span>
+    <span class="lf-card__desc">What to verify when reviewing Airflow compatibility, Kubernetes behavior, docs and developer experience, and where the evidence comes from.</span>
+    <span class="lf-card__more">Review a change →</span>
   </a>
   <a class="lf-card" href="/contribute/build-docs/">
     <span class="lf-card__icon"><i class="fa-solid fa-book"></i></span>

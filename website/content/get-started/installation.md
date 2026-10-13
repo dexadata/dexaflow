@@ -145,7 +145,7 @@ sha256sum --ignore-missing -c checksums.txt
 The identity is exact: it names the release workflow and the tag, so a
 signature made by any other workflow, branch or tag does not verify. Releases
 before `v0.5.0` were cut before the repository moved, and were signed by
-`https://github.com/neochaotic/leoflow/.github/workflows/release.yaml@refs/tags/${TAG}`;
+`https://github.com/neochaotic/leoflow/.github/workflows/release.yaml@refs/tags/<tag>`;
 `install.sh` picks the right one from the version.
 
 ### `dexaflow doctor`
@@ -184,7 +184,7 @@ $ dexaflow-mcp --version      # MCP server (see the MCP guide)
 
 | Variable | Effect |
 |---|---|
-| `DEXAFLOW_VERSION=v0.5.1` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/dexaflow/releases) for the current tag. |
+| `DEXAFLOW_VERSION={{< latest-version v >}}` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/dexaflow/releases) for the current tag. |
 | `DEXAFLOW_NO_SETUP=1` | install binaries only; run `dexaflow setup` yourself later |
 | `DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin` | where to put the binaries |
 | `DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1` | fail when cosign is not installed, instead of installing without checking the signature of `checksums.txt` (see [Verifying the download](#verifying-the-download)) |
@@ -329,8 +329,8 @@ git clone --depth 1 https://github.com/dexadata/dexaflow   # current main
 cd dexaflow
 
 helm install lf ./helm/dexaflow -n leoflow --create-namespace \
-  --set image.tag=v0.5.1 \
-  --set migrations.image.tag=v0.5.1 \
+  --set image.tag={{< latest-version v >}} \
+  --set migrations.image.tag={{< latest-version v >}} \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
@@ -340,7 +340,7 @@ helm install lf ./helm/dexaflow -n leoflow --create-namespace \
 
 The chart auto-generates the agent TLS cert regardless of image version, so
 this works on `main` today. Pin `--set image.tag` / `--set migrations.image.tag`
-to a published release tag (`v0.5.1` shown; see the
+to a published release tag (`{{< latest-version v >}}` shown; see the
 [releases](https://github.com/dexadata/dexaflow/releases)); from a source
 checkout the image tags are not baked in, so set them explicitly. Add
 `--branch <TAG>` to the clone to install the chart at a specific tag instead of
@@ -550,9 +550,55 @@ plus `dexaflow` and `dexaflow-agent` binaries) are published by
 
 ```bash
 # Verify the server image at a release tag.
-cosign verify ghcr.io/dexadata/dexaflow-server:v0.5.1 \
-  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
+cosign verify ghcr.io/dexadata/dexaflow-server:{{< latest-version v >}} \
+  --certificate-identity "https://github.com/dexadata/dexaflow/.github/workflows/release.yaml@refs/tags/{{< latest-version v >}}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The identity is exact: the release workflow at that tag, so a signature made
+by any other workflow, branch or tag does not verify. Releases before
+`v0.5.0` were signed from `neochaotic/leoflow`; use
+`https://github.com/neochaotic/leoflow/.github/workflows/release.yaml@refs/tags/<tag>`
+for those.
+
+#### Build provenance and SBOMs
+
+From `v0.5.4` on, every release archive and every image the release workflow
+pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate`, each
+`dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names, which share their
+digests) carries a [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
+attestation, and each archive's SPDX SBOM is attested against that archive.
+The Helm chart is cosign-signed (see [the chart page](/operate/helm-chart/))
+but carries no build provenance attestation yet (#1562).
+Check the archive and image attestations with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+TAG={{< latest-version v >}}
+gh release download "$TAG" --repo dexadata/dexaflow --pattern "dexaflow_${TAG#v}_linux_amd64.tar.gz"
+gh attestation verify "dexaflow_${TAG#v}_linux_amd64.tar.gz" \
+  --repo dexadata/dexaflow \
+  --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
+
+gh attestation verify "oci://ghcr.io/dexadata/dexaflow-server:${TAG}" \
+  --repo dexadata/dexaflow \
+  --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
+```
+
+Add `--predicate-type https://spdx.dev/Document/v2.3` to check the SBOM
+attestation of an archive instead of its provenance. Offline, the archive
+provenance is also published on the release as
+`dexaflow_<version>.intoto.jsonl`; pass it with `--bundle`.
+
+Each image also carries its SPDX SBOM (for `linux/amd64`) as a cosign
+attestation, next to the image in the registry, under its `dexaflow-*` name:
+
+```bash
+TAG={{< latest-version v >}}
+cosign verify-attestation "ghcr.io/dexadata/dexaflow-server:${TAG}" \
+  --type spdxjson \
+  --certificate-identity "https://github.com/dexadata/dexaflow/.github/workflows/release.yaml@refs/tags/${TAG}" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  | jq -r .payload | base64 -d | jq .predicate
 ```
 
 ### Full values reference

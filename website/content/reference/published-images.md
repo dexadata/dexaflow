@@ -38,12 +38,12 @@ thing.)
 
 | artifact | tags | mutable? |
 | --- | --- | --- |
-| `dexaflow-server` | `0.4.8` **and** `v0.4.8` | no, both point at the same digests |
-| `dexaflow-migrate` | `0.4.8` **and** `v0.4.8` | no |
-| `dexaflow-mcp` | `0.4.8` **and** `v0.4.8` | no |
-| `dexaflow-runtime` | `py3.11-v0.4.8` | no |
+| `dexaflow-server` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no, both point at the same digests |
+| `dexaflow-migrate` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no |
+| `dexaflow-mcp` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no |
+| `dexaflow-runtime` | `py3.11-{{< latest-version v >}}` | no |
 | `dexaflow-runtime` | `py3.11` | **yes**, moved by every GA of the newest minor |
-| the chart | `0.4.8` | no |
+| the chart | `{{< latest-version >}}` | no |
 
 The server, migrate and MCP images carry both the bare and the `v`-prefixed tag, and
 both resolve to identical digests, so either spelling works.
@@ -53,7 +53,7 @@ the moving `py3.N` tags and the GitHub release marked Latest move only after
 every install, upgrade and signature check passed, so a chart version never
 references an image that does not exist yet.
 
-{{% alert title="py3.11 moves, py3.11-v0.4.8 does not" color="warning" %}}
+{{% alert title="py3.11 moves, py3.11-vX.Y.Z does not" color="warning" %}}
 Every GA of the newest minor re-points `dexaflow-runtime:py<version>` at its
 own build, once the release has passed its install, upgrade and signature
 checks. A release candidate never moves it, and neither does a patch of an
@@ -93,7 +93,7 @@ manifests are signed by digest, so both tag shapes are covered (the same command
 verifies `dexaflow-mcp`):
 
 ```bash
-cosign verify ghcr.io/dexadata/dexaflow-server:0.4.8 \
+cosign verify ghcr.io/dexadata/dexaflow-server:{{< latest-version >}} \
   --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

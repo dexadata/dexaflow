@@ -14,7 +14,12 @@ name: CHANGELOG guard
 on:
   pull_request:
     branches: [main, "release-*"]
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    # edited: a `Skip-changelog: <reason>` line added to the description has
+    # to re-run the guard, as the label does (#1560).
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  # The merge queue (#1569): see changelog-guard-queue below.
+  merge_group:
+    types: [checks_requested]
 
 # pull-requests: read is what lets the exemption step ask the API for the
 # CURRENT labels instead of trusting the event payload, which is a snapshot from
@@ -39,6 +44,7 @@ concurrency:
 jobs:
   changelog-guard:
     name: CHANGELOG entry present
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Exempt PRs with no user-facing change (release-prep, chore, dependabot,
@@ -73,10 +79,18 @@ jobs:
     # required and to be clearable.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Re-read the labels from the API rather than the event payload: the
       # payload is a snapshot of when the event fired, and a label applied at
       # creation time can land after it.
-      - name: Exempt when skip-changelog is set, or the author is dependabot
+      #
+      # A `Skip-changelog: <reason>` line in the description exempts too: an
+      # author whose pull request comes from a fork cannot apply labels, and
+      # would otherwise be red for a reason they cannot fix (#1560). The body
+      # is read from the API for the same reason as the labels. It reaches the
+      # script on stdin, never through the command text.
+      - name: Exempt when skip-changelog or a Skip-changelog line is set, or the author is dependabot
         id: exempt
         env:
           GH_TOKEN: ${{ github.token }}
@@ -90,9 +104,13 @@ jobs:
             exit 0
           fi
           labels=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels -q '.labels[].name')
+          reason=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.body // ""' | bash scripts/check-changelog-entry.sh --skip-reason)
           if printf '%s\n' "$labels" | grep -qx 'skip-changelog'; then
             echo "exempt=true" >> "$GITHUB_OUTPUT"
             echo "skip-changelog is set: no changelog entry required"
+          elif [ -n "$reason" ]; then
+            echo "exempt=true" >> "$GITHUB_OUTPUT"
+            echo "Skip-changelog: ${reason}"
           else
             echo "exempt=false" >> "$GITHUB_OUTPUT"
           fi
@@ -105,8 +123,21 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: git fetch --no-tags --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
-      - name: Require a changelog fragment or [Unreleased] entry (or the skip-changelog label)
+      - name: Require a changelog fragment or [Unreleased] entry (or a skip-changelog label or line)
         if: steps.exempt.outputs.exempt != 'true'
         env:
           BASE_REF: ${{ github.base_ref }}
         run: bash scripts/check-changelog-entry.sh "origin/$BASE_REF"
+
+  # The same check name in the merge queue, so it can be made required. The
+  # entry was judged on the pull request, and the queue cannot remove a
+  # fragment the pull request adds: the queue commit is the pull request on
+  # top of the newer base. So this only reports.
+  changelog-guard-queue:
+    name: CHANGELOG entry present
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Judged on the pull request
+        run: echo "The changelog entry was checked on the pull request; nothing to re-check in the merge queue."
