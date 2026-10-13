@@ -1300,7 +1300,13 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		oidcFlow = flow
 	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
-	return buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg)), nil
+	srv := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
+	// Optional HTTPS on the API listener (#638); plain HTTP when unset.
+	if err := configureAPITLS(srv, cfg.Server); err != nil {
+		return nil, err
+	}
+	tel.Logger.Info("api listener", "http_addr", cfg.Server.HTTPAddr, "tls", srv.TLSConfig != nil)
+	return srv, nil
 }
 
 // oidcDiscoveryTimeout bounds the IdP discovery request on the boot path. It is
@@ -1498,6 +1504,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Host binding (#1463): empty unless auth.trusted_issuer.host_pattern is set.
+		TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
 		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
 		TrustedIssuerBearer: issuerBearer(trustedIssuer),
 		// Operator service API (#1283): off unless auth.service_token is set.
@@ -2655,8 +2663,15 @@ func releaseLeader(leader *scheduler.Leader, logger *slog.Logger) {
 	}
 }
 
+// serve runs one listener until it is shut down. A server with a TLSConfig
+// (the API listener with server.http_tls_cert/key, #638) serves HTTPS; its
+// certificate comes from TLSConfig.GetCertificate, so no file names are passed.
 func serve(s *http.Server, errCh chan<- error) {
-	if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	listen := s.ListenAndServe
+	if s.TLSConfig != nil {
+		listen = func() error { return s.ListenAndServeTLS("", "") }
+	}
+	if err := listen(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		errCh <- fmt.Errorf("serving %s: %w", s.Addr, err)
 	}
 }

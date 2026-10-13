@@ -1,0 +1,96 @@
+suite: networkPolicy.grpcFrom gives the agent gRPC port its own sources (#638)
+templates:
+  - networkpolicy.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  networkPolicy.enabled: true
+  networkPolicy.ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress
+tests:
+  - it: keeps http and grpc in one rule under ingressFrom by default
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 8080
+              protocol: TCP
+            - port: 9091
+              protocol: TCP
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: ingress
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+
+  - it: moves grpc into its own rule sourced from grpcFrom when set
+    set:
+      networkPolicy.grpcFrom:
+        - podSelector:
+            matchExpressions:
+              - key: leoflow.io/run-id
+                operator: Exists
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 8080
+              protocol: TCP
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: ingress
+      - equal:
+          path: spec.ingress[1].ports
+          value:
+            - port: 9091
+              protocol: TCP
+      - equal:
+          path: spec.ingress[1].from[0].podSelector.matchExpressions[0].key
+          value: leoflow.io/run-id
+
+  # A rule with no ports matches every port, so the scheduler role (which
+  # serves no http) must not keep an empty shared rule once grpc moves out.
+  - it: renders no port-less rule for the split scheduler role
+    set:
+      split.enabled: true
+      networkPolicy.grpcFrom:
+        - podSelector:
+            matchExpressions:
+              - key: leoflow.io/run-id
+                operator: Exists
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 9091
+              protocol: TCP
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchExpressions[0].key
+          value: leoflow.io/run-id
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+
+  - it: leaves the split api role on its http rule only
+    set:
+      split.enabled: true
+      networkPolicy.grpcFrom:
+        - podSelector: {}
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 8080
+              protocol: TCP
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
