@@ -17,7 +17,7 @@ import (
 // environment cannot decide what a test resolves.
 func isolateCLIEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"TOKEN", "TARGET", "SERVER_URL", "REGISTRY"} {
+	for _, k := range []string{"TOKEN", "TARGET", "SERVER_URL", "REGISTRY", "TRUSTED_WORKSPACES"} {
 		t.Setenv("DEXAFLOW_"+k, "")
 		t.Setenv("LEOFLOW_"+k, "")
 	}

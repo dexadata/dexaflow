@@ -159,3 +159,56 @@ func TestUpdateUserStoreClearsTheLegacySession(t *testing.T) {
 		t.Errorf("config = %q, want only the legacy pair removed", data)
 	}
 }
+
+func TestUpdateUserStoreMovesTheCommentOfARemovedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	orig := "# session written by auth login\nserver_url: https://a\ntoken: t # keep me? no, token goes\nlite_port: 1\n"
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateUserStore(path, func(s *UserStore) error { s.ServerURL, s.Token = "", ""; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "# session written by auth login") {
+		t.Errorf("the comment above a removed key was lost:\n%s", data)
+	}
+}
+
+func TestUpdateUserStoreKeepsAnInlineComment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("current_target: dev # my lab\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateUserStore(path, func(s *UserStore) error { s.CurrentTarget = "prod"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "current_target: prod # my lab") {
+		t.Errorf("inline comment lost:\n%s", data)
+	}
+}
+
+func TestUpdateUserStoreWritesThroughASymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "dexaflow.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("lite_port: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := UpdateUserStore(link, func(s *UserStore) error { s.CurrentTarget = "dev"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the symlink was replaced by a regular file")
+	}
+	if data, _ := os.ReadFile(target); !strings.Contains(string(data), "current_target: dev") {
+		t.Errorf("the link's target was not updated:\n%s", data)
+	}
+}

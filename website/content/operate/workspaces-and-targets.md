@@ -51,12 +51,19 @@ same workspace as running it at the root.
 A workspace file owned by another user is ignored with a warning, the way git
 ignores a repository it does not trust: the file decides which server your
 token goes to and which registry your images go to, and a parent folder on a
-shared machine is not necessarily yours. Take ownership of the file (`chown`)
-to use it.
+shared machine is not necessarily yours. To use such a file, take ownership
+of it (`chown`) or trust its folder:
+
+- `DEXAFLOW_TRUSTED_WORKSPACES` (or `LEOFLOW_TRUSTED_WORKSPACES`): workspace
+  roots separated by the OS path-list separator (`:` on Linux and macOS), or
+  `*` for every workspace. A CI container that runs as root over a checkout
+  the runner owns typically sets `DEXAFLOW_TRUSTED_WORKSPACES=*`.
+- `trusted_workspaces:` in `~/.dexaflow/config.yaml`, a list of roots (or
+  `"*"`). It is read from that default path, not from a `--config` file.
 
 | Command | Where it reads DAGs |
 |---|---|
-| `dexaflow deploy <dag_id>` | The workspace root; without a workspace file, the git repository around the current folder; else the current folder when it is a DAG project; else the Lite workspace (`workspace:` in the config file, or `~/dexaflow`) |
+| `dexaflow deploy <dag_id>` | The workspace root; without a workspace file, the whole git repository around the current folder (so two projects anywhere in it with the same `dag_id`, test fixtures for example, make the lookup fail: add a workspace file or pass the project's path); else the current folder when it is a DAG project; else the Lite workspace (`workspace:` in the config file, or `~/dexaflow`) |
 | `dexaflow deploy --all` | The workspace root; without a workspace file, the current folder when it is a DAG project (a workspace of one). Inside a git repository with no workspace file it refuses rather than deploy every DAG of the repository; outside one it keeps the Lite workspace |
 | `dexaflow deploy` with no argument | The current folder when it is a project; at the workspace root itself, every DAG of the workspace. Any other folder is an error that suggests `deploy <dag_id>` or `deploy --all` |
 | `dexaflow lite` with no argument | The workspace root; `~/dexaflow` (or the config's `workspace:`) only when no workspace file is found |
@@ -69,9 +76,14 @@ Deploy prints the workspace it read and why (`workspace: <root> (from
 Inside a workspace, `dexaflow target add` writes the target into the
 workspace file, so everyone who clones the repository gets it. Outside a
 workspace, or with `--global`, it goes into your config file
-(`~/.dexaflow/config.yaml`). The first target added becomes the default,
-unless your config file has a `server_url`: then commands keep using it until
-you run `dexaflow target use <name>`.
+(`~/.dexaflow/config.yaml`). The first target added to a workspace always
+becomes its `default_target`, since the file is shared and must not depend on
+one author's config; when your config file has a `server_url`, `target add`
+says that commands run inside this workspace now use the target instead
+(outside it, `server_url` still applies). The first target added to your
+config file becomes `current_target` only when it has no `server_url`;
+otherwise commands keep using `server_url` until you run
+`dexaflow target use <name>`.
 
 ```bash
 dexaflow target add prod https://flow.acme.dev --registry ghcr.io/acme/prod
@@ -167,6 +179,7 @@ named, like in `dexaflow.yaml`. `target add`, `use --workspace-default` and
 
 `~/.dexaflow/config.yaml` keeps everything personal: `sessions` (one token per
 server), `targets` and `current_target` for targets outside workspaces,
-`workspace_targets` (your `target use` choice per workspace), and the
+`workspace_targets` (your `target use` choice per workspace),
+`trusted_workspaces`, and the
 `server_url`, `token` and `registry` keys older versions read. Other keys in
 the file are left as they are.

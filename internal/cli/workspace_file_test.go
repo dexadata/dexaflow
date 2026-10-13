@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/dexadata/dexaflow/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -235,5 +236,66 @@ func TestEditWorkspaceKeepsBlankLines(t *testing.T) {
 	}
 	if strings.Contains(string(data), blankLineMarker) {
 		t.Errorf("marker leaked:\n%s", data)
+	}
+}
+
+// foreignWorkspace writes a workspace file owned by another user, under a
+// parent with no workspace of its own, and returns its root.
+func foreignWorkspace(t *testing.T) string {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		t.Skip("changing a file's owner needs root")
+	}
+	root := t.TempDir()
+	writeTree(t, filepath.Join(root, workspaceFileName), sampleWorkspace)
+	if err := os.Chown(filepath.Join(root, workspaceFileName), 4242, 4242); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestTrustedWorkspacesFromTheEnvironment(t *testing.T) {
+	isolateCLIEnv(t)
+	root := foreignWorkspace(t)
+	if ws, _ := findWorkspace(root); ws != nil {
+		t.Fatal("untrusted by default")
+	}
+	for name, value := range map[string]string{
+		"the path":           root,
+		"a list":             "/nowhere" + string(os.PathListSeparator) + root,
+		"every workspace":    "*",
+		"a path with a link": root + string(filepath.Separator) + ".",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("DEXAFLOW_TRUSTED_WORKSPACES", value)
+			if ws, err := findWorkspace(root); err != nil || ws == nil {
+				t.Errorf("DEXAFLOW_TRUSTED_WORKSPACES=%q: workspace = %+v, %v", value, ws, err)
+			}
+		})
+	}
+	t.Run("legacy name", func(t *testing.T) {
+		t.Setenv("LEOFLOW_TRUSTED_WORKSPACES", root)
+		if ws, _ := findWorkspace(root); ws == nil {
+			t.Error("LEOFLOW_TRUSTED_WORKSPACES must work too")
+		}
+	})
+	t.Run("another path does not trust it", func(t *testing.T) {
+		t.Setenv("DEXAFLOW_TRUSTED_WORKSPACES", t.TempDir())
+		if ws, _ := findWorkspace(root); ws != nil {
+			t.Error("trusting another folder must not trust this one")
+		}
+	})
+}
+
+func TestTrustedWorkspacesFromTheUserConfig(t *testing.T) {
+	isolateCLIEnv(t)
+	root := foreignWorkspace(t)
+	cfg, err := config.DefaultConfigFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, cfg, "trusted_workspaces:\n  - "+root+"\n")
+	if ws, err := findWorkspace(root); err != nil || ws == nil {
+		t.Errorf("trusted_workspaces in %s: workspace = %+v, %v", cfg, ws, err)
 	}
 }

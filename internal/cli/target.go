@@ -78,6 +78,8 @@ func runTargetAdd(cmd *cobra.Command, name, server string, o targetAddOptions) e
 	// A first target is selected automatically, unless the user already works
 	// against the config file's server_url: adding a target must not move
 	// their commands to another server behind their back.
+	// Only the user's own current_target follows this rule: the workspace file
+	// is shared, so its default_target never depends on one author's config.
 	o.autoSelect = tc.store.ServerURL == ""
 	var where string
 	var isDefault bool
@@ -92,7 +94,11 @@ func runTargetAdd(cmd *cobra.Command, name, server string, o targetAddOptions) e
 	if _, werr := fmt.Fprintf(out, "Added target %s (%s) to %s\n", name, server, where); werr != nil {
 		return werr
 	}
-	if werr := printSelectionNote(out, name, isDefault, o.autoSelect, tc.store.ServerURL); werr != nil {
+	inWorkspace := tc.ws != nil && !o.global
+	if werr := printSelectionNote(out, name, isDefault, o.autoSelect || inWorkspace, tc.store.ServerURL); werr != nil {
+		return werr
+	}
+	if werr := printOverrideNote(out, name, isDefault && inWorkspace, tc); werr != nil {
 		return werr
 	}
 	if _, saved := tc.store.Session(server); saved {
@@ -117,13 +123,25 @@ func printSelectionNote(out io.Writer, name string, isDefault, autoSelect bool, 
 	return nil
 }
 
+// printOverrideNote tells the author when a new workspace default replaces,
+// inside this workspace, the server_url their config file points everything
+// else at. A target they chose for the workspace with `target use` still wins,
+// so then nothing changes for them.
+func printOverrideNote(out io.Writer, name string, newDefault bool, tc *targetContext) error {
+	if !newDefault || tc.store.ServerURL == "" || tc.store.WorkspaceTarget(tc.ws.Root) != "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "Inside this workspace, commands now use target %s instead of server_url (%s) from your config file; outside it, server_url still applies.\n", name, tc.store.ServerURL)
+	return err
+}
+
 // addWorkspaceTarget writes the target into the workspace file, making it the
 // default when the workspace has none.
 func addWorkspaceTarget(ws *workspaceLocation, name, server string, o targetAddOptions) (where string, isDefault bool, err error) {
 	if old := ws.Spec.Targets[name]; old != nil && !o.force {
 		return "", false, fmt.Errorf("target %q already exists in %s (server %s); pass --force to replace it", name, ws.File, old.Server)
 	}
-	isDefault = ws.Spec.DefaultTarget == "" && o.autoSelect
+	isDefault = ws.Spec.DefaultTarget == ""
 	err = editWorkspaceFile(ws.File, func(e *workspaceEditor) error {
 		if serr := e.setTarget(name, workspaceTarget{Server: server, deployDefaults: o.defaults}); serr != nil {
 			return serr

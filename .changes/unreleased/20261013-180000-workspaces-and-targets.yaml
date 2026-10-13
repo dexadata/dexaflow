@@ -24,7 +24,9 @@ body: |-
   deploy all of it; a bare `deploy` at a workspace root deploys its DAGs; and
   `dexaflow lite` serves the workspace around the current folder, keeping
   `~/dexaflow` only when there is none. A workspace file owned by another user
-  is ignored with a warning. `--registry` is accepted by `compile`, `build` and
+  is ignored with a warning, unless its folder is listed in
+  `DEXAFLOW_TRUSTED_WORKSPACES` (or `*`, for CI containers) or in
+  `trusted_workspaces` in the config file. `--registry` is accepted by `compile`, `build` and
   `deploy`, and deploy prints the server, registry, platforms and base image
   it uses with their sources; `auth login` prints the server before it reads a
   password.

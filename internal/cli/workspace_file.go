@@ -16,6 +16,9 @@ import (
 	"sync"
 
 	yaml "go.yaml.in/yaml/v3"
+
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/envcompat"
 )
 
 // workspaceFileName marks the root of a workspace: a folder holding many DAG
@@ -141,7 +144,7 @@ func findWorkspace(start string) (*workspaceLocation, error) {
 		dir = resolved
 	}
 	for {
-		if p := workspaceFileIn(dir); p != "" && !ownedByCurrentUser(p) {
+		if p := workspaceFileIn(dir); p != "" && !workspaceTrusted(p) {
 			warnUntrustedWorkspace(p)
 		} else if p != "" {
 			spec, perr := parseWorkspaceFile(p)
@@ -168,7 +171,53 @@ func warnUntrustedWorkspace(path string) {
 		return
 	}
 	//nolint:errcheck // a warning that cannot be delivered must not fail the command.
-	fmt.Fprintf(os.Stderr, "warning: ignoring %s: it belongs to another user, and a workspace file chooses where tokens and images go. Take ownership of it (chown) to use it.\n", path)
+	fmt.Fprintf(os.Stderr, "warning: ignoring %s: it belongs to another user, and a workspace file chooses where tokens and images go.\n"+
+		"  To use it, take ownership of it (chown), or trust its folder with DEXAFLOW_TRUSTED_WORKSPACES=%s\n"+
+		"  or trusted_workspaces: [%s] in ~/.dexaflow/config.yaml.\n", path, filepath.Dir(path), filepath.Dir(path))
+}
+
+// workspaceTrusted reports whether the workspace file at path may be used: it
+// belongs to the current user, or its folder is listed in
+// DEXAFLOW_TRUSTED_WORKSPACES (LEOFLOW_TRUSTED_WORKSPACES), a list separated
+// by the OS path-list separator, or in trusted_workspaces in the default user
+// config file. "*" in either trusts every workspace, for a CI container that
+// runs as root over a checkout the runner owns.
+func workspaceTrusted(path string) bool {
+	if ownedByCurrentUser(path) {
+		return true
+	}
+	dir, err := resolvedDir(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	for _, entry := range trustedWorkspaceEntries() {
+		if entry == "*" {
+			return true
+		}
+		if r, rerr := resolvedDir(entry); rerr == nil && r == dir {
+			return true
+		}
+	}
+	return false
+}
+
+// trustedWorkspaceEntries returns the trusted workspace roots from the
+// environment and from the default user config file.
+func trustedWorkspaceEntries() []string {
+	var entries []string
+	if v, ok := envcompat.Lookup("TRUSTED_WORKSPACES"); ok {
+		for _, e := range filepath.SplitList(v) {
+			if e = strings.TrimSpace(e); e != "" {
+				entries = append(entries, e)
+			}
+		}
+	}
+	if path, err := config.DefaultConfigFile(); err == nil {
+		if store, rerr := config.ReadUserStore(path); rerr == nil {
+			entries = append(entries, store.TrustedWorkspaces...)
+		}
+	}
+	return entries
 }
 
 // findWorkspaceFromCwd is findWorkspace from the process working directory.

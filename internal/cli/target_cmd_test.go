@@ -251,11 +251,17 @@ func TestTargetAddKeepsAnExistingServerURL(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, filepath.Join(root, workspaceFileName), workspaceFileTemplate)
 	t.Chdir(root)
-	if _, _, err := run(t, "target", "add", "dev", "https://dev.example", "--config", cfg); err != nil {
+	out, _, err = run(t, "target", "add", "dev", "https://dev.example", "--config", cfg)
+	if err != nil {
 		t.Fatalf("target add in a workspace: %v", err)
 	}
-	if ws, _ := findWorkspace(root); ws.Spec.DefaultTarget != "" {
-		t.Errorf("default_target = %q, want none while server_url is set", ws.Spec.DefaultTarget)
+	// The shared file must not depend on one author's personal config: a
+	// workspace always gets its default target.
+	if ws, _ := findWorkspace(root); ws.Spec.DefaultTarget != "dev" {
+		t.Errorf("default_target = %q, want dev whatever the author's config holds", ws.Spec.DefaultTarget)
+	}
+	if !strings.Contains(out, "instead of server_url (https://pro.example)") {
+		t.Errorf("the author must be told the workspace now overrides their server_url:\n%s", out)
 	}
 }
 

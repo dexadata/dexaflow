@@ -35,6 +35,10 @@ type UserStore struct {
 	// WorkspaceTargets records `dexaflow target use` inside a workspace: the
 	// user's own choice, which leaves the shared workspace file untouched.
 	WorkspaceTargets []WorkspaceTarget `yaml:"workspace_targets,omitempty"`
+	// TrustedWorkspaces lists workspace roots whose workspace file is used
+	// even though another user owns it ("*" trusts every one). The CLI only
+	// reads it; the user writes it.
+	TrustedWorkspaces []string `yaml:"trusted_workspaces,omitempty"`
 }
 
 // UserTarget is a named control plane defined in the user's config file.
@@ -160,10 +164,14 @@ func readDocument(path string) (*yaml.Node, error) {
 	return &parsed, nil
 }
 
-// setKey sets key to value in mapping m, in place when it is already there.
+// setKey sets key to value in mapping m, in place when it is already there,
+// keeping the comment written at the end of the old value's line.
 func setKey(m *yaml.Node, key string, value *yaml.Node) {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if m.Content[i].Value == key {
+			if value.LineComment == "" {
+				value.LineComment = m.Content[i+1].LineComment
+			}
 			m.Content[i+1] = value
 			return
 		}
@@ -171,20 +179,52 @@ func setKey(m *yaml.Node, key string, value *yaml.Node) {
 	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
 }
 
-// deleteKey removes key from mapping m.
+// deleteKey removes key from mapping m. The comment above the key is moved
+// to the key that follows it (or below the one before it), so removing a
+// value never deletes what a person wrote about the file.
 func deleteKey(m *yaml.Node, key string) {
 	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			m.Content = append(m.Content[:i], m.Content[i+2:]...)
-			return
+		if m.Content[i].Value != key {
+			continue
 		}
+		if head := m.Content[i].HeadComment; head != "" {
+			switch {
+			case i+2 < len(m.Content):
+				next := m.Content[i+2]
+				next.HeadComment = joinComments(head, next.HeadComment)
+			case i >= 2:
+				prev := m.Content[i-1]
+				prev.FootComment = joinComments(prev.FootComment, head)
+			default:
+				m.HeadComment = joinComments(m.HeadComment, head)
+			}
+		}
+		m.Content = append(m.Content[:i], m.Content[i+2:]...)
+		return
 	}
+}
+
+// joinComments joins two comment blocks, either of which may be empty.
+func joinComments(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return a + "\n" + b
 }
 
 // writeSecretFile replaces path with data atomically: a 0600 temporary file in
 // the same directory, renamed over it, so a reader never sees half a file and
 // the result is 0600 even when the old file was not.
+//
+// A config file that is a symlink (kept in a dotfiles repository, say) is
+// written through: the link stays and its target is replaced.
 func writeSecretFile(path string, data []byte) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
