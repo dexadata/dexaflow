@@ -1171,6 +1171,7 @@ components:
         changed: { type: boolean, description: False when the version was already current. }
         from:
           description: The version that was current before; null when none was.
+          type: object
           nullable: true
           allOf: [{ $ref: "#/components/schemas/DagVersion" }]
         to: { $ref: "#/components/schemas/DagVersion" }
