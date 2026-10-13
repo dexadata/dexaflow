@@ -97,10 +97,15 @@ JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.dag_id = $2;
 
 -- name: ListDagVersions :many
-SELECT v.id, v.version, v.created_at,
+-- created_by is the registering user's email (empty when the register had no
+-- user). is_current marks the version new runs are created with.
+SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash,
+       COALESCE(v.id = d.current_version_id, false)::boolean AS is_current,
+       COALESCE(u.email, '')::text AS created_by,
        row_number() OVER (ORDER BY v.created_at, v.version) AS version_number
 FROM dag_versions v
 JOIN dags d ON d.id = v.dag_id
+LEFT JOIN users u ON u.id = v.created_by
 WHERE d.tenant_id = $1 AND d.dag_id = $2
 ORDER BY version_number DESC;
 

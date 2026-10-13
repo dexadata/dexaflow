@@ -317,6 +317,24 @@ type DAGUpdate struct {
 	IsPaused *bool `json:"is_paused,omitempty"`
 }
 
+// DagCurrentVersionChange defines model for DagCurrentVersionChange.
+type DagCurrentVersionChange struct {
+	// Changed False when the version was already current.
+	Changed bool   `json:"changed"`
+	DagId   string `json:"dag_id"`
+
+	// From The version that was current before; null when none was.
+	From *DagVersion `json:"from"`
+	To   DagVersion  `json:"to"`
+}
+
+// DagCurrentVersionRequest Exactly one of version and version_number.
+type DagCurrentVersionRequest struct {
+	// Version The version label (bundle_version).
+	Version       *string `json:"version,omitempty"`
+	VersionNumber *int    `json:"version_number,omitempty"`
+}
+
 // DagSource defines model for DagSource.
 type DagSource struct {
 	// Content The dag.py source text (compiled-spec JSON fallback for pre-source-capture versions).
@@ -326,16 +344,38 @@ type DagSource struct {
 	VersionNumber  *int    `json:"version_number,omitempty"`
 }
 
+// DagSpec A compiled dag.json, as described by docs/api/dag-schema.json.
+type DagSpec struct {
+	DagId                string                   `json:"dag_id"`
+	DagVersion           string                   `json:"dag_version"`
+	Image                string                   `json:"image"`
+	SchemaVersion        string                   `json:"schema_version"`
+	Tasks                []map[string]interface{} `json:"tasks"`
+	AdditionalProperties map[string]interface{}   `json:"-"`
+}
+
 // DagVersion defines model for DagVersion.
 type DagVersion struct {
-	BundleName     *string    `json:"bundle_name,omitempty"`
-	BundleUrl      *string    `json:"bundle_url,omitempty"`
-	BundleVersion  *string    `json:"bundle_version,omitempty"`
-	CreatedAt      *time.Time `json:"created_at,omitempty"`
-	DagDisplayName *string    `json:"dag_display_name,omitempty"`
-	DagId          *string    `json:"dag_id,omitempty"`
-	Id             *string    `json:"id,omitempty"`
-	VersionNumber  *int       `json:"version_number,omitempty"`
+	BundleName    *string    `json:"bundle_name,omitempty"`
+	BundleUrl     *string    `json:"bundle_url,omitempty"`
+	BundleVersion *string    `json:"bundle_version,omitempty"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+
+	// CreatedBy Dexaflow. Email of the user who registered the version; null when none was recorded.
+	CreatedBy      *string `json:"created_by,omitempty"`
+	DagDisplayName *string `json:"dag_display_name,omitempty"`
+	DagId          *string `json:"dag_id,omitempty"`
+	Id             *string `json:"id,omitempty"`
+
+	// Image Dexaflow. The image the version runs, pinned by digest when the deploy resolved one.
+	Image *string `json:"image,omitempty"`
+
+	// IsCurrent Dexaflow. Whether new runs are created with this version.
+	IsCurrent *bool `json:"is_current,omitempty"`
+
+	// SpecHash Dexaflow. The canonical hash of the version's dag.json.
+	SpecHash      *string `json:"spec_hash,omitempty"`
+	VersionNumber *int    `json:"version_number,omitempty"`
 }
 
 // DagVersionCollection defines model for DagVersionCollection.
@@ -485,6 +525,15 @@ type VersionInfo struct {
 	Version    *string `json:"version,omitempty"`
 }
 
+// VersionRegistration defines model for VersionRegistration.
+type VersionRegistration struct {
+	// Created False when the content was already registered.
+	Created  *bool   `json:"created,omitempty"`
+	DagId    *string `json:"dag_id,omitempty"`
+	SpecHash *string `json:"spec_hash,omitempty"`
+	Version  *string `json:"version,omitempty"`
+}
+
 // XComEntry defines model for XComEntry.
 type XComEntry struct {
 	DagId     *string     `json:"dag_id,omitempty"`
@@ -585,6 +634,9 @@ type UpdateDagJSONRequestBody = DAGUpdate
 // ClearTaskInstancesJSONRequestBody defines body for ClearTaskInstances for application/json ContentType.
 type ClearTaskInstancesJSONRequestBody = ClearTaskInstancesRequest
 
+// SetDagCurrentVersionJSONRequestBody defines body for SetDagCurrentVersion for application/json ContentType.
+type SetDagCurrentVersionJSONRequestBody = DagCurrentVersionRequest
+
 // TriggerDagRunJSONRequestBody defines body for TriggerDagRun for application/json ContentType.
 type TriggerDagRunJSONRequestBody = DAGRunCreate
 
@@ -597,6 +649,9 @@ type PatchTaskInstanceJSONRequestBody = TaskInstanceStateUpdate
 // PatchTaskInstanceDryRunJSONRequestBody defines body for PatchTaskInstanceDryRun for application/json ContentType.
 type PatchTaskInstanceDryRunJSONRequestBody = TaskInstanceStateUpdate
 
+// RegisterDagVersionJSONRequestBody defines body for RegisterDagVersion for application/json ContentType.
+type RegisterDagVersionJSONRequestBody = DagSpec
+
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
 
@@ -605,6 +660,126 @@ type CreateVariableJSONRequestBody = VariableBody
 
 // IssueTokenJSONRequestBody defines body for IssueToken for application/json ContentType.
 type IssueTokenJSONRequestBody = TokenRequest
+
+// Getter for additional properties for DagSpec. Returns the specified
+// element and whether it was found
+func (a DagSpec) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DagSpec
+func (a *DagSpec) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DagSpec to handle AdditionalProperties
+func (a *DagSpec) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["dag_id"]; found {
+		err = json.Unmarshal(raw, &a.DagId)
+		if err != nil {
+			return fmt.Errorf("error reading 'dag_id': %w", err)
+		}
+		delete(object, "dag_id")
+	}
+
+	if raw, found := object["dag_version"]; found {
+		err = json.Unmarshal(raw, &a.DagVersion)
+		if err != nil {
+			return fmt.Errorf("error reading 'dag_version': %w", err)
+		}
+		delete(object, "dag_version")
+	}
+
+	if raw, found := object["image"]; found {
+		err = json.Unmarshal(raw, &a.Image)
+		if err != nil {
+			return fmt.Errorf("error reading 'image': %w", err)
+		}
+		delete(object, "image")
+	}
+
+	if raw, found := object["schema_version"]; found {
+		err = json.Unmarshal(raw, &a.SchemaVersion)
+		if err != nil {
+			return fmt.Errorf("error reading 'schema_version': %w", err)
+		}
+		delete(object, "schema_version")
+	}
+
+	if raw, found := object["tasks"]; found {
+		err = json.Unmarshal(raw, &a.Tasks)
+		if err != nil {
+			return fmt.Errorf("error reading 'tasks': %w", err)
+		}
+		delete(object, "tasks")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DagSpec to handle AdditionalProperties
+func (a DagSpec) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["dag_id"], err = json.Marshal(a.DagId)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'dag_id': %w", err)
+	}
+
+	object["dag_version"], err = json.Marshal(a.DagVersion)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'dag_version': %w", err)
+	}
+
+	object["image"], err = json.Marshal(a.Image)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'image': %w", err)
+	}
+
+	object["schema_version"], err = json.Marshal(a.SchemaVersion)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'schema_version': %w", err)
+	}
+
+	if a.Tasks != nil {
+		object["tasks"], err = json.Marshal(a.Tasks)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'tasks': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
 
 // AsTaskInstanceCollection returns the union data inside the ClearDagRun200JSONResponseBody as a TaskInstanceCollection
 func (t ClearDagRun200JSONResponseBody) AsTaskInstanceCollection() (TaskInstanceCollection, error) {
@@ -847,6 +1022,24 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v2/dags/{dag_id}/clearTaskInstances (the `ClearTaskInstances` operationId).
 	ClearTaskInstances(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetDagCurrentVersion Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersion(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListDagRuns List DAG runs
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns (the `ListDagRuns` operationId).
@@ -956,6 +1149,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
 	GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterDagVersion Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersion(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMonitorExecutor Executor capability and configuration
 	//
@@ -1326,6 +1537,44 @@ func (c *Client) ClearTaskInstances(ctx context.Context, dagId DagID, body Clear
 	return c.Client.Do(req)
 }
 
+// SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *Client) SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetDagCurrentVersionRequestWithBody(c.Server, dagId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetDagCurrentVersion Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *Client) SetDagCurrentVersion(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetDagCurrentVersionRequest(c.Server, dagId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListDagRuns List DAG runs
 //
 // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns (the `ListDagRuns` operationId).
@@ -1586,6 +1835,44 @@ func (c *Client) GetDagVersion(ctx context.Context, dagId DagID, versionNumber i
 // Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
 func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDagSpecRequest(c.Server, dagId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDagVersionRequestWithBody(c.Server, dagId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterDagVersion Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *Client) RegisterDagVersion(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDagVersionRequest(c.Server, dagId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2381,6 +2668,53 @@ func NewClearTaskInstancesRequestWithBody(server string, dagId DagID, contentTyp
 	return req, nil
 }
 
+// NewSetDagCurrentVersionRequest calls the generic SetDagCurrentVersion builder with application/json body
+func NewSetDagCurrentVersionRequest(server string, dagId DagID, body SetDagCurrentVersionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetDagCurrentVersionRequestWithBody(server, dagId, "application/json", bodyReader)
+}
+
+// NewSetDagCurrentVersionRequestWithBody constructs an http.Request for the SetDagCurrentVersion method, with any body, and a specified content type
+func NewSetDagCurrentVersionRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/currentVersion", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListDagRunsRequest constructs an http.Request for the ListDagRuns method
 func NewListDagRunsRequest(server string, dagId DagID, params *ListDagRunsParams) (*http.Request, error) {
 	var err error
@@ -2991,6 +3325,53 @@ func NewGetDagSpecRequest(server string, dagId DagID) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewRegisterDagVersionRequest calls the generic RegisterDagVersion builder with application/json body
+func NewRegisterDagVersionRequest(server string, dagId DagID, body RegisterDagVersionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterDagVersionRequestWithBody(server, dagId, "application/json", bodyReader)
+}
+
+// NewRegisterDagVersionRequestWithBody constructs an http.Request for the RegisterDagVersion method, with any body, and a specified content type
+func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/versions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3668,6 +4049,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v2/dags/{dag_id}/clearTaskInstances (the `ClearTaskInstances` operationId).
 	ClearTaskInstancesWithResponse(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearTaskInstancesResponse, error)
 
+	// SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
+
+	// SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersionWithResponse(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
+
 	// ListDagRunsWithResponse List DAG runs
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3793,6 +4192,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
 	GetDagSpecWithResponse(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*GetDagSpecResponse, error)
+
+	// RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
+
+	// RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
 
 	// GetMonitorExecutorWithResponse Executor capability and configuration
 	//
@@ -4484,6 +4901,75 @@ func (r ClearTaskInstancesResponse) ContentType() string {
 	return ""
 }
 
+type SetDagCurrentVersionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DagCurrentVersionChange
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON200() *DagCurrentVersionChange {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r SetDagCurrentVersionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetDagCurrentVersionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetDagCurrentVersionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetDagCurrentVersionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListDagRunsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5033,6 +5519,75 @@ func (r GetDagSpecResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetDagSpecResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RegisterDagVersionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VersionRegistration
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VersionRegistration
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON200() *VersionRegistration {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON201() *VersionRegistration {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterDagVersionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterDagVersionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterDagVersionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterDagVersionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5858,6 +6413,36 @@ func (c *ClientWithResponses) ClearTaskInstancesWithResponse(ctx context.Context
 	return ParseClearTaskInstancesResponse(rsp)
 }
 
+// SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *ClientWithResponses) SetDagCurrentVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error) {
+	rsp, err := c.SetDagCurrentVersionWithBody(ctx, dagId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetDagCurrentVersionResponse(rsp)
+}
+
+// SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *ClientWithResponses) SetDagCurrentVersionWithResponse(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error) {
+	rsp, err := c.SetDagCurrentVersion(ctx, dagId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetDagCurrentVersionResponse(rsp)
+}
+
 // ListDagRunsWithResponse List DAG runs
 //
 // Returns a wrapper object for the known response body format(s).
@@ -6078,6 +6663,36 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 		return nil, err
 	}
 	return ParseGetDagSpecResponse(rsp)
+}
+
+// RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
+	rsp, err := c.RegisterDagVersionWithBody(ctx, dagId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterDagVersionResponse(rsp)
+}
+
+// RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *ClientWithResponses) RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
+	rsp, err := c.RegisterDagVersion(ctx, dagId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterDagVersionResponse(rsp)
 }
 
 // GetMonitorExecutorWithResponse Executor capability and configuration
@@ -6703,6 +7318,60 @@ func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesRes
 	return response, nil
 }
 
+// ParseSetDagCurrentVersionResponse parses an HTTP response from a SetDagCurrentVersionWithResponse call
+func ParseSetDagCurrentVersionResponse(rsp *http.Response) (*SetDagCurrentVersionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetDagCurrentVersionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DagCurrentVersionChange
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListDagRunsResponse parses an HTTP response from a ListDagRunsWithResponse call
 func ParseListDagRunsResponse(rsp *http.Response) (*ListDagRunsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7069,6 +7738,60 @@ func ParseGetDagSpecResponse(rsp *http.Response) (*GetDagSpecResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegisterDagVersionResponse parses an HTTP response from a RegisterDagVersionWithResponse call
+func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterDagVersionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VersionRegistration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VersionRegistration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 

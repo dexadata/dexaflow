@@ -387,6 +387,8 @@ type Querier interface {
 	ListDagRunsByDagAfter(ctx context.Context, arg ListDagRunsByDagAfterParams) ([]ListDagRunsByDagAfterRow, error)
 	// See GetDagRunWithVersion. One join rather than a lookup per row.
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
+	// created_by is the registering user's email (empty when the register had no
+	// user). is_current marks the version new runs are created with.
 	ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error)
 	ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, error)
 	// The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,

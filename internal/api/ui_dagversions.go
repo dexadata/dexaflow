@@ -31,6 +31,13 @@ type dagVersionDTO struct {
 	CreatedAt      time.Time `json:"created_at"`
 	DagDisplayName string    `json:"dag_display_name"`
 	BundleURL      *string   `json:"bundle_url"`
+	// Dexaflow fields, added next to Airflow's (#1702): the image the version
+	// runs, its spec hash, whether it is the current version, and the email of
+	// the user who registered it (null when none was recorded).
+	Image     string  `json:"image"`
+	SpecHash  string  `json:"spec_hash"`
+	IsCurrent bool    `json:"is_current"`
+	CreatedBy *string `json:"created_by"`
 }
 
 type dagVersionCollectionDTO struct {
@@ -48,6 +55,10 @@ func toDagVersionDTO(dagID string, v domain.DagVersion) dagVersionDTO {
 		BundleVersion:  strPtrOrNil(v.Version),
 		CreatedAt:      v.CreatedAt,
 		DagDisplayName: dagID,
+		Image:          v.ImageReference,
+		SpecHash:       v.SpecHash,
+		IsCurrent:      v.IsCurrent,
+		CreatedBy:      strPtrOrNil(v.CreatedBy),
 	}
 }
 

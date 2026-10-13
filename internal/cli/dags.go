@@ -24,6 +24,7 @@ func newDagsCommand() *cobra.Command {
 	}
 	cmd.AddCommand(newDagsListCommand())
 	cmd.AddCommand(newDagsDeleteCommand())
+	cmd.AddCommand(newDagsVersionsCommand())
 	return cmd
 }
 

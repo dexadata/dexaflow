@@ -319,10 +319,13 @@ func (q *Queries) InsertDagVersion(ctx context.Context, arg InsertDagVersionPara
 }
 
 const listDagVersions = `-- name: ListDagVersions :many
-SELECT v.id, v.version, v.created_at,
+SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash,
+       COALESCE(v.id = d.current_version_id, false)::boolean AS is_current,
+       COALESCE(u.email, '')::text AS created_by,
        row_number() OVER (ORDER BY v.created_at, v.version) AS version_number
 FROM dag_versions v
 JOIN dags d ON d.id = v.dag_id
+LEFT JOIN users u ON u.id = v.created_by
 WHERE d.tenant_id = $1 AND d.dag_id = $2
 ORDER BY version_number DESC
 `
@@ -333,12 +336,18 @@ type ListDagVersionsParams struct {
 }
 
 type ListDagVersionsRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	Version       string             `json:"version"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	VersionNumber int64              `json:"version_number"`
+	ID             pgtype.UUID        `json:"id"`
+	Version        string             `json:"version"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ImageReference string             `json:"image_reference"`
+	SpecHash       string             `json:"spec_hash"`
+	IsCurrent      bool               `json:"is_current"`
+	CreatedBy      string             `json:"created_by"`
+	VersionNumber  int64              `json:"version_number"`
 }
 
+// created_by is the registering user's email (empty when the register had no
+// user). is_current marks the version new runs are created with.
 func (q *Queries) ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listDagVersions, arg.TenantID, arg.DagID)
 	if err != nil {
@@ -352,6 +361,10 @@ func (q *Queries) ListDagVersions(ctx context.Context, arg ListDagVersionsParams
 			&i.ID,
 			&i.Version,
 			&i.CreatedAt,
+			&i.ImageReference,
+			&i.SpecHash,
+			&i.IsCurrent,
+			&i.CreatedBy,
 			&i.VersionNumber,
 		); err != nil {
 			return nil, err

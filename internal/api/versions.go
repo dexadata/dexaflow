@@ -10,12 +10,18 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// DagVersionRepository registers compiled DAG versions.
+// DagVersionRepository registers compiled DAG versions and chooses which one
+// is current.
 type DagVersionRepository interface {
-	// RegisterDagVersion upserts the DAG and inserts a version keyed by
-	// specHash, reporting whether a new version was created (false if the hash
-	// already existed — the push is idempotent).
-	RegisterDagVersion(ctx context.Context, tenant string, spec domain.DAGSpec, specHash string) (bool, error)
+	// RegisterDagVersionBy upserts the DAG and inserts a version keyed by
+	// specHash on behalf of the user actorUserID, reporting whether a new
+	// version was created (false if the hash already existed: the push is
+	// idempotent).
+	RegisterDagVersionBy(ctx context.Context, tenant, actorUserID string, spec domain.DAGSpec, specHash string) (bool, error)
+	// SetCurrentDagVersion makes the version sel names current, after admit
+	// accepts its spec, on behalf of actorUserID. Runs that already exist keep
+	// their version; is_paused is never changed.
+	SetCurrentDagVersion(ctx context.Context, tenant, dagID string, sel domain.DagVersionSelector, actorUserID string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error)
 }
 
 type versionResponse struct {
@@ -58,7 +64,40 @@ func (g unitGate) check(spec *domain.DAGSpec) error {
 	return nil
 }
 
-func registerVersionHandler(repo DagVersionRepository, unit unitGate, sourceModeImage string, policy *domain.ExecutionPolicy) gin.HandlerFunc {
+// specAdmission is what a spec must pass, beyond the repository's own
+// checks, to be registered or made current: its own validation, the resource
+// unit, source mode and the operator's execution allowlist.
+type specAdmission struct {
+	unit            unitGate
+	sourceModeImage string
+	policy          *domain.ExecutionPolicy
+}
+
+// check returns the first refusal of spec; each one is the client's to fix.
+func (a specAdmission) check(spec *domain.DAGSpec) error {
+	if err := spec.Validate(); err != nil {
+		return err
+	}
+	if err := a.unit.check(spec); err != nil {
+		return err
+	}
+	if err := domain.CheckSourceMode(a.sourceModeImage, spec); err != nil {
+		return err
+	}
+	// The operator's execution allowlist (issue #629): refuse at push what
+	// dispatch would refuse anyway, so the author learns it now.
+	return a.policy.CheckSpec(spec)
+}
+
+// actorOf is the id of the authenticated user, or "" when there is none.
+func actorOf(c *gin.Context) string {
+	if u, ok := UserFromContext(c); ok {
+		return u.ID
+	}
+	return ""
+}
+
+func registerVersionHandler(repo DagVersionRepository, admission specAdmission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var spec domain.DAGSpec
 		if err := c.ShouldBindJSON(&spec); err != nil {
@@ -69,21 +108,7 @@ func registerVersionHandler(repo DagVersionRepository, unit unitGate, sourceMode
 			AbortProblem(c, http.StatusBadRequest, "bad request", "dag_id in path does not match spec")
 			return
 		}
-		if err := spec.Validate(); err != nil {
-			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
-			return
-		}
-		if err := unit.check(&spec); err != nil {
-			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
-			return
-		}
-		if err := domain.CheckSourceMode(sourceModeImage, &spec); err != nil {
-			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
-			return
-		}
-		// The operator's execution allowlist (issue #629): refuse at push what
-		// dispatch would refuse anyway, so the author learns it now.
-		if err := policy.CheckSpec(&spec); err != nil {
+		if err := admission.check(&spec); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
 			return
 		}
@@ -96,7 +121,7 @@ func registerVersionHandler(repo DagVersionRepository, unit unitGate, sourceMode
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
 			return
 		}
-		created, err := repo.RegisterDagVersion(c.Request.Context(), tenantOf(c), spec, hash)
+		created, err := repo.RegisterDagVersionBy(c.Request.Context(), tenantOf(c), actorOf(c), spec, hash)
 		if err != nil {
 			handleRepoError(c, err)
 			return

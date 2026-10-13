@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,15 +18,42 @@ import (
 type fakeVersionRepo struct {
 	created bool
 	seen    []string
+	actors  []string
 	err     error
+
+	// The set-current side: the specs by label the fake holds, the change it
+	// answers, and what the handler asked for.
+	specs      map[string]domain.DAGSpec
+	change     domain.CurrentVersionChange
+	setErr     error
+	selections []domain.DagVersionSelector
+	setTenants []string
+	admitErr   error
 }
 
-func (f *fakeVersionRepo) RegisterDagVersion(_ context.Context, _ string, _ domain.DAGSpec, hash string) (bool, error) {
+func (f *fakeVersionRepo) RegisterDagVersionBy(_ context.Context, _, actor string, _ domain.DAGSpec, hash string) (bool, error) {
 	f.seen = append(f.seen, hash)
+	f.actors = append(f.actors, actor)
 	if f.err != nil {
 		return false, f.err
 	}
 	return f.created, nil
+}
+
+func (f *fakeVersionRepo) SetCurrentDagVersion(_ context.Context, tenant, _ string, sel domain.DagVersionSelector, actor string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
+	f.selections = append(f.selections, sel)
+	f.setTenants = append(f.setTenants, tenant)
+	f.actors = append(f.actors, actor)
+	if f.setErr != nil {
+		return domain.CurrentVersionChange{}, f.setErr
+	}
+	if spec, ok := f.specs[f.change.To.Version]; ok {
+		if err := admit(spec); err != nil {
+			f.admitErr = err
+			return domain.CurrentVersionChange{}, fmt.Errorf("admitting: %w", err)
+		}
+	}
+	return f.change, nil
 }
 
 func versionServer(repo DagVersionRepository) *gin.Engine {
@@ -292,5 +320,155 @@ func TestRegisterVersionRejectsAnImageOrServiceAccountOutsideTheAllowlist(t *tes
 		`{"task_id":"train","type":"python","entrypoint":"dag:a","execution":{"service_account":"etl"}}]}`
 	if rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions", ok); rec.Code != http.StatusCreated {
 		t.Errorf("allowed image and service account = %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRegisterVersionPassesTheUser: the register runs on behalf of the
+// authenticated user, so the version's created_by and its audit entry name
+// them (#1702).
+func TestRegisterVersionPassesTheUser(t *testing.T) {
+	repo := &fakeVersionRepo{created: true}
+	if rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions", validSpecJSON); rec.Code != http.StatusCreated {
+		t.Fatalf("register = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(repo.actors) != 1 || repo.actors[0] != "u1" {
+		t.Errorf("register actors = %v, want [u1]", repo.actors)
+	}
+}
+
+// rollbackChange is v2 -> v1 of etl, as the repository reports it.
+func rollbackChange() domain.CurrentVersionChange {
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	return domain.CurrentVersionChange{
+		Changed: true,
+		From:    domain.DagVersion{ID: "id-2", VersionNumber: 2, Version: "v2", CreatedAt: at, ImageReference: "img@sha256:bb", SpecHash: "h2", CreatedBy: "ci@example.com"},
+		To:      domain.DagVersion{ID: "id-1", VersionNumber: 1, Version: "v1", CreatedAt: at, ImageReference: "img@sha256:aa", SpecHash: "h1", IsCurrent: true},
+	}
+}
+
+// TestSetCurrentVersionByLabel: PUT currentVersion with a label answers 200
+// with the from and to versions, scoped to the caller's tenant and run on
+// behalf of the caller.
+func TestSetCurrentVersionByLabel(t *testing.T) {
+	repo := &fakeVersionRepo{change: rollbackChange()}
+	rec := authGet(versionServer(repo), http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set current = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		DagID   string         `json:"dag_id"`
+		Changed bool           `json:"changed"`
+		From    map[string]any `json:"from"`
+		To      map[string]any `json:"to"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.DagID != "etl" || !resp.Changed || resp.From["bundle_version"] != "v2" || resp.To["bundle_version"] != "v1" {
+		t.Errorf("response = %s, want etl v2 -> v1 changed", rec.Body.String())
+	}
+	if resp.To["version_number"] != float64(1) || resp.To["is_current"] != true || resp.To["image"] != "img@sha256:aa" {
+		t.Errorf("to = %v, want version 1, current, its image", resp.To)
+	}
+	if len(repo.selections) != 1 || repo.selections[0] != (domain.DagVersionSelector{Version: "v1"}) {
+		t.Errorf("selections = %+v, want label v1", repo.selections)
+	}
+	if repo.setTenants[0] != "default" || repo.actors[0] != "u1" {
+		t.Errorf("tenant %q actor %q, want default and u1", repo.setTenants[0], repo.actors[0])
+	}
+}
+
+// TestSetCurrentVersionByNumber: a version_number selects by number.
+func TestSetCurrentVersionByNumber(t *testing.T) {
+	repo := &fakeVersionRepo{change: rollbackChange()}
+	rec := authGet(versionServer(repo), http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version_number":1}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set current = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(repo.selections) != 1 || repo.selections[0] != (domain.DagVersionSelector{Number: 1}) {
+		t.Errorf("selections = %+v, want number 1", repo.selections)
+	}
+}
+
+// TestSetCurrentVersionValidatesTheBody: exactly one of version and
+// version_number, a label within the spec's limits and a positive number.
+func TestSetCurrentVersionValidatesTheBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty":       `{}`,
+		"both":        `{"version":"v1","version_number":1}`,
+		"blank label": `{"version":""}`,
+		"zero":        `{"version_number":0}`,
+		"negative":    `{"version_number":-3}`,
+		"long label":  `{"version":"` + strings.Repeat("a", 300) + `"}`,
+		"not json":    `v1`,
+	} {
+		repo := &fakeVersionRepo{change: rollbackChange()}
+		rec := authGet(versionServer(repo), http.MethodPut, "/api/v2/dags/etl/currentVersion", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: = %d (%s), want 400", name, rec.Code, rec.Body.String())
+		}
+		if len(repo.selections) != 0 {
+			t.Errorf("%s: reached the repository with %+v", name, repo.selections)
+		}
+	}
+}
+
+// TestSetCurrentVersionNotFound: an unknown DAG or version answers 404 with
+// the repository's phrase.
+func TestSetCurrentVersionNotFound(t *testing.T) {
+	repo := &fakeVersionRepo{setErr: domain.Safef(domain.ErrNotFound, "dag %q has no version %q", "etl", "v9")}
+	rec := authGet(versionServer(repo), http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v9"}`)
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "v9") {
+		t.Errorf("unknown version = %d %s, want 404 naming v9", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetCurrentVersionAppliesTheRegisterChecks: the version made current
+// must pass the checks a register of it would pass today, so a policy
+// tightened since it registered is not bypassed by a rollback.
+func TestSetCurrentVersionAppliesTheRegisterChecks(t *testing.T) {
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{Images: []string{"registry.example.com/team-a/*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &fakeVersionRepo{change: rollbackChange(), specs: map[string]domain.DAGSpec{"v1": {
+		SchemaVersion: "1.0", DagID: "etl", DagVersion: "v1", Image: "img@sha256:aa",
+		Tasks: []domain.TaskSpec{{TaskID: "a", Type: "python", Entrypoint: "dag:a"}},
+	}}}
+	srv := NewServer(Dependencies{
+		Logger:          discardLogger(),
+		Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:     auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:     []string{"*"},
+		Versions:        repo,
+		ExecutionPolicy: policy,
+	})
+	rec := authGet(srv, http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "img@sha256:aa") {
+		t.Errorf("rollback to a refused image = %d %s, want 400 naming it", rec.Code, rec.Body.String())
+	}
+	if repo.admitErr == nil {
+		t.Error("the admission check did not run")
+	}
+}
+
+// TestSetCurrentVersionNeedsWriteOnDags: a user who may only read DAGs cannot
+// change which version is live.
+func TestSetCurrentVersionNeedsWriteOnDags(t *testing.T) {
+	repo := &fakeVersionRepo{change: rollbackChange()}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u2", TenantID: "default",
+			Permissions: []auth.Permission{{Action: "read", Resource: "dag"}}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins: []string{"*"},
+		Versions:    repo,
+	})
+	rec := authGet(srv, http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("reader = %d, want 403", rec.Code)
+	}
+	if len(repo.selections) != 0 {
+		t.Errorf("a reader reached the repository: %+v", repo.selections)
 	}
 }
