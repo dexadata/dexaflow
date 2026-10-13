@@ -174,3 +174,78 @@ func TestExecutionPolicyCheckSpecReportsEveryTask(t *testing.T) {
 		t.Errorf("nil policy CheckSpec = %v, want nil", err)
 	}
 }
+
+// service_accounts restricts the ServiceAccount a task may name (issue #537
+// C2). A task that names none runs as the operator's default and is not
+// checked.
+func TestExecutionPolicyRestrictsServiceAccounts(t *testing.T) {
+	p, err := ParseExecutionPolicy(ExecutionPolicyConfig{ServiceAccounts: []string{"etl-reader"}})
+	if err != nil {
+		t.Fatalf("ParseExecutionPolicy: %v", err)
+	}
+	if p == nil {
+		t.Fatal("policy is nil, want one that restricts service accounts")
+	}
+	if cerr := p.CheckTask(TaskSpec{TaskID: "t", Execution: &Execution{ServiceAccount: "etl-reader"}}); cerr != nil {
+		t.Errorf("listed service account refused: %v", cerr)
+	}
+	if cerr := p.CheckTask(TaskSpec{TaskID: "t"}); cerr != nil {
+		t.Errorf("task without a service account refused: %v", cerr)
+	}
+	err = p.CheckTask(TaskSpec{TaskID: "t", Execution: &Execution{ServiceAccount: "cluster-admin-sa"}})
+	if err == nil {
+		t.Fatal("unlisted service account accepted")
+	}
+	for _, want := range []string{"cluster-admin-sa", "executor.defaults.execution_allowlist.service_accounts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+// images restricts the DAG image (issue #537 C2): an exact reference, or a
+// prefix ending in "*".
+func TestExecutionPolicyRestrictsImages(t *testing.T) {
+	p, err := ParseExecutionPolicy(ExecutionPolicyConfig{Images: []string{"registry.example.com/team-a/*", "busybox:1.36"}})
+	if err != nil {
+		t.Fatalf("ParseExecutionPolicy: %v", err)
+	}
+	if p == nil {
+		t.Fatal("policy is nil, want one that restricts images")
+	}
+	for _, img := range []string{"registry.example.com/team-a/etl:v1", "busybox:1.36", ""} {
+		if err := p.CheckImage(img); err != nil {
+			t.Errorf("CheckImage(%q) = %v, want nil", img, err)
+		}
+	}
+	for _, img := range []string{"registry.example.com/team-b/etl:v1", "busybox:latest", "registry.example.com/team-a"} {
+		err := p.CheckImage(img)
+		if err == nil {
+			t.Errorf("CheckImage(%q) accepted", img)
+			continue
+		}
+		if !strings.Contains(err.Error(), "executor.defaults.execution_allowlist.images") {
+			t.Errorf("error %q does not name the setting", err)
+		}
+	}
+	spec := &DAGSpec{Image: "evil.example.com/miner:latest", Tasks: []TaskSpec{{TaskID: "a"}}}
+	if err := p.CheckSpec(spec); err == nil || !strings.Contains(err.Error(), "evil.example.com/miner:latest") {
+		t.Errorf("CheckSpec = %v, want a refusal naming the image", err)
+	}
+	var nilPolicy *ExecutionPolicy
+	if err := nilPolicy.CheckImage("anything"); err != nil {
+		t.Errorf("nil policy CheckImage = %v", err)
+	}
+}
+
+func TestExecutionPolicyRejectsBadIdentityConfig(t *testing.T) {
+	for name, cfg := range map[string]ExecutionPolicyConfig{
+		"blank sa":       {ServiceAccounts: []string{" "}},
+		"blank image":    {Images: []string{""}},
+		"star in middle": {Images: []string{"registry/*/etl"}},
+	} {
+		if _, err := ParseExecutionPolicy(cfg); err == nil {
+			t.Errorf("%s: ParseExecutionPolicy accepted %+v", name, cfg)
+		}
+	}
+}

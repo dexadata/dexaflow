@@ -33,7 +33,7 @@ func TestRecordHeartbeatLiveAttemptStampsNoError(t *testing.T) {
 	dagID := fmt.Sprintf("hb_live_%d", time.Now().UnixNano())
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 
-	id := auth.AgentIdentity{TenantID: "default", DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
+	id := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
 	if err := exec.RecordHeartbeat(ctx, id); err != nil {
 		t.Fatalf("RecordHeartbeat on a live attempt = %v, want nil (must never signal terminate)", err)
 	}
@@ -51,7 +51,7 @@ func TestRecordHeartbeatTerminalRowSignalsStale(t *testing.T) {
 		t.Fatalf("ApplyTransition to failed: %v", err)
 	}
 
-	id := auth.AgentIdentity{TenantID: "default", DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
+	id := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
 	if err := exec.RecordHeartbeat(ctx, id); !errors.Is(err, agentrpc.ErrStaleReport) {
 		t.Fatalf("RecordHeartbeat after a reap = %v, want ErrStaleReport (the terminate signal source)", err)
 	}
@@ -87,13 +87,13 @@ func TestRecordHeartbeatStaleTryNumberSignalsStale(t *testing.T) {
 	}
 
 	// Attempt 1's straggler heartbeats — it is behind, so it is told to stop.
-	stale := auth.AgentIdentity{TenantID: "default", DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
+	stale := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
 	if err := exec.RecordHeartbeat(ctx, stale); !errors.Is(err, agentrpc.ErrStaleReport) {
 		t.Fatalf("RecordHeartbeat (stale attempt) = %v, want ErrStaleReport", err)
 	}
 
 	// Attempt 2 (the live one) heartbeats and applies cleanly — never terminated.
-	live := auth.AgentIdentity{TenantID: "default", DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 2}
+	live := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 2}
 	if err := exec.RecordHeartbeat(ctx, live); err != nil {
 		t.Fatalf("RecordHeartbeat (live attempt 2) = %v, want nil", err)
 	}

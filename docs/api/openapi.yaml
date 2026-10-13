@@ -470,6 +470,46 @@ paths:
               schema: { $ref: "#/components/schemas/DAGRun" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+      - $ref: "#/components/parameters/DagRunID"
+    post:
+      summary: Clear a whole DAG run (queue its task instances for re-run)
+      description: >-
+        The run page's Clear action. A dry run (the default) answers the task
+        instances the clear would reset. The clear itself resets them,
+        re-queues the run and answers the run.
+      operationId: clearDagRun
+      tags: [DAG Runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DAGRunClearRequest" }
+      responses:
+        "200":
+          description: >-
+            With dry_run (the default), the task instances the clear would
+            reset; otherwise the cleared run.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TaskInstanceCollection"
+                  - $ref: "#/components/schemas/DAGRun"
+        "400":
+          description: The body is not valid JSON, or only_new is true
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: The caller may not change task instances
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances:
     parameters:
       - $ref: "#/components/parameters/DagID"
@@ -478,6 +518,12 @@ paths:
       summary: List task instances of a DAG run
       operationId: listTaskInstances
       tags: [Task Instances]
+      description: >-
+        Pages with the same limit, offset and cursor query parameters as the
+        DAG run list (they are not declared on this operation so the
+        generated client keeps its signature). A request that carries cursor
+        gets next_cursor and previous_cursor in the body; only the offset
+        cursors this list issues are accepted, any other is refused with 400.
       responses:
         "200":
           description: A page of task instances
@@ -501,6 +547,61 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TaskInstance" }
+    patch:
+      summary: Mark a task instance as success, failed or skipped
+      description: >-
+        Sets the task instance's state, as the UI's Mark as action does. The
+        answer is the affected set, a collection holding the updated task
+        instance, as Apache Airflow declares it.
+      operationId: patchTaskInstance
+      tags: [Task Instances]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInstanceStateUpdate" }
+      responses:
+        "200":
+          description: The updated task instance, as a one-entry collection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskInstanceCollection" }
+        "400":
+          description: new_state is not success, failed or skipped
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+      - $ref: "#/components/parameters/DagRunID"
+      - $ref: "#/components/parameters/TaskID"
+    patch:
+      summary: Preview marking a task instance
+      description: >-
+        Answers the task instance with the state the PATCH would set, without
+        changing anything.
+      operationId: patchTaskInstanceDryRun
+      tags: [Task Instances]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInstanceStateUpdate" }
+      responses:
+        "200":
+          description: The task instance as the PATCH would leave it, as a one-entry collection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskInstanceCollection" }
+        "400":
+          description: new_state is not success, failed or skipped
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}:
     parameters:
@@ -676,14 +777,20 @@ components:
       name: cursor
       in: query
       description: >-
-        Dexaflow extension. Opaque keyset cursor taken from the
-        Dexaflow-Next-Cursor response header of the previous page. When set,
-        offset is ignored and the page holds the rows after the cursor in the
-        same order, at the cost of the first page whatever the depth. The
-        response body is unchanged. With a state filter, offset paging filters
-        the newest 10000 runs and counts total_entries within them, while
-        cursor paging filters and counts every run of the DAG, so the two
-        modes can report different totals for a DAG with more runs than that.
+        Opaque cursor, as Apache Airflow 3.3 pages its lists. Send it empty
+        for the first page, then the next_cursor or previous_cursor the
+        previous body named. Whenever the request carries cursor, the body
+        names next_cursor (absent on the last page) and previous_cursor
+        (absent on the first page); a request without cursor gets the body
+        without those fields. A cursor that is not one this server issued is
+        refused with 400. Dexaflow also accepts the keyset cursor of the
+        Dexaflow-Next-Cursor response header on the DAG run list: the page
+        then holds the runs after the cursor in the same order, at the cost of
+        the first page whatever the depth. With a state filter, offset paging
+        filters the newest 10000 runs and counts total_entries within them,
+        while keyset paging filters and counts every run of the DAG, so the
+        two modes can report different totals for a DAG with more runs than
+        that.
       schema: { type: string }
     DagID:
       name: dag_id
@@ -1037,6 +1144,16 @@ components:
           type: array
           items: { $ref: "#/components/schemas/DAGRun" }
         total_entries: { type: integer }
+        next_cursor:
+          type: string
+          description: >-
+            Cursor of the next page. Present only when the request carried
+            cursor and a next page exists.
+        previous_cursor:
+          type: string
+          description: >-
+            Cursor of the previous page. Present only when the request carried
+            cursor and the page is not the first.
 
     DAGRunCreate:
       type: object
@@ -1090,6 +1207,59 @@ components:
           type: array
           items: { $ref: "#/components/schemas/TaskInstance" }
         total_entries: { type: integer }
+        next_cursor:
+          type: string
+          description: >-
+            Cursor of the next page. Present only when the request carried
+            cursor and a next page exists.
+        previous_cursor:
+          type: string
+          description: >-
+            Cursor of the previous page. Present only when the request carried
+            cursor and the page is not the first.
+
+    TaskInstanceStateUpdate:
+      type: object
+      required: [new_state]
+      properties:
+        new_state:
+          type: string
+          enum: [success, failed, skipped]
+
+    DAGRunClearRequest:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+          default: true
+          description: >-
+            Return the task instances that WOULD be cleared, without clearing
+            them. Defaults to true, matching Apache Airflow. Send false to
+            execute.
+        only_failed:
+          type: boolean
+          default: false
+          description: >-
+            Restrict the clear to the run's task instances in a failed state.
+            false (the default, matching Apache Airflow) takes every task
+            instance of the run.
+        only_new:
+          type: boolean
+          default: false
+          description: >-
+            Not supported. Sending true is refused with 400: Dexaflow cannot yet
+            tell which tasks a newer DAG version added.
+        run_on_latest_version:
+          type: boolean
+          nullable: true
+          description: >-
+            Which version the re-run executes. Unset or false keeps the version
+            the run was created with; true re-binds the run to the DAG's current
+            registered version.
+        note:
+          type: string
+          nullable: true
+          description: Accepted and not stored (run notes are not editable yet).
 
     ClearTaskInstancesRequest:
       type: object

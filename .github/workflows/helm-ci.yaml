@@ -422,7 +422,8 @@ jobs:
           # The image overrides point at the images this job built and loaded into
           # kind, because no registry has an image for an unreleased version.
           # Upgrade through the chart as it is published under its pre-rename
-          # name (helm-release.yaml packages the same templates as `leoflow`):
+          # name (the `promote` job in release.yaml packages the same templates as
+          # `leoflow`):
           # that is the chart an existing release is upgraded with.
           legacy="$(mktemp -d)/leoflow"
           cp -R helm/dexaflow "${legacy}"

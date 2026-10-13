@@ -524,6 +524,17 @@ durable DB transition, each reaper tears the pod down:
   same `(try, epoch)`, so a row re-placed between the list and the mark is left
   alone, and the pod-presence check that defers a reap only counts the
   attempt's own pod.
+- The `task-id` label is lossy: it is lowercased and `_` and `.` become `-`, so
+  task ids such as `load_a` and `load-a`, or `Load` and `load`, share one value.
+  Every task pod therefore also carries its exact task id in the
+  `leoflow.io/raw-task-id` annotation, and the teardown, the pod-presence check
+  (live and cached) and the reconciler's infra confirmation only act on a pod
+  whose annotation names the attempt's own task. Tearing down one of two such
+  tasks no longer stops the other's live pod, and a task with no pod no longer
+  reads its sibling's pod as its own
+  ([#1598](https://github.com/dexadata/dexaflow/issues/1598)). A pod created
+  by a release before 0.5.4 has no such annotation and is matched on its labels
+  alone, as before, until it finishes.
 - The **reconciler** settles a finished pod's outcome only against the
   attempt named by that pod's labels, try and epoch. A superseded pod's
   `success` record can no longer settle the replacement that shares its try

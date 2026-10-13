@@ -18,8 +18,9 @@ dexaflow deploy [path | dag_id] [flags]
 ```
       --all                  deploy every DAG project in the workspace
       --builder string       image build tool to shell out to (e.g. docker, podman, nerdctl) (default "docker")
-      --dag-version string   DAG version label (default: git describe, else dev)
+      --dag-version string   DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)
       --dockerfile string    Dockerfile path relative to the DAG directory (default "Dockerfile")
+      --force                build, push and register even when the default content label is already deployed
   -h, --help                 help for deploy
       --server string        control plane base URL (default: config server_url)
       --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py

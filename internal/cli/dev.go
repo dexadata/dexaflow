@@ -824,9 +824,9 @@ func makeDeleteDag(mintToken func() string, uiURL, home string, logf func(format
 // devSubprocessSetup provisions the isolated venv and returns the subprocess
 // server env plus a reload that re-discovers + recompiles + registers every
 // project in the workspace (no image build) — the fast multi-DAG inner loop,
-// with user code running unsandboxed on the host. The venv is shared across
-// projects and uses the dependency-union from WorkspaceSpec.RootCfg so every
-// DAG's imports resolve from a single virtualenv.
+// with user code running unsandboxed on the host. Each project gets its own
+// venv built from its own `dependencies:` and python_version, so DAGs that pin
+// different versions of the same package coexist in one workspace (#1679).
 func devSubprocessSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, o devOptions, home string) (env []string, makeReload func(func() string) func() error, err error) {
 	agentBin, err := resolveAndReport(ctx, cmd, o.agentBin, "agent")
 	if err != nil {
@@ -1728,6 +1728,12 @@ func sharedServerEnv(p liteEnvParams) []string {
 		"LEOFLOW_SECRET_KEY_REENCRYPT_ON_BOOT=false",
 		"LEOFLOW_SECRET_KEY_MIGRATION_LOCK=true",
 		"LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true",
+		// The server pauses a new DAG by default, as Airflow does (#1705). Lite
+		// is the inner-dev loop: a DAG you run locally must start active, so
+		// its schedule runs without an unpause after the first save. A DAG's
+		// own is_paused_upon_creation still wins, and an exported
+		// DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION overrides this.
+		"LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION=false",
 	}
 	if adminHash != "" {
 		// Real auth: bootstrap the admin from the hash; no bypass.

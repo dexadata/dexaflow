@@ -65,3 +65,20 @@ func TestWarmPodSpecFuncEnvVarFallbackIsWorkerScoped(t *testing.T) {
 		t.Error("warm bootstrap token must carry a worker id (the Subject)")
 	}
 }
+
+// The warm pod spec builder refuses an image outside the operator's image
+// allowlist (issue #537 C2), so CreateWarmPod never creates the pod even if a
+// target for that image reached the reconciler.
+func TestWarmPodSpecFuncRefusesImageOutsideTheAllowlist(t *testing.T) {
+	cfg := &config.ServerConfig{}
+	cfg.Executor.Defaults.ExecutionAllowlist.Images = []string{"registry.example.com/team-a/*"}
+	authn := auth.NewJWTAuthenticator(nil, "secret", time.Hour)
+	build := warmPodSpecFunc(cfg, authn, "cp:9000")
+
+	if _, err := build(executor.WarmTarget{DagVersionID: "dv-1", Image: "ghcr.io/someone/tool:latest"}); err == nil {
+		t.Fatal("warmPodSpecFunc built a warm pod for an image outside the allowlist")
+	}
+	if _, err := build(executor.WarmTarget{DagVersionID: "dv-2", Image: "registry.example.com/team-a/etl:v1"}); err != nil {
+		t.Fatalf("warmPodSpecFunc refused an allowed image: %v", err)
+	}
+}

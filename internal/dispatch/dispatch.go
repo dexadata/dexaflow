@@ -119,6 +119,11 @@ type PlatformDefaults struct {
 	// that declares more than pool_slots x unit is refused (or, under
 	// enforce: warn, run and counted). Nil: no unit.
 	Unit *domain.ResourceUnit
+	// Limits fills an empty CPU or memory limit on every task pod, after the task
+	// and L0 resources above are chosen (executor.defaults.limits_*, #537). Nil:
+	// no default limit. Not applied with a unit, which always sets both limits.
+	// Without a unit the same limits also size the warm pods (see warmEligible).
+	Limits *domain.DefaultLimits
 	// PodSecurity carries the task-pod hardening choices. It lives here, not in
 	// the DAG spec, on purpose: whether untrusted task code may run as root is a
 	// cluster-operator decision. Exposing it per-DAG would let an author elevate
@@ -393,6 +398,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if req.Execution.ServiceAccount == "" {
 		req.Execution.ServiceAccount = d.defaultTaskServiceAccount
 	}
+	// Name the default too, so the executor's allowlist re-check can tell it
+	// from an account the task chose (issue #537 C2).
+	req.DefaultServiceAccount = d.defaultTaskServiceAccount
 	if r.Staging != nil && r.Staging.Enabled {
 		// All of the run's tasks share one PVC, named deterministically so a
 		// clear+re-run re-attaches it (ADR 0022). The executor provisions it.
@@ -431,6 +439,11 @@ func (d *Dispatcher) refuseBeforeToken(runID, dagID string, task domain.TaskSpec
 	if refused := d.defaults.ExecutionPolicy.CheckTask(task); refused != nil {
 		return false, refused
 	}
+	// The image allowlist (issue #537 C2) checks the image this run resolved,
+	// the one the pod (or a warm worker of this version) would run.
+	if refused := d.defaults.ExecutionPolicy.CheckImage(r.Image); refused != nil {
+		return false, fmt.Errorf("task %q: %w", task.TaskID, refused)
+	}
 	// Register caps a source-mode source only while the mode is on; a version
 	// registered on the runtime image before it was turned on was never
 	// checked. Refuse it here with register's message rather than let the
@@ -462,12 +475,14 @@ func (d *Dispatcher) checkUnit(runID, dagID string, task domain.TaskSpec) error 
 // warmEligible reports whether an attempt may go to a warm worker: no
 // staging, the warm ServiceAccount, none of its own placement or pod metadata,
 // and, with a resource unit, a size-1 task without resources, since a warm pod
-// is one unit.
+// is one unit. Without a unit, warm pods are sized by the default limits
+// (#537), so a task that would get a larger limit on a dedicated pod takes one.
 func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
 	return (r.Staging == nil || !r.Staging.Enabled) &&
 		warmSACompatible(task, d.defaultTaskServiceAccount) &&
 		warmPlacementCompatible(task) &&
-		d.defaults.Unit.WarmEligible(task)
+		d.defaults.Unit.WarmEligible(task) &&
+		(d.defaults.Unit != nil || d.defaults.Limits.WarmEligible(task))
 }
 
 // warmPlacementCompatible reports whether a task can run on a warm worker as it
@@ -496,16 +511,18 @@ func warmPlacementCompatible(task domain.TaskSpec) bool {
 // sizes every task: its own values where it set them, the rest filled so
 // requests never exceed limits (see ResourceUnit.Apply, ADR 0066 §3). Without one, the task's
 // own resources win, then the L0 platform default (ADR 0023), else none.
+//
+// The default limits then fill any CPU or memory limit still empty (#537).
 func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
 	switch {
 	case d.defaults.Unit != nil:
 		return *d.defaults.Unit.Apply(task)
 	case task.Resources != nil:
-		return *task.Resources
+		return d.defaults.Limits.Apply(*task.Resources)
 	case d.defaults.Resources != nil:
-		return *d.defaults.Resources
+		return d.defaults.Limits.Apply(*d.defaults.Resources)
 	}
-	return domain.Resources{}
+	return d.defaults.Limits.Apply(domain.Resources{})
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.

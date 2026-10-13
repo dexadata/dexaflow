@@ -299,7 +299,7 @@ func TestClearedAttemptSpecCarriesTheRestoredBudget(t *testing.T) {
 		t.Fatalf("ClearTaskInstances: %v", err)
 	}
 	try, maxTries := tryBudget(t, pg, ctx, runUUID)
-	spec, err := exec.TaskSpec(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "t", TryNumber: try})
+	spec, err := exec.TaskSpec(ctx, auth.AgentIdentity{TenantID: defaultTenantID(), RunID: runUUID, TaskID: "t", TryNumber: try})
 	if err != nil {
 		t.Fatalf("TaskSpec: %v", err)
 	}

@@ -50,11 +50,11 @@
 
 <p align="center">
   <a href="https://dexaflow.dexadata.ai/">
-    <img src="website/static/assets/screenshots/dev-grid-tasks.png" alt="Dexaflow running the Apache Airflow 3.2 UI — a DAG's grid view, task list, and run-duration overview" width="860">
+    <img src="website/static/assets/screenshots/dev-grid-tasks.png" alt="Dexaflow running the Apache Airflow UI: a DAG's grid view, task list, and run-duration overview" width="860">
   </a>
 </p>
 
-<p align="center"><em>The unmodified Apache Airflow 3.2 UI, served by a Go control plane.</em></p>
+<p align="center"><em>The unmodified Apache Airflow UI, served by a Go control plane.</em></p>
 
 ---
 
@@ -65,7 +65,7 @@ Dexaflow ships in two editions. Pick the track that matches your target:
 ### Lite — the full engine on a single host
 
 The **full Dexaflow control plane on one machine** — the same engine, the same
-Airflow-3.2 UI, the same `dag.py` + `dexaflow.yaml` as Pro — in a one-command,
+Airflow 3.3 UI, the same `dag.py` + `dexaflow.yaml` as Pro, in a one-command,
 **no-Kubernetes** package. Light to run, powerful where it counts: real
 pod-per-task execution, a **durable** Postgres datastore, hot-reload, a real
 admin login. It is not a stripped-down demo — it is the whole engine scoped to
@@ -150,7 +150,7 @@ Dexaflow is a **GitOps-first, container-native workflow orchestrator** written i
 
 - **GitOps-first.** Your DAG is a versioned artifact (`dag.json` + container image), not live source code. CI builds it. The registry stores it. Rollback is a tag change.
 - **Container-native.** Each DAG is its own container image, with its own dependencies, its own Python version, its own everything. Built automatically from a one-page `dexaflow.yaml` — you never touch Docker unless you want to.
-- **Airflow-UI compatible.** The MVP runs the unmodified Apache Airflow 3.2.x UI. Your team's muscle memory survives the migration. No new tool to learn.
+- **Airflow-UI compatible.** The MVP runs the unmodified Apache Airflow 3.3 UI. Your team's muscle memory survives the migration. No new tool to learn.
 - **Go performance, Go discipline.** Static binary. No GIL. Goroutines for concurrency. Test-driven from the first commit. The full `golangci-lint` A+ stack enforced in CI.
 
 ## What It Looks Like to Use
@@ -307,7 +307,7 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 - DAG-as-Image model with automatic image build via `dexaflow.yaml`
 - Hybrid DAG authoring: Python source parsed at compile time, or declarative YAML
 - XCom on Redis with 256 KB limit, TTL, and optional schema validation
-- Apache Airflow 3.2.x UI compatibility (no fork required)
+- Apache Airflow 3.3 UI compatibility (no fork required)
 - JWT authentication, RBAC, multi-tenant schema (OIDC-ready)
 - Kubernetes-native execution (no worker pool to manage)
 - Local development on Kubernetes (k3d/kind) or a dev-only subprocess executor (ADR 0015)
@@ -344,7 +344,7 @@ admin password any time with `dexaflow lite reset-password`.
 > Lite is the primary local path. The legacy Docker-Compose demo profile
 > (`docker compose --profile demo up --build`, login `admin@leoflow.local` /
 > `admin`) still works for CI / containerized-only environments — see
-> [docs/local-deploy.md](https://dexaflow.dexadata.ai/contribute/local-dev-loop/). The pinned Airflow 3.2.x UI is a
+> [docs/local-deploy.md](https://dexaflow.dexadata.ai/contribute/local-dev-loop/). The pinned Airflow 3.3 UI is a
 > tactical MVP choice; a purpose-built Dexaflow UI is the long-term direction
 > (ADR 0018).
 
@@ -372,7 +372,7 @@ TOKEN=$(./bin/dexaflow auth create-token --username admin@leoflow.local --passwo
 
 > **Two dev environments.** `make dev-up` runs Postgres + Redis as plain Docker containers on the host for a fast inner loop (control plane on the host). For full in-cluster execution (control plane and dependencies on a local Kubernetes cluster, mirroring production and exercising real task pods), the [Helm chart](helm/dexaflow/README.md) is installable on any K8s cluster — chart-test CI gates every change with `helm lint` + `helm-unittest` (41 tests) + kind install/upgrade smoke. Task execution is on Kubernetes only (ADR 0015); the host containers are dev dependencies, not the execution path.
 
-> The Airflow 3.2.1 UI ships embedded in the server and is served at `/` (see the one-command demo above and `docs/ui-compatibility.md`). The Scalar API reference is at `/docs`. Load tests are the remaining Phase 6 work.
+> The Airflow 3.3.2 UI ships embedded in the server and is served at `/` (see the one-command demo above and `docs/ui-compatibility.md`). The Scalar API reference is at `/docs`. Load tests are the remaining Phase 6 work.
 
 ## Honest Comparison
 

@@ -40,8 +40,15 @@ type Repository struct {
 	// is off, the plaintext form every earlier release wrote.
 	varEncryption VariableEncryption
 	extCoverage   externalSecretCoverage
-	xcomValues    XComValueDeleter
-	specs         *specCache
+	// pausedAtCreation is the server's dags_are_paused_at_creation (#1705):
+	// whether a DAG registered for the first time starts paused when its spec
+	// does not say. The zero value is false (new DAGs registered active), which
+	// is what tools and tests that build a Repository directly get; the server
+	// sets it from its configuration (default true) through
+	// SetDagsArePausedAtCreation.
+	pausedAtCreation bool
+	xcomValues       XComValueDeleter
+	specs            *specCache
 	// tenants caches tenant name -> id (see tenantID). Bounded by the number
 	// of tenants that exist, since only successful lookups are stored.
 	tenants *sync.Map
@@ -72,6 +79,14 @@ type externalSecretCoverage interface {
 func NewRepository(pg *Postgres) *Repository {
 	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
 }
+
+// SetDagsArePausedAtCreation sets whether a DAG registered for the first time
+// starts paused when its spec has no is_paused_upon_creation (the server's
+// dags_are_paused_at_creation, #1705). It never affects a DAG that exists.
+func (r *Repository) SetDagsArePausedAtCreation(paused bool) { r.pausedAtCreation = paused }
+
+// DagsArePausedAtCreation reports the setting SetDagsArePausedAtCreation set.
+func (r *Repository) DagsArePausedAtCreation() bool { return r.pausedAtCreation }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
 // 0019). Without it, connection writes fail rather than storing plaintext.
@@ -723,11 +738,11 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
 	qtx := r.q.WithTx(tx)
-	cleared, err := resetTaskInstances(ctx, qtx, run.ID, taskIDs, onlyFailed, budget)
+	cleared, err := resetTaskInstances(ctx, qtx, run, taskIDs, onlyFailed, budget)
 	if err != nil {
 		return 0, err
 	}
-	if err := r.deleteClearedXCom(ctx, qtx, run.ID, cleared); err != nil {
+	if err := r.deleteClearedXCom(ctx, qtx, run, cleared); err != nil {
 		return 0, err
 	}
 	if opts.ResetDagRun {
@@ -753,6 +768,7 @@ func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, 
 		if err := q.ResetDagRunToVersion(ctx, queries.ResetDagRunToVersionParams{
 			ID:           run.ID,
 			DagVersionID: dag.CurrentVersionID,
+			TenantID:     run.TenantID,
 		}); err != nil {
 			return fmt.Errorf("re-binding dag run to current version: %w", err)
 		}
@@ -760,7 +776,7 @@ func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, 
 	}
 	// The run is re-opened but keeps its pinned version, so the re-run
 	// executes the image that produced the original attempt.
-	if err := q.ReopenDagRunKeepingVersion(ctx, run.ID); err != nil {
+	if err := q.ReopenDagRunKeepingVersion(ctx, queries.ReopenDagRunKeepingVersionParams{ID: run.ID, TenantID: run.TenantID}); err != nil {
 		return fmt.Errorf("re-opening dag run: %w", err)
 	}
 	return nil
@@ -771,11 +787,13 @@ func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, 
 // try number, so without this the new attempt's downstream reads the previous
 // attempt's values for every key the new attempt does not overwrite (#1131).
 // Airflow likewise never lets an attempt see another attempt's XCom.
-func (r *Repository) deleteClearedXCom(ctx context.Context, q *queries.Queries, runID pgtype.UUID, taskIDs []string) error {
+func (r *Repository) deleteClearedXCom(ctx context.Context, q *queries.Queries, run queries.DagRun, taskIDs []string) error {
 	if len(taskIDs) == 0 {
 		return nil
 	}
-	keys, err := q.DeleteXComIndexForTasks(ctx, queries.DeleteXComIndexForTasksParams{DagRunID: runID, TaskIds: taskIDs})
+	keys, err := q.DeleteXComIndexForTasks(ctx, queries.DeleteXComIndexForTasksParams{
+		TenantID: run.TenantID, DagRunID: run.ID, TaskIds: taskIDs,
+	})
 	if err != nil {
 		return fmt.Errorf("deleting the cleared tasks' xcom index: %w", err)
 	}
@@ -794,13 +812,13 @@ func (r *Repository) deleteClearedXCom(ctx context.Context, q *queries.Queries, 
 // an empty list and onlyFailed) every failed task in the run. Each reset restores
 // the task's retry budget from budget. It returns the ids of the task instances
 // it reset.
-func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UUID, taskIDs []string, onlyFailed bool, budget clearRetryBudget) ([]string, error) {
+func resetTaskInstances(ctx context.Context, q *queries.Queries, run queries.DagRun, taskIDs []string, onlyFailed bool, budget clearRetryBudget) ([]string, error) {
 	if len(taskIDs) == 0 {
 		if !onlyFailed {
 			return nil, nil
 		}
 		ids, err := q.ResetAllFailedTaskInstances(ctx, queries.ResetAllFailedTaskInstancesParams{
-			DagRunID: runID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
+			TenantID: run.TenantID, DagRunID: run.ID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("clearing failed tasks: %w", err)
@@ -811,7 +829,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 	for _, taskID := range taskIDs {
 		if onlyFailed {
 			n, err := q.ResetFailedTaskInstance(ctx, queries.ResetFailedTaskInstanceParams{
-				DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
+				TenantID: run.TenantID, DagRunID: run.ID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("clearing failed task %q: %w", taskID, err)
@@ -822,7 +840,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, runID pgtype.UU
 			continue
 		}
 		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
-			DagRunID: runID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
+			TenantID: run.TenantID, DagRunID: run.ID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
 		}); err != nil {
 			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
@@ -848,7 +866,7 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 		ended = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	}
 	if _, err := r.q.UpdateDagRunState(ctx, queries.UpdateDagRunStateParams{
-		ID: run.ID, State: queries.DagRunState(state), StartedAt: run.StartedAt, EndedAt: ended,
+		ID: run.ID, State: queries.DagRunState(state), StartedAt: run.StartedAt, EndedAt: ended, TenantID: run.TenantID,
 	}); err != nil {
 		return fmt.Errorf("setting dag run state: %w", err)
 	}
@@ -1057,7 +1075,7 @@ func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, ru
 		return mapNotFound(err)
 	}
 	if err := r.q.SetTaskInstanceStateByUser(ctx, queries.SetTaskInstanceStateByUserParams{
-		State: queries.TaskState(state), DagRunID: run.ID, TaskID: taskID,
+		State: queries.TaskState(state), TenantID: run.TenantID, DagRunID: run.ID, TaskID: taskID,
 	}); err != nil {
 		return fmt.Errorf("setting task %q state: %w", taskID, err)
 	}
@@ -1175,8 +1193,18 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 	return spec, nil
 }
 
-// RegisterDagVersion upserts the DAG and inserts a version keyed by specHash,
-// setting it as current. It is idempotent: an existing hash yields created=false.
+// RegisterDagVersion inserts a version of the DAG keyed by specHash and makes
+// it current, creating the DAG on its first registration. It is idempotent: an
+// existing hash yields created=false and writes nothing, even when that hash is
+// an older version than the current one.
+//
+// Everything runs in one transaction that holds the DAG's row lock, so
+// registers of one DAG are serialized and a refused or failed register leaves
+// no partial state (#1702). The dags row's metadata (schedule, catchup,
+// start_date, max_active_runs, description, owner, tags) is rewritten only when
+// the new version becomes current, so it always describes the current version.
+// is_paused is set only when this register creates the DAG (pausedOnCreation);
+// a new version of an existing DAG never changes it.
 func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec domain.DAGSpec, specHash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
@@ -1194,36 +1222,47 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 	if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
 		return false, lerr
 	}
-	maxRuns := spec.MaxActiveRuns
-	if maxRuns == 0 {
-		maxRuns = defaultMaxActiveRuns
-	}
-	dag, err := r.q.UpsertDag(ctx, queries.UpsertDagParams{
-		TenantID:         tid,
-		DagID:            spec.DagID,
-		Description:      strPtr(spec.Description),
-		Owner:            strPtr(spec.Owner),
-		Tags:             spec.Tags,
-		Schedule:         spec.Schedule,
-		ScheduleTimezone: strPtr(spec.ScheduleTZ),
-		StartDate:        parseTimestamptz(spec.StartDate),
-		MaxActiveRuns:    toInt32(maxRuns),
-		Catchup:          spec.Catchup,
-	})
-	if err != nil {
-		return false, fmt.Errorf("upserting dag: %w", err)
-	}
-	if _, verr := r.q.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash}); verr == nil {
-		return false, nil
-	} else if !errors.Is(verr, pgx.ErrNoRows) {
-		return false, fmt.Errorf("checking existing version: %w", verr)
-	}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return false, fmt.Errorf("encoding spec: %w", err)
 	}
-	version, err := r.q.InsertDagVersion(ctx, queries.InsertDagVersionParams{
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("beginning register tx: %w", err)
+	}
+	// Rollback after a successful commit is a no-op; on any early return (409,
+	// identical hash, failed write) it undoes everything this register wrote.
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, spec, specHash, specJSON, r.pausedOnCreation(spec))
+	if err != nil || !created {
+		return false, err
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return false, fmt.Errorf("committing register tx: %w", cerr)
+	}
+	return true, nil
+}
+
+// registerDagVersionTx is the body of RegisterDagVersion, run on a transaction:
+// create the DAG if missing, lock its row, decide on the hash, insert the
+// version, then make it current and apply its metadata.
+//
+// paused is is_paused for a DAG this register creates; it is ignored when the
+// DAG exists, so a redeploy never pauses or unpauses it.
+func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, specHash string, specJSON []byte, paused bool) (bool, error) {
+	meta := dagMetadataOf(spec)
+	dag, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, paused)
+	if err != nil {
+		return false, err
+	}
+	if _, verr := qtx.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
+		return false, nil
+	} else if !errors.Is(verr, pgx.ErrNoRows) {
+		return false, fmt.Errorf("checking existing version: %w", verr)
+	}
+	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
+		TenantID:       tid,
 		Version:        spec.DagVersion,
 		ImageReference: spec.Image,
 		Spec:           specJSON,
@@ -1240,10 +1279,14 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 		// push new content.
 		return false, fmt.Errorf("inserting version: %w", mapConflict(err))
 	}
-	if err := r.q.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID}); err != nil {
+	meta.ID, meta.TenantID = dag.ID, tid
+	if err := qtx.UpdateDagMetadata(ctx, meta); err != nil {
+		return false, fmt.Errorf("updating dag metadata: %w", err)
+	}
+	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
 		return false, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := r.q.CreateAuditLog(ctx, queries.CreateAuditLogParams{
+	if err := qtx.CreateAuditLog(ctx, queries.CreateAuditLogParams{
 		TenantID:     tid,
 		Action:       "dag.version.register",
 		ResourceType: strPtr("dag"),
@@ -1252,6 +1295,62 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 		return false, fmt.Errorf("writing audit log: %w", err)
 	}
 	return true, nil
+}
+
+// pausedOnCreation is whether spec's DAG starts paused if this register creates
+// it: the spec's is_paused_upon_creation when set, else the server's
+// dags_are_paused_at_creation, as in Airflow (#1705).
+func (r *Repository) pausedOnCreation(spec domain.DAGSpec) bool {
+	if spec.IsPausedUponCreation != nil {
+		return *spec.IsPausedUponCreation
+	}
+	return r.pausedAtCreation
+}
+
+// ensureAndLockDag creates the DAG's row when it is missing and locks it. A
+// DeleteDag that commits between the two statements leaves nothing to lock;
+// the pair is then tried once more, which creates the DAG again. A DAG that is
+// gone a second time is reported as a conflict for the caller to retry.
+// paused is is_paused for a DAG this call creates.
+func ensureAndLockDag(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, meta queries.UpdateDagMetadataParams, paused bool) (queries.Dag, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
+			TenantID: tid, DagID: dagID,
+			Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
+			Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
+			MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup, IsPaused: paused,
+		}); err != nil {
+			return queries.Dag{}, fmt.Errorf("creating dag: %w", err)
+		}
+		dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
+		if err == nil {
+			return dag, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return queries.Dag{}, fmt.Errorf("locking dag: %w", err)
+		}
+	}
+	return queries.Dag{}, domain.Safef(domain.ErrConflict,
+		"dag %q was deleted while this version was being registered; push it again", dagID)
+}
+
+// dagMetadataOf maps a spec to the dags-row columns it owns while it is the
+// current version. ID and TenantID are left for the caller.
+func dagMetadataOf(spec domain.DAGSpec) queries.UpdateDagMetadataParams {
+	maxRuns := spec.MaxActiveRuns
+	if maxRuns == 0 {
+		maxRuns = defaultMaxActiveRuns
+	}
+	return queries.UpdateDagMetadataParams{
+		Description:      strPtr(spec.Description),
+		Owner:            strPtr(spec.Owner),
+		Tags:             spec.Tags,
+		Schedule:         spec.Schedule,
+		ScheduleTimezone: strPtr(spec.ScheduleTZ),
+		StartDate:        parseTimestamptz(spec.StartDate),
+		MaxActiveRuns:    toInt32(maxRuns),
+		Catchup:          spec.Catchup,
+	}
 }
 
 // validateDeclaredSecrets rejects a spec that declares a variable or connection
@@ -2189,7 +2288,7 @@ func (r *Repository) ClearDagHistory(ctx context.Context, tenant, dagID string) 
 	// Like DeleteDag, the cascade covers every run and task instance of the
 	// DAG, so it runs without the API statement timeout.
 	err = withoutStatementTimeout(ctx, r.pool, r.q, func(q *queries.Queries) error {
-		_, cerr := q.ClearDagRuns(ctx, dag.ID)
+		_, cerr := q.ClearDagRuns(ctx, queries.ClearDagRunsParams{TenantID: dag.TenantID, DagID: dag.ID})
 		return cerr
 	})
 	if err != nil {

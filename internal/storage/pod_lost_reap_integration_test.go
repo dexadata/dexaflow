@@ -232,7 +232,7 @@ func TestListRunningTasksReportsHeartbeatIntegration(t *testing.T) {
 	if c.Heartbeated {
 		t.Fatalf("a TI that never heartbeated must report Heartbeated=false")
 	}
-	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "t", TryNumber: 1}); err != nil {
+	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{TenantID: defaultTenantID(), RunID: runUUID, TaskID: "t", TryNumber: 1}); err != nil {
 		t.Fatalf("RecordHeartbeat: %v", err)
 	}
 	cands, _ = sched.ListRunningTasks(ctx, 0)

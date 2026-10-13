@@ -69,7 +69,8 @@ func TestHeartbeatRoundTripIntegration(t *testing.T) {
 
 	// Agent heartbeats — the column is stamped.
 	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{
-		RunID: runUUID, TaskID: "t", TryNumber: 1,
+		TenantID: defaultTenantID(),
+		RunID:    runUUID, TaskID: "t", TryNumber: 1,
 	}); err != nil {
 		t.Fatalf("RecordHeartbeat: %v", err)
 	}
@@ -115,7 +116,8 @@ func TestMarkTaskAgentLostIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{
-		RunID: runUUID, TaskID: "t", TryNumber: 1,
+		TenantID: defaultTenantID(),
+		RunID:    runUUID, TaskID: "t", TryNumber: 1,
 	}); err != nil {
 		t.Fatalf("RecordHeartbeat: %v", err)
 	}

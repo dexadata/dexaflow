@@ -92,7 +92,7 @@ func decodeRunPage(t *testing.T, body []byte) (ids []string, total int, keys []s
 }
 
 // Walking the runs with the cursor from the response header visits every run
-// once, in the offset order, and every page keeps the /api/v2 body shape.
+// once, in the offset order, and every page keeps the /api/v2 body fields.
 func TestDagRunsCursorWalksEveryRunOnce(t *testing.T) {
 	repo := &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: fiveRuns()}}
 	srv := keysetRunServer(repo)
@@ -107,8 +107,12 @@ func TestDagRunsCursorWalksEveryRunOnce(t *testing.T) {
 		if total != 5 {
 			t.Errorf("page %d total_entries = %d, want 5", page, total)
 		}
-		if len(keys) != 2 {
-			t.Errorf("page %d body keys = %v, want exactly dag_runs and total_entries", page, keys)
+		// A cursor page may also name Airflow 3.3's next_cursor and
+		// previous_cursor; the 3.2 fields are unchanged.
+		for _, k := range keys {
+			if k != "dag_runs" && k != "total_entries" && (page == 0 || k != "next_cursor" && k != "previous_cursor") {
+				t.Errorf("page %d body keys = %v, want dag_runs and total_entries (plus the cursor fields on cursor pages)", page, keys)
+			}
 		}
 		seen = append(seen, ids...)
 		next := rec.Header().Get(nextCursorHeader)

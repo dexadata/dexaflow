@@ -23,10 +23,10 @@ dexaflow build [workspace] [flags]
 
 ```
       --builder string       image build tool to shell out to (e.g. docker, podman, nerdctl) (default "docker")
-      --dag-version string   version recorded in each dag.json and used by the registry tag strategy (default: git describe, else dev)
+      --dag-version string   version recorded in each dag.json and used by the registry tag strategy (default: per project, git describe of its directory, or dev outside git, plus a hash of its content)
   -h, --help                 help for build
       --push                 push each built image to its registry
-      --sha string           commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD)
+      --sha string           commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)
 ```
 
 ### Options inherited from parent commands
