@@ -183,6 +183,9 @@ type Server struct {
 	// "unchecked" (single-node / tests serve as before); production wires it to the
 	// scheduler's own leadership so exactly one replica — the leader — serves.
 	leaderCheck func() bool
+	// bindRetryDelays is the backoff between retries of a failed warm binding
+	// write (bindWarmAttempt). Injectable so tests retry without waiting.
+	bindRetryDelays []time.Duration
 	// shutdown, when non-nil, is closed as the control plane begins shutting down.
 	// StreamLogs is a bidi stream held open for the whole task; without this signal
 	// its receive loop blocked on Recv until the agent finished, so a graceful stop
@@ -215,7 +218,7 @@ func (s *Server) SetSettledHook(fn func()) { s.settled.Store(&fn) }
 // NewServer builds an AgentService server backed by the given authenticator,
 // store, and XCom service.
 func NewServer(authn Authenticator, store Store, xcomSvc XComService) *Server {
-	s := &Server{auth: authn, store: store, xcom: xcomSvc, now: time.Now}
+	s := &Server{auth: authn, store: store, xcom: xcomSvc, now: time.Now, bindRetryDelays: defaultBindRetryDelays}
 	s.attemptSpecs = newAttemptSpecCache(attemptSpecCacheSize, attemptSpecCacheTTL, func() time.Time { return s.now() })
 	return s
 }
