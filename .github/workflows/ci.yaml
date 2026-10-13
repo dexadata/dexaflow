@@ -20,6 +20,11 @@ permissions:
   contents: read
 
 env:
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
   GO_VERSION: "1.26.9"
   PYTHON_VERSION: "3.11"
   GOLANGCI_LINT_VERSION: "v2.12.2"
