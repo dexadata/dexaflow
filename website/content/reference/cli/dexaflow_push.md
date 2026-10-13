@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_push/
 title: "dexaflow push"
 linkTitle: "push"
-weight: 45
+weight: 46
 ---
 
 Register a compiled dag.json with the control plane.

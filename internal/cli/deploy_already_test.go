@@ -177,7 +177,11 @@ func TestDeployRefusesAnOlderContentLabel(t *testing.T) {
 	if err == nil {
 		t.Fatal("deploying content of an older version must fail")
 	}
-	for _, want := range []string{label, "not the current version (LB)", "#1702", "--dag-version"} {
+	dagID := strings.Fields(strings.SplitN(err.Error(), " content matches", 2)[0])[0]
+	if strings.Contains(err.Error(), "not supported") {
+		t.Errorf("error %q still says rollback is not supported", err)
+	}
+	for _, want := range []string{label, "not the current version (LB)", "dexaflow rollback " + dagID + " --to " + label, "--dag-version"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not say %q", err, want)
 		}

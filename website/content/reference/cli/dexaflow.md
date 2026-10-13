@@ -35,6 +35,7 @@ Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow lite](/reference/cli/dexaflow_lite/)	 - Run Dexaflow Lite locally with hot reload.
 * [dexaflow new](/reference/cli/dexaflow_new/)	 - Scaffold a new DAG under the workspace's dags/ folder.
 * [dexaflow push](/reference/cli/dexaflow_push/)	 - Register a compiled dag.json with the control plane.
+* [dexaflow rollback](/reference/cli/dexaflow_rollback/)	 - Make an earlier registered version of a DAG current again.
 * [dexaflow runs](/reference/cli/dexaflow_runs/)	 - Trigger and inspect DAG runs.
 * [dexaflow server](/reference/cli/dexaflow_server/)	 - Information about running the control plane.
 * [dexaflow setup](/reference/cli/dexaflow_setup/)	 - Bootstrap the managed Dexaflow runtime (Python, parser, workspace).
