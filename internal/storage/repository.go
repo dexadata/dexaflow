@@ -439,15 +439,55 @@ func (r *Repository) GetDag(ctx context.Context, tenant, dagID string) (domain.D
 
 // SetPaused toggles the paused flag of a DAG.
 func (r *Repository) SetPaused(ctx context.Context, tenant, dagID string, paused bool) (domain.DAG, error) {
+	return r.SetPausedBy(ctx, tenant, "", dagID, paused)
+}
+
+// SetPausedBy is SetPaused on behalf of the user actorUserID: a change of
+// is_paused is audited as dag.pause or dag.unpause in the same transaction;
+// a request for the state the DAG is already in records nothing.
+func (r *Repository) SetPausedBy(ctx context.Context, tenant, actorUserID, dagID string, paused bool) (domain.DAG, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return domain.DAG{}, err
 	}
-	d, err := r.q.SetDagPaused(ctx, queries.SetDagPausedParams{TenantID: tid, DagID: dagID, IsPaused: paused})
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.DAG{}, fmt.Errorf("beginning pause tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	before, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
 	if err != nil {
 		return domain.DAG{}, mapNotFound(err)
 	}
+	d, err := qtx.SetDagPaused(ctx, queries.SetDagPausedParams{TenantID: tid, DagID: dagID, IsPaused: paused})
+	if err != nil {
+		return domain.DAG{}, mapNotFound(err)
+	}
+	if before.IsPaused != paused {
+		actor, aerr := tenantActor(ctx, qtx, tid, actorUUID(actorUserID))
+		if aerr != nil {
+			return domain.DAG{}, aerr
+		}
+		if werr := writePauseAudit(ctx, qtx, tid, actor, dagID, paused, map[string]any{"via": "api"}); werr != nil {
+			return domain.DAG{}, werr
+		}
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return domain.DAG{}, fmt.Errorf("committing pause tx: %w", cerr)
+	}
 	return mapDag(d), nil
+}
+
+// writePauseAudit records a change of is_paused on dagID as dag.pause or
+// dag.unpause, with fields added to the metadata.
+func writePauseAudit(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID, dagID string, paused bool, fields map[string]any) error {
+	action := "dag.unpause"
+	if paused {
+		action = "dag.pause"
+	}
+	fields["is_paused"] = paused
+	return writeDagAudit(ctx, qtx, tid, actor, action, dagID, fields)
 }
 
 func (r *Repository) resolveDag(ctx context.Context, tenant, dagID string) (queries.Dag, error) {
@@ -1363,12 +1403,8 @@ func setPausedByRegister(ctx context.Context, qtx *queries.Queries, tid, actor p
 	if _, err := qtx.SetDagPaused(ctx, queries.SetDagPausedParams{TenantID: tid, DagID: spec.DagID, IsPaused: paused}); err != nil {
 		return fmt.Errorf("setting is_paused: %w", err)
 	}
-	action := "dag.unpause"
-	if paused {
-		action = "dag.pause"
-	}
-	return writeDagAudit(ctx, qtx, tid, actor, action, spec.DagID, map[string]any{
-		"is_paused": paused, "via": "register", "version": spec.DagVersion,
+	return writePauseAudit(ctx, qtx, tid, actor, spec.DagID, paused, map[string]any{
+		"via": "register", "version": spec.DagVersion,
 	})
 }
 

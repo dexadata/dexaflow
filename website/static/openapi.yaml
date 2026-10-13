@@ -358,6 +358,10 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       summary: Update DAG (typically pause/unpause)
+      description: >-
+        Sets is_paused. A change is audited as dag.pause or dag.unpause with
+        the acting user; asking for the state the DAG is already in records
+        nothing.
       operationId: updateDag
       tags: [DAGs]
       requestBody:

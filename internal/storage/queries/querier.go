@@ -178,8 +178,9 @@ type Querier interface {
 	// LockDagByDagID and rewrites the metadata only when a new version becomes
 	// current (UpdateDagMetadata). A concurrent first insert of the same dag_id
 	// waits on the unique index until the other transaction ends.
-	// is_paused is set only here, on creation (dags_are_paused_at_creation or the
-	// spec's is_paused_upon_creation, #1705): a redeploy never changes it.
+	// is_paused is set here, on creation (dags_are_paused_at_creation or the
+	// spec's is_paused_upon_creation, #1705): a redeploy never changes it, unless
+	// the register asks for a state (is_paused), which SetDagPaused then applies.
 	EnsureDag(ctx context.Context, arg EnsureDagParams) error
 	// The subset of the given conn_ids that exist for the tenant. Used to reject a
 	// DAG that declares an unknown connection at registration (ADR 0055 D6); a name

@@ -5,6 +5,7 @@ package storage_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -77,7 +78,7 @@ func TestRegisterPausedOverrideOnCreation(t *testing.T) {
 // each change is audited with the acting user; an override equal to the
 // current state writes nothing (#1705).
 func TestRegisterPausedOverrideOnRedeploy(t *testing.T) {
-	yes, no := true, false
+	no := false
 	repo, _, ctx := openRepo(t)
 	repo.SetDagsArePausedAtCreation(true)
 	user, err := repo.CreateUser(ctx, "default", fmt.Sprintf("pauser-%d@example.com", time.Now().UnixNano()), "pw-123456789", nil)
@@ -103,8 +104,23 @@ func TestRegisterPausedOverrideOnRedeploy(t *testing.T) {
 		t.Errorf("unpause audit owner = %q, want %q", entry.Owner, user.Email)
 	}
 
+	pauseKnownContent(t, ctx, repo, user.ID, v2)
+
+	// Without an override the state is reported and left alone.
+	v3 := registerTxSpec(dagID, "v3", "ccc", 3, false)
+	if got := registerAs(t, ctx, repo, user.ID, v3, nil); !got.Created || !got.IsPaused {
+		t.Fatalf("v3 register = %+v, want created and still paused", got)
+	}
+}
+
+// pauseKnownContent registers v2, already registered and current, with
+// is_paused true twice: the first pauses and is audited, the second changes
+// nothing.
+func pauseKnownContent(t *testing.T, ctx context.Context, repo *storage.Repository, actor string, v2 domain.DAGSpec) {
+	t.Helper()
+	yes, dagID := true, v2.DagID
 	// The same content again, now pausing: no version, but the pause commits.
-	if got := registerAs(t, ctx, repo, user.ID, v2, &yes); got.Created || !got.IsPaused {
+	if got := registerAs(t, ctx, repo, actor, v2, &yes); got.Created || !got.IsPaused {
 		t.Fatalf("re-register = %+v, want not created and paused", got)
 	}
 	if !isPaused(t, repo, ctx, dagID) {
@@ -115,17 +131,11 @@ func TestRegisterPausedOverrideOnRedeploy(t *testing.T) {
 	}
 
 	// The same state again: nothing changes and nothing is audited.
-	if got := registerAs(t, ctx, repo, user.ID, v2, &yes); got.Created || !got.IsPaused {
+	if got := registerAs(t, ctx, repo, actor, v2, &yes); got.Created || !got.IsPaused {
 		t.Fatalf("idempotent re-register = %+v, want not created and paused", got)
 	}
 	if n := countAudits(t, repo, dagID, "dag.pause"); n != 1 {
 		t.Errorf("dag.pause audit entries = %d after a no-op, want still 1", n)
-	}
-
-	// Without an override the state is reported and left alone.
-	v3 := registerTxSpec(dagID, "v3", "ccc", 3, false)
-	if got := registerAs(t, ctx, repo, user.ID, v3, nil); !got.Created || !got.IsPaused {
-		t.Fatalf("v3 register = %+v, want created and still paused", got)
 	}
 }
 
@@ -150,5 +160,35 @@ func TestRegisterPausedOverrideRolledBackWithARefusedVersion(t *testing.T) {
 	}
 	if n := countAudits(t, repo, dagID, "dag.unpause"); n != 0 {
 		t.Errorf("dag.unpause audit entries = %d after a refused register, want 0", n)
+	}
+}
+
+// TestSetPausedByAudits: a pause or unpause through the Airflow PATCH is
+// audited with the acting user when it changes the DAG, and a request for the
+// state the DAG is already in records nothing (#1705).
+func TestSetPausedByAudits(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	repo.SetDagsArePausedAtCreation(true)
+	user, err := repo.CreateUser(ctx, "default", fmt.Sprintf("toggler-%d@example.com", time.Now().UnixNano()), "pw-123456789", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dagID := fmt.Sprintf("set_paused_by_%d", time.Now().UnixNano())
+	registerAs(t, ctx, repo, "", registerTxSpec(dagID, "v1", "a", 3, false), nil)
+	d, err := repo.SetPausedBy(ctx, "default", user.ID, dagID, false)
+	if err != nil || d.IsPaused {
+		t.Fatalf("unpause = %+v, %v", d, err)
+	}
+	if entry := latestAudit(t, repo, dagID, "dag.unpause"); entry.Owner != user.Email {
+		t.Errorf("unpause audit owner = %q, want %q", entry.Owner, user.Email)
+	}
+	if _, err := repo.SetPausedBy(ctx, "default", user.ID, dagID, false); err != nil {
+		t.Fatal(err)
+	}
+	if n := countAudits(t, repo, dagID, "dag.unpause"); n != 1 {
+		t.Errorf("dag.unpause audit entries = %d after a no-op, want 1", n)
+	}
+	if _, err := repo.SetPausedBy(ctx, "default", user.ID, "no_such_dag_"+dagID, true); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("unknown DAG: err = %v, want not found", err)
 	}
 }

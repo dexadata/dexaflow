@@ -1008,12 +1008,16 @@ type ClientInterface interface {
 
 	// UpdateDagWithBody Update DAG (typically pause/unpause)
 	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
 	UpdateDagWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateDag Update DAG (typically pause/unpause)
+	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1485,6 +1489,8 @@ func (c *Client) GetDag(ctx context.Context, dagId DagID, reqEditors ...RequestE
 
 // UpdateDagWithBody Update DAG (typically pause/unpause)
 //
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
@@ -1501,6 +1507,8 @@ func (c *Client) UpdateDagWithBody(ctx context.Context, dagId DagID, contentType
 }
 
 // UpdateDag Update DAG (typically pause/unpause)
+//
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4066,12 +4074,16 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateDagWithBodyWithResponse Update DAG (typically pause/unpause)
 	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
 	UpdateDagWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDagResponse, error)
 
 	// UpdateDagWithResponse Update DAG (typically pause/unpause)
+	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6408,6 +6420,8 @@ func (c *ClientWithResponses) GetDagWithResponse(ctx context.Context, dagId DagI
 
 // UpdateDagWithBodyWithResponse Update DAG (typically pause/unpause)
 //
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
@@ -6420,6 +6434,8 @@ func (c *ClientWithResponses) UpdateDagWithBodyWithResponse(ctx context.Context,
 }
 
 // UpdateDagWithResponse Update DAG (typically pause/unpause)
+//
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
