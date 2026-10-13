@@ -9,7 +9,7 @@ that runs inside task images.
   `dexaflow compile` and of Lite (`python3 -m leoflow_parser`), never inside
   the server process (root principle 5,
   [ADR 0048](https://dexaflow.dexadata.ai/project/adrs/0048-no-user-code-in-control-plane/)).
-- **The parser imports a structural shim, not Airflow.** `_shim/` provides the
+- **The parser imports a structural shim, not Airflow.** `leoflow_parser/_shim/` provides the
   `airflow` names the compiler reads, using the standard library only
   ([ADR 0024](https://dexaflow.dexadata.ai/project/adrs/0024-dag-parsing-structural-shim/)).
   Unsupported operators are absent from the shim on purpose, so importing one

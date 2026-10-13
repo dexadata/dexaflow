@@ -27,11 +27,7 @@ reach a replica older than itself. Both directions have to work.
 - **A new control plane handles an old agent.** An old agent never sends a new
   field, so the server reads its absence safely: a token minted before the
   attempt epoch is read as epoch 0
-  (`attemptEpochArg` in `internal/storage/agent_store.go`), and a branch task
-  whose agent sends no decision fails closed with a reason that says to rebuild
-  the image
-  ([ADR 0064](https://dexaflow.dexadata.ai/project/adrs/0064-branching-and-skip/),
-  "Agent / control-plane skew").
+  (`attemptEpochArg` in `internal/storage/agent_store.go`).
 - **The generated code is committed and must match.** Edit `agent.proto`, run
   `make proto` (`buf generate`), and commit `proto/agent/v1/`. The
   `proto-drift` job in `ci.yaml` regenerates it with pinned plugins and fails

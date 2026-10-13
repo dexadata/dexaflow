@@ -60,5 +60,6 @@ command or flag, or an error message.
   interactive session before it deploys to a server that is not on the local
   machine.
 - [ ] **Errors say what to do next.** A refusal names the value that would be
-  accepted (ADR 0066: `set size: 8`), and a failure caused by an old image says
-  to rebuild it (ADR 0064, `branch_decision_missing`).
+  accepted (ADR 0066: `set size: 8`), and a deprecated setting says what to
+  change and whether existing images keep running
+  (`deprecationRemedy` in `internal/cli/compile_python_deprecation.go`).
