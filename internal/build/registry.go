@@ -22,6 +22,39 @@ type Pinned struct {
 	Ref string
 	// Manifest is the raw manifest or index the digest names.
 	Manifest []byte
+	// Platform is os/arch[/variant] from the config of a single image, filled
+	// by the skip path only (Registry.Platform); empty for an index.
+	Platform string
+}
+
+// missing returns the platforms of want the pinned image cannot serve: an
+// index must list each one; a single image serves only its own platform.
+func (p Pinned) missing(want []string) []string {
+	if p.Platform == "" {
+		return missingPlatforms(p.Manifest, want)
+	}
+	var out []string
+	for _, w := range want {
+		if !samePlatform(p.Platform, w) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// samePlatform reports whether the image platform have serves the requested
+// want, with the variant rules of missingPlatforms.
+func samePlatform(have, want string) bool {
+	h := strings.SplitN(strings.ToLower(have), "/", 3)
+	w := strings.SplitN(strings.ToLower(want), "/", 3)
+	if len(h) < 2 || len(w) < 2 || h[0] != w[0] || h[1] != w[1] {
+		return false
+	}
+	hv := ""
+	if len(h) == 3 {
+		hv = h[2]
+	}
+	return len(w) < 3 || variantOf(h[1], hv) == w[2]
 }
 
 // Resolver reads a pushed image's digest and manifest from its registry.
@@ -56,6 +89,34 @@ func (Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 		return Pinned{}, fmt.Errorf("reading %q from its registry: media type %q is not an OCI or Docker v2 manifest or index", image, desc.MediaType)
 	}
 	return Pinned{Ref: pinnedRef(image, desc.Digest.String()), Manifest: desc.Manifest}, nil
+}
+
+// Platform reads os/arch[/variant] from the config of the single image ref
+// names (a pinned reference), or "" when the config names no platform. It is
+// a second request, made only by the skip path, which must know what a
+// single image was built for.
+func (Registry) Platform(ctx context.Context, ref string) (string, error) {
+	r, err := name.ParseReference(ref)
+	if err != nil {
+		return "", fmt.Errorf("image %q is not a valid reference: %w", ref, err)
+	}
+	img, err := remote.Image(r, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithTransport(transport(remote.DefaultTransport)))
+	if err != nil {
+		return "", fmt.Errorf("reading %q from its registry: %w", ref, err)
+	}
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return "", fmt.Errorf("reading the image config: %w", err)
+	}
+	if cfg.OS == "" || cfg.Architecture == "" {
+		return "", nil
+	}
+	p := cfg.OS + "/" + cfg.Architecture
+	if cfg.Variant != "" {
+		p += "/" + cfg.Variant
+	}
+	return p, nil
 }
 
 // pinnedRef replaces the tag or digest of image with digest and keeps the

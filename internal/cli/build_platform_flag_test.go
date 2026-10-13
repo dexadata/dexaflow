@@ -11,6 +11,8 @@ import (
 
 // amd64AndArm64 is the manifest of a list holding both platforms, what the
 // registry holds after a multi-platform push.
+const amd64Only = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"platform":{"os":"linux","architecture":"amd64"}}]}`
+
 const amd64AndArm64 = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}`
 
 // argvBuilder stands in for docker: it appends every argv to log, one call
@@ -263,9 +265,10 @@ func TestBuildCommandChecksEveryProjectBeforeBuilding(t *testing.T) {
 }
 
 // Without --force, the content label covers the platform: a deploy for
-// another platform is not "already deployed", it builds.
+// another platform is not "already deployed", it builds. The registry holds
+// only an amd64 image, so the skip path cannot serve arm64 either.
 func TestDeployForAnotherPlatformBuilds(t *testing.T) {
-	dir := platformProject(t, "")
+	dir, _ := platformProjectWith(t, amd64Only, "")
 	label := labelOf(t, dir)
 	builder, log := argvBuilder(t)
 	fake := &deployServer{current: label, registered: []string{label}}

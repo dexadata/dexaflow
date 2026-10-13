@@ -20,14 +20,14 @@ no container daemon on your machine.
 
 | Order | Builder | Used when | Status |
 |---|---|---|---|
-| 1 | `skip` | The image of your dependencies is already in the registry and the code did not change | Planned (#1706) |
+| 1 | `skip` | The image for this content is already in the registry: today the whole DAG image under its content label (see below); later the image of your dependencies, when only the code changed | Available for `deploy` (whole image) |
 | 2 | `code-layer` | Only your DAG code changed: it is added as one layer on the cached dependency image, through the registry | Planned (#1706) |
 | 3 | `dependency-layer` | Every dependency has a wheel for the target platform: they are installed for that platform and added as a layer on the runtime base, with no daemon and no emulation | Planned (#1706) |
 | 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`): a build pod in your cluster, or a cloud builder | Planned (#1706) |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
-Until the first four land, every build falls back to `local-daemon`, and the
-output says so before the build starts:
+Until paths 2 to 4 land, every build that is not skipped falls back to
+`local-daemon`, and the output says so before the build starts:
 
 ```console
 $ dexaflow deploy --server https://pro.example.com --yes
@@ -44,6 +44,34 @@ Deployed first_pro_dag -> https://pro.example.com
 `compile --build` and `build` print the same two lines, `platforms:` with its
 source and `builder:`. With `deploy --skip-build` nothing is built and no
 builder line is printed.
+
+## Reusing an image already in the registry
+
+The default version label is a hash of everything the image is built from
+(`dexaflow.yaml`, the files the image copies, the CLI version). With
+`tag_strategy: version`, the default, the image tag is that label, so an
+image the registry already holds under it was built from the same inputs.
+`deploy` then pins that image and registers it without building or pushing:
+
+```console
+builder:    skip, the registry already holds the image for this content label (pass --rebuild to build it again)
+```
+
+This happens when the same content was pushed before but is not the current
+version on this control plane: a deploy to a second target that shares the
+registry, a CI job that already built the image, or a deploy whose register
+step failed. When the content is already the current version, `deploy` stops
+earlier and says so.
+
+The image is reused only when it holds every requested platform. It is never
+reused for an explicit `--dag-version`, for a tag from git
+(`tag_strategy: git_sha` or `git_tag`), or with `--rebuild` or `--force`.
+Like the "already deployed" check, it trusts the label: an unpinned
+dependency that gained a release upstream, or a change the label does not
+hash (an environment variable read at build time), is not picked up until
+you pass `--rebuild`. Pin dependencies or commit a lock for reproducible
+images. `deploy --plan` reads the registry too and says when the image would
+be reused.
 
 ## Choosing the platform
 
