@@ -23,7 +23,7 @@ A **paused** DAG is one whose `is_paused` flag is `true` in the metadata databas
 | **Scheduler-created runs** (cron, `@daily`, `@hourly`, …) | ❌ Suspended: no new scheduled runs are created | ✅ Created at each interval |
 | **Catchup backfills** | ❌ Suspended: backlog accrues silently until you unpause | ✅ Created on each tick (subject to `catchup`/`max_active_runs`) |
 | **Manual triggers** (UI **Trigger DAG** button, `POST /api/v2/dags/{id}/dagRuns`, `dexaflow deploy --trigger`) | ⏸ Accepted and **queued**: the run is created, but it does not start until you unpause | ✅ Run |
-| **Queued runs** (created before the pause, or re-queued by a clear) | ⏸ Wait in `queued`: no task is started or dispatched | ✅ Start on the next scheduler tick |
+| **Queued runs** (created before the pause, or re-queued by a clear) | ⏸ Wait in `queued`: no new task is started or dispatched; tasks of a cleared run that were already running finish | ✅ Start on the next scheduler tick |
 | **Running runs** (already started when the pause flipped) | ✅ Continue to completion: pause is not a kill switch | ✅ Continue |
 
 This mirrors Apache Airflow 3: *paused* stops the scheduler from starting
@@ -31,9 +31,11 @@ work. A trigger on a paused DAG is still accepted (the API answers with the
 new run in state `queued`, as Airflow does), and the run waits until someone
 unpauses the DAG with the switch in the UI or
 `dexaflow admin dags unpause <dag_id>`. On the next scheduler tick after the
-unpause, every waiting run starts normally.
+unpause, the waiting runs start. `max_active_runs` only limits the runs the
+schedule creates: queued runs count toward it, but the unpause starts every
+queued run, even when there are more of them than `max_active_runs`.
 
-Until 0.5.4 a manual trigger on a paused DAG started at once. With new DAGs
+Before 0.5.4 a manual trigger on a paused DAG started at once. With new DAGs
 paused at creation (below), a first `dexaflow deploy --trigger` now leaves its
 run queued: unpause the DAG and the run starts.
 
