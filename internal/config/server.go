@@ -289,6 +289,13 @@ type PlatformDefaultsSection struct {
 	// override nor the DAG set any (Kubernetes quantities, e.g. "250m"/"256Mi").
 	ResourcesCPU    string `mapstructure:"resources_cpu"`
 	ResourcesMemory string `mapstructure:"resources_memory"`
+	// LimitsCPU/LimitsMemory are the default task limits (#537): the CPU and
+	// memory limit a task pod gets in a dimension its resources leave without
+	// one, including a task that declares requests only. Empty (the default)
+	// sets no limit, as before. Either may be set alone. Not applied with
+	// executor.unit, which always sets both limits.
+	LimitsCPU    string `mapstructure:"limits_cpu"`
+	LimitsMemory string `mapstructure:"limits_memory"`
 	// RunTasksAsNonRoot refuses to start a task container whose image resolves
 	// to UID 0, completing Pod Security Admission's `restricted` set. On by
 	// default now that the images this repo ships carry a numeric non-root UID:
@@ -1169,6 +1176,10 @@ var serverDefaults = map[string]any{
 	// configures one. Scalars (Kubernetes quantities, e.g. "250m"/"256Mi").
 	"executor.defaults.resources_cpu":    "",
 	"executor.defaults.resources_memory": "",
+	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU /
+	// _MEMORY (#537). Empty sets no default task limit.
+	"executor.defaults.limits_cpu":    "",
+	"executor.defaults.limits_memory": "",
 	// Registered so AutomaticEnv binds LEOFLOW_EXECUTOR_UNIT_CPU / _MEMORY. Empty
 	// (both) means no resource unit (ADR 0066).
 	"executor.unit.cpu":                                "",
@@ -1611,8 +1622,14 @@ func (c *ServerConfig) validateExecution() error {
 // quantities valid and positive, enforce refuse or warn, max_size positive.
 // It combines with warm pools: a warm pod is then one unit and serves only
 // size-1 tasks that declare no resources.
+//
+// It also checks the default task limits (executor.defaults.limits_*, #537),
+// the other operator-set bound on task resources: unset, or valid and positive.
 func (c *ServerConfig) validateExecutorUnit() error {
-	_, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig())
+	if _, err := domain.ParseResourceUnit(c.Executor.Unit.ResourceUnitConfig()); err != nil {
+		return err
+	}
+	_, err := domain.ParseDefaultLimits(c.Executor.Defaults.LimitsCPU, c.Executor.Defaults.LimitsMemory)
 	return err
 }
 

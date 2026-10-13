@@ -70,6 +70,37 @@ tests:
             name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
             value: 256Mi
 
+  - it: no default task limit env when executor.defaults.limits is unset (#537)
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
+          any: true
+
+  - it: executor.defaults.limits renders the default task limit env vars (#537)
+    template: deployment.yaml
+    set:
+      executor.defaults.limits.cpu: "2"
+      executor.defaults.limits.memory: 4Gi
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
+            value: "2"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
+            value: 4Gi
+
   - it: no executor staging-default env when executor.defaults.staging is unset
     template: deployment.yaml
     asserts:
