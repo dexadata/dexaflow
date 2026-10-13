@@ -21,15 +21,20 @@ func checkDeployFollow(o deployOptions) error {
 
 // deployTrigger returns what deploy does once the DAG is registered (or found
 // already current) when --trigger is set: start a run and, with --follow,
-// follow it to its end. It returns nil without --trigger.
+// follow it to its end. When the DAG is paused it says the run waits until the
+// unpause. It returns nil without --trigger.
 func deployTrigger(ctx context.Context, out io.Writer, serverURL, token string, o deployOptions) func(dagID string) error {
 	if !o.trigger {
 		return nil
 	}
 	return func(dagID string) error {
 		runID, err := triggerDeployRun(ctx, out, serverURL, token, dagID)
-		if err != nil || !o.follow {
+		if err != nil {
 			return err
+		}
+		if !o.follow {
+			// With --follow the follower prints this note in its header.
+			return notePausedRun(ctx, out, serverURL, token, dagID)
 		}
 		return followWithSignals(ctx, out, followTarget{base: serverURL, token: token, dagID: dagID, runID: runID},
 			followOptions{timeout: o.timeout})

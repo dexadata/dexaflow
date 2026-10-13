@@ -21,6 +21,9 @@
 # Usage: test/e2e/deploy-e2e.sh [cluster-name]
 set -euo pipefail
 
+# shellcheck source=test/e2e/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 CLUSTER="${1:-leoflow-deploy-e2e}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKDIR="$(mktemp -d)"
@@ -151,6 +154,9 @@ log "registered image: $IMG"
 
 TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
 
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 log "Triggering a run (the cluster must pull the digest-pinned image from the registry)"
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"

@@ -272,9 +272,9 @@ func TestFollowRunInterruptLeavesTheRun(t *testing.T) {
 	}
 }
 
-// TestFollowRunSaysTheDAGIsPaused: a manual run of a paused DAG starts anyway
-// (the scheduler only skips scheduled runs of a paused DAG), and the follower
-// says so with the command that unpauses it.
+// TestFollowRunSaysTheDAGIsPaused: a run of a paused DAG, manual ones
+// included, waits in queued until the DAG is unpaused (Airflow semantics), and
+// the follower says so with the command that unpauses it.
 func TestFollowRunSaysTheDAGIsPaused(t *testing.T) {
 	fastFollow(t)
 	fake := &fakeRunServer{paused: true, steps: successSteps()}
@@ -285,10 +285,59 @@ func TestFollowRunSaysTheDAGIsPaused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("followRun: %v", err)
 	}
-	for _, want := range []string{"etl is paused", "this manual run starts anyway", "dexaflow admin dags unpause etl"} {
+	for _, want := range []string{"etl is paused", "this run waits in queued until you unpause it", "dexaflow admin dags unpause etl"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output does not say %q:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "starts anyway") {
+		t.Errorf("a run of a paused DAG does not start anyway:\n%s", out.String())
+	}
+}
+
+// TestRunsTriggerSaysAPausedRunWaits: `runs trigger` on a paused DAG says
+// once that the run waits until the unpause, with or without --follow.
+func TestRunsTriggerSaysAPausedRunWaits(t *testing.T) {
+	fastFollow(t)
+	for _, follow := range []bool{false, true} {
+		srv := newFakeRun(t, &fakeRunServer{paused: true, steps: successSteps()})
+		args := []string{"runs", "trigger", "etl", "--server", srv.URL, "--token", "x"}
+		if follow {
+			args = append(args, "--follow")
+		}
+
+		out, _, err := run(t, args...)
+		if err != nil {
+			t.Fatalf("runs trigger (follow %t): %v\n%s", follow, err, out)
+		}
+		if n := strings.Count(out, "etl is paused: this run waits in queued until you unpause it: dexaflow admin dags unpause etl"); n != 1 {
+			t.Errorf("follow %t: the paused note printed %d time(s), want once:\n%s", follow, n, out)
+		}
+	}
+}
+
+// TestFollowRunNamesThePauseOfAStalledRun: when the run is still queued
+// because its DAG is paused, the stall note names the pause as the cause and
+// the unpause command, not the agent or max_active_runs.
+func TestFollowRunNamesThePauseOfAStalledRun(t *testing.T) {
+	fastFollow(t)
+	fake := &fakeRunServer{paused: true, steps: []runStep{{state: "queued", tis: []fakeTI{{task: "extract"}}}}}
+	srv := newFakeRun(t, fake)
+	var out strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+
+	_ = followRun(ctx, &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"},
+		followOptions{stallAfter: 10 * time.Millisecond})
+	if !strings.Contains(out.String(), "run run-1 is still queued after") ||
+		!strings.Contains(out.String(), "because etl is paused") {
+		t.Errorf("the stall note should name the pause as the cause:\n%s", out.String())
+	}
+	if n := strings.Count(out.String(), "dexaflow admin dags unpause etl"); n != 2 {
+		t.Errorf("the unpause command printed %d time(s), want twice (header and stall note):\n%s", n, out.String())
+	}
+	if strings.Contains(out.String(), "agent is connected") {
+		t.Errorf("a paused DAG explains the wait; the agent hint misleads:\n%s", out.String())
 	}
 }
 

@@ -53,3 +53,58 @@ func TestDeployTriggerFollowExitsWithTheRunResult(t *testing.T) {
 		t.Errorf("err %q / output %q should name extract and show its logs", err, out)
 	}
 }
+
+// pausedDeployServer serves a DAG that is already current at its content
+// label, so `deploy --trigger` skips the build and only triggers, and runs that
+// answers whether the DAG is paused.
+func pausedDeployServer(t *testing.T, dir string, runs *fakeRunServer) *httptest.Server {
+	t.Helper()
+	label := labelOf(t, dir)
+	deploys := &deployServer{current: label, registered: []string{label}}
+	mux := http.NewServeMux()
+	mux.Handle("/api/v2/dags/etl/details", deploys)
+	mux.Handle("/api/v2/dags/etl/dagVersions", deploys)
+	mux.Handle("/", runs)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestDeployTriggerSaysAPausedRunWaits: `deploy --trigger` without --follow
+// says once that the run of a paused DAG waits until the unpause, and names
+// the command; with --follow the follower says it, and only once too.
+func TestDeployTriggerSaysAPausedRunWaits(t *testing.T) {
+	fastFollow(t)
+	for _, follow := range []bool{false, true} {
+		dir, builder, _ := deployFixture(t)
+		runs := &fakeRunServer{paused: true, steps: successSteps()}
+		srv := pausedDeployServer(t, dir, runs)
+		args := []string{"deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder, "--trigger"}
+		if follow {
+			args = append(args, "--follow")
+		}
+
+		out, _, err := run(t, args...)
+		if err != nil {
+			t.Fatalf("deploy --trigger (follow %t): %v\n%s", follow, err, out)
+		}
+		if n := strings.Count(out, "etl is paused: this run waits in queued until you unpause it: dexaflow admin dags unpause etl"); n != 1 {
+			t.Errorf("follow %t: the paused note printed %d time(s), want once:\n%s", follow, n, out)
+		}
+	}
+}
+
+// TestDeployTriggerSaysNothingForAnActiveDAG: no pause note when the DAG is
+// unpaused.
+func TestDeployTriggerSaysNothingForAnActiveDAG(t *testing.T) {
+	dir, builder, _ := deployFixture(t)
+	srv := pausedDeployServer(t, dir, &fakeRunServer{steps: successSteps()})
+
+	out, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder, "--trigger")
+	if err != nil {
+		t.Fatalf("deploy --trigger: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "is paused") {
+		t.Errorf("an active DAG gets no pause note:\n%s", out)
+	}
+}

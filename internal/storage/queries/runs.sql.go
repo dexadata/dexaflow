@@ -1059,40 +1059,60 @@ func (q *Queries) LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsPa
 }
 
 const listActiveDagRuns = `-- name: ListActiveDagRuns :many
-SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs
+SELECT dag_runs.id, dag_runs.tenant_id, dag_runs.dag_id, dag_runs.dag_version_id, dag_runs.run_id, dag_runs.logical_date, dag_runs.data_interval_start, dag_runs.data_interval_end, dag_runs.state, dag_runs.trigger, dag_runs.conf, dag_runs.triggered_by, dag_runs.queued_at, dag_runs.started_at, dag_runs.ended_at, dag_runs.note, dag_runs.alerted_at, dag_runs.alert_attempts, dag_runs.next_alert_attempt_at,
+  COALESCE((SELECT d.is_paused FROM dags d WHERE d.id = dag_runs.dag_id), false)::boolean AS dag_paused
+FROM dag_runs
 WHERE state IN ('queued', 'running')
 ORDER BY queued_at
 `
 
-func (q *Queries) ListActiveDagRuns(ctx context.Context) ([]DagRun, error) {
+type ListActiveDagRunsRow struct {
+	DagRun    DagRun `json:"dag_run"`
+	DagPaused bool   `json:"dag_paused"`
+}
+
+// The runs the scheduler reads on a tick, and the warm-pool reconcile reads:
+// every queued and running run, each with dag_paused, the is_paused of its DAG.
+// No run is filtered out. The scheduler leaves a queued run of a paused DAG
+// waiting (not started, nothing materialized or dispatched) until the DAG is
+// unpaused, whoever created it (a manual trigger, a clear), as Airflow 3 does
+// when it moves queued runs to running (#1705); a running run of a paused DAG
+// advances so the tasks it started finish. The waiting run stays in the result
+// because a clear on a running run puts it back in queued while other tasks of
+// it still run, and those tasks must keep counting against max_active_runs,
+// max_active_tasks and the pool caps. The scan stays on idx_dag_runs_state;
+// dag_paused is one primary-key probe of dags per active run, which keeps the
+// cost proportional to the active runs, not to the number of DAGs.
+func (q *Queries) ListActiveDagRuns(ctx context.Context) ([]ListActiveDagRunsRow, error) {
 	rows, err := q.db.Query(ctx, listActiveDagRuns)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []DagRun{}
+	items := []ListActiveDagRunsRow{}
 	for rows.Next() {
-		var i DagRun
+		var i ListActiveDagRunsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.DagID,
-			&i.DagVersionID,
-			&i.RunID,
-			&i.LogicalDate,
-			&i.DataIntervalStart,
-			&i.DataIntervalEnd,
-			&i.State,
-			&i.Trigger,
-			&i.Conf,
-			&i.TriggeredBy,
-			&i.QueuedAt,
-			&i.StartedAt,
-			&i.EndedAt,
-			&i.Note,
-			&i.AlertedAt,
-			&i.AlertAttempts,
-			&i.NextAlertAttemptAt,
+			&i.DagRun.ID,
+			&i.DagRun.TenantID,
+			&i.DagRun.DagID,
+			&i.DagRun.DagVersionID,
+			&i.DagRun.RunID,
+			&i.DagRun.LogicalDate,
+			&i.DagRun.DataIntervalStart,
+			&i.DagRun.DataIntervalEnd,
+			&i.DagRun.State,
+			&i.DagRun.Trigger,
+			&i.DagRun.Conf,
+			&i.DagRun.TriggeredBy,
+			&i.DagRun.QueuedAt,
+			&i.DagRun.StartedAt,
+			&i.DagRun.EndedAt,
+			&i.DagRun.Note,
+			&i.DagRun.AlertedAt,
+			&i.DagRun.AlertAttempts,
+			&i.DagRun.NextAlertAttemptAt,
+			&i.DagPaused,
 		); err != nil {
 			return nil, err
 		}
