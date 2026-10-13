@@ -217,6 +217,27 @@ confirmation: the interactive prompt (type the tag back), or `--yes` passed
 deliberately for automation. Everything before the tag — prepare, PR, merge — is
 recoverable; nothing is published until you confirm.
 
+## Release freeze and the Actions queue
+
+GitHub Actions has no job priority: release jobs wait behind every pull request
+run already queued. The v0.5.3 GA was tagged during a wave of 245 PR runs and
+its jobs waited about 50 minutes for a runner (#1685).
+
+- **Freeze PR pushes while a release publishes.** From the go-ahead to publish
+  until the release run is green, nobody pushes to pull request branches or
+  opens new ones. Pushes to `main` and `release-X.Y` that the cut itself makes
+  are the exception.
+- **The cut checks the queue before the tag.** Right before the confirmation
+  prompt it counts the queued and running workflow runs of the repository and
+  refuses above `CUT_MAX_QUEUED` (default 25). Wait for the queue to drain and
+  re-run with `--resume`, or pass `--force-queue` when the release cannot wait.
+  `--dry-run` reports the same counts.
+- **The watch clock starts when a job starts.** `CUT_WAIT_DEADLINE` (default
+  5400 s) counts from the first release job that got a runner, not from the tag
+  push, so a long queue no longer skips the docs root promotion. The time spent
+  queued is logged as `queue_wait_s` in `.release-<tag>.log` and has its own cap,
+  `CUT_QUEUE_DEADLINE` (default 14400 s).
+
 ## Commands
 
 ```bash
@@ -237,6 +258,9 @@ scripts/cut-release.sh v0.5.1-rc.1
 
 # Preview the plan — no branch, commit, PR, or tag
 scripts/cut-release.sh v0.4.4 --dry-run
+
+# Tag even though the Actions queue is busy (the cut refuses by default)
+scripts/cut-release.sh v0.4.4 --force-queue
 
 # Non-interactive (skips the confirm prompt — use only in trusted automation)
 scripts/cut-release.sh v0.4.4 --yes

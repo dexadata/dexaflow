@@ -15,6 +15,7 @@
 #   scripts/cut-release.sh <version> --resume     # finish a cut that died after
 #                                                 # the prepare PR merged
 #   scripts/cut-release.sh --self-test            # pure-logic cases, no network
+#   scripts/cut-release.sh 0.4.4 --force-queue    # tag even on a busy Actions queue
 #
 # Which branch a cut lands on follows from the version (ADR 0062): X.Y.0 and
 # its candidates are prepared and tagged on main; every later patch (X.Y.Z-rc.N
@@ -557,6 +558,26 @@ JSON
   _eq "$(grep -c '^    version = "v9.9.8"$' "$dv/website/hugo.toml")" "1" "and keeps the superseded one as an archived leg"
   rm -rf "$dv"
 
+  # promote_verdict: the watch's definition of PUBLISHED (ADR 0071).
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"success"}]')" "PROMOTED" "a successful promote job is PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"failure"}]')" "NOT failure" "a failed promote is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"failure"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"skipped"}]')" "NOT skipped" "a promote skipped behind a red gate is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":null}]')" "NOT pending" "a promote still running is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"}]')" "LEGACY" "a run from before ADR 0071 has no promote job"
+  _eq "$(promote_verdict 'not json')" "NOT unreadable" "an unreadable job list never reads as PUBLISHED"
+
+  # queue_verdict and runs_started: the queue preflight and the watch clock (#1685).
+  _eq "$(queue_verdict 3 2 25)"   "OK"      "a quiet queue lets the tag go"
+  _eq "$(queue_verdict 20 5 25)"  "OK"      "the threshold itself is still OK"
+  _eq "$(queue_verdict 200 6 25)" "BUSY"    "a PR wave refuses the tag"
+  _eq "$(queue_verdict '' 6 25)"  "UNKNOWN" "an unreadable count is UNKNOWN, not OK"
+  _eq "$(queue_verdict 3 x 25)"   "UNKNOWN" "a non-number is UNKNOWN"
+  _eq "$(runs_started '[{"status":"queued"},{"status":"queued"}]')" "no" "queued runs have not started"
+  _eq "$(runs_started '[{"status":"queued"},{"status":"in_progress"}]')" "yes" "one run with a runner starts the clock"
+  _eq "$(runs_started '[{"status":"completed","conclusion":"success"}]')" "yes" "a finished run has started"
+  _eq "$(runs_started '[]')" "no" "no runs yet is not started"
+  _eq "$(runs_started 'garbage')" "no" "an unreadable payload is not started"
+
   if [ "$fail" = 0 ]; then echo "self-test: PASS"; else echo "self-test: FAIL"; return 1; fi
 }
 
@@ -614,6 +635,62 @@ run_verdict() { # <runs-json>
   anyfail=$(printf '%s' "$j" | jq -r 'any(.[]; .conclusion == "failure")' 2>/dev/null) || { echo PENDING; return; }
   [ "$anyfail" = "true" ] && { echo FAILED; return; }
   echo GREEN
+}
+
+# promote_verdict <jobs-json>: what the release run's `promote` job says about
+# the public pointers (ADR 0071). Pure (jq only) so --self-test can table it.
+# <jobs-json> is the `jobs` array of the release run. Echoes one of:
+#
+#   PROMOTED   the promote job concluded success: chart pushed, and for a GA of
+#              the newest minor, Latest and py3.N moved
+#   LEGACY     the run has no promote job: release.yaml at this tag predates
+#              ADR 0071 (a patch cut from a release branch that has not picked
+#              it up yet), so a green run is still the old meaning of PUBLISHED
+#   NOT <c>    the promote job exists and did not succeed (skipped, failure,
+#              cancelled, or not finished): nothing public moved
+#
+# A green run implies a successful promote today, since a skipped job leaves
+# the run green only when its `if` is false, and promote's `if` is false only
+# when the gate failed, which turns the run red. This reads the job anyway: the
+# watch used to infer "published" from the gate's `exit 1` in another file,
+# and one job's own conclusion is a fact rather than an inference (#1684).
+promote_verdict() { # <jobs-json>
+  local c
+  c=$(printf '%s' "$1" | jq -r '[.[]? | select((.name // "") | startswith("Promote"))] |
+        if length == 0 then "LEGACY" else (.[0].conclusion // "pending") end' 2>/dev/null) || { echo "NOT unreadable"; return; }
+  case "$c" in
+    LEGACY)  echo LEGACY ;;
+    success) echo PROMOTED ;;
+    ""|null) echo "NOT pending" ;;
+    *)       echo "NOT $c" ;;
+  esac
+}
+
+# queue_verdict <queued> <in-progress> <max>: whether the Actions queue is
+# quiet enough to push a tag. Pure, for --self-test. Echoes OK, BUSY or UNKNOWN.
+#
+# GitHub Actions has no job priority, so the release jobs wait behind every PR
+# run already queued. The v0.5.3 GA was tagged during a wave of 245 PR runs and
+# its jobs sat queued for about 50 minutes while the chart and Latest had
+# already moved (#1684, #1685). An unreadable count is UNKNOWN, which warns and
+# proceeds: an API blip must not stop a cut that the operator already confirmed
+# the rest of.
+queue_verdict() { # <queued> <in-progress> <max>
+  local q="${1:-}" p="${2:-}" max="${3:-25}"
+  [[ "$q" =~ ^[0-9]+$ && "$p" =~ ^[0-9]+$ && "$max" =~ ^[0-9]+$ ]] || { echo UNKNOWN; return; }
+  if [ $((q + p)) -gt "$max" ]; then echo BUSY; else echo OK; fi
+}
+
+# runs_started <runs-json>: "yes" once any run on the tag got a runner. The
+# watch deadline counts from then, not from the tag push, so a long queue does
+# not use up the time the jobs themselves need (#1685). Queue time has its own,
+# longer cap. Pure, for --self-test.
+runs_started() { # <runs-json>
+  local r
+  r=$(printf '%s' "$1" | jq -r 'if type == "array" and length > 0 then
+        (any(.[]; (.status // "queued") as $s | ["queued","waiting","pending","requested"] | index($s) | not) | if . then "yes" else "no" end)
+      else "no" end' 2>/dev/null) || r=no
+  echo "${r:-no}"
 }
 
 # latest_runs <runs-json>: keeps the newest run of each workflow. A pull
@@ -963,6 +1040,23 @@ run_gates() { # <tag> <base>
   return $ok
 }
 
+# check_queue <0|1|dry>: the queue preflight before the tag (#1685). Returns 1 on
+# a busy queue unless forced; the counts are logged either way.
+check_queue() { # <0 | 1 (--force-queue) | dry (report only)>
+  local q p v max="${CUT_MAX_QUEUED:-25}"
+  q=$(gh api "repos/$REPO/actions/runs?status=queued&per_page=1" --jq .total_count 2>/dev/null || true)
+  p=$(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=1" --jq .total_count 2>/dev/null || true)
+  v="$(queue_verdict "$q" "$p" "$max")"
+  case "$v" in
+    OK)      log "actions queue: ${q} queued, ${p} in progress (max ${max})" ;;
+    UNKNOWN) warn "could not read the Actions queue; tagging without the queue preflight" ;;
+    BUSY)    warn "actions queue: ${q} queued, ${p} in progress, above CUT_MAX_QUEUED=${max}"
+             [ "$1" = dry ] && { warn "the real cut refuses here unless --force-queue"; return 0; }
+             [ "$1" = 1 ] && { warn "--force-queue: tagging anyway"; return 0; }
+             return 1 ;;
+  esac
+}
+
 confirm_tag() { # <tag>
   [ "${ASSUME_YES:-0}" = 1 ] && { log "confirmation: --yes"; return 0; }
   local ans
@@ -978,18 +1072,19 @@ main() {
   # operator's shell or CI env can never silently bypass confirm_tag (M1). Only
   # --yes, parsed below, may set it.
   ASSUME_YES=0
-  local arg version="" dry=0 resume=0
+  local arg version="" dry=0 resume=0 force_queue=0
   for arg in "$@"; do
     case "$arg" in
       --self-test) self_test; exit $? ;;
       --dry-run)   dry=1 ;;
       --yes)       ASSUME_YES=1 ;;
       --resume)    resume=1 ;;
+      --force-queue) force_queue=1 ;;
       -*)          die "unknown flag: $arg" ;;
       *)           version="$arg" ;;
     esac
   done
-  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume]"
+  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume] [--force-queue]"
 
   version="${version#v}"
   valid_version "$version" || die "invalid version '$version' (want X.Y.Z or X.Y.Z-rc.N)"
@@ -1079,6 +1174,8 @@ main() {
 
   if [ "$dry" = 1 ]; then
     log "DRY RUN — plan only, no branch/commit/PR/tag:"
+    # The queue preflight the real cut runs before the tag, reported only.
+    check_queue dry || true
     # The fragment count is part of the plan, not a detail. The cut CONSUMES
     # .changes/unreleased/, on an rc as well as a GA, and a plan that says
     # "unchanged" while two entries are about to move into the changelog is
@@ -1184,6 +1281,7 @@ main() {
   log "$base CI on merge commit ${sha:0:8}"
   [ "$(wait_sha_green "$sha")" = GREEN ] || die "$base red on the merge commit: NOT tagging"
 
+  check_queue "$force_queue" || die "the Actions queue is busy: the release jobs would wait behind it while nothing is promoted. Hold PR pushes until it drains (RELEASING.md, release freeze), then re-run with --resume, or pass --force-queue"
   confirm_tag "$tag"
   git tag -a "$tag" "$sha" -m "leoflow $tag" || die "creating tag $tag failed"
   git push origin "$tag" || die "pushing tag $tag failed — the tag is local only; 'git push origin $tag' when ready"
@@ -1199,14 +1297,28 @@ main() {
   sleep 15
   local reruns=0 j verdict failed rid isflake published=0 rstart=$SECONDS
   local rdeadline="${CUT_WAIT_DEADLINE:-5400}"
+  # The deadline counts from the first job that got a runner, not from the tag
+  # push: on v0.5.3 the jobs queued for about 50 minutes behind PR CI and the
+  # watch could expire before the run started, skipping the docs root (#1685).
+  # Queue time has its own, longer cap so a stuck queue still ends the watch.
+  local qstart=$SECONDS started=no qdeadline="${CUT_QUEUE_DEADLINE:-14400}"
   while :; do
-    if [ $((SECONDS - rstart)) -gt "$rdeadline" ]; then
-      warn "timed out after ${rdeadline}s waiting on the $tag release workflows — inspect: gh run list --branch $tag"
+    if [ "$started" = no ] && [ $((SECONDS - qstart)) -gt "$qdeadline" ]; then
+      warn "the $tag release jobs never got a runner in ${qdeadline}s; inspect: gh run list --branch $tag"
+      break
+    fi
+    if [ "$started" = yes ] && [ $((SECONDS - rstart)) -gt "$rdeadline" ]; then
+      warn "timed out after ${rdeadline}s of running $tag release workflows; inspect: gh run list --branch $tag"
       break
     fi
     # --branch filters server-side, same window problem as wait_sha_green.
     j=$(gh run list --branch "$tag" --limit 100 --json databaseId,status,conclusion 2>/dev/null \
           | jq '[.[]]' 2>/dev/null)
+    if [ "$started" = no ] && [ "$(runs_started "$j")" = yes ]; then
+      started=yes; rstart=$SECONDS
+      log "$tag release jobs started after $((SECONDS - qstart))s in the queue"
+      echo "queue_wait_s=$((SECONDS - qstart))" >>"$logf"
+    fi
     # Same classification as wait_sha_green — see run_verdict.
     verdict="$(run_verdict "$j")"
     case "$verdict" in
@@ -1231,7 +1343,9 @@ main() {
     # symptom it creates is exactly what stops the recovery. Re-publishing first
     # costs nothing when the release is already published, and it means the next
     # verdict is computed against a release the smokes can actually download.
-    gh release edit "$tag" --repo "$REPO" --draft=false >/dev/null 2>&1 || true
+    # --latest=false: GitHub marks a release Latest by default when it leaves
+    # draft, and only release.yaml's promote job may move Latest (ADR 0071).
+    gh release edit "$tag" --repo "$REPO" --draft=false --latest=false >/dev/null 2>&1 || true
     isflake=1
     for rid in $failed; do
       # An unreadable log is NOT evidence of a non-flake. A job that dies in
@@ -1259,6 +1373,22 @@ main() {
     fi
     warn "release workflows red (non-flake) — inspect the run + gate"; break
   done
+  # PUBLISHED means the release run's promote job moved the pointers, not only
+  # that every run is green (ADR 0071): read that job's own conclusion.
+  if [ "${published:-0}" = 1 ]; then
+    local relrun jobs="" pv
+    relrun=$(gh run list --branch "$tag" --workflow release.yaml --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+    # An unreadable job list must never read as LEGACY (which keeps PUBLISHED),
+    # so a failed lookup hands promote_verdict something it cannot parse.
+    [ -n "$relrun" ] && jobs=$(gh api "repos/$REPO/actions/runs/$relrun/jobs?per_page=100" --jq '.jobs' 2>/dev/null || true)
+    pv="$(promote_verdict "${jobs:-unreadable}")"
+    case "$pv" in
+      PROMOTED) log "$tag promoted: chart pushed; Latest and py3.N moved if this is a GA of the newest minor" ;;
+      LEGACY)   log "$tag: release.yaml at this tag has no promote job (before ADR 0071); a green run is PUBLISHED" ;;
+      *)        published=0
+                warn "$tag release run is green but its promote job reports ${pv#NOT }, so the chart and Latest may not have moved; re-run promote (RELEASING.md)" ;;
+    esac
+  fi
   gh release view "$tag" --repo "$REPO" --json tagName,isDraft,isPrerelease,url \
     -q '"release \(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease) \(.url)"' 2>/dev/null | tee -a "$logf"
 
@@ -1267,10 +1397,11 @@ main() {
   # or still draft. Everything above this line is already recorded, so a failure
   # here costs the docs root and nothing else.
   #
-  # `published` tracks the workflow verdict, not `isDraft`. Those coincide only
-  # because release.yaml's retract step ends in `exit 1`, so a drafted release
-  # is always a red run, and its green arm un-drafts. That invariant lives in
-  # another file — if that `exit 1` ever goes, check this.
+  # `published` tracks the workflow verdict and the promote job's own
+  # conclusion (promote_verdict), not `isDraft`. A drafted release is always a
+  # red run because release.yaml's retract step ends in `exit 1`, and promote
+  # only runs after a green gate, so a run that reached PROMOTED has passed
+  # every gate whatever that step does.
   if ! is_rc "$version"; then
     if [ "${published:-0}" = 1 ]; then
       promote_docs_pr "$tag"
