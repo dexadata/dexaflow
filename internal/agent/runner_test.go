@@ -192,13 +192,32 @@ func (c *fakeCmd) Run(ctx context.Context, argv, env []string, stdout, _ io.Writ
 }
 
 func newRunner(client *fakeClient, cmd *fakeCmd, sink *recordingSink) *Runner {
-	return &Runner{
+	return withFakeClock(&Runner{
 		Client:   client,
 		Cmd:      cmd,
 		Sink:     sink,
 		Hostname: "pod-1",
 		Version:  "test",
-	}
+	})
+}
+
+// withFakeClock gives r a fake clock that its backoffs advance at once.
+// Transient-error retries back off for real in production; here they are
+// instant, and the retry budget is measured on the same fake clock, so a test
+// that injects a lasting control-plane error spends the budget without
+// waiting for it.
+func withFakeClock(r *Runner) *Runner {
+	clk := newFakeClock()
+	r.afterFunc = clk.after
+	r.now = clk.now
+	return r
+}
+
+// instantAfter is an afterFunc that fires at once.
+func instantAfter(time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	ch <- time.Time{}
+	return ch
 }
 
 func TestRunnerHappyPath(t *testing.T) {
