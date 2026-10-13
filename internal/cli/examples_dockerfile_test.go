@@ -40,39 +40,54 @@ func TestExamplesBuildFromGeneratedDockerfile(t *testing.T) {
 	}
 	for _, src := range dirs {
 		rel, _ := filepath.Rel(repo, src) //nolint:errcheck // src is under repo by construction
-		t.Run(filepath.ToSlash(rel), func(t *testing.T) {
-			dir := copyExampleDir(t, src)
-			cfg, cerr := loadProjectConfig(dir)
-			if cerr != nil {
-				t.Fatal(cerr)
-			}
-			cfg.ApplyDefaults()
-			path, cleanup, derr := ensureDockerfile(dir, "Dockerfile", cfg, dagSourcePath(dir, cfg))
-			if derr != nil {
-				t.Fatalf("generating the Dockerfile: %v", derr)
-			}
-			defer cleanup()
-			if filepath.Base(path) != generatedDockerfileName {
-				t.Fatalf("the build would use %s verbatim instead of generating one from dexaflow.yaml", filepath.Base(path))
-			}
-			data, rerr := os.ReadFile(path) //nolint:gosec // the file ensureDockerfile just wrote
-			if rerr != nil {
-				t.Fatal(rerr)
-			}
-			df := string(data)
-			if !strings.HasPrefix(df, "FROM "+publishedBaseRepo+":py"+cfg.PythonVersion) {
-				t.Errorf("not built on the published base:\n%s", df)
-			}
-			deps, eerr := cfg.EffectiveDependencies()
-			if eerr != nil {
-				t.Fatal(eerr)
-			}
-			for _, dep := range deps {
-				if !strings.Contains(df, shellQuote(dep)) {
-					t.Errorf("dependency %q is not installed by:\n%s", dep, df)
-				}
-			}
+		t.Run(strings.ReplaceAll(filepath.ToSlash(rel), "/", "_"), func(t *testing.T) {
+			checkExampleBuildsFromYAML(t, src)
 		})
+	}
+}
+
+// checkExampleBuildsFromYAML asserts that one example declares nothing that
+// would take the build off the generated Dockerfile (build.dockerfile,
+// base_image) and that the Dockerfile the build would use is the generated one,
+// on the published base, installing every effective dependency.
+func checkExampleBuildsFromYAML(t *testing.T, src string) {
+	t.Helper()
+	dir := copyExampleDir(t, src)
+	cfg, cerr := loadProjectConfig(dir)
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	if cfg.Build != nil && cfg.Build.Dockerfile != "" {
+		t.Fatalf("build.dockerfile is %q; examples build from the generated Dockerfile", cfg.Build.Dockerfile)
+	}
+	if cfg.BaseImage != "" {
+		t.Fatalf("base_image is %q; examples build on the published runtime base", cfg.BaseImage)
+	}
+	cfg.ApplyDefaults()
+	path, cleanup, derr := ensureDockerfile(dir, "Dockerfile", cfg, dagSourcePath(dir, cfg))
+	if derr != nil {
+		t.Fatalf("generating the Dockerfile: %v", derr)
+	}
+	defer cleanup()
+	if filepath.Base(path) != generatedDockerfileName {
+		t.Fatalf("the build would use %s verbatim instead of generating one from dexaflow.yaml", filepath.Base(path))
+	}
+	data, rerr := os.ReadFile(path) //nolint:gosec // the file ensureDockerfile just wrote
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	df := string(data)
+	if !strings.HasPrefix(df, "FROM "+publishedBaseRepo+":py"+cfg.PythonVersion) {
+		t.Errorf("not built on the published base:\n%s", df)
+	}
+	deps, eerr := cfg.EffectiveDependencies()
+	if eerr != nil {
+		t.Fatal(eerr)
+	}
+	for _, dep := range deps {
+		if !strings.Contains(df, shellQuote(dep)) {
+			t.Errorf("dependency %q is not installed by:\n%s", dep, df)
+		}
 	}
 }
 

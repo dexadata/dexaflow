@@ -187,9 +187,10 @@ a rollback a lookup. Runs already in flight keep the version they started with.
 - A container registry your cluster can pull from, and the builder logged in to
   it (`docker login`).
 - The control plane URL, passed as `--server` or exported as
-  `DEXAFLOW_SERVER_URL`. The CLI reads no other variable for it: a pipeline that
-  exports something else (`DEXAFLOW_SERVER`, for instance) silently targets the
-  default, `http://localhost:8080`.
+  `DEXAFLOW_SERVER_URL` (the pre-rename `LEOFLOW_SERVER_URL` still works). The
+  CLI reads no other variable for it: a pipeline that exports something else
+  (`DEXAFLOW_SERVER`, for instance) silently targets the default,
+  `http://localhost:8080`.
 - A CI credential for the control plane, below.
 
 ## Credentials for the control plane
@@ -218,8 +219,10 @@ each job:
    export DEXAFLOW_TOKEN
    ```
 
-The token never leaves the job, and a job that runs longer than an hour should
-mint a new one before it registers.
+The token never leaves the job. `deploy` uses the token it started with for the
+register at the end, so a build that can take longer than an hour should run
+the steps apart: `dexaflow compile --build --push`, then mint the token, then
+`dexaflow push` (which registers the tag; see the warning at the top).
 
 ## Python on the runner
 
@@ -235,7 +238,7 @@ The recommended path on each runner type:
 |---|---|
 | **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing dexaflow. Cached automatically. |
 | **GitLab CI** | Install `python3` in the job image (`apk add python3` on `docker:27`), or use an image that ships both Python and the Docker CLI. |
-| **Cloud Build / CodeBuild** | Install `python3` in the docker builder step, or use a cloud-provider image that ships Python 3.11+. |
+| **Cloud Build / CodeBuild** | Run the step on a `python:3.12-slim` image and install the Docker CLI there (the recipe below). `gcr.io/cloud-builders/docker` is Ubuntu 20.04, whose `python3` is 3.8. |
 | **Self-hosted runners** | Pin Python via your image baseline (`apt install python3.12` or `pyenv`) and version-lock in your runner provisioning. |
 | **Generic Docker-in-Docker** | Base your build container on `python:3.12-slim` (gives you Python + a Debian userland for the `docker build` shell). |
 
@@ -326,7 +329,8 @@ deploy_dag:
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - wget -qO- https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
-    - export DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" | dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+    - DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" | dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+    - export DEXAFLOW_TOKEN
     - dexaflow deploy dags/my_pipeline --yes
 ```
 
@@ -346,9 +350,14 @@ Registry in the same project, so `registry.url` in `dexaflow.yaml` is
 `us-central1-docker.pkg.dev/<project>/dags`. The CI password lives in Secret
 Manager.
 
+`gcloud builds submit` uploads the source without `.git`, so `git describe`
+cannot name the version and every build would get the label `dev`; a second
+deploy with changed content is then refused with `409`. The recipe passes the
+build id as `--dag-version` to keep each build's label unique.
+
 ```yaml title="cloudbuild.yaml"
 steps:
-  - name: gcr.io/cloud-builders/docker
+  - name: python:3.12-slim
     entrypoint: bash
     secretEnv: ["DEXAFLOW_CI_PASSWORD"]
     env:
@@ -357,13 +366,15 @@ steps:
       - -c
       - |
         set -euo pipefail
-        # BYO Python: the docker builder image is Debian; install python3.
-        apt-get update -qq && apt-get install -y --no-install-recommends python3
+        # Python 3.12 from the step image; add the Docker CLI and curl. Cloud
+        # Build mounts the Docker socket and its registry credentials into
+        # every step, so docker build/push work from this image too.
+        apt-get update -qq && apt-get install -y --no-install-recommends docker.io curl ca-certificates git
         curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/bin sh
         DEXAFLOW_TOKEN="$(printf '%s\n' "$$DEXAFLOW_CI_PASSWORD" |
           dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
         export DEXAFLOW_TOKEN
-        dexaflow deploy dags/my_pipeline --yes
+        dexaflow deploy dags/my_pipeline --yes --dag-version "$BUILD_ID"
 substitutions:
   _DEXAFLOW_SERVER_URL: https://pro.example.com
 availableSecrets:

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,11 +17,12 @@ import (
 )
 
 // The documentation is where users copy commands from, and a flag that does not
-// exist fails only when somebody runs the page: `deploy --platform` was
-// documented for months with no such flag (#1709). These tests read every
-// `dexaflow ...` invocation in the docs site and the examples and check each
-// flag against the real command tree, so a renamed or removed flag fails here
-// instead of in a user's pipeline.
+// exist fails only when somebody runs the page (#1709). These tests read every
+// `dexaflow ...` command written in a fenced code block or an inline code span
+// of the docs site and the examples, and check its subcommands and flags
+// against the real command tree, so a renamed or removed flag fails here
+// instead of in a user's pipeline. A flag mentioned on its own in prose
+// (`--platform` with no command before it) is not a command and is not checked.
 
 // docInvocation is one `dexaflow ...` command found in a Markdown file: the
 // words after the program name, up to the end of that shell command.
@@ -182,10 +184,10 @@ func lookupDocFlag(cmd *cobra.Command, word string) (found, takesValue bool) {
 }
 
 // unknownDocFlags resolves an invocation to its command in the tree and
-// returns the flags that command does not accept. It returns ok=false when the
-// words do not name a command at all (a placeholder such as `<command>`, or
-// prose that happens to follow the program name), which is not the docs'
-// business to fail on.
+// returns what that command does not have, each as "flag --x" or
+// "subcommand x". It returns ok=false when the words do not name a command at
+// all (a placeholder such as `<command>`, or text that happens to follow the
+// program name), which is not the docs' business to fail on.
 func unknownDocFlags(root *cobra.Command, args []string) (unknown []string, ok bool) {
 	cmd := root
 	var flags []string
@@ -207,7 +209,13 @@ func unknownDocFlags(root *cobra.Command, args []string) (unknown []string, ok b
 			continue
 		}
 		if !cmd.Runnable() {
-			return nil, false
+			// Under a group such as `auth` or `admin`, a word that is not one of
+			// its subcommands is a misspelling. At the root it is as likely to be
+			// text after the program name, so only groups are checked.
+			if cmd == root || isDocPlaceholder(w) {
+				return nil, false
+			}
+			return []string{"subcommand " + w}, true
 		}
 		positional = true
 	}
@@ -216,10 +224,17 @@ func unknownDocFlags(root *cobra.Command, args []string) (unknown []string, ok b
 	}
 	for _, f := range flags {
 		if found, _ := lookupDocFlag(cmd, f); !found {
-			unknown = append(unknown, f)
+			unknown = append(unknown, "flag "+docFlagNameRe.FindString(f))
 		}
 	}
 	return unknown, true
+}
+
+// isDocPlaceholder reports whether a word stands for something the reader
+// fills in (`<subcommand>`, `[flags]`, `$CMD`, `a|b`, `...`) rather than a
+// literal.
+func isDocPlaceholder(w string) bool {
+	return strings.ContainsAny(w, "<>[]{}$|") || strings.Contains(w, "...")
 }
 
 // findDocSubcommand returns the direct subcommand named (or aliased) w.
@@ -243,10 +258,12 @@ func docFlagViolations(root *cobra.Command, docs map[string][]byte) []string {
 				continue
 			}
 			for _, f := range unknown {
-				out = append(out, fmt.Sprintf("%s (unknown flag %s)", inv, f))
+				out = append(out, fmt.Sprintf("%s (unknown %s)", inv, f))
 			}
 		}
 	}
+	// Map iteration order is random; a sorted report reads the same every run.
+	slices.Sort(out)
 	return out
 }
 
@@ -291,6 +308,23 @@ func TestDocFlagCheckerIgnoresNonCommands(t *testing.T) {
 	}
 }
 
+// TestDocFlagCheckerCatchesUnknownSubcommand covers the misspelled subcommand
+// under a group, which used to be dropped without a word because the group
+// itself cannot run. A placeholder under a group and text after the bare
+// program name are still not reported.
+func TestDocFlagCheckerCatchesUnknownSubcommand(t *testing.T) {
+	md := []byte("```bash\n" +
+		"dexaflow auth create-tokn --username ci --password-stdin\n" +
+		"dexaflow auth <subcommand> --help\n" +
+		"dexaflow is the CLI\n" +
+		"```\n")
+	got := docFlagViolations(NewRootCommand(), map[string][]byte{"sub.md": md})
+	want := "sub.md:2: dexaflow auth create-tokn --username ci --password-stdin (unknown subcommand create-tokn)"
+	if strings.Join(got, "\n") != want {
+		t.Fatalf("violations:\n%s\nwant:\n%s", strings.Join(got, "\n"), want)
+	}
+}
+
 // docFlagRoots are the trees the docs test reads, relative to the repository
 // root. website/content/project holds ADRs, specs and plans: decision records
 // keep the flags of the day they were written (they are immutable once
@@ -298,6 +332,8 @@ func TestDocFlagCheckerIgnoresNonCommands(t *testing.T) {
 // page a user copies a command from. reference/go is generated from GoDoc.
 var docFlagRoots = []string{"website/content", "examples"}
 
+// docFlagSkip lists the directories under docFlagRoots that are not read, for
+// the reasons given on docFlagRoots.
 var docFlagSkip = []string{"website/content/project", "website/content/reference/go"}
 
 // TestDocumentedFlagsExist walks the docs site and the examples and fails on

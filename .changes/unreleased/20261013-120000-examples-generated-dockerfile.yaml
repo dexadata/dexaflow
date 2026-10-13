@@ -12,5 +12,6 @@ body: |-
   --platform`), the server variable is `DEXAFLOW_SERVER_URL`, CI mints a token per
   job because tokens expire after an hour, only `deploy` pins the image by
   digest, and rollback is documented as it works today. A test now fails when a
-  page documents a `dexaflow` flag the CLI does not have (#1709).
+  `dexaflow ...` command written in a code block or inline code span of the docs
+  or examples uses a flag or subcommand the CLI does not have (#1709).
 time: 2026-10-13T12:00:00.000000000-03:00
