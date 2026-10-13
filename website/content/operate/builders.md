@@ -138,7 +138,8 @@ registry API and pushed under the DAG image tag.
 builder:    code-layer, the registry holds the dependency image ghcr.io/your-org/etl:deps-4f1c... for this build, so only the DAG code is pushed, as a layer on it (pass --rebuild to build the dependency image again)
 ```
 
-The first build of a key, or a build with `--rebuild`, has the local daemon
+The first build of a key, or a build with `--rebuild` (on `deploy`,
+`compile --push` and `build --push`), has the local daemon
 build and push the dependency image first, then adds the code layer:
 
 ```console
@@ -160,16 +161,21 @@ line says why, when:
 - the project ships its own Dockerfile;
 - `dag_source` is in a subdirectory;
 - the digest of the base image cannot be read (no network or no credentials
-  for its registry);
+  for its registry), or the registry of the DAG image answers the read of
+  the dependency image with an error other than "unknown tag";
+- an `include_paths` entry is a pattern (`lib/*.py`);
 - the build is not pushed (`compile --build` without `--push`), or has no
   platform.
 
 ### What the code layer contains
 
 The layer holds the files the generated Dockerfile copies: the DAG source,
-`include_paths`, the dbt project and the directories of `dbt_groups`, with
-the same `.dockerignore` and `exclude_paths` rules as the version label.
-`.git` never ships. Symlinks inside a copied directory stay links. Every
+`include_paths`, the dbt project and the directories of `dbt_groups`,
+filtered by your `.dockerignore` and `exclude_paths` with Docker's rules, as
+the full build filters them. `.git`, `.dockerignore` and the compiled
+`dag.json` never ship, even from a project at `.`. Symlinks inside a copied
+directory stay links. A file whose name starts with `.wh.` is refused, since
+a layer reads it as a deletion. Every
 entry is owned by root, with a fixed date, mode `0755` for directories and
 executables and `0644` for other files, so the same files always make the
 same layer and the non-root task user can read every file.
@@ -178,8 +184,10 @@ same layer and the non-root task user can read every file.
 
 A dependency image is reused for as long as its key holds. Its transitive
 dependencies (the packages your pinned ones pull in) are the versions pip
-resolved when it was first built. Pass `--rebuild` to build the dependency
-image again. A base image given by tag is read by digest on every build, so
+resolved when it was first built, and its `system_packages` the versions
+apt installed then, so their security updates arrive only with a rebuild.
+Pass `--rebuild` to build the dependency image again, for example on a
+schedule in CI. A base image given by tag is read by digest on every build, so
 a new image under that tag gives a new key and a new dependency image.
 
 `deps-*` tags accumulate in the DAG repository, one per set of dependencies.

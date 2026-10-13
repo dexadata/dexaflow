@@ -3,10 +3,13 @@ package build
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	ggcrtransport "github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 // splitFixture is a registry with no images yet and the split of a build of
@@ -173,4 +176,33 @@ func lastLayer(t *testing.T, ref string) v1.Layer {
 		t.Fatal(err)
 	}
 	return layers[len(layers)-1]
+}
+
+// errRegistry answers every Resolve with err; it can push, so only the read
+// decides the path.
+type errRegistry struct{ err error }
+
+func (r errRegistry) Resolve(context.Context, string) (Pinned, error) { return Pinned{}, r.err }
+
+func (errRegistry) AppendCode(context.Context, Pinned, []LayerFile, string) error { return nil }
+
+// Only a registry that says the dependency image is not there has the daemon
+// build it; a registry this client cannot read (401, a refused TLS
+// handshake) keeps the whole build on the daemon, which may reach it.
+func TestSelectSplitsOnlyWhenTheDependencyImageIsMissing(t *testing.T) {
+	split := &Split{DepsImage: "reg.io/etl:deps-1", Dockerfile: "FROM b\n"}
+	missing := &ggcrtransport.Error{StatusCode: 404, Errors: []ggcrtransport.Diagnostic{{Code: ggcrtransport.ManifestUnknownErrorCode}}}
+	b, _ := Select(context.Background(), Options{Split: split, Registry: errRegistry{fmt.Errorf("reading: %w", missing)}}, "reg.io/etl:v1", []string{"linux/amd64"})
+	if _, ok := b.(CodeLayer); !ok {
+		t.Errorf("missing: Select = %#v, want the daemon to build the dependency image", b)
+	}
+	for name, err := range map[string]error{
+		"unauthorized": fmt.Errorf("reading: %w", &ggcrtransport.Error{StatusCode: 401}),
+		"tls":          errors.New("tls: failed to verify certificate"),
+	} {
+		b, reason := Select(context.Background(), Options{Split: split, Registry: errRegistry{err}}, "reg.io/etl:v1", []string{"linux/amd64"})
+		if _, ok := b.(LocalDaemon); !ok || !strings.Contains(reason, "could not be read") {
+			t.Errorf("%s: Select = %#v, reason %q, want the whole build on the daemon", name, b, reason)
+		}
+	}
 }

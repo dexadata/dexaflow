@@ -72,12 +72,12 @@ func layerEntries(t *testing.T, layer v1.Layer) []*tar.Header {
 
 func TestCodeLayerIsDeterministic(t *testing.T) {
 	files := codeFixture(t)
-	a, err := codeLayer(files, types.OCILayer)
+	a, err := makeLayer(t, files, types.OCILayer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reversed := []LayerFile{files[3], files[2], files[1], files[0]}
-	b, err := codeLayer(reversed, types.OCILayer)
+	b, err := makeLayer(t, reversed, types.OCILayer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestCodeLayerIsDeterministic(t *testing.T) {
 }
 
 func TestCodeLayerEntriesAreNormalized(t *testing.T) {
-	layer, err := codeLayer(codeFixture(t), types.DockerLayer)
+	layer, err := makeLayer(t, codeFixture(t), types.DockerLayer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestCodeLayerEntriesAreNormalized(t *testing.T) {
 
 func TestCodeLayerRefusesAPathOutsideTheWorkdir(t *testing.T) {
 	for _, p := range []string{"../etc/passwd", "/etc/passwd", "a/../../b", ""} {
-		if _, err := codeLayer([]LayerFile{{Path: p, Dir: true}}, types.OCILayer); err == nil {
+		if _, err := makeLayer(t, []LayerFile{{Path: p, Dir: true}}, types.OCILayer); err == nil {
 			t.Errorf("codeLayer accepted the path %q", p)
 		}
 	}
@@ -136,7 +136,7 @@ func TestCodeLayerRefusesAPathOutsideTheWorkdir(t *testing.T) {
 
 func TestCodeLayerReadsEachFileOnce(t *testing.T) {
 	files := codeFixture(t)
-	layer, err := codeLayer(files[1:2], types.OCILayer)
+	layer, err := makeLayer(t, files[1:2], types.OCILayer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,5 +283,53 @@ func pushIndexWithAttestation(t *testing.T, ref string, platforms ...string) {
 	}
 	if werr := remote.WriteIndex(r, idx); werr != nil {
 		t.Fatal(werr)
+	}
+}
+
+// makeLayer is codeLayer with its temporary file removed after the test.
+func makeLayer(t *testing.T, files []LayerFile, mediaType types.MediaType) (v1.Layer, error) {
+	t.Helper()
+	layer, remove, err := codeLayer(files, mediaType)
+	if err == nil {
+		t.Cleanup(remove)
+	}
+	return layer, err
+}
+
+func TestCodeLayerRefusesAWhiteoutName(t *testing.T) {
+	for _, p := range []string{".wh.dag.py", "lib/.wh..wh..opq"} {
+		if _, err := makeLayer(t, []LayerFile{{Path: p, Dir: true}}, types.OCILayer); err == nil || !strings.Contains(err.Error(), ".wh.") {
+			t.Errorf("%s: err = %v, want a refusal naming .wh.", p, err)
+		}
+	}
+}
+
+func TestCodeLayerRemovesItsTemporaryFile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	_, remove, err := codeLayer(codeFixture(t), types.OCILayer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(tmp, "dexaflow-code-*")); len(left) != 1 {
+		t.Fatalf("temporary files = %v, want the layer's", left)
+	}
+	remove()
+	if left, _ := filepath.Glob(filepath.Join(tmp, "dexaflow-code-*")); len(left) != 0 {
+		t.Fatalf("temporary files left: %v", left)
+	}
+}
+
+// An index with no image for a platform is refused rather than pushed empty.
+func TestAppendCodeRefusesAnIndexWithNoPlatformImage(t *testing.T) {
+	host := testRegistry(t)
+	deps := host + "/dags/etl:deps-4"
+	pushIndexWithAttestation(t, deps)
+	base, err := Registry{}.Resolve(context.Background(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (Registry{}).AppendCode(context.Background(), base, codeFixture(t), host+"/dags/etl:v4"); err == nil || !strings.Contains(err.Error(), "no image for a platform") {
+		t.Fatalf("err = %v, want a refusal", err)
 	}
 }

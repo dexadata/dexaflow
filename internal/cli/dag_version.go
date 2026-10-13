@@ -442,6 +442,11 @@ func (w *contentWalker) skip(rel, abs string) bool {
 	if slash == "dag.json" || (w.output != "" && filepath.Clean(abs) == w.output) {
 		return true
 	}
+	if w.layer {
+		// The code layer reads exclude_paths and the dbt artifacts through
+		// the merged .dockerignore, with Docker's rules (codeLayerFiles).
+		return false
+	}
 	if w.dbtArtifact(slash) {
 		return true
 	}
@@ -450,9 +455,6 @@ func (w *contentWalker) skip(rel, abs string) bool {
 
 // dbtArtifact reports whether slash is a file `dbt parse` rewrites inside a
 // dbt project directory: logs/, .user.yml, and dbtParseOutputs under target/.
-// For the code layer only logs/ and .user.yml, which the generated
-// .dockerignore keeps out of the image (dbtBuildArtifacts); the parse
-// outputs ship, as the COPY ships them.
 func (w *contentWalker) dbtArtifact(slash string) bool {
 	dirs := dbtGroupProjectDirs(w.cfg)
 	if w.cfg.Dbt != nil && w.cfg.Dbt.Project != "" {
@@ -465,9 +467,6 @@ func (w *contentWalker) dbtArtifact(slash string) bool {
 		}
 		if slash == prefix+"logs" || slash == prefix+".user.yml" {
 			return true
-		}
-		if w.layer {
-			continue
 		}
 		for _, f := range dbtParseOutputs {
 			if slash == prefix+"target/"+f {

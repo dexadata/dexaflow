@@ -67,7 +67,7 @@ type compileOptions struct {
 	// (ADR 0076). deploy sets it; --rebuild and --force clear it.
 	reuse bool
 	// rebuild builds the dependency image of a split build again even when
-	// the registry holds one for its key (deploy --rebuild).
+	// the registry holds one for its key (--rebuild).
 	rebuild bool
 }
 
@@ -99,6 +99,7 @@ func newCompileCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
 	cmd.Flags().BoolVar(&o.build, "build", false, "build the DAG container image (requires --image)")
 	cmd.Flags().BoolVar(&o.push, "push", false, "push the built image to its registry (requires --build)")
+	cmd.Flags().BoolVar(&o.rebuild, "rebuild", false, "build the dependency image again even when the registry holds one for its key (with --push)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	addPlatformFlag(cmd)

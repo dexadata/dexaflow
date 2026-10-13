@@ -59,6 +59,11 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 	if cfg.Dbt == nil && filepath.Clean(cfg.DagSource) != filepath.Base(cfg.DagSource) {
 		return nil, fmt.Sprintf("dag_source %q is in a subdirectory, which the code layer does not place yet", cfg.DagSource)
 	}
+	for _, p := range cfg.IncludePaths {
+		if strings.ContainsAny(p, "*?[") {
+			return nil, fmt.Sprintf("include_paths entry %q is a pattern, which the code layer does not expand", p)
+		}
+	}
 	deps, err := cfg.EffectiveDependencies()
 	if err != nil {
 		return nil, ""
@@ -152,9 +157,10 @@ func depsImage(image, key string) string {
 
 // dependencyDockerfile renders the Dockerfile of the dependency image: the
 // generated Dockerfile (generatedDockerfile) without its COPY lines, FROM the
-// base image pinned by digest. The image configuration is the same, since
-// COPY changes none of it, so the dependency image plus the code layer is the
-// image the generated Dockerfile builds.
+// base image pinned by digest. COPY changes none of the image configuration,
+// so the dependency image plus the code layer has the configuration of the
+// image the generated Dockerfile builds; codeLayerFiles says how the files
+// differ.
 func dependencyDockerfile(cfg *domain.LeoflowConfig, from string) (string, error) {
 	if err := cfg.ValidateDockerfileValues(); err != nil {
 		return "", err
@@ -186,19 +192,26 @@ func dependencyDockerfile(cfg *domain.LeoflowConfig, from string) (string, error
 }
 
 // codeLayerFiles lists the entries of the code layer: what the COPY lines of
-// the generated Dockerfile take from dir, walked as the version label walks
-// it (contentWalker), with the same .dockerignore, exclude_paths and symlink
-// rules. Two differences, both what the COPY does: the files `dbt parse`
-// writes under target/ ship, and dbt.manifest is one more file of its project
-// rather than a root of its own. A root that does not exist fails, as the
-// COPY would. Every directory above a nested root is listed too, as the COPY
-// creates it.
+// the generated Dockerfile take from dir. It walks the roots of those lines as
+// the version label walks them (contentWalker), with the same symlink rules,
+// and filters with the .dockerignore the build reads: the project's own
+// lines, then exclude_paths and the dbt artifacts in the forms
+// ensureDockerignore writes, matched with Docker's rules (buildIgnore). So the
+// files `dbt parse` writes under target/ ship, as the COPY ships them, and
+// dbt.manifest is one more file of its project. What the layer leaves out on
+// top of the build: .git, .leoflow* files, .dockerignore and the compiled
+// dag.json, which no task reads. A root that does not exist or that the
+// .dockerignore excludes fails, as the COPY would. Every directory above a
+// nested root is listed too, as the COPY creates it.
 func codeLayerFiles(dir string, cfg *domain.LeoflowConfig, output string) ([]build.LayerFile, error) {
 	w, err := newContentWalker(dir, cfg, output, false, sha256.New())
 	if err != nil {
 		return nil, err
 	}
 	w.layer = true
+	if w.ignore, err = buildIgnore(dir, cfg); err != nil {
+		return nil, err
+	}
 	// The roots of generatedDockerfile: a dbt project copies its project
 	// directory alone; a dag.py its file, its dbt groups and include_paths.
 	names := append([]string{filepath.Base(cfg.DagSource)}, copiedRoots(cfg)...)
@@ -215,11 +228,28 @@ func codeLayerFiles(dir string, cfg *domain.LeoflowConfig, output string) ([]bui
 		if _, serr := os.Stat(filepath.Join(dir, n)); serr != nil {
 			return nil, fmt.Errorf("%s: the build copies it into the image: %w", filepath.Join(dir, n), serr)
 		}
+		if n != "." && w.ignore.excluded(filepath.ToSlash(n)) {
+			return nil, fmt.Errorf("%s is excluded by .dockerignore or exclude_paths, so the build cannot copy it into the image", n)
+		}
 		if werr := w.hashRoot(root); werr != nil {
 			return nil, werr
 		}
 	}
 	return withParents(w.files), nil
+}
+
+// buildIgnore parses the .dockerignore the build reads: the project's own
+// file, without a block an interrupted build left, merged with exclude_paths
+// and dbtBuildArtifacts as ensureDockerignore merges them.
+func buildIgnore(dir string, cfg *domain.LeoflowConfig) (dockerignore, error) {
+	file := filepath.Join(dir, dockerignoreName)
+	data, err := os.ReadFile(file) //nolint:gosec // G304: the project's own .dockerignore.
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return dockerignore{}, fmt.Errorf("reading %s: %w", file, err)
+	}
+	data, _ = stripLeoflowBlock(data)
+	merged, _ := mergeDockerignore(data, slices.Concat(cfg.ExcludePaths, dbtBuildArtifacts(cfg)))
+	return parseDockerignore(merged), nil
 }
 
 // collect records one walked entry of the code layer: a directory, a

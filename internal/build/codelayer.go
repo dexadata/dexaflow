@@ -2,7 +2,6 @@ package build
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -52,28 +51,49 @@ type LayerFile struct {
 // codeLayer packs files as a deterministic tar layer of mediaType: entries
 // sorted by path, owned by root, with a fixed modification time and modes
 // normalized to 0755 for directories and executables, 0644 for other files
-// (ADR 0073 section 2). Each source file is read once, here.
-func codeLayer(files []LayerFile, mediaType types.MediaType) (v1.Layer, error) {
+// (ADR 0073 section 2). Each source file is read once, here, into a
+// temporary tar file that remove deletes; the layer reads that file, so a
+// large project is streamed rather than held in memory.
+func codeLayer(files []LayerFile, mediaType types.MediaType) (layer v1.Layer, remove func(), err error) {
 	sorted := slices.Clone(files)
 	slices.SortFunc(sorted, func(a, b LayerFile) int { return strings.Compare(a.Path, b.Path) })
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+	f, err := os.CreateTemp("", "dexaflow-code-*.tar")
+	if err != nil {
+		return nil, nil, fmt.Errorf("making the code layer: %w", err)
+	}
+	remove = func() { _ = os.Remove(f.Name()) } //nolint:errcheck // best-effort cleanup of a temporary file
+	if werr := writeTar(f, sorted); werr != nil {
+		_ = f.Close() //nolint:errcheck // the write error is the one to report
+		remove()
+		return nil, nil, werr
+	}
+	if cerr := f.Close(); cerr != nil {
+		remove()
+		return nil, nil, fmt.Errorf("writing the code layer: %w", cerr)
+	}
+	tarPath := f.Name()
+	layer, err = tarball.LayerFromOpener(func() (io.ReadCloser, error) {
+		return os.Open(tarPath) //nolint:gosec // G304: the temporary file made above.
+	}, tarball.WithMediaType(mediaType))
+	if err != nil {
+		remove()
+		return nil, nil, fmt.Errorf("making the code layer: %w", err)
+	}
+	return layer, remove, nil
+}
+
+// writeTar writes the sorted entries to w as a tar stream.
+func writeTar(w io.Writer, sorted []LayerFile) error {
+	tw := tar.NewWriter(w)
 	for _, f := range sorted {
 		if err := writeEntry(tw, f); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if err := tw.Close(); err != nil {
-		return nil, fmt.Errorf("closing the code layer: %w", err)
+		return fmt.Errorf("closing the code layer: %w", err)
 	}
-	data := buf.Bytes()
-	layer, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(data)), nil
-	}, tarball.WithMediaType(mediaType))
-	if err != nil {
-		return nil, fmt.Errorf("making the code layer: %w", err)
-	}
-	return layer, nil
+	return nil
 }
 
 // writeEntry writes one file of a code layer.
@@ -109,10 +129,17 @@ func writeEntry(tw *tar.Writer, f LayerFile) error {
 }
 
 // layerPath checks that p names a place under Workdir and returns it clean.
+// A name starting with .wh. is refused: in a layer it is a whiteout, which
+// would delete a file of the image below instead of adding one.
 func layerPath(p string) (string, error) {
 	clean := path.Clean(p)
 	if p == "" || clean == "." || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("the code layer path %q is not under %s", p, Workdir)
+	}
+	for _, seg := range strings.Split(clean, "/") {
+		if strings.HasPrefix(seg, ".wh.") {
+			return "", fmt.Errorf("the project file %q starts with .wh., which an image layer reads as a deletion; rename it or add it to exclude_paths", p)
+		}
 	}
 	return clean, nil
 }
@@ -132,6 +159,7 @@ func (Registry) AppendCode(ctx context.Context, base Pinned, files []LayerFile, 
 		return fmt.Errorf("image %q is not a valid reference: %w", base.Ref, err)
 	}
 	layers := &layerCache{files: files, made: map[types.MediaType]v1.Layer{}}
+	defer layers.remove()
 	opts := remoteOptions(ctx)
 	if isIndex(base.Manifest) {
 		return appendToIndex(src, dst, layers, opts)
@@ -162,6 +190,7 @@ func appendToIndex(src, dst name.Reference, layers *layerCache, opts []remote.Op
 		return fmt.Errorf("reading the index of %s: %w", src, err)
 	}
 	out := mutate.IndexMediaType(empty.Index, im.MediaType)
+	images := 0
 	for _, d := range im.Manifests {
 		if isAttestation(d) {
 			continue
@@ -178,6 +207,10 @@ func appendToIndex(src, dst name.Reference, layers *layerCache, opts []remote.Op
 			return aerr
 		}
 		out = mutate.AppendManifests(out, mutate.IndexAddendum{Add: withCode, Descriptor: v1.Descriptor{Platform: d.Platform}})
+		images++
+	}
+	if images == 0 {
+		return fmt.Errorf("the dependency image %s lists no image for a platform", src)
 	}
 	if err := remote.WriteIndex(dst, out, opts...); err != nil {
 		return fmt.Errorf("pushing %s: %w", dst, err)
@@ -197,8 +230,16 @@ func isAttestation(d v1.Descriptor) bool {
 // layerCache makes the code layer once per media type: a Docker v2 image
 // takes a Docker layer, an OCI image an OCI one.
 type layerCache struct {
-	files []LayerFile
-	made  map[types.MediaType]v1.Layer
+	files   []LayerFile
+	made    map[types.MediaType]v1.Layer
+	removes []func()
+}
+
+// remove deletes the temporary files of the layers made.
+func (c *layerCache) remove() {
+	for _, r := range c.removes {
+		r()
+	}
 }
 
 // appendTo returns img with the code layer appended.
@@ -213,10 +254,12 @@ func (c *layerCache) appendTo(img v1.Image) (v1.Image, error) {
 	}
 	layer, ok := c.made[layerType]
 	if !ok {
-		if layer, err = codeLayer(c.files, layerType); err != nil {
+		var remove func()
+		if layer, remove, err = codeLayer(c.files, layerType); err != nil {
 			return nil, err
 		}
 		c.made[layerType] = layer
+		c.removes = append(c.removes, remove)
 	}
 	out, err := mutate.Append(img, mutate.Addendum{
 		Layer:   layer,

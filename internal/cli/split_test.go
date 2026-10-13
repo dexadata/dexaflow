@@ -362,6 +362,10 @@ func TestDeploySaysWhyTheBuildIsNotSplit(t *testing.T) {
 		"own Dockerfile": {func(t *testing.T, dir string) {
 			writeProjectFile(t, dir, "Dockerfile", "FROM scratch\n")
 		}, "fallback: the project ships its own Dockerfile"},
+		"pattern in include_paths": {func(t *testing.T, dir string) {
+			writeProjectFile(t, dir, "lib/a.py", "x\n")
+			editYAML(t, dir, "dependencies:", "include_paths: [\"lib/*.py\"]\ndependencies:")
+		}, `fallback: include_paths entry "lib/*.py" is a pattern`},
 		"public base": {func(t *testing.T, dir string) {
 			editYAML(t, dir, "base_image: ", "base_image: ghcr.io/x/y:1\n# was: ")
 		}, "fallback: the digest of the base image ghcr.io/x/y:1 could not be read"},
@@ -390,4 +394,53 @@ func editYAML(t *testing.T, dir, old, replacement string) {
 		t.Fatalf("dexaflow.yaml has no %q:\n%s", old, body)
 	}
 	writeProjectFile(t, dir, "dexaflow.yaml", strings.Replace(body, old, replacement, 1))
+}
+
+// exclude_paths reach the code layer with Docker's rules, as the generated
+// .dockerignore applies them: `**` at any depth, a pattern with a slash only
+// from the project root, a bare name at any depth.
+func TestCodeLayerFilesApplyExcludePathsAsDockerDoes(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"dag.py", "lib/a.py", "lib/certs/deep/k.pem", "lib/data/schema.json", "lib/cache/x.bin", "lib/sub/cache/y.bin"} {
+		writeProjectFile(t, dir, f, "x\n")
+	}
+	cfg := &domain.LeoflowConfig{DagID: "etl", DagSource: "dag.py", IncludePaths: []string{"lib"}, ExcludePaths: []string{"**/*.pem", "data/", "cache"}}
+	files, err := codeLayerFiles(dir, cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"dag.py", "lib/", "lib/a.py", "lib/certs/", "lib/certs/deep/", "lib/data/", "lib/data/schema.json", "lib/sub/"}
+	if got := layerPaths(files); !slices.Equal(got, want) {
+		t.Errorf("code layer = %q, want %q", got, want)
+	}
+}
+
+// A root the .dockerignore excludes fails, as its COPY would.
+func TestCodeLayerFilesFailOnAnExcludedRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectFile(t, dir, "dag.py", "# dag\n")
+	writeProjectFile(t, dir, "secrets/k", "x\n")
+	cfg := &domain.LeoflowConfig{DagID: "etl", DagSource: "dag.py", IncludePaths: []string{"secrets"}, ExcludePaths: []string{"/secrets"}}
+	if _, err := codeLayerFiles(dir, cfg, ""); err == nil || !strings.Contains(err.Error(), "excluded") {
+		t.Fatalf("err = %v, want one saying the root is excluded", err)
+	}
+}
+
+// compile --push --rebuild builds the dependency image again, as deploy
+// --rebuild does.
+func TestCompileRebuildBuildsTheDependencyImage(t *testing.T) {
+	dir, _, deps := splitProject(t, "")
+	pushPlatformIndex(t, deps, "linux/amd64")
+	builder, argv := argvBuilder(t)
+	out, _, err := run(t, "compile", dir, "--build", "--push", "--rebuild", "--builder", builder)
+	if err != nil {
+		t.Fatalf("compile --rebuild: %v\n%s", err, out)
+	}
+	if calls := argvLines(t, argv); len(calls) != 2 || !strings.Contains(calls[0], "-t "+deps+" ") {
+		t.Fatalf("daemon calls = %q, want the dependency image built and pushed", calls)
+	}
+	out, _, err = run(t, "compile", dir, "--build", "--push", "--builder", builder)
+	if err != nil || !strings.Contains(out, "builder:    code-layer") {
+		t.Fatalf("compile without --rebuild: %v, want the code-layer path:\n%s", err, out)
+	}
 }
