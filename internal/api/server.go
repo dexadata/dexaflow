@@ -348,6 +348,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
+	registerUIGantt(r, deps.Tasks)
 	registerUITasks(r, deps.Specs)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)
@@ -360,6 +361,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)
 	registerUIStubs(r)
 	registerAPIStubs(r)
+	registerAirflow33Unserved(r)
 	if deps.UI != nil {
 		static := gin.WrapH(http.StripPrefix("/static", deps.UI.StaticHandler()))
 		r.GET("/static/*filepath", static)

@@ -104,6 +104,27 @@ func (e TaskInstanceState) Valid() bool {
 	}
 }
 
+// Defines values for TaskInstanceStateUpdateNewState.
+const (
+	TaskInstanceStateUpdateNewStateFailed  TaskInstanceStateUpdateNewState = "failed"
+	TaskInstanceStateUpdateNewStateSkipped TaskInstanceStateUpdateNewState = "skipped"
+	TaskInstanceStateUpdateNewStateSuccess TaskInstanceStateUpdateNewState = "success"
+)
+
+// Valid indicates whether the value is a known member of the TaskInstanceStateUpdateNewState enum.
+func (e TaskInstanceStateUpdateNewState) Valid() bool {
+	switch e {
+	case TaskInstanceStateUpdateNewStateFailed:
+		return true
+	case TaskInstanceStateUpdateNewStateSkipped:
+		return true
+	case TaskInstanceStateUpdateNewStateSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListDagRunsParamsState.
 const (
 	ListDagRunsParamsStateFailed  ListDagRunsParamsState = "failed"
@@ -253,10 +274,34 @@ type DAGRunRunType string
 // DAGRunState defines model for DAGRun.State.
 type DAGRunState string
 
+// DAGRunClearRequest defines model for DAGRunClearRequest.
+type DAGRunClearRequest struct {
+	// DryRun Return the task instances that WOULD be cleared, without clearing them. Defaults to true, matching Apache Airflow. Send false to execute.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// Note Accepted and not stored (run notes are not editable yet).
+	Note *string `json:"note,omitempty"`
+
+	// OnlyFailed Restrict the clear to the run's task instances in a failed state. false (the default, matching Apache Airflow) takes every task instance of the run.
+	OnlyFailed *bool `json:"only_failed,omitempty"`
+
+	// OnlyNew Not supported. Sending true is refused with 400: Dexaflow cannot yet tell which tasks a newer DAG version added.
+	OnlyNew *bool `json:"only_new,omitempty"`
+
+	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with; true re-binds the run to the DAG's current registered version.
+	RunOnLatestVersion *bool `json:"run_on_latest_version,omitempty"`
+}
+
 // DAGRunCollection defines model for DAGRunCollection.
 type DAGRunCollection struct {
-	DagRuns      *[]DAGRun `json:"dag_runs,omitempty"`
-	TotalEntries *int      `json:"total_entries,omitempty"`
+	DagRuns *[]DAGRun `json:"dag_runs,omitempty"`
+
+	// NextCursor Cursor of the next page. Present only when the request carried cursor and a next page exists.
+	NextCursor *string `json:"next_cursor,omitempty"`
+
+	// PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
+	TotalEntries   *int    `json:"total_entries,omitempty"`
 }
 
 // DAGRunCreate defines model for DAGRunCreate.
@@ -351,9 +396,22 @@ type TaskInstanceState string
 
 // TaskInstanceCollection defines model for TaskInstanceCollection.
 type TaskInstanceCollection struct {
-	TaskInstances *[]TaskInstance `json:"task_instances,omitempty"`
-	TotalEntries  *int            `json:"total_entries,omitempty"`
+	// NextCursor Cursor of the next page. Present only when the request carried cursor and a next page exists.
+	NextCursor *string `json:"next_cursor,omitempty"`
+
+	// PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
+	PreviousCursor *string         `json:"previous_cursor,omitempty"`
+	TaskInstances  *[]TaskInstance `json:"task_instances,omitempty"`
+	TotalEntries   *int            `json:"total_entries,omitempty"`
 }
+
+// TaskInstanceStateUpdate defines model for TaskInstanceStateUpdate.
+type TaskInstanceStateUpdate struct {
+	NewState TaskInstanceStateUpdateNewState `json:"new_state"`
+}
+
+// TaskInstanceStateUpdateNewState defines model for TaskInstanceStateUpdate.NewState.
+type TaskInstanceStateUpdateNewState string
 
 // TokenRequest defines model for TokenRequest.
 type TokenRequest struct {
@@ -490,13 +548,18 @@ type ListDagRunsParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 
-	// Cursor Dexaflow extension. Opaque keyset cursor taken from the Dexaflow-Next-Cursor response header of the previous page. When set, offset is ignored and the page holds the rows after the cursor in the same order, at the cost of the first page whatever the depth. The response body is unchanged. With a state filter, offset paging filters the newest 10000 runs and counts total_entries within them, while cursor paging filters and counts every run of the DAG, so the two modes can report different totals for a DAG with more runs than that.
+	// Cursor Opaque cursor, as Apache Airflow 3.3 pages its lists. Send it empty for the first page, then the next_cursor or previous_cursor the previous body named. Whenever the request carries cursor, the body names next_cursor (absent on the last page) and previous_cursor (absent on the first page); a request without cursor gets the body without those fields. A cursor that is not one this server issued is refused with 400. Dexaflow also accepts the keyset cursor of the Dexaflow-Next-Cursor response header on the DAG run list: the page then holds the runs after the cursor in the same order, at the cost of the first page whatever the depth. With a state filter, offset paging filters the newest 10000 runs and counts total_entries within them, while keyset paging filters and counts every run of the DAG, so the two modes can report different totals for a DAG with more runs than that.
 	Cursor *Cursor                   `form:"cursor,omitempty" json:"cursor,omitempty"`
 	State  *[]ListDagRunsParamsState `form:"state,omitempty" json:"state,omitempty"`
 }
 
 // ListDagRunsParamsState defines parameters for ListDagRuns.
 type ListDagRunsParamsState string
+
+// ClearDagRun200JSONResponseBody defines parameters for ClearDagRun.
+type ClearDagRun200JSONResponseBody struct {
+	union json.RawMessage
+}
 
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
@@ -525,6 +588,15 @@ type ClearTaskInstancesJSONRequestBody = ClearTaskInstancesRequest
 // TriggerDagRunJSONRequestBody defines body for TriggerDagRun for application/json ContentType.
 type TriggerDagRunJSONRequestBody = DAGRunCreate
 
+// ClearDagRunJSONRequestBody defines body for ClearDagRun for application/json ContentType.
+type ClearDagRunJSONRequestBody = DAGRunClearRequest
+
+// PatchTaskInstanceJSONRequestBody defines body for PatchTaskInstance for application/json ContentType.
+type PatchTaskInstanceJSONRequestBody = TaskInstanceStateUpdate
+
+// PatchTaskInstanceDryRunJSONRequestBody defines body for PatchTaskInstanceDryRun for application/json ContentType.
+type PatchTaskInstanceDryRunJSONRequestBody = TaskInstanceStateUpdate
+
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
 
@@ -533,6 +605,68 @@ type CreateVariableJSONRequestBody = VariableBody
 
 // IssueTokenJSONRequestBody defines body for IssueToken for application/json ContentType.
 type IssueTokenJSONRequestBody = TokenRequest
+
+// AsTaskInstanceCollection returns the union data inside the ClearDagRun200JSONResponseBody as a TaskInstanceCollection
+func (t ClearDagRun200JSONResponseBody) AsTaskInstanceCollection() (TaskInstanceCollection, error) {
+	var body TaskInstanceCollection
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromTaskInstanceCollection overwrites any union data inside the ClearDagRun200JSONResponseBody as the provided TaskInstanceCollection
+func (t *ClearDagRun200JSONResponseBody) FromTaskInstanceCollection(v TaskInstanceCollection) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeTaskInstanceCollection performs a merge with any union data inside the ClearDagRun200JSONResponseBody, using the provided TaskInstanceCollection
+func (t *ClearDagRun200JSONResponseBody) MergeTaskInstanceCollection(v TaskInstanceCollection) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDAGRun returns the union data inside the ClearDagRun200JSONResponseBody as a DAGRun
+func (t ClearDagRun200JSONResponseBody) AsDAGRun() (DAGRun, error) {
+	var body DAGRun
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDAGRun overwrites any union data inside the ClearDagRun200JSONResponseBody as the provided DAGRun
+func (t *ClearDagRun200JSONResponseBody) FromDAGRun(v DAGRun) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDAGRun performs a merge with any union data inside the ClearDagRun200JSONResponseBody, using the provided DAGRun
+func (t *ClearDagRun200JSONResponseBody) MergeDAGRun(v DAGRun) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ClearDagRun200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ClearDagRun200JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -737,7 +871,27 @@ type ClientInterface interface {
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id} (the `GetDagRun` operationId).
 	GetDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ClearDagRunWithBody Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClearDagRun Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListTaskInstances List task instances of a DAG run
+	//
+	// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances (the `ListTaskInstances` operationId).
 	ListTaskInstances(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -746,6 +900,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
 	GetTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstanceWithBody Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstanceWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstance Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstanceDryRunWithBody Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstanceDryRun Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRun(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTaskLogs Get task logs
 	//
@@ -1200,7 +1390,47 @@ func (c *Client) GetDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, 
 	return c.Client.Do(req)
 }
 
+// ClearDagRunWithBody Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *Client) ClearDagRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClearDagRunRequestWithBody(c.Server, dagId, dagRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClearDagRun Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *Client) ClearDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClearDagRunRequest(c.Server, dagId, dagRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListTaskInstances List task instances of a DAG run
+//
+// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 //
 // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances (the `ListTaskInstances` operationId).
 func (c *Client) ListTaskInstances(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1220,6 +1450,82 @@ func (c *Client) ListTaskInstances(ctx context.Context, dagId DagID, dagRunId Da
 // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
 func (c *Client) GetTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTaskInstanceRequest(c.Server, dagId, dagRunId, taskId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstanceWithBody Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *Client) PatchTaskInstanceWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceRequestWithBody(c.Server, dagId, dagRunId, taskId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstance Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *Client) PatchTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceRequest(c.Server, dagId, dagRunId, taskId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstanceDryRunWithBody Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *Client) PatchTaskInstanceDryRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceDryRunRequestWithBody(c.Server, dagId, dagRunId, taskId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstanceDryRun Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *Client) PatchTaskInstanceDryRun(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceDryRunRequest(c.Server, dagId, dagRunId, taskId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2260,6 +2566,60 @@ func NewGetDagRunRequest(server string, dagId DagID, dagRunId DagRunID) (*http.R
 	return req, nil
 }
 
+// NewClearDagRunRequest calls the generic ClearDagRun builder with application/json body
+func NewClearDagRunRequest(server string, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClearDagRunRequestWithBody(server, dagId, dagRunId, "application/json", bodyReader)
+}
+
+// NewClearDagRunRequestWithBody constructs an http.Request for the ClearDagRun method, with any body, and a specified content type
+func NewClearDagRunRequestWithBody(server string, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "dag_run_id", dagRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/dagRuns/%s/clear", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListTaskInstancesRequest constructs an http.Request for the ListTaskInstances method
 func NewListTaskInstancesRequest(server string, dagId DagID, dagRunId DagRunID) (*http.Request, error) {
 	var err error
@@ -2345,6 +2705,128 @@ func NewGetTaskInstanceRequest(server string, dagId DagID, dagRunId DagRunID, ta
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewPatchTaskInstanceRequest calls the generic PatchTaskInstance builder with application/json body
+func NewPatchTaskInstanceRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchTaskInstanceRequestWithBody(server, dagId, dagRunId, taskId, "application/json", bodyReader)
+}
+
+// NewPatchTaskInstanceRequestWithBody constructs an http.Request for the PatchTaskInstance method, with any body, and a specified content type
+func NewPatchTaskInstanceRequestWithBody(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "dag_run_id", dagRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "task_id", taskId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/dagRuns/%s/taskInstances/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPatchTaskInstanceDryRunRequest calls the generic PatchTaskInstanceDryRun builder with application/json body
+func NewPatchTaskInstanceDryRunRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchTaskInstanceDryRunRequestWithBody(server, dagId, dagRunId, taskId, "application/json", bodyReader)
+}
+
+// NewPatchTaskInstanceDryRunRequestWithBody constructs an http.Request for the PatchTaskInstanceDryRun method, with any body, and a specified content type
+func NewPatchTaskInstanceDryRunRequestWithBody(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "dag_run_id", dagRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "task_id", taskId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/dagRuns/%s/taskInstances/%s/dry_run", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3214,7 +3696,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id} (the `GetDagRun` operationId).
 	GetDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*GetDagRunResponse, error)
 
+	// ClearDagRunWithBodyWithResponse Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+
+	// ClearDagRunWithResponse Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+
 	// ListTaskInstancesWithResponse List task instances of a DAG run
+	//
+	// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -3227,6 +3729,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
 	GetTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*GetTaskInstanceResponse, error)
+
+	// PatchTaskInstanceWithBodyWithResponse Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstanceWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+
+	// PatchTaskInstanceWithResponse Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+
+	// PatchTaskInstanceDryRunWithBodyWithResponse Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
+
+	// PatchTaskInstanceDryRunWithResponse Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
 
 	// GetTaskLogsWithResponse Get task logs
 	//
@@ -4076,6 +4614,68 @@ func (r GetDagRunResponse) ContentType() string {
 	return ""
 }
 
+type ClearDagRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClearDagRun200JSONResponseBody
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClearDagRunResponse) GetJSON200() *ClearDagRun200JSONResponseBody {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ClearDagRunResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ClearDagRunResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ClearDagRunResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ClearDagRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClearDagRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClearDagRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClearDagRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListTaskInstancesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4152,6 +4752,116 @@ func (r GetTaskInstanceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetTaskInstanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchTaskInstanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TaskInstanceCollection
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchTaskInstanceResponse) GetJSON200() *TaskInstanceCollection {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchTaskInstanceResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchTaskInstanceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchTaskInstanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchTaskInstanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchTaskInstanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchTaskInstanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchTaskInstanceDryRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TaskInstanceCollection
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchTaskInstanceDryRunResponse) GetJSON200() *TaskInstanceCollection {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchTaskInstanceDryRunResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchTaskInstanceDryRunResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchTaskInstanceDryRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchTaskInstanceDryRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchTaskInstanceDryRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchTaskInstanceDryRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5200,7 +5910,39 @@ func (c *ClientWithResponses) GetDagRunWithResponse(ctx context.Context, dagId D
 	return ParseGetDagRunResponse(rsp)
 }
 
+// ClearDagRunWithBodyWithResponse Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *ClientWithResponses) ClearDagRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error) {
+	rsp, err := c.ClearDagRunWithBody(ctx, dagId, dagRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClearDagRunResponse(rsp)
+}
+
+// ClearDagRunWithResponse Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *ClientWithResponses) ClearDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error) {
+	rsp, err := c.ClearDagRun(ctx, dagId, dagRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClearDagRunResponse(rsp)
+}
+
 // ListTaskInstancesWithResponse List task instances of a DAG run
+//
+// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -5224,6 +5966,66 @@ func (c *ClientWithResponses) GetTaskInstanceWithResponse(ctx context.Context, d
 		return nil, err
 	}
 	return ParseGetTaskInstanceResponse(rsp)
+}
+
+// PatchTaskInstanceWithBodyWithResponse Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error) {
+	rsp, err := c.PatchTaskInstanceWithBody(ctx, dagId, dagRunId, taskId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceResponse(rsp)
+}
+
+// PatchTaskInstanceWithResponse Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error) {
+	rsp, err := c.PatchTaskInstance(ctx, dagId, dagRunId, taskId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceResponse(rsp)
+}
+
+// PatchTaskInstanceDryRunWithBodyWithResponse Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceDryRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error) {
+	rsp, err := c.PatchTaskInstanceDryRunWithBody(ctx, dagId, dagRunId, taskId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceDryRunResponse(rsp)
+}
+
+// PatchTaskInstanceDryRunWithResponse Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceDryRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error) {
+	rsp, err := c.PatchTaskInstanceDryRun(ctx, dagId, dagRunId, taskId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceDryRunResponse(rsp)
 }
 
 // GetTaskLogsWithResponse Get task logs
@@ -5986,6 +6788,53 @@ func ParseGetDagRunResponse(rsp *http.Response) (*GetDagRunResponse, error) {
 	return response, nil
 }
 
+// ParseClearDagRunResponse parses an HTTP response from a ClearDagRunWithResponse call
+func ParseClearDagRunResponse(rsp *http.Response) (*ClearDagRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClearDagRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClearDagRun200JSONResponseBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTaskInstancesResponse parses an HTTP response from a ListTaskInstancesWithResponse call
 func ParseListTaskInstancesResponse(rsp *http.Response) (*ListTaskInstancesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6032,6 +6881,86 @@ func ParseGetTaskInstanceResponse(rsp *http.Response) (*GetTaskInstanceResponse,
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchTaskInstanceResponse parses an HTTP response from a PatchTaskInstanceWithResponse call
+func ParsePatchTaskInstanceResponse(rsp *http.Response) (*PatchTaskInstanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchTaskInstanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TaskInstanceCollection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchTaskInstanceDryRunResponse parses an HTTP response from a PatchTaskInstanceDryRunWithResponse call
+func ParsePatchTaskInstanceDryRunResponse(rsp *http.Response) (*PatchTaskInstanceDryRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchTaskInstanceDryRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TaskInstanceCollection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
