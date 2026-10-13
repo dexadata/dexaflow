@@ -1167,6 +1167,12 @@ jobs:
         run: python3 -m pip install --user pyyaml
       - name: Check every dependabot directory exists
         run: bash scripts/check-dependabot-dirs.sh
+      # #1560: CONTRIBUTING.md promises fork contributors that no pull request
+      # workflow uses a repository secret or runs on pull_request_target. A
+      # cut-time-only gate would let a PR break that promise and stay green.
+      # Shares this job so the check costs no extra runner.
+      - name: Workflows stay safe for pull requests from forks
+        run: bash scripts/check-fork-safe-workflows.sh
 
   # ─────────────────────────────────────────────────────────────────────
   # Stale deploy-path check. The old GKE deploy directory was renamed to
