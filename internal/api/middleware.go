@@ -350,15 +350,41 @@ func RequireScope(scope string) gin.HandlerFunc {
 	return permissionGate{scope: scope}.check
 }
 
+// RequireDeployPermission guards the routes that deploy a DAG: registering a
+// version and setting the current version (ADR 0074). deploy:dag, the
+// deployer role's grant, allows them, and so does write:dag, so a role that
+// deployed before deploy:dag existed, a custom one included, still does. A
+// scoped token also needs dexaflow:deploy.
+func RequireDeployPermission() gin.HandlerFunc {
+	return permissionGate{action: "deploy", alt: "write", resource: "dag", scope: auth.ScopeDeploy}.check
+}
+
 func requirePermission(action, resource, scope string) gin.HandlerFunc {
 	return permissionGate{action: action, resource: resource, scope: scope}.check
 }
 
-// permissionGate checks the role permission (when action is set), then, for
+// permissionGate checks the role permission (when action is set; alt, when
+// set, is a second action on the same resource that also passes), then, for
 // a scoped principal, the route's scope; an empty scope means no scope grants
 // the route. Its check is a method value rather than a closure so jwtAuth can
 // find it in a route's handler chain (scopeGated).
-type permissionGate struct{ action, resource, scope string }
+type permissionGate struct{ action, alt, resource, scope string }
+
+// allows reports whether user holds the gate's permission.
+func (g permissionGate) allows(user *auth.User) bool {
+	if user.HasPermission(g.action, g.resource) {
+		return true
+	}
+	return g.alt != "" && user.HasPermission(g.alt, g.resource)
+}
+
+// missing names the permission a refused user lacks.
+func (g permissionGate) missing() string {
+	if g.alt == "" {
+		return g.action + ":" + g.resource
+	}
+	return g.action + ":" + g.resource + " or " + g.alt + ":" + g.resource
+}
 
 func (g permissionGate) check(c *gin.Context) {
 	user, ok := UserFromContext(c)
@@ -366,8 +392,8 @@ func (g permissionGate) check(c *gin.Context) {
 		AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no authenticated user")
 		return
 	}
-	if g.action != "" && !user.HasPermission(g.action, g.resource) {
-		AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+g.action+":"+g.resource)
+	if g.action != "" && !g.allows(user) {
+		AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+g.missing())
 		return
 	}
 	if user.Scoped && g.scope == "" {

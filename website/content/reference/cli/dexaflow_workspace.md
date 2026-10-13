@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_workspace/
 title: "dexaflow workspace"
 linkTitle: "workspace"
-weight: 68
+weight: 71
 ---
 
 Create and manage a workspace (many DAGs, shared targets and defaults).

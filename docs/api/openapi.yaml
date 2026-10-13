@@ -136,6 +136,104 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/v2/apiTokens:
+    get:
+      summary: List API tokens (Dexaflow)
+      description: >-
+        Lists the caller's unrevoked API tokens, newest first, expired ones
+        included. A caller who may manage accounts (write:user) sees every
+        token of the tenant. The token itself and its hash are never returned.
+        Not callable with an API token or any other scoped token (ADR 0074).
+      operationId: listAPITokens
+      tags: [API Tokens]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of API tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APITokenCollection" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller authenticated with a scoped token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      summary: Create an API token (Dexaflow)
+      description: >-
+        Creates a long-lived, named API token owned by the caller (ADR 0074).
+        The response carries the token once; the server keeps only its
+        SHA-256 hash. The token authenticates as its owner, with the owner's
+        current roles narrowed to the token's scopes: deploy carries
+        dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The
+        caller's roles must allow what the scope does (deploy needs deploy or
+        write on dags, read needs read on dags). An account holds at most 50
+        live tokens. Audited as api_token.create. Not callable with an API
+        token or any other scoped token.
+      operationId: createAPIToken
+      tags: [API Tokens]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAPITokenRequest" }
+      responses:
+        "201":
+          description: The token was created; this is the only time it is shown
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedAPIToken" }
+        "400":
+          description: Invalid name, scope or lifetime, or too many live tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller's roles do not allow the scope, or the caller used a scoped token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The caller already holds a live token with this name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v2/apiTokens/{token_id}:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Revoke an API token (Dexaflow)
+      description: >-
+        Revokes one of the caller's API tokens, or any token of the tenant for
+        a caller who may manage accounts (write:user). The token stops working
+        on its next request. Revoking a revoked token succeeds. Audited as
+        api_token.revoke. Not callable with an API token or any other scoped
+        token.
+      operationId: revokeAPIToken
+      tags: [API Tokens]
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller authenticated with a scoped token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v2/connections:
     get:
       summary: List connections
@@ -422,7 +520,7 @@ paths:
         current. Re-registering content that is already registered (same spec
         hash) is a no-op answered with 200 and created false, and leaves the
         current version as it is. The same label with other content is
-        refused with 409. Needs write on dags (scope dexaflow:deploy).
+        refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
       operationId: registerDagVersion
       tags: [DAGs]
       requestBody:
@@ -466,7 +564,7 @@ paths:
         is_paused is never changed. The version must pass the checks a
         register of it would pass today. Naming the current version changes
         nothing (changed false). Audited as dag.version.set_current. Needs
-        write on dags (scope dexaflow:deploy).
+        deploy or write on dags (scope dexaflow:deploy).
       operationId: setDagCurrentVersion
       tags: [DAGs]
       requestBody:
@@ -1001,6 +1099,73 @@ components:
         users:
           type: array
           items: { $ref: "#/components/schemas/UserListItem" }
+        total_entries: { type: integer }
+
+    CreateAPITokenRequest:
+      type: object
+      required: [name, scope]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+          description: >-
+            A name for the token, unique among the caller's live tokens: 1 to
+            64 letters, digits, dots, dashes or underscores, starting with a
+            letter or digit.
+        scope:
+          type: string
+          enum: [deploy, read]
+          description: >-
+            deploy registers versions, sets the current version and reads
+            DAGs; read only reads.
+        expires_in_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 31536000
+          description: Lifetime of the token. Defaults to 7776000 (90 days).
+
+    APIToken:
+      type: object
+      required: [id, name, scopes, created_at, expires_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        owner_email:
+          type: string
+          description: Email of the token's owner (in lists).
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the token last authenticated a request, recorded at most once
+            every five minutes; null when it was never used.
+
+    CreatedAPIToken:
+      allOf:
+        - $ref: "#/components/schemas/APIToken"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: >-
+                The token, starting with dxf_. It is shown only in this
+                response and cannot be read again.
+
+    APITokenCollection:
+      type: object
+      properties:
+        api_tokens:
+          type: array
+          items: { $ref: "#/components/schemas/APIToken" }
         total_entries: { type: integer }
 
     Connection:

@@ -224,34 +224,81 @@ Two things that look like a rollback are not:
 
 ## Credentials for the control plane
 
-A control-plane token **expires after one hour** (`auth.jwt.token_ttl_seconds`,
-3600 by default), so a token stored as a CI secret stops working the same
-afternoon. Store a **password** instead, and mint a fresh token at the start of
-each job:
+A CI job authenticates with a **deploy token**: a long-lived API token that
+registers DAG versions and nothing else. Store it as a CI secret named
+`DEXAFLOW_TOKEN`; `deploy`, `push`, `rollback` and the other commands read that
+variable (the pre-rename `LEOFLOW_TOKEN` still works).
 
-1. Once, as an admin, create a service user for CI with a role that grants
-   `write:dag`, and store its password as a CI secret
-   (`DEXAFLOW_CI_PASSWORD` below):
+1. Once, as an admin, create a service user for CI with the built-in
+   **`deployer`** role. It reads DAGs and their versions, registers versions
+   and sets the current version (rollback), and nothing else: it cannot delete
+   or pause a DAG, trigger a run, or touch connections, variables or users.
 
    ```bash
    dexaflow auth create-user --email ci-deploy@example.com --password-stdin \
-     --role "$DEPLOY_ROLE" < password.txt
+     --role deployer < password.txt
    ```
 
-2. In each job, exchange it for a token. `deploy`, `push` and the other
-   commands read `DEXAFLOW_TOKEN`:
+2. Create a deploy token for that user. Sign in as the service user (the
+   command signs in with `--username` and the password, or uses the session
+   `dexaflow auth login` saved), name the token after the pipeline that will
+   hold it, and choose its lifetime:
 
    ```bash
-   export DEXAFLOW_SERVER_URL=https://pro.example.com
-   DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
-     dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
-   export DEXAFLOW_TOKEN
+   dexaflow auth create-token --server https://pro.example.com \
+     --username ci-deploy@example.com --password-stdin \
+     --scope deploy --name github-my-dags --ttl 90d < password.txt
    ```
 
-The token never leaves the job. `deploy` uses the token it started with for the
-register at the end, so a build that can take longer than an hour should run
-the steps apart: `dexaflow compile --build --push`, then mint the token, then
-`dexaflow push` (which registers the tag; see the warning at the top).
+   The token (it starts with `dxf_`) is printed **once**, alone on stdout; the
+   name, id, scopes and expiry go to stderr. Store it as the `DEXAFLOW_TOKEN`
+   secret of the pipeline. The server keeps only its SHA-256 hash, so a lost
+   token cannot be shown again: create a new one.
+
+3. Set `DEXAFLOW_SERVER_URL` and `DEXAFLOW_TOKEN` in the job and run
+   `dexaflow deploy`, as in the examples below.
+
+What a deploy token can do, and how it ends:
+
+- **Scope.** `--scope deploy` carries `dexaflow:read` and `dexaflow:deploy`:
+  the token reads DAGs and versions, registers versions and sets the current
+  version, and is refused everything else, whatever its owner's roles. It
+  never does more than its owner's roles allow either, and the owner's roles
+  are read again on every request. `--scope read` makes a read-only token.
+  `deploy --trigger` needs to trigger a run, which a deploy token cannot do.
+- **Lifetime.** `--ttl` takes days (`90d`) or a duration (`12h`), from one hour
+  to 365 days; the default is 90 days. An expired token answers `401`.
+- **Listing.** `dexaflow auth tokens list` shows your tokens with their id,
+  name, scopes, expiry and when each was last used (recorded at most once every
+  five minutes). An admin sees every token of the tenant.
+- **Revoking.** `dexaflow auth tokens revoke <id>` stops a token on its next
+  request. Deactivating the owner stops all of the owner's tokens.
+- **Limits.** A token cannot create, list or revoke tokens. A user holds at
+  most 50 live tokens, and token names are unique among a user's live tokens:
+  1 to 64 letters, digits, dots, dashes or underscores.
+
+Creating, listing and revoking tokens is also available through the API
+(`POST`, `GET /api/v2/apiTokens` and `DELETE /api/v2/apiTokens/{id}`). The UI
+does not list tokens yet.
+
+{{% alert title="Without a deploy token: a password per job" color="info" %}}
+A session token from `dexaflow auth create-token` without `--scope` **expires
+after one hour** (`auth.jwt.token_ttl_seconds`, 3600 by default), so it cannot
+be stored as a CI secret. On a control plane older than deploy tokens, store
+the service user's password instead (`DEXAFLOW_CI_PASSWORD` below) and mint a
+session token at the start of each job:
+
+```bash
+export DEXAFLOW_SERVER_URL=https://pro.example.com
+DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
+  dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
+export DEXAFLOW_TOKEN
+```
+
+That token lives one hour: a build that can take longer should run the steps
+apart (`dexaflow compile --build --push`, then mint the token, then
+`dexaflow push`, which registers the tag; see the warning at the top).
+{{% /alert %}}
 
 ## Python on the runner
 
@@ -320,12 +367,8 @@ jobs:
         run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
       - name: Deploy
         env:
-          DEXAFLOW_CI_PASSWORD: ${{ secrets.DEXAFLOW_CI_PASSWORD }}
-        run: |
-          DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
-            dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
-          export DEXAFLOW_TOKEN
-          dexaflow deploy dags/my_pipeline --yes
+          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
+        run: dexaflow deploy dags/my_pipeline --yes
 ```
 
 GHCR refuses image names with upper-case letters, so keep `registry.url` and
@@ -358,15 +401,13 @@ deploy_dag:
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - wget -qO- https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
-    - DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" | dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
-    - export DEXAFLOW_TOKEN
-    - dexaflow deploy dags/my_pipeline --yes
+    - dexaflow deploy dags/my_pipeline --yes   # DEXAFLOW_TOKEN is a masked CI/CD variable
 ```
 
 `docker:dind` runs only on a runner configured with `privileged = true` (and,
 for the TLS variables above, `volumes = ["/certs/client"]`) in its
-`config.toml`; GitLab's shared SaaS runners are. `DEXAFLOW_CI_PASSWORD` is a
-masked CI/CD variable. `registry.url` in `dexaflow.yaml` is your project's
+`config.toml`; GitLab's shared SaaS runners are. `DEXAFLOW_TOKEN` is a
+masked CI/CD variable holding the deploy token. `registry.url` in `dexaflow.yaml` is your project's
 `$CI_REGISTRY_IMAGE`, written out (for example
 `registry.gitlab.com/your-group/my-dags`).
 
@@ -376,8 +417,8 @@ masked CI/CD variable. `registry.url` in `dexaflow.yaml` is your project's
 Build, push and register on Cloud Build; the DAG image runs as task pods on your
 cluster. The build's service account is already authorized to push to Artifact
 Registry in the same project, so `registry.url` in `dexaflow.yaml` is
-`us-central1-docker.pkg.dev/<project>/dags`. The CI password lives in Secret
-Manager.
+`us-central1-docker.pkg.dev/<project>/dags`. The deploy token lives in Secret
+Manager as `dexaflow-deploy-token` and reaches the step as `DEXAFLOW_TOKEN`.
 
 `gcloud builds submit` uploads the source without `.git`, so `git describe`
 cannot name the version and every build would get the label `dev`; a second
@@ -388,7 +429,7 @@ build id as `--dag-version` to keep each build's label unique.
 steps:
   - name: python:3.12-slim
     entrypoint: bash
-    secretEnv: ["DEXAFLOW_CI_PASSWORD"]
+    secretEnv: ["DEXAFLOW_TOKEN"]
     env:
       - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}
     args:
@@ -400,16 +441,13 @@ steps:
         # every step, so docker build/push work from this image too.
         apt-get update -qq && apt-get install -y --no-install-recommends docker.io curl ca-certificates git
         curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/bin sh
-        DEXAFLOW_TOKEN="$(printf '%s\n' "$$DEXAFLOW_CI_PASSWORD" |
-          dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
-        export DEXAFLOW_TOKEN
         dexaflow deploy dags/my_pipeline --yes --dag-version "$BUILD_ID"
 substitutions:
   _DEXAFLOW_SERVER_URL: https://pro.example.com
 availableSecrets:
   secretManager:
-    - versionName: projects/$PROJECT_ID/secrets/dexaflow-ci-password/versions/latest
-      env: DEXAFLOW_CI_PASSWORD
+    - versionName: projects/$PROJECT_ID/secrets/dexaflow-deploy-token/versions/latest
+      env: DEXAFLOW_TOKEN
 options: { logging: CLOUD_LOGGING_ONLY }
 ```
 
@@ -438,9 +476,7 @@ Any runner with Docker, **Python 3.11+**, and the `dexaflow` CLI
 
 ```bash
 export DEXAFLOW_SERVER_URL=https://pro.example.com
-DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
-  dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
-export DEXAFLOW_TOKEN
+export DEXAFLOW_TOKEN="$DEPLOY_TOKEN_FROM_YOUR_SECRET_STORE"   # a deploy token
 dexaflow deploy dags/my_pipeline --yes
 ```
 

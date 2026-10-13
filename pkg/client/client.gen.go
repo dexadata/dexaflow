@@ -17,6 +17,24 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for CreateAPITokenRequestScope.
+const (
+	Deploy CreateAPITokenRequestScope = "deploy"
+	Read   CreateAPITokenRequestScope = "read"
+)
+
+// Valid indicates whether the value is a known member of the CreateAPITokenRequestScope enum.
+func (e CreateAPITokenRequestScope) Valid() bool {
+	switch e {
+	case Deploy:
+		return true
+	case Read:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DAGRunRunType.
 const (
 	DAGRunRunTypeBackfill         DAGRunRunType = "backfill"
@@ -149,6 +167,27 @@ func (e ListDagRunsParamsState) Valid() bool {
 	}
 }
 
+// APIToken defines model for APIToken.
+type APIToken struct {
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Id        string    `json:"id"`
+
+	// LastUsedAt When the token last authenticated a request, recorded at most once every five minutes; null when it was never used.
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	Name       string     `json:"name"`
+
+	// OwnerEmail Email of the token's owner (in lists).
+	OwnerEmail *string  `json:"owner_email,omitempty"`
+	Scopes     []string `json:"scopes"`
+}
+
+// APITokenCollection defines model for APITokenCollection.
+type APITokenCollection struct {
+	ApiTokens    *[]APIToken `json:"api_tokens,omitempty"`
+	TotalEntries *int        `json:"total_entries,omitempty"`
+}
+
 // ClearTaskInstancesRequest defines model for ClearTaskInstancesRequest.
 type ClearTaskInstancesRequest struct {
 	DagRunId *string `json:"dag_run_id,omitempty"`
@@ -216,6 +255,21 @@ type ConnectionCollection struct {
 	TotalEntries *int          `json:"total_entries,omitempty"`
 }
 
+// CreateAPITokenRequest defines model for CreateAPITokenRequest.
+type CreateAPITokenRequest struct {
+	// ExpiresInSeconds Lifetime of the token. Defaults to 7776000 (90 days).
+	ExpiresInSeconds *int64 `json:"expires_in_seconds,omitempty"`
+
+	// Name A name for the token, unique among the caller's live tokens: 1 to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.
+	Name string `json:"name"`
+
+	// Scope deploy registers versions, sets the current version and reads DAGs; read only reads.
+	Scope CreateAPITokenRequestScope `json:"scope"`
+}
+
+// CreateAPITokenRequestScope deploy registers versions, sets the current version and reads DAGs; read only reads.
+type CreateAPITokenRequestScope string
+
 // CreateUserRequest defines model for CreateUserRequest.
 type CreateUserRequest struct {
 	// Email Login email. Normalized to lowercase, so it is unique case-insensitively within the tenant.
@@ -226,6 +280,24 @@ type CreateUserRequest struct {
 
 	// Roles Names of existing roles to grant; omit or empty to grant none.
 	Roles *[]string `json:"roles,omitempty"`
+}
+
+// CreatedAPIToken defines model for CreatedAPIToken.
+type CreatedAPIToken struct {
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Id        string    `json:"id"`
+
+	// LastUsedAt When the token last authenticated a request, recorded at most once every five minutes; null when it was never used.
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	Name       string     `json:"name"`
+
+	// OwnerEmail Email of the token's owner (in lists).
+	OwnerEmail *string  `json:"owner_email,omitempty"`
+	Scopes     []string `json:"scopes"`
+
+	// Token The token, starting with dxf_. It is shown only in this response and cannot be read again.
+	Token string `json:"token"`
 }
 
 // DAG defines model for DAG.
@@ -580,6 +652,12 @@ type NotFound = Error
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
+// ListAPITokensParams defines parameters for ListAPITokens.
+type ListAPITokensParams struct {
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // ListConnectionsParams defines parameters for ListConnections.
 type ListConnectionsParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
@@ -624,6 +702,9 @@ type ListVariablesParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 }
+
+// CreateAPITokenJSONRequestBody defines body for CreateAPIToken for application/json ContentType.
+type CreateAPITokenJSONRequestBody = CreateAPITokenRequest
 
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
 type CreateConnectionJSONRequestBody = ConnectionBody
@@ -920,6 +1001,38 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// ListAPITokens List API tokens (Dexaflow)
+	//
+	// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+	//
+	// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+	ListAPITokens(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAPITokenWithBody Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAPIToken Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeAPIToken Revoke an API token (Dexaflow)
+	//
+	// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+	//
+	// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+	RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RenewToken Renew a still-valid JWT into a fresh short-lived token
 	//
 	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
@@ -1027,7 +1140,7 @@ type ClientInterface interface {
 
 	// SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1036,7 +1149,7 @@ type ClientInterface interface {
 
 	// SetDagCurrentVersion Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1155,7 +1268,7 @@ type ClientInterface interface {
 
 	// RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
 	//
-	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1164,7 +1277,7 @@ type ClientInterface interface {
 
 	// RegisterDagVersion Register a compiled DAG version (Dexaflow)
 	//
-	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1283,6 +1396,78 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /readyz (the `GetReadyz` operationId).
 	GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ListAPITokens List API tokens (Dexaflow)
+//
+// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+//
+// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+func (c *Client) ListAPITokens(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAPITokensRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAPITokenWithBody Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *Client) CreateAPITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAPITokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAPIToken Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *Client) CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAPITokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeAPIToken Revoke an API token (Dexaflow)
+//
+// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+//
+// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+func (c *Client) RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeAPITokenRequest(c.Server, tokenId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // RenewToken Renew a still-valid JWT into a fresh short-lived token
@@ -1542,7 +1727,7 @@ func (c *Client) ClearTaskInstances(ctx context.Context, dagId DagID, body Clear
 
 // SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes any type of body and a specified content type.
 //
@@ -1561,7 +1746,7 @@ func (c *Client) SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, 
 
 // SetDagCurrentVersion Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1850,7 +2035,7 @@ func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...Requ
 
 // RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
 //
-// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes any type of body and a specified content type.
 //
@@ -1869,7 +2054,7 @@ func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, co
 
 // RegisterDagVersion Register a compiled DAG version (Dexaflow)
 //
-// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2157,6 +2342,146 @@ func (c *Client) GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewListAPITokensRequest constructs an http.Request for the ListAPITokens method
+func NewListAPITokensRequest(server string, params *ListAPITokensParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/apiTokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateAPITokenRequest calls the generic CreateAPIToken builder with application/json body
+func NewCreateAPITokenRequest(server string, body CreateAPITokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateAPITokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateAPITokenRequestWithBody constructs an http.Request for the CreateAPIToken method, with any body, and a specified content type
+func NewCreateAPITokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/apiTokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeAPITokenRequest constructs an http.Request for the RevokeAPIToken method
+func NewRevokeAPITokenRequest(server string, tokenId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token_id", tokenId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/apiTokens/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewRenewTokenRequest constructs an http.Request for the RenewToken method
@@ -3933,6 +4258,42 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ListAPITokensWithResponse List API tokens (Dexaflow)
+	//
+	// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+	ListAPITokensWithResponse(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*ListAPITokensResponse, error)
+
+	// CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+
+	// CreateAPITokenWithResponse Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPITokenWithResponse(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+
+	// RevokeAPITokenWithResponse Revoke an API token (Dexaflow)
+	//
+	// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+	RevokeAPITokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error)
+
 	// RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 	//
 	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
@@ -4054,7 +4415,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4063,7 +4424,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4198,7 +4559,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
 	//
-	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4207,7 +4568,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
 	//
-	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4346,6 +4707,185 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /readyz (the `GetReadyz` operationId).
 	GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
+}
+
+type ListAPITokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *APITokenCollection
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAPITokensResponse) GetJSON200() *APITokenCollection {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListAPITokensResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListAPITokensResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAPITokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAPITokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAPITokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAPITokensResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateAPITokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CreatedAPIToken
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateAPITokenResponse) GetJSON201() *CreatedAPIToken {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateAPITokenResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateAPITokenResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateAPITokenResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateAPITokenResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateAPITokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateAPITokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateAPITokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateAPITokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeAPITokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RevokeAPITokenResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RevokeAPITokenResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeAPITokenResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeAPITokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeAPITokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeAPITokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeAPITokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type RenewTokenResponse struct {
@@ -6207,6 +6747,66 @@ func (r GetReadyzResponse) ContentType() string {
 	return ""
 }
 
+// ListAPITokensWithResponse List API tokens (Dexaflow)
+//
+// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+func (c *ClientWithResponses) ListAPITokensWithResponse(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*ListAPITokensResponse, error) {
+	rsp, err := c.ListAPITokens(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAPITokensResponse(rsp)
+}
+
+// CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *ClientWithResponses) CreateAPITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error) {
+	rsp, err := c.CreateAPITokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAPITokenResponse(rsp)
+}
+
+// CreateAPITokenWithResponse Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:read and dexaflow:deploy, read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *ClientWithResponses) CreateAPITokenWithResponse(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error) {
+	rsp, err := c.CreateAPIToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAPITokenResponse(rsp)
+}
+
+// RevokeAPITokenWithResponse Revoke an API token (Dexaflow)
+//
+// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+func (c *ClientWithResponses) RevokeAPITokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error) {
+	rsp, err := c.RevokeAPIToken(ctx, tokenId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeAPITokenResponse(rsp)
+}
+
 // RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 //
 // Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
@@ -6418,7 +7018,7 @@ func (c *ClientWithResponses) ClearTaskInstancesWithResponse(ctx context.Context
 
 // SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6433,7 +7033,7 @@ func (c *ClientWithResponses) SetDagCurrentVersionWithBodyWithResponse(ctx conte
 
 // SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6670,7 +7270,7 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 
 // RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
 //
-// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6685,7 +7285,7 @@ func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context
 
 // RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
 //
-// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6925,6 +7525,143 @@ func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetReadyzResponse(rsp)
+}
+
+// ParseListAPITokensResponse parses an HTTP response from a ListAPITokensWithResponse call
+func ParseListAPITokensResponse(rsp *http.Response) (*ListAPITokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAPITokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest APITokenCollection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateAPITokenResponse parses an HTTP response from a CreateAPITokenWithResponse call
+func ParseCreateAPITokenResponse(rsp *http.Response) (*CreateAPITokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateAPITokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CreatedAPIToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeAPITokenResponse parses an HTTP response from a RevokeAPITokenWithResponse call
+func ParseRevokeAPITokenResponse(rsp *http.Response) (*RevokeAPITokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeAPITokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseRenewTokenResponse parses an HTTP response from a RenewTokenWithResponse call

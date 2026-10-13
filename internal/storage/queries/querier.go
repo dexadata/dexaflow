@@ -66,6 +66,7 @@ type Querier interface {
 	// Give a tenant the built-in roles the migrations seed for "default". Copying
 	// keeps every tenant's ladder equal to default's as later migrations change it.
 	CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UUID) error
+	CountAPITokens(ctx context.Context, arg CountAPITokensParams) (int64, error)
 	// Counts queued+running runs for a single DAG; used by the manual-trigger
 	// path to enforce max_active_runs (#200) before insert.
 	CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error)
@@ -94,6 +95,7 @@ type Querier interface {
 	CountExpiredSystemAuditLog(ctx context.Context, arg CountExpiredSystemAuditLogParams) (int64, error)
 	// Audit rows of one tenant older than the cutoff, at most max_rows.
 	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
+	CountLiveAPITokens(ctx context.Context, arg CountLiveAPITokensParams) (int64, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
 	// with no password row is an escape hatch that does not open, which is worse
@@ -222,6 +224,9 @@ type Querier interface {
 	// FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
 	// states.
 	FailTaskInstanceInfraIfActive(ctx context.Context, arg FailTaskInstanceInfraIfActiveParams) error
+	// The per-request lookup of an API token. Revoked and expired tokens are
+	// returned too, so the authenticator decides, and says why in one place.
+	GetAPITokenByHash(ctx context.Context, tokenHash string) (GetAPITokenByHashRow, error)
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
 	GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (Dag, error)
@@ -291,6 +296,11 @@ type Querier interface {
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
 	GetXComEntry(ctx context.Context, arg GetXComEntryParams) (GetXComEntryRow, error)
+	// Stores a new API token for a user of the tenant (ADR 0074). The SELECT
+	// yields no row, so nothing is inserted, when the user is not in the tenant
+	// or already holds max_live live tokens: the caller reads pgx.ErrNoRows and
+	// tells the two apart with CountLiveAPITokens.
+	InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) (InsertAPITokenRow, error)
 	// The row is inserted only under a dag of the given tenant (#508): a dag id of
 	// another tenant inserts nothing and the query returns no row.
 	InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error)
@@ -326,6 +336,9 @@ type Querier interface {
 	// absent for a claim-less one (ADR 0051 amendment).
 	IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error)
 	LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsParams) ([]LatestRunsForDagsRow, error)
+	// The tenant's unrevoked tokens, newest first; owner_id NULL lists every
+	// owner's. Never selects token_hash.
+	ListAPITokens(ctx context.Context, arg ListAPITokensParams) ([]ListAPITokensRow, error)
 	ListActiveDagRuns(ctx context.Context) ([]DagRun, error)
 	// run_id is the dag_run's UUID (StagingClaimName uses it), so join on dag_runs.id,
 	// which is globally unique. run_state is NULL only when the run row is truly gone.
@@ -920,6 +933,9 @@ type Querier interface {
 	// plans and runs. Each execution's log is kept apart by its epoch-keyed object.
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
+	// Revokes a token of the tenant; owner_id NULL revokes any owner's. Revoking
+	// a revoked token keeps its first revocation time.
+	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) (RevokeAPITokenRow, error)
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
 	SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag, error)
 	SetTaskInstanceNote(ctx context.Context, arg SetTaskInstanceNoteParams) error
@@ -963,6 +979,7 @@ type Querier interface {
 	TaskInstanceAttemptFields(ctx context.Context, arg TaskInstanceAttemptFieldsParams) (TaskInstanceAttemptFieldsRow, error)
 	TaskInstancesForDagRuns(ctx context.Context, arg TaskInstancesForDagRunsParams) ([]TaskInstancesForDagRunsRow, error)
 	TenantHasDefaultPool(ctx context.Context, name string) (bool, error)
+	TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error
 	// The range of attempt epochs one try's executions can have, for the log
 	// reader (ADR 0051 amendment, #863). Epochs grow monotonically per row and the
 	// try only grows, so every execution of try N has an epoch above the latest

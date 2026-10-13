@@ -20,6 +20,7 @@ func newAuthCommand() *cobra.Command {
 	auth.AddCommand(newCreateTokenCommand())
 	auth.AddCommand(newLoginCommand())
 	auth.AddCommand(newCreateUserCommand())
+	auth.AddCommand(newTokensCommand())
 	return auth
 }
 
@@ -102,14 +103,26 @@ func rolesOrNone(roles []string) string {
 	return strings.Join(roles, ",")
 }
 
+// newCreateTokenCommand builds `dexaflow auth create-token`. Without --scope
+// it exchanges a username and password for a short-lived session JWT. With
+// --scope it creates a named, long-lived API token for CI (ADR 0074), signing
+// in first when a username is given, and otherwise using --token, the token
+// variable or the saved session.
 func newCreateTokenCommand() *cobra.Command {
-	var serverURL, username, password string
+	var serverURL, username, password, token, scope, name, ttl string
 	var passwordStdin bool
 	cmd := &cobra.Command{
 		Use:   "create-token",
-		Short: "Obtain a JWT from the control plane.",
+		Short: "Obtain a session JWT, or with --scope create a long-lived API token.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			apiReq, ferr := apiTokenFlags(scope, name, ttl)
+			if ferr != nil {
+				return ferr
+			}
+			if apiReq != nil {
+				return runCreateAPIToken(cmd, serverURL, token, username, password, passwordStdin, apiReq)
+			}
 			choice, rerr := resolveServer(cmd, serverURL)
 			if rerr != nil {
 				return rerr
@@ -119,11 +132,11 @@ func newCreateTokenCommand() *cobra.Command {
 			if perr != nil {
 				return perr
 			}
-			token, err := requestToken(cmdContext(cmd), serverURL, username, pw)
+			jwt, err := requestToken(cmdContext(cmd), serverURL, username, pw)
 			if err != nil {
 				return hintEmailUsername(username, err)
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), token)
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), jwt)
 			return err
 		},
 	}
@@ -131,6 +144,10 @@ func newCreateTokenCommand() *cobra.Command {
 	cmd.Flags().StringVar(&username, "username", os.Getenv("LEOFLOW_USERNAME"), "username")
 	cmd.Flags().StringVar(&password, "password", os.Getenv("LEOFLOW_PASSWORD"), "password")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the password from stdin instead of --password (avoids ps/shell-history exposure)")
+	cmd.Flags().StringVar(&scope, "scope", "", "create a long-lived API token with this scope instead of a session JWT: deploy (register versions, set the current version, read DAGs) or read")
+	cmd.Flags().StringVar(&name, "name", "", "name of the API token, unique among your live tokens (with --scope)")
+	cmd.Flags().StringVar(&ttl, "ttl", "", "lifetime of the API token, in days (90d) or as a duration (12h), from 1h to 365d (with --scope; default 90d)")
+	cmd.Flags().StringVar(&token, "token", "", "session JWT that creates the API token when no --username is given (with --scope; default: DEXAFLOW_TOKEN, then the saved session)")
 	return cmd
 }
 
