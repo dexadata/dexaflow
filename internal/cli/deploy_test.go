@@ -89,7 +89,7 @@ func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
 	defer srv.Close()
 
 	var sb strings.Builder
-	if err := triggerDeployRun(context.Background(), &sb, srv.URL, "tok", "etl"); err != nil {
+	if _, err := triggerDeployRun(context.Background(), &sb, srv.URL, "tok", "etl"); err != nil {
 		t.Fatalf("triggerDeployRun: %v", err)
 	}
 	if gotPath != "/api/v2/dags/etl/dagRuns" {
@@ -111,7 +111,7 @@ func TestTriggerDeployRunSurfacesError(t *testing.T) {
 		w.WriteHeader(http.StatusConflict)
 	}))
 	defer srv.Close()
-	if err := triggerDeployRun(context.Background(), io.Discard, srv.URL, "tok", "etl"); err == nil {
+	if _, err := triggerDeployRun(context.Background(), io.Discard, srv.URL, "tok", "etl"); err == nil {
 		t.Error("expected an error when the trigger is rejected")
 	}
 }

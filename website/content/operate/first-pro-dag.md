@@ -148,22 +148,59 @@ paused or active as you left it. To have new DAGs start active, set
 [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 {{% /alert %}}
 
-## Step 3: trigger and watch it run
+## Step 3: unpause, trigger and watch it run
+
+A DAG deployed for the first time is paused, and a run triggered while it is
+paused waits in `queued` until you unpause it, as in Airflow. So unpause it
+first, then trigger a run and follow it:
 
 ```console
-$ dexaflow deploy --trigger
-…
-Deployed first_pro_dag -> https://pro.example.com
-  image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
-  registered version 1a2b3c4
-  triggered run manual__1717525200
 $ dexaflow admin dags unpause first_pro_dag
+  first_pro_dag                  unpaused
+unpaused 1/1 DAG(s)
+$ dexaflow runs trigger first_pro_dag --follow
+Triggered run manual__1717525200 for "first_pro_dag" (state queued)
+Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
+  https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
+  extract  queued
+  extract  running
+  extract  success  2.9s
+    | [leoflow] loading dag:extract
+    | [leoflow] returned dict (12 B XCom)
+  load     queued
+  load     running
+  load     success  3.1s
+    | [leoflow] loading dag:load
+    | [leoflow] pulled data (12 B)
+    | [leoflow] resolved kwargs: ['data']
+    | loaded 42 rows
+    | [leoflow] returned None (no XCom pushed)
+Run manual__1717525200 succeeded (followed for 21.4s).
 ```
 
-A DAG deployed for the first time is paused, so the triggered run waits in
-`queued` until the unpause. Then the scheduler starts it, pulls your image,
-runs each task in its own pod, and the Airflow UI shows state and logs. Once
-the DAG is active, later `dexaflow deploy --trigger` runs start at once.
+The scheduler starts the run, pulls your image, runs each task in its own pod,
+and the Airflow UI shows state and logs. From now on, `dexaflow deploy
+--trigger --follow` deploys, triggers and follows in one command; later
+deploys leave the DAG unpaused.
+
+`--follow` prints each task state change and the logs of each attempt as it
+finishes, with the link to the run in the UI, and exits with the result of the
+run, so a script or a CI job can rely on it:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | the run succeeded |
+| `1` | the deploy or the API failed (the error says why) |
+| `2` | the run failed; the error names the failed tasks and the ones that did not run because of them (`upstream_failed`) |
+| `3` | `--timeout` elapsed before the run ended (for example `--timeout 30m`) |
+| `130` | you pressed Ctrl-C |
+
+Ctrl-C and `--timeout` only stop following: the run keeps going, and
+`dexaflow runs status first_pro_dag --run <run_id>` shows it later. A run that
+stays queued for two minutes gets a note saying no task has started and where
+to look. `dexaflow runs trigger <dag_id> --follow` and `dexaflow deploy
+--trigger --follow` follow a run the same way, and `dexaflow runs logs
+<dag_id>` prints the logs of every task of the latest run.
 
 ## When it doesn't work
 
