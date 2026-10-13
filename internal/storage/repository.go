@@ -1178,8 +1178,17 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 	return spec, nil
 }
 
-// RegisterDagVersion upserts the DAG and inserts a version keyed by specHash,
-// setting it as current. It is idempotent: an existing hash yields created=false.
+// RegisterDagVersion inserts a version of the DAG keyed by specHash and makes
+// it current, creating the DAG on its first registration. It is idempotent: an
+// existing hash yields created=false and writes nothing, even when that hash is
+// an older version than the current one.
+//
+// Everything runs in one transaction that holds the DAG's row lock, so
+// registers of one DAG are serialized and a refused or failed register leaves
+// no partial state (#1702). The dags row's metadata (schedule, catchup,
+// start_date, max_active_runs, description, owner, tags) is rewritten only when
+// the new version becomes current, so it always describes the current version.
+// is_paused is never changed here.
 func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec domain.DAGSpec, specHash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
@@ -1197,35 +1206,50 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 	if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
 		return false, lerr
 	}
-	maxRuns := spec.MaxActiveRuns
-	if maxRuns == 0 {
-		maxRuns = defaultMaxActiveRuns
-	}
-	dag, err := r.q.UpsertDag(ctx, queries.UpsertDagParams{
-		TenantID:         tid,
-		DagID:            spec.DagID,
-		Description:      strPtr(spec.Description),
-		Owner:            strPtr(spec.Owner),
-		Tags:             spec.Tags,
-		Schedule:         spec.Schedule,
-		ScheduleTimezone: strPtr(spec.ScheduleTZ),
-		StartDate:        parseTimestamptz(spec.StartDate),
-		MaxActiveRuns:    toInt32(maxRuns),
-		Catchup:          spec.Catchup,
-	})
-	if err != nil {
-		return false, fmt.Errorf("upserting dag: %w", err)
-	}
-	if _, verr := r.q.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
-		return false, nil
-	} else if !errors.Is(verr, pgx.ErrNoRows) {
-		return false, fmt.Errorf("checking existing version: %w", verr)
-	}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return false, fmt.Errorf("encoding spec: %w", err)
 	}
-	version, err := r.q.InsertDagVersion(ctx, queries.InsertDagVersionParams{
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("beginning register tx: %w", err)
+	}
+	// Rollback after a successful commit is a no-op; on any early return (409,
+	// identical hash, failed write) it undoes everything this register wrote.
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, spec, specHash, specJSON)
+	if err != nil || !created {
+		return false, err
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return false, fmt.Errorf("committing register tx: %w", cerr)
+	}
+	return true, nil
+}
+
+// registerDagVersionTx is the body of RegisterDagVersion, run on a transaction:
+// create the DAG if missing, lock its row, decide on the hash, insert the
+// version, then make it current and apply its metadata.
+func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, specHash string, specJSON []byte) (bool, error) {
+	meta := dagMetadataOf(spec)
+	if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
+		TenantID: tid, DagID: spec.DagID,
+		Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
+		Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
+		MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup,
+	}); err != nil {
+		return false, fmt.Errorf("creating dag: %w", err)
+	}
+	dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: spec.DagID})
+	if err != nil {
+		return false, fmt.Errorf("locking dag: %w", err)
+	}
+	if _, verr := qtx.GetDagVersionByHash(ctx, queries.GetDagVersionByHashParams{DagID: dag.ID, SpecHash: specHash, TenantID: tid}); verr == nil {
+		return false, nil
+	} else if !errors.Is(verr, pgx.ErrNoRows) {
+		return false, fmt.Errorf("checking existing version: %w", verr)
+	}
+	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
 		TenantID:       tid,
 		Version:        spec.DagVersion,
@@ -1244,10 +1268,14 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 		// push new content.
 		return false, fmt.Errorf("inserting version: %w", mapConflict(err))
 	}
-	if err := r.q.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
+	meta.ID, meta.TenantID = dag.ID, tid
+	if err := qtx.UpdateDagMetadata(ctx, meta); err != nil {
+		return false, fmt.Errorf("updating dag metadata: %w", err)
+	}
+	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
 		return false, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := r.q.CreateAuditLog(ctx, queries.CreateAuditLogParams{
+	if err := qtx.CreateAuditLog(ctx, queries.CreateAuditLogParams{
 		TenantID:     tid,
 		Action:       "dag.version.register",
 		ResourceType: strPtr("dag"),
@@ -1256,6 +1284,25 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 		return false, fmt.Errorf("writing audit log: %w", err)
 	}
 	return true, nil
+}
+
+// dagMetadataOf maps a spec to the dags-row columns it owns while it is the
+// current version. ID and TenantID are left for the caller.
+func dagMetadataOf(spec domain.DAGSpec) queries.UpdateDagMetadataParams {
+	maxRuns := spec.MaxActiveRuns
+	if maxRuns == 0 {
+		maxRuns = defaultMaxActiveRuns
+	}
+	return queries.UpdateDagMetadataParams{
+		Description:      strPtr(spec.Description),
+		Owner:            strPtr(spec.Owner),
+		Tags:             spec.Tags,
+		Schedule:         spec.Schedule,
+		ScheduleTimezone: strPtr(spec.ScheduleTZ),
+		StartDate:        parseTimestamptz(spec.StartDate),
+		MaxActiveRuns:    toInt32(maxRuns),
+		Catchup:          spec.Catchup,
+	}
 }
 
 // validateDeclaredSecrets rejects a spec that declares a variable or connection
