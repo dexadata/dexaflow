@@ -8,6 +8,13 @@ on:
     branches: [main, "release-*"]
   pull_request:
     branches: [main, "release-*"]
+  # The merge queue (#1569) tests each pull request on top of the queue
+  # before it merges, and a required check has to report there too, or the
+  # queue waits on it forever. No job in this file reads the pull_request
+  # payload unguarded: tdd-check is pull_request only, and the heavy k3d gate
+  # treats every event other than pull_request as "run".
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
