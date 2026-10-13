@@ -1061,9 +1061,21 @@ func (q *Queries) LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsPa
 const listActiveDagRuns = `-- name: ListActiveDagRuns :many
 SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs
 WHERE state IN ('queued', 'running')
+  AND (state = 'running' OR NOT EXISTS (
+    SELECT 1 FROM dags d
+    WHERE d.id = dag_runs.dag_id AND d.tenant_id = dag_runs.tenant_id AND d.is_paused
+  ))
 ORDER BY queued_at
 `
 
+// The runs the scheduler advances on a tick, and the warm-pool reconcile reads.
+// A queued run of a paused DAG is left out, so it is not started and none of
+// its tasks is materialized or dispatched until the DAG is unpaused, whoever
+// created it (a manual trigger, a clear): Airflow 3 filters is_paused the same
+// way when it moves queued runs to running (#1705). A running run of a paused
+// DAG stays in, so the tasks it already started finish. The scan stays on
+// idx_dag_runs_state; Postgres checks the pause against one hashed set of the
+// paused DAGs, built once per call.
 func (q *Queries) ListActiveDagRuns(ctx context.Context) ([]DagRun, error) {
 	rows, err := q.db.Query(ctx, listActiveDagRuns)
 	if err != nil {

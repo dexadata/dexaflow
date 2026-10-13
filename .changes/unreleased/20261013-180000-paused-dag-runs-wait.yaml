@@ -1,0 +1,16 @@
+kind: Changed
+body: |-
+  Behavior change: **a run of a paused DAG now waits in `queued` until the DAG
+  is unpaused, as in Airflow 3.** Until now only scheduled run creation
+  checked the pause: a manual trigger (UI, `POST /api/v2/dags/{id}/dagRuns`,
+  `dexaflow runs trigger`, `dexaflow deploy --trigger`) or a cleared run of a
+  paused DAG started at once. The scheduler now leaves a queued run of a
+  paused DAG alone: no task instance is created and nothing is dispatched.
+  The API is unchanged and still answers with the queued run. Unpausing the
+  DAG (UI switch or `dexaflow admin dags unpause <dag_id>`) starts the waiting
+  runs on the next scheduler tick. Runs that already started keep running
+  when their DAG is paused. Since new DAGs are paused at creation, a first
+  `dexaflow deploy --trigger` now leaves its run queued until you unpause the
+  DAG. `dexaflow lite` registers new DAGs active, so the local loop is
+  unaffected. (#1705)
+time: 2026-10-13T18:00:00.000000000-03:00

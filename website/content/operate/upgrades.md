@@ -793,7 +793,9 @@ it with the same key, as for connections.
 
 **New DAGs start paused** (#1705). 0.5.4 follows Airflow: a DAG registered for
 the first time starts paused, so its schedule creates no run, catchup
-included, until someone unpauses it. Manual triggers still run. Changing a
+included, until someone unpauses it. A manual trigger on a paused DAG is
+accepted and its run waits in `queued` until the unpause (see the next item).
+Changing a
 default in a patch is a deliberate exception to the patch rule
 ([ADR 0068](/project/adrs/0068-patch-content-gated-by-safety/),
 `helm/AGENTS.md`), decided in #1705.
@@ -824,6 +826,19 @@ ways back to the 0.5.3 behavior:
 
 `dexaflow lite` keeps registering new DAGs active. Rolling back to 0.5.3 needs
 nothing: 0.5.3 ignores the setting and the spec field.
+
+**Runs of a paused DAG wait in `queued`** (#1705). As in Airflow 3, the
+scheduler no longer starts a queued run while its DAG is paused, whoever
+created it: a manual trigger (UI, `POST /api/v2/dags/{id}/dagRuns`,
+`dexaflow deploy --trigger`, `dexaflow runs trigger`) or a clear that
+re-queues the run. The API is unchanged and still answers with the queued
+run. Unpausing the DAG (UI switch or `dexaflow admin dags unpause <dag_id>`)
+starts every waiting run on the next scheduler tick. Runs that had already
+started keep running when the DAG is paused. In 0.5.3 a manual trigger on a
+paused DAG started at once, so a pipeline that deploys a new DAG and triggers
+it now has to unpause it too (or register it active, as above). Runs queued
+on a paused DAG at the moment of the upgrade wait from then on. Rolling back
+to 0.5.3 starts them.
 
 ## Related issues
 

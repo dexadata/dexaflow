@@ -133,8 +133,9 @@ That one command crossed every boundary:
 `deploy` publishes the artifact. A DAG deployed for the first time starts
 **paused**, as in Airflow: its schedule creates no run until you unpause it
 with the switch in the UI or `dexaflow admin dags unpause first_pro_dag`.
-Add `--trigger` to kick a run immediately (a manual trigger runs even while the
-DAG is paused), or trigger from the Airflow UI. Later deploys keep the DAG
+Add `--trigger` to create a run at once, or trigger from the Airflow UI. While
+the DAG is paused the run waits in `queued`, as in Airflow; it starts as soon
+as you unpause the DAG. Later deploys keep the DAG
 paused or active as you left it. To have new DAGs start active, set
 `is_paused_upon_creation=False` on the DAG or ask the operator to set
 `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false`; see
@@ -150,10 +151,13 @@ Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
   registered version 1a2b3c4
   triggered run manual__1717525200
+$ dexaflow admin dags unpause first_pro_dag
 ```
 
-The scheduler pulls your image, runs each task in its own pod, and the Airflow UI
-shows state and logs. That is the whole Pro lifecycle, in one verb.
+A DAG deployed for the first time is paused, so the triggered run waits in
+`queued` until the unpause. Then the scheduler starts it, pulls your image,
+runs each task in its own pod, and the Airflow UI shows state and logs. Once
+the DAG is active, later `dexaflow deploy --trigger` runs start at once.
 
 ## When it doesn't work
 

@@ -326,6 +326,14 @@ type Querier interface {
 	// absent for a claim-less one (ADR 0051 amendment).
 	IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error)
 	LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsParams) ([]LatestRunsForDagsRow, error)
+	// The runs the scheduler advances on a tick, and the warm-pool reconcile reads.
+	// A queued run of a paused DAG is left out, so it is not started and none of
+	// its tasks is materialized or dispatched until the DAG is unpaused, whoever
+	// created it (a manual trigger, a clear): Airflow 3 filters is_paused the same
+	// way when it moves queued runs to running (#1705). A running run of a paused
+	// DAG stays in, so the tasks it already started finish. The scan stays on
+	// idx_dag_runs_state; Postgres checks the pause against one hashed set of the
+	// paused DAGs, built once per call.
 	ListActiveDagRuns(ctx context.Context) ([]DagRun, error)
 	// run_id is the dag_run's UUID (StagingClaimName uses it), so join on dag_runs.id,
 	// which is globally unique. run_state is NULL only when the run row is truly gone.

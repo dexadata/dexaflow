@@ -47,7 +47,7 @@ func (h *handlers) registerRunControl(s *mcpsdk.Server) {
 	}
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "trigger_run",
-		Description: "Start a new run of a DAG now, optionally with a conf object. Ask the user before calling it.",
+		Description: "Trigger a new run of a DAG, optionally with a conf object. On a paused DAG the run waits in queued until the DAG is unpaused. Ask the user before calling it.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(true)},
 	}, h.triggerRun)
 	mcpsdk.AddTool(s, &mcpsdk.Tool{

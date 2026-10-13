@@ -199,7 +199,7 @@ scope too.
 
 | Tool | What it does | Plan first when |
 |---|---|---|
-| `trigger_run` | Starts a run now (`dag_id`, optional `conf` and `note`). | never |
+| `trigger_run` | Triggers a run (`dag_id`, optional `conf` and `note`); on a paused DAG it waits in `queued` until the unpause. | never |
 | `clear_task` | Clears task instances of a run so they run again: `dag_id`, `run_id`, optional `task_ids`, `include_downstream`, `include_upstream`, `only_failed` (default true) and `run_on_latest_version`. It previews the clear first. | the clear touches more than one task instance |
 | `pause_dag` | Pauses a DAG. | never |
 | `unpause_dag` | Unpauses a DAG. | the DAG has a schedule, since unpausing starts runs |
