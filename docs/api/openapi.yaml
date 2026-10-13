@@ -937,6 +937,13 @@ components:
         schema: { type: string, nullable: true }
         port: { type: integer, nullable: true }
         extra: { type: string, nullable: true }
+        extra_unreadable:
+          type: boolean
+          description: >-
+            Present and true in a listing when the extra is encrypted with a
+            secret key the server does not have (for example after a key
+            rotation that dropped the old key). The extra is then masked.
+            Reading the connection alone answers 500 with a message naming it.
 
     ConnectionBody:
       type: object
