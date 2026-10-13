@@ -101,9 +101,19 @@ The tool pushes with its own credentials, and the CLI reads the registry with
 the same ones: those `docker login ghcr.io` or your cloud's helper writes to
 `~/.docker/config.json` (`gcloud auth configure-docker`,
 `aws ecr get-login-password | docker login ...`, `az acr login`), credential
-helpers included. Dexaflow never stores a registry credential. A registry on
-`localhost`, a `*.localhost` name (as k3d names its registries) or a private
-address is spoken to over HTTP; every other one over verified TLS.
+helpers included. Dexaflow never stores a registry credential.
+
+Only a registry on `localhost`, a `*.localhost` name (as k3d names its
+registries) or a loopback address may answer over plain HTTP; every other
+one, private addresses included, is read over verified TLS, and a registry
+that answers only HTTP there is refused rather than sent the credentials in
+clear. `*.localhost` names are dialed on `127.0.0.1` and never sent through a
+proxy.
+
+podman users: the CLI reads `~/.docker/config.json`, and podman's
+`auth.json` only when that file does not exist. If you have both, run
+`docker login` for the registry too, or the push succeeds and the read is
+refused with a 401.
 
 On a machine whose architecture differs from the target platform (an Apple
 Silicon laptop building `linux/amd64`), the tool builds under emulation, which

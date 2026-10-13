@@ -67,6 +67,10 @@ linters:
               desc: "the Docker SDK is refused (ADR 0015)"
             - pkg: github.com/moby/moby
               desc: "the Docker SDK is refused (ADR 0015)"
+            - pkg: github.com/docker/cli
+              desc: "reached only through authn.DefaultKeychain (ADR 0073)"
+            - pkg: github.com/docker/docker-credential-helpers
+              desc: "reached only through authn.DefaultKeychain (ADR 0073)"
           allow:
             - github.com/google/go-containerregistry/pkg/name
             - github.com/google/go-containerregistry/pkg/authn$
@@ -89,6 +93,8 @@ linters:
             - pkg: github.com/google/go-containerregistry/pkg/v1/google
               desc: "pulls cloud SDKs into the CLI (ADR 0073)"
             - pkg: github.com/docker/docker
+              desc: "the Docker SDK is refused (ADR 0015)"
+            - pkg: github.com/moby/moby
               desc: "the Docker SDK is refused (ADR 0015)"
     gocyclo:
       # ADR 0012: hard cap at 15. Critical paths target <=10 but that is not enforced here.

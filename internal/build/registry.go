@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 // Pinned is what a registry says a reference names.
@@ -35,20 +36,24 @@ type Resolver interface {
 // image store, so an image any tool pushed can be pinned (ADR 0075).
 type Registry struct{}
 
-// Resolve reads the digest and the manifest that image names. A registry on
-// localhost, *.localhost, 127.0.0.1 or a private address is spoken to over
-// plain HTTP, as go-containerregistry decides; every other one over verified
-// TLS.
+// Resolve reads the digest and the manifest that image names. Only a
+// registry on localhost, a *.localhost name or a loopback address may answer
+// over plain HTTP (plainHTTPOnLoopback); every other one is spoken to over
+// verified TLS. Only an OCI or Docker v2 manifest or index is accepted, so
+// the digest is always the one computed from the manifest returned.
 func (Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 	ref, err := name.ParseReference(image)
 	if err != nil {
 		return Pinned{}, fmt.Errorf("image %q is not a valid reference: %w", image, err)
 	}
 	desc, err := remote.Get(ref, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain),
-		remote.WithTransport(transport()))
+		remote.WithTransport(transport(remote.DefaultTransport)))
 	if err != nil {
 		return Pinned{}, fmt.Errorf("reading %q from its registry (credentials come from `docker login` "+
 			"or its credential helpers, in ~/.docker/config.json): %w", image, err)
+	}
+	if !acceptedMediaTypes[desc.MediaType] {
+		return Pinned{}, fmt.Errorf("reading %q from its registry: media type %q is not an OCI or Docker v2 manifest or index", image, desc.MediaType)
 	}
 	return Pinned{Ref: pinnedRef(image, desc.Digest.String()), Manifest: desc.Manifest}, nil
 }
@@ -66,14 +71,30 @@ func pinnedRef(image, digest string) string {
 	return repo + "@" + digest
 }
 
-// transport is the registry client's HTTP transport: go-containerregistry's
-// default, with *.localhost names dialed on the loopback (loopbackAddr) and
-// never sent through a proxy (bypassLocalhost).
-func transport() http.RoundTripper {
-	base, ok := remote.DefaultTransport.(*http.Transport)
+// acceptedMediaTypes are the manifest kinds whose digest go-containerregistry
+// computes from the bytes it returns. A schema 1 manifest takes its digest
+// from a response header instead, which nothing checks.
+var acceptedMediaTypes = map[types.MediaType]bool{
+	types.OCIManifestSchema1:    true,
+	types.OCIImageIndex:         true,
+	types.DockerManifestSchema2: true,
+	types.DockerManifestList:    true,
+}
+
+// transport is the registry client's HTTP transport: base (go-containerregistry's
+// default), with *.localhost names dialed on the loopback (loopbackAddr),
+// never sent through a proxy (bypassLocalhost), and plain HTTP refused off
+// the loopback (plainHTTPOnLoopback).
+func transport(base http.RoundTripper) http.RoundTripper {
+	b, ok := base.(*http.Transport)
 	if !ok {
-		base = &http.Transport{Proxy: http.ProxyFromEnvironment}
+		b = &http.Transport{Proxy: http.ProxyFromEnvironment}
 	}
+	return plainHTTPOnLoopback{next: localTransport(b)}
+}
+
+// localTransport clones base and points *.localhost names at the loopback.
+func localTransport(base *http.Transport) *http.Transport {
 	t := base.Clone()
 	t.Proxy = bypassLocalhost(t.Proxy)
 	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
@@ -81,6 +102,32 @@ func transport() http.RoundTripper {
 		return d.DialContext(ctx, network, loopbackAddr(addr))
 	}
 	return t
+}
+
+// plainHTTPOnLoopback refuses a plain HTTP request to any host but localhost,
+// a *.localhost name or a loopback address. go-containerregistry also picks
+// plain HTTP for a private (RFC 1918) address and, when it pings a registry,
+// races HTTPS against HTTP and keeps whichever answers first; on a shared
+// network that would let anyone who answers HTTP on the registry's port
+// receive the credentials and choose the digest.
+type plainHTTPOnLoopback struct{ next http.RoundTripper }
+
+// RoundTrip sends r through next unless it is plain HTTP off the loopback.
+func (p plainHTTPOnLoopback) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Scheme == "http" && !isLoopbackHost(r.URL.Hostname()) {
+		return nil, fmt.Errorf("refusing plain HTTP to %s: only a registry on localhost, a *.localhost name "+
+			"or a loopback address is read without TLS", r.URL.Host)
+	}
+	return p.next.RoundTrip(r)
+}
+
+// isLoopbackHost reports whether host is a localhost name or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if isLocalhostName(host) {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // loopbackAddr maps a host:port whose host is localhost or ends in

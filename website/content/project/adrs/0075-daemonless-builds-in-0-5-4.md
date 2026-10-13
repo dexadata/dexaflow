@@ -55,8 +55,22 @@ have.
 ## Consequences
 
 - A deploy needs read access to the registry it pushes to, with the
-  credentials `docker login` or a credential helper already wrote. A push that
-  succeeded already proves that access.
+  credentials `docker login` or a credential helper wrote to
+  `~/.docker/config.json`. For docker that is the access the push used. podman
+  keeps its own `auth.json`, which the client reads only when no docker
+  config exists, so a podman user with both logs in with `docker login` too.
+- Plain HTTP is allowed only to `localhost`, `*.localhost` and loopback
+  addresses. go-containerregistry would also use it for private (RFC 1918)
+  addresses, falling back from HTTPS to whichever scheme answers first, which
+  would hand the credentials and the choice of digest to anyone answering HTTP
+  on the network; the client refuses that.
+- The digest is what the tag names when it is read, right after the push. Two
+  pushes of the same tag at the same moment (two jobs building one version)
+  can make one deploy register the other's image. The default tag is the
+  content version or the git commit, so the two images come from the same
+  sources; a hand-picked tag reused across different sources is the case to
+  avoid. Comparing with the digest the tool reports on push is left to the
+  daemonless builders, which push in process and know it.
 - The local tool only builds and pushes. podman and nerdctl no longer need an
   `inspect` that matches docker's output format.
 - The new dependency (go-containerregistry) arrives in a patch. It is linked

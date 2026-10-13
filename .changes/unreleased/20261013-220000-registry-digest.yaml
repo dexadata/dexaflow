@@ -8,7 +8,8 @@ body: |-
   `manifest inspect`. `deploy --skip-build` therefore registers an image any
   tool pushed (a CI job, a cloud builder, another machine) without a container
   tool or a local copy of the image, so the `docker pull` the split pipeline
-  recipe needed is gone. A registry on `localhost`, a `*.localhost` name (as
-  k3d names its registries) or a private address is read over HTTP and never
-  through a proxy; every other one over verified TLS (#1706, ADR 0075).
+  recipe needed is gone. Only a registry on `localhost`, a `*.localhost` name
+  (as k3d names its registries) or a loopback address may answer over plain
+  HTTP; every other one, private addresses included, is read over verified
+  TLS. `*.localhost` names are never sent through a proxy (#1706, ADR 0075).
 time: 2026-10-13T22:00:00.000000000-03:00

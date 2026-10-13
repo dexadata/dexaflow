@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 // testRegistry starts an in-memory registry and returns its host:port. A
@@ -202,7 +204,99 @@ func TestRegistryBypassesTheProxyForLocalhostNames(t *testing.T) {
 			t.Errorf("proxy for %s = %v, %v; want %v", host, got, err, want)
 		}
 	}
-	if transport().(*http.Transport).Proxy == nil {
-		t.Error("the transport dropped the environment's proxy")
+}
+
+// The transport the client uses carries the bypass: a *.localhost request
+// gets no proxy, while another host keeps the proxy of the base transport.
+func TestTransportWiresTheProxyBypass(t *testing.T) {
+	proxy, _ := url.Parse("http://proxy.invalid:3128")
+	base := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return proxy, nil }}
+	tr, ok := transport(base).(plainHTTPOnLoopback)
+	if !ok {
+		t.Fatalf("transport is %T, want plainHTTPOnLoopback", transport(base))
+	}
+	inner, ok := tr.next.(*http.Transport)
+	if !ok {
+		t.Fatalf("inner transport is %T", tr.next)
+	}
+	for host, want := range map[string]*url.URL{"k3d-registry.localhost:5111": nil, "reg.io": proxy} {
+		r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://"+host+"/v2/", http.NoBody)
+		if got, err := inner.Proxy(r); err != nil || got != want {
+			t.Errorf("proxy for %s = %v, %v; want %v", host, got, err, want)
+		}
+	}
+}
+
+// A registry on a private address that answers only plain HTTP is never
+// read: go-containerregistry would fall back to HTTP for it, and anyone on
+// the network answering HTTP would get the credentials and pick the digest.
+// A loopback registry still is (TestRegistryResolvesATagToItsDigest).
+func TestRegistryRefusesPlainHTTPOffTheLoopback(t *testing.T) {
+	for _, u := range []string{"http://10.0.5.20:5000/v2/", "http://192.168.1.9:5000/v2/", "http://reg.io/v2/"} {
+		if sent, err := roundTripVia(t, u); err == nil || sent {
+			t.Errorf("plain HTTP to %s was sent (err %v)", u, err)
+		}
+	}
+	for _, u := range []string{
+		"http://127.0.0.1:5000/v2/", "http://[::1]:5000/v2/", "http://localhost:5000/v2/",
+		"http://k3d-r.localhost:5111/v2/", "https://10.0.5.20:5000/v2/",
+	} {
+		if sent, err := roundTripVia(t, u); err != nil || !sent {
+			t.Errorf("request to %s was refused: %v", u, err)
+		}
+	}
+}
+
+// roundTripVia sends a GET for u through plainHTTPOnLoopback and reports
+// whether it reached the next transport.
+func roundTripVia(t *testing.T, u string) (bool, error) {
+	t.Helper()
+	r, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := false
+	next := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		sent = true
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})
+	resp, err := plainHTTPOnLoopback{next: next}.RoundTrip(r)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	return sent, err
+}
+
+// The end-to-end path: a plain HTTP registry reached through a private
+// address fails to resolve, with the refusal in the error.
+func TestRegistryResolveRefusesAPlainHTTPPrivateRegistry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := Registry{}.Resolve(ctx, "10.255.255.1:5000/team/etl:v1")
+	if err == nil || !strings.Contains(err.Error(), "refusing plain HTTP") {
+		t.Fatalf("Resolve of a private plain HTTP registry: %v, want a plain HTTP refusal", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A schema 1 manifest takes its digest from a response header that nothing
+// checks, so the registry could name any digest; it is refused.
+func TestRegistryRefusesASchema1Manifest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			return
+		}
+		w.Header().Set("Content-Type", string(types.DockerManifestSchema1Signed))
+		w.Header().Set("Docker-Content-Digest", "sha256:"+strings.Repeat("a", 64))
+		_, _ = w.Write([]byte(`{"schemaVersion":1}`))
+	}))
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+	_, err := Registry{}.Resolve(context.Background(), host+"/team/etl:v1")
+	if err == nil || !strings.Contains(err.Error(), "not an OCI or Docker v2") {
+		t.Fatalf("Resolve of a schema 1 manifest: %v, want a media type refusal", err)
 	}
 }
