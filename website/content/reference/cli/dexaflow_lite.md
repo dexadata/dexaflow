@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite/
 title: "dexaflow lite"
 linkTitle: "lite"
-weight: 38
+weight: 41
 ---
 
 Run Dexaflow Lite locally with hot reload.
