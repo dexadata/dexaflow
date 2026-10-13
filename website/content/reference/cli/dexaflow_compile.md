@@ -25,6 +25,7 @@ dexaflow compile [path] [flags]
   -o, --output string        path to write the compiled dag.json (default <project>/dag.json)
       --parser-cmd string    override the parser command (default from config)
       --push                 push the built image to its registry (requires --build)
+      --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
 ```
 
 ### Options inherited from parent commands
@@ -33,6 +34,7 @@ dexaflow compile [path] [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

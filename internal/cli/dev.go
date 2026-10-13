@@ -210,11 +210,21 @@ func resolveLiteProject(cmd *cobra.Command, args []string) (string, error) {
 		}
 		return p, nil
 	}
-	dir := defaultWorkspace(cmd)
+	dir := liteWorkspace(cmd)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("creating workspace %s: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// liteWorkspace is the workspace `dexaflow lite` runs with no argument: the one
+// around the current directory when a dexaflow.workspace.yaml is found, else
+// defaultWorkspace.
+func liteWorkspace(cmd *cobra.Command) string {
+	if ws, err := findWorkspaceFromCwd(); err == nil && ws != nil {
+		return ws.Root
+	}
+	return defaultWorkspace(cmd)
 }
 
 // defaultWorkspace returns the workspace from config (set by `dexaflow setup`),
@@ -2022,6 +2032,7 @@ func workspaceWatchPaths(ws *WorkspaceSpec) []string {
 func devCompileAndRegister(ctx context.Context, cmd *cobra.Command, dir string, opts compileOptions, token string, afterCompile func() error, uiURL string) error {
 	opts.output = filepath.Join(liteDevDir(), "dag.json")
 	opts.dagVersion = fmt.Sprintf("dev-%d", time.Now().UnixNano())
+	opts.lite = true
 	//nolint:contextcheck // runCompile derives its context from cmd; ctx here is used for registration.
 	if cerr := runCompile(cmd, dir, opts); cerr != nil {
 		return cerr
