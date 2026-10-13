@@ -7,7 +7,7 @@ description: "ADR 0074: long-lived API tokens owned by a user, stored as a SHA-2
 
 **Status:** Proposed
 **Date:** 2026-10-13
-**Relates:** ADR 0008 (JWT authentication; this adds a second credential next to the session JWT, under the same per-request reload), ADR 0067 (the scopes these tokens carry, and the rule that a scope only narrows), ADR 0041 (pipeline-less deploy, which CI runs)
+**Relates:** ADR 0008 (JWT authentication; this adds a second credential next to the session JWT, under the same per-request reload), ADR 0067 (the scopes these tokens carry, and the rule that a scope only narrows; this amends its scope table so `dexaflow:deploy` also opens the reads a deploy makes), ADR 0041 (pipeline-less deploy, which CI runs)
 **Issues:** #1708 (CI/CD credentials and roles)
 
 ## Context

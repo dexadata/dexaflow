@@ -5,7 +5,8 @@ body: |-
   (`dxf_...`) owned by the signed-in user: it registers DAG versions, sets the
   current version and reads DAGs and their versions, and is refused everything
   else, other reads included (it carries `dexaflow:deploy` alone, which now
-  also opens the DAG list, a DAG, its details and its versions). The token is
+  also opens the DAG list, a DAG, its details and its versions, for any
+  token that carries it, trusted-issuer tokens included). The token is
   shown once; the server stores only its SHA-256 hash. Tokens expire (90 days
   by default, one hour to 365 days), record when they were last used, and are
   listed and revoked with `dexaflow auth tokens list` and `dexaflow auth tokens

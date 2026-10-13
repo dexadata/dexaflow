@@ -999,7 +999,8 @@ so a user can grant a client less than their own rights:
 
 - The scope check runs after the role check, and both must pass. A viewer's
   token with `dexaflow:run` still cannot trigger.
-- No scope implies another. A client that runs and reads needs both.
+- No scope implies another, with one exception: `dexaflow:deploy` opens the
+  reads a deploy makes (listed above). A client that runs and reads needs both.
 - A token **without** a `scope` claim may only read. A claim that is not a
   string is refused with `401`.
 - Every other write (connections, variables, pools, users, deleting a DAG or
