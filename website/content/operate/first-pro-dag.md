@@ -162,16 +162,16 @@ note: first_pro_dag is paused: this manual run starts anyway, but its schedule c
   extract  queued
   extract  running
   extract  success  2.9s
-    | [leoflow] loading dag:extract
-    | [leoflow] returned dict (12 B XCom)
+    | [dexaflow] loading dag:extract
+    | [dexaflow] returned dict (12 B XCom)
   load     queued
   load     running
   load     success  3.1s
-    | [leoflow] loading dag:load
-    | [leoflow] pulled data (12 B)
-    | [leoflow] resolved kwargs: ['data']
+    | [dexaflow] loading dag:load
+    | [dexaflow] pulled data (12 B)
+    | [dexaflow] resolved kwargs: ['data']
     | loaded 42 rows
-    | [leoflow] returned None (no XCom pushed)
+    | [dexaflow] returned None (no XCom pushed)
 Run manual__1717525200 succeeded (followed for 21.4s).
 ```
 

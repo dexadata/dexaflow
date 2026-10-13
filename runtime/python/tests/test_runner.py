@@ -157,7 +157,7 @@ def test_run_lifecycle_never_logs_kwargs_values(tmp_path, monkeypatch, capsys):
         f"expected the keys-only kwargs line in:\n{stdout}"
     )
     # The pulled metadata line is still expected (size only).
-    assert "[leoflow] pulled raw" in stdout
+    assert "[dexaflow] pulled raw" in stdout
     assert "(26 B)" in stdout  # the JSON-encoded secret has 26 bytes
 
 
@@ -165,7 +165,7 @@ def test_run_logs_xcom_pulls_with_size(tmp_path, monkeypatch, capsys):
     """When an upstream XCom is consumed, the runtime MUST log it with the wire
     size — invaluable when debugging "received None" in a downstream task
     (was the upstream silent? did the name match? how big is the payload?).
-    The line goes inside the Pre task execution group with the [leoflow]
+    The line goes inside the Pre task execution group with the [dexaflow]
     prefix.
     """
     out = tmp_path / "rv.json"
@@ -181,9 +181,9 @@ def test_run_logs_xcom_pulls_with_size(tmp_path, monkeypatch, capsys):
     runner.run(f"{mod}:task")
 
     stdout = capsys.readouterr().out
-    # Each pulled XCom gets its own [leoflow] pulled line with byte size.
-    assert "[leoflow] pulled raw (10 B)" in stdout, f"missing raw pull line:\n{stdout}"
-    assert "[leoflow] pulled summary (4 B)" in stdout, f"missing summary pull line:\n{stdout}"
+    # Each pulled XCom gets its own [dexaflow] pulled line with byte size.
+    assert "[dexaflow] pulled raw (10 B)" in stdout, f"missing raw pull line:\n{stdout}"
+    assert "[dexaflow] pulled summary (4 B)" in stdout, f"missing summary pull line:\n{stdout}"
 
 
 def test_run_emits_flat_lifecycle_lines(tmp_path, monkeypatch, capsys):
@@ -212,9 +212,9 @@ def test_run_emits_flat_lifecycle_lines(tmp_path, monkeypatch, capsys):
     assert "::group::" not in stdout, f"::group:: marker leaked into stdout:\n{stdout}"
     assert "::endgroup::" not in stdout, f"::endgroup:: marker leaked into stdout:\n{stdout}"
     # All three lifecycle lines and the user print MUST be present, in order.
-    loading = stdout.find("[leoflow] loading")
+    loading = stdout.find("[dexaflow] loading")
     user_line = stdout.find("USER_LINE_INSIDE_TASK")
-    returned = stdout.find("[leoflow] returned")
+    returned = stdout.find("[dexaflow] returned")
     assert loading != -1, f"missing loading line in:\n{stdout}"
     assert user_line != -1, f"missing user print in:\n{stdout}"
     assert returned != -1, f"missing returned line in:\n{stdout}"

@@ -15,7 +15,7 @@ python_version: "3.11"
 dependencies: []
 `
 
-const dagTemplate = `"""%s — example Dexaflow DAG."""
+const dagTemplate = `"""%s: an example Dexaflow DAG."""
 from __future__ import annotations
 
 from airflow.sdk import DAG, task
