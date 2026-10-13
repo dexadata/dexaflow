@@ -14,7 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -53,6 +52,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.force, "force", false, "build, push and register even when the default content label is already deployed")
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL (default: config server_url)")
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
+	cmd.Flags().String("registry", "", "image registry prefix to push to, over every configured one (default: DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, then the config file)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
@@ -73,17 +73,63 @@ func runDeployTarget(cmd *cobra.Command, args []string, o deployOptions) error {
 	if len(args) == 1 {
 		target = args[0]
 	}
+	if len(args) == 0 && !isProjectDir(target) {
+		// At a workspace root, which is not a project itself, a bare deploy
+		// means the workspace's DAGs.
+		if ws, err := findWorkspaceFromCwd(); err != nil {
+			return err
+		} else if ws != nil {
+			return deployAll(cmd, o)
+		}
+	}
 	if info, err := os.Stat(target); err == nil && info.IsDir() {
 		return runDeploy(cmd, target, o)
 	}
 	if len(args) == 1 {
-		dir, rerr := resolveProjectDir(defaultWorkspace(cmd), target)
+		wsDir, werr := deployWorkspaceDir(cmd)
+		if werr != nil {
+			return werr
+		}
+		dir, rerr := resolveProjectDir(wsDir, target)
 		if rerr != nil {
 			return rerr
 		}
 		return runDeploy(cmd, dir, o)
 	}
 	return runDeploy(cmd, target, o)
+}
+
+// isProjectDir reports whether dir holds a DAG project: a dexaflow.yaml (or
+// leoflow.yaml) or a dag.py.
+func isProjectDir(dir string) bool {
+	return fileExists(projectConfigPath(dir)) || fileExists(filepath.Join(dir, "dag.py"))
+}
+
+// deployWorkspaceDir is where `deploy --all` and `deploy <dag_id>` find DAGs:
+// the workspace around the current directory (its dexaflow.workspace.yaml),
+// else the git repository around it, else the current directory when it is a
+// DAG project (a workspace of one), else the Lite workspace (the config's
+// workspace, or ~/dexaflow). Reading ~/dexaflow first made both commands fail
+// with "lstat ~/dexaflow" inside a repository (#1704).
+func deployWorkspaceDir(cmd *cobra.Command) (string, error) {
+	ws, err := findWorkspaceFromCwd()
+	if err != nil {
+		return "", err
+	}
+	if ws != nil {
+		return ws.Root, nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolving the current directory: %w", err)
+	}
+	if root := gitRootOf(cmdContext(cmd), wd); root != "" {
+		return root, nil
+	}
+	if isProjectDir(wd) {
+		return wd, nil
+	}
+	return defaultWorkspace(cmd), nil
 }
 
 // resolveProjectDir maps a dag_id to its project directory within the workspace,
@@ -110,7 +156,10 @@ func resolveProjectDir(workspaceDir, dagID string) (string, error) {
 // error if any failed (so CI catches it) — partial pushes are not rolled back
 // (content-addressed images make a re-deploy idempotent). ADR 0041.
 func deployAll(cmd *cobra.Command, o deployOptions) error {
-	wsDir := defaultWorkspace(cmd)
+	wsDir, err := deployWorkspaceDir(cmd)
+	if err != nil {
+		return err
+	}
 	ws, err := ResolveWorkspace(wsDir)
 	if err != nil {
 		return err
@@ -155,13 +204,14 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
 	}
 	return fmt.Errorf(`deploy requires a container registry, but none is configured.
   A Pro deploy pushes the DAG image to a registry your cluster can pull from
-  (Lite runs locally and needs none). Add to dexaflow.yaml:
+  (Lite runs locally and needs none). Set one, for one DAG or for all:
 
-      registry:
-        url: ghcr.io/<your-org>     # or ECR / Artifact Registry / ACR / private
-        image_name: <name>
+      dexaflow.yaml:              registry: {url: ghcr.io/<your-org>}
+      dexaflow.workspace.yaml:    defaults: {registry: ghcr.io/<your-org>}
+      a target:                   dexaflow target add <name> <url> --registry ghcr.io/<your-org> --force
+      this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
 
-  Then authenticate your builder once:  docker login ghcr.io`)
+  The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io`)
 }
 
 // repinImageInSpec rewrites the compiled dag.json's image field to the
@@ -190,71 +240,79 @@ func deployImageRef(cfg *domain.LeoflowConfig, version string, rev gitRevision) 
 	return composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, tag)
 }
 
-// resolveServerToken applies the deploy auth precedence: --server/--token, then
-// LEOFLOW_* env (via the token flag default), then the persisted config written
-// by `dexaflow auth login`.
+// resolveServerToken resolves the control plane a server command calls and the
+// bearer token it sends there. The server comes from resolveServer (flags, a
+// named target, the environment, then the config file); the token from
+// pickToken (--token, DEXAFLOW_TOKEN or LEOFLOW_TOKEN, the session saved for
+// that server, then the single-server session of older configs).
 //
-// When the token comes from that persisted session file (not a --token flag or
-// LEOFLOW_TOKEN env, which are caller- or CI-managed), it is transparently
-// refreshed if near expiry and the file is rewritten with the fresh token (aresta
-// #5), so a long dev session never re-logs in every hour. The refresh is
-// best-effort: on any failure the current token is returned unchanged.
+// When the token comes from a saved session (not a --token flag or a token
+// variable, which are caller- or CI-managed), it is transparently refreshed if
+// near expiry and saved back where it came from (aresta #5), so a long dev
+// session never re-logs in every hour. The refresh is best-effort and never
+// fails the command.
 func resolveServerToken(cmd *cobra.Command, serverFlag, tokenFlag string) (serverURL, token string, err error) {
-	serverURL, token = serverFlag, tokenFlag
-	tokenFromSession := false
-	configuredServer := ""
-	if serverURL == "" || token == "" {
-		cfg, cerr := config.Load(configFilePath(cmd), cmd.Flags())
-		if cerr != nil {
-			return "", "", cerr
-		}
-		configuredServer = cfg.ServerURL
-		if serverURL == "" {
-			serverURL = cfg.ServerURL
-		}
-		if token == "" {
-			token = cfg.Token
-			tokenFromSession = true
-		}
+	choice, err := resolveServer(cmd, serverFlag)
+	if err != nil {
+		return "", "", err
 	}
-	// Only auto-refresh a file-persisted session token: a --token flag or a
-	// LEOFLOW_TOKEN env var (which config.Load also surfaces as cfg.Token) is
-	// externally managed and must never be silently rewritten.
-	if tokenFromSession && os.Getenv("LEOFLOW_TOKEN") == "" {
-		token = autoRefreshToken(cmdContext(cmd), configFilePath(cmd), serverURL, token)
+	serverURL = choice.URL
+	token, source := pickToken(choice, tokenFlag)
+	ctx := cmdContext(cmd)
+	switch source {
+	case tokenSession:
+		token = autoRefreshWith(ctx, serverURL, token, func(fresh string) error {
+			return saveSession(cmd, serverURL, fresh)
+		})
+	case tokenLegacy:
+		token = autoRefreshToken(ctx, configFilePath(cmd), serverURL, token)
+	case tokenNone, tokenExternal:
 	}
 	// Record what was decided so a 401 can say whether the token belongs to the
-	// server being called (#1102). LEOFLOW_TOKEN is externally supplied, so it is
-	// not "from config" even though config.Load surfaces it as cfg.Token.
+	// server being called (#1102). A session saved for this very server cannot
+	// belong to another one, so only the single-server session is compared.
 	resolvedTarget.server = serverURL
-	resolvedTarget.configured = configuredServer
-	resolvedTarget.fromConfig = tokenFromSession && os.Getenv("LEOFLOW_TOKEN") == ""
+	resolvedTarget.configured = ""
+	if source == tokenLegacy {
+		resolvedTarget.configured = choice.tc.store.ServerURL
+	}
+	resolvedTarget.fromConfig = source == tokenLegacy
 	return serverURL, token, nil
 }
 
-// loadDeployConfig loads and validates the project config and enforces the
-// registry a Pro deploy pushes to.
-func loadDeployConfig(dir string) (*domain.LeoflowConfig, error) {
+// loadDeployConfig loads and validates the project config, fills what it
+// leaves unset from the workspace and the target (applyWorkspaceDefaults), and
+// enforces the registry a Pro deploy pushes to. It returns where the registry
+// came from.
+func loadDeployConfig(cmd *cobra.Command, dir string) (*domain.LeoflowConfig, string, error) {
 	cfg, err := loadProjectConfig(dir)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if verr := cfg.Validate(); verr != nil {
-		return nil, fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
+		return nil, "", fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
+	}
+	prov, derr := applyWorkspaceDefaults(cmd, dir, cfg, true)
+	if derr != nil {
+		return nil, "", derr
 	}
 	if rerr := requireRegistry(cfg); rerr != nil {
-		return nil, rerr
+		return nil, "", rerr
 	}
-	return cfg, nil
+	return cfg, prov.registrySource, nil
 }
 
 // runDeploy orchestrates the pipeline-less promotion: validate the project,
 // enforce the registry, build+push the image for the target platform, re-pin it
 // by digest into dag.json, and register that with the control plane.
 func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
-	cfg, err := loadDeployConfig(dir)
+	cfg, registrySource, err := loadDeployConfig(cmd, dir)
 	if err != nil {
 		return err
+	}
+	if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "registry %s/%s (from %s)\n",
+		cfg.Registry.URL, cfg.Registry.ImageName, registrySource); werr != nil {
+		return werr
 	}
 
 	serverURL, token, serr := resolveServerToken(cmd, o.serverURL, o.token)

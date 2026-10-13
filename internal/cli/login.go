@@ -28,13 +28,11 @@ func newLoginCommand() *cobra.Command {
 		Short: "Authenticate to a control plane (Pro) and store the token.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if serverURL == "" {
-				cfg, cerr := config.Load(configFilePath(cmd), cmd.Flags())
-				if cerr != nil {
-					return cerr
-				}
-				serverURL = cfg.ServerURL
+			choice, rerr := resolveServer(cmd, serverURL)
+			if rerr != nil {
+				return rerr
 			}
+			serverURL = choice.URL
 			var cerr error
 			if password, cerr = resolvePassword(cmd, password, passwordStdin); cerr != nil {
 				return cerr
@@ -51,8 +49,12 @@ func newLoginCommand() *cobra.Command {
 			if perr != nil {
 				return perr
 			}
-			if serr := config.PersistSession(path, serverURL, token); serr != nil {
+			if serr := persistLogin(path, serverURL, token, choice.Target); serr != nil {
 				return serr
+			}
+			if choice.Target != nil {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s (target %s; token saved to %s)\n", serverURL, choice.Target.Name, path)
+				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s (token saved to %s)\n", serverURL, path)
 			return err
@@ -63,6 +65,24 @@ func newLoginCommand() *cobra.Command {
 	cmd.Flags().StringVar(&password, "password", os.Getenv("LEOFLOW_PASSWORD"), "password")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the password from stdin instead of --password (avoids ps/shell-history exposure)")
 	return cmd
+}
+
+// persistLogin saves a fresh login. The token is always saved for its server,
+// so each control plane keeps its own. A login to a named target leaves the
+// single-server session (server_url and token) alone; any other login also
+// writes it, as before targets existed, so configs and tools that read those
+// two keys keep working.
+func persistLogin(path, serverURL, token string, target *activeTarget) error {
+	if err := config.UpdateUserStore(path, func(s *config.UserStore) error {
+		s.SetSession(serverURL, token)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if target != nil {
+		return nil
+	}
+	return config.PersistSession(path, serverURL, token)
 }
 
 // sessionConfigPath resolves the config file `login` writes to: the --config

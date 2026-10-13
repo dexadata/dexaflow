@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_push/
 title: "dexaflow push"
 linkTitle: "push"
-weight: 44
+weight: 45
 ---
 
 Register a compiled dag.json with the control plane.
@@ -18,7 +18,7 @@ dexaflow push <dag.json> [flags]
 ```
   -h, --help            help for push
       --server string   control plane base URL (default: config server_url)
-      --token string    JWT bearer token
+      --token string    JWT bearer token (default: the session saved for the server)
 ```
 
 ### Options inherited from parent commands
@@ -27,6 +27,7 @@ dexaflow push <dag.json> [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

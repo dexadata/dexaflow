@@ -96,3 +96,25 @@ func renewToken(ctx context.Context, serverURL, token string) (string, error) {
 	}
 	return *resp.JSON200.AccessToken, nil
 }
+
+// autoRefreshWith is autoRefreshToken for a token stored somewhere other than
+// the single-server session: persist saves the renewed token, and the original
+// is returned unchanged when the token is not near expiry, the renewal fails,
+// or persist does.
+func autoRefreshWith(ctx context.Context, serverURL, token string, persist func(string) error) string {
+	if serverURL == "" || token == "" {
+		return token
+	}
+	iat, exp, ok := tokenIssuedExpiry(token)
+	if !ok || !nearExpiry(iat, exp, time.Now()) {
+		return token
+	}
+	renewed, err := renewToken(ctx, serverURL, token)
+	if err != nil || renewed == "" {
+		return token
+	}
+	if err := persist(renewed); err != nil {
+		return token
+	}
+	return renewed
+}

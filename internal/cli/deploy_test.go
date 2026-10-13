@@ -196,6 +196,9 @@ func TestDeployAllRejectsExtraArg(t *testing.T) {
 func TestDeployAllReportsPerProjectFailure(t *testing.T) {
 	// A workspace with one scaffolded project that has no registry: --all must
 	// iterate to it, fail it at the registry guard, and report a non-zero result.
+	// Run from a folder outside any workspace or repository, where the
+	// config's workspace is the one deploy reads.
+	t.Chdir(t.TempDir())
 	ws := t.TempDir()
 	if _, _, err := run(t, "init", filepath.Join(ws, "one")); err != nil {
 		t.Fatalf("init: %v", err)
@@ -210,6 +213,7 @@ func TestDeployAllReportsPerProjectFailure(t *testing.T) {
 }
 
 func TestDeployByDagIDReachesProjectThenGuard(t *testing.T) {
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
 	ws := t.TempDir()
 	if _, _, err := run(t, "init", filepath.Join(ws, "solo")); err != nil {
 		t.Fatalf("init: %v", err)

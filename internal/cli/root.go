@@ -31,6 +31,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().String("config", "", "config file path (default ~/.dexaflow/config.yaml)")
 	root.PersistentFlags().String("log-level", "", "log level: debug, info, warn, error")
 	root.PersistentFlags().String("server-url", "", "control plane API base URL")
+	root.PersistentFlags().String("target", "", "`name` of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)")
 
 	// Cobra command groups (issue #D1, dogfood audit #212): split the 17
 	// commands into four navigable sections so new users see "init → run"
@@ -43,9 +44,9 @@ func NewRootCommand() *cobra.Command {
 		&cobra.Group{ID: "lifecycle", Title: "Lifecycle (install, configure, repair, retire):"},
 	)
 
-	authoring := []*cobra.Command{newInitCommand(), newValidateCommand(), newCompileCommand(), newBuildCommand(), newPushCommand(), newDeployCommand()}
+	authoring := []*cobra.Command{newWorkspaceCommand(), newNewCommand(), newInitCommand(), newValidateCommand(), newCompileCommand(), newBuildCommand(), newPushCommand(), newDeployCommand()}
 	runtime := []*cobra.Command{newLiteCommand(), newServerCommand()}
-	inspection := []*cobra.Command{newDagsCommand(), newRunsCommand(), newAuthCommand()}
+	inspection := []*cobra.Command{newDagsCommand(), newRunsCommand(), newAuthCommand(), newTargetCommand()}
 	operations := []*cobra.Command{newAdminCommand(), newConnectionsCommand(), newVariablesCommand()}
 	lifecycle := []*cobra.Command{newSetupCommand(), newDoctorCommand(), newDBCommand(), newUninstallCommand(), newVersionCommand()}
 

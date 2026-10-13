@@ -48,6 +48,9 @@ type compileOptions struct {
 	// (LEOFLOW_EXECUTOR_TYPE), not by anything in the dag.json, so compile
 	// cannot infer this — only Lite's subprocess mode knows.
 	local bool
+	// lite marks a compile for `dexaflow lite`, which deploys to no target:
+	// the workspace defaults apply, a target's do not.
+	lite bool
 }
 
 func newCompileCommand() *cobra.Command {
@@ -101,6 +104,20 @@ func defaultOutputPath(dir, explicit string) string {
 		return explicit
 	}
 	return filepath.Join(dir, "dag.json")
+}
+
+// loadCompileConfig is resolveCompileTarget plus the workspace and target
+// defaults (applyWorkspaceDefaults) that deploy applies too, so a compile and a
+// deploy of the same project build the same image.
+func loadCompileConfig(cmd *cobra.Command, dir string, o compileOptions) (*domain.LeoflowConfig, error) {
+	cfg, err := resolveCompileTarget(dir, o.output)
+	if err != nil {
+		return nil, err
+	}
+	if _, derr := applyWorkspaceDefaults(cmd, dir, cfg, !o.lite); derr != nil {
+		return nil, derr
+	}
+	return cfg, nil
 }
 
 // resolveCompileTarget loads the project config and confirms the artifact can
@@ -176,7 +193,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	// filepath.Join, and a compileOptions literal that forgot it reached a write
 	// with an empty path.
 	o.output = defaultOutputPath(dir, o.output)
-	cfg, err := resolveCompileTarget(dir, o.output)
+	cfg, err := loadCompileConfig(cmd, dir, o)
 	if err != nil {
 		return err
 	}

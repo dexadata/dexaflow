@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dexadata/dexaflow/internal/config"
 	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
@@ -111,13 +110,11 @@ func newCreateTokenCommand() *cobra.Command {
 		Short: "Obtain a JWT from the control plane.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if serverURL == "" {
-				cfg, cerr := config.Load(configFilePath(cmd), cmd.Flags())
-				if cerr != nil {
-					return cerr
-				}
-				serverURL = cfg.ServerURL
+			choice, rerr := resolveServer(cmd, serverURL)
+			if rerr != nil {
+				return rerr
 			}
+			serverURL = choice.URL
 			pw, perr := resolvePassword(cmd, password, passwordStdin)
 			if perr != nil {
 				return perr
