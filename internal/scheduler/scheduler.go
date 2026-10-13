@@ -275,6 +275,11 @@ type Recorder interface {
 	// result. The scheduler records result="dropped" when its dispatch semaphore
 	// is saturated (#435); the dispatcher records "sent"/"failed" for deliveries.
 	RecordAlert(dagID, channelType, result string)
+	// ObserveSchedulerLoop records the wall time of one leader tick, whether
+	// its step succeeded or not (#1186).
+	ObserveSchedulerLoop(d time.Duration)
+	// RecordTaskRetry counts one retry released for a task (#1186).
+	RecordTaskRetry(dagID, taskID string)
 	// RecordSchedulerWokenTick counts a tick started early by Wake
 	// (scheduler.eager_promotion) instead of by the loop interval.
 	RecordSchedulerWokenTick()
@@ -606,6 +611,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // can never crash the process or stop the loop. It is the top-level backstop;
 // per-run isolation in Step quarantines individual poison runs underneath it.
 func (s *Scheduler) tick(ctx context.Context) {
+	// Registered first so it runs last, after a recovered panic too. Only a
+	// leader's tick does scheduling work; a follower's would dilute the
+	// histogram with near-zero samples.
+	if s.recorder != nil && s.leading.Load() {
+		start := time.Now()
+		defer func() { s.recorder.ObserveSchedulerLoop(time.Since(start)) }()
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("scheduler tick panic recovered", "panic", r, "stack", string(debug.Stack()))
@@ -1301,6 +1313,7 @@ func (s *Scheduler) resetForRetry(ctx context.Context, run RunState, taskID stri
 	}
 	if s.recorder != nil {
 		s.recorder.RecordSchedulerDecision("retry")
+		s.recorder.RecordTaskRetry(run.DagID, taskID)
 		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateNone), run.DagID)
 	}
 	return nil
