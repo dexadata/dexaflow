@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -1648,19 +1647,16 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(agentrpc.RecoveryUnaryInterceptor(logger), inflight.UnaryInterceptor()),
 		grpc.ChainStreamInterceptor(agentrpc.RecoveryStreamInterceptor(logger), inflight.StreamInterceptor()),
-		// Tolerate a warm worker's keepalive pings on an otherwise idle assignment
-		// stream so gRPC does not GOAWAY it as abusive (ADR 0058 N1b). This only
-		// RELAXES the server's default client-ping enforcement (5m, streams-only),
-		// so it cannot change StreamLogs behavior — an active StreamLogs already
-		// satisfies both the old and new policy. Server-initiated keepalive
-		// (ServerParameters: MaxConnectionIdle / Time pings) is deliberately NOT
-		// added here: it would start pinging existing idle StreamLogs connections,
-		// a behavior change with no benefit until a real warm worker connects.
-		// Deferred to N1b1-place as a documented TODO.
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
+		// Tolerate the agents' keepalive pings, including on an otherwise idle
+		// connection or assignment stream, so gRPC does not GOAWAY them as
+		// abusive (ADR 0058 N1b, #946). This only RELAXES the server's default
+		// client-ping enforcement (5m, streams-only). Server-initiated keepalive
+		// (ServerParameters) is deliberately NOT added: the agent pings, and so
+		// detects a dead control plane itself; a vanished agent is found by the
+		// heartbeat reapers, and an assignment sent to a vanished warm worker is
+		// reclaimed when its ack lease expires. Server pings on every idle agent
+		// connection would cost something and detect nothing those miss.
+		grpc.KeepaliveEnforcementPolicy(agentrpc.KeepaliveEnforcementPolicy()),
 	}
 	secure := tlsCert != "" && tlsKey != ""
 	if secure {
