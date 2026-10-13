@@ -61,3 +61,10 @@ func variantOf(arch, variant string) string {
 	}
 	return v
 }
+
+// isIndex reports whether raw is an image index or manifest list: it lists
+// manifests rather than layers.
+func isIndex(raw []byte) bool {
+	var list manifestList
+	return json.Unmarshal(raw, &list) == nil && len(list.Manifests) > 0
+}

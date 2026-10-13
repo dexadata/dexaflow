@@ -300,3 +300,25 @@ func TestRegistryRefusesASchema1Manifest(t *testing.T) {
 		t.Fatalf("Resolve of a schema 1 manifest: %v, want a media type refusal", err)
 	}
 }
+
+// Platform reads what a single image's config names, which the skip path
+// compares with the platform asked for.
+func TestRegistryReadsThePlatformOfASingleImage(t *testing.T) {
+	host := testRegistry(t)
+	pushImage(t, host+"/team/etl:v1")
+	// random.Image writes a config with no os or architecture.
+	if got, err := (Registry{}).Platform(context.Background(), host+"/team/etl:v1"); err != nil || got != "" {
+		t.Errorf("Platform = %q, %v; want empty for a config that names none", got, err)
+	}
+	img, _ := random.Image(16, 1)
+	cfg, _ := img.ConfigFile()
+	cfg.OS, cfg.Architecture, cfg.Variant = "linux", "arm64", "v8"
+	img, _ = mutate.ConfigFile(img, cfg)
+	r, _ := name.ParseReference(host + "/team/etl:arm")
+	if werr := remote.Write(r, img); werr != nil {
+		t.Fatal(werr)
+	}
+	if got, err := (Registry{}).Platform(context.Background(), host+"/team/etl:arm"); err != nil || got != "linux/arm64/v8" {
+		t.Errorf("Platform = %q, %v; want linux/arm64/v8", got, err)
+	}
+}
