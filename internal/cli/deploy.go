@@ -38,6 +38,8 @@ type deployOptions struct {
 	active     bool
 	plan       bool
 	output     string
+	follow     bool
+	timeout    time.Duration
 	// report collects each DAG's result for --output json; nil for text.
 	report *deployReport
 }
@@ -73,6 +75,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.all, "all", false, "deploy every DAG project in the workspace")
 	cmd.Flags().BoolVar(&o.skipBuild, "skip-build", false, "reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py")
 	cmd.Flags().BoolVar(&o.trigger, "trigger", false, "trigger a run immediately after registering")
+	addFollowFlags(cmd, &o.follow, &o.timeout)
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt (for automation)")
 	cmd.Flags().BoolVar(&o.force, "force", false, "build, push and register even when the default content label is already deployed")
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
@@ -94,6 +97,9 @@ func newDeployCommand() *cobra.Command {
 // project in the workspace), a directory path, or a dag_id (resolved to its
 // subdir in the workspace). A bare invocation is deployHere.
 func runDeployTarget(cmd *cobra.Command, args []string, o deployOptions) error {
+	if err := checkDeployFollow(o); err != nil {
+		return err
+	}
 	if o.all {
 		if len(args) > 0 {
 			return fmt.Errorf("--all deploys the whole workspace; do not also pass a path or dag_id")
@@ -603,8 +609,8 @@ func (d *deployRun) finish(ctx context.Context, res deployResult) error {
 		return err
 	}
 	d.o.report.add(res)
-	if d.o.trigger {
-		return triggerDeployRun(ctx, out, d.serverURL, d.token, res.DagID)
+	if trigger := deployTrigger(ctx, out, d.serverURL, d.token, d.o); trigger != nil {
+		return trigger(res.DagID)
 	}
 	return nil
 }
@@ -723,14 +729,15 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 
 // triggerDeployRun kicks a manual run of the just-registered DAG, the --trigger
 // opt-in (deploy registers only by default). It posts to the Airflow-compatible
-// trigger endpoint with a unique manual run id.
-func triggerDeployRun(ctx context.Context, out io.Writer, serverURL, token, dagID string) error {
+// trigger endpoint with a unique manual run id, and returns the run id the
+// server answers with (the one it was sent when the answer names none).
+func triggerDeployRun(ctx context.Context, out io.Writer, serverURL, token, dagID string) (string, error) {
 	runID := fmt.Sprintf("manual__%d", time.Now().UTC().Unix())
 	payload := []byte(fmt.Sprintf(`{"dag_run_id":%q}`, runID))
 	url := strings.TrimRight(serverURL, "/") + "/api/v2/dags/" + dagID + "/dagRuns"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("building trigger request: %w", err)
+		return "", fmt.Errorf("building trigger request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -738,19 +745,25 @@ func triggerDeployRun(ctx context.Context, out io.Writer, serverURL, token, dagI
 	}
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return fmt.Errorf("triggering run for %q: %w", dagID, err)
+		return "", fmt.Errorf("triggering run for %q: %w", dagID, err)
 	}
 	raw, readErr := io.ReadAll(resp.Body)
 	closeErr := resp.Body.Close()
 	if readErr != nil {
-		return fmt.Errorf("reading trigger response: %w", readErr)
+		return "", fmt.Errorf("reading trigger response: %w", readErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("closing trigger response: %w", closeErr)
+		return "", fmt.Errorf("closing trigger response: %w", closeErr)
 	}
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("trigger returned %d: %s", resp.StatusCode, string(raw))
+		return "", fmt.Errorf("trigger returned %d: %s", resp.StatusCode, string(raw))
+	}
+	var answer struct {
+		DagRunID string `json:"dag_run_id"`
+	}
+	if json.Unmarshal(raw, &answer) == nil && answer.DagRunID != "" {
+		runID = answer.DagRunID
 	}
 	_, err = fmt.Fprintf(out, "  triggered run %s\n", runID)
-	return err
+	return runID, err
 }
