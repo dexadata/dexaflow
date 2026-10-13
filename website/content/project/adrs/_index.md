@@ -82,3 +82,4 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0069: Contributor context is public and tool-agnostic; tool files stay local](/project/adrs/0069-contributor-context/)
 - [ADR 0070: Secrets reach a process by environment reference, never rendered into a command string](/project/adrs/0070-secrets-by-env-reference/)
 - [ADR 0071: Releases stage, verify, then promote; only a promote job moves public pointers](/project/adrs/0071-stage-verify-promote-releases/)
+- [ADR 0072: CodeQL blocks a pull request only for the high or critical alerts it introduces](/project/adrs/0072-codeql-gate-on-introduced-alerts/)
