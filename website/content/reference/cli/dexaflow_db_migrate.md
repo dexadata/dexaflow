@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_db_migrate/
 title: "dexaflow db migrate"
 linkTitle: "db migrate"
-weight: 32
+weight: 33
 ---
 
 Create (if needed) and migrate the Lite database to the latest schema.

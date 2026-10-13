@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_reset-password/
 title: "dexaflow lite reset-password"
 linkTitle: "lite reset-password"
-weight: 42
+weight: 43
 ---
 
 Reset the Dexaflow Lite admin password.

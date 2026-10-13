@@ -179,6 +179,25 @@ dexaflow deploy --all        # every DAG in the workspace (best-effort; non-zero
 dexaflow deploy --skip-build # reuse the existing image (skip docker build/push); dag.json is still recompiled from dexaflow.yaml/dag.py
 ```
 
+## See versions and roll back
+
+Every deploy that registers new content adds a version; the newest becomes
+current.
+
+```console
+$ dexaflow dags versions first_pro_dag
+VERSION  LABEL    CURRENT  CREATED           CREATED BY      IMAGE
+2        5d6e7f8  *        2026-10-02 09:12  you@example.com  sha256:4b1d0c9e2a7f
+1        1a2b3c4           2026-10-01 17:40  you@example.com  sha256:9f2c81d07a3e
+$ dexaflow rollback first_pro_dag
+first_pro_dag: current version changed from 5d6e7f8 (#2) to 1a2b3c4 (#1).
+```
+
+The rollback reuses the image the older version was registered with, applies
+its schedule, and leaves runs already created on their own version and the
+pause state as it is. `--to` picks another version by label or number. See
+[Rolling back](/operate/cicd-deploy/#rolling-back) for the details.
+
 ## Build in one CI job, deploy in another
 
 `dexaflow deploy` builds, pushes and registers in one command, and that is the

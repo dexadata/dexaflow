@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_init/
 title: "dexaflow init"
 linkTitle: "init"
-weight: 36
+weight: 37
 ---
 
 Scaffold a new DAG project (dexaflow.yaml + dag.py).

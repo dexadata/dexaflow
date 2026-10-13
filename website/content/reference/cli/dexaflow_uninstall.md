@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_uninstall/
 title: "dexaflow uninstall"
 linkTitle: "uninstall"
-weight: 52
+weight: 54
 ---
 
 Remove the Dexaflow installation (~/.dexaflow).

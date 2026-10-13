@@ -159,31 +159,52 @@ grow with the repo. Choose it only if you want that.
 
 ## Rolling back
 
-There is **no rollback command yet** (tracked in
-[#1702](https://github.com/dexadata/dexaflow/issues/1702)), and nothing makes an
-older version current again by itself:
-
-- Re-running `dexaflow push` with an older `dag.json` does **not** roll back.
-  Content the control plane already has is a no-op: it answers `created:
-  false`, the newer version stays current, and nothing else changes, the
-  schedule included.
-- Retagging an image in the registry does not roll back either: a version
-  registered by `deploy` names its image by digest.
-
-What works today is registering the old code **as a new version**, under a new
-version label and on the old image digest. From the commit you want back:
+A rollback makes a version the control plane already holds current again. It
+rebuilds nothing: the version runs the image digest it was registered with.
 
 ```bash
-git checkout <old-commit>
-dexaflow compile dags/my_pipeline -o dag.json \
-  --image "ghcr.io/your-org/my-pipeline@sha256:<old-digest>" \
-  --dag-version "<old-version>-rollback-1"
-dexaflow push dag.json --server "$DEXAFLOW_SERVER_URL"
+dexaflow dags versions my_pipeline                 # what is registered, and which is current
+dexaflow rollback my_pipeline                      # back to the version before the current one
+dexaflow rollback my_pipeline --to v1.4.0-3fa2c1   # or to a label (or a version number) from the list
 ```
 
-The old digest is in the `image …@sha256:…` line `deploy` printed for that
-version, and in the `dag.json` it wrote; keeping that file as a CI artifact makes
-a rollback a lookup. Runs already in flight keep the version they started with.
+`dexaflow dags versions` lists each version, newest first: its number, its
+label, a `*` on the current one, when and by whom it was registered, and the
+short image digest. `dexaflow rollback` prints the version it moved from and
+the one it moved to, and takes `--server` and `--token` like the other
+commands. Both read and write through the API: the listing is
+`GET /api/v2/dags/{dag_id}/dagVersions`, and the rollback is
+`PUT /api/v2/dags/{dag_id}/currentVersion` with `{"version": "<label>"}` or
+`{"version_number": <n>}`, which needs the same permission as registering a
+version (scope `dexaflow:deploy` for a scoped token).
+
+What a rollback changes, in one transaction:
+
+- **New runs** use the version made current, from the next scheduler tick.
+- **The schedule** and the other DAG settings (catchup, start date, max active
+  runs, description, owner, tags) become that version's.
+- **Runs already created keep their version**, including runs in flight.
+- **Pause state does not change.** A paused DAG stays paused, an unpaused one
+  stays unpaused.
+
+The version must still pass what a register of it would pass today: the
+operator's execution policy, the tenant limits, and its declared Variables and
+Connections. A version that no longer does is refused with `400` (or `403` for
+a tenant limit), and the current version stays. Naming the version that is
+already current changes nothing. Every rollback is recorded in the audit log as
+`dag.version.set_current`, with the user and the from and to versions.
+
+Two things that look like a rollback are not:
+
+- Re-running `dexaflow push` with an older `dag.json` is a no-op: content the
+  control plane already has answers `created: false`, and the newer version
+  stays current, schedule included.
+- Retagging an image in the registry changes nothing: a version registered by
+  `deploy` names its image by digest.
+
+`dexaflow deploy` of code that matches a version registered earlier (after a
+`git revert`, for example) stops before building and suggests the
+`dexaflow rollback <dag_id> --to <label>` command for that version.
 
 ## Prerequisites
 

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_runs_logs/
 title: "dexaflow runs logs"
 linkTitle: "runs logs"
-weight: 47
+weight: 49
 ---
 
 Stream a task attempt's logs (the latest attempt by default).
