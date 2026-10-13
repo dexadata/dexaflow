@@ -531,8 +531,11 @@ type VersionInfo struct {
 // VersionRegistration defines model for VersionRegistration.
 type VersionRegistration struct {
 	// Created False when the content was already registered.
-	Created  *bool   `json:"created,omitempty"`
-	DagId    *string `json:"dag_id,omitempty"`
+	Created *bool   `json:"created,omitempty"`
+	DagId   *string `json:"dag_id,omitempty"`
+
+	// IsPaused The DAG's is_paused after the register.
+	IsPaused *bool   `json:"is_paused,omitempty"`
 	SpecHash *string `json:"spec_hash,omitempty"`
 	Version  *string `json:"version,omitempty"`
 }
@@ -611,6 +614,12 @@ type ListDagRunsParamsState string
 // ClearDagRun200JSONResponseBody defines parameters for ClearDagRun.
 type ClearDagRun200JSONResponseBody struct {
 	union json.RawMessage
+}
+
+// RegisterDagVersionParams defines parameters for RegisterDagVersion.
+type RegisterDagVersionParams struct {
+	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400.
+	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -1156,20 +1165,22 @@ type ClientInterface interface {
 	// RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-	RegisterDagVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RegisterDagVersionWithBody(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterDagVersion Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-	RegisterDagVersion(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RegisterDagVersion(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMonitorExecutor Executor capability and configuration
 	//
@@ -1851,12 +1862,13 @@ func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...Requ
 // RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRegisterDagVersionRequestWithBody(c.Server, dagId, contentType, body)
+func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDagVersionRequestWithBody(c.Server, dagId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1870,12 +1882,13 @@ func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, co
 // RegisterDagVersion Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-func (c *Client) RegisterDagVersion(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRegisterDagVersionRequest(c.Server, dagId, body)
+func (c *Client) RegisterDagVersion(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDagVersionRequest(c.Server, dagId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3333,18 +3346,18 @@ func NewGetDagSpecRequest(server string, dagId DagID) (*http.Request, error) {
 }
 
 // NewRegisterDagVersionRequest calls the generic RegisterDagVersion builder with application/json body
-func NewRegisterDagVersionRequest(server string, dagId DagID, body RegisterDagVersionJSONRequestBody) (*http.Request, error) {
+func NewRegisterDagVersionRequest(server string, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewRegisterDagVersionRequestWithBody(server, dagId, "application/json", bodyReader)
+	return NewRegisterDagVersionRequestWithBody(server, dagId, params, "application/json", bodyReader)
 }
 
 // NewRegisterDagVersionRequestWithBody constructs an http.Request for the RegisterDagVersion method, with any body, and a specified content type
-func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error) {
+func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3367,6 +3380,33 @@ func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, contentTyp
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.IsPaused != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "is_paused", *params.IsPaused, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
@@ -4199,20 +4239,22 @@ type ClientWithResponsesInterface interface {
 	// RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-	RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
+	RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
 
 	// RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-	RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
+	RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
 
 	// GetMonitorExecutorWithResponse Executor capability and configuration
 	//
@@ -6671,12 +6713,13 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 // RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
-	rsp, err := c.RegisterDagVersionWithBody(ctx, dagId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
+	rsp, err := c.RegisterDagVersionWithBody(ctx, dagId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -6686,12 +6729,13 @@ func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context
 // RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
-func (c *ClientWithResponses) RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
-	rsp, err := c.RegisterDagVersion(ctx, dagId, body, reqEditors...)
+func (c *ClientWithResponses) RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
+	rsp, err := c.RegisterDagVersion(ctx, dagId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

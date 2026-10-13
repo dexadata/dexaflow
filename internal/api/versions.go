@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -13,11 +14,12 @@ import (
 // DagVersionRepository registers compiled DAG versions and chooses which one
 // is current.
 type DagVersionRepository interface {
-	// RegisterDagVersionBy upserts the DAG and inserts a version keyed by
-	// specHash on behalf of the user actorUserID, reporting whether a new
+	// RegisterDagVersionAs upserts the DAG and inserts a version keyed by
+	// reg.SpecHash on behalf of reg.ActorUserID, reporting whether a new
 	// version was created (false if the hash already existed: the push is
-	// idempotent).
-	RegisterDagVersionBy(ctx context.Context, tenant, actorUserID string, spec domain.DAGSpec, specHash string) (bool, error)
+	// idempotent) and the DAG's is_paused afterwards. reg.IsPaused, when set,
+	// is the DAG's state after the register.
+	RegisterDagVersionAs(ctx context.Context, tenant string, reg domain.DagRegistration) (domain.DagRegistered, error)
 	// SetCurrentDagVersion makes the version sel names current, after admit
 	// accepts its spec, on behalf of actorUserID. Runs that already exist keep
 	// their version; is_paused is never changed.
@@ -29,6 +31,7 @@ type versionResponse struct {
 	Version  string `json:"version"`
 	SpecHash string `json:"spec_hash"`
 	Created  bool   `json:"created"`
+	IsPaused bool   `json:"is_paused"`
 }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -105,8 +108,32 @@ func actorOf(c *gin.Context) string {
 	return ""
 }
 
+// pausedQuery reads the optional is_paused query parameter of a register:
+// absent is nil (Airflow's rule applies), true or false sets the DAG's state.
+// Any other value, an empty one included, is an error for the client to fix.
+func pausedQuery(c *gin.Context) (*bool, error) {
+	raw, ok := c.GetQuery("is_paused")
+	if !ok {
+		return nil, nil //nolint:nilnil // absent is a valid "no override", not an error
+	}
+	switch raw {
+	case "true":
+		v := true
+		return &v, nil
+	case "false":
+		v := false
+		return &v, nil
+	}
+	return nil, errors.New("is_paused must be true or false")
+}
+
 func registerVersionHandler(repo DagVersionRepository, admission specAdmission) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		paused, perr := pausedQuery(c)
+		if perr != nil {
+			AbortProblem(c, http.StatusBadRequest, "bad request", perr.Error())
+			return
+		}
 		var spec domain.DAGSpec
 		if err := c.ShouldBindJSON(&spec); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
@@ -129,15 +156,17 @@ func registerVersionHandler(repo DagVersionRepository, admission specAdmission) 
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
 			return
 		}
-		created, err := repo.RegisterDagVersionBy(c.Request.Context(), tenantOf(c), actorOf(c), spec, hash)
+		got, err := repo.RegisterDagVersionAs(c.Request.Context(), tenantOf(c), domain.DagRegistration{
+			Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused,
+		})
 		if err != nil {
 			handleRepoError(c, err)
 			return
 		}
 		status := http.StatusOK
-		if created {
+		if got.Created {
 			status = http.StatusCreated
 		}
-		c.JSON(status, versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: created})
+		c.JSON(status, versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, IsPaused: got.IsPaused})
 	}
 }

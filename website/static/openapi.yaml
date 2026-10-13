@@ -423,8 +423,23 @@ paths:
         hash) is a no-op answered with 200 and created false, and leaves the
         current version as it is. The same label with other content is
         refused with 409. Needs write on dags (scope dexaflow:deploy).
+
+        Without is_paused, a DAG the register creates starts paused per its
+        is_paused_upon_creation, else the server's dags_are_paused_at_creation,
+        and an existing DAG keeps its state. With is_paused, the DAG ends the
+        register in that state whether it is created, gets a new version or
+        already had this content; a change to an existing DAG is audited as
+        dag.pause or dag.unpause in the same transaction.
       operationId: registerDagVersion
       tags: [DAGs]
+      parameters:
+        - name: is_paused
+          in: query
+          required: false
+          description: >-
+            Sets the DAG's is_paused for this register (true or false). Any
+            other value is refused with 400.
+          schema: { type: boolean }
       requestBody:
         required: true
         content:
@@ -1202,6 +1217,7 @@ components:
         version: { type: string }
         spec_hash: { type: string }
         created: { type: boolean, description: False when the content was already registered. }
+        is_paused: { type: boolean, description: The DAG's is_paused after the register. }
 
     DagVersionCollection:
       type: object
