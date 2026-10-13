@@ -31,7 +31,8 @@ const fallbackReason = "fallback: no daemonless or remote builder is available y
 
 // Select resolves the builder for a build of image for platforms in
 // ResolutionOrder, and says why it was chosen. The skip path applies when
-// reuse is allowed and the registry already holds image for every platform;
+// reuse is allowed and the registry already holds image for every platform
+// (ADR 0076);
 // otherwise the local daemon builds, as the daemonless and remote paths are
 // not implemented yet.
 func Select(ctx context.Context, o Options, image string, platforms []string) (b Builder, reason string) {

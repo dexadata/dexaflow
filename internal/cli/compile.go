@@ -64,7 +64,7 @@ type compileOptions struct {
 	built *build.Result
 	// reuse allows the skip path: the image tag is the default content label,
 	// so an image the registry holds under it can be pinned instead of built
-	// (ADR 0073 section 2). deploy sets it; --rebuild and --force clear it.
+	// (ADR 0076). deploy sets it; --rebuild and --force clear it.
 	reuse bool
 }
 
