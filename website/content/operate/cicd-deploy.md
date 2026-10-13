@@ -147,8 +147,12 @@ grow with the repo. Choose it only if you want that.
 {{% alert title="Tag images immutably" color="success" %}}
 The recipes tag by git SHA (`my_pipeline:$GIT_SHA`), never `:latest`. The
 image a `dag.json` points at is then frozen — re-running an old DAG version
-pulls exactly the bytes it shipped with, and a rollback is a re-`push` of the
-older `dag.json`.
+pulls exactly the bytes it shipped with.
+
+Re-pushing an older `dag.json` as it is does not roll back: that content is
+already registered, so the server answers `created: false` and changes nothing,
+neither the current version nor the schedule. To make older code live again,
+deploy the older commit under a new `--dag-version`.
 {{% /alert %}}
 
 ## Prerequisites
