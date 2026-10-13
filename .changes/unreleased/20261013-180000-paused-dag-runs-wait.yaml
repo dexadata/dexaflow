@@ -12,8 +12,10 @@ body: |-
   `max_active_tasks` and their pool's slots. Unpausing the DAG (UI switch or
   `dexaflow admin dags unpause <dag_id>`) starts the waiting runs on the next
   scheduler tick; the unpause does not hold back queued runs past
-  `max_active_runs`. Runs that already started keep running when their DAG is
-  paused. Since new DAGs are paused at creation, a first
+  `max_active_runs`. Runs in `running` keep going when their DAG is paused.
+  A run that a clear put back in `queued` waits like any queued run, even
+  while some of its tasks run: those tasks finish, and nothing downstream or
+  retried starts until the unpause. Since new DAGs are paused at creation, a first
   `dexaflow deploy --trigger` now leaves its run queued until you unpause the
   DAG. `dexaflow lite` registers new DAGs active, so the local loop is
   unaffected. (#1705)

@@ -24,7 +24,7 @@ A **paused** DAG is one whose `is_paused` flag is `true` in the metadata databas
 | **Catchup backfills** | ❌ Suspended: backlog accrues silently until you unpause | ✅ Created on each tick (subject to `catchup`/`max_active_runs`) |
 | **Manual triggers** (UI **Trigger DAG** button, `POST /api/v2/dags/{id}/dagRuns`, `dexaflow deploy --trigger`) | ⏸ Accepted and **queued**: the run is created, but it does not start until you unpause | ✅ Run |
 | **Queued runs** (created before the pause, or re-queued by a clear) | ⏸ Wait in `queued`: no new task is started or dispatched; tasks of a cleared run that were already running finish | ✅ Start on the next scheduler tick |
-| **Running runs** (already started when the pause flipped) | ✅ Continue to completion: pause is not a kill switch | ✅ Continue |
+| **Running runs** (in state `running` when the pause flipped) | ✅ Continue to completion: pause is not a kill switch | ✅ Continue |
 
 This mirrors Apache Airflow 3: *paused* stops the scheduler from starting
 work. A trigger on a paused DAG is still accepted (the API answers with the
@@ -39,8 +39,11 @@ Before 0.5.4 a manual trigger on a paused DAG started at once. With new DAGs
 paused at creation (below), a first `dexaflow deploy --trigger` now leaves its
 run queued: unpause the DAG and the run starts.
 
-**Running runs.** Pausing a DAG does not touch a run that has already
-started: its tasks keep being scheduled and dispatched until the run finishes.
+**Running runs.** Pausing a DAG does not touch a run in state `running`: its
+tasks keep being scheduled and dispatched until the run finishes. A run that a
+clear put back in `queued` is a queued run, even while some of its tasks are
+still running: while its DAG is paused those tasks finish, and nothing
+downstream or retried starts until the unpause.
 This is a deliberate, conservative difference from Airflow 3, whose scheduler
 also stops scheduling new tasks of a running run while its DAG is paused
 (the tasks already running finish, and the rest wait for the unpause). To stop

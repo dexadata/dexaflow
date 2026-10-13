@@ -834,8 +834,10 @@ created it: a manual trigger (UI, `POST /api/v2/dags/{id}/dagRuns`,
 re-queues the run. The API is unchanged and still answers with the queued
 run. Unpausing the DAG (UI switch or `dexaflow admin dags unpause <dag_id>`)
 starts the waiting runs on the next scheduler tick, all of them even when
-there are more than `max_active_runs`. Runs that had already
-started keep running when the DAG is paused. In 0.5.3 a manual trigger on a
+there are more than `max_active_runs`. Runs in `running` keep going when
+the DAG is paused. A run that a clear put back in `queued` waits like any
+queued run, even while some of its tasks run: those tasks finish, and nothing
+downstream or retried starts until the unpause. In 0.5.3 a manual trigger on a
 paused DAG started at once, so a pipeline that deploys a new DAG and triggers
 it now has to unpause it too (or register it active, as above). Runs queued
 on a paused DAG at the moment of the upgrade wait from then on. Rolling back
