@@ -344,9 +344,43 @@ func TestMarkTaskInstanceState(t *testing.T) {
 	if tasks.setState != "" {
 		t.Errorf("dry_run must not change state, but set %q", tasks.setState)
 	}
+	// Both answers are a TaskInstanceCollectionResponse, as Airflow declares for
+	// the PATCH and its dry_run: the Mark-as dialog of the 3.3 UI reads
+	// task_instances.length from the preview and crashed on a bare instance.
+	assertMarkCollection(t, rec.Body.Bytes(), "failed")
+	rec = authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1/taskInstances/extract", `{"new_state":"success"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mark = %d (%s)", rec.Code, rec.Body.String())
+	}
+	assertMarkCollection(t, rec.Body.Bytes(), "")
 	// An invalid state is rejected.
 	if rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1/taskInstances/extract/-1", `{"new_state":"banana"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid new_state = %d, want 400", rec.Code)
+	}
+}
+
+// assertMarkCollection checks a mark-state answer is a one-instance
+// TaskInstanceCollectionResponse, with the previewed state when want is set.
+func assertMarkCollection(t *testing.T, body []byte, want string) {
+	t.Helper()
+	var got struct {
+		TaskInstances []struct {
+			TaskID string  `json:"task_id"`
+			State  *string `json:"state"`
+		} `json:"task_instances"`
+		TotalEntries *int `json:"total_entries"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if len(got.TaskInstances) != 1 || got.TotalEntries == nil || *got.TotalEntries != 1 {
+		t.Fatalf("want a one-instance collection, got %s", body)
+	}
+	if got.TaskInstances[0].TaskID != "extract" {
+		t.Errorf("task_id = %q, want extract", got.TaskInstances[0].TaskID)
+	}
+	if want != "" && (got.TaskInstances[0].State == nil || *got.TaskInstances[0].State != want) {
+		t.Errorf("previewed state = %v, want %q", got.TaskInstances[0].State, want)
 	}
 }
 

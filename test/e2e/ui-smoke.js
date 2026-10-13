@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// Headless SPA crash smoke: drives the embedded Airflow 3.2 UI of a running
+// Headless SPA crash smoke: drives the embedded Airflow UI (3.3) of a running
 // Dexaflow control plane and fails if any screen throws an uncaught error.
 //
 // It exists because the Go API tests cannot see the React layer: the connector
@@ -101,7 +101,17 @@ function finish(code, text, stream = process.stdout) {
   // 1) Every top-level screen (page load). /connections renders all connector types.
   const routes = ['/', '/dags', '/connections', '/variables', '/pools', '/providers',
     '/assets', '/config', '/plugins', '/xcoms', '/security/users', '/browse/audit_log'];
-  for (const r of routes) await step('route ' + r, async () => { await page.goto(URL + r, { waitUntil: 'networkidle' }); });
+  // A goto can race the SPA's own post-login navigation ("interrupted by
+  // another navigation"); that is not a crash, so retry the load once.
+  const gotoRoute = async (path) => {
+    try {
+      await page.goto(URL + path, { waitUntil: 'networkidle' });
+    } catch (e) {
+      if (!/interrupted by another navigation/.test(e.message)) throw e;
+      await page.goto(URL + path, { waitUntil: 'networkidle' });
+    }
+  };
+  for (const r of routes) await step('route ' + r, async () => { await gotoRoute(r); });
 
   // 2) Connection form open (the bug that shipped broken).
   await step('connections: open Add form', async () => {
@@ -150,6 +160,109 @@ function finish(code, text, stream = process.stdout) {
     if (await m.count()) await m.click({ timeout: 4000 }).catch(() => {});
   });
 
+  const mintToken = async () => {
+    const auth = await (await page.request.post(URL + '/auth/token',
+      { data: { username: USER, password: PASS } })).json().catch(() => ({}));
+    if (!auth.access_token) throw new Error('POST /auth/token returned no access_token');
+    return auth.access_token;
+  };
+
+  // Mark as failed, then Clear, on one task instance, asserted end to end
+  // (#835). These are the flows newer Airflow UIs broke upstream: the state
+  // badge stayed stale after a Mark-as (apache/airflow#67883), the page froze
+  // re-streaming the grid after one (apache/airflow#67884), and after a Clear
+  // the log view must show one attempt tab per try that each load their own
+  // attempt (#241). The action menu step above only clicks; these assert.
+  const apiGet = async (path) => {
+    const tok = await mintToken();
+    return (await page.request.get(URL + path, { headers: { Authorization: 'Bearer ' + tok } })).json().catch(() => ({}));
+  };
+  let markRun = '';
+  let markTask = '';
+  await step('mark as failed: dialog previews, badge updates, page stays responsive', async () => {
+    // The run triggered before the smoke may still be finishing; wait for a
+    // successful task instance to mark.
+    for (let i = 0; i < 30 && !markTask; i++) {
+      const runs = await apiGet('/api/v2/dags/hello/dagRuns?limit=1');
+      markRun = runs?.dag_runs?.[0]?.dag_run_id || '';
+      const tis = markRun ? await apiGet(`/api/v2/dags/hello/dagRuns/${markRun}/taskInstances`) : {};
+      markTask = (tis.task_instances || []).find((ti) => ti.state === 'success')?.task_id || '';
+      if (!markTask) await page.waitForTimeout(1000);
+    }
+    if (!markTask) throw new Error('no successful task instance of hello to mark (did the run finish?)');
+    await page.goto(`${URL}/dags/hello/runs/${markRun}/tasks/${markTask}`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: /Mark Task Instance as/i }).click({ timeout: 5000 });
+    await page.getByRole('menuitem', { name: /failed/i }).first().click({ timeout: 5000 });
+    // The preview lists the affected task instances (a dry run answering a bare
+    // task instance crashed this dialog).
+    await page.getByText(/Affected Tasks: 1/i).first().waitFor({ timeout: 5000 });
+    const streams = [];
+    const onResp = (r) => { if (r.url().includes('/ui/grid/ti_summaries/')) streams.push(r.url()); };
+    page.on('response', onResp);
+    await page.getByRole('button', { name: /^confirm$/i }).last().click({ timeout: 5000 });
+    // Responsive: animation frames keep arriving while the grid re-streams.
+    for (let i = 0; i < 6; i++) {
+      const t0 = Date.now();
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+      if (Date.now() - t0 > 1500) throw new Error(`page froze for ${Date.now() - t0}ms after Mark as failed`);
+      await page.waitForTimeout(300);
+    }
+    page.off('response', onResp);
+    if (streams.length > 4) throw new Error(`Mark as failed re-streamed the grid ${streams.length} times`);
+    // The header badge shows the new state without a reload.
+    const header = page.locator('h2, [role=heading]').filter({ hasText: markTask }).first();
+    const badge = await header.locator('xpath=..').innerText({ timeout: 5000 }).catch(() => '');
+    if (!/Failed/i.test(badge)) throw new Error(`state badge still stale after Mark as failed: "${badge.slice(0, 80)}"`);
+    const ti = await apiGet(`/api/v2/dags/hello/dagRuns/${markRun}/taskInstances/${markTask}`);
+    if (ti.state !== 'failed') throw new Error(`server state after Mark as failed = ${ti.state}`);
+  });
+
+  await step('clear: one attempt tab per try, each loads its own log', async () => {
+    if (!markTask) throw new Error('no task instance from the Mark-as step');
+    await page.getByRole('button', { name: /clear/i }).first().click({ timeout: 5000 });
+    await page.getByRole('button', { name: /^confirm$/i }).last().click({ timeout: 5000 });
+    // Wait for the second attempt to finish (subprocess executor, a few seconds).
+    let ti = {};
+    for (let i = 0; i < 60; i++) {
+      await page.waitForTimeout(1000);
+      ti = await apiGet(`/api/v2/dags/hello/dagRuns/${markRun}/taskInstances/${markTask}`);
+      if (ti.try_number >= 2 && ['success', 'failed'].includes(ti.state)) break;
+    }
+    if (!(ti.try_number >= 2)) throw new Error(`clear did not start a second attempt (try_number ${ti.try_number}, state ${ti.state})`);
+    await page.goto(`${URL}/dags/hello/runs/${markRun}/tasks/${markTask}`, { waitUntil: 'networkidle' });
+    for (const tryNo of [1, 2]) {
+      const tab = page.getByRole('button', { name: new RegExp(`^${tryNo}$`) }).first();
+      if (!(await tab.count())) throw new Error(`no attempt tab for try ${tryNo}`);
+      await tab.click({ timeout: 5000 });
+      // The viewer names the attempt file it rendered; seeing it proves this
+      // tab loaded its own attempt, not the latest one again. (No wait on the
+      // request: the latest attempt is already loaded, and a revisited tab is
+      // served from the query cache.)
+      await page.getByText(`attempt=${tryNo}.log`).first().waitFor({ timeout: 8000 })
+        .catch(() => { throw new Error(`attempt ${tryNo} tab did not render its own log`); });
+    }
+  });
+
+  await step('gantt view renders', async () => {
+    if (!markRun) throw new Error('no run from the Mark-as step');
+    await page.goto(`${URL}/dags/hello/runs/${markRun}`, { waitUntil: 'networkidle' });
+    const ganttRes = page.waitForResponse((r) => r.url().includes('/ui/gantt/'), { timeout: 8000 });
+    await page.getByRole('button', { name: /Show Gantt/i }).click({ timeout: 5000 });
+    const res = await ganttRes;
+    const body = await res.json().catch(() => ({}));
+    if (!Array.isArray(body.task_instances) || body.task_instances.length === 0) {
+      throw new Error('/ui/gantt answered no task_instances');
+    }
+  });
+
+  await step('run clear dialog previews the affected task instances', async () => {
+    if (!markRun) throw new Error('no run from the Mark-as step');
+    await page.goto(`${URL}/dags/hello/runs/${markRun}`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: /clear/i }).first().click({ timeout: 5000 });
+    await page.getByText(/Affected Tasks: [1-9]/i).first().waitFor({ timeout: 5000 });
+    await page.keyboard.press('Escape');
+  });
+
   // The connection "Test" probe must honor the host/port/schema the form sends as
   // SEPARATE fields. Regression guard: it once built {scheme}://{host} from
   // conn_type alone, dropping port+schema, so a reachable endpoint on a non-default
@@ -181,12 +294,6 @@ function finish(code, text, stream = process.stdout) {
   // the real Lite (no route mocking): the details shape, both surfaces render,
   // and a real form submit creates a run carrying the expected conf.
   const paramsDag = 'params_demo';
-  const mintToken = async () => {
-    const auth = await (await page.request.post(URL + '/auth/token',
-      { data: { username: USER, password: PASS } })).json().catch(() => ({}));
-    if (!auth.access_token) throw new Error('POST /auth/token returned no access_token');
-    return auth.access_token;
-  };
 
   await step('params DAG: /details serves typed params in Airflow shape', async () => {
     const tok = await mintToken();

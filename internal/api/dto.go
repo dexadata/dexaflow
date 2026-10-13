@@ -110,11 +110,19 @@ type dagRunDTO struct {
 	BundleVersion      *string         `json:"bundle_version"`
 	Duration           *float64        `json:"duration"`
 	PartitionKey       *string         `json:"partition_key"`
+	// PartitionDate is required by the Airflow 3.3 DAGRunResponse. Dexaflow
+	// has no partitioned runs, so it is always null, which also keeps the run
+	// Details view from rendering an empty Partition Date row.
+	PartitionDate *time.Time `json:"partition_date"`
 }
 
 type dagRunCollectionDTO struct {
 	DagRuns      []dagRunDTO `json:"dag_runs"`
 	TotalEntries int         `json:"total_entries"`
+	// NextCursor and PreviousCursor are Airflow 3.3's cursor paging fields,
+	// set only when the request pages by cursor (see cursorMode).
+	NextCursor     *string `json:"next_cursor,omitempty"`
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
 }
 
 func toDagRunDTO(r domain.DagRun) dagRunDTO {
@@ -220,6 +228,10 @@ type taskInstanceDTO struct {
 type taskInstanceCollectionDTO struct {
 	TaskInstances []taskInstanceDTO `json:"task_instances"`
 	TotalEntries  int               `json:"total_entries"`
+	// NextCursor and PreviousCursor are Airflow 3.3's cursor paging fields,
+	// set only when the request pages by cursor (see cursorMode).
+	NextCursor     *string `json:"next_cursor,omitempty"`
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
 }
 
 func toTaskInstanceDTO(ti domain.TaskInstance) taskInstanceDTO {

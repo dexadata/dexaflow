@@ -19,7 +19,7 @@ OAPI_CODEGEN_VERSION  ?= v2.8.0
 CHANGIE_VERSION       ?= v1.24.0
 
 # ─── Pinned Airflow UI (see ADR 0017 / docs/ui-compatibility.md) ───
-AIRFLOW_UI_VERSION ?= 3.2.1
+AIRFLOW_UI_VERSION ?= 3.3.2
 UI_ASSETS_DIR      := internal/ui/assets
 
 # ─── Paths ───

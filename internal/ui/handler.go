@@ -119,7 +119,7 @@ func homeLinkHTML(label, href string) string {
 		`<span>` + html.EscapeString(label) + `</span></a>` + homeLinkStyle
 }
 
-// Server serves the embedded Airflow 3.2.1 SPA: static assets under a prefix and
+// Server serves the embedded Airflow 3.3.2 SPA: static assets under a prefix and
 // an index.html fallback for client-side routes.
 type Server struct {
 	fsys         fs.FS
