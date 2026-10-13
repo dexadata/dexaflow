@@ -173,6 +173,9 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: applicatio
   "$API/api/v2/connections" >/dev/null || fail "creating the warehouse_pg connection"
 "$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN"
 
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 log "Triggering a run"
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"

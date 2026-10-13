@@ -543,6 +543,10 @@ run_experiment() {
   "$WP_CLI" deploy "$out/dag-project" --server "http://127.0.0.1:$api_port" \
     --token "$token" --skip-build --yes --dag-version "$WP_DAG_VERSION" \
     || exp_die "registering the DAG failed; a trigger would 404, which is exactly the shape this runner exists to fix"
+  # New DAGs are paused at creation, and a manual run of a paused DAG waits
+  # until the DAG is unpaused: every arm would measure runs that never start.
+  "$WP_CLI" admin dags unpause gcp_probe --server "http://127.0.0.1:$api_port" --token "$token" >/dev/null \
+    || exp_die "unpausing gcp_probe failed; every trigger would stay queued and no arm would measure a start"
 
   # An exploratory stop, for mapping what is left instead of discovering it one
   # paid cluster at a time.

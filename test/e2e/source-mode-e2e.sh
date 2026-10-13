@@ -182,6 +182,9 @@ register_ok() {
 
 trigger() {
   local rid
+  # New DAGs are paused at creation, and a manual run of a paused DAG waits
+  # until the DAG is unpaused.
+  unpause_dag "$API" "$1" "$TOKEN" || fail "$1: unpausing failed"
   rid="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
     -d '{}' "$API/api/v2/dags/$1/dagRuns" | jq -r '.dag_run_id')"
   [ -n "$rid" ] && [ "$rid" != "null" ] || fail "$1: no dag_run_id returned"
