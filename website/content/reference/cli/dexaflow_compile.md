@@ -24,6 +24,7 @@ dexaflow compile [path] [flags]
       --image string         container image reference for the DAG
   -o, --output string        path to write the compiled dag.json (default <project>/dag.json)
       --parser-cmd string    override the parser command (default from config)
+      --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --push                 push the built image to its registry (requires --build)
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
 ```

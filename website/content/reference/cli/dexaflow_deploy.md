@@ -23,6 +23,7 @@ dexaflow deploy [path | dag_id] [flags]
       --follow               follow the run: print task state changes and logs, the UI link, and exit with the run's result
       --force                build, push and register even when the default content label is already deployed
   -h, --help                 help for deploy
+      --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
       --server string        control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py

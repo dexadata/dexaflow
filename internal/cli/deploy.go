@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -63,6 +64,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
+	addPlatformFlag(cmd)
 	return cmd
 }
 
@@ -451,6 +453,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 		origin = labelExplicit
 	}
 	output := filepath.Join(dir, "dag.json")
+	var built build.Result
 	co := compileOptions{
 		output:     output,
 		builder:    o.builder,
@@ -458,6 +461,9 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 		dagVersion: o.dagVersion,
 		build:      !o.skipBuild,
 		push:       !o.skipBuild,
+		// printDeploySettings showed the platforms; the build pins its push.
+		settingsShown: true,
+		built:         &built,
 	}
 	// Resolved here rather than inside runCompile because the digest lookup
 	// below needs the same reference; runCompile then takes both as given.
@@ -478,7 +484,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 		return cerr
 	}
 
-	digestRef, derr := imageDigest(cmd, o.builder, image)
+	digestRef, derr := deployedDigest(cmd, o.builder, image, built)
 	if derr != nil {
 		return derr
 	}
