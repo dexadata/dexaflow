@@ -341,7 +341,7 @@ func rollbackChange() domain.CurrentVersionChange {
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	return domain.CurrentVersionChange{
 		Changed: true,
-		From:    domain.DagVersion{ID: "id-2", VersionNumber: 2, Version: "v2", CreatedAt: at, ImageReference: "img@sha256:bb", SpecHash: "h2", CreatedBy: "ci@example.com"},
+		From:    domain.DagVersion{ID: "id-2", VersionNumber: 2, Version: "v2", CreatedAt: at, ImageReference: "img@sha256:bb", SpecHash: "h2", CreatedBy: "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"},
 		To:      domain.DagVersion{ID: "id-1", VersionNumber: 1, Version: "v1", CreatedAt: at, ImageReference: "img@sha256:aa", SpecHash: "h1", IsCurrent: true},
 	}
 }
@@ -470,5 +470,38 @@ func TestSetCurrentVersionNeedsWriteOnDags(t *testing.T) {
 	}
 	if len(repo.selections) != 0 {
 		t.Errorf("a reader reached the repository: %+v", repo.selections)
+	}
+}
+
+// TestSetCurrentVersionCountsAMisfitAtItsOwnStage: a tolerated misfit found
+// while making a version current is counted under set_current, not register,
+// so the metric tells a rollback from a deploy.
+func TestSetCurrentVersionCountsAMisfitAtItsOwnStage(t *testing.T) {
+	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{
+		CPU: "250m", Memory: "512Mi", Enforce: domain.UnitEnforceWarn, MaxSize: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	misfits := &fakeUnitMisfits{}
+	repo := &fakeVersionRepo{change: rollbackChange(), specs: map[string]domain.DAGSpec{"v1": {
+		SchemaVersion: "1.0", DagID: "etl", DagVersion: "v1", Image: "img@sha256:aa",
+		Tasks: []domain.TaskSpec{{TaskID: "train", Type: "python", Entrypoint: "dag:a",
+			Resources: &domain.Resources{Limits: &domain.ResourceQuantity{CPU: "2"}}}},
+	}}}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Versions:      repo,
+		ResourceUnit:  unit,
+		UnitMisfits:   misfits,
+	})
+	if rec := authGet(srv, http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`); rec.Code != http.StatusOK {
+		t.Fatalf("set current = %d %s", rec.Code, rec.Body.String())
+	}
+	if len(misfits.stages) != 1 || misfits.stages[0] != "set_current" {
+		t.Errorf("misfits recorded = %v, want one at set_current", misfits.stages)
 	}
 }

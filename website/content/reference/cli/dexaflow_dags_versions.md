@@ -11,7 +11,7 @@ List a DAG's registered versions, marking the current one.
 
 ### Synopsis
 
-Lists the versions registered for a DAG, newest first: the version number, the label (bundle_version), a * on the current version (the one new runs use), when and by whom it was registered, and the image digest it runs. Make another version current with `dexaflow rollback`.
+Lists the versions registered for a DAG, newest first: the version number, the label (bundle_version), a * on the current version (the one new runs use), when it was registered and the id of the user who registered it (`dexaflow admin users list` maps ids to emails), and the image digest it runs. Make another version current with `dexaflow rollback`.
 
 ```
 dexaflow dags versions <dag_id> [flags]

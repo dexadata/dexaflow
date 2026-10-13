@@ -1280,6 +1280,10 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	} else if !errors.Is(verr, pgx.ErrNoRows) {
 		return false, fmt.Errorf("checking existing version: %w", verr)
 	}
+	actor, err := tenantActor(ctx, qtx, tid, reg.actor)
+	if err != nil {
+		return false, err
+	}
 	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
 		TenantID:       tid,
@@ -1287,7 +1291,7 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 		ImageReference: spec.Image,
 		Spec:           reg.specJSON,
 		SpecHash:       specHash,
-		CreatedBy:      reg.actor,
+		CreatedBy:      actor,
 	})
 	if err != nil {
 		// A collision on dag_versions_unique (dag_id, version) means the same
@@ -1306,7 +1310,7 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
 		return false, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := writeDagAudit(ctx, qtx, tid, reg.actor, "dag.version.register", spec.DagID, map[string]any{
+	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, map[string]any{
 		"version": spec.DagVersion, "image": spec.Image, "spec_hash": specHash,
 	}); err != nil {
 		return false, err
@@ -1332,6 +1336,23 @@ func actorUUID(userID string) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return u
+}
+
+// tenantActor returns actor when it is a user of the tenant, else a null UUID:
+// a token whose user row is gone, or names another tenant, records no user
+// instead of failing the write on a foreign key.
+func tenantActor(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID) (pgtype.UUID, error) {
+	if !actor.Valid {
+		return pgtype.UUID{}, nil
+	}
+	id, err := qtx.GetTenantUserID(ctx, queries.GetTenantUserIDParams{ID: actor, TenantID: tid})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, nil
+	}
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("looking up the acting user: %w", err)
+	}
+	return id, nil
 }
 
 // writeDagAudit records action on dagID by actor, with fields as metadata.

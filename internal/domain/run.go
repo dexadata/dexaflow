@@ -46,8 +46,10 @@ type DagVersion struct {
 	// IsCurrent reports whether this is the DAG's current version: the one new
 	// runs are created with.
 	IsCurrent bool
-	// CreatedBy is the email of the user who registered the version, or ""
-	// when the register had no user (Lite's dev principal, a direct call).
+	// CreatedBy is the id of the user who registered the version, or "" when
+	// the register had no user of the tenant (Lite's dev principal, a direct
+	// call, a deleted user). It is an id, not an email: every reader of the
+	// DAG sees it.
 	CreatedBy string
 }
 

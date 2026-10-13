@@ -269,6 +269,9 @@ type Querier interface {
 	GetRoleIDForUserTenant(ctx context.Context, arg GetRoleIDForUserTenantParams) (pgtype.UUID, error)
 	GetTenantByName(ctx context.Context, name string) (GetTenantByNameRow, error)
 	GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error)
+	// The id of a user of the tenant: no row when the user is gone or belongs to
+	// another tenant, so a stale token's subject records no creator.
+	GetTenantUserID(ctx context.Context, arg GetTenantUserIDParams) (pgtype.UUID, error)
 	GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (GetUserByEmailRow, error)
 	// The by-id lookup backing the per-request authz reload. Returns the tenant
 	// name (not the uuid) so the reconstructed principal matches the login path's
@@ -387,8 +390,9 @@ type Querier interface {
 	ListDagRunsByDagAfter(ctx context.Context, arg ListDagRunsByDagAfterParams) ([]ListDagRunsByDagAfterRow, error)
 	// See GetDagRunWithVersion. One join rather than a lookup per row.
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
-	// created_by is the registering user's email (empty when the register had no
-	// user). is_current marks the version new runs are created with.
+	// created_by is the registering user's id (empty when the register had no
+	// user), not their email: any reader of the DAG sees it. is_current marks the
+	// version new runs are created with.
 	ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error)
 	ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, error)
 	// The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,

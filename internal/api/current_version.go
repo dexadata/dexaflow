@@ -69,7 +69,7 @@ func setCurrentVersionHandler(repo DagVersionRepository, admission specAdmission
 		}
 		dagID := c.Param("dag_id")
 		admit := func(spec domain.DAGSpec) error {
-			if aerr := admission.check(&spec); aerr != nil {
+			if aerr := admission.check(&spec, stageSetCurrent); aerr != nil {
 				return admissionError{aerr}
 			}
 			return nil

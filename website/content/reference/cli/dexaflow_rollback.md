@@ -11,7 +11,7 @@ Make an earlier registered version of a DAG current again.
 
 ### Synopsis
 
-Makes a registered version of the DAG the one new runs use, with that version's schedule. Without --to it is the version registered before the current one; --to takes a label (bundle_version) or a version number from `dexaflow dags versions`. Runs that already exist keep the version they started with, and the DAG stays paused or unpaused as it is. Nothing is rebuilt: the version's pinned image is used as registered.
+Makes a registered version of the DAG the one new runs use, with that version's schedule. Without --to it is the version registered before the current one; --to takes a label (bundle_version) or a version number from `dexaflow dags versions`, matched as a label first and then as a number. Runs that already exist keep the version they started with, and the DAG stays paused or unpaused as it is. Nothing is rebuilt: the version's pinned image is used as registered.
 
 ```
 dexaflow rollback <dag_id> [flags]
@@ -22,7 +22,7 @@ dexaflow rollback <dag_id> [flags]
 ```
   -h, --help            help for rollback
       --server string   control plane base URL (default: config server_url)
-      --to string       version to make current: a label or a version number (default: the one before the current version)
+      --to string       version to make current: matched first as a label, then as a version number (default: the one before the current version)
       --token string    JWT bearer token (default: config token)
 ```
 

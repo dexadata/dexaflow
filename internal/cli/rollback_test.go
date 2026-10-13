@@ -61,8 +61,8 @@ func threeVersions() *versionsServer {
 		}
 	}
 	return &versionsServer{versions: []map[string]any{
-		v(3, "v1.2.0-ccc", true, "ci@example.com"),
-		v(2, "v1.1.0-bbb", false, "ana@example.com"),
+		v(3, "v1.2.0-ccc", true, "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"),
+		v(2, "v1.1.0-bbb", false, "0b9d8c7e-6f5a-4b3c-8d2e-1a0f9e8d7c6b"),
 		v(1, "v1.0.0-aaa", false, nil),
 	}}
 }
@@ -79,12 +79,12 @@ func TestDagsVersionsPrintsTheTable(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("want a header and 3 rows, got:\n%s", out)
 	}
-	for _, want := range []string{"VERSION", "LABEL", "CURRENT", "CREATED", "CREATED BY", "IMAGE"} {
+	for _, want := range []string{"VERSION", "LABEL", "CURRENT", "CREATED", "CREATOR ID", "IMAGE"} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("header %q misses %s", lines[0], want)
 		}
 	}
-	if !strings.Contains(lines[1], "v1.2.0-ccc") || !strings.Contains(lines[1], "*") || !strings.Contains(lines[1], "ci@example.com") ||
+	if !strings.Contains(lines[1], "v1.2.0-ccc") || !strings.Contains(lines[1], "*") || !strings.Contains(lines[1], "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a") ||
 		!strings.Contains(lines[1], "sha256:dddddddddddd") || strings.Contains(lines[1], strings.Repeat("d", 13)) {
 		t.Errorf("current row = %q, want label, marker, user and a short digest", lines[1])
 	}

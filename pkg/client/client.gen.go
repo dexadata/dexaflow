@@ -361,7 +361,7 @@ type DagVersion struct {
 	BundleVersion *string    `json:"bundle_version,omitempty"`
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 
-	// CreatedBy Dexaflow. Email of the user who registered the version; null when none was recorded.
+	// CreatedBy Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
 	CreatedBy      *string `json:"created_by,omitempty"`
 	DagDisplayName *string `json:"dag_display_name,omitempty"`
 	DagId          *string `json:"dag_id,omitempty"`

@@ -18,36 +18,33 @@ import (
 // that version from the next scheduler tick; runs that already exist keep the
 // version they were created with (dag_runs.dag_version_id is never rewritten).
 //
-// It runs in one transaction under the same row lock as RegisterDagVersion, so
-// it is serialized with registers of the DAG, and it applies the target
-// version's metadata (schedule, catchup, start_date, max_active_runs,
-// description, owner, tags) to the dags row together with current_version_id.
-// is_paused is never changed: pausing is an operator decision, not a deploy one.
+// The target spec must first pass what a register of it would have to pass
+// today: its declared Variables and Connections, the tenant's limits, and
+// admit (the caller's checks, such as the execution policy); a refusal is
+// returned as is. Like RegisterDagVersion, these checks run before the
+// transaction, on reads of their own, so the transaction never waits for a
+// second connection while it holds one and the DAG's row lock.
 //
-// Before anything is written the target spec must pass what a register of it
-// would have to pass today: its declared Variables and Connections, the
-// tenant's limits, and admit (the caller's checks, such as the execution
-// policy); a refusal is returned as is. A target that is already current
-// changes nothing and records nothing (Changed is false). An unknown DAG, an
-// unknown version and a DAG of another tenant are domain.ErrNotFound. The
-// change is audited as dag.version.set_current by actorUserID, with the from
-// and to versions.
+// The write runs in one transaction under the same row lock as
+// RegisterDagVersion, so it is serialized with registers of the DAG. Under
+// the lock the target is resolved again and must be the version that was
+// checked (else domain.ErrConflict); then the target version's metadata
+// (schedule, catchup, start_date, max_active_runs, description, owner, tags) is
+// applied to the dags row together with current_version_id. is_paused is never
+// changed: pausing is an operator decision, not a deploy one.
+//
+// A target that is already current changes nothing and records nothing
+// (Changed is false). An unknown DAG, an unknown version and a DAG of another
+// tenant are domain.ErrNotFound. The change is audited as
+// dag.version.set_current by actorUserID, with the from and to versions.
 func (r *Repository) SetCurrentDagVersion(ctx context.Context, tenant, dagID string, sel domain.DagVersionSelector, actorUserID string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return domain.CurrentVersionChange{}, err
 	}
-	check := func(spec domain.DAGSpec) error {
-		if verr := r.validateDeclaredSecrets(ctx, tid, spec); verr != nil {
-			return verr
-		}
-		if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
-			return lerr
-		}
-		if admit != nil {
-			return admit(spec)
-		}
-		return nil
+	checked, err := r.checkSetCurrentTarget(ctx, tid, dagID, sel, admit)
+	if err != nil || !checked.Changed {
+		return checked, err
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -56,7 +53,7 @@ func (r *Repository) SetCurrentDagVersion(ctx context.Context, tenant, dagID str
 	// Rollback after a successful commit is a no-op; on any early return it
 	// undoes everything this call wrote.
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
-	change, err := setCurrentDagVersionTx(ctx, r.q.WithTx(tx), tid, dagID, sel, actorUUID(actorUserID), check)
+	change, err := setCurrentDagVersionTx(ctx, r.q.WithTx(tx), tid, dagID, sel, checked.To, actorUUID(actorUserID))
 	if err != nil || !change.Changed {
 		return change, err
 	}
@@ -66,10 +63,36 @@ func (r *Repository) SetCurrentDagVersion(ctx context.Context, tenant, dagID str
 	return change, nil
 }
 
-// setCurrentDagVersionTx is the body of SetCurrentDagVersion, run on a
-// transaction: lock the DAG, resolve the current and target versions, check
-// the target, then point the DAG at it and apply its metadata.
-func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, sel domain.DagVersionSelector, actor pgtype.UUID, check func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
+// checkSetCurrentTarget resolves the version sel names, without a lock, and
+// runs the register checks on its spec. A target that is already current is
+// returned unchanged and unchecked: nothing will be written.
+func (r *Repository) checkSetCurrentTarget(ctx context.Context, tid pgtype.UUID, dagID string, sel domain.DagVersionSelector, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
+	change, target, err := resolveCurrentVersionChange(ctx, r.q, tid, dagID, sel)
+	if err != nil || !change.Changed {
+		return change, err
+	}
+	spec, err := versionSpec(ctx, r.q, tid, target)
+	if err != nil {
+		return domain.CurrentVersionChange{}, err
+	}
+	if verr := r.validateDeclaredSecrets(ctx, tid, spec); verr != nil {
+		return domain.CurrentVersionChange{}, verr
+	}
+	if lerr := checkRegistrationLimits(ctx, r.q, tid, spec); lerr != nil {
+		return domain.CurrentVersionChange{}, lerr
+	}
+	if admit != nil {
+		if aerr := admit(spec); aerr != nil {
+			return domain.CurrentVersionChange{}, aerr
+		}
+	}
+	return change, nil
+}
+
+// setCurrentDagVersionTx is the write of SetCurrentDagVersion, run on a
+// transaction: lock the DAG, resolve the versions again, confirm the target is
+// the checked one, then point the DAG at it and apply its metadata.
+func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, sel domain.DagVersionSelector, checked domain.DagVersion, actor pgtype.UUID) (domain.CurrentVersionChange, error) {
 	dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -77,20 +100,20 @@ func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtyp
 		}
 		return domain.CurrentVersionChange{}, fmt.Errorf("locking dag: %w", err)
 	}
-	rows, err := qtx.ListDagVersions(ctx, queries.ListDagVersionsParams{TenantID: tid, DagID: dagID})
+	change, target, err := resolveCurrentVersionChange(ctx, qtx, tid, dagID, sel)
 	if err != nil {
-		return domain.CurrentVersionChange{}, fmt.Errorf("listing dag versions: %w", err)
+		return domain.CurrentVersionChange{}, err
 	}
-	change, target, err := pickCurrentVersionChange(dagID, rows, sel)
-	if err != nil || !change.Changed {
-		return change, err
+	if change.To.ID != checked.ID || change.To.SpecHash != checked.SpecHash {
+		return domain.CurrentVersionChange{}, domain.Safef(domain.ErrConflict,
+			"the versions of dag %q changed while the rollback was checked; run it again", dagID)
+	}
+	if !change.Changed {
+		return change, nil
 	}
 	spec, err := versionSpec(ctx, qtx, tid, target)
 	if err != nil {
 		return domain.CurrentVersionChange{}, err
-	}
-	if cerr := check(spec); cerr != nil {
-		return domain.CurrentVersionChange{}, cerr
 	}
 	meta := dagMetadataOf(spec)
 	meta.ID, meta.TenantID = dag.ID, tid
@@ -100,15 +123,39 @@ func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtyp
 	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: target, TenantID: tid}); err != nil {
 		return domain.CurrentVersionChange{}, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.set_current", dagID, map[string]any{
-		"from_version": change.From.Version, "from_version_number": change.From.VersionNumber,
-		"to_version": change.To.Version, "to_version_number": change.To.VersionNumber,
-		"image": change.To.ImageReference, "spec_hash": change.To.SpecHash,
-	}); err != nil {
+	if err := auditSetCurrent(ctx, qtx, tid, actor, dagID, change); err != nil {
 		return domain.CurrentVersionChange{}, err
 	}
 	change.From.IsCurrent, change.To.IsCurrent = false, true
 	return change, nil
+}
+
+// auditSetCurrent records change as dag.version.set_current by actor (a user
+// of the tenant, else no user).
+func auditSetCurrent(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID, dagID string, change domain.CurrentVersionChange) error {
+	user, err := tenantActor(ctx, qtx, tid, actor)
+	if err != nil {
+		return err
+	}
+	return writeDagAudit(ctx, qtx, tid, user, "dag.version.set_current", dagID, map[string]any{
+		"from_version": change.From.Version, "from_version_number": change.From.VersionNumber,
+		"to_version": change.To.Version, "to_version_number": change.To.VersionNumber,
+		"image": change.To.ImageReference, "spec_hash": change.To.SpecHash,
+	})
+}
+
+// resolveCurrentVersionChange lists the DAG's versions with q and picks the
+// current one and the one sel names. A DAG with no version (or no DAG) is
+// domain.ErrNotFound.
+func resolveCurrentVersionChange(ctx context.Context, q *queries.Queries, tid pgtype.UUID, dagID string, sel domain.DagVersionSelector) (domain.CurrentVersionChange, pgtype.UUID, error) {
+	rows, err := q.ListDagVersions(ctx, queries.ListDagVersionsParams{TenantID: tid, DagID: dagID})
+	if err != nil {
+		return domain.CurrentVersionChange{}, pgtype.UUID{}, fmt.Errorf("listing dag versions: %w", err)
+	}
+	if len(rows) == 0 {
+		return domain.CurrentVersionChange{}, pgtype.UUID{}, domain.Safef(domain.ErrNotFound, "dag %q not found", dagID)
+	}
+	return pickCurrentVersionChange(dagID, rows, sel)
 }
 
 // pickCurrentVersionChange finds, in a DAG's listed versions, the current one
@@ -137,8 +184,8 @@ func pickCurrentVersionChange(dagID string, rows []queries.ListDagVersionsRow, s
 }
 
 // versionSpec reads and decodes the spec of version id, in tenant tid.
-func versionSpec(ctx context.Context, qtx *queries.Queries, tid, id pgtype.UUID) (domain.DAGSpec, error) {
-	row, err := qtx.GetDagVersionInTenant(ctx, queries.GetDagVersionInTenantParams{ID: id, TenantID: tid})
+func versionSpec(ctx context.Context, q *queries.Queries, tid, id pgtype.UUID) (domain.DAGSpec, error) {
+	row, err := q.GetDagVersionInTenant(ctx, queries.GetDagVersionInTenantParams{ID: id, TenantID: tid})
 	if err != nil {
 		return domain.DAGSpec{}, fmt.Errorf("loading dag version: %w", mapNotFound(err))
 	}

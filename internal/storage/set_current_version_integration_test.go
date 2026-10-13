@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage"
 )
@@ -330,8 +333,8 @@ func TestRegisterDagVersionByRecordsProvenance(t *testing.T) {
 	}
 
 	v := versionByLabel(t, repo, "default", dagID, "v1")
-	if v.CreatedBy != user.Email || v.ImageReference != spec.Image || v.SpecHash != hash || !v.IsCurrent {
-		t.Errorf("listed version = %+v, want created_by %s, image %s, hash %s, current", v, user.Email, spec.Image, hash)
+	if v.CreatedBy != user.ID || v.ImageReference != spec.Image || v.SpecHash != hash || !v.IsCurrent {
+		t.Errorf("listed version = %+v, want created_by %s, image %s, hash %s, current", v, user.ID, spec.Image, hash)
 	}
 	entry := latestAudit(t, repo, dagID, "dag.version.register")
 	if entry.Owner != user.Email {
@@ -343,5 +346,98 @@ func TestRegisterDagVersionByRecordsProvenance(t *testing.T) {
 	}
 	if meta["version"] != "v1" || meta["image"] != spec.Image || meta["spec_hash"] != hash {
 		t.Errorf("audit metadata = %s, want version, image and spec_hash", entry.Extra)
+	}
+}
+
+// TestSetCurrentDagVersionOnAOneConnectionPool: a rollback holds one
+// connection at a time, so it completes on a pool of one. Its checks used to
+// query the pool while the transaction held the only connection and the DAG's
+// row lock, and waited until the deadline.
+func TestSetCurrentDagVersionOnAOneConnectionPool(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL must point at a migrated database for integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: url, MaxOpenConns: 1})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pg.Close)
+	repo := storage.NewRepository(pg)
+	dagID, v1, _ := seedTwoVersions(t, repo, "setcur_onepool")
+	change, err := repo.SetCurrentDagVersion(ctx, "default", dagID, domain.DagVersionSelector{Version: "v1"}, "", admitAll)
+	if err != nil {
+		t.Fatalf("rollback on a one-connection pool: %v", err)
+	}
+	if !change.Changed || change.To.Version != v1.DagVersion {
+		t.Errorf("change = %+v, want v2 -> v1", change)
+	}
+}
+
+// TestSetCurrentDagVersionSerializesWithRegisters: a rollback racing a
+// register of the same DAG never leaves the dags row describing a version
+// other than the current one, whichever commits last.
+func TestSetCurrentDagVersionSerializesWithRegisters(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	for round := 0; round < 10; round++ {
+		dagID, _, _ := seedTwoVersions(t, repo, fmt.Sprintf("setcur_race_%d", round))
+		v3 := registerTxSpec(dagID, "v3", "ccc", 11, false)
+		hash, err := v3.CanonicalHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		var rerr, serr error
+		start := make(chan struct{})
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, rerr = repo.RegisterDagVersion(ctx, "default", v3, hash)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, serr = repo.SetCurrentDagVersion(ctx, "default", dagID, domain.DagVersionSelector{Version: "v1"}, "", admitAll)
+		}()
+		close(start)
+		wg.Wait()
+		if rerr != nil || serr != nil {
+			t.Fatalf("round %d: register %v, rollback %v", round, rerr, serr)
+		}
+		got := readDagMetadata(t, ctx, repo, dagID)
+		want := map[string]domain.DAGSpec{"v1": registerTxSpec(dagID, "v1", "a", 3, false), "v3": v3}[got.CurrentVersion]
+		if want.DagID == "" {
+			t.Fatalf("round %d: current version %q is neither v1 nor v3", round, got.CurrentVersion)
+		}
+		if !reflect.DeepEqual(got, specMetadata(t, want)) {
+			t.Fatalf("round %d: dags row does not describe current %s:\ngot  %+v\nwant %+v", round, want.DagVersion, got, specMetadata(t, want))
+		}
+	}
+}
+
+// TestRegisterDagVersionByAMissingUser: a register on behalf of a user id
+// with no users row in the tenant (a deleted user's still-valid token)
+// registers with no creator instead of failing on the foreign key.
+func TestRegisterDagVersionByAMissingUser(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	dagID := fmt.Sprintf("provenance_gone_%d", time.Now().UnixNano())
+	spec := registerTxSpec(dagID, "v1", "a", 3, false)
+	hash, err := spec.CanonicalHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const gone = "00000000-0000-4000-8000-000000000001"
+	if created, err := repo.RegisterDagVersionBy(ctx, "default", gone, spec, hash); err != nil || !created {
+		t.Fatalf("register by a missing user: created=%v err=%v", created, err)
+	}
+	if v := versionByLabel(t, repo, "default", dagID, "v1"); v.CreatedBy != "" {
+		t.Errorf("created_by = %q, want empty", v.CreatedBy)
+	}
+	registerTx(t, ctx, repo, registerTxSpec(dagID, "v2", "bb", 7, true))
+	if _, err := repo.SetCurrentDagVersion(ctx, "default", dagID, domain.DagVersionSelector{Version: "v1"}, gone, admitAll); err != nil {
+		t.Fatalf("rollback by a missing user: %v", err)
 	}
 }

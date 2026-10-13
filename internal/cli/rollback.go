@@ -26,9 +26,9 @@ func newDagsVersionsCommand() *cobra.Command {
 		Use:   "versions <dag_id>",
 		Short: "List a DAG's registered versions, marking the current one.",
 		Long: "Lists the versions registered for a DAG, newest first: the version number, the label " +
-			"(bundle_version), a * on the current version (the one new runs use), when and by whom it " +
-			"was registered, and the image digest it runs. Make another version current with " +
-			"`dexaflow rollback`.",
+			"(bundle_version), a * on the current version (the one new runs use), when it was registered and " +
+			"the id of the user who registered it (`dexaflow admin users list` maps ids to emails), and " +
+			"the image digest it runs. Make another version current with `dexaflow rollback`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newAPIClient(cmd, serverURL, token)
@@ -55,7 +55,8 @@ func newRollbackCommand() *cobra.Command {
 		Short: "Make an earlier registered version of a DAG current again.",
 		Long: "Makes a registered version of the DAG the one new runs use, with that version's " +
 			"schedule. Without --to it is the version registered before the current one; --to takes a " +
-			"label (bundle_version) or a version number from `dexaflow dags versions`. Runs that already " +
+			"label (bundle_version) or a version number from `dexaflow dags versions`, matched as a label first " +
+			"and then as a number. Runs that already " +
 			"exist keep the version they started with, and the DAG stays paused or unpaused as it is. " +
 			"Nothing is rebuilt: the version's pinned image is used as registered.",
 		Args: cobra.ExactArgs(1),
@@ -78,7 +79,7 @@ func newRollbackCommand() *cobra.Command {
 		},
 	}
 	addServerFlags(cmd, &serverURL, &token)
-	cmd.Flags().StringVar(&to, "to", "", "version to make current: a label or a version number (default: the one before the current version)")
+	cmd.Flags().StringVar(&to, "to", "", "version to make current: matched first as a label, then as a version number (default: the one before the current version)")
 	return cmd
 }
 
@@ -151,7 +152,7 @@ func printVersions(w io.Writer, versions []listedVersion) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "VERSION\tLABEL\tCURRENT\tCREATED\tCREATED BY\tIMAGE"); err != nil {
+	if _, err := fmt.Fprintln(tw, "VERSION\tLABEL\tCURRENT\tCREATED\tCREATOR ID\tIMAGE"); err != nil {
 		return err
 	}
 	for _, v := range versions {

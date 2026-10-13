@@ -147,7 +147,7 @@ func TestDagDetailsPopulatesBundleVersion(t *testing.T) {
 // (#1702), and a version with no recorded user has created_by null.
 func TestDagVersionsExposeProvenance(t *testing.T) {
 	srv := versionsServer([]domain.DAG{{DagID: "etl"}}, []domain.DagVersion{
-		{ID: "v2", VersionNumber: 2, Version: "b", ImageReference: "img@sha256:bb", SpecHash: "h2", IsCurrent: true, CreatedBy: "ci@example.com"},
+		{ID: "v2", VersionNumber: 2, Version: "b", ImageReference: "img@sha256:bb", SpecHash: "h2", IsCurrent: true, CreatedBy: "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"},
 		{ID: "v1", VersionNumber: 1, Version: "a", ImageReference: "img@sha256:aa", SpecHash: "h1"},
 	})
 	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagVersions", "")
@@ -161,7 +161,7 @@ func TestDagVersionsExposeProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	cur, old := col.DagVersions[0], col.DagVersions[1]
-	if cur["image"] != "img@sha256:bb" || cur["spec_hash"] != "h2" || cur["is_current"] != true || cur["created_by"] != "ci@example.com" {
+	if cur["image"] != "img@sha256:bb" || cur["spec_hash"] != "h2" || cur["is_current"] != true || cur["created_by"] != "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a" {
 		t.Errorf("current version = %v", cur)
 	}
 	if v, ok := old["created_by"]; !ok || v != nil || old["is_current"] != false {

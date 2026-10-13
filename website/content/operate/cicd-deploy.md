@@ -169,8 +169,9 @@ dexaflow rollback my_pipeline --to v1.4.0-3fa2c1   # or to a label (or a version
 ```
 
 `dexaflow dags versions` lists each version, newest first: its number, its
-label, a `*` on the current one, when and by whom it was registered, and the
-short image digest. `dexaflow rollback` prints the version it moved from and
+label, a `*` on the current one, when it was registered, the id of the user
+who registered it (`dexaflow admin users list` maps ids to emails), and the
+short image digest. `--to` matches a label first, then a version number. `dexaflow rollback` prints the version it moved from and
 the one it moved to, and takes `--server` and `--token` like the other
 commands. Both read and write through the API: the listing is
 `GET /api/v2/dags/{dag_id}/dagVersions`, and the rollback is

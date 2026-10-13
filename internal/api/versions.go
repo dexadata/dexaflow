@@ -45,20 +45,27 @@ type unitGate struct {
 	logger  *slog.Logger
 }
 
-// check returns the refusal for spec, after logging and counting every misfit
-// tolerated under enforce: warn.
-func (g unitGate) check(spec *domain.DAGSpec) error {
+// The stages a spec is admitted at: registering it, or making a registered
+// version current again. They label the misfit metric and the warning.
+const (
+	stageRegister   = "register"
+	stageSetCurrent = "set_current"
+)
+
+// check returns the refusal for spec, after logging and counting, at stage,
+// every misfit tolerated under enforce: warn.
+func (g unitGate) check(spec *domain.DAGSpec, stage string) error {
 	warned, refused := g.unit.CheckSpec(spec)
 	if refused != nil {
 		return refused
 	}
 	for _, w := range warned {
 		if g.logger != nil {
-			g.logger.Warn("registering a task that does not fit its size under executor.unit.enforce=warn",
-				"dag", logSafe(spec.DagID), "version", logSafe(spec.DagVersion), "error", logSafe(w.Error()))
+			g.logger.Warn("admitting a task that does not fit its size under executor.unit.enforce=warn",
+				"stage", stage, "dag", logSafe(spec.DagID), "version", logSafe(spec.DagVersion), "error", logSafe(w.Error()))
 		}
 		if g.misfits != nil {
-			g.misfits.RecordUnitMisfit("register")
+			g.misfits.RecordUnitMisfit(stage)
 		}
 	}
 	return nil
@@ -74,11 +81,12 @@ type specAdmission struct {
 }
 
 // check returns the first refusal of spec; each one is the client's to fix.
-func (a specAdmission) check(spec *domain.DAGSpec) error {
+// stage is stageRegister or stageSetCurrent.
+func (a specAdmission) check(spec *domain.DAGSpec, stage string) error {
 	if err := spec.Validate(); err != nil {
 		return err
 	}
-	if err := a.unit.check(spec); err != nil {
+	if err := a.unit.check(spec, stage); err != nil {
 		return err
 	}
 	if err := domain.CheckSourceMode(a.sourceModeImage, spec); err != nil {
@@ -108,7 +116,7 @@ func registerVersionHandler(repo DagVersionRepository, admission specAdmission) 
 			AbortProblem(c, http.StatusBadRequest, "bad request", "dag_id in path does not match spec")
 			return
 		}
-		if err := admission.check(&spec); err != nil {
+		if err := admission.check(&spec, stageRegister); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", err.Error())
 			return
 		}

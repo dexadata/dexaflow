@@ -1154,7 +1154,7 @@ components:
         created_by:
           type: string
           nullable: true
-          description: Dexaflow. Email of the user who registered the version; null when none was recorded.
+          description: Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
 
     DagCurrentVersionRequest:
       type: object
