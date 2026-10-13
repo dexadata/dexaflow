@@ -68,14 +68,25 @@ that source.
 
 Several platforms (`--platform linux/amd64,linux/arm64`) need a tool that
 pushes one image per platform under one manifest list. The `local-daemon`
-builder hands the list to the tool as is: docker with the
-containerd image store enabled builds and pushes it, and `deploy` registers the manifest list's
-digest. docker's default image store and podman refuse it; the build then
-fails with the tool's own error and a hint that says how to build one platform:
+builder hands the list to the tool as is (`<tool> build --platform
+linux/amd64,linux/arm64`, then `<tool> push`); docker with the containerd
+image store enabled builds and pushes it as one manifest list.
+
+Whatever the tool, a multi-platform push is then checked before anything is
+registered: the CLI reads the pushed digest with `<tool> inspect` and runs
+`<tool> manifest inspect <image>@<digest>`, and the digest must be a manifest
+list holding an image for every requested platform. A tool can succeed at
+build and push and still leave a partial image, so the build fails when the
+build itself fails, when the list misses a platform, and when
+`manifest inspect` cannot run or answers something that is not a list. The
+error keeps the tool's message and says how to build one platform:
 
 ```text
-Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with the containerd image store enabled. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: building image ...
+Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with the containerd image store enabled. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: the pushed image ghcr.io/your-org/first-pro-dag@sha256:... is not a manifest list holding every platform; missing linux/arm64
 ```
+
+`compile --build --push` runs the same check; a one-platform build is a plain
+image and is not checked.
 
 ## The local daemon fallback
 

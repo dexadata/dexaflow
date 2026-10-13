@@ -209,9 +209,14 @@ before it builds any. Several platforms are built by a builder that pushes one
 image per platform under one index (paths 1 to 4, and buildx in path 5). The
 local daemon passes the list to the tool unchanged: docker with the containerd
 image store builds and pushes it as a manifest list, and the digest of that
-list is registered. A tool that refuses the list fails the build, and the
-error says how to build one platform, naming `build.platforms` first because
-not every command that builds has `--platform`.
+list is registered. Because a tool can succeed at build and push and still
+leave a partial image (podman without `--manifest` keeps the last platform
+under the tag; a push without all platforms sends part of a list), the pushed
+digest is then checked with `<tool> manifest inspect` to be a list holding
+every requested platform, and anything the check cannot confirm fails the
+build before anything is registered. A failure, in the build or the check,
+says how to build one platform, naming `build.platforms` first because not
+every command that builds has `--platform`.
 
 ### 6. Scope of 0.5.4
 

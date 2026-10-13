@@ -9,10 +9,20 @@ import (
 	"testing"
 )
 
+// amd64AndArm64 is the `manifest inspect` answer for a list holding both.
+const amd64AndArm64 = `{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}`
+
 // argvBuilder stands in for docker: it appends every argv to log, one call per
-// line, and answers `inspect` with a digest-pinned reference of the image, so
-// a deploy can pin what it pushed.
+// line, answers `inspect` with a digest-pinned reference of the image, so a
+// deploy can pin what it pushed, and `manifest inspect` with a list holding
+// linux/amd64 and linux/arm64.
 func argvBuilder(t *testing.T) (builder, log string) {
+	t.Helper()
+	return manifestBuilder(t, amd64AndArm64)
+}
+
+// manifestBuilder is argvBuilder answering `manifest inspect` with manifest.
+func manifestBuilder(t *testing.T, manifest string) (builder, log string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stubs are POSIX-only")
@@ -23,6 +33,7 @@ func argvBuilder(t *testing.T) (builder, log string) {
 	script := "#!/bin/sh\n" +
 		"echo \"$*\" >> \"" + log + "\"\n" +
 		"if [ \"$1\" = inspect ]; then img=\"$4\"; printf '%s@sha256:0123abcd\\n' \"${img%:*}\"; fi\n" +
+		"if [ \"$1\" = manifest ]; then printf '%s\\n' '" + manifest + "'; fi\n" +
 		"exit 0\n"
 	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
 		t.Fatal(err)
@@ -134,8 +145,9 @@ func TestCompileHandsSeveralPlatformsToTheTool(t *testing.T) {
 			t.Fatalf("%v: compile: %v\n%s", c.args, err, out)
 		}
 		calls := argvLines(t, log)
-		if len(calls) != 2 || !strings.HasPrefix(calls[0], "build --platform linux/amd64,linux/arm64 ") || !strings.HasPrefix(calls[1], "push ") {
-			t.Errorf("%v: builder calls = %q, want one build for both platforms and a push", c.args, calls)
+		if len(calls) != 4 || !strings.HasPrefix(calls[0], "build --platform linux/amd64,linux/arm64 ") || !strings.HasPrefix(calls[1], "push ") ||
+			calls[3] != "manifest inspect reg.io/team/etl@sha256:0123abcd" {
+			t.Errorf("%v: builder calls = %q, want one build for both platforms, a push, and the push verified", c.args, calls)
 		}
 	}
 }
@@ -174,51 +186,55 @@ func TestCompileHintsWhenAMultiPlatformBuildFails(t *testing.T) {
 
 // A malformed platform is refused wherever it comes from, before the parser,
 // the builder, the confirmation or any request to the control plane.
-func TestMalformedPlatformsAreRefusedWhateverTheSource(t *testing.T) {
-	t.Run("dexaflow.yaml, compile", func(t *testing.T) {
-		dir := platformProject(t, "build:\n  platforms: [arm64]\n")
-		parserLog := filepath.Join(t.TempDir(), "parser.log")
-		t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, parserLog))
-		builder, log := argvBuilder(t)
-		_, _, err := run(t, "compile", dir, "--build", "--builder", builder)
-		if err == nil || !strings.Contains(err.Error(), "build.platforms") || !strings.Contains(err.Error(), filepath.Join(dir, "dexaflow.yaml")) {
-			t.Fatalf("err = %v, want build.platforms and the file named", err)
-		}
-		if _, serr := os.Stat(parserLog); serr == nil || argvLines(t, log) != nil {
-			t.Error("the parser or the builder ran")
-		}
-	})
-	t.Run("dexaflow.yaml, deploy", func(t *testing.T) {
-		dir := platformProject(t, "build:\n  platforms: [arm64]\n")
-		builder, log := argvBuilder(t)
-		fake := &deployServer{}
-		srv := httptest.NewServer(fake)
-		defer srv.Close()
-		out, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--builder", builder)
-		if err == nil || !strings.Contains(err.Error(), "build.platforms") {
-			t.Fatalf("err = %v, want build.platforms named", err)
-		}
-		if fake.reads != 0 || fake.registers != 0 || strings.Contains(out, "server:") || strings.Contains(out, "Deploy ") {
-			t.Errorf("reads=%d registers=%d output=%q: the deploy went on past the refusal", fake.reads, fake.registers, out)
-		}
-		if argvLines(t, log) != nil {
-			t.Error("the builder ran")
-		}
-	})
-	t.Run("workspace defaults", func(t *testing.T) {
-		dir := platformProject(t, "")
-		ws := filepath.Dir(dir)
-		writeProjectFile(t, ws, "dexaflow.workspace.yaml", "schema_version: \"1.0\"\ndefaults:\n  platforms: [arm64]\n")
-		t.Chdir(ws)
-		builder, log := argvBuilder(t)
-		_, _, err := run(t, "compile", dir, "--build", "--builder", builder)
-		if err == nil || !strings.Contains(err.Error(), "dexaflow.workspace.yaml") {
-			t.Fatalf("err = %v, want the workspace file named", err)
-		}
-		if argvLines(t, log) != nil {
-			t.Error("the builder ran")
-		}
-	})
+func TestMalformedProjectPlatformsStopCompile(t *testing.T) {
+	dir := platformProject(t, "build:\n  platforms: [arm64]\n")
+	parserLog := filepath.Join(t.TempDir(), "parser.log")
+	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, parserLog))
+	builder, log := argvBuilder(t)
+	_, _, err := run(t, "compile", dir, "--build", "--builder", builder)
+	if err == nil || !strings.Contains(err.Error(), "build.platforms") || !strings.Contains(err.Error(), filepath.Join(dir, "dexaflow.yaml")) {
+		t.Fatalf("err = %v, want build.platforms and the file named", err)
+	}
+	if _, serr := os.Stat(parserLog); serr == nil || argvLines(t, log) != nil {
+		t.Error("the parser or the builder ran")
+	}
+}
+
+// The same refusal stops a deploy before the confirmation and before any
+// request to the control plane.
+func TestMalformedProjectPlatformsStopDeployBeforeTheServer(t *testing.T) {
+	dir := platformProject(t, "build:\n  platforms: [arm64]\n")
+	builder, log := argvBuilder(t)
+	fake := &deployServer{}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	out, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--builder", builder)
+	if err == nil || !strings.Contains(err.Error(), "build.platforms") {
+		t.Fatalf("err = %v, want build.platforms named", err)
+	}
+	if fake.reads != 0 || fake.registers != 0 || strings.Contains(out, "server:") || strings.Contains(out, "Deploy ") {
+		t.Errorf("reads=%d registers=%d output=%q: the deploy went on past the refusal", fake.reads, fake.registers, out)
+	}
+	if argvLines(t, log) != nil {
+		t.Error("the builder ran")
+	}
+}
+
+// A malformed value from the workspace defaults is refused with the
+// workspace file named.
+func TestMalformedWorkspacePlatformsAreRefused(t *testing.T) {
+	dir := platformProject(t, "")
+	ws := filepath.Dir(dir)
+	writeProjectFile(t, ws, "dexaflow.workspace.yaml", "schema_version: \"1.0\"\ndefaults:\n  platforms: [arm64]\n")
+	t.Chdir(ws)
+	builder, log := argvBuilder(t)
+	_, _, err := run(t, "compile", dir, "--build", "--builder", builder)
+	if err == nil || !strings.Contains(err.Error(), "dexaflow.workspace.yaml") {
+		t.Fatalf("err = %v, want the workspace file named", err)
+	}
+	if argvLines(t, log) != nil {
+		t.Error("the builder ran")
+	}
 }
 
 // dexaflow build checks every project before it builds any, so one bad
@@ -373,5 +389,27 @@ func TestEmptyProjectPlatformsLeaveTheToolDefault(t *testing.T) {
 	}
 	if calls := argvLines(t, log); len(calls) != 1 || strings.Contains(calls[0], "--platform") {
 		t.Errorf("builder calls = %q, want one build without --platform", calls)
+	}
+}
+
+// A tool that builds and pushes only part of the requested platforms (podman
+// without --manifest keeps the last one under the tag) is caught after the
+// push, and nothing is registered.
+func TestDeployRefusesAPushMissingAPlatform(t *testing.T) {
+	dir := platformProject(t, "")
+	builder, log := manifestBuilder(t, `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)
+	fake := &deployServer{}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	_, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--force",
+		"--builder", builder, "--platform", "linux/amd64,linux/arm64")
+	if err == nil || !strings.Contains(err.Error(), "missing linux/amd64,linux/arm64") {
+		t.Fatalf("err = %v, want the missing platforms named", err)
+	}
+	if fake.registers != 0 {
+		t.Errorf("registered %d time(s) an image that does not cover the platforms", fake.registers)
+	}
+	if calls := argvLines(t, log); len(calls) != 4 || !strings.HasPrefix(calls[3], "manifest inspect ") {
+		t.Errorf("builder calls = %q, want the push verified", calls)
 	}
 }

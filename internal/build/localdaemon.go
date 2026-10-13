@@ -35,11 +35,11 @@ func (b LocalDaemon) Describe() string {
 	return fmt.Sprintf("%s (%s)", PathLocalDaemon, b.tool())
 }
 
-// multiPlatformHint wraps the failure of a build for several platforms. The
-// list is passed to the tool as is, because docker with the containerd image
-// store builds and pushes it as one manifest list; docker's default image
-// store and podman without --manifest refuse it with an error that does not
-// say what to change, so this one does.
+// multiPlatformHint wraps the failure of a build for several platforms, in
+// the build or in verifyPlatforms. The list is passed to the tool as is,
+// because docker with the containerd image store builds and pushes it as one
+// manifest list; a tool that cannot fails with an error that does not say
+// what to change, so this one does.
 func (b LocalDaemon) multiPlatformHint(platforms []string, err error) error {
 	return fmt.Errorf("%w: building for %s with %s needs a tool that pushes one image per platform under one manifest list, "+
 		"such as docker with the containerd image store enabled. Otherwise build one platform: set build.platforms in dexaflow.yaml "+
@@ -48,7 +48,8 @@ func (b LocalDaemon) multiPlatformHint(platforms []string, err error) error {
 }
 
 // Build runs the build, then the push when asked, then reads the pushed
-// image's digest when a pin is asked for.
+// image's digest when a pin is asked for or several platforms were built,
+// and checks that such a push holds every platform (verifyPlatforms).
 func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 	if req.Pin && !req.Push {
 		return Result{}, errors.New("a digest pin needs a push: an image that is not in a registry has no registry digest")
@@ -68,15 +69,42 @@ func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("pushing image %q with %q: %w", req.Image, b.tool(), err)
 	}
 	res.Pushed = true
-	if !req.Pin {
+	if !req.Pin && len(req.Platforms) < 2 {
 		return res, nil
 	}
 	ref, err := b.Digest(ctx, req.Image, req.Stderr)
 	if err != nil {
 		return Result{}, err
 	}
-	res.Ref = ref
+	if verr := b.verifyPlatforms(ctx, ref, req.Platforms, req.Stderr); verr != nil {
+		return Result{}, verr
+	}
+	if req.Pin {
+		res.Ref = ref
+	}
 	return res, nil
+}
+
+// verifyPlatforms checks, for a build of several platforms, that the pushed
+// digest is a manifest list holding every one of them. A tool can succeed at
+// build and push and still leave a partial image: podman without --manifest
+// keeps only the last platform under the tag, and a push without
+// --all-platforms can send part of a list. Registering that digest would run
+// the wrong image, or none, on the missing platforms, so anything the check
+// cannot confirm, including a tool that cannot run `manifest inspect`, fails
+// the build. One platform is a plain image and is not checked.
+func (b LocalDaemon) verifyPlatforms(ctx context.Context, ref string, platforms []string, stderr io.Writer) error {
+	if len(platforms) < 2 {
+		return nil
+	}
+	var out bytes.Buffer
+	if err := b.run(ctx, &out, stderr, "manifest", "inspect", ref); err != nil {
+		return b.multiPlatformHint(platforms, fmt.Errorf("could not check that %s lists every platform with `%s manifest inspect %s`: %w", ref, b.tool(), ref, err))
+	}
+	if missing := missingPlatforms(out.Bytes(), platforms); len(missing) > 0 {
+		return b.multiPlatformHint(platforms, fmt.Errorf("the pushed image %s is not a manifest list holding every platform; missing %s", ref, strings.Join(missing, ",")))
+	}
+	return nil
 }
 
 // Digest reads the repo digest of an image the tool pushed, as a pinned

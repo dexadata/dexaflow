@@ -11,7 +11,14 @@ body: |-
   decides the daemonless builders that come first. A malformed platform, from
   the flag, `dexaflow.yaml`, a target or the workspace defaults, is refused
   with its source named before anything is parsed, built or sent to the
-  control plane, and `build` checks every project before it builds any. A list
-  of platforms still reaches the tool as before; when the tool cannot build
-  it, the error now says how to build one platform (#1706).
+  control plane, and `build` checks every project before it builds any. This
+  also applies to `compile` without `--build` and to `dexaflow lite`: a
+  malformed `build.platforms` that used to be ignored there now fails early.
+  A list of platforms still reaches the tool as before, but the push is now
+  checked with `<tool> manifest inspect` to be a manifest list holding every
+  requested platform, so a tool that pushes a partial image (podman without
+  `--manifest`) fails the build instead of having a digest registered that
+  does not cover the platforms; a tool without `manifest inspect` can no
+  longer push several platforms. A failed multi-platform build says how to
+  build one platform (#1706).
 time: 2026-10-13T20:00:00.000000000-03:00
