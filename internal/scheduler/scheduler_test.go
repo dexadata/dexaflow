@@ -72,6 +72,11 @@ type fakeStore struct {
 	// the task no longer up_for_retry (a lost race).
 	activeRunsErr error
 	retryNoop     bool
+	// batchFrom records the source state each batched transition was guarded
+	// on; batchSuperseded makes that guard find the row already moved on (a
+	// user's mark or clear, an agent's report) so the write skips it.
+	batchFrom       map[string]domain.TaskState
+	batchSuperseded map[string]bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -132,12 +137,23 @@ func (f *fakeStore) MarkQueued(_ context.Context, runID, taskID string, expectNe
 
 // ApplyTransitions mirrors the batched store: it records one transition per task,
 // exactly as the equivalent per-task ApplyTransition calls would, so assertions
-// on f.transitions are unchanged by the scheduler's batching.
-func (f *fakeStore) ApplyTransitions(_ context.Context, runID string, taskIDs []string, to domain.TaskState) error {
-	for _, taskID := range taskIDs {
-		f.transitions = append(f.transitions, transition{runID, taskID, to})
+// on f.transitions are unchanged by the scheduler's batching. A task the test
+// marked superseded is skipped, as the store's source-state guard skips a row
+// that moved on, and is not reported as applied.
+func (f *fakeStore) ApplyTransitions(_ context.Context, runID string, taskIDs []string, from, to domain.TaskState) ([]string, error) {
+	if f.batchFrom == nil {
+		f.batchFrom = map[string]domain.TaskState{}
 	}
-	return nil
+	var applied []string
+	for _, taskID := range taskIDs {
+		f.batchFrom[taskID] = from
+		if f.batchSuperseded[taskID] {
+			continue
+		}
+		f.transitions = append(f.transitions, transition{runID, taskID, to})
+		applied = append(applied, taskID)
+	}
+	return applied, nil
 }
 func (f *fakeStore) ResetForRetry(_ context.Context, runID, taskID string) (bool, error) {
 	if f.retryNoop {

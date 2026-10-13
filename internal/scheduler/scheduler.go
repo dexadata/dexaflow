@@ -205,14 +205,16 @@ type Store interface {
 	// buffered dispatch worker already failed or re-offered the task, or the
 	// agent already reported), so that newer outcome is never overwritten.
 	MarkQueued(ctx context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error)
-	// ApplyTransitions moves every listed task of a run to the SAME target state
-	// in one statement — the batched form of calling ApplyTransition once per
-	// task. The scheduler groups a tick's plain state-set transitions
-	// (scheduled/skipped/upstream_failed/up_for_retry) by target state and flushes
-	// each group here, so R updates collapse to one per distinct state with a
-	// byte-identical result. It carries no source-state guard, matching
-	// ApplyTransition; the guarded none-rail resets stay on their own methods.
-	ApplyTransitions(ctx context.Context, runID string, taskIDs []string, to domain.TaskState) error
+	// ApplyTransitions moves every listed task of a run that is still in the
+	// from state to the SAME target state in one statement. The scheduler groups
+	// a tick's plain state-set transitions (scheduled/skipped/upstream_failed/
+	// up_for_retry) by source and target state and flushes each group here, so R
+	// updates collapse to one per group. from is the state the tick's snapshot
+	// read: a row a concurrent writer moved since (a user's mark or clear, an
+	// agent's report under an overlapping leader) is left alone (#1605). It
+	// returns the task ids that actually moved; the guarded none-rail resets stay
+	// on their own methods.
+	ApplyTransitions(ctx context.Context, runID string, taskIDs []string, from, to domain.TaskState) ([]string, error)
 	// ResetForRetry returns a task to 'none' and increments its try number so a
 	// retry re-evaluates and re-runs it. It is guarded to the up_for_retry source
 	// state; the bool reports whether the reset actually fired (false = the TI was
@@ -1090,12 +1092,15 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, er
 // persisted.
 //
 // Plain state-set transitions (no side effect beyond the write + metric) are
-// collected and flushed grouped by target state in one UPDATE each, instead of
-// one per task. The queued (dispatch) and none (guarded reset) rails keep their
-// per-task paths inside applyPlanned. Deferring the plain writes to after the
-// loop is safe: each targets a distinct row, FinalizeRun reads the in-memory
-// run (not the DB), and dispatch depends on task specs, not sibling TI state,
-// so the per-tick effect is byte-identical, only the statement count drops.
+// collected and flushed grouped by source and target state in one UPDATE
+// each, instead of one per task. The queued (dispatch) and none (guarded
+// reset) rails keep their per-task paths inside applyPlanned. Deferring the
+// plain writes to after the loop is safe: each targets a distinct row,
+// FinalizeRun reads the in-memory run (not the DB), and dispatch depends on
+// task specs, not sibling TI state. Each write is guarded on the state this
+// tick's snapshot read, so a row a concurrent writer moved during the
+// dispatch loop (a user's mark or clear, an agent's report) is left alone
+// (#1605), and the returned batch carries only the rows that moved.
 func (s *Scheduler) applyPlan(ctx context.Context, run RunState, plan []PlannedTransition, poolOf map[string]poolCharge, res *advanced) (*transitionBatch, error) {
 	batch := newTransitionBatch()
 	for _, t := range plan {
@@ -1247,8 +1252,8 @@ const alertResultDropped = "dropped"
 // (a dispatch side effect) and the none rail runs the guarded retry/reschedule/
 // infra-replace resets — both stay per-task, applied in plan order. Every other
 // transition is a plain state set with no side effect beyond the write and its
-// metric, so it is collected into the batch and flushed grouped by target state
-// after the loop.
+// metric, so it is collected into the batch and flushed grouped by source and
+// target state after the loop.
 func (s *Scheduler) applyPlanned(ctx context.Context, run RunState, t PlannedTransition, batch *transitionBatch) error {
 	switch t.To {
 	case domain.TaskStateQueued:
@@ -1265,51 +1270,76 @@ func (s *Scheduler) applyPlanned(ctx context.Context, run RunState, t PlannedTra
 		}
 		return s.resetForRetry(ctx, run, t.TaskID)
 	default:
-		batch.add(t.To, t.TaskID)
+		batch.add(run.States[t.TaskID], t.To, t.TaskID)
 		return nil
 	}
 }
 
-// transitionBatch groups a tick's plain state-set transitions by target state so
-// each group can be flushed in one UPDATE (SchedulerStore.ApplyTransitions)
-// rather than one per task. It carries only side-effect-free transitions; the
-// queued (dispatch) and none (guarded reset) rails never enter it.
+// transitionBatch groups a tick's plain state-set transitions by source and
+// target state so each group can be flushed in one UPDATE
+// (SchedulerStore.ApplyTransitions) rather than one per task. It carries only
+// side-effect-free transitions; the queued (dispatch) and none (guarded reset)
+// rails never enter it.
 type transitionBatch struct {
-	// order lists target states in first-seen order so the flush — and the
-	// metrics it emits — is deterministic regardless of Go's map iteration.
-	order   []domain.TaskState
-	byState map[domain.TaskState][]string
+	// order lists (from, to) groups in first-seen order so the flush (and the
+	// metrics it emits) is deterministic regardless of Go's map iteration.
+	order []transitionKey
+	byKey map[transitionKey][]string
+	// applied holds, per group, the task ids the flush actually moved; a row
+	// the source-state guard left alone (#1605) is absent from it.
+	applied map[transitionKey][]string
+}
+
+// transitionKey is one batched group: the state the tick's snapshot read for
+// the task (the write's guard) and the state it moves to.
+type transitionKey struct {
+	from, to domain.TaskState
 }
 
 // newTransitionBatch builds an empty batch.
 func newTransitionBatch() *transitionBatch {
-	return &transitionBatch{byState: make(map[domain.TaskState][]string)}
-}
-
-// add records that taskID transitions to the given target state this tick.
-func (b *transitionBatch) add(to domain.TaskState, taskID string) {
-	if _, seen := b.byState[to]; !seen {
-		b.order = append(b.order, to)
+	return &transitionBatch{
+		byKey:   make(map[transitionKey][]string),
+		applied: make(map[transitionKey][]string),
 	}
-	b.byState[to] = append(b.byState[to], taskID)
 }
 
-// flushTransitions applies each collected target-state group in one UPDATE, then
-// records the per-task metrics recordTransition would have. Metrics are emitted
-// only after the group's write succeeds — the same "record nothing we did not
-// persist" contract the per-task path had — and per-task counts are identical to
-// the unbatched path (metric ordering is not an observable output).
+// add records that taskID, read in state from, transitions to the given target
+// state this tick.
+func (b *transitionBatch) add(from, to domain.TaskState, taskID string) {
+	k := transitionKey{from: from, to: to}
+	if _, seen := b.byKey[k]; !seen {
+		b.order = append(b.order, k)
+	}
+	b.byKey[k] = append(b.byKey[k], taskID)
+}
+
+// flushTransitions applies each collected (from, to) group in one guarded
+// UPDATE, then records the per-task metrics for the rows that actually moved.
+// A row a concurrent writer moved after the tick's snapshot is not touched
+// (#1605) and is counted as a superseded decision instead, the same "record
+// nothing we did not persist" contract the queued write follows.
 func (s *Scheduler) flushTransitions(ctx context.Context, run RunState, b *transitionBatch) error {
-	for _, to := range b.order {
-		taskIDs := b.byState[to]
-		if err := s.store.ApplyTransitions(ctx, run.RunID, taskIDs, to); err != nil {
-			return fmt.Errorf("applying %s transitions: %w", to, err)
+	for _, k := range b.order {
+		taskIDs := b.byKey[k]
+		applied, err := s.store.ApplyTransitions(ctx, run.RunID, taskIDs, k.from, k.to)
+		if err != nil {
+			return fmt.Errorf("applying %s transitions: %w", k.to, err)
 		}
-		if s.recorder != nil {
-			for _, taskID := range taskIDs {
-				s.recorder.RecordSchedulerDecision(string(to))
-				s.recorder.RecordTaskTransition(string(run.States[taskID]), string(to), run.DagID)
-			}
+		b.applied[k] = applied
+		if skipped := len(taskIDs) - len(applied); skipped > 0 {
+			s.logger.Debug("batched transition superseded; the task already moved on",
+				"run", run.RunID, "from", k.from, "to", k.to, "superseded", skipped)
+		}
+		if s.recorder == nil {
+			continue
+		}
+		for range applied {
+			s.recorder.RecordSchedulerDecision(string(k.to))
+			s.recorder.RecordTaskTransition(string(k.from), string(k.to), run.DagID)
+		}
+		for i := len(applied); i < len(taskIDs); i++ {
+			s.recorder.RecordSchedulerDecision(string(k.to) + "_superseded")
 		}
 	}
 	return nil

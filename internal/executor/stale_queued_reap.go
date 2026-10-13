@@ -193,9 +193,10 @@ func (r *dispatchLostReaper) run(ctx context.Context) error {
 			}
 			// Only a LIVE pod defers here, which is NOT because a finished pod is
 			// worthless: SucceedTaskInstanceIfActive and its siblings admit
-			// `queued`, so the reconciler settles queued attempts by design, and
-			// ApplyTransition can stamp a row that already reached `running` back
-			// to `queued` (#929), so "a queued attempt never ran" is unsound. The
+			// `queued`, so the reconciler settles queued attempts by design and
+			// "a queued attempt never ran" is unsound. (The scheduler's queued
+			// stamp is guarded to the scheduled slot it planned, so it never moves
+			// a row that reached `running` back to `queued`, #929.) The
 			// finished pod's outcome record is nonetheless safe: the teardown below
 			// skips a pod in a terminal phase and leaves it to the reconciler
 			// (#928), so this reaper's decision can stay a pure liveness question.
