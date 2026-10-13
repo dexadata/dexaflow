@@ -78,7 +78,9 @@ func NewRootCommand() *cobra.Command {
 	return root
 }
 
-// Execute runs the root command and returns a process exit code.
+// Execute runs the root command and returns a process exit code: 0 on
+// success, the code an error carries (a followed run's result, see
+// exitRunFailed), or 1 for any other error.
 func Execute() int {
 	// DEXAFLOW_* and the pre-rename LEOFLOW_* names are interchangeable, and
 	// processes this CLI starts (server, agent, parser) inherit both.
@@ -93,11 +95,18 @@ func Execute() int {
 	if notice := legacyNameNotice(os.Args[0]); notice != "" && stderrIsTerminal() {
 		fmt.Fprintln(os.Stderr, notice)
 	}
-	if err := NewRootCommand().Execute(); err != nil {
+	code, err := executeRoot(NewRootCommand())
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
 	}
-	return 0
+	return code
+}
+
+// executeRoot runs root and returns the process exit code for its error,
+// together with the error.
+func executeRoot(root *cobra.Command) (int, error) {
+	err := root.Execute()
+	return exitCodeOf(err), err
 }
 
 // legacyCommandName is the CLI's name before the Dexaflow rename. Installs from
