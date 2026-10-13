@@ -111,7 +111,22 @@ type leaseState struct {
 	// attemptEpoch is the epoch the dispatcher claimed for this assignment.
 	attemptEpoch int
 	timer        *time.Timer
+	// expired is set once the ack deadline passed with no ack. The lease then
+	// stays as a tombstone for leaseTombstone (see onLeaseExpire): the worker
+	// may still ack it late and run the attempt, so it is neither offered new
+	// work nor forgotten while that ack can arrive.
+	expired bool
 }
+
+// leaseTombstone is how long an expired lease is remembered after its ack
+// deadline. A worker acks after resetting its scratch and runs the attempt
+// whatever the server answers, so an ack can arrive after the lease expired. The
+// tombstone lets that late started ack still bind the attempt and mark the worker
+// busy, and keeps the worker out of the free set meanwhile, so it is never handed
+// a second assignment while it may be running the first. Five minutes is well
+// past the dispatch-lost threshold (3 minutes): by then the attempt has been
+// recovered by the reaper and a later ack is fenced by the attempt epoch.
+const leaseTombstone = 5 * time.Minute
 
 // WorkerRegistry is the concurrency-safe home of the warm-worker fleet and the
 // H1 ack/lease machine (ADR 0058 N1b).
@@ -135,6 +150,9 @@ type WorkerRegistry struct {
 	// leaseFor computes an assignment's ack deadline. Injectable so tests drive
 	// reclaim deterministically with a tiny lease.
 	leaseFor func(*agentv1.WorkAssignment) time.Duration
+	// tombstoneFor is how long an expired lease is kept (leaseTombstone).
+	// Injectable so tests drive the tombstone deterministically.
+	tombstoneFor time.Duration
 	// now is the clock the liveness grace is measured on. Injectable for tests.
 	now func() time.Time
 }
@@ -150,7 +168,8 @@ func NewWorkerRegistry(onReclaim func(ReclaimEvent)) *WorkerRegistry {
 		leaseFor: func(a *agentv1.WorkAssignment) time.Duration {
 			return time.Duration(a.GetLeaseSeconds()) * time.Second
 		},
-		now: time.Now,
+		tombstoneFor: leaseTombstone,
+		now:          time.Now,
 	}
 }
 
@@ -319,8 +338,15 @@ func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bo
 // cancels the lease (no reclaim), and returns the WarmBinding to persist — the
 // acked attempt's (run, task, try) plus the worker's pod name — with ok=true.
 // started=false reclaims the assignment and returns ok=false. An ack for an
-// unknown assignment (already expired or already settled) also returns ok=false.
-// Only ok=true carries a non-nil binding the handler should persist.
+// unknown assignment (already settled, or expired past its tombstone) also
+// returns ok=false. Only ok=true carries a non-nil binding the handler should
+// persist.
+//
+// A late ack, one that arrives after the lease expired but while its tombstone
+// is kept, is settled the same way: the worker runs the attempt whatever the
+// server answers, so a started late ack still binds the attempt and marks the
+// worker busy. A refused late ack returns the worker to the free set, which the
+// expiry deliberately did not do.
 func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, bool) {
 	r.mu.Lock()
 	ls, ok := r.leases[assignmentID]
@@ -332,6 +358,8 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 	ls.timer.Stop()
 	if started {
 		ls.worker.busy = true
+		// A late started ack may land after a reconnect replaced this entry; the
+		// busy bit then sits on the stale entry and the new one is unaffected.
 		binding := &WarmBinding{
 			RunID:        ls.runID,
 			TaskID:       ls.taskID,
@@ -341,6 +369,9 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 		}
 		r.mu.Unlock()
 		return binding, true
+	}
+	if ls.expired {
+		r.returnFreeLocked(ls.worker)
 	}
 	ev := ReclaimEvent{
 		AssignmentID: assignmentID,
@@ -372,24 +403,24 @@ func (r *WorkerRegistry) MarkFree(identity string) {
 // onLeaseExpire reclaims an assignment whose lease elapsed with no ack. If the
 // lease was already settled (acked or the worker deregistered), it is a no-op.
 //
-// H4 (ADR 0058 N1d-c): a missed ack is usually a transient slow-start, not a
-// wedge, so the worker is returned to the free set rather than stranded holding
-// a pool slot forever — but only if the registry still points at exactly this
-// entry (a reconnect under the same identity installs a fresh entry we must not
-// disturb) and it is not busy serving another acked attempt. A genuine wedge is
-// bounded later by the D9 lifetime/attempt caps (out of scope here). Done under
-// the lock, consistent with the other free-set mutations.
+// The worker is NOT returned to the free set here: it acks after a scratch reset
+// and then runs the attempt regardless of the server's answer, so a slow worker
+// can still ack and run this attempt. Offering it new work now would push a
+// second assignment onto a worker that is busy with the first (#1600). The lease
+// is kept as a tombstone instead (expired=true) so a late started ack still binds
+// the attempt (Ack). When the tombstone elapses with no ack, onTombstoneExpire
+// returns the worker to the free set (H4, ADR 0058 N1d-c): a missed ack is
+// usually a transient slow start, not a wedge, and the worker must not stay
+// stranded holding a pool slot forever.
 func (r *WorkerRegistry) onLeaseExpire(assignmentID string) {
 	r.mu.Lock()
 	ls, ok := r.leases[assignmentID]
-	if !ok {
+	if !ok || ls.expired {
 		r.mu.Unlock()
 		return
 	}
-	delete(r.leases, assignmentID)
-	if w := ls.worker; r.workers[w.identity] == w && !w.busy {
-		r.addFreeLocked(w)
-	}
+	ls.expired = true
+	ls.timer = time.AfterFunc(r.tombstoneFor, func() { r.onTombstoneExpire(assignmentID, ls) })
 	ev := ReclaimEvent{
 		AssignmentID: assignmentID,
 		DagVersionID: ls.dagVersion,
@@ -401,6 +432,30 @@ func (r *WorkerRegistry) onLeaseExpire(assignmentID string) {
 	}
 	r.mu.Unlock()
 	r.emitReclaim(ev)
+}
+
+// onTombstoneExpire forgets an expired lease whose late ack never came and
+// returns its worker to the free set (H4). It is a no-op if the lease was settled
+// meanwhile (a late ack, or the worker deregistered) or replaced. No reclaim is
+// emitted: the lease expiry already emitted ReclaimLeaseExpired.
+func (r *WorkerRegistry) onTombstoneExpire(assignmentID string, ls *leaseState) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.leases[assignmentID] != ls {
+		return
+	}
+	delete(r.leases, assignmentID)
+	r.returnFreeLocked(ls.worker)
+}
+
+// returnFreeLocked puts w back in the free set, but only if the registry still
+// points at exactly this entry (a reconnect under the same identity installs a
+// fresh entry we must not disturb) and it is not busy serving an acked attempt.
+// Requires r.mu.
+func (r *WorkerRegistry) returnFreeLocked(w *registeredWorker) {
+	if r.workers[w.identity] == w && !w.busy {
+		r.addFreeLocked(w)
+	}
 }
 
 // emitReclaim delivers a reclaim event to the observer, always OUTSIDE the lock

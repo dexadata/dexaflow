@@ -35,6 +35,9 @@ type fakeStore struct {
 	warmMu       sync.Mutex
 	warmBindings []warmBindingCall
 	bindWarmErr  error
+	// bindWarmFailures makes the first N BindWarmAttempt calls fail with
+	// bindWarmErr; zero means every call returns bindWarmErr.
+	bindWarmFailures int
 }
 
 type warmBindingCall struct {
@@ -77,8 +80,11 @@ func (s *fakeStore) RecordHeartbeat(_ context.Context, id auth.AgentIdentity) er
 
 func (s *fakeStore) BindWarmAttempt(_ context.Context, runID, taskID string, tryNumber, _ int, workerPod string) error {
 	s.warmMu.Lock()
+	defer s.warmMu.Unlock()
 	s.warmBindings = append(s.warmBindings, warmBindingCall{runID, taskID, tryNumber, workerPod})
-	s.warmMu.Unlock()
+	if s.bindWarmFailures > 0 && len(s.warmBindings) > s.bindWarmFailures {
+		return nil
+	}
 	return s.bindWarmErr
 }
 
