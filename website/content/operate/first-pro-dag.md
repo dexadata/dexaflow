@@ -148,18 +148,21 @@ paused or active as you left it. To have new DAGs start active, set
 [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 {{% /alert %}}
 
-## Step 3: unpause, trigger and watch it run
+## Step 3: activate, trigger and watch it run
 
 A DAG deployed for the first time is paused, and a run triggered while it is
-paused waits in `queued` until you unpause it, as in Airflow. So unpause it
-first, then trigger a run and follow it:
+paused waits in `queued` until you unpause it, as in Airflow. `--active`
+unpauses the DAG in the same register, so one command deploys it, starts a run
+and follows it:
 
 ```console
-$ dexaflow admin dags unpause first_pro_dag
-  first_pro_dag                  unpaused
-unpaused 1/1 DAG(s)
-$ dexaflow runs trigger first_pro_dag --follow
-Triggered run manual__1717525200 for "first_pro_dag" (state queued)
+$ dexaflow deploy --active --trigger --follow
+…
+Deployed first_pro_dag -> https://pro.example.com
+  image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
+  registered version 1a2b3c4
+next: first_pro_dag is active and has no schedule; it runs only when triggered (`dexaflow runs trigger first_pro_dag`).
+  triggered run manual__1717525200
 Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
   https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
   extract  queued
@@ -179,9 +182,11 @@ Run manual__1717525200 succeeded (followed for 21.4s).
 ```
 
 The scheduler starts the run, pulls your image, runs each task in its own pod,
-and the Airflow UI shows state and logs. From now on, `dexaflow deploy
---trigger --follow` deploys, triggers and follows in one command; later
-deploys leave the DAG unpaused.
+and the Airflow UI shows state and logs. Later deploys leave the DAG active,
+so `--active` is only needed the first time. Setting `is_paused` needs write
+on dags: the built-in deployer role and a deploy-only token cannot pass
+`--active`, so in CI an admin unpauses the DAG once instead
+(`dexaflow admin dags unpause first_pro_dag`).
 
 If you trigger while the DAG is still paused, the command says so and the run
 waits:
