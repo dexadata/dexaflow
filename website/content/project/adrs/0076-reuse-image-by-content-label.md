@@ -64,8 +64,8 @@ already trusts it: when the label is the current version, nothing is built.
   operators to limit push access to the deploy identity, and to enable tag
   immutability where the registry offers it, so a tag that exists cannot be
   replaced. With immutable tags, `--rebuild` of a label already in the
-  registry fails at the push; a pipeline that must always build tags from
-  git instead.
+  registry fails at the push; a pipeline that must always build gives
+  every build its own `--dag-version` instead.
 - **The digest registered stays the one the registry returned** (ADR 0075):
   the reuse pins exactly the bytes it checked, so there is no window between
   the platform check and the pin.

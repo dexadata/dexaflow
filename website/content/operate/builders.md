@@ -110,8 +110,9 @@ to that repository as deploy access:
 
 A pipeline that must build what it ships, every time, passes `--rebuild`
 when tags are mutable. With tag immutability on, `--rebuild` of a label that
-is already in the registry fails at the push; such a pipeline tags from git
-instead (`tag_strategy: git_sha`), which never reuses.
+is already in the registry fails at the push; such a pipeline gives every
+build its own label instead, for example `--dag-version "$CI_PIPELINE_ID"`,
+which never reuses and never collides.
 
 The decision and its trade-offs are recorded in
 [ADR 0076](/project/adrs/0076-reuse-image-by-content-label/).
