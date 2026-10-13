@@ -91,6 +91,10 @@ type connectionDTO struct {
 	Schema       *string `json:"schema"`
 	Port         *int    `json:"port"`
 	Extra        *string `json:"extra"`
+	// ExtraUnreadable marks a connection whose stored extra no configured
+	// secret key opens (#1677); its extra is masked. Omitted otherwise, so a
+	// readable connection renders exactly as Airflow's ConnectionResponse.
+	ExtraUnreadable bool `json:"extra_unreadable,omitempty"`
 }
 
 type connectionCollectionDTO struct {
@@ -99,15 +103,21 @@ type connectionCollectionDTO struct {
 }
 
 func toConnectionDTO(c domain.Connection) connectionDTO {
+	extra := strPtrOrNil(redactExtra(c.Extra))
+	if c.ExtraUnreadable {
+		mask := secretMask
+		extra = &mask
+	}
 	return connectionDTO{
-		ConnectionID: c.ConnID,
-		ConnType:     c.ConnType,
-		Description:  strPtrOrNil(c.Description),
-		Host:         strPtrOrNil(c.Host),
-		Login:        strPtrOrNil(c.Login),
-		Schema:       strPtrOrNil(c.Schema),
-		Port:         c.Port,
-		Extra:        strPtrOrNil(redactExtra(c.Extra)),
+		ConnectionID:    c.ConnID,
+		ConnType:        c.ConnType,
+		Description:     strPtrOrNil(c.Description),
+		Host:            strPtrOrNil(c.Host),
+		Login:           strPtrOrNil(c.Login),
+		Schema:          strPtrOrNil(c.Schema),
+		Port:            c.Port,
+		Extra:           extra,
+		ExtraUnreadable: c.ExtraUnreadable,
 	}
 }
 
