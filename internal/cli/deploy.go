@@ -511,8 +511,8 @@ func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, 
 		return true, nil
 	case deployStale:
 		return false, fmt.Errorf("%s content matches version %s, which is not the current version (%s). "+
-			"Rolling back to it is not supported yet (#1702); to register this content again as a new version, pass --dag-version <new-label>",
-			dagID, version, current)
+			"To make it current again, run `dexaflow rollback %s --to %s`; to register this content again as a new version, pass --dag-version <new-label>",
+			dagID, version, current, dagID, version)
 	case deployUnknown:
 	}
 	return false, nil

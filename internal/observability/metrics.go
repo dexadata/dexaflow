@@ -197,7 +197,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}),
 		UnitMisfits: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_unit_misfit_total",
-			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, dispatch).",
+			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, set_current, dispatch).",
 		}, []string{"stage"}),
 
 		RedisCommandFailures: f.NewCounterVec(prometheus.CounterOpts{

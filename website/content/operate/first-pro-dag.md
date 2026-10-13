@@ -184,6 +184,26 @@ folder, else the git repository around it. To keep many DAGs in one repository
 with named control planes (`--target dev`, `--target prod`) and one shared
 registry, see [Workspaces and targets](/operate/workspaces-and-targets/).
 
+## See versions and roll back
+
+Every deploy that registers new content adds a version; the newest becomes
+current.
+
+```console
+$ dexaflow dags versions first_pro_dag
+VERSION  LABEL    CURRENT  CREATED           CREATOR ID                            IMAGE
+2        5d6e7f8  *        2026-10-02 09:12  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  sha256:4b1d0c9e2a7f
+1        1a2b3c4           2026-10-01 17:40  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  sha256:9f2c81d07a3e
+$ dexaflow rollback first_pro_dag
+first_pro_dag: current version changed from 5d6e7f8 (#2) to 1a2b3c4 (#1).
+New runs use 1a2b3c4 (#1) from the next scheduler tick; runs already created keep their version.
+```
+
+The rollback reuses the image the older version was registered with, applies
+its schedule, and leaves runs already created on their own version and the
+pause state as it is. `--to` picks another version by label or number. See
+[Rolling back](/operate/cicd-deploy/#rolling-back) for the details.
+
 ## Build in one CI job, deploy in another
 
 `dexaflow deploy` builds, pushes and registers in one command, and that is the

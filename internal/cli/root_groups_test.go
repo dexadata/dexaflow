@@ -25,7 +25,8 @@ func TestRootCommandsHaveGroups(t *testing.T) {
 		"runs": "inspection",
 		"auth": "inspection",
 		// Operations — operate a running control plane.
-		"admin": "operations",
+		"admin":    "operations",
+		"rollback": "operations",
 		// Lifecycle — install, configure, repair, version, retire the host.
 		"setup":     "lifecycle",
 		"doctor":    "lifecycle",
