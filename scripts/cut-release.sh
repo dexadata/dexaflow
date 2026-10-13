@@ -29,6 +29,12 @@
 # Either way the cut first folds the pending `.changes/unreleased/*.yaml`
 # fragments into `[Unreleased]` and deletes them (scripts/changelog-fold.sh).
 #
+# A patch GA folds on release-X.Y, so main never sees that fold. Once the tag
+# is pushed the cut opens `changelog: sync vX.Y.Z to main`
+# (scripts/changelog-sync.sh), and before every cut it checks that main is in
+# sync with every patch already tagged, so a minor cut from main cannot fold a
+# shipped fragment a second time.
+#
 # Release-auth: the tag+push (the irreversible publish) NEVER happens without an
 # explicit confirmation — the interactive prompt, or `--yes` passed deliberately.
 set -uo pipefail
@@ -90,6 +96,53 @@ release_base() {
   local v="${1#v}" patch
   v="${v%%-*}"; patch="${v##*.}"
   if [ "$patch" = 0 ]; then printf 'main'; else printf 'release-%s' "$(minor_of "$v")"; fi
+}
+
+# wants_changelog_sync <version>: true for a patch GA (X.Y.Z, Z > 0), the one
+# kind of cut whose fold happens on release-X.Y and never reaches main. An rc
+# folds there too, but into [Unreleased], and its GA carries it on.
+wants_changelog_sync() {
+  is_rc "$1" && return 1
+  [ "$(release_base "$1")" != main ]
+}
+
+# changelog_sync_script: path of origin/main's copy of changelog-sync.sh. Not
+# $ROOT/scripts: by the time it runs, the cut has checked out release/<tag>,
+# built on release-X.Y, which may predate the script, and the sync it performs
+# is a change to main.
+changelog_sync_script() {
+  local f; f="$(mktemp)"
+  if git -C "$ROOT" show origin/main:scripts/changelog-sync.sh >"$f" 2>/dev/null && [ -s "$f" ]; then printf '%s' "$f"; return 0; fi
+  rm -f "$f"
+  [ -f "$ROOT/scripts/changelog-sync.sh" ] && { printf '%s' "$ROOT/scripts/changelog-sync.sh"; return 0; }
+  return 1
+}
+
+# sync_changelog_pr <version>: open the pull request that brings a patch's
+# changelog back to main. Runs right after the tag push, before the release
+# watch: the changelog is true once the tag exists, whatever the workflows do,
+# unlike the docs root. It RETURNS on every failure, for the same reason
+# promote_docs_version does: an exit here would strand a pushed tag with no
+# watch and no un-draft. The script runs in its own process, so not even an
+# exit inside it can reach this shell.
+sync_changelog_pr() { # <version>
+  local v="$1" script rc=0
+  script="${CHANGELOG_SYNC_SCRIPT:-$(changelog_sync_script)}" || script=""
+  if [ -z "$script" ]; then
+    warn "changelog sync: scripts/changelog-sync.sh is on neither origin/main nor this checkout. Main still lacks the v$v changelog; once it is there, run: scripts/changelog-sync.sh $v --pr --fetch"
+    return 0
+  fi
+  log "changelog: opening the sync of v$v to main"
+  # --fetch: the cut last fetched main at preflight, possibly an hour ago, and
+  # the pull request is built on origin/main.
+  CHANGELOG_SYNC_REPO="$ROOT" bash "$script" "$v" --pr --fetch || rc=$?
+  case "$rc" in
+    0) ;;
+    1) warn "changelog sync: the pull request needs a look; a fragment was kept for review (above)" ;;
+    *) warn "changelog sync for v$v failed (exit $rc, above). The release is unaffected; main still lacks its changelog. Recover with: scripts/changelog-sync.sh $v --pr --fetch (RELEASING.md, \"How the changelog flows\")" ;;
+  esac
+  [ "$script" = "${CHANGELOG_SYNC_SCRIPT:-}" ] || [ "$script" = "$ROOT/scripts/changelog-sync.sh" ] || rm -f "$script"
+  return 0
 }
 
 self_test() {
@@ -557,6 +610,26 @@ JSON
   _eq "$(grep -c 'v9.9.9 (latest)' "$dv/website/hugo.toml")" "1" "the hugo fallback names the new release"
   _eq "$(grep -c '^    version = "v9.9.8"$' "$dv/website/hugo.toml")" "1" "and keeps the superseded one as an archived leg"
   rm -rf "$dv"
+
+  # The changelog sync runs after a patch GA tag and only then: a minor GA is
+  # dated on main itself, and an rc leaves [Unreleased] for its GA to date.
+  _ws() { if wants_changelog_sync "$1"; then echo sync; else echo no; fi; }
+  _eq "$(_ws 0.5.4)"       "sync" "a patch GA syncs its changelog to main"
+  _eq "$(_ws 0.5.10)"      "sync" "patch 10 is a patch"
+  _eq "$(_ws 0.6.0)"       "no"   "a minor GA was dated on main already"
+  _eq "$(_ws 0.5.4-rc.1)"  "no"   "an rc has nothing dated to sync"
+  # sync_changelog_pr runs past the tag push, so it must return 0 whatever the
+  # script does, and must pass the version and --pr through. Driven in this
+  # shell, not a subshell, for the same reason as promote_docs_version above.
+  local sd; sd="$(mktemp -d)"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/argv"\nexit 2\n' "$sd" >"$sd/sync.sh"
+  local scrc=0
+  CHANGELOG_SYNC_SCRIPT="$sd/sync.sh" sync_changelog_pr 9.9.10 >/dev/null 2>&1 || scrc=$?
+  _eq "$scrc" "0" "sync_changelog_pr returns 0 when the sync fails"
+  _eq "$(cat "$sd/argv" 2>/dev/null)" "9.9.10 --pr --fetch" "sync_changelog_pr runs the sync with --pr on a fresh origin/main"
+  _eq "$(CHANGELOG_SYNC_SCRIPT="$sd/sync.sh" sync_changelog_pr 9.9.10 2>&1 >/dev/null | grep -c 'changelog-sync.sh 9.9.10 --pr --fetch')" "1" "and prints the manual recovery"
+  _eq "$(test -f "$sd/sync.sh" && echo kept)" "kept" "an operator-supplied script is never deleted"
+  rm -rf "$sd"
 
   # promote_verdict: the watch's definition of PUBLISHED (ADR 0071).
   _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"success"}]')" "PROMOTED" "a successful promote job is PUBLISHED"
@@ -1162,6 +1235,31 @@ main() {
     fi
   fi
 
+  # main must already carry the changelog of every patch tagged so far
+  # (scripts/changelog-sync.sh). A minor cut from main folds main's fragments,
+  # so one that shipped in a patch and was never synced back would be
+  # published again as new: that refuses. A patch cut builds on release-X.Y and
+  # its notes are not affected, and the sync it opens after its tag repairs the
+  # earlier ones too, so there it only warns. Read from origin/main, never from
+  # this checkout.
+  if [ "$resume" != 1 ]; then
+    local sync_script sync_out sync_rc=0
+    if sync_script="$(changelog_sync_script)"; then
+      git fetch origin main -q >/dev/null 2>&1 || true
+      sync_out="$(CHANGELOG_SYNC_REPO="$ROOT" bash "$sync_script" --check-all 2>&1)" || sync_rc=$?
+      [ "$sync_script" = "$ROOT/scripts/changelog-sync.sh" ] || rm -f "$sync_script"
+      if [ "$sync_rc" != 0 ]; then
+        printf '%s\n' "$sync_out" | head -40 >&2
+        if [ "$base" = main ] && [ "$dry" != 1 ]; then
+          die "main does not carry the changelog of a patch already released (above), and this cut would fold its fragments again. Run scripts/changelog-sync.sh <that X.Y.Z> --pr, merge the pull request, then cut."
+        fi
+        warn "main does not carry the changelog of a patch already released (above); run scripts/changelog-sync.sh <that X.Y.Z> --pr. A minor cut refuses until it does."
+      fi
+    else
+      warn "scripts/changelog-sync.sh is not on origin/main yet, so main was not checked for an unsynced patch changelog"
+    fi
+  fi
+
   if [ "$dry" = 1 ] && [ "$resume" = 1 ]; then
     log "DRY RUN (--resume) — no tag, no push:"
     [ "$base_ok" = 1 ] || die "$base does not exist on origin, so there is nothing to resume"
@@ -1189,11 +1287,12 @@ main() {
     local base_note="" from_chart
     [ "$base_ok" = 1 ] || base_note=" (MISSING on origin: create it from v$(minor_of "$version").0 before the real cut)"
     from_chart="$(git show "origin/$base:helm/dexaflow/Chart.yaml" 2>/dev/null | awk '/^version:/{print $2; exit}')"
-    printf '  base:          %s%s\n  branch:        release/%s\n  tag:           %s\n  chart version: %s -> %s\n  kind:          %s\n  fragments:     %s\n  changelog:     %s\n' \
+    printf '  base:          %s%s\n  branch:        release/%s\n  tag:           %s\n  chart version: %s -> %s\n  kind:          %s\n  fragments:     %s\n  changelog:     %s\n  main sync:     %s\n' \
       "$base" "$base_note" "$tag" "$tag" "${from_chart:-$(read_chart_version)}" "$cv" \
       "$(is_rc "$version" && echo 'rc, keeps [Unreleased]' || echo 'GA, dates [Unreleased]')" \
       "$pending pending, folded into [Unreleased] and removed" \
-      "$(is_rc "$version" && echo "[Unreleased] gains the $pending folded entry(ies)" || echo "[Unreleased] + $pending folded -> [$cv] - $(date -u +%F)")"
+      "$(is_rc "$version" && echo "[Unreleased] gains the $pending folded entry(ies)" || echo "[Unreleased] + $pending folded -> [$cv] - $(date -u +%F)")" \
+      "$(wants_changelog_sync "$version" && echo "after the tag, a PR to main: changelog: sync $tag to main" || echo 'none (nothing folds outside main)')"
     exit 0
   fi
 
@@ -1292,6 +1391,11 @@ main() {
   # act AND starved the release watch below — including #862's un-draft, which
   # is what lets a retracted draft release recover on a rerun.
   { echo "tag=$tag sha=$sha date=$(date -u +%FT%TZ) kind=$(is_rc "$version" && echo rc || echo ga)"; } >>"$logf"
+
+  # A patch GA folded its fragments on release-X.Y; bring that back to main
+  # now, while the tag is fresh. It opens a pull request and does not wait on
+  # it, so it costs the watch below a few seconds, and it never fails the cut.
+  wants_changelog_sync "$version" && sync_changelog_pr "$cv"
 
   log "release workflows"
   sleep 15

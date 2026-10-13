@@ -394,6 +394,13 @@ type ExecutionSection struct {
 	// is turned on. Dedicated task pods are not affected; they follow
 	// executor.defaults.read_only_task_root_filesystem.
 	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
+	// WarmPoolEventRefill makes warm-pool refill event driven: the reconciler
+	// reads the fleet from a dedicated warm-pod informer instead of a LIST per
+	// tick, reacts at once to a worker being deleted, failing or claimed, and
+	// issues replacement creates concurrently (bounded). Default false keeps
+	// today's 30s polling with a LIST and serial creates. The failover reapers
+	// and the drained-anchor delete keep their live reads either way.
+	WarmPoolEventRefill bool `mapstructure:"warm_pool_event_refill"`
 }
 
 // EffectiveMinIdle resolves the warm-worker target for one dag_version under
@@ -888,8 +895,16 @@ type OIDCSection struct {
 
 // SchedulerSection configures the scheduler loop.
 type SchedulerSection struct {
-	LoopIntervalMS int             `mapstructure:"loop_interval_ms"`
-	Enabled        bool            `mapstructure:"enabled"`
+	LoopIntervalMS int  `mapstructure:"loop_interval_ms"`
+	Enabled        bool `mapstructure:"enabled"`
+	// EagerPromotion cuts the latency between a task settling and its
+	// downstreams being dispatched. Within a tick, the scheduler re-plans a run
+	// after its own state changes (a newly scheduled task is queued at once, a
+	// skip cascades), a bounded number of times; and a task's terminal report
+	// triggers an early tick instead of waiting for the next interval, which
+	// stays the upper bound. Off by default (ADR 0062): the tick then promotes
+	// one step per interval, as it always has.
+	EagerPromotion bool            `mapstructure:"eager_promotion"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
 	Alerts         AlertsSection   `mapstructure:"alerts"`
 	// PoolStarvationThreshold is how long a task held only by its pool waits
@@ -1064,6 +1079,9 @@ var serverDefaults = map[string]any{
 	"scheduler.loop_interval_ms":          1000,
 	"scheduler.enabled":                   true,
 	"scheduler.pool_starvation_threshold": "60s",
+	// Off by default (ADR 0062 feature gate): promotion keeps its one-step-per-
+	// tick cadence until an operator opts in.
+	"scheduler.eager_promotion": false,
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
@@ -1209,6 +1227,9 @@ var serverDefaults = map[string]any{
 	"execution.warm_read_only_root_filesystem": false,
 	"execution.source_mode.enabled":            false,
 	"execution.source_mode.image":              "",
+	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
+	"execution.warm_pool_event_refill": false,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,

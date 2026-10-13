@@ -116,7 +116,8 @@ func TestKubernetesWarmPodsCreateBuildsAndCreates(t *testing.T) {
 		return WarmPodSpec{DagVersionID: t.DagVersionID, Image: t.Image, BootstrapToken: "tok"}, nil
 	}
 	k := NewKubernetesWarmPods(cs, "leoflow", newSpec)
-	if err := k.CreateWarmPod(context.Background(), WarmTarget{DagVersionID: "dv1", Image: "img", EffectiveMinIdle: 1}, "", ""); err != nil {
+	name, err := k.CreateWarmPod(context.Background(), WarmTarget{DagVersionID: "dv1", Image: "img", EffectiveMinIdle: 1}, "", "")
+	if err != nil {
 		t.Fatalf("CreateWarmPod: %v", err)
 	}
 	pods, err := cs.CoreV1().Pods("leoflow").List(context.Background(), metav1.ListOptions{
@@ -131,6 +132,10 @@ func TestKubernetesWarmPodsCreateBuildsAndCreates(t *testing.T) {
 	if got := pods.Items[0].Spec.Containers[0].Image; got != "img" {
 		t.Errorf("created pod image = %q, want img", got)
 	}
+	// The reconciler keys its create expectation on this name.
+	if name == "" || name != pods.Items[0].Name {
+		t.Errorf("CreateWarmPod returned %q, want the created pod's name %q", name, pods.Items[0].Name)
+	}
 }
 
 // TestKubernetesWarmPodsCreateStampsAnchorOwner proves CreateWarmPod threads the
@@ -142,7 +147,7 @@ func TestKubernetesWarmPodsCreateStampsAnchorOwner(t *testing.T) {
 		return WarmPodSpec{DagVersionID: t.DagVersionID, Image: t.Image}, nil
 	}
 	k := NewKubernetesWarmPods(cs, "leoflow", newSpec)
-	if err := k.CreateWarmPod(context.Background(), WarmTarget{DagVersionID: "dv1", Image: "img"}, "leoflow-pool-dv1", "anchor-uid-123"); err != nil {
+	if _, err := k.CreateWarmPod(context.Background(), WarmTarget{DagVersionID: "dv1", Image: "img"}, "leoflow-pool-dv1", "anchor-uid-123"); err != nil {
 		t.Fatalf("CreateWarmPod: %v", err)
 	}
 	pods, err := cs.CoreV1().Pods("leoflow").List(context.Background(), metav1.ListOptions{

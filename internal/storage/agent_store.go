@@ -33,7 +33,17 @@ func NewExecutionStore(pg *Postgres) *ExecutionStore {
 
 // TaskSpec returns the agent-facing execution spec for a task instance.
 func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (agentrpc.TaskSpec, error) {
-	task, spec, _, run, err := s.resolve(ctx, id.RunID, id.TaskID)
+	tid, rid, err := agentAttemptRef(id)
+	if err != nil {
+		return agentrpc.TaskSpec{}, err
+	}
+	// The run is read inside the token's tenant (#508): a token whose run id
+	// belongs to another tenant finds no run.
+	run, err := s.q.GetDagRunInTenant(ctx, queries.GetDagRunInTenantParams{TenantID: tid, ID: rid})
+	if err != nil {
+		return agentrpc.TaskSpec{}, fmt.Errorf("loading run: %w", err)
+	}
+	task, spec, _, err := s.taskOfRun(ctx, run, id.RunID, id.TaskID)
 	if err != nil {
 		return agentrpc.TaskSpec{}, err
 	}
@@ -68,19 +78,7 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 	// fires on_failure_callback only when try_number >= max_tries (#424). Reading
 	// the spec value there would fire the callback on every retry of a cleared
 	// task. The spec value is the fallback when the row cannot be read.
-	var firstRescheduleAt string
-	attemptBudget := maxTries(task)
-	if rid, perr := parseUUID(id.RunID); perr == nil {
-		if row, ferr := s.q.TaskInstanceAttemptFields(ctx,
-			queries.TaskInstanceAttemptFieldsParams{DagRunID: rid, TaskID: id.TaskID}); ferr == nil {
-			if row.FirstRescheduleAt.Valid {
-				firstRescheduleAt = row.FirstRescheduleAt.Time.UTC().Format(time.RFC3339)
-			}
-			if row.MaxTries > 0 {
-				attemptBudget = int(row.MaxTries)
-			}
-		}
-	}
+	firstRescheduleAt, attemptBudget := s.attemptFields(ctx, tid, rid, id.TaskID, maxTries(task))
 	var timeout int
 	if task.ExecutionTimeoutSeconds != nil {
 		timeout = *task.ExecutionTimeoutSeconds
@@ -165,12 +163,13 @@ func maxTries(task domain.TaskSpec) int {
 // ReportState records a state transition reported by the agent, persisting the
 // exit code and error message and stamping started/ended/duration timestamps.
 func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity, state domain.TaskState, exitCode int, errMsg string) error {
-	rid, err := parseUUID(id.RunID)
+	tid, rid, err := agentAttemptRef(id)
 	if err != nil {
 		return err
 	}
 	code := toInt32(exitCode)
 	params := queries.ReportTaskResultParams{
+		TenantID:     tid,
 		DagRunID:     rid,
 		TaskID:       id.TaskID,
 		Column3:      queries.TaskState(state), // sqlc names the $3::task_state cast param Column3.
@@ -201,11 +200,12 @@ func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity,
 // epoch, ADR 0051 amendment) and the active states, so a poke from a superseded
 // attempt or onto a settled row does not apply and returns agentrpc.ErrStaleReport.
 func (s *ExecutionStore) Reschedule(ctx context.Context, id auth.AgentIdentity, at time.Time) error {
-	rid, err := parseUUID(id.RunID)
+	tid, rid, err := agentAttemptRef(id)
 	if err != nil {
 		return err
 	}
 	rows, err := s.q.RescheduleTaskInstance(ctx, queries.RescheduleTaskInstanceParams{
+		TenantID:     tid,
 		DagRunID:     rid,
 		TaskID:       id.TaskID,
 		RescheduleAt: pgtype.Timestamptz{Time: at, Valid: true},
@@ -226,11 +226,12 @@ func (s *ExecutionStore) Reschedule(ctx context.Context, id auth.AgentIdentity, 
 // agent has gone silent. The SQL guard skips terminal rows — a late
 // heartbeat after a terminal report is a no-op, not a regression.
 func (s *ExecutionStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdentity) error {
-	rid, err := parseUUID(id.RunID)
+	tid, rid, err := agentAttemptRef(id)
 	if err != nil {
 		return err
 	}
 	rows, err := s.q.RecordTaskHeartbeat(ctx, queries.RecordTaskHeartbeatParams{
+		TenantID:     tid,
 		DagRunID:     rid,
 		TaskID:       id.TaskID,
 		TryNumber:    toInt32(id.TryNumber),
@@ -295,11 +296,12 @@ func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID stri
 // recency term would deny a legitimate clear-and-rerun of an old run, binding
 // credential lifetime to the run's age rather than to the attempt.
 func (s *ExecutionStore) IsTaskInstanceLive(ctx context.Context, id auth.AgentIdentity) (bool, error) {
-	rid, err := parseUUID(id.RunID)
+	tid, rid, err := agentAttemptRef(id)
 	if err != nil {
 		return false, err
 	}
 	return s.q.IsTaskInstanceLive(ctx, queries.IsTaskInstanceLiveParams{
+		TenantID:     tid,
 		DagRunID:     rid,
 		TaskID:       id.TaskID,
 		TryNumber:    toInt32(id.TryNumber),
@@ -443,6 +445,38 @@ func attemptEpochArg(id auth.AgentIdentity) *int32 {
 	return &n
 }
 
+// attemptFields reads the task instance's first reschedule time (RFC3339,
+// empty when unset) and attempt budget, inside the token's tenant. The budget
+// falls back to specBudget when the row cannot be read or carries none.
+func (s *ExecutionStore) attemptFields(ctx context.Context, tid, rid pgtype.UUID, taskID string, specBudget int) (firstRescheduleAt string, budget int) {
+	budget = specBudget
+	row, err := s.q.TaskInstanceAttemptFields(ctx,
+		queries.TaskInstanceAttemptFieldsParams{TenantID: tid, DagRunID: rid, TaskID: taskID})
+	if err != nil {
+		return "", budget
+	}
+	if row.FirstRescheduleAt.Valid {
+		firstRescheduleAt = row.FirstRescheduleAt.Time.UTC().Format(time.RFC3339)
+	}
+	if row.MaxTries > 0 {
+		budget = int(row.MaxTries)
+	}
+	return firstRescheduleAt, budget
+}
+
+// agentAttemptRef parses the tenant and run ids an agent token carries. The
+// queries keyed by the token's run id also filter on its tenant (#508), so a
+// token that names a run of another tenant matches no row.
+func agentAttemptRef(id auth.AgentIdentity) (tenantID, runID pgtype.UUID, err error) {
+	if tenantID, err = parseUUID(id.TenantID); err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, fmt.Errorf("parsing the token's tenant id: %w", err)
+	}
+	if runID, err = parseUUID(id.RunID); err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	return tenantID, runID, nil
+}
+
 // ErrNotDispatchable is returned by ResolveTask when the task's row is no
 // longer in a pre-dispatch state (none, scheduled or queued): it is running or
 // settled, so dispatching it again would start a second execution.
@@ -504,6 +538,13 @@ func (s *ExecutionStore) resolve(ctx context.Context, runID, taskID string) (dom
 	if err != nil {
 		return domain.TaskSpec{}, domain.DAGSpec{}, queries.DagVersion{}, queries.DagRun{}, fmt.Errorf("loading run: %w", err)
 	}
+	task, spec, ver, err := s.taskOfRun(ctx, run, runID, taskID)
+	return task, spec, ver, run, err
+}
+
+// taskOfRun loads the dag version a run is pinned to and returns the named
+// task's spec. runID is the id the caller named the run by, for the error.
+func (s *ExecutionStore) taskOfRun(ctx context.Context, run queries.DagRun, runID, taskID string) (domain.TaskSpec, domain.DAGSpec, queries.DagVersion, error) {
 	// The version row + decoded spec are memoized per (immutable) dag_version_id,
 	// so re-resolving the same run's tasks on the dispatch path reuses the parse
 	// the scheduler tick already did instead of a fresh fetch + unmarshal. The
@@ -511,11 +552,11 @@ func (s *ExecutionStore) resolve(ctx context.Context, runID, taskID string) (dom
 	// Staging/Source), never mutates it.
 	ver, spec, err := s.specs.get(ctx, s.q, run.DagVersionID)
 	if err != nil {
-		return domain.TaskSpec{}, domain.DAGSpec{}, queries.DagVersion{}, queries.DagRun{}, err
+		return domain.TaskSpec{}, domain.DAGSpec{}, queries.DagVersion{}, err
 	}
 	for _, t := range spec.Tasks {
 		if t.TaskID == taskID {
-			return t, spec, ver, run, nil
+			return t, spec, ver, nil
 		}
 	}
 	// The one failure on this path an agent can act on, so it is composed as a
@@ -524,7 +565,7 @@ func (s *ExecutionStore) resolve(ctx context.Context, runID, taskID string) (dom
 	// dag_version does not declare — a stale image, a mismatched version — rather
 	// than that the control plane is broken, and it names only values the caller
 	// already holds in its own token.
-	return domain.TaskSpec{}, domain.DAGSpec{}, queries.DagVersion{}, queries.DagRun{},
+	return domain.TaskSpec{}, domain.DAGSpec{}, queries.DagVersion{},
 		domain.Safef(domain.ErrNotFound, "task %q not found in run %q", taskID, runID)
 }
 

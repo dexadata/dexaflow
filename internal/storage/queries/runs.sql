@@ -4,7 +4,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetDagRun :one
-SELECT * FROM dag_runs WHERE dag_id = $1 AND run_id = $2;
+-- tenant_id is a predicate here, not only a property of the caller's resolved
+-- dag id (#508): a dag id of another tenant finds no run.
+SELECT * FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3;
 
 -- name: GetDagRunWithVersion :one
 -- The run plus the LABEL of the version it is pinned to. The API needs the label
@@ -21,16 +23,16 @@ SELECT * FROM dag_runs WHERE dag_id = $1 AND run_id = $2;
 SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = $1 AND r.run_id = $2;
+WHERE r.tenant_id = $1 AND r.dag_id = $2 AND r.run_id = $3;
 
 -- name: ListDagRunsByDagWithVersion :many
 -- See GetDagRunWithVersion. One join rather than a lookup per row.
 SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = $1
+WHERE r.tenant_id = $1 AND r.dag_id = $2
 ORDER BY r.logical_date DESC, r.run_id DESC
-LIMIT $2 OFFSET $3;
+LIMIT $3 OFFSET $4;
 
 -- name: ListDagRunsByDagAfter :many
 -- Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
@@ -40,7 +42,7 @@ LIMIT $2 OFFSET $3;
 SELECT r.*, v.version AS dag_version_label
 FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
-WHERE r.dag_id = sqlc.arg(dag_id)
+WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id)
   AND (cardinality(sqlc.arg(states)::text[]) = 0 OR r.state::text = ANY(sqlc.arg(states)::text[]))
   AND (r.logical_date, r.run_id) < (sqlc.arg(after_logical_date)::timestamptz, sqlc.arg(after_run_id)::text)
 ORDER BY r.logical_date DESC, r.run_id DESC
@@ -48,26 +50,33 @@ LIMIT sqlc.arg(row_limit);
 
 -- name: CountDagRunsByDagStates :one
 SELECT count(*) FROM dag_runs
-WHERE dag_id = sqlc.arg(dag_id) AND state::text = ANY(sqlc.arg(states)::text[]);
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_id = sqlc.arg(dag_id) AND state::text = ANY(sqlc.arg(states)::text[]);
 
 -- name: DeleteDagRun :execrows
 -- Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
-DELETE FROM dag_runs WHERE dag_id = $1 AND run_id = $2;
+DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3;
 
 -- name: ListDagRunsByDag :many
 SELECT * FROM dag_runs
-WHERE dag_id = $1
+WHERE tenant_id = $1 AND dag_id = $2
 ORDER BY logical_date DESC
-LIMIT $2 OFFSET $3;
+LIMIT $3 OFFSET $4;
 
 -- name: CountDagRunsByDag :one
-SELECT count(*) FROM dag_runs WHERE dag_id = $1;
+-- The tenant is checked on the parent dag, once, rather than on every run row:
+-- a per-row tenant_id filter would turn the index-only count over
+-- idx_dag_runs_dag_logical into a heap visit per run. A dag_runs row always
+-- carries its dag's tenant, so a dag id of another tenant counts zero either
+-- way (#508).
+SELECT count(*) FROM dag_runs
+WHERE dag_runs.dag_id = $1
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = $1 AND d.tenant_id = $2);
 
 -- name: CountActiveDagRunsByDagID :one
 -- Counts queued+running runs for a single DAG; used by the manual-trigger
 -- path to enforce max_active_runs (#200) before insert.
 SELECT count(*) FROM dag_runs
-WHERE dag_id = $1 AND state IN ('queued', 'running');
+WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running');
 
 -- name: ListStaleQueuedTaskInstances :many
 -- Lists every TI currently in `queued` alongside its queued_at timestamp for
@@ -127,7 +136,7 @@ ORDER BY queued_at;
 -- name: UpdateDagRunState :one
 UPDATE dag_runs
 SET state = $2, started_at = $3, ended_at = $4
-WHERE id = $1
+WHERE id = $1 AND tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
 
 -- name: ReopenDagRunKeepingVersion :exec
@@ -148,7 +157,7 @@ RETURNING *;
 UPDATE dag_runs
 SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL
-WHERE id = $1;
+WHERE id = $1 AND tenant_id = $2;
 
 -- name: ResetDagRunToVersion :exec
 -- Clear with run_on_latest_version re-binds the run to the DAG's current
@@ -165,7 +174,7 @@ UPDATE dag_runs
 SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL,
     dag_version_id = $2
-WHERE id = $1;
+WHERE id = $1 AND tenant_id = sqlc.arg(tenant_id);
 
 -- name: ClaimAlertAttempt :one
 -- Atomically claim one on-failure ATTEMPT for a run, returning the row iff this
@@ -238,7 +247,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: ListTaskInstancesByRun :many
 SELECT * FROM task_instances
-WHERE dag_run_id = $1
+WHERE tenant_id = $1 AND dag_run_id = $2
 ORDER BY task_id;
 
 -- name: ListTaskInstancesByRuns :many
@@ -259,7 +268,9 @@ ORDER BY dag_run_id, task_id;
 -- left out and the current row, the try's latest execution, stands for it.
 -- Each row carries the per-attempt fields PLUS the run-constant fields
 -- (operator, max_tries, map_index) copied from the current TI; archived rows
--- get them via the JOIN.
+-- get them via the JOIN. pool and pool_slots are the current TI's too: history
+-- does not record them, so every attempt reports the pool the task is charged
+-- to now (#1589).
 SELECT
     ti.id AS task_instance_id,
     ti.map_index,
@@ -277,10 +288,12 @@ SELECT
     h.hostname,
     h.pod_name,
     h.node_name,
-    h.note
+    h.note,
+    ti.pool,
+    ti.pool_slots
 FROM task_instance_history h
 JOIN task_instances ti ON ti.id = h.task_instance_id
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
   AND h.try_number <> ti.try_number
 UNION ALL
 SELECT
@@ -300,9 +313,11 @@ SELECT
     ti.hostname,
     ti.pod_name,
     ti.node_name,
-    ti.note
+    ti.note,
+    ti.pool,
+    ti.pool_slots
 FROM task_instances ti
-WHERE ti.dag_run_id = $1 AND ti.task_id = $2
+WHERE ti.tenant_id = $1 AND ti.dag_run_id = $2 AND ti.task_id = $3
 ORDER BY try_number;
 
 -- name: TryAttemptEpochBounds :one
@@ -319,18 +334,18 @@ SELECT
         SELECT max(h.attempt_epoch)
         FROM task_instance_history h
         JOIN task_instances lt ON lt.id = h.task_instance_id
-        WHERE lt.dag_run_id = sqlc.arg(dag_run_id) AND lt.task_id = sqlc.arg(task_id)
+        WHERE lt.tenant_id = sqlc.arg(tenant_id) AND lt.dag_run_id = sqlc.arg(dag_run_id) AND lt.task_id = sqlc.arg(task_id)
           AND h.try_number < sqlc.arg(try_number)
     ), 0)::int AS low,
     COALESCE((
         SELECT cur.attempt_epoch FROM task_instances cur
-        WHERE cur.dag_run_id = sqlc.arg(dag_run_id) AND cur.task_id = sqlc.arg(task_id)
+        WHERE cur.tenant_id = sqlc.arg(tenant_id) AND cur.dag_run_id = sqlc.arg(dag_run_id) AND cur.task_id = sqlc.arg(task_id)
           AND cur.try_number = sqlc.arg(try_number)
     ), (
         SELECT h.attempt_epoch
         FROM task_instance_history h
         JOIN task_instances ht ON ht.id = h.task_instance_id
-        WHERE ht.dag_run_id = sqlc.arg(dag_run_id) AND ht.task_id = sqlc.arg(task_id)
+        WHERE ht.tenant_id = sqlc.arg(tenant_id) AND ht.dag_run_id = sqlc.arg(dag_run_id) AND ht.task_id = sqlc.arg(task_id)
           AND h.try_number = sqlc.arg(try_number)
     ), 0)::int AS high;
 
@@ -374,10 +389,29 @@ SELECT EXISTS (
 )::bool AS run_exists;
 
 -- name: GetDagVersionByID :one
+-- Unscoped: for the spec cache the scheduler and the dispatcher share, which
+-- hold version ids from their own runs. A request path reads a version with
+-- GetDagVersionInTenant (#508).
 SELECT * FROM dag_versions WHERE id = $1;
 
+-- name: GetDagVersionInTenant :one
+-- A version by id, only when its DAG belongs to the given tenant (#508).
+-- dag_versions has no tenant_id of its own; the tenant is its DAG's.
+SELECT * FROM dag_versions
+WHERE dag_versions.id = $1
+  AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $2);
+
 -- name: GetDagRunByID :one
+-- Unscoped: for the scheduler and the dispatcher, which hold run ids from
+-- their own listings. A run id that arrives in an agent token is read with
+-- GetDagRunInTenant instead (#508).
 SELECT * FROM dag_runs WHERE id = $1;
+
+-- name: GetDagRunInTenant :one
+-- A run by id, only inside the given tenant: the agent RPC reads the run its
+-- token names with the token's tenant, so a token of one tenant never loads
+-- another tenant's run (#508).
+SELECT * FROM dag_runs WHERE tenant_id = $1 AND id = $2;
 
 -- name: UpdateTaskInstanceStateByRunTask :exec
 -- Stamps the per-state entry timestamps the UI shows (scheduled_when /
@@ -404,7 +438,7 @@ SET state = sqlc.arg(state)::task_state,
     started_at = CASE WHEN sqlc.arg(state)::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     last_failure_kind = NULL,
     infra_confirmed_at = now()
-WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = sqlc.arg(task_id);
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id) AND task_id = sqlc.arg(task_id);
 
 -- name: UpdateTaskInstanceStatesByRunTasks :exec
 -- Batched form of UpdateTaskInstanceStateByRunTask: applies ONE target state to
@@ -462,7 +496,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
+    WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
         queued_at = EXCLUDED.queued_at,
@@ -515,8 +549,17 @@ SET state = 'none',
     pool_slots = COALESCE(
         (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
+WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id);
 
 -- name: ResetTaskInstanceForRetry :execrows
 -- The scheduler retry rail's reset: identical to ResetTaskInstanceToNone but
@@ -715,7 +758,7 @@ WHERE dag_run_id = $1 AND task_id = $2 AND state = 'up_for_reschedule';
 -- scheduler enforces, which a clear moves past the spec's retries + 1 (#1131),
 -- so the runtime's on_failure_callback gate must read it from here (#424).
 SELECT first_reschedule_at, max_tries FROM task_instances
-WHERE dag_run_id = $1 AND task_id = $2;
+WHERE tenant_id = $1 AND dag_run_id = $2 AND task_id = $3;
 
 -- name: FailTaskInstanceIfActive :exec
 -- Settle a task instance failed from the pod reconciler, guarded by id,
@@ -833,6 +876,7 @@ SET state = $3::task_state,
     duration_seconds = CASE WHEN $3::task_state IN ('success', 'failed') AND started_at IS NOT NULL
         THEN EXTRACT(EPOCH FROM (now() - started_at)) ELSE duration_seconds END
 WHERE dag_run_id = $1 AND task_id = $2
+  AND tenant_id = sqlc.arg(tenant_id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = COALESCE(sqlc.narg(attempt_epoch)::int, 0)
   AND state IN ('none', 'scheduled', 'queued', 'running');
@@ -853,6 +897,7 @@ SET state = 'up_for_reschedule'::task_state,
     -- delivered get_first_reschedule_date lets the sensor honor cumulative timeout.
     first_reschedule_at = COALESCE(first_reschedule_at, now())
 WHERE dag_run_id = $1 AND task_id = $2
+  AND tenant_id = sqlc.arg(tenant_id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = COALESCE(sqlc.narg(attempt_epoch)::int, 0)
   AND state IN ('running', 'queued', 'scheduled');
@@ -862,7 +907,7 @@ SELECT t.id AS tenant_id, dr.id AS dag_run_id
 FROM dag_runs dr
 JOIN dags d ON d.id = dr.dag_id
 JOIN tenants t ON t.id = d.tenant_id
-WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3;
+WHERE t.name = $1 AND d.dag_id = $2 AND dr.run_id = $3 AND dr.tenant_id = t.id;
 
 -- name: LatestRunsForDags :many
 SELECT d.dag_id AS dag_id_text,
@@ -931,7 +976,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
+    WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -983,8 +1028,17 @@ SET state = 'none',
     pool_slots = COALESCE(
         (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
+WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = sqlc.arg(dag_run_id) AND ti.task_id = sqlc.arg(task_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry');
 
 -- name: ResetAllFailedTaskInstances :many
@@ -1002,7 +1056,7 @@ WITH archived AS (
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
         src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
     FROM task_instances src
-    WHERE src.dag_run_id = sqlc.arg(dag_run_id)
+    WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
     SET state = EXCLUDED.state,
@@ -1054,8 +1108,17 @@ SET state = 'none',
     pool_slots = COALESCE(
         (sqlc.arg(spec_pool_slots)::int[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)],
         ti.pool_slots),
+    -- The pool is re-bound the same way (#1589), so a task the version moved to
+    -- another pool is charged there and not to the pool it left. spec_pools is
+    -- parallel to spec_task_ids with '' for the implicit default_pool, stored as
+    -- NULL like materialization does; a task the version no longer declares
+    -- keeps the pool it had.
+    pool = CASE
+        WHEN array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id) IS NULL THEN ti.pool
+        ELSE NULLIF((sqlc.arg(spec_pools)::text[])[array_position(sqlc.arg(spec_task_ids)::text[], ti.task_id)], '')
+    END,
     try_number = ti.try_number + 1
-WHERE ti.dag_run_id = sqlc.arg(dag_run_id)
+WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = sqlc.arg(dag_run_id)
   AND ti.state IN ('failed', 'upstream_failed', 'up_for_retry')
 RETURNING ti.task_id;
 
@@ -1152,6 +1215,7 @@ SET last_heartbeat_at = now()
 WHERE dag_run_id = $1
   AND task_id = $2
   AND try_number = $3
+  AND tenant_id = sqlc.arg(tenant_id)
   AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_epoch)::int)
   AND state IN ('queued', 'running');
 
@@ -1177,6 +1241,7 @@ SELECT EXISTS (
     WHERE dag_run_id = $1
       AND task_id = $2
       AND try_number = $3
+      AND tenant_id = sqlc.arg(tenant_id)
       AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_epoch)::int)
       AND state IN ('queued', 'running')
 );

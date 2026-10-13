@@ -162,7 +162,10 @@ git push -u origin fix/clear-error-message
   open PR edits the same few lines: each merge conflicts the rest, each conflict
   costs a rebase, and each rebase re-runs the full CI matrix. Two fragments are
   two different files and cannot conflict. Hand-editing `CHANGELOG.md` still
-  passes the gate; the fragment is the cheaper way to do the same thing.
+  passes the gate; the fragment is the cheaper way to do the same thing. Dated
+  sections are published release notes: never edit them. What happens to the
+  fragment after it merges is in
+  [Record a change](/contribute/recipes/record-a-change/#what-happens-to-the-fragment).
 
   A PR with no user-facing change (release prep, chore, dependency bump,
   docs-only) takes the **`skip-changelog`** label instead. Dependabot PRs are
@@ -189,6 +192,17 @@ accepted from first-time contributors** — open a discussion issue first.
   `user_roles` alone: tenants created through the service API copy their
   built-in roles from `default` only once (#1305).
   `migrations/tenant_roles_test.go` enforces it.
+- **Tenant predicates in SQL.** A query over a tenant-owned table (one with a
+  `tenant_id` column: `dag_runs`, `task_instances`, `xcom_index` and the rest)
+  that selects, updates or deletes by an internal id takes the caller's tenant
+  as a parameter and filters on it (`WHERE tenant_id = $1 AND ...`). Resolving
+  the id inside the tenant first is not enough on its own: the predicate keeps
+  a stray id from reaching another tenant's rows when some path skips the
+  resolve (#508). An agent call takes the tenant from its token. The
+  exception is the server's own work across every tenant (the scheduler, the
+  dispatcher, the reapers and the janitors), whose ids come from its own
+  listings; its unscoped queries say so in their comments where a scoped
+  variant exists (`GetDagRunByID`, `GetDagVersionByID`).
 
 ## 6. The CI gates
 

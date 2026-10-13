@@ -54,7 +54,7 @@ type Querier interface {
 	// duplicate dispatch cannot move the epoch of the live attempt. The row is the
 	// task's latest try, matching how the dispatcher has always resolved it.
 	ClaimAttemptEpoch(ctx context.Context, arg ClaimAttemptEpochParams) (ClaimAttemptEpochRow, error)
-	ClearDagRuns(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	ClearDagRuns(ctx context.Context, arg ClearDagRunsParams) (int64, error)
 	// The reconciler confirms a provisional infra mark (ADR 0052 amendment, part
 	// 2): the attempt's pods show no SUCCESS record and no task container still
 	// running, so the guess stands and the planner may re-place. Guarded on the
@@ -68,11 +68,16 @@ type Querier interface {
 	CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UUID) error
 	// Counts queued+running runs for a single DAG; used by the manual-trigger
 	// path to enforce max_active_runs (#200) before insert.
-	CountActiveDagRunsByDagID(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error)
 	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountConnections(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountDagRunStatesInWindow(ctx context.Context, arg CountDagRunStatesInWindowParams) ([]CountDagRunStatesInWindowRow, error)
-	CountDagRunsByDag(ctx context.Context, dagID pgtype.UUID) (int64, error)
+	// The tenant is checked on the parent dag, once, rather than on every run row:
+	// a per-row tenant_id filter would turn the index-only count over
+	// idx_dag_runs_dag_logical into a heap visit per run. A dag_runs row always
+	// carries its dag's tenant, so a dag id of another tenant counts zero either
+	// way (#508).
+	CountDagRunsByDag(ctx context.Context, arg CountDagRunsByDagParams) (int64, error)
 	CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error)
 	CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	// One index probe per DAG of the tenant for its newest run. DAGs without runs
@@ -176,8 +181,17 @@ type Querier interface {
 	GetConnection(ctx context.Context, arg GetConnectionParams) (GetConnectionRow, error)
 	GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecParams) ([]byte, error)
 	GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (Dag, error)
+	// tenant_id is a predicate here, not only a property of the caller's resolved
+	// dag id (#508): a dag id of another tenant finds no run.
 	GetDagRun(ctx context.Context, arg GetDagRunParams) (DagRun, error)
+	// Unscoped: for the scheduler and the dispatcher, which hold run ids from
+	// their own listings. A run id that arrives in an agent token is read with
+	// GetDagRunInTenant instead (#508).
 	GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, error)
+	// A run by id, only inside the given tenant: the agent RPC reads the run its
+	// token names with the token's tenant, so a token of one tenant never loads
+	// another tenant's run (#508).
+	GetDagRunInTenant(ctx context.Context, arg GetDagRunInTenantParams) (DagRun, error)
 	// The run plus the LABEL of the version it is pinned to. The API needs the label
 	// to populate bundle_version, which is what makes the UI's clear dialog render
 	// its "Run with latest bundle version" control: the SPA shows that control only
@@ -190,8 +204,15 @@ type Querier interface {
 	// is written this way so that a future ON DELETE SET NULL degrades to a null
 	// label instead of dropping the run from the UI.
 	GetDagRunWithVersion(ctx context.Context, arg GetDagRunWithVersionParams) (GetDagRunWithVersionRow, error)
+	// dag_versions has no tenant_id: the tenant is checked on the parent dag (#508).
 	GetDagVersionByHash(ctx context.Context, arg GetDagVersionByHashParams) (DagVersion, error)
+	// Unscoped: for the spec cache the scheduler and the dispatcher share, which
+	// hold version ids from their own runs. A request path reads a version with
+	// GetDagVersionInTenant (#508).
 	GetDagVersionByID(ctx context.Context, id pgtype.UUID) (DagVersion, error)
+	// A version by id, only when its DAG belongs to the given tenant (#508).
+	// dag_versions has no tenant_id of its own; the tenant is its DAG's.
+	GetDagVersionInTenant(ctx context.Context, arg GetDagVersionInTenantParams) (DagVersion, error)
 	// See ListDagsWithVersion.
 	GetDagWithVersion(ctx context.Context, arg GetDagWithVersionParams) (GetDagWithVersionRow, error)
 	GetDefaultTenant(ctx context.Context) (GetDefaultTenantRow, error)
@@ -223,6 +244,8 @@ type Querier interface {
 	GetVariable(ctx context.Context, arg GetVariableParams) (GetVariableRow, error)
 	GetXComByNames(ctx context.Context, arg GetXComByNamesParams) (GetXComByNamesRow, error)
 	GetXComEntry(ctx context.Context, arg GetXComEntryParams) (GetXComEntryRow, error)
+	// The row is inserted only under a dag of the given tenant (#508): a dag id of
+	// another tenant inserts nothing and the query returns no row.
 	InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error)
 	// The implicit default pool every tenant needs (migration 023 seeds it for
 	// "default"), copied from default's so the slot count stays in step.
@@ -432,9 +455,11 @@ type Querier interface {
 	// left out and the current row, the try's latest execution, stands for it.
 	// Each row carries the per-attempt fields PLUS the run-constant fields
 	// (operator, max_tries, map_index) copied from the current TI; archived rows
-	// get them via the JOIN.
+	// get them via the JOIN. pool and pool_slots are the current TI's too: history
+	// does not record them, so every attempt reports the pool the task is charged
+	// to now (#1589).
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
-	ListTaskInstancesByRun(ctx context.Context, dagRunID pgtype.UUID) ([]TaskInstance, error)
+	ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstancesByRunParams) ([]TaskInstance, error)
 	// The batched form of ListTaskInstancesByRun for the scheduler tick: every
 	// active run's task instances in one round trip instead of one per run. Rows
 	// come grouped by run and, within a run, in the same task_id order the per-run
@@ -626,7 +651,7 @@ type Querier interface {
 	// Alert bookkeeping is cleared here for the same reason it is there: the clear
 	// starts a new failure episode, so a genuine re-failure re-pages, and a spent
 	// retry budget is not carried into an episode that has not been attempted.
-	ReopenDagRunKeepingVersion(ctx context.Context, id pgtype.UUID) error
+	ReopenDagRunKeepingVersion(ctx context.Context, arg ReopenDagRunKeepingVersionParams) error
 	// $3 is cast to task_state in every usage: without the cast Postgres deduces an
 	// enum type from `state = $3` but text from the literal comparisons below and
 	// rejects the parameter as having inconsistent types (SQLSTATE 42P08). The pod

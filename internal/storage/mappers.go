@@ -158,6 +158,8 @@ func mapTaskInstance(ti queries.TaskInstance, dagID, runID string) domain.TaskIn
 		Duration:    ti.DurationSeconds,
 		Hostname:    strOrEmpty(ti.Hostname),
 		Note:        strOrEmpty(ti.Note),
+		Pool:        poolName(ti.Pool),
+		PoolSlots:   int(ti.PoolSlots),
 		// error_message is where every failure path already records its cause; it
 		// was written but never read back, which is what left a failed attempt with
 		// no visible reason anywhere outside the control plane's own logs.
@@ -177,4 +179,13 @@ func parseTimestamptz(s string) pgtype.Timestamptz {
 		}
 	}
 	return pgtype.Timestamptz{}
+}
+
+// poolName names a task instance's pool, resolving the NULL an unset pool is
+// stored as to the implicit default_pool (see poolOrNil).
+func poolName(pool *string) string {
+	if pool == nil || *pool == "" {
+		return domain.DefaultPoolName
+	}
+	return *pool
 }
