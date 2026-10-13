@@ -147,3 +147,78 @@ func TestWatchLeadershipStaysWhileHolding(t *testing.T) {
 	cancel() // simulate shutdown; the watchdog should return
 	<-done
 }
+
+// hangingLock is a leader lock whose every query blocks until its context is
+// done, the way a query does on a database session that is black-holed (the
+// host vanished behind a failover or a partition, with no TCP reset).
+type hangingLock struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (h *hangingLock) wait(ctx context.Context) error {
+	h.mu.Lock()
+	h.calls++
+	h.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (h *hangingLock) HoldsLock(ctx context.Context) (bool, error) { return false, h.wait(ctx) }
+
+func (h *hangingLock) TryAcquire(ctx context.Context) (bool, error) { return false, h.wait(ctx) }
+
+// TestWatchLeadershipStepsDownWhenChecksHang: a check that never returns is a
+// failed check, not a pass. Each check runs under a deadline, so a leader whose
+// session is black-holed steps down after maxLeaderCheckFailures intervals
+// instead of leading on a lock it can no longer confirm (#1599, R-12).
+func TestWatchLeadershipStepsDownWhenChecksHang(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	chk := &hangingLock{}
+	var (
+		mu     sync.Mutex
+		reason string
+	)
+	done := make(chan struct{})
+	go func() {
+		watchLeadership(ctx, chk, 10*time.Millisecond, cancel, discardLog(), func(r string) {
+			mu.Lock()
+			reason = r
+			mu.Unlock()
+		})
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("leader never stepped down while every leadership check hung")
+	}
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if reason != "check_timeout" {
+		t.Errorf("step-down reason = %q, want check_timeout", reason)
+	}
+	if chk.calls < maxLeaderCheckFailures {
+		t.Errorf("stepped down after %d checks, want %d", chk.calls, maxLeaderCheckFailures)
+	}
+}
+
+// TestTryLeadershipGivesUpOnAHungSession: a follower's campaign attempt is
+// bounded too, so a black-holed session cannot stall the campaign loop
+// forever (#1599, R-12).
+func TestTryLeadershipGivesUpOnAHungSession(t *testing.T) {
+	start := time.Now()
+	ok, err := tryLeadership(context.Background(), &hangingLock{}, 20*time.Millisecond)
+	if err == nil || ok {
+		t.Fatalf("tryLeadership on a hung session = %v, %v; want an error", ok, err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error %v does not report the deadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("tryLeadership took %s with a 20ms deadline", elapsed)
+	}
+}

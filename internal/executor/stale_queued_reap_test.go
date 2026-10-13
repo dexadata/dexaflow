@@ -49,7 +49,7 @@ type fakeStaleQueuedStore struct {
 	failErr    error
 }
 
-func (f *fakeStaleQueuedStore) ListStaleQueuedCandidates(context.Context) ([]StaleQueuedCandidate, error) {
+func (f *fakeStaleQueuedStore) ListStaleQueuedCandidates(context.Context, time.Duration, ReapCursor) ([]StaleQueuedCandidate, error) {
 	return f.candidates, f.listErr
 }
 

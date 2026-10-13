@@ -206,9 +206,9 @@ spec:
               value: {{ include "leoflow.agentControlPlaneAddr" .ctx | quote }}
             # The namespace the control plane creates task pods + staging PVCs in.
             # MUST equal the namespace the executor Role/RoleBinding are granted in
-            # (rbac.yaml, also .Values.taskNamespace) or every dispatch 403s (#480).
+            # (rbac.yaml, also leoflow.taskNamespace) or every dispatch 403s (#480).
             - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
-              value: {{ .ctx.Values.taskNamespace | quote }}
+              value: {{ include "leoflow.taskNamespace" .ctx | quote }}
             {{- if .ctx.Values.config.cors.allowedOrigins }}
             # CORS origins the API accepts (server.cors.allowed_origins, #1144).
             # Comma-joined for the same reason as trusted_proxies below: the chart
@@ -252,6 +252,11 @@ spec:
             - name: LEOFLOW_SERVER_POOLS_READ_ONLY
               value: "true"
             {{- end }}
+            # New DAGs start paused unless the DAG says otherwise
+            # (dags_are_paused_at_creation, #1705). Rendered either way, so the
+            # chart value, not the server build, decides.
+            - name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+              value: {{ .ctx.Values.config.dagsArePausedAtCreation | toString | quote }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set

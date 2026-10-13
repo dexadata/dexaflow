@@ -79,11 +79,16 @@ SELECT count(*) FROM dag_runs
 WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running');
 
 -- name: ListStaleQueuedTaskInstances :many
--- Lists every TI currently in `queued` alongside its queued_at timestamp for
--- the dispatch-lost reaper (#202). The reaper applies the threshold per
--- candidate so the SQL stays simple and the decision is purely in Go. The
--- LIMIT bounds a tick's reap work after a long outage; the rest are picked
--- up next tick (backstop, not sprint).
+-- Lists one page of the TIs in `queued` for at least the dispatch-lost
+-- threshold, with their queued_at, for the dispatch-lost reaper (#202). The
+-- threshold is applied here, before the LIMIT, so attempts inside it never
+-- take the slots of those past it; a NULL queued_at is never listed (too
+-- poorly observed to reap). The reaper re-checks the threshold in Go.
+-- The page is keyset-paged on (queued_at, id) after the reaper's cursor
+-- (R-07, #1597): with a fixed "oldest 100", 100 queued attempts whose pods
+-- are Pending (a capacity shortage) hid a newer lost dispatch forever. The
+-- reaper keeps the cursor across sweeps and passes '-infinity' and the nil
+-- uuid to start over. The LIMIT bounds a sweep's reap work.
 -- warm_worker_id rides along (ADR 0058 N1d-a2, review finding H3): a queued warm
 -- attempt whose serving warm worker is still alive is just slow to transition
 -- queued->running, so the dispatch-lost reaper must DEFER it rather than fail it
@@ -104,8 +109,10 @@ FROM task_instances ti
 JOIN dag_runs dr ON dr.id = ti.dag_run_id
 JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'queued'
-ORDER BY ti.queued_at NULLS LAST
-LIMIT 100;
+  AND ti.queued_at <= now() - make_interval(secs => sqlc.arg(threshold_seconds)::float8)
+  AND (ti.queued_at, ti.id) > (sqlc.arg(after_at)::timestamptz, sqlc.arg(after_id)::uuid)
+ORDER BY ti.queued_at, ti.id
+LIMIT sqlc.arg(page_size);
 
 -- name: MarkTaskDispatchLost :execrows
 -- Fails one queued TI with a dispatch_lost error. The WHERE state='queued'
@@ -774,6 +781,25 @@ WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
 
+-- name: FailTaskInstanceInfraIfActive :exec
+-- Settle a task instance failed for an infrastructure reason from the pod
+-- reconciler (ADR 0051, #1595): the cluster stopped the pod (an eviction, a
+-- graceful node shutdown, a preemption), so the attempt goes to the infra
+-- re-place rail and keeps the task's own retries. Confirmed at once: the
+-- reconciler read the terminal pod and found no SUCCESS record, which is what
+-- the confirmation pass would check (ADR 0052 amendment, part 2). Guarded like
+-- FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
+-- states.
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = now(),
+    error_message = sqlc.arg(error_message)
+WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state IN ('scheduled', 'queued', 'running');
+
 -- name: SucceedTaskInstanceIfActive :execrows
 -- Settle a task instance succeeded from its durable outcome record (ADR 0052),
 -- recovering a success whose report was lost. Guarded by id, try_number and
@@ -1436,9 +1462,12 @@ WHERE id = sqlc.arg(id)
 -- slots of those past it; a NULL started_at is never listed (too poorly observed
 -- to reap). The reaper re-checks grace and pod liveness per candidate in Go.
 -- heartbeated lets Lite (no pods) judge a TI whose agent died before its first
--- heartbeat, which the agent-lost query never lists (#916). The
--- LIMIT bounds a single tick's reap work even after a large outage; the rest
--- are picked up next tick.
+-- heartbeat, which the agent-lost query never lists (#916). The page is
+-- keyset-paged on (started_at, id) after the reaper's cursor (R-07, #1597):
+-- with a fixed "oldest 100", 100 attempts with live pods hid a newer attempt
+-- whose pod vanished forever. The reaper keeps the cursor across sweeps and
+-- passes '-infinity' and the nil uuid to start over. The LIMIT bounds a single
+-- sweep's reap work.
 SELECT ti.id AS task_instance_id,
        ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
@@ -1454,8 +1483,9 @@ JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
   AND ti.warm_worker_id IS NULL
   AND ti.started_at <= now() - make_interval(secs => sqlc.arg(grace_seconds)::float8)
-ORDER BY ti.started_at
-LIMIT 100;
+  AND (ti.started_at, ti.id) > (sqlc.arg(after_at)::timestamptz, sqlc.arg(after_id)::uuid)
+ORDER BY ti.started_at, ti.id
+LIMIT sqlc.arg(page_size);
 
 -- name: MarkTaskPodLost :execrows
 -- Fails a running TI whose pod has vanished (deleted/evicted/node lost). The

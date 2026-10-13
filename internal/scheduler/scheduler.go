@@ -275,6 +275,11 @@ type Recorder interface {
 	// result. The scheduler records result="dropped" when its dispatch semaphore
 	// is saturated (#435); the dispatcher records "sent"/"failed" for deliveries.
 	RecordAlert(dagID, channelType, result string)
+	// ObserveSchedulerLoop records the wall time of one leader tick, whether
+	// its step succeeded or not (#1186).
+	ObserveSchedulerLoop(d time.Duration)
+	// RecordTaskRetry counts one retry released for a task (#1186).
+	RecordTaskRetry(dagID, taskID string)
 	// RecordSchedulerWokenTick counts a tick started early by Wake
 	// (scheduler.eager_promotion) instead of by the loop interval.
 	RecordSchedulerWokenTick()
@@ -315,7 +320,21 @@ type Scheduler struct {
 	// at the run after it, so one large run cannot take every freed buffer slot
 	// tick after tick. Touched only by the tick goroutine.
 	deferredRun string
-	alerter     Alerter
+	// dispatchTickBudget bounds the wall time one tick spends dispatching
+	// (scheduler.dispatch.tick_budget, #1596). Once it is spent the tick stops
+	// dispatching, like a deferred dispatch: the rest of the ready tasks stay
+	// scheduled, untouched, and the next tick starts at the run after the one
+	// that was cut. 0 disables it. dispatchDeadline is the current tick's end of
+	// dispatch, zero when no budget applies. Tick goroutine only.
+	dispatchTickBudget time.Duration
+	dispatchDeadline   time.Time
+	// dispatchTenantLimit caps the dispatches one tenant gets per tick
+	// (scheduler.dispatch.max_per_tenant_per_tick); 0 means no cap.
+	// tenantDispatches counts the current tick's dispatches per tenant UUID.
+	// Tick goroutine only.
+	dispatchTenantLimit int
+	tenantDispatches    map[string]int
+	alerter             Alerter
 	// alertSem bounds concurrent on-failure alert dispatches (#424): a mass
 	// failure must not spawn an unbounded burst of alert goroutines/POSTs. A
 	// buffered channel used as a counting semaphore; a saturated slot drops the
@@ -379,8 +398,42 @@ func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Sch
 		warnedRunCaps:   map[string]string{},
 		alertSem:        make(chan struct{}, defaultAlertConcurrency),
 		clock:           time.Now,
-		wake:            make(chan struct{}, 1),
+		// The budget is on by default: the stall it prevents is reachable with
+		// default settings (synchronous dispatch, client QPS 5).
+		dispatchTickBudget: DefaultDispatchTickBudget,
+		tenantDispatches:   map[string]int{},
+		wake:               make(chan struct{}, 1),
 	}
+}
+
+// DefaultDispatchTickBudget is the default for scheduler.dispatch.tick_budget:
+// the wall time one tick may spend dispatching before it stops and leaves the
+// rest for the next tick (#1596). Well below the 30 s step timeout, so a tick
+// that dispatches a wide fan-out under the Kubernetes client's rate limit still
+// reaches every other run and finishes in seconds; long enough that a healthy
+// tick, which dispatches in milliseconds, never meets it.
+const DefaultDispatchTickBudget = 5 * time.Second
+
+// SetDispatchTickBudget sets how long one tick may spend dispatching
+// (scheduler.dispatch.tick_budget). 0 or less disables the budget, which
+// dispatches every ready task in the tick however long it takes. Call before
+// the scheduler starts ticking.
+func (s *Scheduler) SetDispatchTickBudget(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	s.dispatchTickBudget = d
+}
+
+// SetDispatchTenantLimit caps how many tasks one tenant may dispatch in one
+// tick (scheduler.dispatch.max_per_tenant_per_tick), so a tenant with a wide
+// fan-out or many runs leaves dispatch room for the others. 0 or less means no
+// cap. Call before the scheduler starts ticking.
+func (s *Scheduler) SetDispatchTenantLimit(n int) {
+	if n < 0 {
+		n = 0
+	}
+	s.dispatchTenantLimit = n
 }
 
 // defaultStepTimeout bounds how long one scheduling tick may run before it is
@@ -558,6 +611,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // can never crash the process or stop the loop. It is the top-level backstop;
 // per-run isolation in Step quarantines individual poison runs underneath it.
 func (s *Scheduler) tick(ctx context.Context) {
+	// Registered first so it runs last, after a recovered panic too. Only a
+	// leader's tick does scheduling work; a follower's would dilute the
+	// histogram with near-zero samples.
+	if s.recorder != nil && s.leading.Load() {
+		start := time.Now()
+		defer func() { s.recorder.ObserveSchedulerLoop(time.Since(start)) }()
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("scheduler tick panic recovered", "panic", r, "stack", string(debug.Stack()))
@@ -646,12 +706,21 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		reservations = s.pruneReservations(runs, poolBudgets)
 		waits = make(map[string][]PoolWait)
 	}
+	// Create the due cron runs before dispatching: dispatch is the part of the
+	// tick that can run long (a wide fan-out under the client rate limit), and a
+	// tick that ran out of time there used to skip run creation, losing the slot
+	// with catchup=false (#1596). The runs created here are not in this tick's
+	// snapshot either way, so the order changes nothing else.
+	for i := range runs {
+		activeByDAG[dagRef{runs[i].TenantID, runs[i].DagID}]++
+	}
+	createErr := s.createDueRuns(ctx, activeByDAG)
 	start := rotateAfter(runs, s.deferredRun)
 	s.deferredRun = ""
+	s.openDispatchWindow()
 	for k := range runs {
 		run := runs[(start+k)%len(runs)]
 		key := dagRef{run.TenantID, run.DagID}
-		activeByDAG[key]++
 		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
 		run.PoolsEnabled = s.poolsEnabled
 		run.ConfineUndefinedPools = s.confineUndefinedPools
@@ -670,7 +739,40 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	if tracking {
 		s.recordPoolWaits(s.clock(), runs, waits, poolBudgets)
 	}
-	return s.createDueRuns(ctx, activeByDAG)
+	return createErr
+}
+
+// openDispatchWindow starts the tick's dispatch accounting: the deadline the
+// dispatch budget sets and the per-tenant dispatch counts.
+func (s *Scheduler) openDispatchWindow() {
+	s.dispatchDeadline = time.Time{}
+	if s.dispatchTickBudget > 0 {
+		s.dispatchDeadline = s.clock().Add(s.dispatchTickBudget)
+	}
+	clear(s.tenantDispatches)
+}
+
+// holdDispatch reports whether the tick must leave run's next ready task
+// scheduled instead of dispatching it: an earlier dispatch this tick was
+// deferred, the tick's dispatch budget is spent, or the run's tenant used its
+// dispatches for this tick. A held task is not touched, so it costs no dispatch
+// attempt and no backoff, and the next tick offers it again. When the budget
+// runs out, run is remembered so the next tick starts after it.
+func (s *Scheduler) holdDispatch(run RunState) bool {
+	if s.deferredRun != "" {
+		return true
+	}
+	if !s.dispatchDeadline.IsZero() && !s.clock().Before(s.dispatchDeadline) {
+		s.deferredRun = run.RunID
+		s.logger.Debug("dispatch budget for this tick spent; the remaining tasks wait for the next tick",
+			"run", run.RunID, "budget", s.dispatchTickBudget)
+		s.record("dispatch_budget_spent")
+		return true
+	}
+	if s.dispatchTenantLimit > 0 && s.tenantDispatches[run.TenantID] >= s.dispatchTenantLimit {
+		return true
+	}
+	return false
 }
 
 // rotateAfter returns the index the tick starts advancing runs at: right after
@@ -1211,6 +1313,7 @@ func (s *Scheduler) resetForRetry(ctx context.Context, run RunState, taskID stri
 	}
 	if s.recorder != nil {
 		s.recorder.RecordSchedulerDecision("retry")
+		s.recorder.RecordTaskRetry(run.DagID, taskID)
 		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateNone), run.DagID)
 	}
 	return nil
@@ -1269,11 +1372,11 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 		return fmt.Errorf("task %s not found in run %s", t.TaskID, run.RunID)
 	}
 	if s.dispatcher != nil {
-		if s.deferredRun != "" {
-			// The buffer refused a dispatch earlier this tick: leave the task
-			// scheduled, untouched, for the next tick instead of another refusal.
+		if s.holdDispatch(run) {
+			// Leave the task scheduled, untouched, for the next tick.
 			return nil
 		}
+		s.tenantDispatches[run.TenantID]++
 		disp, err := s.dispatcher.Dispatch(ctx, run.RunID, run.DagID, run.DagVersionID, task)
 		if err != nil {
 			return s.handleDispatchFailure(ctx, run, t.TaskID, disp, err)

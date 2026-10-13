@@ -75,6 +75,12 @@ type Metrics struct {
 	RedisPoolIdle        prometheus.Gauge
 	RedisPoolTotalConns  prometheus.Gauge
 	RedisPoolTimeouts    prometheus.Counter
+
+	// Retention janitor (D5): rows deleted per table, rows a dry run found
+	// eligible per table, and the duration of each cycle.
+	RetentionRowsDeleted   *prometheus.CounterVec
+	RetentionRowsEligible  *prometheus.GaugeVec
+	RetentionCycleDuration prometheus.Histogram
 }
 
 // NewMetrics registers every ADR 0010 collector with reg and returns the set.
@@ -220,7 +226,34 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		RedisPoolTimeouts: f.NewCounter(prometheus.CounterOpts{
 			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
+
+		RetentionRowsDeleted: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_retention_rows_deleted_total", Help: "Metadata rows the retention janitor deleted, by table.",
+		}, []string{"table"}),
+		RetentionRowsEligible: f.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "dexaflow_retention_rows_eligible", Help: "Rows the last retention dry run found eligible for deletion, by table, summed across all tenants.",
+		}, []string{"table"}),
+		RetentionCycleDuration: f.NewHistogram(prometheus.HistogramOpts{
+			Name:    "dexaflow_retention_cycle_duration_seconds",
+			Help:    "Wall-clock duration of one retention janitor cycle, pauses included.",
+			Buckets: []float64{0.1, 1, 10, 30, 60, 300, 900, 1800},
+		}),
 	}
+}
+
+// RecordRetentionDeleted counts n rows the retention janitor deleted from table.
+func (m *Metrics) RecordRetentionDeleted(table string, n int64) {
+	m.RetentionRowsDeleted.WithLabelValues(table).Add(float64(n))
+}
+
+// RecordRetentionEligible sets the rows a retention dry run found eligible in table.
+func (m *Metrics) RecordRetentionEligible(table string, n int64) {
+	m.RetentionRowsEligible.WithLabelValues(table).Set(float64(n))
+}
+
+// ObserveRetentionCycle observes the duration of one retention cycle.
+func (m *Metrics) ObserveRetentionCycle(d time.Duration) {
+	m.RetentionCycleDuration.Observe(d.Seconds())
 }
 
 // RecordRedisCommandFailure increments the per-reason command failure counter
@@ -295,6 +328,28 @@ func (m *Metrics) ObserveSchedulerReacquire(d time.Duration) {
 	m.SchedulerReacquire.Observe(d.Seconds())
 }
 
+// ObserveSchedulerLoop records the wall time of one leader scheduler tick, the
+// SLI dexaflow_scheduler_loop_duration_seconds exists for (#1186). It satisfies
+// scheduler.Recorder.
+func (m *Metrics) ObserveSchedulerLoop(d time.Duration) {
+	m.SchedulerLoopDuration.Observe(d.Seconds())
+}
+
+// RecordTaskRetry counts one retry the scheduler released for a task (its
+// up_for_retry reset to none with a new try number). It satisfies
+// scheduler.Recorder.
+func (m *Metrics) RecordTaskRetry(dagID, taskID string) {
+	m.TaskRetries.WithLabelValues(dagID, taskID).Inc()
+}
+
+// ObservePodCreation counts one task pod create by dag and result ("success"
+// or "error", ADR 0010) and observes the API call's latency. It satisfies
+// executor.PodCreationRecorder.
+func (m *Metrics) ObservePodCreation(dagID, result string, d time.Duration) {
+	m.PodsCreated.WithLabelValues(dagID, result).Inc()
+	m.TaskPodCreationDuration.Observe(d.Seconds())
+}
+
 // RecordTaskTransition records a task instance state transition.
 func (m *Metrics) RecordTaskTransition(from, to, dagID string) {
 	m.TaskStateTransitions.WithLabelValues(from, to, dagID).Inc()
@@ -324,8 +379,8 @@ func (m *Metrics) RecordDispatchQueueDepth(depth int) {
 func (m *Metrics) RecordDispatchAtCapacity() { m.DispatchAtCapacity.Inc() }
 
 // RecordDispatchLatencySeconds observes one end-to-end dispatch latency, from
-// enqueue to the worker's inner-dispatcher return. Reserved for future use by
-// the BufferedDispatcher.
+// enqueue to the worker's inner-dispatcher return, for every buffered dispatch
+// (successful or not).
 func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 	m.DispatchLatency.Observe(seconds)
 }

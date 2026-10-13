@@ -86,6 +86,12 @@ def compile_dag(
         spec["max_active_runs"] = mar
     if getattr(dag, "catchup", None) is True:
         spec["catchup"] = True
+    # Both values are kept: False makes a DAG start active on a server that
+    # pauses new DAGs, True the other way round. Unset is omitted and the server
+    # setting decides. Read only when the DAG is first registered.
+    paused = getattr(dag, "is_paused_upon_creation", None)
+    if isinstance(paused, bool):
+        spec["is_paused_upon_creation"] = paused
     return spec
 
 

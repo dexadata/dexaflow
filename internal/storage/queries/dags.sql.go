@@ -86,6 +86,51 @@ func (q *Queries) DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const ensureDag = `-- name: EnsureDag :exec
+INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup, is_paused)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+ON CONFLICT (tenant_id, dag_id) DO NOTHING
+`
+
+type EnsureDagParams struct {
+	TenantID         pgtype.UUID        `json:"tenant_id"`
+	DagID            string             `json:"dag_id"`
+	Description      *string            `json:"description"`
+	Owner            *string            `json:"owner"`
+	Tags             []string           `json:"tags"`
+	Schedule         *string            `json:"schedule"`
+	ScheduleTimezone *string            `json:"schedule_timezone"`
+	StartDate        pgtype.Timestamptz `json:"start_date"`
+	MaxActiveRuns    int32              `json:"max_active_runs"`
+	Catchup          bool               `json:"catchup"`
+	IsPaused         bool               `json:"is_paused"`
+}
+
+// Creates the dags row of a DAG registered for the first time, with the
+// metadata of the spec that will become its first version. An existing row is
+// left untouched (no write, no lock): RegisterDagVersion then locks it with
+// LockDagByDagID and rewrites the metadata only when a new version becomes
+// current (UpdateDagMetadata). A concurrent first insert of the same dag_id
+// waits on the unique index until the other transaction ends.
+// is_paused is set only here, on creation (dags_are_paused_at_creation or the
+// spec's is_paused_upon_creation, #1705): a redeploy never changes it.
+func (q *Queries) EnsureDag(ctx context.Context, arg EnsureDagParams) error {
+	_, err := q.db.Exec(ctx, ensureDag,
+		arg.TenantID,
+		arg.DagID,
+		arg.Description,
+		arg.Owner,
+		arg.Tags,
+		arg.Schedule,
+		arg.ScheduleTimezone,
+		arg.StartDate,
+		arg.MaxActiveRuns,
+		arg.Catchup,
+		arg.IsPaused,
+	)
+	return err
+}
+
 const getCurrentDagSpec = `-- name: GetCurrentDagSpec :one
 SELECT v.spec
 FROM dags d
@@ -521,6 +566,45 @@ func (q *Queries) ListDagsWithVersion(ctx context.Context, arg ListDagsWithVersi
 	return items, nil
 }
 
+const lockDagByDagID = `-- name: LockDagByDagID :one
+SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR NO KEY UPDATE
+`
+
+type LockDagByDagIDParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    string      `json:"dag_id"`
+}
+
+// Locks the DAG's row for the rest of the transaction, so registers of the same
+// DAG are serialized: the spec-hash check of one register sees the version the
+// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
+// another register, but not the KEY SHARE lock every dag_runs insert takes on
+// its DAG, so run creation is not blocked while a version registers.
+func (q *Queries) LockDagByDagID(ctx context.Context, arg LockDagByDagIDParams) (Dag, error) {
+	row := q.db.QueryRow(ctx, lockDagByDagID, arg.TenantID, arg.DagID)
+	var i Dag
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.DagID,
+		&i.Description,
+		&i.IsPaused,
+		&i.IsActive,
+		&i.Owner,
+		&i.Tags,
+		&i.Schedule,
+		&i.ScheduleTimezone,
+		&i.StartDate,
+		&i.EndDate,
+		&i.MaxActiveRuns,
+		&i.Catchup,
+		&i.CurrentVersionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setCurrentDagVersion = `-- name: SetCurrentDagVersion :exec
 UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3
 `
@@ -573,25 +657,23 @@ func (q *Queries) SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag
 	return i, err
 }
 
-const upsertDag = `-- name: UpsertDag :one
-INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (tenant_id, dag_id) DO UPDATE
-SET description = EXCLUDED.description,
-    owner = EXCLUDED.owner,
-    tags = EXCLUDED.tags,
-    schedule = EXCLUDED.schedule,
-    schedule_timezone = EXCLUDED.schedule_timezone,
-    start_date = EXCLUDED.start_date,
-    max_active_runs = EXCLUDED.max_active_runs,
-    catchup = EXCLUDED.catchup,
+const updateDagMetadata = `-- name: UpdateDagMetadata :exec
+UPDATE dags
+SET description = $3,
+    owner = $4,
+    tags = $5,
+    schedule = $6,
+    schedule_timezone = $7,
+    start_date = $8,
+    max_active_runs = $9,
+    catchup = $10,
     updated_at = now()
-RETURNING id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at
+WHERE id = $1 AND tenant_id = $2
 `
 
-type UpsertDagParams struct {
+type UpdateDagMetadataParams struct {
+	ID               pgtype.UUID        `json:"id"`
 	TenantID         pgtype.UUID        `json:"tenant_id"`
-	DagID            string             `json:"dag_id"`
 	Description      *string            `json:"description"`
 	Owner            *string            `json:"owner"`
 	Tags             []string           `json:"tags"`
@@ -602,10 +684,13 @@ type UpsertDagParams struct {
 	Catchup          bool               `json:"catchup"`
 }
 
-func (q *Queries) UpsertDag(ctx context.Context, arg UpsertDagParams) (Dag, error) {
-	row := q.db.QueryRow(ctx, upsertDag,
+// Applies the spec of the version that is becoming current to the dags row, in
+// the same transaction as SetCurrentDagVersion. is_paused is never touched:
+// pausing is an operator decision, not a deploy one.
+func (q *Queries) UpdateDagMetadata(ctx context.Context, arg UpdateDagMetadataParams) error {
+	_, err := q.db.Exec(ctx, updateDagMetadata,
+		arg.ID,
 		arg.TenantID,
-		arg.DagID,
 		arg.Description,
 		arg.Owner,
 		arg.Tags,
@@ -615,25 +700,5 @@ func (q *Queries) UpsertDag(ctx context.Context, arg UpsertDagParams) (Dag, erro
 		arg.MaxActiveRuns,
 		arg.Catchup,
 	)
-	var i Dag
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.DagID,
-		&i.Description,
-		&i.IsPaused,
-		&i.IsActive,
-		&i.Owner,
-		&i.Tags,
-		&i.Schedule,
-		&i.ScheduleTimezone,
-		&i.StartDate,
-		&i.EndDate,
-		&i.MaxActiveRuns,
-		&i.Catchup,
-		&i.CurrentVersionID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+	return err
 }
