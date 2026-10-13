@@ -592,7 +592,8 @@ func (d *deployRun) mayReuse(image, version string, origin labelOrigin) bool {
 // inputs and can be pinned without a build (the skip path of ADR 0073). An
 // explicit --dag-version, or a tag from git (tag_strategy git_sha or
 // git_tag), names no content: a dirty tree or a moved tag would reuse an
-// image of other sources.
+// image of other sources. A git strategy that fell back to the label (outside
+// git, no tag on HEAD) tags with the label, and so may reuse.
 func reusableImage(image, version string, origin labelOrigin) bool {
 	return origin == labelDefault && version != "" && strings.HasSuffix(image, ":"+version)
 }

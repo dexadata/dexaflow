@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -57,6 +58,10 @@ func TestSelectReadsThePlatformOfASingleImage(t *testing.T) {
 		{"linux/amd64", "linux/amd64", true},
 		{"linux/arm64/v8", "linux/arm64", true},
 		{"linux/arm64", "linux/amd64", false},
+		{"linux/arm/v6", "linux/arm/v7", false},
+		{"linux/arm", "linux/arm/v7", false},
+		{"linux/arm/v7", "linux/arm/v7", true},
+		{"linux/arm/v7", "linux/arm", true},
 	} {
 		reg := &fixedRegistry{pinned: Pinned{Ref: "r@sha256:1", Manifest: []byte(`{"layers":[]}`)}, platform: tc.have}
 		b, _ := Select(context.Background(), Options{Reuse: true, Registry: reg}, "r:1", []string{tc.want})
@@ -78,7 +83,8 @@ func TestSelectBuildsWhenTheImageCannotBeReused(t *testing.T) {
 		why       string
 	}{
 		"missing platform": {Options{Reuse: true, Registry: ok}, []string{"linux/amd64", "linux/arm64"}, "linux/arm64"},
-		"not in registry":  {Options{Reuse: true, Registry: &fixedRegistry{err: errors.New("MANIFEST_UNKNOWN")}}, []string{"linux/amd64"}, "no image"},
+		"not in registry":  {Options{Reuse: true, Registry: &fixedRegistry{err: fmt.Errorf("reading: %w", errors.New("MANIFEST_UNKNOWN"))}}, []string{"linux/amd64"}, "no reusable image for this content in the registry (MANIFEST_UNKNOWN)"},
+		"unauthorized":     {Options{Reuse: true, Registry: &fixedRegistry{err: fmt.Errorf("reading: %w", errors.New("UNAUTHORIZED"))}}, []string{"linux/amd64"}, "(UNAUTHORIZED)"},
 		"no platform":      {Options{Reuse: true, Registry: ok}, nil, "fallback"},
 		"reuse not asked":  {Options{Registry: ok}, []string{"linux/amd64"}, "fallback"},
 	}

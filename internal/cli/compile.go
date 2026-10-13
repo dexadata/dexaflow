@@ -597,14 +597,15 @@ func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.
 		return nil
 	}
 	b, reason := selectBuilder(cmdContext(cmd), o, cfg, image)
-	if b.Path() == build.PathSkip {
-		return reuseImage(cmd, o, cfg, b, reason, image)
-	}
 	return buildImage(cmd, dir, o, cfg, image, b, reason)
 }
 
 // buildImage runs builder b on the project, from its own Dockerfile or one
-// generated from dexaflow.yaml, and pushes when asked.
+// generated from dexaflow.yaml, and pushes when asked. The checks before the
+// build (a build.dockerfile outside the project, exclude_paths, secrets the
+// image would carry) run on the skip path too, where b builds nothing: the
+// image it reuses was built from the same inputs, so what they refuse or warn
+// about holds for it as well.
 func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string, b build.Builder, reason string) error {
 	name, fromConfig := resolveDockerfileName(cmd, o, cfg)
 	if fromConfig {
@@ -649,23 +650,9 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 		*o.built = res
 	}
 	// After the build, where the eye lands: the warning above is minutes of
-	// layer output away by now.
-	remindBakedSecretsAfterBuild(cmd.ErrOrStderr(), baked)
-	return nil
-}
-
-// reuseImage takes the skip path: no Dockerfile, no build and no push; the
-// result pins the image the registry already holds for this content.
-func reuseImage(cmd *cobra.Command, o compileOptions, cfg *domain.LeoflowConfig, b build.Builder, reason, image string) error {
-	if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
-		return perr
-	}
-	res, err := b.Build(cmdContext(cmd), build.Request{Image: image, Platforms: buildPlatforms(cfg), Push: true, Pin: true})
-	if err != nil {
-		return err
-	}
-	if o.built != nil {
-		*o.built = res
+	// layer output away by now. A reused image printed no build output.
+	if res.Path != build.PathSkip {
+		remindBakedSecretsAfterBuild(cmd.ErrOrStderr(), baked)
 	}
 	return nil
 }

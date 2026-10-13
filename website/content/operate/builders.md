@@ -65,7 +65,9 @@ earlier and says so.
 
 The image is reused only when it holds every requested platform. It is never
 reused for an explicit `--dag-version`, for a tag from git
-(`tag_strategy: git_sha` or `git_tag`), or with `--rebuild` or `--force`.
+(`tag_strategy: git_sha` or `git_tag`, unless it fell back to the version
+label outside git or with no tag on `HEAD`), or with `--rebuild` or
+`--force`.
 Like the "already deployed" check, it trusts the label: an unpinned
 dependency that gained a release upstream, or a change the label does not
 hash (an environment variable read at build time), is not picked up until

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -90,4 +92,60 @@ func TestDeployPlanSaysTheImageIsReused(t *testing.T) {
 	if err != nil || !strings.Contains(out, "build       yes") {
 		t.Errorf("plan --rebuild: %v, want a build:\n%s", err, out)
 	}
+}
+
+// tag_strategy git_sha in a git repository tags with the commit, which names
+// no content (the tree may be dirty): the deploy builds even though the
+// registry answers for that tag.
+func TestDeployWithAGitTagBuilds(t *testing.T) {
+	dir, _ := platformProjectWith(t, amd64AndArm64, "build:\n  platforms: [linux/amd64]\n")
+	writeProjectFile(t, dir, "dexaflow.yaml", strings.Replace(readProjectFile(t, dir, "dexaflow.yaml"),
+		"  image_name: etl\n", "  image_name: etl\n  tag_strategy: git_sha\n", 1))
+	gitInitTagged(t, dir, "")
+	builder, log := argvBuilder(t)
+	out, _, err := deployDir(t, &deployServer{}, dir, builder)
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	if calls := argvLines(t, log); len(calls) != 2 || !strings.HasPrefix(calls[0], "build ") {
+		t.Errorf("builder calls = %q, want a build and a push", calls)
+	}
+}
+
+// The checks before a build hold on the skip path: a build.dockerfile that a
+// symlink takes outside the project is refused (#1272) even when the image
+// is reused.
+func TestDeployReuseKeepsTheDockerfileCheck(t *testing.T) {
+	dir, _ := platformProjectWith(t, amd64AndArm64, "build:\n  platforms: [linux/amd64]\n  dockerfile: Dockerfile.link\n")
+	outside := filepath.Join(t.TempDir(), "Dockerfile")
+	writeProjectFile(t, filepath.Dir(outside), "Dockerfile", "FROM scratch\n")
+	if err := os.Symlink(outside, filepath.Join(dir, "Dockerfile.link")); err != nil {
+		t.Fatal(err)
+	}
+	builder, _ := argvBuilder(t)
+	fake := &deployServer{}
+	out, _, err := deployDir(t, fake, dir, builder)
+	if err == nil || !strings.Contains(err.Error(), "outside the project directory") || fake.registers != 0 {
+		t.Fatalf("deploy with build.dockerfile outside the project: err=%v registers=%d\n%s", err, fake.registers, out)
+	}
+}
+
+// A plan that builds nothing (the label is current) never claims a reuse.
+func TestDeployPlanOfTheCurrentLabelClaimsNoReuse(t *testing.T) {
+	dir, _ := platformProjectWith(t, amd64AndArm64, "build:\n  platforms: [linux/amd64]\n")
+	label := labelOf(t, dir)
+	builder, _ := argvBuilder(t)
+	out, _, err := deployDir(t, &deployServer{current: label, registered: []string{label}}, dir, builder, "--plan")
+	if err != nil || !strings.Contains(out, "up to date") || strings.Contains(out, "registry already holds") {
+		t.Errorf("plan of the current label: %v\n%s", err, out)
+	}
+}
+
+func readProjectFile(t *testing.T, dir, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, rel)) //nolint:gosec // a path this test created
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

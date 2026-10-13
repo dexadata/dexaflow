@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -44,7 +45,11 @@ func Select(ctx context.Context, o Options, image string, platforms []string) (b
 	}
 	pinned, err := reg.Resolve(ctx, image)
 	if err != nil {
-		return daemon, "no image for this content in the registry yet; " + fallbackReason
+		cause := errors.Unwrap(err)
+		if cause == nil {
+			cause = err
+		}
+		return daemon, fmt.Sprintf("no reusable image for this content in the registry (%v); %s", cause, fallbackReason)
 	}
 	if !isIndex(pinned.Manifest) {
 		pr, ok := reg.(platformReader)
