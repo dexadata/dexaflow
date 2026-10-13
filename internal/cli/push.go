@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -35,17 +34,9 @@ func newPushCommand() *cobra.Command {
 			if verr := spec.Validate(); verr != nil {
 				return fmt.Errorf("invalid dag.json: %w", verr)
 			}
-			if serverURL == "" || token == "" {
-				cfg, cerr := config.Load(configFilePath(cmd), cmd.Flags())
-				if cerr != nil {
-					return cerr
-				}
-				if serverURL == "" {
-					serverURL = cfg.ServerURL
-				}
-				if token == "" {
-					token = cfg.Token
-				}
+			serverURL, token, err = resolveServerToken(cmd, serverURL, token)
+			if err != nil {
+				return err
 			}
 			status, body, err := pushVersion(cmdContext(cmd), serverURL, token, spec.DagID, data)
 			if err != nil {
@@ -58,8 +49,8 @@ func newPushCommand() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL (default: config server_url)")
-	cmd.Flags().StringVar(&token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token")
+	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
+	cmd.Flags().StringVar(&token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: the session saved for the server)")
 	return cmd
 }
 

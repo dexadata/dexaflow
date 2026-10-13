@@ -14,7 +14,7 @@ import (
 var resolvedTarget struct {
 	server     string // the control plane being called
 	configured string // server_url in the config file, when one was read
-	fromConfig bool   // the token came from the config file, not a flag or env
+	fromConfig bool   // the config file's token was used, or withheld as belonging to configured
 }
 
 // apiStatusError is the one place a non-2xx from the control plane becomes an
@@ -32,15 +32,15 @@ func apiStatusError(status int, body []byte) error {
 const loginCommandPath = "dexaflow auth login"
 
 // tokenServerHint turns a bare 401 into something actionable when the token was
-// read from the config file and the command is talking to a DIFFERENT control
-// plane than the one that token was persisted for.
+// saved in the config file for a DIFFERENT control plane than the one the
+// command is talking to.
 //
 // The config stores `server_url` and `token` together — internal/config/persist.go
 // writes both keys in the same call — so the CLI has always known which server it
-// minted a token for. It just never said so: pointing a command at another server
-// with --server carried the persisted token along, that server rejected it, and
-// the user saw a 401 with no way to tell an expired token from a token that
-// belongs somewhere else (#1102).
+// minted a token for. It used to send that token to whatever server --server
+// named, and the user saw a 401 with no way to tell an expired token from a
+// token that belongs somewhere else (#1102). The token is now withheld from any
+// other server (pickToken), and the 401 that follows says why.
 //
 // It stays silent in every case where a mismatch is not what happened: a non-401,
 // a token the user supplied explicitly, no config server to compare against, or
@@ -61,7 +61,7 @@ func tokenServerHint(err error, effectiveServer, configServer string, tokenFromC
 	if sameServer(effectiveServer, configServer) {
 		return err
 	}
-	return fmt.Errorf("%w\nhint: the saved token was issued for %s, and this command is calling %s.\n      Log in to that server first:  %s --server %s",
+	return fmt.Errorf("%w\nhint: the saved token was issued for %s, so it was not sent to %s.\n      Log in to that server first:  %s --server %s",
 		err, configServer, effectiveServer, loginCommandPath, effectiveServer)
 }
 

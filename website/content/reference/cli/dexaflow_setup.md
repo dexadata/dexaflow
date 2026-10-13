@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_setup/
 title: "dexaflow setup"
 linkTitle: "setup"
-weight: 51
+weight: 52
 ---
 
 Bootstrap the managed Dexaflow runtime (Python, parser, workspace).
@@ -31,6 +31,7 @@ dexaflow setup [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO
