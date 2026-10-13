@@ -21,6 +21,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/agent/secretsource"
 	"github.com/dexadata/dexaflow/internal/taskoutcome"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -109,6 +110,15 @@ type Runner struct {
 	// afterFunc returns a channel that fires after the given delay; it exists so
 	// tests can make the report-retry backoff instant. Nil uses time.After.
 	afterFunc func(time.Duration) <-chan time.Time
+	// now is the clock the transient-retry budget is measured on; tests inject
+	// one that a hung call and a backoff advance. Nil uses time.Now.
+	now func() time.Time
+	// startPhase and outputPhase are the transient-retry budgets of the
+	// attempt: every call before the task runs (spec, variables, connections,
+	// upstream XComs) shares the first, and every output push shares the
+	// second. runOneAttempt resets both.
+	startPhase  retryPhase
+	outputPhase retryPhase
 	// attemptEpoch is the execution of the try this attempt is, from its task
 	// spec, stamped on the outcome record (ADR 0052 amendment). It is reset for
 	// every attempt a warm worker runs; 0 until the spec is read.
@@ -131,6 +141,14 @@ func (r *Runner) after(d time.Duration) <-chan time.Time {
 	return time.After(d)
 }
 
+// clock reads the injected clock when set (tests) and time.Now otherwise.
+func (r *Runner) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
 // Run executes the task lifecycle and returns an error if the task failed. In
 // single-shot mode the agent registers once and serves exactly one attempt, so
 // Run is register followed by runOneAttempt. The warm worker (warm.go) reuses
@@ -149,7 +167,13 @@ func (r *Runner) Run(ctx context.Context) error {
 // It does NOT register — registration is a per-worker concern the caller owns.
 func (r *Runner) runOneAttempt(ctx context.Context) error {
 	r.attemptEpoch = 0
-	spec, err := r.Client.GetTaskSpec(ctx, &agentv1.GetTaskSpecRequest{})
+	r.startPhase, r.outputPhase = retryPhase{}, retryPhase{}
+	var spec *agentv1.TaskSpec
+	err := r.withTransientRetry(ctx, &r.startPhase, "GetTaskSpec", func(ctx context.Context) error {
+		var cerr error
+		spec, cerr = r.Client.GetTaskSpec(ctx, &agentv1.GetTaskSpecRequest{})
+		return cerr
+	})
 	if err != nil {
 		return fmt.Errorf("fetching task spec: %w", err)
 	}
@@ -188,7 +212,12 @@ func (r *Runner) register(ctx context.Context) error {
 }
 
 func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string, error) {
-	fetcher := r.prefetchXCom(ctx, spec)
+	// The batched prefetch is not retried (a failure falls back to the
+	// per-value reads, which are), but it runs inside the start phase's budget.
+	prefetchCtx, cancel := r.phaseContext(ctx, &r.startPhase)
+	inner := r.prefetchXCom(prefetchCtx, spec)
+	cancel()
+	fetcher := retryingFetcher{r: r, phase: &r.startPhase, inner: inner}
 	var xcom []string
 	for param, upstreams := range spec.GetXcomInputMapping() {
 		taskIDs := upstreams.GetTaskIds()
@@ -448,23 +477,33 @@ func (r *Runner) secretsEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]stri
 	// vaultDenied records a liveness-enforce PermissionDenied on either vault RPC;
 	// it gates the external branch (B2) so a non-live TI resolves nothing.
 	vaultDenied := false
-	if resp, err := r.Client.GetVariables(ctx, &agentv1.GetVariablesRequest{}); err != nil {
+	var varsResp *agentv1.GetVariablesResponse
+	if err := r.withTransientRetry(ctx, &r.startPhase, "GetVariables", func(ctx context.Context) error {
+		var cerr error
+		varsResp, cerr = r.Client.GetVariables(ctx, &agentv1.GetVariablesRequest{})
+		return cerr
+	}); err != nil {
 		if status.Code(err) == codes.PermissionDenied {
 			vaultDenied = true
 		}
 		slog.Warn("fetching variables; Variable.get may be unavailable", "error", err)
 	} else {
-		for k, v := range resp.GetVariables() {
+		for k, v := range varsResp.GetVariables() {
 			vars[k] = v
 		}
 	}
-	if resp, err := r.Client.GetConnections(ctx, &agentv1.GetConnectionsRequest{}); err != nil {
+	var connsResp *agentv1.GetConnectionsResponse
+	if err := r.withTransientRetry(ctx, &r.startPhase, "GetConnections", func(ctx context.Context) error {
+		var cerr error
+		connsResp, cerr = r.Client.GetConnections(ctx, &agentv1.GetConnectionsRequest{})
+		return cerr
+	}); err != nil {
 		if status.Code(err) == codes.PermissionDenied {
 			vaultDenied = true
 		}
 		slog.Warn("fetching connections; get_connection may be unavailable", "error", err)
 	} else {
-		for id, uri := range resp.GetConnectionUris() {
+		for id, uri := range connsResp.GetConnectionUris() {
 			conns[id] = uri
 		}
 	}
@@ -753,7 +792,7 @@ func (r *Runner) pushReturnValue(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	resp, err := r.Client.PushXCom(ctx, &agentv1.PushXComRequest{
+	resp, err := r.pushXCom(ctx, &agentv1.PushXComRequest{
 		Key:         "return_value",
 		Value:       value,
 		ContentType: "application/json",
@@ -785,7 +824,7 @@ func (r *Runner) pushExtraLinks(ctx context.Context) error {
 	if err != nil || !ok {
 		return err
 	}
-	resp, err := r.Client.PushXCom(ctx, &agentv1.PushXComRequest{
+	resp, err := r.pushXCom(ctx, &agentv1.PushXComRequest{
 		Key:         "_extra_links",
 		Value:       value,
 		ContentType: "application/json",
@@ -819,7 +858,7 @@ func (r *Runner) pushCustomXComs(ctx context.Context) error {
 		return fmt.Errorf("decoding xcom pushes: %w", uerr)
 	}
 	for _, key := range sortedKeys(pushes) {
-		resp, perr := r.Client.PushXCom(ctx, &agentv1.PushXComRequest{
+		resp, perr := r.pushXCom(ctx, &agentv1.PushXComRequest{
 			Key:         key,
 			Value:       pushes[key],
 			ContentType: "application/json",
@@ -1028,6 +1067,12 @@ func jitterDelay(d time.Duration) time.Duration {
 // on the warm pod's own liveness, so a live worker retrying is never falsely
 // reaped for it.
 func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequest) error {
+	// internalSpent is the backoff spent on Internal answers, which (unlike the
+	// codes retryableReportErr names) are retried only within
+	// transientRetryBudget: Internal is what the control plane answered for a
+	// store error before it learned to say Unavailable, and still answers for a
+	// failure that repeats on every attempt.
+	var internalSpent time.Duration
 	for attempt := 1; ; attempt++ {
 		resp, err := r.Client.ReportState(ctx, req)
 		if err == nil {
@@ -1043,10 +1088,13 @@ func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequ
 			}
 			return nil
 		}
-		if !retryableReportErr(err) {
-			return fmt.Errorf("reporting state %v: %w", req.GetState(), err)
-		}
 		delay := jitterDelay(reportBackoff(attempt))
+		if !retryableReportErr(err) {
+			if status.Code(err) != codes.Internal || internalSpent+delay > transientRetryBudget {
+				return fmt.Errorf("reporting state %v: %w", req.GetState(), err)
+			}
+			internalSpent += delay
+		}
 		slog.Warn("report failed; retrying after backoff",
 			"state", req.GetState(), "attempt", attempt, "delay", delay, "error", err)
 		select {
@@ -1070,6 +1118,114 @@ func retryableReportErr(err error) bool {
 	default:
 		return false
 	}
+}
+
+// transientRetryBudget bounds the wall time the agent spends retrying a
+// transient control-plane error on the calls that read its inputs and deliver
+// its outputs (GetTaskSpec, GetVariables, GetConnections, FetchXCom, PushXCom),
+// and the backoff it spends on an Internal answer to ReportState (R-01, #1594).
+// Two minutes covers a Postgres failover, a Redis restart and a rolling restart
+// of a single control-plane replica, each of which used to fail every task that
+// started or finished inside it, charged to the user's retries. The input and
+// output calls share it per phase (retryPhase): the time inside each try counts,
+// not only the backoff, so the bound holds against a control plane that hangs
+// every call until its per-call deadline. A control plane that is still failing
+// when it runs out ends the attempt as before, with the delays between tries
+// following reportBackoff, jittered.
+const transientRetryBudget = 2 * time.Minute
+
+// retryPhase is the transient-retry budget one phase of an attempt shares
+// across all of its calls. Its deadline is set by the first try of the
+// phase's first call, transientRetryBudget after it; the zero value is a phase
+// that has not started.
+type retryPhase struct {
+	deadline time.Time
+}
+
+// phaseContext starts phase if it has not started and returns ctx bounded by
+// its deadline, so no try of the phase runs past it.
+func (r *Runner) phaseContext(ctx context.Context, phase *retryPhase) (context.Context, context.CancelFunc) {
+	if phase.deadline.IsZero() {
+		phase.deadline = r.clock().Add(transientRetryBudget)
+	}
+	return context.WithTimeout(ctx, phase.deadline.Sub(r.clock()))
+}
+
+// retryableTransientErr reports whether an error from an input or output call
+// is worth retrying: the control plane was unreachable or restarting
+// (Unavailable), a store behind it failed (Internal, which an older control
+// plane answers for a database or Redis outage), the call timed out
+// (DeadlineExceeded) or lost a conflict (Aborted). ResourceExhausted is left
+// out on purpose: on these calls it is a message over the size limit, which
+// fails the same way every time.
+func retryableTransientErr(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.Internal, codes.DeadlineExceeded, codes.Aborted:
+		return true
+	default:
+		return false
+	}
+}
+
+// withTransientRetry runs call until it succeeds, fails with an error
+// retryableTransientErr rejects, or phase runs out of budget, and returns
+// call's last error. Every try gets a context bounded by the phase deadline,
+// so a try that hangs is cut there, and a backoff that would end past the
+// deadline is not slept: the call gives up instead. A call that starts after
+// the phase ran out fails at once with DeadlineExceeded. A canceled context
+// stops it at once. Every call it wraps is safe to repeat: the reads are
+// reads, and PushXCom stores the same value under the same key.
+func (r *Runner) withTransientRetry(ctx context.Context, phase *retryPhase, op string, call func(context.Context) error) error {
+	for attempt := 1; ; attempt++ {
+		callCtx, cancel := r.phaseContext(ctx, phase)
+		err := call(callCtx)
+		cancel()
+		if err == nil || !retryableTransientErr(err) {
+			return err
+		}
+		delay := jitterDelay(reportBackoff(attempt))
+		if r.clock().Add(delay).After(phase.deadline) {
+			slog.Warn("control plane call still failing; giving up", "call", op, "attempts", attempt, "error", err)
+			return err
+		}
+		slog.Warn("control plane call failed; retrying after backoff",
+			"call", op, "attempt", attempt, "delay", delay, "error", err)
+		select {
+		case <-ctx.Done():
+			return err
+		case <-r.after(delay):
+		}
+	}
+}
+
+// pushXCom is PushXCom with the transient-error retry.
+func (r *Runner) pushXCom(ctx context.Context, req *agentv1.PushXComRequest) (*agentv1.PushXComResponse, error) {
+	var resp *agentv1.PushXComResponse
+	err := r.withTransientRetry(ctx, &r.outputPhase, "PushXCom", func(ctx context.Context) error {
+		var cerr error
+		resp, cerr = r.Client.PushXCom(ctx, req)
+		return cerr
+	})
+	return resp, err
+}
+
+// retryingFetcher is an xcomFetcher that retries a transient FetchXCom error.
+// A NotFound is an answer, not an error, and comes back on the first call.
+type retryingFetcher struct {
+	r     *Runner
+	phase *retryPhase
+	inner xcomFetcher
+}
+
+// FetchXCom fetches through inner with the transient-error retry.
+func (f retryingFetcher) FetchXCom(ctx context.Context, in *agentv1.FetchXComRequest, opts ...grpc.CallOption) (*agentv1.FetchXComResponse, error) {
+	var resp *agentv1.FetchXComResponse
+	err := f.r.withTransientRetry(ctx, f.phase, "FetchXCom", func(ctx context.Context) error {
+		var cerr error
+		resp, cerr = f.inner.FetchXCom(ctx, in, opts...)
+		return cerr
+	})
+	return resp, err
 }
 
 // reschedule reads the next-poke time a reschedule-mode sensor wrote to

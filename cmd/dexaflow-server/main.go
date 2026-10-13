@@ -47,6 +47,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/observability"
 	"github.com/dexadata/dexaflow/internal/oidc"
+	"github.com/dexadata/dexaflow/internal/retention"
 	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/secrets"
 	"github.com/dexadata/dexaflow/internal/storage"
@@ -1197,6 +1198,9 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		// dispatches settle (success or failed via the sink) instead of leaking
 		// workers and leaving TIs stuck `queued` (#133). nil in Lite/passthrough.
 		drain = func() { drainDispatch(dispatchCloser, logger) }
+		// On the scheduler pool, with the loop and the other janitors: off the
+		// API pool and its statement_timeout (#1339).
+		startRetention(ctx, cfg.Retention, storage.NewRetentionStore(schedPG), sched.IsLeading, metrics, logger)
 		health = sched
 		podDispatch = dispatchOn
 	}
@@ -2019,6 +2023,30 @@ func startXComSweep(ctx context.Context, backend *xcom.PostgresBackend, logger *
 	}()
 }
 
+// startRetention starts the retention janitor (D5) when any retention class is
+// configured and reports whether it did. Every class is off by default, so a
+// default install starts nothing and deletes nothing. The janitor runs on the
+// scheduler leader only and rechecks leadership before every batch.
+func startRetention(ctx context.Context, sec config.RetentionSection, store retention.Store, leading func() bool, rec retention.Recorder, logger *slog.Logger) bool {
+	if !sec.Enabled() {
+		return false
+	}
+	j := retention.New(store, retentionConfig(sec), rec, logger)
+	j.SetLeading(leading)
+	logger.Info("retention janitor enabled", "dag_runs_days", sec.DagRunsDays, "audit_log_days", sec.AuditLogDays,
+		"dry_run", sec.DryRun, "interval", sec.Interval, "batch_size", sec.BatchSize, "max_rows_per_cycle", sec.MaxRowsPerCycle)
+	startGatedTicker(ctx, "retention", sec.Interval, leading, logger, func() { j.RunCycle(ctx) })
+	return true
+}
+
+// retentionConfig maps the config section onto the janitor's settings.
+func retentionConfig(sec config.RetentionSection) retention.Config {
+	return retention.Config{
+		DagRunsDays: sec.DagRunsDays, AuditLogDays: sec.AuditLogDays, DryRun: sec.DryRun,
+		BatchSize: sec.BatchSize, BatchPause: sec.BatchPause, MaxRowsPerCycle: sec.MaxRowsPerCycle,
+	}
+}
+
 // startGatedTicker runs fn every interval on a background goroutine, but only
 // while leading() reports this instance holds leadership. It stops when ctx is
 // done. The pod reconciler and staging GC mutate cluster state, so at
@@ -2438,6 +2466,10 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	sched := scheduler.NewScheduler(store, logger,
 		time.Duration(cfg.Scheduler.LoopIntervalMS)*time.Millisecond)
 	sched.SetRecorder(metrics)
+	// Bound the dispatch work of one tick, and of one tenant in a tick, so a
+	// wide fan-out cannot stall every other run and cron creation (#1596).
+	sched.SetDispatchTickBudget(cfg.Scheduler.Dispatch.TickBudget)
+	sched.SetDispatchTenantLimit(cfg.Scheduler.Dispatch.MaxPerTenantPerTick)
 	// Named pools are Pro-only (ADR 0053): enable the cross-DAG slot gate only on
 	// the Pro edition. Left off on Lite/non-Pro, the tick never queries pool
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
@@ -2836,6 +2868,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// deleted it instead (ADR 0052 amendment).
 	if metrics != nil {
 		podExec.SetTeardownRecorder(metrics)
+		// Count every task pod create and observe its API latency (#1186).
+		podExec.SetPodMetrics(metrics)
 	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
 	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)

@@ -34,6 +34,7 @@ type ServerConfig struct {
 	Observability ObservabilitySection `mapstructure:"observability"`
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
+	Retention     RetentionSection     `mapstructure:"retention"`
 	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
 	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
 	// writes.
@@ -999,6 +1000,82 @@ type DispatchSection struct {
 	// Workers is the number of goroutines draining the queue. Ignored when
 	// BufferSize <= 0; otherwise floored to 1.
 	Workers int `mapstructure:"workers"`
+	// TickBudget bounds the wall time one scheduler tick spends dispatching
+	// (#1596). Once it is spent the tick stops dispatching, the remaining ready
+	// tasks stay scheduled with no attempt charged, and the next tick starts at
+	// the run after the one that was cut, so one wide fan-out under the
+	// Kubernetes client rate limit cannot hold every other run, and cron run
+	// creation, for minutes. 0 disables it; negative fails boot.
+	TickBudget time.Duration `mapstructure:"tick_budget"`
+	// MaxPerTenantPerTick caps the tasks one tenant may dispatch in one tick,
+	// so a tenant with a wide fan-out or many runs leaves dispatch room for the
+	// others. 0 (default) means no cap; negative fails boot.
+	MaxPerTenantPerTick int `mapstructure:"max_per_tenant_per_tick"`
+}
+
+// RetentionSection configures the leader-only retention janitor, which deletes
+// metadata rows past a per-class age. Every class is off by default (0 days):
+// nothing is ever deleted unless the operator configures a window. The pacing
+// knobs keep each statement small and each cycle bounded.
+type RetentionSection struct {
+	// DagRunsDays deletes finished (success or failed) dag runs, with their task
+	// instances, attempt history, state history and XCom index rows, once they
+	// ended more than this many days ago. 0 (default) keeps every run.
+	DagRunsDays int `mapstructure:"dag_runs_days"`
+	// AuditLogDays deletes audit log entries older than this many days. 0
+	// (default) keeps the whole audit log.
+	AuditLogDays int `mapstructure:"audit_log_days"`
+	// DryRun only counts the rows a cycle would delete, logs the counts and
+	// exports them as gauges, and deletes nothing.
+	DryRun bool `mapstructure:"dry_run"`
+	// Interval is how often a cycle runs. Default 1h.
+	Interval time.Duration `mapstructure:"interval"`
+	// BatchSize caps the rows one DELETE statement removes, except the task
+	// instances of one run larger than it, which go together. Default 1000.
+	BatchSize int `mapstructure:"batch_size"`
+	// BatchPause is the sleep between two batches, so the janitor never holds
+	// the database busy. Default 100ms.
+	BatchPause time.Duration `mapstructure:"batch_pause"`
+	// MaxRowsPerCycle stops a cycle from starting another batch once this many
+	// rows were deleted; the rest waits for the next cycle. Default 100000.
+	MaxRowsPerCycle int `mapstructure:"max_rows_per_cycle"`
+}
+
+// maxRetentionBatchSize bounds retention.batch_size: a batch is meant to be
+// small, and a value in the hundreds of thousands is the unbounded DELETE the
+// janitor exists to avoid.
+const maxRetentionBatchSize = 50000
+
+// Enabled reports whether any retention class is configured.
+func (r RetentionSection) Enabled() bool {
+	return r.DagRunsDays > 0 || r.AuditLogDays > 0
+}
+
+// Validate rejects a negative window always, and pacing that would make the
+// janitor unbounded or a busy loop when a class is on.
+func (r RetentionSection) Validate() error {
+	if r.DagRunsDays < 0 {
+		return fmt.Errorf("retention.dag_runs_days must be >= 0 (got %d); 0 keeps every run", r.DagRunsDays)
+	}
+	if r.AuditLogDays < 0 {
+		return fmt.Errorf("retention.audit_log_days must be >= 0 (got %d); 0 keeps the whole audit log", r.AuditLogDays)
+	}
+	if !r.Enabled() {
+		return nil
+	}
+	if r.BatchSize < 1 || r.BatchSize > maxRetentionBatchSize {
+		return fmt.Errorf("retention.batch_size must be between 1 and %d (got %d)", maxRetentionBatchSize, r.BatchSize)
+	}
+	if r.BatchPause < 0 {
+		return fmt.Errorf("retention.batch_pause must be >= 0 (got %v)", r.BatchPause)
+	}
+	if r.Interval <= 0 {
+		return fmt.Errorf("retention.interval must be > 0 (got %v)", r.Interval)
+	}
+	if r.MaxRowsPerCycle < 1 {
+		return fmt.Errorf("retention.max_rows_per_cycle must be >= 1 (got %d)", r.MaxRowsPerCycle)
+	}
+	return nil
 }
 
 // ObservabilitySection configures logging, metrics, and tracing.
@@ -1139,20 +1216,25 @@ var serverDefaults = map[string]any{
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
-	"scheduler.dispatch.buffer_size":        0,
-	"scheduler.dispatch.workers":            0,
-	"executor.http.user_agent":              "leoflow/0.1",
-	"executor.task_namespace":               "leoflow",
-	"executor.type":                         "kubernetes",
-	"executor.agent_path":                   "leoflow-agent",
-	"executor.subprocess_workdir":           "",
-	"executor.agent_control_plane_addr":     "",
-	"executor.agent_tls_ca_configmap":       "",
-	"executor.task_service_account":         "",
-	"executor.task_secret_name":             "",
-	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
-	"executor.collect_settled_run_pods":     false,
-	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	"scheduler.dispatch.buffer_size": 0,
+	"scheduler.dispatch.workers":     0,
+	// The tick dispatch budget is on by default (#1596): with synchronous
+	// dispatch and client QPS 5, one wide fan-out otherwise stalls every run
+	// of every tenant, cron creation included.
+	"scheduler.dispatch.tick_budget":             "5s",
+	"scheduler.dispatch.max_per_tenant_per_tick": 0,
+	"executor.http.user_agent":                   "leoflow/0.1",
+	"executor.task_namespace":                    "leoflow",
+	"executor.type":                              "kubernetes",
+	"executor.agent_path":                        "leoflow-agent",
+	"executor.subprocess_workdir":                "",
+	"executor.agent_control_plane_addr":          "",
+	"executor.agent_tls_ca_configmap":            "",
+	"executor.task_service_account":              "",
+	"executor.task_secret_name":                  "",
+	"executor.task_secret_mount_path":            "/etc/leoflow/secrets",
+	"executor.collect_settled_run_pods":          false,
+	"executor.defaults.staging_access_mode":      "ReadWriteMany",
 	// Execution allowlist (issue #629): allow every field and any priority
 	// class, so an install that does not set it is unchanged. Each list binds
 	// from one comma-separated env var.
@@ -1293,6 +1375,15 @@ var serverDefaults = map[string]any{
 	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
 	"execution.warm_pool_event_refill": false,
+	// Retention (the leader-only janitor). Every class ships off: nothing is
+	// deleted until an operator sets a window. The pacing values apply once one is.
+	"retention.dag_runs_days":      0,
+	"retention.audit_log_days":     0,
+	"retention.dry_run":            false,
+	"retention.interval":           "1h",
+	"retention.batch_size":         1000,
+	"retention.batch_pause":        "100ms",
+	"retention.max_rows_per_cycle": 100000,
 }
 
 // LoadServer assembles the server configuration from defaults, the given file,
@@ -1416,6 +1507,12 @@ func (c *ServerConfig) validateNonNegative() error {
 	if c.Scheduler.PoolStarvationThreshold < 0 {
 		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
 	}
+	if c.Scheduler.Dispatch.TickBudget < 0 {
+		return fmt.Errorf("scheduler.dispatch.tick_budget must not be negative (got %s); 0 disables it", c.Scheduler.Dispatch.TickBudget)
+	}
+	if c.Scheduler.Dispatch.MaxPerTenantPerTick < 0 {
+		return fmt.Errorf("scheduler.dispatch.max_per_tenant_per_tick must not be negative (got %d); 0 means no cap", c.Scheduler.Dispatch.MaxPerTenantPerTick)
+	}
 	return nil
 }
 
@@ -1433,17 +1530,16 @@ func (c *ServerConfig) Validate() error {
 	if err := c.validateNonNegative(); err != nil {
 		return err
 	}
-	if err := c.validateSecretPolicies(); err != nil {
-		return err
-	}
-	if err := c.validateExecution(); err != nil {
-		return err
-	}
-	if err := c.validateExecutorPolicies(); err != nil {
-		return err
-	}
-	if err := c.validatePlatformIntegration(); err != nil {
-		return err
+	for _, check := range []func() error{
+		c.validateSecretPolicies,
+		c.validateExecution,
+		c.Retention.Validate,
+		c.validateExecutorPolicies,
+		c.validatePlatformIntegration,
+	} {
+		if err := check(); err != nil {
+			return err
+		}
 	}
 	if _, err := egress.NewPolicy(c.Scheduler.Alerts.AllowedCIDRs); err != nil {
 		return fmt.Errorf("scheduler.alerts.allowed_cidrs: %w", err)

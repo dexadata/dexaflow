@@ -118,17 +118,35 @@ the install never touches your system package manager, the Linux
 ### Verifying the download
 
 The release publishes `checksums.txt` (SHA-256), and the checksums file is
-**cosign-signed** (keyless). `install.sh` verifies the archive checksum
-automatically. To verify the signature yourself:
+**cosign-signed** (keyless) by the release workflow, with the signature in
+`checksums.txt.sig` and the signing certificate in `checksums.txt.pem`.
+
+`install.sh` always checks the archive against `checksums.txt`. When
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) v2 or
+later is on your `PATH`, it first verifies the signature of `checksums.txt`
+and **refuses to install** if the signature does not verify, or if the
+release has no signature. Without cosign it installs as before and prints one
+line saying the signature was not checked.
+
+To verify the signature yourself, for the release you downloaded (here
+`v0.5.3`):
 
 ```bash
+TAG=v0.5.3
 cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)' \
+  --certificate-identity "https://github.com/dexadata/dexaflow/.github/workflows/release.yaml@refs/tags/${TAG}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
+sha256sum --ignore-missing -c checksums.txt
 ```
+
+The identity is exact: it names the release workflow and the tag, so a
+signature made by any other workflow, branch or tag does not verify. Releases
+before `v0.5.0` were cut before the repository moved, and were signed by
+`https://github.com/neochaotic/leoflow/.github/workflows/release.yaml@refs/tags/${TAG}`;
+`install.sh` picks the right one from the version.
 
 ### `dexaflow doctor`
 
@@ -169,6 +187,10 @@ $ dexaflow-mcp --version      # MCP server (see the MCP guide)
 | `DEXAFLOW_VERSION=v0.5.1` | install a specific release (default: newest, including pre-releases). See [Releases](https://github.com/dexadata/dexaflow/releases) for the current tag. |
 | `DEXAFLOW_NO_SETUP=1` | install binaries only; run `dexaflow setup` yourself later |
 | `DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin` | where to put the binaries |
+| `DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1` | fail when cosign is not installed, instead of installing without checking the signature of `checksums.txt` (see [Verifying the download](#verifying-the-download)) |
+| `DEXAFLOW_INSTALL_SKIP_SIGNATURE=1` | do not verify the signature even though cosign is installed, for a machine that cannot reach Sigstore (`rekor.sigstore.dev`, `tuf-repo-cdn.sigstore.dev`). The checksum is still checked. |
+
+Every variable is also read under its `LEOFLOW_` name, from before the rename.
 
 ### Building Lite from source
 
