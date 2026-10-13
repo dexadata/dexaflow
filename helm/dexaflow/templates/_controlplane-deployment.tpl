@@ -206,9 +206,9 @@ spec:
               value: {{ include "leoflow.agentControlPlaneAddr" .ctx | quote }}
             # The namespace the control plane creates task pods + staging PVCs in.
             # MUST equal the namespace the executor Role/RoleBinding are granted in
-            # (rbac.yaml, also .Values.taskNamespace) or every dispatch 403s (#480).
+            # (rbac.yaml, also leoflow.taskNamespace) or every dispatch 403s (#480).
             - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
-              value: {{ .ctx.Values.taskNamespace | quote }}
+              value: {{ include "leoflow.taskNamespace" .ctx | quote }}
             {{- if .ctx.Values.config.cors.allowedOrigins }}
             # CORS origins the API accepts (server.cors.allowed_origins, #1144).
             # Comma-joined for the same reason as trusted_proxies below: the chart

@@ -48,8 +48,14 @@ split:
 # -- Namespace where the control plane creates task pods + per-run staging PVCs.
 # The chart wires this into both the executor RBAC (Role/RoleBinding) AND the
 # server (LEOFLOW_EXECUTOR_TASK_NAMESPACE), so the server acts on exactly the
-# namespace it is granted — override it freely (#480).
-taskNamespace: leoflow
+# namespace it is granted (#480). Empty (the default) means
+# the release namespace on a fresh install. On `helm upgrade`, empty keeps the
+# namespace the running control plane already uses (charts before 0.5.4 defaulted
+# to `leoflow`), so an upgrade never moves task pods on its own; `helm template`
+# and GitOps renderers cannot read the live release, so set it explicitly there
+# (#1682).
+# @default -- `""` (the release namespace)
+taskNamespace: ""
 
 # ServiceAccount that TASK pods run as (distinct from the control-plane
 # serviceAccount above). On GKE, annotate it for Workload Identity so tasks reach

@@ -168,6 +168,44 @@ Two consequences for your own tooling:
   policy the chart creates normally does not exist yet when the *pre-install*
   hook runs.
 
+### Upgrading to 0.5.4: the task namespace default
+
+Charts before 0.5.4 defaulted `taskNamespace` to the literal `leoflow`, whatever
+namespace the release was installed in. A `helm install -n dexaflow` without
+`--set taskNamespace=...` sent task pods, their staging PVCs, the executor Role
+and RoleBinding and the agent CA ConfigMap to a `leoflow` namespace the operator
+never chose (#1682).
+
+From 0.5.4 an unset `taskNamespace` means the release namespace on a fresh
+install. On `helm upgrade` an unset value keeps the namespace the release's
+running control plane already uses: the chart reads it from the
+`LEOFLOW_EXECUTOR_TASK_NAMESPACE` env of the live Deployment, so the upgrade
+does not move task pods or their RBAC under running tasks. The chart's NOTES
+print a line when this happens.
+
+| Your install | What the upgrade does |
+|---|---|
+| Release namespace is `leoflow` | Nothing changes. |
+| `taskNamespace` set explicitly (any value, `leoflow` included) | Nothing changes. |
+| Another release namespace, `taskNamespace` unset | Keeps `leoflow`. Set `taskNamespace: leoflow` to pin it. |
+| Rendered by `helm template`, ArgoCD or Flux, `taskNamespace` unset | The renderer cannot read the live release, so it renders the **release namespace**. Set `taskNamespace: leoflow` in your values **before** syncing 0.5.4 if your task pods run there today. |
+
+To move task pods to the release namespace on purpose:
+
+1. Let running tasks finish, or pause the DAGs that would start new ones.
+2. `helm upgrade ... --set taskNamespace=<release namespace>`. Helm deletes the
+   Role, RoleBinding and CA ConfigMap it had created in `leoflow` and creates
+   them in the new namespace, and the control plane switches to it.
+3. The control plane no longer watches `leoflow`, so it does not clean it up.
+   List what is left with
+   `kubectl -n leoflow get pods,pvc,configmaps -l leoflow.io/run-id` (warm-pool
+   anchors carry `leoflow.io/warm-anchor=true`) and delete it once it has
+   finished.
+
+Installs that do not use the chart are unaffected: the server's own default for
+`executor.task_namespace` (`DEXAFLOW_EXECUTOR_TASK_NAMESPACE` or
+`LEOFLOW_EXECUTOR_TASK_NAMESPACE`) is still `leoflow`.
+
 ### Upgrading to 0.5.1: finish the rollout promptly
 
 0.5.1 fences each task execution by an attempt epoch carried in the agent's

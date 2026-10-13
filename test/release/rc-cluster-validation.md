@@ -361,7 +361,7 @@ helm upgrade leoflow ... --set networkPolicy.enabled=true
 - **Separation PASS:** with the control-plane policy ON and
   `taskNetworkPolicy.enabled` left at its `false` default, **no policy selects a
   task pod**. Check selection, not object count: `taskNamespace` defaults to
-  `leoflow`, which is the release namespace in §1's baseline, so counting objects
+  the release namespace (`leoflow` in §1's baseline), so counting objects
   there returns the control-plane policy and reads as a FAIL on a correct
   install.
 

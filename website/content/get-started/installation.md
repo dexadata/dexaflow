@@ -333,7 +333,8 @@ ServiceMonitor, NetworkPolicy):
 - A pre-install/pre-upgrade **Job** running `golang-migrate` against
   `database.url` before the server starts.
 - A **ServiceAccount + Role/RoleBinding** letting the control plane create,
-  watch, and delete **task pods** (and read their logs) in `taskNamespace`.
+  watch, and delete **task pods** (and read their logs) in `taskNamespace`
+  (default: the release namespace).
 - A chart-managed **Secret** holding the inline DB / Redis / JWT / bootstrap
   credentials. Skipped when you bring your own via `*.existingSecret`.
 

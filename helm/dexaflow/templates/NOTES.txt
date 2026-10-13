@@ -1,7 +1,16 @@
 Dexaflow control plane "{{ include "leoflow.fullname" . }}" is installing into namespace "{{ .Release.Namespace }}".
 
-1. Task pods are created in namespace "{{ .Values.taskNamespace }}". Ensure it exists:
-     kubectl create namespace {{ .Values.taskNamespace }} --dry-run=client -o yaml | kubectl apply -f -
+1. Task pods are created in namespace "{{ include "leoflow.taskNamespace" . }}". Ensure it exists:
+     kubectl create namespace {{ include "leoflow.taskNamespace" . }} --dry-run=client -o yaml | kubectl apply -f -
+{{- if and (not .Values.taskNamespace) .Release.IsUpgrade (ne (include "leoflow.taskNamespace" .) .Release.Namespace) }}
+   taskNamespace is unset, so this upgrade keeps "{{ include "leoflow.taskNamespace" . }}", the namespace the
+   running control plane already used (charts before 0.5.4 defaulted to "leoflow"). Fresh
+   installs now default to the release namespace. To pin the current namespace, set
+     --set taskNamespace={{ include "leoflow.taskNamespace" . }}
+   To move task pods to "{{ .Release.Namespace }}", let running tasks finish, then
+     --set taskNamespace={{ .Release.Namespace }}
+   (see the upgrade guide).
+{{- end }}
 
 2. Agents in task pods dial the control plane gRPC at:
      {{ include "leoflow.agentControlPlaneAddr" . }}
@@ -83,7 +92,7 @@ metadata, the apiserver, or any in-cluster service" is contained (ADR 0047/0048)
 networkPolicy.enabled does NOT cover task pods: it selects control-plane pods in
 namespace {{ .Release.Namespace }}, and its egress is a single empty rule
 (- {}), which matches every destination — it restricts ingress only. Nothing
-selects a task pod in namespace {{ .Values.taskNamespace }} until you set:
+selects a task pod in namespace {{ include "leoflow.taskNamespace" . }} until you set:
      --set taskNetworkPolicy.enabled=true
 It is off by default on purpose, not by oversight: the policy always excludes
 169.254.0.0/16 from its allow-all egress rule, and that is where GKE Workload
