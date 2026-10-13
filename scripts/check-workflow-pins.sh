@@ -18,8 +18,9 @@
 #   2. no `@latest` outside a comment, in a workflow or in the Makefile;
 #   3. no Makefile `*_VERSION ?= latest`;
 #   4. a workflow `go install <pkg>@<ver>` uses the version the Makefile pins
-#      for the same package (one fact, one value), or an exact vX.Y.Z when the
-#      Makefile does not install it;
+#      for the same package (one fact, one value), or an exact vX.Y.Z (or a Go
+#      pseudo-version, for modules with no tags such as golang.org/x/exp) when
+#      the Makefile does not install it;
 #   5. a workflow `npm install -g <pkg>@<ver>` names an exact X.Y.Z;
 #   6. every `actions/checkout` step sets `persist-credentials` explicitly.
 #      `false` unless the job pushes with git: a token left in .git/config is
@@ -77,7 +78,9 @@ GO_INSTALL = re.compile(r"go install\s+(?:-\S+\s+(?:'[^']*'\s+|\"[^\"]*\"\s+|\S+
 # Dependabot bumps it.
 FROM_GO_MOD = re.compile(r"^\$\(go list -m ")
 NPM_GLOBAL = re.compile(r"npm (?:install|i) +(?:-g|--global) +((?:@[^\s/]+/)?[^\s@]+)(?:@(\S+))?")
-EXACT_GO = re.compile(r"^v\d+\.\d+\.\d+$")
+# An exact vX.Y.Z, or a Go pseudo-version (vX.Y.Z-[pre.]yyyymmddhhmmss-<12 hex>):
+# it names one commit, so it is as fixed as a tag.
+EXACT_GO = re.compile(r"^v\d+\.\d+\.\d+(?:-(?:[0-9A-Za-z-]+\.)*\d{14}-[0-9a-f]{12})?$")
 EXACT_NPM = re.compile(r"^\d+\.\d+\.\d+$")
 
 # The Makefile's pins: VAR ?= value, and which package each `go install` uses it for.
@@ -120,7 +123,7 @@ for path in files:
 			if want is not None and ver != want:
 				problems.append(f"  {where}\n    go install {pkg}@{ver}, the Makefile pins {want}")
 			elif want is None and not (EXACT_GO.match(ver) or FROM_GO_MOD.match(ver)):
-				problems.append(f"  {where}\n    go install {pkg}@{ver} is not an exact vX.Y.Z")
+				problems.append(f"  {where}\n    go install {pkg}@{ver} is not an exact vX.Y.Z or a Go pseudo-version")
 		n = NPM_GLOBAL.search(c)
 		if n and not (n.group(2) and EXACT_NPM.match(n.group(2))):
 			problems.append(f"  {where}\n    npm global install without an exact X.Y.Z: {line.strip()}")
@@ -208,6 +211,8 @@ self_test() {
 	_from_go_mod() { _wf "$1" "      - run: go install \"google.golang.org/protobuf/cmd/protoc-gen-go@\$(go list -m -f '{{.Version}}' google.golang.org/protobuf)\""; }
 	_make_echo_hint() { _makefile "$1" v1.8.0; printf 'vuln:\n\t@command -v govulncheck || (echo "run: go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION))"; exit 0)\n' >>"$1/Makefile"; }
 	_unknown_pkg_exact() { _wf "$1" "      - run: go install -tags 'postgres' example.com/tool@v1.2.3"; }
+	_pseudo_version() { _wf "$1" "      - run: go install golang.org/x/exp/cmd/gorelease@v0.0.0-20250106191152-7588d65b2ba8"; }
+	_bad_pseudo_version() { _wf "$1" "      - run: go install golang.org/x/exp/cmd/gorelease@v0.0.0-2025-7588d65b"; }
 	_make_latest_var() { _makefile "$1" latest; }
 	_make_latest_literal() { printf 'tools:\n\tgo install example.com/tool@latest\n' >"$1/Makefile"; }
 	_commented_latest_is_fine() { _good_steps "$1"; printf '      # was: go install x@latest\n' >>"$1/.github/workflows/ci.yaml"; }
@@ -231,6 +236,8 @@ self_test() {
 	_case "CI drifting from the Makefile pin"         1 "govulncheck@v1.7.0, the Makefile pins v1.8.0" _drift_from_make
 	_case "a go install on a branch is refused"       1 "example.com/tool@main is not an exact" _unknown_pkg_branch
 	_case "an exact go install not in Make passes"    0 "every action is SHA-pinned" _unknown_pkg_exact
+	_case "a Go pseudo-version passes"                0 "every action is SHA-pinned" _pseudo_version
+	_case "a malformed pseudo-version is refused"     1 "gorelease@v0.0.0-2025-7588d65b is not an exact" _bad_pseudo_version
 	_case "a version read from go.mod passes"         0 "every action is SHA-pinned" _from_go_mod
 	_case "a Make hint naming the pin parses"         0 "every action is SHA-pinned" _make_echo_hint
 	_case "a Makefile VERSION ?= latest is refused"   1 "GOVULNCHECK_VERSION ?= latest" _make_latest_var
