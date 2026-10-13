@@ -25,7 +25,8 @@ type defaultsProvenance struct {
 	// registrySource names where registry.url came from, "" when none is set.
 	registrySource string
 	// platformsSource and baseImageSource name where build.platforms and
-	// base_image came from; "" means the project or the built-in default.
+	// base_image came from: --platform, the project's file, a target or the
+	// workspace defaults; "" means the built-in default.
 	platformsSource string
 	baseImageSource string
 }
@@ -39,8 +40,9 @@ type defaultsProvenance struct {
 // (LEOFLOW_REGISTRY), the project's registry.url, the target's registry, the
 // workspace's defaults.registry, then registry in the user's config file. With
 // a url and no image_name, the image is named after the dag_id, as the schema
-// documents. build.platforms and base_image come from the project, then the
-// target, then the workspace defaults. withTarget is false for Lite, which
+// documents. build.platforms comes from --platform, then the project, then
+// the target, then the workspace defaults; base_image from the project, then
+// the target, then the workspace defaults. withTarget is false for Lite, which
 // deploys nowhere.
 func applyWorkspaceDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, withTarget bool) (defaultsProvenance, error) {
 	layers, err := defaultsLayers(cmd, dir, withTarget)
@@ -53,6 +55,9 @@ func applyWorkspaceDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowC
 	}
 	prov := defaultsProvenance{registrySource: applyRegistry(cmd, dir, cfg, layers, store, configFilePath(cmd))}
 	prov.platformsSource, prov.baseImageSource = applyBuildDefaults(dir, cfg, layers)
+	if prov.platformsSource, err = applyPlatformFlag(cmd, cfg, prov.platformsSource); err != nil {
+		return defaultsProvenance{}, err
+	}
 	return prov, nil
 }
 

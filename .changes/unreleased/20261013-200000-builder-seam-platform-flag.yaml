@@ -1,0 +1,15 @@
+kind: Added
+body: |-
+  **`--platform` on `deploy`, `compile` and `build`, and the builder named in
+  the output.** `--platform linux/arm64` (repeatable or comma-separated)
+  chooses the image platform over `build.platforms` in `dexaflow.yaml`, the
+  target and the workspace defaults; a malformed value is refused before the
+  build. `compile --build` and `build` now print `platforms:` with the value's
+  source, as `deploy` already did, and every build prints a `builder:` line
+  naming how the image is built. Today that is always the local container
+  daemon (`docker`, or `podman`/`nerdctl` with `--builder`), as before, and the
+  line says it is the fallback: ADR 0073 decides the daemonless builders that
+  come first. A list of several platforms is now refused before the DAG is
+  parsed, with the platforms named, since the local daemon builds one platform
+  per image; it used to reach `docker build` and fail there (#1706).
+time: 2026-10-13T20:00:00.000000000-03:00

@@ -84,6 +84,8 @@ nosetests.xml
 
 # Distribution
 build/
+# ...but not the Go package that builds DAG images (ADR 0073).
+!internal/build/
 develop-eggs/
 downloads/
 eggs/

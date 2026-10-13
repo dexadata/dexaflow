@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/dbt"
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -51,6 +52,16 @@ type compileOptions struct {
 	// lite marks a compile for `dexaflow lite`, which deploys to no target:
 	// the workspace defaults apply, a target's do not.
 	lite bool
+	// platformsSource names where build.platforms came from, for the build
+	// output; runCompile sets it.
+	platformsSource string
+	// settingsShown says the caller already printed the platforms and their
+	// source (deploy does, before it asks to confirm), so the build does not
+	// print them twice.
+	settingsShown bool
+	// built, when set, receives the builder's result, and asks the builder to
+	// pin the pushed image by digest (deploy registers that pin).
+	built *build.Result
 }
 
 func newCompileCommand() *cobra.Command {
@@ -83,6 +94,7 @@ func newCompileCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.push, "push", false, "push the built image to its registry (requires --build)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
+	addPlatformFlag(cmd)
 	return cmd
 }
 
@@ -110,15 +122,16 @@ func defaultOutputPath(dir, explicit string) string {
 // loadCompileConfig is resolveCompileTarget plus the workspace and target
 // defaults (applyWorkspaceDefaults) that deploy applies too, so a compile and a
 // deploy of the same project build the same image.
-func loadCompileConfig(cmd *cobra.Command, dir string, o compileOptions) (*domain.LeoflowConfig, error) {
+func loadCompileConfig(cmd *cobra.Command, dir string, o compileOptions) (*domain.LeoflowConfig, defaultsProvenance, error) {
 	cfg, err := resolveCompileTarget(dir, o.output)
 	if err != nil {
-		return nil, err
+		return nil, defaultsProvenance{}, err
 	}
-	if _, derr := applyWorkspaceDefaults(cmd, dir, cfg, !o.lite); derr != nil {
-		return nil, derr
+	prov, derr := applyWorkspaceDefaults(cmd, dir, cfg, !o.lite)
+	if derr != nil {
+		return nil, defaultsProvenance{}, derr
 	}
-	return cfg, nil
+	return cfg, prov, nil
 }
 
 // resolveCompileTarget loads the project config and confirms the artifact can
@@ -186,6 +199,25 @@ func checkProjectPreconditions(cmd *cobra.Command, dir string, cfg *domain.Leofl
 	return nil
 }
 
+// prepareCompile loads the project config with its defaults, records where
+// the platforms came from, and runs every check that must pass before the
+// parser starts: the project preconditions and, for a build, what the
+// selected builder can do.
+func prepareCompile(cmd *cobra.Command, dir string, o *compileOptions) (*domain.LeoflowConfig, error) {
+	cfg, prov, err := loadCompileConfig(cmd, dir, *o)
+	if err != nil {
+		return nil, err
+	}
+	o.platformsSource = prov.platformsSource
+	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
+		return nil, perr
+	}
+	if berr := checkBuilder(*o, cfg); berr != nil {
+		return nil, berr
+	}
+	return cfg, nil
+}
+
 // runCompile resolves the project config, runs the parser, validates the output,
 // and optionally builds the DAG image.
 func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
@@ -194,12 +226,9 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	// filepath.Join, and a compileOptions literal that forgot it reached a write
 	// with an empty path.
 	o.output = defaultOutputPath(dir, o.output)
-	cfg, err := loadCompileConfig(cmd, dir, o)
+	cfg, err := prepareCompile(cmd, dir, &o)
 	if err != nil {
 		return err
-	}
-	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
-		return perr
 	}
 	// Self-heal the extracted parser sources before running the parser, so a binary
 	// upgrade (new features like dbt vs a stale ~/.dexaflow/pysrc) never surfaces as
@@ -558,9 +587,11 @@ func writeDAGFile(path string, spec *domain.DAGSpec) error {
 }
 
 // buildAndPush optionally builds the DAG image and pushes it, honoring the
-// --build/--push flags. When building and the project ships no Dockerfile, one is
-// generated from the dexaflow.yaml (base image + system packages + dependencies/
-// connectors), built, and removed afterward so the workspace stays clean.
+// --build/--push flags, with the builder selectBuilder resolves. When building
+// and the project ships no Dockerfile, one is generated from the dexaflow.yaml
+// (base image + system packages + dependencies/connectors), built, and removed
+// afterward so the workspace stays clean. A push always follows a build
+// (checkImageFlags refuses --push without --build).
 func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
 	if o.build {
 		name, fromConfig := resolveDockerfileName(cmd, o, cfg)
@@ -586,21 +617,29 @@ func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.
 			return ierr
 		}
 		defer ignoreCleanup()
-		var platforms []string
-		if cfg.Build != nil {
-			platforms = cfg.Build.Platforms
+		b, reason := selectBuilder(o)
+		if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
+			return perr
 		}
-		if berr := buildImage(cmd, o.builder, image, dockerfile, dir, platforms); berr != nil {
+		res, berr := b.Build(cmdContext(cmd), build.Request{
+			Image:      image,
+			Dockerfile: dockerfile,
+			ContextDir: dir,
+			Platforms:  buildPlatforms(cfg),
+			Push:       o.push,
+			Pin:        o.push && o.built != nil,
+			Stdout:     cmd.OutOrStdout(),
+			Stderr:     cmd.ErrOrStderr(),
+		})
+		if berr != nil {
 			return berr
+		}
+		if o.built != nil {
+			*o.built = res
 		}
 		// After the build, where the eye lands: the warning above is minutes of
 		// layer output away by now.
 		remindBakedSecretsAfterBuild(cmd.ErrOrStderr(), baked)
-	}
-	if o.push {
-		if perr := pushImage(cmd, o.builder, image); perr != nil {
-			return perr
-		}
 	}
 	return nil
 }
@@ -672,56 +711,16 @@ func compileSummary(src, out, image, version string) string {
 
 // checkImageFlags enforces the --build/--image relationship and notes when an
 // image is recorded without being built.
-func checkImageFlags(cmd *cobra.Command, build, push bool, image string) error {
-	if push && !build {
+func checkImageFlags(cmd *cobra.Command, building, push bool, image string) error {
+	if push && !building {
 		return errors.New("--push requires --build")
 	}
-	if build && image == "" {
+	if building && image == "" {
 		return errors.New("--build needs an image reference: pass --image, or set registry.url + registry.image_name in dexaflow.yaml")
 	}
-	if !build && image != "" {
+	if !building && image != "" {
 		_, werr := fmt.Fprintf(cmd.ErrOrStderr(), "note: recording image %q without building it; pass --build to build the DAG image\n", image)
 		return werr
-	}
-	return nil
-}
-
-// buildArgs assembles the builder argv for a DAG image build. When platforms is
-// non-empty it injects `--platform a,b`, so a deploy can target the cluster's
-// architecture instead of the host's — the Mac-safe default linux/amd64 (ADR
-// 0041). A single platform works with a plain `docker build`; a multi-platform
-// list is the caller's signal to route through buildx (the deploy command does).
-func buildArgs(image, dockerfile, contextDir string, platforms []string) []string {
-	args := []string{"build"}
-	if len(platforms) > 0 {
-		args = append(args, "--platform", strings.Join(platforms, ","))
-	}
-	return append(args, "-t", image, "-f", dockerfile, contextDir)
-}
-
-// buildImage shells out to the configured builder to build the DAG image
-// out-of-process (ADR 0015: no Docker SDK in our binaries). The build context
-// is the DAG directory; platforms selects the target architecture(s).
-func buildImage(cmd *cobra.Command, builder, image, dockerfile, contextDir string, platforms []string) error {
-	//nolint:gosec // G204: builder is operator-configured by design (ADR 0015).
-	bc := exec.CommandContext(cmdContext(cmd), builder, buildArgs(image, dockerfile, contextDir, platforms)...)
-	bc.Stdout = cmd.OutOrStdout()
-	bc.Stderr = cmd.ErrOrStderr()
-	if err := bc.Run(); err != nil {
-		return fmt.Errorf("building image %q with %q: %w", image, builder, err)
-	}
-	return nil
-}
-
-// pushImage shells out to the configured builder to push the image to its
-// registry (out-of-process; ADR 0015).
-func pushImage(cmd *cobra.Command, builder, image string) error {
-	//nolint:gosec // G204: builder is operator-configured by design (ADR 0015).
-	pc := exec.CommandContext(cmdContext(cmd), builder, "push", image)
-	pc.Stdout = cmd.OutOrStdout()
-	pc.Stderr = cmd.ErrOrStderr()
-	if err := pc.Run(); err != nil {
-		return fmt.Errorf("pushing image %q with %q: %w", image, builder, err)
 	}
 	return nil
 }

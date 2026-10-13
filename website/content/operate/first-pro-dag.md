@@ -34,8 +34,10 @@ when the build is done.
 
 ## Prerequisites
 
-- **`docker`** (or `podman`/`nerdctl`, passed with `--builder`). Used to build and
-  push the DAG image.
+- **A way to build the DAG image.** `deploy` picks a [builder](/operate/builders/)
+  and says which one ran. Until the daemonless builders land, it falls back to
+  a local container tool: `docker`, or `podman`/`nerdctl` passed with
+  `--builder`.
 - The **`dexaflow` CLI** and Python 3.11 to 3.13 on your `PATH`. `dexaflow
   compile` and `dexaflow deploy` extract the bundled parser on their own; run
   `dexaflow setup` only if you want it to fetch a managed Python for you.
@@ -110,6 +112,8 @@ another base with `base_image:` in `dexaflow.yaml` if you need one.
 ```console
 $ dexaflow deploy
 Deploy first_pro_dag -> https://pro.example.com? [y/N] y
+platforms:  linux/amd64 (from the default)
+builder:    local-daemon (docker), fallback: no daemonless or remote builder is available yet
 …  (compile → build for linux/amd64 → push → register)
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
@@ -121,9 +125,10 @@ That one command crossed every boundary:
 1. **compile**: parsed `dag.py`, overlaid `dexaflow.yaml`, ran the guardrails
    (unknown `task_id`, unsupported operator, duplicate keys), wrote `dag.json`.
 2. **build**: generated the Dockerfile from `dexaflow.yaml` and built the image
-   **for the cluster's architecture**, which is `build.platforms` in
-   `dexaflow.yaml` (`linux/amd64` when unset), so a macOS/arm64 laptop produces
-   an image an amd64 cluster can run.
+   **for the cluster's architecture**: `--platform`, else `build.platforms` in
+   `dexaflow.yaml` (`linux/amd64` when neither is set), so a macOS/arm64 laptop
+   produces an image an amd64 cluster can run. The `builder:` line names how it
+   was built; see [Builders](/operate/builders/).
 3. **push**: pushed it to your `registry:`.
 4. **re-pin + register**: captured the image **digest**, wrote
    `…@sha256:…` into `dag.json`, and registered that with the control plane. Pro
@@ -163,7 +168,7 @@ shows state and logs. That is the whole Pro lifecycle, in one verb.
 |---|---|---|
 | `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
 | `denied` / `unauthorized` on push | builder not logged in to the registry | `docker login ghcr.io` (registry auth ≠ control-plane auth) |
-| Task pod: `exec format error` | image arch ≠ cluster arch | set the cluster's architecture in `dexaflow.yaml`, for example `build: {platforms: [linux/arm64]}` on a Graviton cluster. `deploy` has no `--platform` flag; the platform always comes from `build.platforms` |
+| Task pod: `exec format error` | image arch ≠ cluster arch | build for the cluster's architecture: `dexaflow deploy --platform linux/arm64` on a Graviton cluster, or `build: {platforms: [linux/arm64]}` in `dexaflow.yaml`. The `platforms:` line of the output names where the value came from |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …`; create them on Pro (UI/API) first. See [Variables & Connections](/author-dags/variables-connections/) |
 
 Hit something not on this list (an unsupported task type, `CreateContainerConfigError`,
