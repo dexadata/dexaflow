@@ -1498,6 +1498,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Host binding (#1463): empty unless auth.trusted_issuer.host_pattern is set.
+		TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
 		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
 		TrustedIssuerBearer: issuerBearer(trustedIssuer),
 		// Operator service API (#1283): off unless auth.service_token is set.

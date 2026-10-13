@@ -179,19 +179,24 @@ func DevBypassAuth() gin.HandlerFunc {
 
 // JWTAuth validates the bearer token on protected routes and stores the user.
 func JWTAuth(authn auth.Authenticator) gin.HandlerFunc {
-	return jwtAuth(authn, nil, authTokenCookie)
+	return jwtAuth(authn, nil, sessionCookieSpec{}, nil)
 }
 
 // jwtAuth is JWTAuth with an optional trusted-issuer bearer (#1468): a bearer
 // in the Authorization header that is not a valid engine token is then also
 // checked against the trusted issuer. A nil bearer leaves JWTAuth unchanged.
-func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, cookieName string) gin.HandlerFunc {
+//
+// session names the session cookie it reads (#1405) and, with hosts, clears.
+// hosts, when not nil, binds a session cookie to its tenant's host (#1463): a
+// cookie whose principal belongs to another tenant than the host names is
+// refused with 401 and cleared. The Authorization header is not bound.
+func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, session sessionCookieSpec, hosts *hostBinding) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublic(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
-		tokens := candidateTokens(c, cookieName)
+		tokens := candidateTokens(c, session.cookieName())
 		if len(tokens) == 0 {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
@@ -206,8 +211,10 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, cookieName stri
 		// once every candidate has been tried.
 		fromHeader := bearerToken(c.GetHeader("Authorization")) != ""
 		var unavailable, tenantless error
+		wrongHost := false
 		for i, token := range tokens {
-			user, err := authenticateCandidate(c.Request.Context(), authn, bearer, token, fromHeader && i == 0)
+			header := fromHeader && i == 0
+			user, err := authenticateCandidate(c.Request.Context(), authn, bearer, token, header)
 			if err == nil && user.TenantID == "" {
 				// A principal that names no tenant cannot be scoped. The
 				// authenticator already refuses one; this guard keeps any other
@@ -216,6 +223,10 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, cookieName stri
 			}
 			if errors.Is(err, auth.ErrTenantlessToken) {
 				tenantless = err
+			}
+			if err == nil && !header && !hosts.allows(c, user.TenantID) {
+				wrongHost = true
+				continue
 			}
 			if err == nil {
 				if user.Scoped && !scopeGated(c) {
@@ -232,21 +243,37 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, cookieName stri
 				unavailable = err
 			}
 		}
-		if unavailable != nil {
-			// We could not DETERMINE whether the token is valid — the store was
-			// unreachable. Answering 401 says something false about the caller and
-			// is actively harmful: a well-behaved client reads 401 as "re-authenticate",
-			// so it hammers /auth/token against the same dead database, and a wall of
-			// 401s reads to whoever is on call as an auth incident rather than the
-			// outage it is. 503 is the same answer the login path already gives for
-			// the same cause (#843), and the cause stays in the log (#1087).
-			AbortProblemCause(c, http.StatusServiceUnavailable, "service unavailable", "authentication temporarily unavailable", unavailable)
-			return
-		}
-		// The client hears the same "invalid token" either way; the log keeps the
-		// tenantless cause so an operator can tell it from a bad signature.
-		AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "invalid token", tenantless)
+		refuseCandidates(c, session, unavailable, tenantless, wrongHost)
 	}
+}
+
+// refuseCandidates answers a request none of whose candidate tokens
+// authenticated: 503 when a backend failure kept a token from being checked,
+// 401 clearing the cookie when only a session of another tenant's host was
+// seen (#1463), 401 otherwise.
+func refuseCandidates(c *gin.Context, session sessionCookieSpec, unavailable, tenantless error, wrongHost bool) {
+	if unavailable != nil {
+		// We could not DETERMINE whether the token is valid: the store was
+		// unreachable. Answering 401 says something false about the caller and
+		// is actively harmful: a well-behaved client reads 401 as "re-authenticate",
+		// so it hammers /auth/token against the same dead database, and a wall of
+		// 401s reads to whoever is on call as an auth incident rather than the
+		// outage it is. 503 is the same answer the login path already gives for
+		// the same cause (#843), and the cause stays in the log (#1087).
+		AbortProblemCause(c, http.StatusServiceUnavailable, "service unavailable", "authentication temporarily unavailable", unavailable)
+		return
+	}
+	if wrongHost {
+		// A valid session of another tenant than this host's: clear it, so
+		// the browser signs in again here instead of retrying a cookie that
+		// can never work on this host.
+		clearSessionCookie(c, session)
+		AbortProblem(c, http.StatusUnauthorized, "unauthorized", "the session is not valid on this host")
+		return
+	}
+	// The client hears the same "invalid token" either way; the log keeps the
+	// tenantless cause so an operator can tell it from a bad signature.
+	AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "invalid token", tenantless)
 }
 
 // authenticateCandidate authenticates one candidate token: as an engine token

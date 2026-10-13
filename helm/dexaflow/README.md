@@ -503,6 +503,7 @@ differ from what's committed.
 | auth.trustedIssuer.audience | string | `""` | The `aud` the tokens must carry for this Dexaflow. |
 | auth.trustedIssuer.bearerAudiences | list | `[]` | Audiences whose tokens from the issuer are accepted as the `Authorization: Bearer` of any `/api/v2` request, reused until they expire (#1468), for remote MCP clients behind your platform (`leoflow-mcp` by convention). Each must differ from `audience`. Empty (the default) leaves the bearer mode off. |
 | auth.trustedIssuer.bearerMaxLifetimeSeconds | int | `0` | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. |
+| auth.trustedIssuer.hostPattern | string | `""` | Binds every browser session to its tenant's host when each tenant is served on its own host, for example `{tenant}.example.com` (#1463). A handoff is then accepted only on the host of the token's tenant, and a session cookie only on the host of the session's tenant; the `Authorization` header is not bound. Behind an ingress that rewrites `Host`, list it in `config.trustedProxies` so its `X-Forwarded-Host` is used. Empty (the default) binds nothing. |
 | auth.trustedIssuer.issuer | string | `""` | The exact `iss` of the issuer's tokens. Empty (the default) disables the handoff and renders none of these keys. |
 | auth.trustedIssuer.jwksUrl | string | `""` | Where the issuer publishes its public signing keys. `https`, or `http` on a loopback host. |
 | auth.trustedIssuer.maxLifetimeSeconds | int | `0` | Longest `exp - iat` a handoff token may have. `0` uses 120 seconds; at most 600. |

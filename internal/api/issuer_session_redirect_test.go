@@ -67,11 +67,6 @@ func postSessionAccept(h http.Handler, form url.Values, origin, accept string) *
 	return rec
 }
 
-func setsSessionCookie(rec *httptest.ResponseRecorder) bool {
-	c := rec.Header().Get("Set-Cookie")
-	return strings.HasPrefix(c, authTokenCookie+"=") && !strings.HasPrefix(c, authTokenCookie+"=;")
-}
-
 // issuerRefusal is one way the handoff is refused: the request that causes it,
 // the status it answers without an external sign-in URL, and the stable code
 // it carries to that URL when one is configured.
