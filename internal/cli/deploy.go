@@ -53,7 +53,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
-	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe, else dev)")
+	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
 	return cmd
 }
 
@@ -180,11 +180,11 @@ func repinImageInSpec(data []byte, digestRef string) ([]byte, error) {
 }
 
 // deployImageRef composes the pushed image reference for a project from its
-// registry config, the resolved version, and the git sha, applying the tag
-// strategy (so tag_strategy: git_sha yields a genuine commit tag, not the
-// version label).
-func deployImageRef(cfg *domain.LeoflowConfig, version, sha string) string {
-	tag := resolveImageTag(cfg.Registry.TagStrategy, version, sha)
+// registry config, the resolved version, and the project's git revision,
+// applying the tag strategy (so tag_strategy: git_sha yields a genuine commit
+// tag, not the version label).
+func deployImageRef(cfg *domain.LeoflowConfig, version string, rev gitRevision) string {
+	tag := resolveImageTag(cfg.Registry.TagStrategy, version, rev)
 	return composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, tag)
 }
 
@@ -254,22 +254,27 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 		return fmt.Errorf("deploy aborted")
 	}
 
-	version := o.dagVersion
-	if version == "" {
-		version = gitVersion(cmdContext(cmd))
+	origin := labelDefault
+	if o.dagVersion != "" {
+		origin = labelExplicit
 	}
-	image := deployImageRef(cfg, version, gitSHA(cmdContext(cmd)))
-
 	output := filepath.Join(dir, "dag.json")
 	co := compileOptions{
 		output:     output,
-		image:      image,
 		builder:    o.builder,
 		dockerfile: o.dockerfile,
-		dagVersion: version,
+		dagVersion: o.dagVersion,
 		build:      !o.skipBuild,
 		push:       !o.skipBuild,
 	}
+	// Resolved here rather than inside runCompile because the digest lookup
+	// below needs the same reference; runCompile then takes both as given.
+	image, ierr := resolveVersionAndImage(cmd, dir, &co, cfg)
+	if ierr != nil {
+		return ierr
+	}
+	co.image = image
+	version := co.dagVersion
 	if cerr := runCompile(cmd, dir, co); cerr != nil {
 		return cerr
 	}
@@ -279,7 +284,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 		return derr
 	}
 	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
-	dagID, rerr := registerDeployedDAG(ctx, out, serverURL, token, output, digestRef, version)
+	dagID, rerr := registerDeployedDAG(ctx, out, serverURL, token, output, digestRef, version, origin)
 	if rerr != nil {
 		return rerr
 	}
@@ -294,7 +299,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 // and registers it with the control plane, then prints a per-phase summary. It
 // is split from runDeploy so the post-build flow (which needs no builder) is
 // unit-testable against a fake control plane.
-func registerDeployedDAG(ctx context.Context, out io.Writer, serverURL, token, output, digestRef, version string) (dagID string, err error) {
+func registerDeployedDAG(ctx context.Context, out io.Writer, serverURL, token, output, digestRef, version string, origin labelOrigin) (dagID string, err error) {
 	data, rerr := os.ReadFile(output) //nolint:gosec // output path is operator-controlled (the DAG dir).
 	if rerr != nil {
 		return "", fmt.Errorf("reading %s: %w", output, rerr)
@@ -315,7 +320,7 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, serverURL, token, o
 		return "", uerr
 	}
 	if status >= http.StatusMultipleChoices {
-		return "", apiStatusError(status, []byte(body))
+		return "", versionConflictHint(apiStatusError(status, []byte(body)), version, origin)
 	}
 	if _, werr := fmt.Fprintf(out,
 		"Deployed %s -> %s\n  image %s\n  registered version %s\n", spec.DagID, serverURL, digestRef, version); werr != nil {

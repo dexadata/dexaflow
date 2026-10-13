@@ -1,0 +1,16 @@
+kind: Changed
+body: |-
+  **The default DAG version label follows the DAG's content.** Without
+  `--dag-version`, `dexaflow compile`, `deploy` and `build` now label a DAG
+  `<git describe --tags --always>-<hash>`, or `dev-<hash>` outside git, where
+  the hash covers the DAG source, `include_paths`, the dbt project, a project
+  Dockerfile, the resolved `dexaflow.yaml` and the CLI version. Deploying edited
+  code again, from a dirty tree or from a folder outside git, no longer fails
+  with `409` after a full build and push; unchanged content gets the same label
+  and stays a no-op; each DAG of a workspace gets its own label. The label is a
+  valid image tag, so a git tag like `release/v1` or `v1+build` no longer breaks
+  `tag_strategy: version`. `tag_strategy: git_tag` now tags with the git tag on
+  the project's `HEAD` and `custom` with the version label; both used to act as
+  `git_sha`. A `409` on `deploy` or `push` now explains which way out applies.
+  An explicit `--dag-version` is used unchanged. (#1703)
+time: 2026-10-13T12:00:00.000000000+00:00

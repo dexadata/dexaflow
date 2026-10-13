@@ -173,27 +173,46 @@ the control plane's log sink. Read it from:
 See [Troubleshooting → Logs](/operate/troubleshooting/#logs) for where the sink
 directory and control-plane request logs live.
 
-### 8. `--dag-version` outside a git repo — the `dev` default and its 409
+### 8. The version label and its 409
 
-`--dag-version` defaults to `git describe` in the project's directory; **outside
-a git repo it falls back to the literal string `"dev"`.** DAG versions are
-immutable and unique per `(dag_id, version)` — a second deploy that reuses the
-same version string with **different content** is a genuine conflict, not an
-overwrite, and is rejected:
+DAG versions are immutable and unique per `(dag_id, version)`. Registering
+the same label with the same content again is a no-op; the same label with
+**different** content is a conflict, not an overwrite, and is rejected:
 
 ```
 server returned 409: {"title":"conflict","status":409,"detail":"inserting version: …"}
+hint: version "v1" of this DAG is already registered with different content, and versions are immutable.
 ```
 
-An identical re-push of the same content short-circuits (idempotent, no error);
-only a version string collision with **different** content 409s. This bites
-example DAGs, scratch projects, and CI checkouts that clone with `--depth 1`
-outside `.git` scope — anything not resolvable by `git describe`.
+Without `--dag-version`, the label is derived from the DAG itself:
+`<git describe>-<hash>`, where `git describe --tags --always` runs in the
+**project directory** (outside git the base is `dev`), and the hash covers what
+the DAG is built from:
 
-**Fix:** pass an explicit, changing `--dag-version` (`--dag-version
-$(date +%s)` for scratch iteration, or your CI's commit SHA), or run inside a
-real git checkout so `git describe`/`tag_strategy: git_sha` gives you a fresh
-version automatically on every commit.
+- the DAG source (`dag.py`, or the dbt project directories), the files under
+  `include_paths`, and `dbt.manifest` when set;
+- the whole project directory when the project ships its own Dockerfile,
+  which can `COPY` anything, and that Dockerfile itself;
+- the resolved `dexaflow.yaml` (dependencies, connectors, `python_version`,
+  `base_image`, task overrides) and the CLI version.
+
+It leaves out `.git`, `exclude_paths`, the compiled `dag.json` and the
+`target/` and `logs/` that `dbt parse` writes, and never looks at file times.
+So editing code and deploying again, from a dirty tree or from a folder
+outside git, gets a new label, and deploying unchanged content gets the same
+one. Every DAG of a monorepo gets its own. The label is also a valid image tag
+(characters a tag cannot carry become `-`), since `tag_strategy: version` tags
+the image with it.
+
+With that default, a 409 has two causes, and the hint names the one that
+applies:
+
+- **An explicit `--dag-version` was reused** for different content. Pass a new
+  one, or omit it.
+- **The sources are unchanged but the image was rebuilt** to a new digest, for
+  example a re-run CI job: the registered version already runs this code, so
+  there is nothing to deploy. Pass a new `--dag-version` to register the new
+  image anyway.
 
 ## From here
 

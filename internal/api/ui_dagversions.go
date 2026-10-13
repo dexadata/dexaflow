@@ -19,9 +19,9 @@ type DagVersionLister interface {
 }
 
 // dagVersionDTO is the Airflow 3.2.1 DAGVersionResponse. Dexaflow surfaces the
-// deployment label (git describe in prod, "dev-<ts>" in dev) as bundle_version —
-// Airflow's field for the deployed bundle's version — so a run is traceable to
-// its deployment. bundle_url is null; bundle_name is a constant.
+// deployment label (git describe plus a content hash in prod, "dev-<ts>" in
+// dev) as bundle_version, Airflow's field for the deployed bundle's version,
+// so a run is traceable to its deployment. bundle_url is null; bundle_name is a constant.
 type dagVersionDTO struct {
 	ID             string    `json:"id"`
 	VersionNumber  int       `json:"version_number"`
