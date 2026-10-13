@@ -9,32 +9,23 @@ import (
 	"testing"
 )
 
-// testDigest is the pinned reference the digest builder reports.
-const testDigest = "reg.io/team/etl@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-// digestBuilder wraps the recording stub builder so `inspect` answers a
-// pinned digest: the whole deploy then runs to the register.
-func digestBuilder(t *testing.T, stub string) string {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), "digest-builder.sh")
-	body := "#!/usr/bin/env bash\n" +
-		"if [ \"$1\" = inspect ]; then echo '" + testDigest + "'; exit 0; fi\n" +
-		"exec " + stub + " \"$@\"\n"
-	if err := os.WriteFile(p, []byte(body), 0o755); err != nil { //nolint:gosec // test fixture must be executable
-		t.Fatal(err)
-	}
-	return p
-}
-
-// deployTo runs a whole deploy of a fresh fixture against fake.
+// deployTo runs a whole deploy of a fresh fixture against fake, with a
+// registry that holds the image the stub builder "pushed".
 func deployTo(t *testing.T, fake *deployServer, args ...string) (dir, stdout, stderr, log string, err error) {
 	t.Helper()
-	dir, stub, log := deployFixture(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	dir, stub, log := deployFixtureAt(t, reg.host+"/team")
+	stdout, stderr, err = deployDir(t, fake, dir, stub, args...)
+	return dir, stdout, stderr, log, err
+}
+
+// deployDir runs a whole deploy of dir with builder against fake.
+func deployDir(t *testing.T, fake *deployServer, dir, builder string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
-	all := append([]string{"deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", digestBuilder(t, stub)}, args...)
-	stdout, stderr, err = run(t, all...)
-	return dir, stdout, stderr, log, err
+	all := append([]string{"deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder}, args...)
+	return run(t, all...)
 }
 
 // TestDeployPausedAndActiveSetIsPaused: --paused and --active reach the
@@ -238,7 +229,9 @@ type deployJSON struct {
 // a pipeline to read, and the human lines go to stderr.
 func TestDeployOutputJSON(t *testing.T) {
 	fake := &deployServer{paused: true}
-	dir, out, errOut, _, err := deployTo(t, fake, "--output", "json")
+	reg := newFakeOCIRegistry(t, singleManifest)
+	dir, stub, _ := deployFixtureAt(t, reg.host+"/team")
+	out, errOut, err := deployDir(t, fake, dir, stub, "--output", "json")
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s", err, errOut)
 	}
@@ -253,8 +246,8 @@ func TestDeployOutputJSON(t *testing.T) {
 	got := map[string]any{"dag_id": d.DagID, "status": d.Status, "version": d.Version, "image": d.Image,
 		"digest": d.Digest, "spec_hash": d.SpecHash, "created": d.Created != nil && *d.Created,
 		"is_paused": d.IsPaused != nil && *d.IsPaused, "next says paused": strings.Contains(d.Next, "paused")}
-	want := map[string]any{"dag_id": "etl", "status": "registered", "version": labelOf(t, dir), "image": testDigest,
-		"digest": "sha256:" + strings.SplitN(testDigest, "@sha256:", 2)[1], "spec_hash": "abc123", "created": true,
+	want := map[string]any{"dag_id": "etl", "status": "registered", "version": labelOf(t, dir), "image": reg.host + "/team/etl@" + reg.digest,
+		"digest": reg.digest, "spec_hash": "abc123", "created": true,
 		"is_paused": true, "next says paused": true}
 	for k, w := range want {
 		if got[k] != w {

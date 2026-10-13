@@ -25,6 +25,7 @@ linters:
 
     # ─── Security (ADR 0014) ───
     - gosec              # Security-oriented antipatterns
+    - depguard           # Allowed registry client packages (ADR 0073)
 
     # ─── Correctness / quality ───
     - gocritic           # Opinionated style and performance hints
@@ -49,6 +50,46 @@ linters:
     - tagliatelle        # Struct tag naming consistency
 
   settings:
+    depguard:
+      rules:
+        # ADR 0073 section 3: the CLI's registry client may use only these
+        # go-containerregistry packages. pkg/v1/daemon wraps the Docker SDK
+        # (ADR 0015); k8schain and pkg/v1/google pull cloud SDKs into the CLI.
+        # The longest match wins, so the allow entries carve out of the deny.
+        registry-client:
+          list-mode: lax
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/google/go-containerregistry
+              desc: "only the packages ADR 0073 section 3 allows"
+            - pkg: github.com/docker/docker
+              desc: "the Docker SDK is refused (ADR 0015)"
+            - pkg: github.com/moby/moby
+              desc: "the Docker SDK is refused (ADR 0015)"
+          allow:
+            - github.com/google/go-containerregistry/pkg/name
+            - github.com/google/go-containerregistry/pkg/authn$
+            - github.com/google/go-containerregistry/pkg/v1$
+            - github.com/google/go-containerregistry/pkg/v1/remote$
+            - github.com/google/go-containerregistry/pkg/v1/mutate
+            - github.com/google/go-containerregistry/pkg/v1/tarball
+            - github.com/google/go-containerregistry/pkg/v1/empty
+            - github.com/google/go-containerregistry/pkg/v1/types
+        # Tests may also stand up an in-memory registry and random images.
+        registry-client-tests:
+          list-mode: lax
+          files:
+            - "$test"
+          deny:
+            - pkg: github.com/google/go-containerregistry/pkg/v1/daemon
+              desc: "wraps the Docker SDK (ADR 0015)"
+            - pkg: github.com/google/go-containerregistry/pkg/authn/k8schain
+              desc: "pulls cloud SDKs into the CLI (ADR 0073)"
+            - pkg: github.com/google/go-containerregistry/pkg/v1/google
+              desc: "pulls cloud SDKs into the CLI (ADR 0073)"
+            - pkg: github.com/docker/docker
+              desc: "the Docker SDK is refused (ADR 0015)"
     gocyclo:
       # ADR 0012: hard cap at 15. Critical paths target <=10 but that is not enforced here.
       min-complexity: 15

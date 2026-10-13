@@ -73,13 +73,12 @@ linux/amd64,linux/arm64`, then `<tool> push`); docker with the containerd
 image store enabled builds and pushes it as one manifest list.
 
 Whatever the tool, a multi-platform push is then checked before anything is
-registered: the CLI reads the pushed digest with `<tool> inspect` and runs
-`<tool> manifest inspect <image>@<digest>`, and the digest must be a manifest
-list holding an image for every requested platform. A tool can succeed at
-build and push and still leave a partial image, so the build fails when the
-build itself fails, when the list misses a platform, and when
-`manifest inspect` cannot run or answers something that is not a list. The
-error keeps the tool's message and says how to build one platform:
+registered: the CLI reads what the tag names from the registry itself, and it
+must be a manifest list holding an image for every requested platform. A tool
+can succeed at build and push and still leave a partial image, so the build
+fails when the build itself fails, when the list misses a platform, and when
+the registry cannot be read or answers something that is not a list. The
+error keeps the cause and says how to build one platform:
 
 ```text
 Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with the containerd image store enabled. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: the pushed image ghcr.io/your-org/first-pro-dag@sha256:... is not a manifest list holding every platform; missing linux/arm64
@@ -91,20 +90,29 @@ image and is not checked.
 ## The local daemon fallback
 
 `local-daemon` runs a container tool on your machine: `docker` by default, or
-`podman` or `nerdctl` with `--builder`. It runs `<tool> build --platform ...`,
-then `<tool> push`, then reads the pushed image's digest with
-`<tool> inspect`. Registry credentials are the tool's own: log in once with
-`docker login ghcr.io` (or your cloud's helper, such as
-`gcloud auth configure-docker` or `aws ecr get-login-password`). Dexaflow never
-stores a registry credential.
+`podman` or `nerdctl` with `--builder`. It runs `<tool> build --platform ...`
+and `<tool> push`. The digest `deploy` registers is then read from the
+registry, not from the tool
+([ADR 0075](/project/adrs/0075-daemonless-builds-in-0-5-4/)).
+
+## Registry credentials
+
+The tool pushes with its own credentials, and the CLI reads the registry with
+the same ones: those `docker login ghcr.io` or your cloud's helper writes to
+`~/.docker/config.json` (`gcloud auth configure-docker`,
+`aws ecr get-login-password | docker login ...`, `az acr login`), credential
+helpers included. Dexaflow never stores a registry credential. A registry on
+`localhost`, a `*.localhost` name (as k3d names its registries) or a private
+address is spoken to over HTTP; every other one over verified TLS.
 
 On a machine whose architecture differs from the target platform (an Apple
 Silicon laptop building `linux/amd64`), the tool builds under emulation, which
 is slower; Docker Desktop includes it, and Colima, Lima or podman may need a
 one-time `docker run --privileged tonistiigi/binfmt --install all`.
 
-`deploy --skip-build` reuses an image the tool already pushed: it still reads
-the digest with `<tool> inspect`, so it needs the same tool on the same machine.
+`deploy --skip-build` registers an image that is already in the registry,
+whoever pushed it: a CI job, a cloud builder or another machine. It reads the
+digest from the registry and needs no container tool at all.
 
 A project that ships its own `Dockerfile` (or `build.dockerfile` in
 `dexaflow.yaml`) is built from it as-is. Once the `remote` builder lands it can

@@ -11,5 +11,5 @@ type Options struct {
 // build resolves to it; the daemonless and remote paths are added in front of
 // it without changing callers.
 func Select(o Options) (b Builder, reason string) {
-	return LocalDaemon(o), "fallback: no daemonless or remote builder is available yet"
+	return LocalDaemon{Tool: o.Tool}, "fallback: no daemonless or remote builder is available yet"
 }
