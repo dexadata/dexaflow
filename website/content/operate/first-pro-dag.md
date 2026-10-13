@@ -45,7 +45,9 @@ flowchart LR
   DAG image there; the control plane pulls it. (Lite needs none — this is a Pro
   thing.)
 - **A reachable Pro control plane.** A throwaway one comes from the
-  [Helm chart](/operate/helm-chart/).
+  [Helm chart](/operate/helm-chart/). To rehearse this whole page on your
+  machine, [Try Pro on a local cluster](/operate/local-cluster/) sets up a
+  local cluster, a registry and the chart (for testing only).
 
 ## Step 0 — log in once
 
@@ -164,7 +166,7 @@ shows state and logs. That is the whole Pro lifecycle, in one verb.
 |---|---|---|
 | `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
 | `denied` / `unauthorized` on push | builder not logged in to the registry | `docker login ghcr.io` (registry auth ≠ control-plane auth) |
-| Task pod: `exec format error` | image arch ≠ cluster arch | already handled — deploy builds `linux/amd64`; for a Graviton cluster pass `--platform linux/arm64` |
+| Task pod: `exec format error` | image arch ≠ cluster arch | already handled — deploy builds `linux/amd64`; for a Graviton cluster set `build.platforms: ["linux/arm64"]` in `dexaflow.yaml` |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …` — create them on Pro (UI/API) first; see [Variables & Connections](/author-dags/variables-connections/) |
 
 Hit something not on this list — an unsupported task type, `CreateContainerConfigError`,

@@ -492,6 +492,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES` | _(empty)_ | both | Comma-separated audiences whose tokens from the trusted issuer are accepted as the bearer of any `/api/v2` request, reused until they expire: the [bearer mode](#trusted-issuer-bearer-tokens), for remote MCP clients behind your platform (`leoflow-mcp` is the conventional audience). Each must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE`. Empty leaves the mode off. Helm: `auth.trustedIssuer.bearerAudiences`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. Helm: `auth.trustedIssuer.bearerMaxLifetimeSeconds`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN` | _(empty)_ | both | Binds every browser session to its tenant's host, for an operator that serves each tenant on its own host in front of one Dexaflow, for example `{tenant}.example.com`. A handoff for a tenant is accepted only on that tenant's host, and a session cookie only on the host of the session's tenant. See [Binding sessions to tenant hosts](#binding-sessions-to-tenant-hosts). A host and optional port with exactly one `{tenant}`; boot fails otherwise, or when the issuer is not set. Empty binds nothing. Helm: `auth.trustedIssuer.hostPattern`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. A refused [trusted-issuer handoff](#trusted-issuer-handoff) is also sent back here, with an `error` code. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
 | `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE` | `false` | both | Drops the `Secure` attribute from the browser session cookie (`_token`) and the OIDC state cookie. Leave it off. Both login paths set the session cookie server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is never readable by a script. There is one reason to turn it on: a deployment served over **plain http to something that is not a loopback address**, where the browser refuses a `Secure` cookie outright and the sign-in page would post valid credentials, get a `200`, and land back on itself with no error anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing: browsers treat it as trustworthy and accept the cookie over http. It cannot be derived from the request (behind a TLS-terminating ingress the server sees plain http while the browser sees https), so it is a setting, and boot logs a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart install terminates TLS at the ingress, where this must stay off. `extraEnv` if a deployment genuinely needs it. **Set this before upgrading a plain-http deployment on a non-loopback name.** The browser refuses a `Secure` cookie there and refuses the `Secure` deletion too, so a new login is discarded and sign-out cannot clear the session the previous build left behind until it expires on its own. |
@@ -632,6 +633,8 @@ across clusters.
 | `DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS` | _(empty)_ | Pro | Default StorageClass for the staging volume (e.g. the cluster's RWX class). Empty falls back to the cluster's default StorageClass. Helm: `executor.defaults.staging.storageClass`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU` | _(empty)_ | Pro | Default CPU for a task that declares none of its own (a Kubernetes quantity, e.g. `250m`). Applied as **both request and limit**. Guaranteed QoS needs the **memory** default set too — cpu alone leaves the task Burstable with no memory bound at all, and the control plane WARNs at boot naming the missing key; empty leaves it BestEffort unless the DAG sets its own. Helm: `executor.defaults.resources.cpu`. |
 | `DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY` | _(empty)_ | Pro | Default memory for a task that declares none of its own (e.g. `256Mi`). Applied as **both request and limit**. Set it together with the CPU default — either one alone is Burstable, not Guaranteed. Helm: `executor.defaults.resources.memory`. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU` | _(empty)_ | Pro | Default CPU **limit** for every task pod whose resources leave the CPU limit empty, including a task that declares requests only (a Kubernetes quantity, e.g. `2`). A declared limit is never changed, and a request above this value raises the filled limit to the request. Where the CPU request is also empty, Kubernetes sets the request to this limit, as it does for a `LimitRange` default, so a task declaring only a memory request also requests this CPU. Without `executor.unit`, the default limits also size every warm worker pod, and a task whose own limit would be larger skips warm placement and takes a dedicated pod. Empty (the default) sets no limit. Not applied with `executor.unit`, which always sets both limits. Helm: `executor.defaults.limits.cpu`. |
+| `DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY` | _(empty)_ | Pro | Default memory **limit** for every task pod whose resources leave the memory limit empty (e.g. `4Gi`). Same rules as the CPU limit above (a task declaring only a CPU request also requests this memory, and warm worker pods carry it too); either may be set alone. Empty (the default) sets no limit. Helm: `executor.defaults.limits.memory`. |
 
 ### Warm worker pools (`execution.*`)
 
@@ -811,6 +814,7 @@ status it stands for (`dexaflow.refusal_status` on the span), not as a `303`.
 | Subject not linked to the issuer | `403` | `user_not_linked` |
 | Linked user deactivated | `403` | `user_inactive` |
 | User linked in another tenant than the token names | `403` | `tenant_mismatch` |
+| Token for a tenant posted on another tenant's host ([host binding](#binding-sessions-to-tenant-hosts)) | `403` | `host_tenant_mismatch` |
 | Dexaflow could not look up the user or open the session | `500` | `server_error` |
 | The issuer's JWKS could not be downloaded, so the token was not checked | `503` | `server_error` |
 
@@ -835,6 +839,43 @@ one session: a second post of the same `jti` is refused until the token
 expires. That memory is per server process, so with several replicas a token
 could be accepted once by each; the short lifetime is what bounds that
 window. Mint each token right before posting it, and never put one in a URL.
+
+### Binding sessions to tenant hosts
+
+When you serve each tenant on its own host (`acme.example.com`,
+`globex.example.com`) in front of one Dexaflow, set `host_pattern` so a
+session works only on its own tenant's host:
+
+```yaml
+auth:
+  trusted_issuer:
+    # ... the handoff keys above ...
+    host_pattern: "{tenant}.example.com"
+```
+
+With it set:
+
+- A handoff is accepted only when the request's host is the pattern with the
+  token's tenant in place of `{tenant}`. On any other host it answers `403`
+  (or redirects to the external sign-in with `error=host_tenant_mismatch` when
+  one is set), sets no cookie, and records `issuer.login.failure` with reason
+  `host_tenant_mismatch`.
+- A request that authenticates with the session cookie is accepted only on the
+  host of the session's tenant, however the session was opened (handoff,
+  password or single sign-on). On any other host the API answers `401` and the
+  UI sends the browser to sign in, and both clear the cookie. A password or
+  single sign-on login for the `default` tenant then works only on
+  `default.example.com` (with the pattern above).
+- A token in the `Authorization` header (the CLI, API clients, a
+  [trusted-issuer bearer](#trusted-issuer-bearer-tokens)) is not bound to a
+  host: it never travels on its own the way a cookie does.
+
+The host is the request's `Host` header, compared without the port unless the
+pattern names one, and ignoring case. Behind an ingress that rewrites `Host`,
+list the ingress in `server.trusted_proxies`: the `X-Forwarded-Host` it sets is
+then used, and only from those peers. This also stops a session that a page
+on one tenant's host plants for its own tenant from being used on another
+tenant's host.
 
 ### Trusted-issuer bearer tokens
 
