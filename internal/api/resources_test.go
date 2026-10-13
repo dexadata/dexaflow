@@ -37,7 +37,7 @@ func (f *fakeDagRepo) GetDag(_ context.Context, _, dagID string) (domain.DAG, er
 	return domain.DAG{}, ErrNotFound
 }
 
-func (f *fakeDagRepo) SetPaused(_ context.Context, _, dagID string, paused bool) (domain.DAG, error) {
+func (f *fakeDagRepo) SetPausedBy(_ context.Context, _, _, dagID string, paused bool) (domain.DAG, error) {
 	for _, d := range f.dags {
 		if d.DagID == dagID {
 			d.IsPaused = paused
@@ -1085,15 +1085,35 @@ func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 	}
 }
 
-// pauseRecorder records SetPaused calls.
+// pauseRecorder records SetPausedBy calls.
 type pauseRecorder struct {
 	fakeDagRepo
-	calls int
+	calls  int
+	actors []string
 }
 
-func (p *pauseRecorder) SetPaused(ctx context.Context, tenant, dagID string, paused bool) (domain.DAG, error) {
+func (p *pauseRecorder) SetPausedBy(ctx context.Context, tenant, actor, dagID string, paused bool) (domain.DAG, error) {
 	p.calls++
-	return p.fakeDagRepo.SetPaused(ctx, tenant, dagID, paused)
+	p.actors = append(p.actors, actor)
+	return p.fakeDagRepo.SetPausedBy(ctx, tenant, actor, dagID, paused)
+}
+
+// TestPatchDagPassesTheUser: a pause runs on behalf of the authenticated
+// user, so its audit entry names them (#1705).
+func TestPatchDagPassesTheUser(t *testing.T) {
+	repo := &pauseRecorder{fakeDagRepo: fakeDagRepo{dags: []domain.DAG{{DagID: "etl"}}}}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		Dags:          repo,
+	})
+	if rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl", `{"is_paused":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(repo.actors) != 1 || repo.actors[0] != "u1" {
+		t.Errorf("pause actors = %v, want [u1]", repo.actors)
+	}
 }
 
 // TestPatchDagWithoutIsPausedIsRefused: a PATCH that does not say whether to
