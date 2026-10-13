@@ -5,8 +5,9 @@
 // builders are tried in (ResolutionOrder): skip the build when the dependency
 // image already exists, append a code layer, pack a daemonless dependency
 // layer, use a remote builder, and only then fall back to a local container
-// daemon. Only the last, LocalDaemon, exists today, so Select always returns
-// it. Every builder returns a Result that carries the digest of the image it
+// daemon. Two exist today: Existing, the skip path in its first form (the
+// whole image for this content label is already in the registry, see Select),
+// and LocalDaemon. Every builder returns a Result that carries the digest of the image it
 // pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
 // ADR 0041).
 //
@@ -26,7 +27,9 @@ type Path string
 
 // The builder resolution order of ADR 0073, first to last.
 const (
-	// PathSkip reuses the dependency image already in the registry.
+	// PathSkip reuses an image already in the registry: today the whole
+	// image of the content label; once images are split, the dependency
+	// image of the dependency key (ADR 0073 section 4).
 	PathSkip Path = "skip"
 	// PathCodeLayer appends the DAG code as a layer to a cached dependency
 	// image through the registry API.

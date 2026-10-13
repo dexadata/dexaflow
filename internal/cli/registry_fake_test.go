@@ -78,3 +78,10 @@ func missingRegistry(t *testing.T) string {
 	t.Cleanup(srv.Close)
 	return strings.TrimPrefix(srv.URL, "http://")
 }
+
+// readList returns the repo:ref of every manifest read so far.
+func (r *fakeOCIRegistry) readList() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reads...)
+}

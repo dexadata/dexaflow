@@ -34,6 +34,7 @@ type deployOptions struct {
 	trigger    bool
 	yes        bool
 	force      bool
+	rebuild    bool
 	paused     bool
 	active     bool
 	plan       bool
@@ -78,6 +79,7 @@ func newDeployCommand() *cobra.Command {
 	addFollowFlags(cmd, &o.follow, &o.timeout)
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt (for automation)")
 	cmd.Flags().BoolVar(&o.force, "force", false, "build, push and register even when the default content label is already deployed")
+	cmd.Flags().BoolVar(&o.rebuild, "rebuild", false, "build and push the image even when the registry already holds one for this content label")
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
 	cmd.Flags().String("registry", "", registryFlagUsage)
@@ -548,6 +550,7 @@ func (d *deployRun) run() error {
 	}
 	co.image = image
 	version := co.dagVersion
+	co.reuse = d.mayReuse(image, version, origin)
 	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
 	if d.o.plan {
 		return d.plan(ctx, version, image, origin)
@@ -577,10 +580,29 @@ func (d *deployRun) run() error {
 	return d.finish(ctx, res)
 }
 
+// mayReuse reports whether this deploy may take the skip path: the tag is the
+// content label (reusableImage), and neither --rebuild nor --force asks for a
+// build.
+func (d *deployRun) mayReuse(image, version string, origin labelOrigin) bool {
+	return reusableImage(image, version, origin) && !d.o.rebuild && !d.o.force
+}
+
+// reusableImage reports whether the image tag is the default content label,
+// so an image the registry holds under it was built from this deploy's
+// inputs and can be pinned without a build (ADR 0076, the skip path of
+// ADR 0073). An explicit --dag-version, or a tag from git (tag_strategy
+// git_sha or git_tag), names no content: a dirty tree or a moved tag would
+// reuse an image of other sources. A git strategy that fell back to the label (outside
+// git, no tag on HEAD) tags with the label, and so may reuse.
+func reusableImage(image, version string, origin labelOrigin) bool {
+	return origin == labelDefault && version != "" && strings.HasSuffix(image, ":"+version)
+}
+
 // plan says what a deploy of this DAG would do, and records it.
 func (d *deployRun) plan(ctx context.Context, version, image string, origin labelOrigin) error {
 	in := planInput{serverURL: d.serverURL, token: d.token, dagID: d.cfg.DagID, version: version, image: image,
-		origin: origin, skipBuild: d.o.skipBuild, force: d.o.force, paused: d.o.pausedOverride()}
+		origin: origin, skipBuild: d.o.skipBuild, force: d.o.force, paused: d.o.pausedOverride(),
+		reuse: d.mayReuse(image, version, origin), platforms: buildPlatforms(d.cfg)}
 	res, err := planDeploy(ctx, d.cmd.ErrOrStderr(), in)
 	if err != nil {
 		return err

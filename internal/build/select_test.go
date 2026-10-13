@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -8,7 +9,7 @@ import (
 // Until a daemonless path exists, every build resolves to the local daemon
 // fallback, and the reason says so.
 func TestSelectFallsBackToTheLocalDaemon(t *testing.T) {
-	b, reason := Select(Options{Tool: "podman"})
+	b, reason := Select(context.Background(), Options{Tool: "podman"}, "r:1", nil)
 	ld, ok := b.(LocalDaemon)
 	if !ok || ld.Tool != "podman" {
 		t.Fatalf("Select = %#v, want LocalDaemon with the configured tool", b)
@@ -19,7 +20,7 @@ func TestSelectFallsBackToTheLocalDaemon(t *testing.T) {
 }
 
 func TestSelectDefaultsTheToolToDocker(t *testing.T) {
-	b, _ := Select(Options{})
+	b, _ := Select(context.Background(), Options{}, "r:1", nil)
 	if b.Describe() != "local-daemon (docker)" {
 		t.Errorf("Describe = %q", b.Describe())
 	}
