@@ -296,6 +296,15 @@ class _StandaloneTaskInstance:
         self._xcom_by_task = _load_xcom_by_task()
         self.pushed: dict = {}
 
+    @property
+    def stats_tags(self) -> dict[str, str]:
+        """Metric tags for this task instance, shaped like the Task SDK's (dag_id and
+        task_id; no team_name, Dexaflow has no multi-team runs). Operators built on the
+        SDK's ResumableJobMixin (``durable=True``, the default in Airflow 3.3, e.g.
+        BigQueryInsertJobOperator) read ``ti.stats_tags`` before submitting their job,
+        so without it they crashed before doing any work."""
+        return {"dag_id": self.dag_id, "task_id": self.task_id}
+
     def xcom_push(self, key=None, value=None, *args, **kwargs) -> None:
         """Capture the push (keyed by ``key``) so the operator's UI deep-link buttons
         (operator_extra_links) can be computed after execute() — see

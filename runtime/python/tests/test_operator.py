@@ -166,6 +166,16 @@ class GenericLinkOperator(EchoOperator):
         return {"ok": True}
 
 
+class ResumableReadOperator(EchoOperator):
+    """Mirrors the Task SDK's ResumableJobMixin (Airflow 3.3): with durable=True, the
+    default, execute_resumable() reads context["ti"].stats_tags before submitting the
+    job. BigQueryInsertJobOperator runs through it."""
+
+    def execute(self, context):
+        team = context["ti"].stats_tags.get("team_name")
+        return {"tags": context["ti"].stats_tags, "team": team}
+
+
 class MultiKeyOperator(EchoOperator):
     """Pushes a custom-keyed XCom during execute (besides its return value) — the
     multi-key XCom pattern the runtime ships so it is stored/visible (#XCOM)."""
@@ -291,6 +301,22 @@ def test_run_operator_tolerates_ti_xcom_push_and_try_number(tmp_path, monkeypatc
     runner.run_operator(f"{mod}.LinkPersistOperator", {})
 
     assert json.loads(out.read_text()) == {"task_id": "invoke", "try_number": 2}
+
+
+def test_run_operator_serves_ti_stats_tags(tmp_path, monkeypatch):
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    # ResumableJobMixin operators (BigQueryInsertJobOperator with its default
+    # durable=True) crashed on the missing ti.stats_tags before submitting the job,
+    # so DAGs had to pass durable=False to run on Dexaflow.
+    runner.run_operator(f"{mod}.ResumableReadOperator", {})
+
+    assert json.loads(out.read_text()) == {
+        "tags": {"dag_id": "report", "task_id": "build"}, "team": None}
 
 
 def test_operator_context_provides_tolerant_ti(monkeypatch):
