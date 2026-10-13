@@ -1340,7 +1340,7 @@ type registerOutcome struct {
 func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, reg registration) (registerOutcome, error) {
 	spec, specHash := reg.spec, reg.specHash
 	meta := dagMetadataOf(spec)
-	dag, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, reg.paused)
+	dag, dagCreated, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, reg.paused)
 	if err != nil {
 		return registerOutcome{}, err
 	}
@@ -1348,7 +1348,7 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	if err != nil {
 		return registerOutcome{}, err
 	}
-	out := registerOutcome{DagRegistered: domain.DagRegistered{IsPaused: dag.IsPaused}}
+	out := registerOutcome{DagRegistered: domain.DagRegistered{IsPaused: dag.IsPaused, DagCreated: dagCreated}}
 	if reg.pausedOverride && dag.IsPaused != reg.paused {
 		if perr := setPausedByRegister(ctx, qtx, tid, actor, spec, reg.paused); perr != nil {
 			return registerOutcome{}, perr
@@ -1476,26 +1476,29 @@ func (r *Repository) pausedOnCreation(spec domain.DAGSpec) bool {
 // DeleteDag that commits between the two statements leaves nothing to lock;
 // the pair is then tried once more, which creates the DAG again. A DAG that is
 // gone a second time is reported as a conflict for the caller to retry.
-// paused is is_paused for a DAG this call creates.
-func ensureAndLockDag(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, meta queries.UpdateDagMetadataParams, paused bool) (queries.Dag, error) {
+// paused is is_paused for a DAG this call creates; created reports whether
+// it created the row.
+func ensureAndLockDag(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, meta queries.UpdateDagMetadataParams, paused bool) (dag queries.Dag, created bool, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
+		inserted, eerr := qtx.EnsureDag(ctx, queries.EnsureDagParams{
 			TenantID: tid, DagID: dagID,
 			Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
 			Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
 			MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup, IsPaused: paused,
-		}); err != nil {
-			return queries.Dag{}, fmt.Errorf("creating dag: %w", err)
+		})
+		if eerr != nil {
+			return queries.Dag{}, false, fmt.Errorf("creating dag: %w", eerr)
 		}
-		dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
+		created = created || inserted > 0
+		dag, err = qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
 		if err == nil {
-			return dag, nil
+			return dag, created, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return queries.Dag{}, fmt.Errorf("locking dag: %w", err)
+			return queries.Dag{}, false, fmt.Errorf("locking dag: %w", err)
 		}
 	}
-	return queries.Dag{}, domain.Safef(domain.ErrConflict,
+	return queries.Dag{}, false, domain.Safef(domain.ErrConflict,
 		"dag %q was deleted while this version was being registered; push it again", dagID)
 }
 

@@ -531,8 +531,11 @@ type VersionInfo struct {
 // VersionRegistration defines model for VersionRegistration.
 type VersionRegistration struct {
 	// Created False when the content was already registered.
-	Created *bool   `json:"created,omitempty"`
-	DagId   *string `json:"dag_id,omitempty"`
+	Created *bool `json:"created,omitempty"`
+
+	// DagCreated True when this register created the DAG (its first version); false for a new version of an existing DAG.
+	DagCreated *bool   `json:"dag_created,omitempty"`
+	DagId      *string `json:"dag_id,omitempty"`
 
 	// IsPaused The DAG's is_paused after the register.
 	IsPaused *bool   `json:"is_paused,omitempty"`
@@ -618,7 +621,7 @@ type ClearDagRun200JSONResponseBody struct {
 
 // RegisterDagVersionParams defines parameters for RegisterDagVersion.
 type RegisterDagVersionParams struct {
-	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400.
+	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. A scoped token needs the dexaflow:run scope to send it (403 otherwise).
 	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
 }
 
@@ -1169,7 +1172,7 @@ type ClientInterface interface {
 	// RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1179,7 +1182,7 @@ type ClientInterface interface {
 	// RegisterDagVersion Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1870,7 +1873,7 @@ func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...Requ
 // RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 //
 // Takes any type of body and a specified content type.
 //
@@ -1890,7 +1893,7 @@ func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, pa
 // RegisterDagVersion Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4251,7 +4254,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4261,7 +4264,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -5593,6 +5596,8 @@ type RegisterDagVersionResponse struct {
 	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
 }
@@ -5615,6 +5620,11 @@ func (r RegisterDagVersionResponse) GetJSON400() *Error {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RegisterDagVersionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON403() *Error {
+	return r.JSON403
 }
 
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
@@ -6729,7 +6739,7 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 // RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6745,7 +6755,7 @@ func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context
 // RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs write on dags (scope dexaflow:deploy).
-// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction.
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: a scoped token needs dexaflow:run as well as dexaflow:deploy to send is_paused, else the register is refused with 403.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7848,6 +7858,13 @@ func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Error

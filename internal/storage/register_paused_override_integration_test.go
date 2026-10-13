@@ -192,3 +192,19 @@ func TestSetPausedByAudits(t *testing.T) {
 		t.Errorf("unknown DAG: err = %v, want not found", err)
 	}
 }
+
+// TestRegisterReportsWhetherItCreatedTheDag: a new version of an existing DAG
+// is created (a version) but did not create the DAG; the deploy summary needs
+// the difference to tell a first schedule from a redeploy.
+func TestRegisterReportsWhetherItCreatedTheDag(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	dagID := fmt.Sprintf("dag_created_%d", time.Now().UnixNano())
+	first := registerAs(t, ctx, repo, "", registerTxSpec(dagID, "v1", "a", 3, false), nil)
+	if !first.Created || !first.DagCreated {
+		t.Fatalf("first register = %+v, want a version and a new DAG", first)
+	}
+	next := registerAs(t, ctx, repo, "", registerTxSpec(dagID, "v2", "bb", 3, false), nil)
+	if !next.Created || next.DagCreated {
+		t.Fatalf("second register = %+v, want a version of an existing DAG", next)
+	}
+}

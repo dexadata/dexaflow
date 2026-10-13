@@ -83,11 +83,13 @@ type DagRegistration struct {
 }
 
 // DagRegistered is the outcome of a register: whether a new version was
-// created (false when the content was already registered) and the DAG's
+// created (false when the content was already registered), whether the
+// register created the DAG itself (its first version), and the DAG's
 // is_paused afterwards.
 type DagRegistered struct {
-	Created  bool
-	IsPaused bool
+	Created    bool
+	DagCreated bool
+	IsPaused   bool
 }
 
 // DagRun is an execution of a DAG, identified by dag_id + run_id.

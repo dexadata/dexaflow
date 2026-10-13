@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -27,11 +28,12 @@ type DagVersionRepository interface {
 }
 
 type versionResponse struct {
-	DagID    string `json:"dag_id"`
-	Version  string `json:"version"`
-	SpecHash string `json:"spec_hash"`
-	Created  bool   `json:"created"`
-	IsPaused bool   `json:"is_paused"`
+	DagID      string `json:"dag_id"`
+	Version    string `json:"version"`
+	SpecHash   string `json:"spec_hash"`
+	Created    bool   `json:"created"`
+	DagCreated bool   `json:"dag_created"`
+	IsPaused   bool   `json:"is_paused"`
 }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -134,6 +136,12 @@ func registerVersionHandler(repo DagVersionRepository, admission specAdmission) 
 			AbortProblem(c, http.StatusBadRequest, "bad request", perr.Error())
 			return
 		}
+		// Pausing is a run-state write: PATCH /dags/{dag_id} needs
+		// dexaflow:run, so a deploy-only token may not pause or unpause here.
+		if u, ok := UserFromContext(c); paused != nil && ok && u.Scoped && !u.HasScope(auth.ScopeRun) {
+			AbortProblem(c, http.StatusForbidden, "forbidden", "missing scope "+auth.ScopeRun+" (is_paused)")
+			return
+		}
 		var spec domain.DAGSpec
 		if err := c.ShouldBindJSON(&spec); err != nil {
 			AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
@@ -167,6 +175,6 @@ func registerVersionHandler(repo DagVersionRepository, admission specAdmission) 
 		if got.Created {
 			status = http.StatusCreated
 		}
-		c.JSON(status, versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, IsPaused: got.IsPaused})
+		c.JSON(status, versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused})
 	}
 }

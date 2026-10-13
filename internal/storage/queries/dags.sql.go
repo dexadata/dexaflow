@@ -86,7 +86,7 @@ func (q *Queries) DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, er
 	return result.RowsAffected(), nil
 }
 
-const ensureDag = `-- name: EnsureDag :exec
+const ensureDag = `-- name: EnsureDag :execrows
 INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup, is_paused)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (tenant_id, dag_id) DO NOTHING
@@ -115,8 +115,9 @@ type EnsureDagParams struct {
 // is_paused is set here, on creation (dags_are_paused_at_creation or the
 // spec's is_paused_upon_creation, #1705): a redeploy never changes it, unless
 // the register asks for a state (is_paused), which SetDagPaused then applies.
-func (q *Queries) EnsureDag(ctx context.Context, arg EnsureDagParams) error {
-	_, err := q.db.Exec(ctx, ensureDag,
+// The row count tells the register whether it created the DAG (1) or found it (0).
+func (q *Queries) EnsureDag(ctx context.Context, arg EnsureDagParams) (int64, error) {
+	result, err := q.db.Exec(ctx, ensureDag,
 		arg.TenantID,
 		arg.DagID,
 		arg.Description,
@@ -129,7 +130,10 @@ func (q *Queries) EnsureDag(ctx context.Context, arg EnsureDagParams) error {
 		arg.Catchup,
 		arg.IsPaused,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getCurrentDagSpec = `-- name: GetCurrentDagSpec :one

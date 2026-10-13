@@ -1,4 +1,4 @@
--- name: EnsureDag :exec
+-- name: EnsureDag :execrows
 -- Creates the dags row of a DAG registered for the first time, with the
 -- metadata of the spec that will become its first version. An existing row is
 -- left untouched (no write, no lock): RegisterDagVersion then locks it with
@@ -8,6 +8,7 @@
 -- is_paused is set here, on creation (dags_are_paused_at_creation or the
 -- spec's is_paused_upon_creation, #1705): a redeploy never changes it, unless
 -- the register asks for a state (is_paused), which SetDagPaused then applies.
+-- The row count tells the register whether it created the DAG (1) or found it (0).
 INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup, is_paused)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (tenant_id, dag_id) DO NOTHING;
