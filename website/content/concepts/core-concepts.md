@@ -45,13 +45,16 @@ in this order:
 1. The DAG's own `is_paused_upon_creation` argument, when it sets one:
    `DAG("etl", is_paused_upon_creation=False)` registers active,
    `True` registers paused.
-2. The server setting `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` (default `true`,
-   Helm `config.dagsArePausedAtCreation`). Set it to `false` to register new
+2. The server setting `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` (default `true`;
+   on Helm set the chart value `config.dagsArePausedAtCreation`, not
+   `extraEnv`). Set it to `false` to register new
    DAGs active, as releases before 0.5.4 did.
 
 Both apply **only when the DAG is created**. Deploying a new version of an
 existing DAG never pauses or unpauses it: an active DAG stays active, and its
-next scheduled run uses the new version; a paused DAG stays paused.
+next scheduled run uses the new version; a paused DAG stays paused. A DAG that
+is deleted (`dexaflow dags delete --deregister`) and deployed again is created
+again, so it comes back paused.
 `dexaflow lite` registers new DAGs active, so a DAG you run locally keeps its
 schedule from the first save.
 

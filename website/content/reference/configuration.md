@@ -573,7 +573,7 @@ a WARN at boot when the secret is empty.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` | `true` | both | Start a DAG paused when it is registered for the first time, so its schedule creates no run until someone unpauses it. Airflow's setting of the same name. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. `false` registers new DAGs active, as releases before 0.5.4 did. `dexaflow lite` sets it to `false`. Config key `dags_are_paused_at_creation`. Helm: `config.dagsArePausedAtCreation`. See [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused). |
+| `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` | `true` | both | Start a DAG paused when it is registered for the first time, so its schedule creates no run until someone unpauses it. Airflow's setting of the same name. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. `false` registers new DAGs active, as releases before 0.5.4 did. `dexaflow lite` sets it to `false`. Config key `dags_are_paused_at_creation`. Helm: set the chart value `config.dagsArePausedAtCreation` (not `extraEnv`); the chart always renders this variable. A DAG deleted and deployed again comes back paused. See [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused). |
 
 ### Scheduler (`scheduler.*`)
 

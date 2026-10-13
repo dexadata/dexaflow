@@ -751,19 +751,38 @@ leaves encrypted rows encrypted and readable by 0.5.4; only `decrypt` makes
 them readable by 0.5.3. A backup taken while it is on holds ciphertext: restore
 it with the same key, as for connections.
 
+### What changes in 0.5.4 without a flag
+
 **New DAGs start paused** (#1705). 0.5.4 follows Airflow: a DAG registered for
 the first time starts paused, so its schedule creates no run, catchup
-included, until someone unpauses it. Manual triggers still run. DAGs that
-already exist keep their state, and a redeploy never pauses or unpauses a DAG,
-so the upgrade itself changes nothing that is running. A pipeline that deploys
-a new DAG and expects its schedule to start has three ways back to the 0.5.3
-behavior:
+included, until someone unpauses it. Manual triggers still run. Changing a
+default in a patch is a deliberate exception to the patch rule
+([ADR 0068](/project/adrs/0068-patch-content-gated-by-safety/),
+`helm/AGENTS.md`), decided in #1705.
+
+DAGs that already exist keep their state, and a redeploy never pauses or
+unpauses a DAG, so the upgrade itself changes nothing that is running. Three
+cases do change:
+
+- **A DAG deleted and deployed again comes back paused**, because it is
+  registered for the first time again.
+- **During a rolling upgrade**, a replica still on 0.5.3 registers new DAGs
+  active until every replica runs 0.5.4.
+- **A DAG that already passes `is_paused_upon_creation`** compiles into a
+  `dag.json` that now carries it, so its spec hash changes. Redeploying it
+  under the same `--dag-version` is refused with 409; deploy it under a new
+  `--dag-version` (a new commit does this on its own).
+
+A pipeline that deploys a new DAG and expects its schedule to start has three
+ways back to the 0.5.3 behavior:
 
 - unpause the DAG after its first deploy (UI switch, or
   `dexaflow admin dags unpause <dag_id>`);
 - set `is_paused_upon_creation=False` on that DAG;
-- set `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false` on the server (Helm:
-  `config.dagsArePausedAtCreation: false`) to register every new DAG active.
+- set `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false` on the server to register
+  every new DAG active. On Helm, set the chart value
+  `config.dagsArePausedAtCreation: false` rather than `extraEnv`: the chart
+  already renders this variable from that value.
 
 `dexaflow lite` keeps registering new DAGs active. Rolling back to 0.5.3 needs
 nothing: 0.5.3 ignores the setting and the spec field.

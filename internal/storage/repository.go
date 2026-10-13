@@ -42,7 +42,10 @@ type Repository struct {
 	extCoverage   externalSecretCoverage
 	// pausedAtCreation is the server's dags_are_paused_at_creation (#1705):
 	// whether a DAG registered for the first time starts paused when its spec
-	// does not say. The zero value (false) registers new DAGs active.
+	// does not say. The zero value is false (new DAGs registered active), which
+	// is what tools and tests that build a Repository directly get; the server
+	// sets it from its configuration (default true) through
+	// SetDagsArePausedAtCreation.
 	pausedAtCreation bool
 	xcomValues       XComValueDeleter
 	specs            *specCache
