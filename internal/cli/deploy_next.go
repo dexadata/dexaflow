@@ -89,13 +89,22 @@ func formatTick(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// nextStepLine says, in one sentence, what happens to the DAG after this deploy: active with
-// its next run, or paused with what unpausing does. created is whether the
-// deploy created the DAG, which decides whether the scheduler starts it from
-// scratch. It mirrors the scheduler (internal/scheduler dueSlots): with
-// catchup and a start_date every missed tick since start_date gets a run,
+// dagHistory is what the deploy knows about the DAG before it: whether this
+// deploy created it, and whether it was paused (so --active released it).
+type dagHistory struct {
+	created   bool
+	wasPaused bool
+}
+
+// nextStepLine says, in one sentence, what happens to the DAG after this
+// deploy: active with its next run, or paused with what unpausing does. The
+// scheduler starts an active DAG from scratch when the deploy created it,
+// and releases its backlog when the deploy unpaused it (h.wasPaused); an
+// active DAG that was already active just runs at its next tick. It mirrors
+// the scheduler (internal/scheduler dueSlots): with catchup and a start_date
+// every missed tick since start_date (or since the last run) gets a run,
 // otherwise only the latest missed tick does, and cron times are UTC.
-func nextStepLine(s dagState, created bool, now time.Time) string {
+func nextStepLine(s dagState, h dagHistory, now time.Time) string {
 	sched := scheduleOf(s.Schedule)
 	if sched == nil {
 		return noCronLine(s)
@@ -106,10 +115,10 @@ func nextStepLine(s dagState, created bool, now time.Time) string {
 		floor = s.StartDate.UTC().Add(-time.Nanosecond)
 	}
 	next := sched.Next(floor)
-	if !s.IsPaused && !created {
+	if !s.IsPaused && !h.created && !h.wasPaused {
 		return fmt.Sprintf("%s is active; next run %s (UTC).", s.DagID, formatTick(next))
 	}
-	start := startClause(sched, s, created, now, next)
+	start := startClause(sched, s, h.created, now, next)
 	if !s.IsPaused {
 		return fmt.Sprintf("%s is active; the scheduler %s.", s.DagID, start)
 	}

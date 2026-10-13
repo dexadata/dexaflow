@@ -295,12 +295,85 @@ func TestDeployRejectsAnUnknownOutput(t *testing.T) {
 // created the DAG, so it says what the scheduler starts with rather than only
 // the next tick.
 func TestDeploySummaryOfANewScheduledDAG(t *testing.T) {
-	fake := &deployServer{schedule: "@daily"}
+	fake := &deployServer{schedule: "@daily", dagCreated: true}
 	_, out, _, _, err := deployTo(t, fake)
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "next: etl is active; the scheduler creates one run for the latest tick") {
 		t.Errorf("output %q does not say what the scheduler starts with", out)
+	}
+}
+
+// TestDeploySummaryOfANewVersionOfAnActiveDAG: a 201 for a new version of an
+// existing active DAG does not mean the DAG is new, so the line gives the
+// next run and claims no catchup since start_date.
+func TestDeploySummaryOfANewVersionOfAnActiveDAG(t *testing.T) {
+	fake := &deployServer{schedule: "@daily", catchup: true, startDate: "2026-01-01T00:00:00Z"}
+	_, out, _, _, err := deployTo(t, fake)
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "next: etl is active; next run") || strings.Contains(out, "catchup") {
+		t.Errorf("output %q, want the next run and no catchup backlog", out)
+	}
+}
+
+// TestDeploySummaryWhenActiveUnpausesADAG: --active on a DAG that was paused
+// releases the scheduler's backlog, which the line describes as an upper
+// bound.
+func TestDeploySummaryWhenActiveUnpausesADAG(t *testing.T) {
+	fake := &deployServer{paused: true, schedule: "@daily", catchup: true, startDate: "2026-01-01T00:00:00Z"}
+	_, out, _, _, err := deployTo(t, fake, "--active")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	for _, want := range []string{"next: etl is active; the scheduler creates up to", "fewer if it already ran"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q does not say %q", out, want)
+		}
+	}
+}
+
+// TestDeployWarnsWhenTheServerIgnoresIsPaused: an older server registers
+// without applying is_paused; the deploy says so instead of implying it.
+func TestDeployWarnsWhenTheServerIgnoresIsPaused(t *testing.T) {
+	fake := &deployServer{paused: true, ignorePaused: true}
+	_, out, errOut, _, err := deployTo(t, fake, "--active")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "warning:") || !strings.Contains(errOut, "--active") {
+		t.Errorf("stderr %q, want a warning that --active was not applied", errOut)
+	}
+	if !strings.Contains(out, "next: etl is paused") {
+		t.Errorf("output %q, want the state the server reports", out)
+	}
+}
+
+// TestDeployOutputJSONReportsAFailure: a failed deploy still prints the JSON
+// document, with the DAG marked failed and the error.
+func TestDeployOutputJSONReportsAFailure(t *testing.T) {
+	dir, stub, _ := deployFixture(t)
+	srv := httptest.NewServer(&deployServer{status: 404})
+	defer srv.Close()
+	// The plain stub builder cannot report a digest, so the deploy fails after the build.
+	out, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", stub, "--output", "json")
+	if err == nil {
+		t.Fatal("want the deploy to fail")
+	}
+	var doc struct {
+		Server string `json:"server"`
+		DAGs   []struct {
+			DagID  string `json:"dag_id"`
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"dags"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", jerr, out)
+	}
+	if doc.Server == "" || len(doc.DAGs) != 1 || doc.DAGs[0].DagID != "etl" || doc.DAGs[0].Status != "failed" || doc.DAGs[0].Error == "" {
+		t.Errorf("doc = %s", out)
 	}
 }

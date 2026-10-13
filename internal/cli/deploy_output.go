@@ -40,17 +40,18 @@ type deployReport struct {
 
 // deployResult is what one DAG's deploy did, or with --plan would do.
 type deployResult struct {
-	DagID    string      `json:"dag_id"`
-	Status   string      `json:"status"`
-	Version  string      `json:"version,omitempty"`
-	Image    string      `json:"image,omitempty"`
-	Digest   string      `json:"digest,omitempty"`
-	SpecHash string      `json:"spec_hash,omitempty"`
-	Created  bool        `json:"created"`
-	IsPaused *bool       `json:"is_paused,omitempty"`
-	Next     string      `json:"next,omitempty"`
-	Plan     *deployPlan `json:"plan,omitempty"`
-	Error    string      `json:"error,omitempty"`
+	DagID      string      `json:"dag_id"`
+	Status     string      `json:"status"`
+	Version    string      `json:"version,omitempty"`
+	Image      string      `json:"image,omitempty"`
+	Digest     string      `json:"digest,omitempty"`
+	SpecHash   string      `json:"spec_hash,omitempty"`
+	Created    bool        `json:"created"`
+	DagCreated bool        `json:"dag_created"`
+	IsPaused   *bool       `json:"is_paused,omitempty"`
+	Next       string      `json:"next,omitempty"`
+	Plan       *deployPlan `json:"plan,omitempty"`
+	Error      string      `json:"error,omitempty"`
 }
 
 // setServer records the control plane the deploy goes to. A nil report (text
@@ -70,6 +71,20 @@ func (r *deployReport) add(res deployResult) {
 	if r != nil {
 		r.DAGs = append(r.DAGs, res)
 	}
+}
+
+// addFailure records that the deploy of dagID failed with err, once: --all
+// and the DAG's own deploy both report the same failure.
+func (r *deployReport) addFailure(dagID string, err error) {
+	if r == nil {
+		return
+	}
+	for _, d := range r.DAGs {
+		if d.DagID == dagID && d.Status == deployStatusFailed {
+			return
+		}
+	}
+	r.add(deployResult{DagID: dagID, Status: deployStatusFailed, Error: err.Error()})
 }
 
 // digestOf is the sha256:... part of a digest-pinned reference, "" when it
@@ -94,8 +109,8 @@ func validateDeployOptions(o deployOptions) error {
 
 // runDeployCommand runs deploy with the chosen output. With --output json the
 // human lines (and the builder's) go to stderr, and stdout carries one JSON
-// document: the report, printed also after a failure of --all so a pipeline
-// sees which DAGs went through.
+// document: the report, printed after a failure too, with each failed DAG
+// (status failed and its error), so a pipeline sees what went through.
 func runDeployCommand(cmd *cobra.Command, args []string, o deployOptions) error {
 	if err := validateDeployOptions(o); err != nil {
 		return err
@@ -108,7 +123,8 @@ func runDeployCommand(cmd *cobra.Command, args []string, o deployOptions) error 
 	o.report = &deployReport{DAGs: []deployResult{}}
 	err := runDeployTarget(cmd, args, o)
 	if err != nil && len(o.report.DAGs) == 0 {
-		return err
+		// Failed before any DAG was known (no project, no server).
+		o.report.addFailure("", err)
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
@@ -141,15 +157,16 @@ func deployServerChoice(cmd *cobra.Command, o deployOptions) (*serverChoice, str
 }
 
 // printNextStep reads the DAG's state back and prints what happens next,
-// recording it in res. A server that cannot answer leaves the line out.
-func printNextStep(ctx context.Context, out io.Writer, serverURL, token string, res *deployResult) error {
+// recording it in res. wasPaused is the state before an --active deploy. A
+// server that cannot answer leaves the line out.
+func printNextStep(ctx context.Context, out io.Writer, serverURL, token string, res *deployResult, wasPaused bool) error {
 	state, ok := fetchDagState(ctx, serverURL, token, res.DagID)
 	if !ok {
 		return nil
 	}
 	paused := state.IsPaused
 	res.IsPaused = &paused
-	res.Next = nextStepLine(state, res.Created, time.Now())
+	res.Next = nextStepLine(state, dagHistory{created: res.DagCreated, wasPaused: wasPaused}, time.Now())
 	_, err := fmt.Fprintln(out, "next: "+res.Next)
 	return err
 }

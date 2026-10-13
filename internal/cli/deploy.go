@@ -296,7 +296,7 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 		devPrintf(out, "==> %s %s (%s)\n", verb, p.DagID, p.Path)
 		if derr := runDeploy(cmd, p.Path, o); derr != nil {
 			failed = append(failed, p.DagID)
-			o.report.add(deployResult{DagID: p.DagID, Status: deployStatusFailed, Error: derr.Error()})
+			o.report.addFailure(p.DagID, derr)
 			devPrintf(errOut, "    FAILED %s: %v\n", p.DagID, derr)
 		}
 	}
@@ -460,11 +460,17 @@ func orDefault(source string) string {
 // enforce the registry, build+push the image for the target platform, re-pin it
 // by digest into dag.json, and register that with the control plane. With
 // --plan it stops after deciding what it would do.
-func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
+func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	cfg, prov, err := loadDeployConfig(cmd, dir)
 	if err != nil {
 		return err
 	}
+	// A failure past this point is reported for its DAG in --output json.
+	defer func() {
+		if err != nil {
+			o.report.addFailure(cfg.DagID, err)
+		}
+	}()
 	choice, token, serr := deployServerChoice(cmd, o)
 	if serr != nil {
 		return serr
@@ -489,6 +495,21 @@ type deployRun struct {
 	o                deployOptions
 	cfg              *domain.LeoflowConfig
 	serverURL, token string
+	// wasPaused is the DAG's is_paused before an --active deploy, so the
+	// summary can describe the backlog it releases.
+	wasPaused bool
+}
+
+// readStateBefore records, for --active, whether the DAG was paused before
+// this deploy. Other deploys do not change is_paused, or leave it paused,
+// and need no read.
+func (d *deployRun) readStateBefore(ctx context.Context) {
+	if p := d.o.pausedOverride(); p == nil || *p {
+		return
+	}
+	if before, ok := fetchDagState(ctx, d.serverURL, d.token, d.cfg.DagID); ok {
+		d.wasPaused = before.IsPaused
+	}
 }
 
 // run resolves the label and image, then plans, or checks, builds, pushes
@@ -534,8 +555,9 @@ func (d *deployRun) run() error {
 	if derr != nil {
 		return derr
 	}
+	d.readStateBefore(ctx)
 	res, rerr := registerDeployedDAG(ctx, out, registerRequest{serverURL: d.serverURL, token: d.token, output: output,
-		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride()})
+		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride(), warn: d.cmd.ErrOrStderr()})
 	if rerr != nil {
 		return rerr
 	}
@@ -559,6 +581,7 @@ func (d *deployRun) plan(ctx context.Context, version, image string, origin labe
 // version: nothing was registered, so --paused or --active is applied with
 // the Airflow PATCH, then the summary and --trigger run as for a register.
 func (d *deployRun) alreadyCurrent(ctx context.Context, version string) error {
+	d.readStateBefore(ctx)
 	if p := d.o.pausedOverride(); p != nil {
 		if err := patchDagPausedRaw(ctx, d.serverURL, d.token, d.cfg.DagID, *p); err != nil {
 			return err
@@ -570,7 +593,7 @@ func (d *deployRun) alreadyCurrent(ctx context.Context, version string) error {
 // finish prints what happens next, records the result and runs --trigger.
 func (d *deployRun) finish(ctx context.Context, res deployResult) error {
 	out := d.cmd.OutOrStdout()
-	if err := printNextStep(ctx, out, d.serverURL, d.token, &res); err != nil {
+	if err := printNextStep(ctx, out, d.serverURL, d.token, &res, d.wasPaused); err != nil {
 		return err
 	}
 	d.o.report.add(res)
@@ -617,13 +640,31 @@ type registerRequest struct {
 	version          string
 	origin           labelOrigin
 	paused           *bool
+	// warn receives the warning that the server did not apply paused.
+	warn io.Writer
 }
 
 // registerAnswer is the part of the register response the deploy reports.
-// IsPaused is nil from a server that does not report it.
+// IsPaused and DagCreated are nil from a server that does not report them.
 type registerAnswer struct {
-	SpecHash string `json:"spec_hash"`
-	IsPaused *bool  `json:"is_paused"`
+	SpecHash   string `json:"spec_hash"`
+	IsPaused   *bool  `json:"is_paused"`
+	DagCreated *bool  `json:"dag_created"`
+}
+
+// warnPausedIgnored warns when --paused or --active was asked and the answer
+// does not show it applied: a server from before the is_paused parameter
+// registers without it.
+func warnPausedIgnored(w io.Writer, asked, got *bool) {
+	if asked == nil || w == nil || (got != nil && *got == *asked) {
+		return
+	}
+	flag := "--active"
+	if *asked {
+		flag = "--paused"
+	}
+	//nolint:errcheck // advisory: the register succeeded either way
+	fmt.Fprintf(w, "warning: the server did not confirm %s (is_paused); it may predate the parameter. Check the DAG's state, and set it with `dexaflow admin dags pause|unpause`.\n", flag)
 }
 
 // registerDeployedDAG re-pins the compiled dag.json to the pushed image's digest
@@ -655,8 +696,10 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	}
 	var answer registerAnswer
 	_ = json.Unmarshal([]byte(body), &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
+	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
-		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated, Status: deployStatusRegistered}
+		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,
+		DagCreated: answer.DagCreated != nil && *answer.DagCreated, Status: deployStatusRegistered}
 	if status == http.StatusOK {
 		// 200 rather than 201: the server already had this exact spec and made
 		// no version. Reached when the pre-check was skipped (--force) or could

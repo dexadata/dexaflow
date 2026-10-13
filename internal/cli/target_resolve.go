@@ -192,14 +192,17 @@ func resolveServer(cmd *cobra.Command, serverFlag string) (*serverChoice, error)
 		return nil, err
 	}
 	source := "the default"
+	implicit := false
 	switch {
 	case envServer:
 		source = "DEXAFLOW_SERVER_URL"
 	case tc.store.ServerURL != "":
 		source = "server_url in " + tc.storePath
+	default:
+		implicit = true
 	}
 	return &serverChoice{URL: cfg.ServerURL, Source: source, tc: tc,
-		Implicit: source == "the default", Lite: cfg.LiteExecutor != ""}, nil
+		Implicit: implicit, Lite: cfg.LiteExecutor != ""}, nil
 }
 
 // tokenSource says where resolveServerToken found the token.

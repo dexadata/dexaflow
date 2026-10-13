@@ -27,10 +27,14 @@ type deployServer struct {
 	registers   int
 	triggers    int
 	// What the summary reads back, and what the deploy asked for.
-	paused     bool
-	schedule   string // timetable_summary; "" answers the server's no-schedule text
-	regQueries []string
-	patches    []string
+	paused       bool
+	schedule     string // timetable_summary; "" answers the server's no-schedule text
+	catchup      bool
+	startDate    string // start_date; "" answers null
+	dagCreated   bool   // dag_created of the register answer
+	ignorePaused bool   // an older server: no is_paused query, no is_paused in the answer
+	regQueries   []string
+	patches      []string
 }
 
 // detailsJSON is the details answer: the current label and the fields the
@@ -40,15 +44,19 @@ func (s *deployServer) detailsJSON(current string) string {
 	if s.schedule != "" {
 		summary = `"` + s.schedule + `"`
 	}
-	return fmt.Sprintf(`{"dag_id":"etl","bundle_version":%s,"is_paused":%v,"timetable_summary":%s,"catchup":false,"start_date":null}`,
-		current, s.paused, summary)
+	start := "null"
+	if s.startDate != "" {
+		start = `"` + s.startDate + `"`
+	}
+	return fmt.Sprintf(`{"dag_id":"etl","bundle_version":%s,"is_paused":%v,"timetable_summary":%s,"catchup":%v,"start_date":%s}`,
+		current, s.paused, summary, s.catchup, start)
 }
 
 // applyPausedQuery sets paused from a register's is_paused query, as the
 // server does.
 func (s *deployServer) applyPausedQuery(r *http.Request) {
 	s.regQueries = append(s.regQueries, r.URL.RawQuery)
-	if v := r.URL.Query().Get("is_paused"); v != "" {
+	if v := r.URL.Query().Get("is_paused"); v != "" && !s.ignorePaused {
 		s.paused = v == "true"
 	}
 }
@@ -58,34 +66,9 @@ func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	switch {
 	case r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/details") || strings.HasSuffix(r.URL.Path, "/dagVersions")):
-		s.reads++
-		if s.failFirst > 0 {
-			s.failFirst--
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if s.status != 0 {
-			w.WriteHeader(s.status)
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/details") && s.nullCurrent {
-			_, _ = io.WriteString(w, s.detailsJSON("null"))
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/details") {
-			_, _ = io.WriteString(w, s.detailsJSON(`"`+s.current+`"`))
-			return
-		}
-		parts := make([]string, 0, len(s.registered))
-		for _, l := range s.registered {
-			parts = append(parts, `{"bundle_version":"`+l+`"}`)
-		}
-		_, _ = io.WriteString(w, `{"dag_versions":[`+strings.Join(parts, ",")+`]}`)
+		s.serveRead(w, r)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions"):
-		s.registers++
-		s.applyPausedQuery(r)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"is_paused":%v}`, s.paused)
+		s.serveRegister(w, r)
 	case r.Method == http.MethodPatch && r.URL.Path == "/api/v2/dags/etl":
 		b, _ := io.ReadAll(r.Body)
 		s.patches = append(s.patches, string(b))
@@ -97,6 +80,46 @@ func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// serveRead answers the details and dagVersions reads.
+func (s *deployServer) serveRead(w http.ResponseWriter, r *http.Request) {
+	s.reads++
+	if s.failFirst > 0 {
+		s.failFirst--
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if s.status != 0 {
+		w.WriteHeader(s.status)
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/details") {
+		current := `"` + s.current + `"`
+		if s.nullCurrent {
+			current = "null"
+		}
+		_, _ = io.WriteString(w, s.detailsJSON(current))
+		return
+	}
+	parts := make([]string, 0, len(s.registered))
+	for _, l := range s.registered {
+		parts = append(parts, `{"bundle_version":"`+l+`"}`)
+	}
+	_, _ = io.WriteString(w, `{"dag_versions":[`+strings.Join(parts, ",")+`]}`)
+}
+
+// serveRegister answers a register with 201 and the fields the deploy reads.
+func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
+	s.registers++
+	s.applyPausedQuery(r)
+	w.WriteHeader(http.StatusCreated)
+	if s.ignorePaused {
+		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true}`)
+		return
+	}
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"dag_created":%v,"is_paused":%v}`,
+		s.dagCreated, s.paused)
 }
 
 func TestCheckDeployed(t *testing.T) {

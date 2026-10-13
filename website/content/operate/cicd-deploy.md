@@ -133,7 +133,9 @@ next: etl is paused, so nothing runs until `dexaflow admin dags unpause etl`; un
 An active DAG gets its next run time instead. The line follows the scheduler:
 with `catchup=True` and a `start_date`, every tick since `start_date` gets a
 run; otherwise only the latest tick does. A DAG that already ran resumes after
-its last run, so its count is an upper bound.
+its last run, so its count is an upper bound, as it is for `--active` on a DAG
+that was paused. Times are in UTC: the scheduler does not yet apply a DAG's
+`timezone` or `end_date`, so the line ignores them too.
 
 With no server set anywhere (no `--server`, `--target`, `DEXAFLOW_SERVER_URL`
 or `server_url`), `deploy` stops before building instead of going to
@@ -141,7 +143,7 @@ or `server_url`), `deploy` stops before building instead of going to
 
 | Flag | What it does |
 |---|---|
-| `--paused` / `--active` | Leaves the DAG paused or active after this deploy, new or not, instead of the creation rule above. The register sets it in its own transaction, audited as `dag.pause` or `dag.unpause`; for content that is already current, nothing is registered and the DAG is paused or unpaused with the Airflow `PATCH /api/v2/dags/{dag_id}`. |
+| `--paused` / `--active` | Leaves the DAG paused or active after this deploy, new or not, instead of the creation rule above. The register sets it in its own transaction, audited as `dag.pause` or `dag.unpause`; for content that is already current, nothing is registered and the DAG is paused or unpaused with the Airflow `PATCH /api/v2/dags/{dag_id}`. Pausing is a run-state write: a scoped token needs `dexaflow:run` as well as `dexaflow:deploy` for these flags, and a deploy-only token is refused with `403`. |
 | `--plan` | Says per DAG what a deploy would build, push and register, and why (content changed, already current, an older version, a new DAG), without running the parser, the builder or the register. Works with `--all`. |
 | `--output json` | Prints one JSON document on stdout for the pipeline to read; the human lines and the builder's output go to stderr. |
 
@@ -160,6 +162,7 @@ The JSON document has one entry per DAG:
       "digest": "sha256:4e1f...",
       "spec_hash": "9b0c...",
       "created": true,
+      "dag_created": true,
       "is_paused": true,
       "next": "my_pipeline is paused, so nothing runs until ..."
     }
@@ -167,7 +170,8 @@ The JSON document has one entry per DAG:
 }
 ```
 
-`status` is `registered` (a new version), `unchanged` (the server already had
+`created` says a new version was registered and `dag_created` that it was
+the DAG's first. `status` is `registered` (a new version), `unchanged` (the server already had
 this exact content), `current` (the content label is the current version, so
 nothing was built), or `failed` (one DAG of `--all`, with `error`). With
 `--plan` it is `planned` or `refused`, and a `plan` object carries `build`,
