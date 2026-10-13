@@ -26,7 +26,9 @@ var ErrNotFound = domain.ErrNotFound
 type DagRepository interface {
 	ListDags(ctx context.Context, tenant string, limit, offset int) ([]domain.DAG, int, error)
 	GetDag(ctx context.Context, tenant, dagID string) (domain.DAG, error)
-	SetPaused(ctx context.Context, tenant, dagID string, paused bool) (domain.DAG, error)
+	// SetPausedBy sets is_paused on behalf of the user actorUserID, who a
+	// change is audited for.
+	SetPausedBy(ctx context.Context, tenant, actorUserID, dagID string, paused bool) (domain.DAG, error)
 	DeleteDag(ctx context.Context, tenant, dagID string) error
 	ClearDagHistory(ctx context.Context, tenant, dagID string) error
 	ListDagsFiltered(ctx context.Context, tenant, runState string, paused *bool, limit, offset int) ([]domain.DAG, int, error)
@@ -291,7 +293,7 @@ func patchDagHandler(repo DagRepository) gin.HandlerFunc {
 			AbortProblem(c, http.StatusBadRequest, "bad request", "is_paused (true or false) is required")
 			return
 		}
-		d, err := repo.SetPaused(c.Request.Context(), tenantOf(c), c.Param("dag_id"), *body.IsPaused)
+		d, err := repo.SetPausedBy(c.Request.Context(), tenantOf(c), actorOf(c), c.Param("dag_id"), *body.IsPaused)
 		if err != nil {
 			handleRepoError(c, err)
 			return

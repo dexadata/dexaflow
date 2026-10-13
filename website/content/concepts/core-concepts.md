@@ -71,7 +71,11 @@ settings decide the first state, in this order:
 
 Both apply **only when the DAG is created**. Deploying a new version of an
 existing DAG never pauses or unpauses it: an active DAG stays active, and its
-next scheduled run uses the new version; a paused DAG stays paused. A DAG that
+next scheduled run uses the new version; a paused DAG stays paused. The one
+exception is asking for it: `dexaflow deploy --paused` or `--active` leaves
+the DAG in that state after this deploy, new or not, and the change is
+recorded in the audit log (`dag.pause` or `dag.unpause`), as a pause from the
+UI is. A DAG that
 is deleted (`dexaflow dags delete --deregister`) and deployed again is created
 again, so it comes back paused.
 `dexaflow lite` registers new DAGs active, so a DAG you run locally keeps its

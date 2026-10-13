@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,7 +57,16 @@ func newPushCommand() *cobra.Command {
 
 // pushVersion POSTs a dag.json to the control plane's versions endpoint.
 func pushVersion(ctx context.Context, serverURL, token, dagID string, spec []byte) (status int, body string, err error) {
+	return pushVersionPaused(ctx, serverURL, token, dagID, spec, nil)
+}
+
+// pushVersionPaused is pushVersion that, when paused is set, asks the server
+// to leave the DAG in that state (the is_paused query parameter).
+func pushVersionPaused(ctx context.Context, serverURL, token, dagID string, spec []byte, paused *bool) (status int, body string, err error) {
 	url := strings.TrimRight(serverURL, "/") + "/api/v2/dags/" + dagID + "/versions"
+	if paused != nil {
+		url += "?is_paused=" + strconv.FormatBool(*paused)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(spec))
 	if err != nil {
 		return 0, "", fmt.Errorf("building request: %w", err)
