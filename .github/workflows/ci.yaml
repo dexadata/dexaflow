@@ -494,7 +494,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────
   # Headless SPA crash smoke (test/e2e/ui-smoke.js): boots Lite (managed PG, no
-  # Docker), drives the embedded Airflow 3.2 UI with a real browser, and fails on
+  # Docker), drives the embedded Airflow UI with a real browser, and fails on
   # any uncaught React error. The Go tests cannot see the React layer — the
   # connector config page once shipped broken (catalog omitted standard_fields
   # keys the SPA reads) and only a browser caught it. This guards that whole class
@@ -634,6 +634,10 @@ jobs:
           # It lands in the workspace dexaflow setup chose (~/dexaflow by default).
           mkdir -p "$HOME/dexaflow/params_demo"
           cp examples/params_demo/dag.py examples/params_demo/dexaflow.yaml "$HOME/dexaflow/params_demo/"
+          # Lite scaffolds its starter only into an EMPTY workspace, and the
+          # fixture above makes it non-empty, so scaffold the "hello" starter
+          # the smoke drives (logs, Mark as failed, Clear, Gantt) explicitly.
+          dexaflow init "$HOME/dexaflow/hello"
           dexaflow lite --port 18080 --postgres managed --executor subprocess \
             --server-bin "$PWD/bin/leoflow-server" --agent-bin "$PWD/bin/leoflow-agent" > /tmp/lite.log 2>&1 &
           for _ in $(seq 1 60); do curl -fsS http://localhost:18080/readyz >/dev/null 2>&1 && break; sleep 3; done

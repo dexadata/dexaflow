@@ -200,6 +200,14 @@ Also supported:
 - **XCom**: TaskFlow data-flow (`transform(extract())`) is resolved automatically into typed inputs (`xcom_input`) — for `@task` **and** operator args.
 - **Schedule**: cron strings and presets (`@daily`, `0 * * * *`).
 - **Dependencies**: linear ordering via TaskFlow calls or `a >> b`.
+- **`.override(...)` on a `@task`**: `estimate.override(task_id="estimate_03")(3)`
+  builds the task with different operator arguments, as in Airflow. It takes the
+  same arguments as `@task(...)` (`task_id`, `retries`, `retry_delay`,
+  `execution_timeout`, `trigger_rule`, `pool_slots`, ...), merged over the
+  decorator's, and leaves the decorated function unchanged. A repeated `task_id`
+  gets the usual `__1`, `__2` suffix. Two limits: `on_failure_callback` is
+  refused in `.override(...)` (set it on `@task(...)`, where the runtime reads it),
+  and `.override(...).expand(...)` is refused like any dynamic task mapping.
 
 > Connector cookbooks (postgres, mysql, sqlite, redis, http) are `python`
 > tasks that read a managed Connection (`AIRFLOW_CONN_*`) — that is the

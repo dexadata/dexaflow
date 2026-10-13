@@ -86,8 +86,9 @@ truth = image
 
 # ── the copies that only describe it ─────────────────────────────────────────
 # `postgres://` connection strings do not match: the pattern requires a digit
-# after the colon.
-TAG_RE = re.compile(r"postgres:(\d[\w.-]*)")
+# after the colon. A host named `postgres` inside a URL (`@postgres:5432`,
+# `//postgres:5432`) is a port, not a tag, so a preceding `@` or `/` excludes it.
+TAG_RE = re.compile(r"(?<![@/])postgres:(\d[\w.-]*)")
 
 targets = []
 for base, _, names in os.walk(os.path.join(root, "internal", "cli")):
@@ -209,6 +210,10 @@ self_test() {
 	_connection_strings_are_not_tags() {
 		printf 'package cli\n\nconst dsn = "postgres://leoflow:leoflow@localhost:5432/leoflow"\nconst help = "the Docker Postgres (postgres:16)"\n' >"$1/internal/cli/dev.go"
 	}
+	# A Service named postgres in a URL is a host and port, not an image tag.
+	_url_hosts_are_not_tags() {
+		printf 'Lite spins up `postgres:16`.\n--set database.url=postgres://u:p@postgres:5432/db\n' >"$1/website/content/get-started/quickstart.md"
+	}
 	_a_new_doc_page_is_covered() {
 		mkdir -p "$1/website/content/operate"
 		printf 'Lite uses `postgres:15` under the hood.\n' >"$1/website/content/operate/new-page.md"
@@ -223,6 +228,7 @@ self_test() {
 	_case "a missing compose fails, not skips"       1 "does not exist" _missing_compose
 	_case "an empty scan fails, not passes"          1 "no \`postgres:<tag>\` reference found" _nothing_names_the_tag
 	_case "connection strings are not tags"          0 "says postgres:16" _connection_strings_are_not_tags
+	_case "URL hosts named postgres are not tags"    0 "says postgres:16" _url_hosts_are_not_tags
 	_case "a new docs page is covered by the walk"   1 "operate/new-page.md" _a_new_doc_page_is_covered
 	# The ADR fixture names postgres:15 in every case above and never fails one.
 	_case "ADRs record their own era"                0 "says postgres:16" _noop

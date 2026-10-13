@@ -73,7 +73,7 @@ services:
       - "-database=postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable"
       - "up"
 
-  # The control plane: serves /api/v2, /ui, and the embedded Airflow 3.2.1 UI.
+  # The control plane: serves /api/v2, /ui, and the embedded Airflow 3.3.2 UI.
   leoflow-server:
     profiles: ["demo"]
     build:

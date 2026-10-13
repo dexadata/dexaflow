@@ -1,7 +1,7 @@
 """Clear dialog: the "Run with latest bundle version" toggle must reach the server.
 
-The embedded Airflow 3.2.x SPA has always rendered this checkbox in the Clear
-dialog and always sent `run_on_latest_version` in the request body. The control
+The embedded Airflow SPA (3.2 and 3.3) renders this checkbox in the Clear
+dialog and sends `run_on_latest_version` in the request body. The control
 plane did not read the field: every clear re-bound the run to the DAG's current
 version regardless. So the checkbox was inert — unticking it changed nothing,
 and the UI told the user something that was not true.
@@ -70,8 +70,15 @@ def clear_bodies(page, dag, run, task, want_latest):
             "the Clear dialog has no 'Run with latest bundle version' control; "
             "the SPA changed and this test's premise is gone"
         )
+    if toggle.is_disabled():
+        raise AssertionError(
+            "the 'Run with latest bundle version' control is disabled: the SPA thinks the run "
+            "has no Dag version (empty dag_versions) and forces the latest one"
+        )
     if toggle.is_checked() != want_latest:
-        toggle.click()
+        # The 3.3 SPA (Chakra v3) lays the styled control over the native input,
+        # so a plain click on the input is intercepted; set it directly.
+        toggle.set_checked(want_latest, force=True)
     if toggle.is_checked() != want_latest:
         raise AssertionError(f"could not set the toggle to {want_latest}")
 
@@ -89,7 +96,10 @@ def main():
         page = browser.new_page()
         login(page)
 
-        for want in (True, False):
+        # False first: a clear on the latest version re-pins the run, and the
+        # 3.3 SPA only offers the control while the run's version differs from
+        # the DAG's, so the other order would hide it on the second pass.
+        for want in (False, True):
             bodies = [b for b in clear_bodies(page, dag, run, task, want) if "__unparseable__" not in b]
             if not bodies:
                 failures.append(f"toggle={want}: the page sent no clearTaskInstances request")

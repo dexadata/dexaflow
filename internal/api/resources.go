@@ -417,7 +417,7 @@ func validRunState(s string) bool {
 	}
 }
 
-func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
+func listDagRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// "~" is Airflow's wildcard for "all DAGs"; the UI home polls
 		// GET /api/v2/dags/~/dagRuns for a global run view. Dexaflow has no
@@ -431,8 +431,16 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 		limit, offset := pagination(c)
 		states := c.QueryArray("state")
 		if raw := c.Query("cursor"); raw != "" {
-			listDagRunsByCursor(c, repo, raw, states, limit)
-			return
+			cur, err := decodeListCursor(raw)
+			if err != nil {
+				AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
+				return
+			}
+			if cur.Keyset != nil {
+				listDagRunsByCursor(c, repo, versions, *cur.Keyset, cur.Offset, states, limit)
+				return
+			}
+			offset = cur.Offset
 		}
 		runs, total, err := listRunsFiltered(c, repo, states, limit, offset)
 		if err != nil {
@@ -440,25 +448,83 @@ func listDagRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 			return
 		}
 		out := dagRunCollectionDTO{DagRuns: make([]dagRunDTO, 0, len(runs)), TotalEntries: total}
+		pinned := pinnedDagVersions(c, versions)
 		for _, r := range runs {
-			out.DagRuns = append(out.DagRuns, toDagRunDTO(r))
+			dto := toDagRunDTO(r)
+			pinned.name(&dto, r)
+			out.DagRuns = append(out.DagRuns, dto)
 		}
 		setPaginationLinks(c, total, limit, offset)
-		if _, ok := repo.(DagRunPageReader); ok && len(runs) > 0 && offset+len(runs) < total {
+		_, keyset := repo.(DagRunPageReader)
+		more := len(runs) > 0 && offset+len(runs) < total
+		if keyset && more {
 			setNextCursor(c, runCursor(runs[len(runs)-1]), false)
+		}
+		if cursorMode(c) {
+			if more {
+				// The keyset cursor keeps deep forward pages cheap; a store
+				// without keyset paging moves by offset.
+				next := encodeOffsetCursor(offset + len(runs))
+				if keyset && len(states) == 0 {
+					next = encodeKeysetCursorAt(runCursor(runs[len(runs)-1]), offset+len(runs))
+				}
+				out.NextCursor = &next
+			}
+			out.PreviousCursor = previousOffsetCursor(offset, limit)
 		}
 		c.JSON(http.StatusOK, out)
 	}
 }
 
-func getDagRunHandler(repo DagRunRepository) gin.HandlerFunc {
+func getDagRunHandler(repo DagRunRepository, versions DagVersionLister) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		r, err := repo.GetDagRun(c.Request.Context(), tenantOf(c), c.Param("dag_id"), c.Param("dag_run_id"))
 		if err != nil {
 			handleRepoError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, toDagRunDTO(r))
+		dto := toDagRunDTO(r)
+		pinnedDagVersions(c, versions).name(&dto, r)
+		c.JSON(http.StatusOK, dto)
+	}
+}
+
+// pinnedVersions resolves runs to the registered versions they are pinned to,
+// by label. The Airflow 3.3 Clear dialogs read a run's dag_versions: an empty
+// list means "carried over from Airflow 2", which forces and locks the "Run
+// with latest bundle version" control. A run whose label no longer resolves
+// keeps the empty list.
+type pinnedVersions struct {
+	dagID   string
+	byLabel map[string]domain.DagVersion
+}
+
+// pinnedDagVersions reads the DAG's versions once, for one run or a page of them.
+func pinnedDagVersions(c *gin.Context, versions DagVersionLister) pinnedVersions {
+	p := pinnedVersions{dagID: c.Param("dag_id")}
+	if versions == nil {
+		return p
+	}
+	vs, err := versions.ListDagVersions(c.Request.Context(), tenantOf(c), p.dagID)
+	if err != nil {
+		return p
+	}
+	p.byLabel = make(map[string]domain.DagVersion, len(vs))
+	for _, v := range vs {
+		if best, ok := p.byLabel[v.Version]; !ok || v.VersionNumber > best.VersionNumber {
+			p.byLabel[v.Version] = v
+		}
+	}
+	return p
+}
+
+// name sets dto's dag_versions to the version run r is pinned to, when it resolves.
+func (p pinnedVersions) name(dto *dagRunDTO, r domain.DagRun) {
+	if r.Version == "" {
+		return
+	}
+	if v, ok := p.byLabel[r.Version]; ok {
+		dto.DagVersions = []any{toDagVersionDTO(p.dagID, v)}
 	}
 }
 
@@ -660,6 +726,16 @@ func listTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepository
 			return
 		}
 		limit, offset := pagination(c)
+		if raw := c.Query("cursor"); raw != "" {
+			// Task instances page by offset only, so the only cursors this
+			// list issues are offset cursors.
+			cur, err := decodeListCursor(raw)
+			if err != nil || cur.Keyset != nil {
+				AbortProblem(c, http.StatusBadRequest, "bad request", errBadCursor.Error())
+				return
+			}
+			offset = cur.Offset
+		}
 		tis, total, err := repo.ListTaskInstances(c.Request.Context(), tenantOf(c), c.Param("dag_id"), c.Param("dag_run_id"), limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
@@ -675,6 +751,13 @@ func listTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepository
 			out.TaskInstances = append(out.TaskInstances, dto)
 		}
 		setPaginationLinks(c, total, limit, offset)
+		if cursorMode(c) {
+			if len(tis) > 0 && offset+len(tis) < total {
+				next := encodeOffsetCursor(offset + len(tis))
+				out.NextCursor = &next
+			}
+			out.PreviousCursor = previousOffsetCursor(offset, limit)
+		}
 		c.JSON(http.StatusOK, out)
 	}
 }
@@ -918,7 +1001,8 @@ type markStateRequest struct {
 // patchTaskInstanceHandler implements the UI's mark-success/failed PATCH on
 // .../taskInstances/{task_id}[/{map_index}][/dry_run]. The catch-all action is
 // the trailing path after the task_id; a "dry_run" segment previews without
-// changing state. It returns the (would-be) updated task instance.
+// changing state. It returns the (would-be) updated task instance as a
+// one-entry collection, the affected set Airflow answers with.
 func patchTaskInstanceHandler(repo TaskInstanceRepository, runs DagRunRepository, versions DagVersionLister, audit AuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// #271 diagnostic: timing the mark-state mutation so we can prove the
@@ -929,6 +1013,12 @@ func patchTaskInstanceHandler(repo TaskInstanceRepository, runs DagRunRepository
 		// the SPA's cache invalidation (see #271 update).
 		t0 := time.Now()
 		action := strings.Trim(c.Param("action"), "/")
+		// The task state store PATCH shares this catch-all; it must never
+		// reach the mark below.
+		if taskStateStoreAction(action) {
+			abortNotAvailable(c, featureStateStore)
+			return
+		}
 		dryRun := action == "dry_run" || strings.HasSuffix(action, "/dry_run")
 		var body markStateRequest
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -959,10 +1049,13 @@ func patchTaskInstanceHandler(repo TaskInstanceRepository, runs DagRunRepository
 			recordTaskAudit(c, audit, "taskinstance.mark."+body.NewState, runID, taskID, dto.TryNumber)
 		}
 		slog.Info("PATCH /taskInstances mark-state",
-			"tenant", tenantOf(c), "dag", dagID, "run", runID, "task", taskID,
-			"new_state", body.NewState, "dry_run", dryRun,
+			"tenant", logSafe(tenantOf(c)), "dag", logSafe(dagID), "run", logSafe(runID), "task", logSafe(taskID),
+			"new_state", logSafe(body.NewState), "dry_run", dryRun,
 			"write_ms", writeMs, "total_ms", time.Since(t0).Milliseconds())
-		c.JSON(http.StatusOK, dto)
+		// Airflow declares TaskInstanceCollectionResponse for the PATCH and its
+		// dry_run (the affected set). The 3.3 UI's Mark-as dialog reads
+		// task_instances.length from the preview, so a bare instance crashed it.
+		c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: []taskInstanceDTO{dto}, TotalEntries: 1})
 	}
 }
 
@@ -1033,15 +1126,12 @@ func taskInstanceActionHandler(tasks TaskInstanceRepository, logs LogReader, xco
 			serveLogs(c, logs, tasks, try)
 			return
 		}
-		if xcoms != nil {
-			if action == "xcomEntries" {
-				serveXComEntries(c, xcoms)
-				return
-			}
-			if key, ok := strings.CutPrefix(action, "xcomEntries/"); ok {
-				serveXComValue(c, xcoms, key)
-				return
-			}
+		if serveXComAction(c, xcoms, action) {
+			return
+		}
+		if taskStateStoreAction(action) {
+			serveTaskStateStore(c, action)
+			return
 		}
 		if action == "links" {
 			// The task Details view reads g.extra_links and calls Object.keys on it,
@@ -1088,6 +1178,23 @@ func taskInstanceActionHandler(tasks TaskInstanceRepository, logs LogReader, xco
 		}
 		serveSingleTaskInstance(c, tasks, runs, versions, specs, mapIndex)
 	}
+}
+
+// serveXComAction answers the xcomEntries list and value reads of the task
+// instance catch-all, and reports whether action was one of them.
+func serveXComAction(c *gin.Context, xcoms XComReader, action string) bool {
+	if xcoms == nil {
+		return false
+	}
+	if action == "xcomEntries" {
+		serveXComEntries(c, xcoms)
+		return true
+	}
+	if key, ok := strings.CutPrefix(action, "xcomEntries/"); ok {
+		serveXComValue(c, xcoms, key)
+		return true
+	}
+	return false
 }
 
 // serveSingleTaskInstance returns one task instance (TaskInstanceResponse) by
@@ -1221,9 +1328,9 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 	}
 	if deps.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
-		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns))
+		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns, deps.DagVersions))
 		g.POST("", RequireScopedPermission("execute", "dag", auth.ScopeRun), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
-		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.DagRuns))
+		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.DagRuns, deps.DagVersions))
 		g.PATCH("/:dag_run_id", RequireScopedPermission("write", "dag_run", auth.ScopeRun), patchDagRunHandler(deps.DagRuns, deps.Audit))
 		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.DagRuns))
 	}
@@ -1252,6 +1359,10 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action", RequireScopedPermission("write", "task_instance", auth.ScopeRun), patchTI)
 		r.POST("/api/v2/dags/:dag_id/clearTaskInstances",
 			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
+		if deps.DagRuns != nil {
+			r.POST("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/clear",
+				RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearDagRunHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Audit))
+		}
 	}
 	if deps.Versions != nil {
 		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage, deps.ExecutionPolicy))
