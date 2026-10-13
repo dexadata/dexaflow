@@ -1000,6 +1000,17 @@ type DispatchSection struct {
 	// Workers is the number of goroutines draining the queue. Ignored when
 	// BufferSize <= 0; otherwise floored to 1.
 	Workers int `mapstructure:"workers"`
+	// TickBudget bounds the wall time one scheduler tick spends dispatching
+	// (#1596). Once it is spent the tick stops dispatching, the remaining ready
+	// tasks stay scheduled with no attempt charged, and the next tick starts at
+	// the run after the one that was cut, so one wide fan-out under the
+	// Kubernetes client rate limit cannot hold every other run, and cron run
+	// creation, for minutes. 0 disables it; negative fails boot.
+	TickBudget time.Duration `mapstructure:"tick_budget"`
+	// MaxPerTenantPerTick caps the tasks one tenant may dispatch in one tick,
+	// so a tenant with a wide fan-out or many runs leaves dispatch room for the
+	// others. 0 (default) means no cap; negative fails boot.
+	MaxPerTenantPerTick int `mapstructure:"max_per_tenant_per_tick"`
 }
 
 // RetentionSection configures the leader-only retention janitor, which deletes
@@ -1205,20 +1216,25 @@ var serverDefaults = map[string]any{
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).
-	"scheduler.dispatch.buffer_size":        0,
-	"scheduler.dispatch.workers":            0,
-	"executor.http.user_agent":              "leoflow/0.1",
-	"executor.task_namespace":               "leoflow",
-	"executor.type":                         "kubernetes",
-	"executor.agent_path":                   "leoflow-agent",
-	"executor.subprocess_workdir":           "",
-	"executor.agent_control_plane_addr":     "",
-	"executor.agent_tls_ca_configmap":       "",
-	"executor.task_service_account":         "",
-	"executor.task_secret_name":             "",
-	"executor.task_secret_mount_path":       "/etc/leoflow/secrets",
-	"executor.collect_settled_run_pods":     false,
-	"executor.defaults.staging_access_mode": "ReadWriteMany",
+	"scheduler.dispatch.buffer_size": 0,
+	"scheduler.dispatch.workers":     0,
+	// The tick dispatch budget is on by default (#1596): with synchronous
+	// dispatch and client QPS 5, one wide fan-out otherwise stalls every run
+	// of every tenant, cron creation included.
+	"scheduler.dispatch.tick_budget":             "5s",
+	"scheduler.dispatch.max_per_tenant_per_tick": 0,
+	"executor.http.user_agent":                   "leoflow/0.1",
+	"executor.task_namespace":                    "leoflow",
+	"executor.type":                              "kubernetes",
+	"executor.agent_path":                        "leoflow-agent",
+	"executor.subprocess_workdir":                "",
+	"executor.agent_control_plane_addr":          "",
+	"executor.agent_tls_ca_configmap":            "",
+	"executor.task_service_account":              "",
+	"executor.task_secret_name":                  "",
+	"executor.task_secret_mount_path":            "/etc/leoflow/secrets",
+	"executor.collect_settled_run_pods":          false,
+	"executor.defaults.staging_access_mode":      "ReadWriteMany",
 	// Execution allowlist (issue #629): allow every field and any priority
 	// class, so an install that does not set it is unchanged. Each list binds
 	// from one comma-separated env var.
@@ -1490,6 +1506,12 @@ func (c *ServerConfig) validateNonNegative() error {
 	}
 	if c.Scheduler.PoolStarvationThreshold < 0 {
 		return fmt.Errorf("scheduler.pool_starvation_threshold must not be negative (got %s); 0 disables it", c.Scheduler.PoolStarvationThreshold)
+	}
+	if c.Scheduler.Dispatch.TickBudget < 0 {
+		return fmt.Errorf("scheduler.dispatch.tick_budget must not be negative (got %s); 0 disables it", c.Scheduler.Dispatch.TickBudget)
+	}
+	if c.Scheduler.Dispatch.MaxPerTenantPerTick < 0 {
+		return fmt.Errorf("scheduler.dispatch.max_per_tenant_per_tick must not be negative (got %d); 0 means no cap", c.Scheduler.Dispatch.MaxPerTenantPerTick)
 	}
 	return nil
 }
