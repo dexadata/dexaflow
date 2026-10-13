@@ -147,11 +147,16 @@ func isTagChar(c byte) bool {
 //   - the content of every file the generated Dockerfile COPYs: the DAG source,
 //     dbt project directories, include_paths and dbt.manifest; with a project
 //     Dockerfile, which can COPY anything, the whole project directory;
-//   - the project Dockerfile and the .dockerignore, which both shape the image.
+//   - with a project Dockerfile, that Dockerfile (always, even when the
+//     .dockerignore lists it) and the .dockerignore.
 //
 // Files are hashed by their slash-separated path relative to the project and
-// their bytes, in sorted order; a symlink is hashed as its target string and
-// never followed, since COPY keeps links. Modification times and file modes
+// their bytes, in sorted order. A root the build names (dag_source,
+// include_paths, a dbt directory, the Dockerfile, dbt.manifest) is followed
+// through symlinks and hashed as its target's content, since the build copies
+// what it points at; it must resolve inside the project, except dbt.manifest,
+// which only the CLI reads. A symlink inside a walked directory is hashed as
+// its target string and never followed, since COPY keeps links. Modification times and file modes
 // never count, so a chmod alone keeps the label. It leaves out what the build
 // cannot see or what every compile rewrites: .git, exclude_paths and
 // .dockerignore matches, the compiled dag.json, the generated Dockerfile, and
@@ -166,11 +171,12 @@ func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output strin
 	}
 	hashField(h, "config", cfgJSON)
 	hashField(h, "cli", []byte(version.Get().Version))
-	w, err := newContentWalker(dir, cfg, output, h)
+	own := projectDockerfile(dir, cfg, dockerfile)
+	w, err := newContentWalker(dir, cfg, output, own != "", h)
 	if err != nil {
 		return "", err
 	}
-	for _, root := range w.roots(dockerfile) {
+	for _, root := range w.roots(own) {
 		if werr := w.hashRoot(root); werr != nil {
 			return "", werr
 		}
@@ -203,25 +209,35 @@ var dbtParseOutputs = []string{
 
 // contentWalker hashes the files of one project directory.
 type contentWalker struct {
-	dir      string
-	cfg      *domain.LeoflowConfig
-	output   string // absolute path of the compiled dag.json, or ""
+	dir     string // the project directory as given
+	realDir string // dir with symlinks resolved, for the containment check
+	cfg     *domain.LeoflowConfig
+	output  string // absolute, symlink-resolved path of the compiled dag.json, or ""
+	// pinned are the slash paths hashed as roots of their own (dbt.manifest
+	// and the project Dockerfile): never skipped, never hashed twice.
+	pinned   map[string]bool
 	manifest string // slash path of dbt.manifest relative to dir, or ""
 	ignore   dockerignore
 	h        hash.Hash
 }
 
-// newContentWalker reads the project's .dockerignore (hashing it, with any
-// block a killed build left behind stripped) and resolves the paths the walk
-// treats specially.
-func newContentWalker(dir string, cfg *domain.LeoflowConfig, output string, h hash.Hash) (*contentWalker, error) {
-	w := &contentWalker{dir: dir, cfg: cfg, h: h}
+// hashRootSpec is one root of the hash: a project-relative path.
+type hashRootSpec struct {
+	name   string
+	pinned bool // exempt from every skip rule
+	inside bool // must resolve inside the project directory
+}
+
+// newContentWalker reads the project's .dockerignore (hashing it when the
+// project ships its own Dockerfile, with any block a killed build left behind
+// stripped) and resolves the paths the walk treats specially.
+func newContentWalker(dir string, cfg *domain.LeoflowConfig, output string, ownDockerfile bool, h hash.Hash) (*contentWalker, error) {
+	w := &contentWalker{dir: dir, realDir: dir, cfg: cfg, h: h, pinned: map[string]bool{}}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		w.realDir = resolved
+	}
 	if output != "" {
-		abs, err := filepath.Abs(output)
-		if err != nil {
-			return nil, fmt.Errorf("resolving %s: %w", output, err)
-		}
-		w.output = abs
+		w.output = resolvedAbs(output)
 	}
 	if cfg.Dbt != nil && cfg.Dbt.Project != "" && cfg.Dbt.Manifest != "" {
 		w.manifest = filepath.ToSlash(filepath.Join(filepath.Clean(cfg.Dbt.Project), cfg.Dbt.Manifest))
@@ -231,7 +247,12 @@ func newContentWalker(dir string, cfg *domain.LeoflowConfig, output string, h ha
 	switch {
 	case err == nil:
 		data, _ = stripLeoflowBlock(data)
-		hashField(h, dockerignoreName, data)
+		if ownDockerfile {
+			// The generated Dockerfile COPYs named paths, so there the file
+			// only filters them; with a project Dockerfile it decides what
+			// `COPY .` takes.
+			hashField(h, dockerignoreName, data)
+		}
 		w.ignore = parseDockerignore(data)
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, hashReadError(ignorePath, err)
@@ -239,24 +260,47 @@ func newContentWalker(dir string, cfg *domain.LeoflowConfig, output string, h ha
 	return w, nil
 }
 
-// roots lists the project-relative paths whose content shapes the image,
-// mirroring what generatedDockerfile COPYs (copiedRoots), sorted. dbt.manifest
-// is always its own root, because the dbt compile reads it even when its
-// directory is otherwise walked.
-func (w *contentWalker) roots(dockerfile string) []string {
-	var roots []string
-	if projectDockerfile(w.dir, w.cfg, dockerfile) != "" {
-		roots = []string{"."}
+// resolvedAbs returns p absolute, with the symlinks of its directory resolved
+// when it exists, so it compares equal to a path met while walking.
+func resolvedAbs(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	if resolved, rerr := filepath.EvalSymlinks(filepath.Dir(abs)); rerr == nil {
+		return filepath.Join(resolved, filepath.Base(abs))
+	}
+	return abs
+}
+
+// roots lists the roots of the hash, mirroring what generatedDockerfile COPYs
+// (copiedRoots), sorted; with a project Dockerfile, the whole directory and
+// the Dockerfile. dbt.manifest is always its own root, because the dbt compile
+// reads it wherever it lives.
+func (w *contentWalker) roots(ownDockerfile string) []hashRootSpec {
+	var names []string
+	if ownDockerfile != "" {
+		names = []string{"."}
 	} else {
-		roots = append([]string{filepath.Clean(w.cfg.DagSource)}, copiedRoots(w.cfg)...)
-		slices.Sort(roots)
-		roots = slices.Compact(roots)
-		if slices.Contains(roots, ".") {
-			roots = []string{"."}
+		names = append([]string{filepath.Clean(w.cfg.DagSource)}, copiedRoots(w.cfg)...)
+		slices.Sort(names)
+		names = slices.Compact(names)
+		if slices.Contains(names, ".") {
+			names = []string{"."}
 		}
 	}
+	roots := make([]hashRootSpec, 0, len(names)+2)
+	for _, n := range names {
+		roots = append(roots, hashRootSpec{name: n, inside: true})
+	}
+	if ownDockerfile != "" {
+		name := filepath.Clean(ownDockerfile)
+		w.pinned[filepath.ToSlash(name)] = true
+		roots = append(roots, hashRootSpec{name: name, pinned: true, inside: true})
+	}
 	if w.manifest != "" {
-		roots = append(roots, filepath.FromSlash(w.manifest))
+		w.pinned[w.manifest] = true
+		roots = append(roots, hashRootSpec{name: filepath.FromSlash(w.manifest), pinned: true})
 	}
 	return roots
 }
@@ -277,40 +321,67 @@ func projectDockerfile(dir string, cfg *domain.LeoflowConfig, dockerfile string)
 	return ""
 }
 
-// hashRoot hashes one root, a file or a directory walked in lexical order. A
-// root that does not exist is recorded as absent: the compile reports it with
-// its own message, and the label still differs from the one with the file.
-func (w *contentWalker) hashRoot(root string) error {
-	start := filepath.Join(w.dir, root)
-	if _, err := os.Lstat(start); errors.Is(err, fs.ErrNotExist) {
-		hashField(w.h, "absent", []byte(filepath.ToSlash(root)))
-		return nil
+// hashRoot hashes one root, followed through symlinks, then walked in lexical
+// order with every entry named by its path under the root's own name. A root
+// that does not exist (or a link to nothing) is recorded as absent: the
+// compile reports it with its own message, and the label still differs from
+// the one with the file.
+func (w *contentWalker) hashRoot(r hashRootSpec) error {
+	resolved, err := w.resolveRoot(r)
+	if err != nil || resolved == "" {
+		return err
 	}
-	return filepath.WalkDir(start, func(file string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(resolved, func(file string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return hashReadError(file, err)
 		}
-		rel, rerr := filepath.Rel(w.dir, file)
+		inner, rerr := filepath.Rel(resolved, file)
 		if rerr != nil {
 			return rerr
 		}
-		slash := filepath.ToSlash(rel)
-		if w.skip(rel, file) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		// A directory the .dockerignore excludes is still walked when a later
-		// `!` line may bring part of it back, as the build does.
-		if rel != "." && slash != w.manifest && w.ignore.excluded(slash) {
-			if d.IsDir() && !w.ignore.hasNegation {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		return w.hashEntry(file, slash, d)
+		return w.visit(r, file, filepath.Join(r.name, inner), d)
 	})
+}
+
+// resolveRoot follows a root through its symlinks and checks it stays in the
+// project when it must. It returns "" (and records the root as absent) when
+// there is nothing there.
+func (w *contentWalker) resolveRoot(r hashRootSpec) (string, error) {
+	start := filepath.Join(w.dir, r.name)
+	resolved, err := filepath.EvalSymlinks(start)
+	if errors.Is(err, fs.ErrNotExist) {
+		hashField(w.h, "absent", []byte(filepath.ToSlash(r.name)))
+		return "", nil
+	}
+	if err != nil {
+		return "", hashReadError(start, err)
+	}
+	if r.inside {
+		if rel, rerr := filepath.Rel(w.realDir, resolved); rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("%s resolves to %s, outside the project directory %s; the build cannot COPY it", start, resolved, w.realDir)
+		}
+	}
+	return resolved, nil
+}
+
+// visit decides one walked entry, named rel under its root's name.
+func (w *contentWalker) visit(r hashRootSpec, file, rel string, d fs.DirEntry) error {
+	slash := filepath.ToSlash(rel)
+	if !r.pinned && (w.skip(rel, file) || w.pinned[slash]) {
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	// A directory the .dockerignore excludes is still walked when a `!` line
+	// may bring part of it back, as the build does.
+	if !r.pinned && rel != "." && w.ignore.excluded(slash) {
+		if d.IsDir() && !w.ignore.mayReinclude(slash) {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	return w.hashEntry(file, slash, d)
 }
 
 // hashEntry hashes one walked entry: a symlink as its target, a regular file
@@ -353,9 +424,6 @@ func (w *contentWalker) skip(rel, abs string) bool {
 		return false
 	}
 	slash := filepath.ToSlash(rel)
-	if slash == w.manifest {
-		return false
-	}
 	base := path.Base(slash)
 	if base == ".git" || strings.HasPrefix(base, ".leoflow") || slash == dockerignoreName {
 		return true

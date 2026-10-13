@@ -192,8 +192,8 @@ the DAG is built from:
 - the DAG source (`dag.py`, or the dbt project directories), the files under
   `include_paths`, and `dbt.manifest` when set, wherever it lives;
 - the whole project directory when the project ships its own Dockerfile,
-  which can `COPY` anything, and that Dockerfile itself;
-- the project's `.dockerignore`;
+  which can `COPY` anything, that Dockerfile itself (even when the
+  `.dockerignore` lists it) and the `.dockerignore`;
 - the resolved `dexaflow.yaml` (dependencies, connectors, `python_version`,
   `base_image`, task overrides) and the CLI version.
 
@@ -201,10 +201,12 @@ It leaves out `.git`, what `exclude_paths` and `.dockerignore` keep out of the
 build, the compiled `dag.json`, and the files `dbt parse` rewrites on every run
 (`target/manifest.json` and its siblings, `logs/`, `.user.yml`) unless
 `dbt.manifest` points at one of them. Anything else under `target/` counts,
-because it ships in the image. A symlink counts as the path it points to,
-never followed. File times and modes never count. A file the label cannot read
-stops the compile with its name: add it to `exclude_paths`, or pass
-`--dag-version`.
+because it ships in the image. A path the build names (`dag_source`, an
+`include_paths` entry, a dbt directory, the Dockerfile) is followed through
+symlinks and hashed as what it points to, which must be inside the project; a
+symlink found inside a copied directory counts as the path it points to, never
+followed. File times and modes never count. A file the label cannot read stops
+the compile with its name: add it to `exclude_paths`, or pass `--dag-version`.
 
 So editing code and deploying again, from a dirty tree or from a folder
 outside git, gets a new label, and deploying unchanged content gets the same
@@ -214,13 +216,28 @@ the image with it. A release tagged `v1.2.3` is therefore pushed as
 `:v1.2.3-<hash>` under the default strategy; set `tag_strategy: git_tag` to
 tag the image with the git tag itself.
 
-Before building, `dexaflow deploy` asks the control plane whether the DAG
-already has a version with the default label. If it does, the content is
-already deployed: it prints `already deployed as <label>` and skips the build,
-the push and the register (`--trigger` still starts a run). This is what makes
-a re-run CI job succeed: rebuilding the same sources would produce a new image
-digest under the same label, which the server refuses. If the check cannot be
-made (network, auth), the deploy proceeds as before. An explicit
+Before building, `dexaflow deploy` asks the control plane which version of
+the DAG is current (the `bundle_version` of `GET /api/v2/dags/{dag_id}/details`)
+and which labels it has registered:
+
+- **The default label is the current version:** the content is already what
+  runs. Deploy prints `already deployed as <label>` and skips the build, the
+  push and the register (`--trigger` still starts a run). This is what makes a
+  re-run CI job succeed: rebuilding the same sources would produce a new image
+  digest under the same label, which the server refuses. Changes outside the
+  hashed inputs (environment variables, Variables read at parse time) need a
+  new `--dag-version`.
+- **The label is registered but another version is current**, for example
+  after reverting to code deployed earlier: deploy stops before building and
+  says so. Making an older version current again is not supported yet
+  ([#1702](https://github.com/dexadata/dexaflow/issues/1702)); pass a new
+  `--dag-version` to register the same content as a new version.
+- **The label is unknown**, or the DAG has never been registered (`404`):
+  deploy builds and registers as usual.
+
+A `403` or a network error on the check lets the deploy proceed with a note.
+A `401` stops it with the sign-in hint, and any other answer stops it naming
+`--force`. `--force` skips the check altogether, and an explicit
 `--dag-version` is never checked.
 
 A 409 can still happen, and the hint names the cause that applies:

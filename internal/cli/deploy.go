@@ -29,6 +29,7 @@ type deployOptions struct {
 	skipBuild  bool
 	trigger    bool
 	yes        bool
+	force      bool
 }
 
 // newDeployCommand builds `dexaflow deploy [path]`: the pipeline-less promotion of
@@ -49,6 +50,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.skipBuild, "skip-build", false, "reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py")
 	cmd.Flags().BoolVar(&o.trigger, "trigger", false, "trigger a run immediately after registering")
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt (for automation)")
+	cmd.Flags().BoolVar(&o.force, "force", false, "build, push and register even when the default content label is already deployed")
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL (default: config server_url)")
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
@@ -230,19 +232,29 @@ func resolveServerToken(cmd *cobra.Command, serverFlag, tokenFlag string) (serve
 	return serverURL, token, nil
 }
 
+// loadDeployConfig loads and validates the project config and enforces the
+// registry a Pro deploy pushes to.
+func loadDeployConfig(dir string) (*domain.LeoflowConfig, error) {
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	if verr := cfg.Validate(); verr != nil {
+		return nil, fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
+	}
+	if rerr := requireRegistry(cfg); rerr != nil {
+		return nil, rerr
+	}
+	return cfg, nil
+}
+
 // runDeploy orchestrates the pipeline-less promotion: validate the project,
 // enforce the registry, build+push the image for the target platform, re-pin it
 // by digest into dag.json, and register that with the control plane.
 func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
-	cfg, err := loadProjectConfig(dir)
+	cfg, err := loadDeployConfig(dir)
 	if err != nil {
 		return err
-	}
-	if verr := cfg.Validate(); verr != nil {
-		return fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
-	}
-	if rerr := requireRegistry(cfg); rerr != nil {
-		return rerr
 	}
 
 	serverURL, token, serr := resolveServerToken(cmd, o.serverURL, o.token)
@@ -276,8 +288,10 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 	co.image = image
 	version := co.dagVersion
 	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
-	if origin == labelDefault && alreadyDeployed(ctx, cmd.ErrOrStderr(), serverURL, token, cfg.DagID, version) {
-		return reportAlreadyDeployed(ctx, out, serverURL, token, cfg.DagID, version, o.trigger)
+	// Only a content label says anything about content; --force skips it.
+	if done, perr := preDeployCheck(ctx, cmd.ErrOrStderr(), out, serverURL, token, cfg.DagID, version,
+		origin == labelDefault && !o.force, o.trigger); done || perr != nil {
+		return perr
 	}
 	if cerr := runCompile(cmd, dir, co); cerr != nil {
 		return cerr
@@ -298,17 +312,39 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) error {
 	return nil
 }
 
-// reportAlreadyDeployed ends a deploy whose content label is already
-// registered: nothing is built, pushed or registered, and --trigger still
-// starts a run of the version that is there.
-func reportAlreadyDeployed(ctx context.Context, out io.Writer, serverURL, token, dagID, version string, trigger bool) error {
-	if _, err := fmt.Fprintf(out, "%s already deployed as %s: nothing to build, push or register\n", dagID, version); err != nil {
-		return err
+// preDeployCheck runs checkDeployed for a content label (when enabled) and
+// acts on it: done when the label is already the current version (nothing is built,
+// pushed or registered, and --trigger still starts a run), an error when the
+// label is an older version or the check was refused for authentication.
+func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, dagID, version string, enabled, trigger bool) (done bool, err error) {
+	if !enabled {
+		return false, nil
 	}
-	if trigger {
-		return triggerDeployRun(ctx, out, serverURL, token, dagID)
+	state, current, err := checkDeployed(ctx, warn, serverURL, token, dagID, version)
+	if err != nil {
+		return false, err
 	}
-	return nil
+	switch state {
+	case deployCurrent:
+		if _, werr := fmt.Fprintf(out, "%s already deployed as %s (the current version): nothing to build, push or register.\n"+
+			"Changes outside the hashed inputs (environment variables, Variables read at parse time) need a new --dag-version; --force skips this check.\n",
+			dagID, version); werr != nil {
+			return true, werr
+		}
+		if trigger {
+			return true, triggerDeployRun(ctx, out, serverURL, token, dagID)
+		}
+		return true, nil
+	case deployStale:
+		if current == "" {
+			current = "none"
+		}
+		return false, fmt.Errorf("%s content matches version %s, which is not the current version (%s). "+
+			"Rolling back to it is not supported yet (#1702); to register this content again as a new version, pass --dag-version <new-label>",
+			dagID, version, current)
+	case deployUnknown:
+	}
+	return false, nil
 }
 
 // registerDeployedDAG re-pins the compiled dag.json to the pushed image's digest

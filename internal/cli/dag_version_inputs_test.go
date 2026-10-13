@@ -190,3 +190,99 @@ func TestDefaultDAGVersionIgnoresInheritedGitEnv(t *testing.T) {
 		t.Errorf("label = %q, want the project's own v1.0.0", label)
 	}
 }
+
+func TestDefaultDAGVersionHashesADockerfileTheDockerignoreLists(t *testing.T) {
+	dir := versionProject(t, "")
+	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY . /app\n")
+	writeProjectFile(t, dir, ".dockerignore", "Dockerfile\n")
+	before := labelOf(t, dir)
+	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY dag.py /app/\n")
+	if got := labelOf(t, dir); got == before {
+		t.Errorf("a changed Dockerfile listed in .dockerignore kept label %q", before)
+	}
+}
+
+func TestDefaultDAGVersionFollowsSymlinkedRoots(t *testing.T) {
+	t.Run("dag_source", func(t *testing.T) {
+		dir := versionProject(t, "dag_source: dag.py\n")
+		writeProjectFile(t, dir, "real.py", "# v1\n")
+		if err := os.Remove(filepath.Join(dir, "dag.py")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("real.py", filepath.Join(dir, "dag.py")); err != nil {
+			t.Fatal(err)
+		}
+		before := labelOf(t, dir)
+		writeProjectFile(t, dir, "real.py", "# v2\n")
+		if got := labelOf(t, dir); got == before {
+			t.Errorf("an edit behind the dag.py link kept label %q", before)
+		}
+	})
+	t.Run("include_paths", func(t *testing.T) {
+		dir := versionProject(t, "include_paths: [lib]\n")
+		writeProjectFile(t, dir, "shared/util.py", "X = 1\n")
+		if err := os.Symlink("shared", filepath.Join(dir, "lib")); err != nil {
+			t.Fatal(err)
+		}
+		before := labelOf(t, dir)
+		writeProjectFile(t, dir, "shared/util.py", "X = 2\n")
+		if got := labelOf(t, dir); got == before {
+			t.Errorf("an edit behind the lib link kept label %q", before)
+		}
+	})
+	t.Run("a root that leaves the project is refused", func(t *testing.T) {
+		dir := versionProject(t, "include_paths: [lib]\n")
+		outside := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(dir, "lib")); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := loadProjectConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := defaultDAGVersion(context.Background(), dir, cfg, "Dockerfile", ""); err == nil || !strings.Contains(err.Error(), "outside the project") {
+			t.Errorf("err = %v, want an outside-the-project refusal", err)
+		}
+	})
+}
+
+func TestDefaultDAGVersionHashesDockerignoreOnlyWithAProjectDockerfile(t *testing.T) {
+	dir := versionProject(t, "")
+	writeProjectFile(t, dir, ".dockerignore", "notes\n")
+	before := labelOf(t, dir)
+	writeProjectFile(t, dir, ".dockerignore", "notes\ntmp/\n")
+	if got := labelOf(t, dir); got != before {
+		t.Errorf("with the generated Dockerfile a .dockerignore edit moved the label: %q -> %q", before, got)
+	}
+}
+
+func TestDockerignoreReincludeDescendsOnlyWhereItCan(t *testing.T) {
+	m := parseDockerignore([]byte("notes\nbuild\n!notes/keep.md\n"))
+	if !m.mayReinclude("notes") {
+		t.Error("notes holds a re-included file; the walk must descend")
+	}
+	if m.mayReinclude("build") {
+		t.Error("nothing under build is re-included; the walk must skip it")
+	}
+	if !parseDockerignore([]byte("x\n!**/keep\n")).mayReinclude("x") {
+		t.Error("a ** negation can match anywhere")
+	}
+}
+
+func TestDockerignoreClassNeverMatchesASlash(t *testing.T) {
+	cases := []struct {
+		pattern, path string
+		want          bool
+	}{
+		{"a[/]b", "a/b", false},
+		{"a[^x]b", "a/b", false},
+		{"a[!x]b", "a/b", false},
+		{"a[^x]b", "acb", true},
+		{"a[bc]d", "abd", true},
+	}
+	for _, c := range cases {
+		if got := parseDockerignore([]byte(c.pattern + "\n")).excluded(c.path); got != c.want {
+			t.Errorf("%q excludes %q = %v, want %v", c.pattern, c.path, got, c.want)
+		}
+	}
+}

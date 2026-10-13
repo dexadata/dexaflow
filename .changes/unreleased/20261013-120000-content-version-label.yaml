@@ -4,14 +4,17 @@ body: |-
   `--dag-version`, `dexaflow compile`, `deploy` and `build` now label a DAG
   `<git describe --tags --always>-<hash>`, or `dev-<hash>` outside git, where
   the hash covers the DAG source, `include_paths`, the dbt project and
-  `dbt.manifest`, a project Dockerfile and `.dockerignore`, the resolved
+  `dbt.manifest`, a project Dockerfile and its `.dockerignore`, the resolved
   `dexaflow.yaml` and the CLI version. Deploying edited code again, from a
   dirty tree or from a folder outside git, no longer fails with `409` after a
   full build and push, and each DAG of a workspace gets its own label. Before
-  building, `deploy` now checks whether the DAG already has that label
-  registered and, if so, prints `already deployed as <label>` and skips the
-  build, push and register (`--trigger` still runs), so re-running a CI job on
-  unchanged sources succeeds. The label is a valid image tag, so a git tag like
+  building, `deploy` now asks the control plane for the DAG's versions: when
+  the label is the current version it prints `already deployed as <label>` and
+  skips the build, push and register (`--trigger` still runs), so re-running a
+  CI job on unchanged sources succeeds; when the label belongs to an older
+  version it stops before building, since rolling back is not supported yet
+  (#1702). A `401` on that check stops the deploy, and the new `--force` flag
+  skips the check. The label is a valid image tag, so a git tag like
   `release/v1` or `v1+build` no longer breaks `tag_strategy: version`. With
   that default strategy a tagged release is now pushed as `:v1.2.3-<hash>`
   instead of `:v1.2.3`; set `tag_strategy: git_tag` to keep the plain release
