@@ -184,24 +184,30 @@ EOF
 dexaflow validate hello_local
 ```
 
-Then build, push, register and trigger it in one command:
+Then build, push, register and trigger it in one command, and unpause it:
 
 ```bash
 dexaflow deploy hello_local --yes --trigger
+dexaflow admin dags unpause hello_local
 ```
 
 `dexaflow deploy` compiles `dag.py` into `dag.json`, builds the DAG image from
 the published runtime base (no Dockerfile needed), pushes it to the registry,
 pins `dag.json` to the digest the push returned and registers it with the
-control plane. `--trigger` starts a run straight away.
+control plane. `--trigger` creates a run. A DAG registered for the first time
+starts paused (the chart's `config.dagsArePausedAtCreation` defaults to
+`true`), so the run waits in `queued` and `deploy` prints a note saying so;
+the unpause starts it, and turns on the DAG's `@daily` schedule. See
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
 
 The image is built for your machine's architecture, which is also the k3d
 node's. Do not copy a `build.platforms: [linux/amd64]` setting from a cloud
 project onto an arm64 laptop: the task pod would fail with `exec format error`.
 
-Add `--follow` to stay with the run until it ends: it prints the task states
-and logs and exits non-zero when the run fails. Or watch the run and the task
-pod:
+To stay with the run until it ends, `dexaflow runs logs hello_local -f`
+prints the task states and logs; from the next deploy on, now that the DAG is
+unpaused, `dexaflow deploy hello_local --yes --trigger --follow` does the same
+and exits non-zero when the run fails. Or watch the run and the task pod:
 
 ```bash
 dexaflow runs status hello_local

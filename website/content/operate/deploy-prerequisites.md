@@ -232,7 +232,7 @@ and which labels it has registered:
 
 - **The default label is the current version:** the content is already what
   runs. Deploy prints `already deployed as <label>` and skips the build, the
-  push and the register (`--trigger` still starts a run). This is what makes a
+  push and the register (`--trigger` still creates a run). This is what makes a
   re-run CI job succeed: rebuilding the same sources would produce a new image
   digest under the same label, which the server refuses. Changes outside the
   hashed inputs (environment variables, Variables read at parse time) need a

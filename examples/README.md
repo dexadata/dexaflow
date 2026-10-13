@@ -52,7 +52,8 @@ and deploy:
 ```sh
 docker login ghcr.io
 dexaflow auth login --server https://pro.example.com
-dexaflow deploy examples/<name>/ --trigger    # compile, build, push, pin by digest, register, run
+dexaflow deploy examples/<name>/ --trigger    # compile, build, push, pin by digest, register, trigger
+dexaflow admin dags unpause <dag_id>          # a new DAG starts paused: its run waits in queued until this
 ```
 
 The full walkthrough is [Deploy your first Pro DAG](https://dexaflow.dexadata.ai/operate/first-pro-dag/),

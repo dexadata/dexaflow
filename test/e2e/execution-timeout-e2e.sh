@@ -425,6 +425,9 @@ k3d_import "$CLUSTER" "$BASE_IMAGE" "$DAG_IMAGE"
 
 log "Pushing + triggering"
 "$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN" || fail "dexaflow push failed"
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 RUN_ID="$(curl -fsS --max-time "$CURL_MAX_TIME" -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{}' \
   "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')" || fail "triggering the run failed"
