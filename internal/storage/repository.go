@@ -40,8 +40,12 @@ type Repository struct {
 	// is off, the plaintext form every earlier release wrote.
 	varEncryption VariableEncryption
 	extCoverage   externalSecretCoverage
-	xcomValues    XComValueDeleter
-	specs         *specCache
+	// pausedAtCreation is the server's dags_are_paused_at_creation (#1705):
+	// whether a DAG registered for the first time starts paused when its spec
+	// does not say. The zero value (false) registers new DAGs active.
+	pausedAtCreation bool
+	xcomValues       XComValueDeleter
+	specs            *specCache
 	// tenants caches tenant name -> id (see tenantID). Bounded by the number
 	// of tenants that exist, since only successful lookups are stored.
 	tenants *sync.Map
@@ -72,6 +76,14 @@ type externalSecretCoverage interface {
 func NewRepository(pg *Postgres) *Repository {
 	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
 }
+
+// SetDagsArePausedAtCreation sets whether a DAG registered for the first time
+// starts paused when its spec has no is_paused_upon_creation (the server's
+// dags_are_paused_at_creation, #1705). It never affects a DAG that exists.
+func (r *Repository) SetDagsArePausedAtCreation(paused bool) { r.pausedAtCreation = paused }
+
+// DagsArePausedAtCreation reports the setting SetDagsArePausedAtCreation set.
+func (r *Repository) DagsArePausedAtCreation() bool { return r.pausedAtCreation }
 
 // SetCipher attaches the encryption cipher used for connection secrets (ADR
 // 0019). Without it, connection writes fail rather than storing plaintext.
@@ -1188,7 +1200,8 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 // no partial state (#1702). The dags row's metadata (schedule, catchup,
 // start_date, max_active_runs, description, owner, tags) is rewritten only when
 // the new version becomes current, so it always describes the current version.
-// is_paused is never changed here.
+// is_paused is set only when this register creates the DAG (pausedOnCreation);
+// a new version of an existing DAG never changes it.
 func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec domain.DAGSpec, specHash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
@@ -1217,7 +1230,7 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 	// Rollback after a successful commit is a no-op; on any early return (409,
 	// identical hash, failed write) it undoes everything this register wrote.
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
-	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, spec, specHash, specJSON)
+	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, spec, specHash, specJSON, r.pausedOnCreation(spec))
 	if err != nil || !created {
 		return false, err
 	}
@@ -1230,13 +1243,16 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 // registerDagVersionTx is the body of RegisterDagVersion, run on a transaction:
 // create the DAG if missing, lock its row, decide on the hash, insert the
 // version, then make it current and apply its metadata.
-func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, specHash string, specJSON []byte) (bool, error) {
+//
+// paused is is_paused for a DAG this register creates; it is ignored when the
+// DAG exists, so a redeploy never pauses or unpauses it.
+func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, specHash string, specJSON []byte, paused bool) (bool, error) {
 	meta := dagMetadataOf(spec)
 	if err := qtx.EnsureDag(ctx, queries.EnsureDagParams{
 		TenantID: tid, DagID: spec.DagID,
 		Description: meta.Description, Owner: meta.Owner, Tags: meta.Tags,
 		Schedule: meta.Schedule, ScheduleTimezone: meta.ScheduleTimezone, StartDate: meta.StartDate,
-		MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup,
+		MaxActiveRuns: meta.MaxActiveRuns, Catchup: meta.Catchup, IsPaused: paused,
 	}); err != nil {
 		return false, fmt.Errorf("creating dag: %w", err)
 	}
@@ -1284,6 +1300,16 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 		return false, fmt.Errorf("writing audit log: %w", err)
 	}
 	return true, nil
+}
+
+// pausedOnCreation is whether spec's DAG starts paused if this register creates
+// it: the spec's is_paused_upon_creation when set, else the server's
+// dags_are_paused_at_creation, as in Airflow (#1705).
+func (r *Repository) pausedOnCreation(spec domain.DAGSpec) bool {
+	if spec.IsPausedUponCreation != nil {
+		return *spec.IsPausedUponCreation
+	}
+	return r.pausedAtCreation
 }
 
 // dagMetadataOf maps a spec to the dags-row columns it owns while it is the

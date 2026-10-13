@@ -34,6 +34,27 @@ If you want a real "no runs at all" switch, the supported pattern is the same as
 in Airflow: pause the DAG **and** instruct operators not to trigger it. There is
 no separate "disable" flag.
 
+### New DAGs start paused
+
+As in Airflow, a DAG registered for the first time starts **paused**: its
+schedule creates no run, catchup included, until someone unpauses it with the
+switch in the UI or `dexaflow admin dags unpause <dag_id>`. Manual triggers
+work at once, as the table above says. Two settings decide the first state,
+in this order:
+
+1. The DAG's own `is_paused_upon_creation` argument, when it sets one:
+   `DAG("etl", is_paused_upon_creation=False)` registers active,
+   `True` registers paused.
+2. The server setting `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` (default `true`,
+   Helm `config.dagsArePausedAtCreation`). Set it to `false` to register new
+   DAGs active, as releases before 0.5.4 did.
+
+Both apply **only when the DAG is created**. Deploying a new version of an
+existing DAG never pauses or unpauses it: an active DAG stays active, and its
+next scheduled run uses the new version; a paused DAG stays paused.
+`dexaflow lite` registers new DAGs active, so a DAG you run locally keeps its
+schedule from the first save.
+
 ### Why not block manual triggers too?
 
 Three reasons we kept Airflow's behavior:

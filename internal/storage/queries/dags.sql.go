@@ -87,8 +87,8 @@ func (q *Queries) DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, er
 }
 
 const ensureDag = `-- name: EnsureDag :exec
-INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup, is_paused)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (tenant_id, dag_id) DO NOTHING
 `
 
@@ -103,6 +103,7 @@ type EnsureDagParams struct {
 	StartDate        pgtype.Timestamptz `json:"start_date"`
 	MaxActiveRuns    int32              `json:"max_active_runs"`
 	Catchup          bool               `json:"catchup"`
+	IsPaused         bool               `json:"is_paused"`
 }
 
 // Creates the dags row of a DAG registered for the first time, with the
@@ -111,6 +112,8 @@ type EnsureDagParams struct {
 // LockDagByDagID and rewrites the metadata only when a new version becomes
 // current (UpdateDagMetadata). A concurrent first insert of the same dag_id
 // waits on the unique index until the other transaction ends.
+// is_paused is set only here, on creation (dags_are_paused_at_creation or the
+// spec's is_paused_upon_creation, #1705): a redeploy never changes it.
 func (q *Queries) EnsureDag(ctx context.Context, arg EnsureDagParams) error {
 	_, err := q.db.Exec(ctx, ensureDag,
 		arg.TenantID,
@@ -123,6 +126,7 @@ func (q *Queries) EnsureDag(ctx context.Context, arg EnsureDagParams) error {
 		arg.StartDate,
 		arg.MaxActiveRuns,
 		arg.Catchup,
+		arg.IsPaused,
 	)
 	return err
 }

@@ -245,6 +245,8 @@ config:
     allowedCIDRs: []
   # -- Make the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer 403 for every role, tenant `admin` included; list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools, so no tenant can raise its own slot budget. It also makes a task naming a pool its tenant has not defined draw on `default_pool` instead of running unlimited. False (the default) renders nothing and keeps pools writable under `write:pool`.
   poolsReadOnly: false
+  # -- Start a DAG paused when it is registered for the first time (`dags_are_paused_at_creation`, Airflow's setting of the same name), so its schedule creates no run until someone unpauses it. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. Set `false` to register new DAGs active, as releases before 0.5.4 did. Rendered as `LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION`.
+  dagsArePausedAtCreation: true
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
 

@@ -5,8 +5,10 @@
 -- LockDagByDagID and rewrites the metadata only when a new version becomes
 -- current (UpdateDagMetadata). A concurrent first insert of the same dag_id
 -- waits on the unique index until the other transaction ends.
-INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+-- is_paused is set only here, on creation (dags_are_paused_at_creation or the
+-- spec's is_paused_upon_creation, #1705): a redeploy never changes it.
+INSERT INTO dags (tenant_id, dag_id, description, owner, tags, schedule, schedule_timezone, start_date, max_active_runs, catchup, is_paused)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (tenant_id, dag_id) DO NOTHING;
 
 -- name: LockDagByDagID :one

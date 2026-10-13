@@ -67,6 +67,14 @@ type ServerConfig struct {
 	// every sealed row at boot: the step before rolling back to a release that
 	// cannot read sealed values.
 	VariableEncryption string `mapstructure:"variable_encryption"`
+	// DagsArePausedAtCreation (DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION, default
+	// true) is Airflow's [core] dags_are_paused_at_creation: a DAG registered
+	// for the first time starts paused, so its schedule creates no run until
+	// someone unpauses it. A DAG's own is_paused_upon_creation wins over it.
+	// It applies only on creation: a redeploy never pauses or unpauses a DAG
+	// (#1705). `dexaflow lite` sets it to false, so a DAG run locally starts
+	// active as it always did.
+	DagsArePausedAtCreation bool `mapstructure:"dags_are_paused_at_creation"`
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -1234,9 +1242,11 @@ var serverDefaults = map[string]any{
 	"secret_key_migration_lock":    false,
 	// Registered so DEXAFLOW_/LEOFLOW_VARIABLE_ENCRYPTION binds; off keeps the
 	// plaintext Variables every earlier release wrote and reads (#507).
-	"variable_encryption":    VariableEncryptionOff,
-	"secrets.backend":        "",
-	"secrets.backend_kwargs": "",
+	"variable_encryption": VariableEncryptionOff,
+	// Airflow's default (#1705): new DAGs start paused.
+	"dags_are_paused_at_creation": true,
+	"secrets.backend":             "",
+	"secrets.backend_kwargs":      "",
 	// Gate (ADR 0062): false sends every API body uncompressed, as before.
 	"server.gzip_responses": false,
 	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.

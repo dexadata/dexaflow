@@ -751,6 +751,23 @@ leaves encrypted rows encrypted and readable by 0.5.4; only `decrypt` makes
 them readable by 0.5.3. A backup taken while it is on holds ciphertext: restore
 it with the same key, as for connections.
 
+**New DAGs start paused** (#1705). 0.5.4 follows Airflow: a DAG registered for
+the first time starts paused, so its schedule creates no run, catchup
+included, until someone unpauses it. Manual triggers still run. DAGs that
+already exist keep their state, and a redeploy never pauses or unpauses a DAG,
+so the upgrade itself changes nothing that is running. A pipeline that deploys
+a new DAG and expects its schedule to start has three ways back to the 0.5.3
+behavior:
+
+- unpause the DAG after its first deploy (UI switch, or
+  `dexaflow admin dags unpause <dag_id>`);
+- set `is_paused_upon_creation=False` on that DAG;
+- set `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false` on the server (Helm:
+  `config.dagsArePausedAtCreation: false`) to register every new DAG active.
+
+`dexaflow lite` keeps registering new DAGs active. Rolling back to 0.5.3 needs
+nothing: 0.5.3 ignores the setting and the spec field.
+
 ## Related issues
 
 - #136 — this contract.
