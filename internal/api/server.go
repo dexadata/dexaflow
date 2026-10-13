@@ -125,6 +125,9 @@ type Dependencies struct {
 	Variables      VariableStore
 	Users          UserStore
 	UserAudit      UserAuditWriter
+	// APITokens keeps the long-lived API tokens (ADR 0074). Nil leaves the
+	// /api/v2/apiTokens routes unregistered.
+	APITokens      TokenStore
 	Connections    ConnectionStore
 	ConnectionTest ConnectionTester
 	Pools          PoolStore
@@ -364,6 +367,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIAudit(r, deps.AuditLog)
 	registerUIVariables(r, deps.Variables)
 	registerUsers(r, deps.Users, deps.UserAudit)
+	registerAPITokens(r, deps.APITokens, deps.AuthAudit)
 	registerUIConnections(r, deps.Connections, deps.ConnectionTest)
 	registerUIPools(r, deps.Pools, deps.Edition == "pro", deps.PoolsReadOnly)
 	registerUIFavorites(r, deps.Favorites)

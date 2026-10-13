@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_connections/
 title: "dexaflow connections"
 linkTitle: "connections"
-weight: 23
+weight: 26
 ---
 
 Manage control-plane connections.

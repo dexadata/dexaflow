@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_connections_set/
 title: "dexaflow connections set"
 linkTitle: "connections set"
-weight: 27
+weight: 30
 ---
 
 Create or update a connection (upsert).

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_runs_status/
 title: "dexaflow runs status"
 linkTitle: "runs status"
-weight: 51
+weight: 54
 ---
 
 Show the state of a DAG run (the latest by default).

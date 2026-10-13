@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_runs_logs/
 title: "dexaflow runs logs"
 linkTitle: "runs logs"
-weight: 50
+weight: 53
 ---
 
 Print task logs: one task's attempt, or every task of a run (the latest run by default).

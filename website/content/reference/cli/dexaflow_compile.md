@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_compile/
 title: "dexaflow compile"
 linkTitle: "compile"
-weight: 17
+weight: 20
 ---
 
 Compile a DAG project into dag.json via the Python parser.

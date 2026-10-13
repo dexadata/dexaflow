@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_dags_versions/
 title: "dexaflow dags versions"
 linkTitle: "dags versions"
-weight: 31
+weight: 34
 ---
 
 List a DAG's registered versions, marking the current one.

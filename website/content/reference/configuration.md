@@ -995,11 +995,12 @@ so a user can grant a client less than their own rights:
 |---|---|
 | `dexaflow:read` | Every route that needs a `read` permission, plus the control-plane health and version (`/api/v2/monitor/health`, `/api/v2/monitor/executor`, `/api/v2/version`) and the import errors feed. |
 | `dexaflow:run` | Triggering a run, setting a run's state, clearing or marking task instances, and pausing or unpausing a DAG. |
-| `dexaflow:deploy` | Registering a DAG version (`POST /api/v2/dags/{id}/versions`). |
+| `dexaflow:deploy` | Registering a DAG version (`POST /api/v2/dags/{id}/versions`) and setting the current version (`PUT /api/v2/dags/{id}/currentVersion`), plus the reads a deploy makes: the DAG list, a DAG, its details and its versions ([ADR 0074](/project/adrs/0074-scoped-api-tokens/)). |
 
 - The scope check runs after the role check, and both must pass. A viewer's
   token with `dexaflow:run` still cannot trigger.
-- No scope implies another. A client that runs and reads needs both.
+- No scope implies another, with one exception: `dexaflow:deploy` opens the
+  reads a deploy makes (listed above). A client that runs and reads needs both.
 - A token **without** a `scope` claim may only read. A claim that is not a
   string is refused with `401`.
 - Every other write (connections, variables, pools, users, deleting a DAG or
@@ -1010,6 +1011,10 @@ so a user can grant a client less than their own rights:
   bearer token whatever its scopes, so a route added without a permission
   check never ignores a token's scopes.
 - A refusal is `403` with a detail that names the missing scope.
+- The same scopes narrow Dexaflow's own API tokens (`dexaflow auth create-token
+  --scope deploy`, [ADR 0074](/project/adrs/0074-scoped-api-tokens/)): a deploy
+  token carries `dexaflow:deploy` alone. See
+  [credentials for the control plane](/operate/cicd-deploy/#credentials-for-the-control-plane).
 - Pausing and unpausing is `PATCH /api/v2/dags/{id}` with
   `{"is_paused": true}` or `false`. A body without `is_paused` is refused
   with `400` rather than read as an unpause.
