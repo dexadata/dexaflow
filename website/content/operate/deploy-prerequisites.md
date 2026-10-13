@@ -177,27 +177,87 @@ the control plane's log sink. Read it from:
 See [Troubleshooting → Logs](/operate/troubleshooting/#logs) for where the sink
 directory and control-plane request logs live.
 
-### 8. `--dag-version` outside a git repo — the `dev` default and its 409
+### 8. The version label and its 409
 
-`--dag-version` defaults to `git describe` in the project's directory; **outside
-a git repo it falls back to the literal string `"dev"`.** DAG versions are
-immutable and unique per `(dag_id, version)` — a second deploy that reuses the
-same version string with **different content** is a genuine conflict, not an
-overwrite, and is rejected:
+DAG versions are immutable and unique per `(dag_id, version)`. Registering
+the same label with the same content again is a no-op; the same label with
+**different** content is a conflict, not an overwrite, and is rejected:
 
 ```
 server returned 409: {"title":"conflict","status":409,"detail":"inserting version: …"}
+hint: version "v1" of this DAG is already registered with different content, and versions are immutable.
 ```
 
-An identical re-push of the same content short-circuits (idempotent, no error);
-only a version string collision with **different** content 409s. This bites
-example DAGs, scratch projects, and CI checkouts that clone with `--depth 1`
-outside `.git` scope — anything not resolvable by `git describe`.
+Without `--dag-version`, the label is derived from the DAG itself:
+`<git describe>-<hash>`, where `git describe --tags --always` runs in the
+**project directory** (outside git the base is `dev`), and the hash covers what
+the DAG is built from:
 
-**Fix:** pass an explicit, changing `--dag-version` (`--dag-version
-$(date +%s)` for scratch iteration, or your CI's commit SHA), or run inside a
-real git checkout so `git describe` gives you a fresh version automatically on
-every commit.
+- the DAG source (`dag.py`, or the dbt project directories), the files under
+  `include_paths`, and `dbt.manifest` when set, wherever it lives;
+- the whole project directory when the project ships its own Dockerfile,
+  which can `COPY` anything, that Dockerfile itself (even when the
+  `.dockerignore` lists it) and the `.dockerignore`;
+- the resolved `dexaflow.yaml` (dependencies, connectors, `python_version`,
+  `base_image`, task overrides) and the CLI version.
+
+It leaves out `.git`, what `exclude_paths` and `.dockerignore` keep out of the
+build, the compiled `dag.json`, and the files `dbt parse` rewrites on every run
+(`target/manifest.json` and its siblings, `logs/`, `.user.yml`) unless
+`dbt.manifest` points at one of them. Anything else under `target/` counts,
+because it ships in the image. A path the build copies (`dag_source`, an
+`include_paths` entry, a dbt directory) is followed through symlinks and
+hashed as what it points to, which must be inside the project; the Dockerfile
+and `dbt.manifest` are followed too and may live outside it, as
+`--dockerfile ../Dockerfile.shared` does; a
+symlink found inside a copied directory counts as the path it points to, never
+followed. File times and modes never count. A file the label cannot read stops
+the compile with its name: add it to `exclude_paths`, or pass `--dag-version`.
+
+So editing code and deploying again, from a dirty tree or from a folder
+outside git, gets a new label, and deploying unchanged content gets the same
+one. Every DAG of a monorepo gets its own. The label is also a valid image tag
+(characters a tag cannot carry become `-`), since `tag_strategy: version` tags
+the image with it. A release tagged `v1.2.3` is therefore pushed as
+`:v1.2.3-<hash>` under the default strategy; set `tag_strategy: git_tag` to
+tag the image with the git tag itself.
+
+Before building, `dexaflow deploy` asks the control plane which version of
+the DAG is current (the `bundle_version` of `GET /api/v2/dags/{dag_id}/details`)
+and which labels it has registered:
+
+- **The default label is the current version:** the content is already what
+  runs. Deploy prints `already deployed as <label>` and skips the build, the
+  push and the register (`--trigger` still starts a run). This is what makes a
+  re-run CI job succeed: rebuilding the same sources would produce a new image
+  digest under the same label, which the server refuses. Changes outside the
+  hashed inputs (environment variables, Variables read at parse time) need a
+  new `--dag-version`.
+- **The label is registered but another version is current**, for example
+  after reverting to code deployed earlier: deploy stops before building and
+  says so. Making an older version current again is not supported yet
+  ([#1702](https://github.com/dexadata/dexaflow/issues/1702)); pass a new
+  `--dag-version` to register the same content as a new version.
+- **The label is unknown**, the DAG has never been registered (`404`), or it
+  has no current version: deploy builds and registers as usual.
+
+A `403`, a network error, or a `5xx` that one retry does not cure lets the
+deploy proceed with a note. A `401` stops it with the sign-in hint, and any
+other answer, or a response it cannot read, stops it naming `--force`.
+`--force` skips the check altogether, and an explicit `--dag-version` is never
+checked. When a deploy that went past the check registers content the server
+already holds, it says so with a warning instead of `Deployed`: nothing new
+was registered, and that version may not be the current one.
+
+A 409 can still happen, and the hint names the cause that applies:
+
+- **An explicit `--dag-version` was reused** for different content. Pass a new
+  one, or omit it.
+- **The hashed inputs are unchanged**, as after `compile --build --push`
+  followed by `push` of the same sources: either the image was rebuilt to a
+  new digest, or the DAG reads files outside its source and `include_paths`
+  (add them to `include_paths`). Pass a new `--dag-version` to register
+  anyway.
 
 ## From here
 

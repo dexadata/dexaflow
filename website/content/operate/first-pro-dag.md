@@ -197,10 +197,10 @@ store, hence the `docker pull` on a fresh runner.
 
 {{% alert title="Prefer tag_strategy: git_sha for a split pipeline" color="info" %}}
 With the default `version` strategy the tag is the DAG version label, which
-comes from `git describe`, so two runs of the same pipeline on the same commit
-produce the same tag and a rebuild silently replaces what is already in the
-registry. `git_sha` ties the tag to the commit instead, which is what makes a
-deploy reproducible.
+comes from `git describe` and a hash of the DAG's content, so two runs of the
+same pipeline on the same commit produce the same tag and a rebuild silently
+replaces what is already in the registry. `git_sha` ties the tag to the commit
+instead, which is what makes a deploy reproducible.
 
 Either way `deploy` re-pins the artifact by digest after the push, so the tag is
 a convenience and not the integrity boundary.

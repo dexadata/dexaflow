@@ -74,7 +74,7 @@ func newCompileCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&o.output, "output", "o", "", "path to write the compiled dag.json (default <project>/dag.json)")
 	cmd.Flags().StringVar(&o.image, "image", "", "container image reference for the DAG")
 	cmd.Flags().StringVar(&o.parserCmd, "parser-cmd", "", "override the parser command (default from config)")
-	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe, else dev)")
+	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
 	cmd.Flags().BoolVar(&o.build, "build", false, "build the DAG container image (requires --image)")
 	cmd.Flags().BoolVar(&o.push, "push", false, "push the built image to its registry (requires --build)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
@@ -187,21 +187,21 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	// upgrade (new features like dbt vs a stale ~/.dexaflow/pysrc) never surfaces as
 	// a confusing "not supported" error (#239).
 	ensurePysrc(cmd)
+	// The image is the --image flag when set, else derived from the dexaflow.yaml
+	// registry block (url/image_name:tag), so a yaml-driven build needs no flag.
+	// The resolved value flows into dag.json and the build, keeping the
+	// registered artifact and the built/pushed image in lockstep.
+	image, ierr := resolveVersionAndImage(cmd, dir, &o, cfg)
+	if ierr != nil {
+		return ierr
+	}
 	if cfg.Dbt != nil {
-		return runDbtCompile(cmd, dir, o, cfg)
+		return runDbtCompile(cmd, dir, o, cfg, image)
 	}
 	command, err := resolveParserCommand(cmd, o.parserCmd)
 	if err != nil {
 		return err
 	}
-	if o.dagVersion == "" {
-		o.dagVersion = gitVersion(cmdContext(cmd))
-	}
-	// The image is the --image flag when set, else derived from the dexaflow.yaml
-	// registry block (url/image_name:version), so a yaml-driven build needs no
-	// flag. The resolved value flows into dag.json (via the parser) and the build,
-	// keeping the registered artifact and the built/pushed image in lockstep.
-	image := resolveBuildImage(o.image, cfg, o.dagVersion, gitSHA(cmdContext(cmd)))
 	if ierr := checkImageFlags(cmd, o.build, o.push, image); ierr != nil {
 		return ierr
 	}
@@ -244,11 +244,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 // acquires the manifest.json (a baked file or a fresh `dbt parse`), renders it
 // into a dag.json via the dbt package, overlays the dexaflow.yaml, validates, and
 // optionally builds/pushes the image — reusing the same tail as the parser path.
-func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig) error {
-	if o.dagVersion == "" {
-		o.dagVersion = gitVersion(cmdContext(cmd))
-	}
-	image := resolveBuildImage(o.image, cfg, o.dagVersion, gitSHA(cmdContext(cmd)))
+func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
 	if ierr := checkImageFlags(cmd, o.build, o.push, image); ierr != nil {
 		return ierr
 	}
@@ -734,24 +730,33 @@ type parserArgs struct {
 // PyYAML.
 const parserConfigEnv = "LEOFLOW_PROJECT_CONFIG_JSON"
 
-// gitVersion derives a version label from git, falling back to "dev".
-func gitVersion(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "git", "describe", "--tags", "--always", "--dirty").Output()
-	if err != nil {
-		return "dev"
+// resolveVersionAndImage settles the two names of a compile: it fills
+// o.dagVersion with the content-derived default label (defaultDAGVersion) when
+// --dag-version was not given, and returns the image reference, the --image
+// flag when set, else the registry block's url/image_name with the tag strategy
+// applied to the project's own git revision. Callers that resolve before
+// runCompile (deploy) pass both back in, so runCompile resolves nothing twice.
+func resolveVersionAndImage(cmd *cobra.Command, dir string, o *compileOptions, cfg *domain.LeoflowConfig) (string, error) {
+	ctx := cmdContext(cmd)
+	if o.dagVersion == "" {
+		dockerfile, _ := resolveDockerfileName(cmd, *o, cfg)
+		label, err := defaultDAGVersion(ctx, dir, cfg, dockerfile, o.output)
+		if err != nil {
+			return "", err
+		}
+		o.dagVersion = label
 	}
-	return strings.TrimSpace(string(out))
-}
-
-// gitSHA returns the short commit hash, or "" when the project is not in git —
-// so a deploy with tag_strategy git_sha gets a genuine per-commit tag and falls
-// back to the version label otherwise.
-func gitSHA(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD").Output()
-	if err != nil {
-		return ""
+	if o.image != "" || cfg.Registry == nil || cfg.Registry.URL == "" || cfg.Registry.ImageName == "" {
+		// No reference to derive: the flag, or nothing (checkImageFlags names
+		// what is missing), so git has nothing to say.
+		return o.image, nil
 	}
-	return strings.TrimSpace(string(out))
+	rev := readGitRevision(ctx, dir)
+	if msg := tagStrategyFallback(cfg.Registry.TagStrategy, rev); msg != "" {
+		//nolint:errcheck // a warning that cannot be delivered must not fail the compile
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", msg)
+	}
+	return resolveBuildImage("", cfg, o.dagVersion, rev), nil
 }
 
 // resolveParserCommand returns the explicit --parser-cmd value when set,
