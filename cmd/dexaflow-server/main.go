@@ -1,4 +1,4 @@
-// Command leoflow-server runs the Dexaflow control plane: the HTTP API, auth,
+// Command dexaflow-server runs the Dexaflow control plane: the HTTP API, auth,
 // metrics, and (when enabled) the scheduler.
 package main
 
