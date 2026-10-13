@@ -722,6 +722,10 @@ type parserArgs struct {
 	// truth for the config schema; the parser carries zero third-party
 	// Python deps (ADR 0024 + alpha cleanup).
 	projectConfig *domain.LeoflowConfig
+	// stdout receives the parser's own stdout. Nil means the command's stdout,
+	// which is what compile wants; validate --parse discards it, because the
+	// parser announces a scratch file the user never asked for.
+	stdout io.Writer
 }
 
 // parserConfigEnv is the env var that carries the resolved project config
@@ -806,6 +810,9 @@ func runParser(cmd *cobra.Command, command string, a parserArgs) error {
 	}
 	pc.Env = env
 	pc.Stdout = cmd.OutOrStdout()
+	if a.stdout != nil {
+		pc.Stdout = a.stdout
+	}
 	// Stream the parser's stderr to the terminal and capture it, so a parse
 	// failure carries the real traceback (e.g. the SyntaxError + file:line) in
 	// the returned error — surfaced both in the dev terminal and the UI's import

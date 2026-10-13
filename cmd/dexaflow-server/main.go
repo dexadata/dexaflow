@@ -173,6 +173,7 @@ func run() error {
 	// A clear deletes the stored XCom of the attempts it clears, not just their
 	// index rows, since agents fetch values by key (#1131).
 	repo.SetXComBackend(xcomBackend)
+	configureRegistration(repo, cfg)
 	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
 		return serr
 	}
@@ -3073,4 +3074,11 @@ func logEnvCompat(r envcompat.Report) {
 	if n := len(r.Legacy); n > 0 {
 		slog.Info("environment: variables set under their LEOFLOW_* names are also read as DEXAFLOW_*", "count", n)
 	}
+}
+
+// configureRegistration applies the settings DAG registration reads: whether a
+// DAG registered for the first time starts paused (dags_are_paused_at_creation,
+// #1705). A DAG's own is_paused_upon_creation still wins over it.
+func configureRegistration(repo *storage.Repository, cfg *config.ServerConfig) {
+	repo.SetDagsArePausedAtCreation(cfg.DagsArePausedAtCreation)
 }

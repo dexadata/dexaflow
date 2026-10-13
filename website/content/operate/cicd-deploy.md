@@ -114,6 +114,13 @@ pushes the image to your registry → registers `dag.json`. The control plane ru
 the new version on the next trigger. One DAG per pipeline keeps blast radius
 small: a broken `another_pipeline` never blocks `my_pipeline`.
 
+The first registration of a DAG leaves it **paused**, as in Airflow: its
+schedule creates no run until someone unpauses it (UI switch, or
+`dexaflow admin dags unpause <dag_id>`). Later registrations never change that,
+so a pipeline that redeploys an active DAG keeps it active. A DAG that should
+start active sets `is_paused_upon_creation=False`; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
+
 {{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The per-DAG pipeline above stays the recommendation, and the `paths:` filter is
 the point of it: one DAG per pipeline is what keeps a broken DAG from blocking
