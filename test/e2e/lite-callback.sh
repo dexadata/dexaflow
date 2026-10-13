@@ -194,7 +194,7 @@ COUNT="$(grep -c . "$CAPTURE" || true)"
 pass "callback fired exactly once (terminal attempt)"
 
 echo "==> the runtime logged the callback lifecycle (in the task's own log)"
-# The '[leoflow] running on_failure_callback' lifecycle line is emitted by the
+# The '[dexaflow] running on_failure_callback' lifecycle line is emitted by the
 # runtime to the TASK's log (shipped by the agent), not the control-plane log.
 tasklog=""
 for _ in $(seq 1 15); do
