@@ -102,8 +102,8 @@ Then the Connection's Extra: `{ "key_secret_name": "dexaflow-gcp-key", "project"
 ## Run + verify
 
 ```bash
-# Pro: dexaflow compile dags/gcp_gcs_load --image <REG>/gcp_gcs_load:v1 --build --push -o dag.json
-#      dexaflow push dag.json && dexaflow runs trigger gcp_gcs_load
+# Pro: add a registry: block to dexaflow.yaml (see ../README.md), then
+#      dexaflow deploy dags/gcp_gcs_load --trigger
 # Lite: dexaflow lite --executor=subprocess dags/gcp_gcs_load
 ```
 The task log prints the resolved auth mode and `gcs roundtrip ok: gs://<bucket>/leoflow/gcp_gcs_load.txt`.
