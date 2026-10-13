@@ -38,6 +38,35 @@ type DagVersion struct {
 	// "dev-<timestamp>" in Lite. It is the stable
 	// per-deployment identifier under a stable dag_id.
 	Version string
+	// ImageReference is the image the version runs, pinned by digest when the
+	// deploy resolved one.
+	ImageReference string
+	// SpecHash is the canonical hash of the version's dag.json.
+	SpecHash string
+	// IsCurrent reports whether this is the DAG's current version: the one new
+	// runs are created with.
+	IsCurrent bool
+	// CreatedBy is the id of the user who registered the version, or "" when
+	// the register had no user of the tenant (Lite's dev principal, a direct
+	// call, a deleted user). It is an id, not an email: every reader of the
+	// DAG sees it.
+	CreatedBy string
+}
+
+// DagVersionSelector names one registered version of a DAG, by its label
+// (Version) or by its version_number (Number). Exactly one is set.
+type DagVersionSelector struct {
+	Version string
+	Number  int
+}
+
+// CurrentVersionChange is the outcome of making a version current: the
+// version that was current before (From), the one that is current now (To),
+// and whether anything changed (false when To was already current).
+type CurrentVersionChange struct {
+	From    DagVersion
+	To      DagVersion
+	Changed bool
 }
 
 // DagRun is an execution of a DAG, identified by dag_id + run_id.

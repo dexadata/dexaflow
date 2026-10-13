@@ -55,14 +55,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # lychee resolves relative links/images against each file's own directory, so
       # a dead `docs/assets/x.png` in README (the #758 class) or a moved doc link
       # (the #740 class) fails here. External links are checked too but softened by
       # lychee.toml (429/403/timeouts tolerated) and .lycheeignore (flaky hosts).
       - name: Check links & images
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
           args: >-
             --config lychee.toml

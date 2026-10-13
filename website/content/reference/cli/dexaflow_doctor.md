@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_doctor/
 title: "dexaflow doctor"
 linkTitle: "doctor"
-weight: 35
+weight: 36
 ---
 
 Report host platform, dependencies, and the achievable operating tier.

@@ -1158,14 +1158,23 @@ func (r *Repository) ListDagVersions(ctx context.Context, tenant, dagID string) 
 	}
 	out := make([]domain.DagVersion, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.DagVersion{
-			ID:            uuidToString(row.ID),
-			VersionNumber: int(row.VersionNumber),
-			CreatedAt:     timeVal(row.CreatedAt),
-			Version:       row.Version,
-		})
+		out = append(out, dagVersionOf(row))
 	}
 	return out, nil
+}
+
+// dagVersionOf maps a listed version row to the domain version.
+func dagVersionOf(row queries.ListDagVersionsRow) domain.DagVersion {
+	return domain.DagVersion{
+		ID:             uuidToString(row.ID),
+		VersionNumber:  int(row.VersionNumber),
+		CreatedAt:      timeVal(row.CreatedAt),
+		Version:        row.Version,
+		ImageReference: row.ImageReference,
+		SpecHash:       row.SpecHash,
+		IsCurrent:      row.IsCurrent,
+		CreatedBy:      row.CreatedBy,
+	}
 }
 
 // GetCurrentSpec returns the parsed spec of the DAG's current version, or
@@ -1206,6 +1215,13 @@ func (r *Repository) GetCurrentSpec(ctx context.Context, tenant, dagID string) (
 // is_paused is set only when this register creates the DAG (pausedOnCreation);
 // a new version of an existing DAG never changes it.
 func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec domain.DAGSpec, specHash string) (bool, error) {
+	return r.RegisterDagVersionBy(ctx, tenant, "", spec, specHash)
+}
+
+// RegisterDagVersionBy is RegisterDagVersion on behalf of the user actorUserID:
+// the version's created_by and its audit entry name that user. An actor that is
+// not a user id (empty, or Lite's dev principal) leaves both without a user.
+func (r *Repository) RegisterDagVersionBy(ctx context.Context, tenant, actorUserID string, spec domain.DAGSpec, specHash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return false, err
@@ -1233,7 +1249,10 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 	// Rollback after a successful commit is a no-op; on any early return (409,
 	// identical hash, failed write) it undoes everything this register wrote.
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
-	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, spec, specHash, specJSON, r.pausedOnCreation(spec))
+	created, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, registration{
+		spec: spec, specHash: specHash, specJSON: specJSON,
+		paused: r.pausedOnCreation(spec), actor: actorUUID(actorUserID),
+	})
 	if err != nil || !created {
 		return false, err
 	}
@@ -1247,11 +1266,12 @@ func (r *Repository) RegisterDagVersion(ctx context.Context, tenant string, spec
 // create the DAG if missing, lock its row, decide on the hash, insert the
 // version, then make it current and apply its metadata.
 //
-// paused is is_paused for a DAG this register creates; it is ignored when the
-// DAG exists, so a redeploy never pauses or unpauses it.
-func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, spec domain.DAGSpec, specHash string, specJSON []byte, paused bool) (bool, error) {
+// reg.paused is is_paused for a DAG this register creates; it is ignored when
+// the DAG exists, so a redeploy never pauses or unpauses it.
+func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, reg registration) (bool, error) {
+	spec, specHash := reg.spec, reg.specHash
 	meta := dagMetadataOf(spec)
-	dag, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, paused)
+	dag, err := ensureAndLockDag(ctx, qtx, tid, spec.DagID, meta, reg.paused)
 	if err != nil {
 		return false, err
 	}
@@ -1260,14 +1280,18 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	} else if !errors.Is(verr, pgx.ErrNoRows) {
 		return false, fmt.Errorf("checking existing version: %w", verr)
 	}
+	actor, err := tenantActor(ctx, qtx, tid, reg.actor)
+	if err != nil {
+		return false, err
+	}
 	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
 		TenantID:       tid,
 		Version:        spec.DagVersion,
 		ImageReference: spec.Image,
-		Spec:           specJSON,
+		Spec:           reg.specJSON,
 		SpecHash:       specHash,
-		CreatedBy:      pgtype.UUID{},
+		CreatedBy:      actor,
 	})
 	if err != nil {
 		// A collision on dag_versions_unique (dag_id, version) means the same
@@ -1286,15 +1310,64 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
 		return false, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := qtx.CreateAuditLog(ctx, queries.CreateAuditLogParams{
-		TenantID:     tid,
-		Action:       "dag.version.register",
-		ResourceType: strPtr("dag"),
-		ResourceID:   strPtr(spec.DagID),
+	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, map[string]any{
+		"version": spec.DagVersion, "image": spec.Image, "spec_hash": specHash,
 	}); err != nil {
-		return false, fmt.Errorf("writing audit log: %w", err)
+		return false, err
 	}
 	return true, nil
+}
+
+// registration is what one register writes: the spec, its hash and encoding,
+// is_paused for a DAG it creates, and the registering user (null when none).
+type registration struct {
+	spec     domain.DAGSpec
+	specHash string
+	specJSON []byte
+	paused   bool
+	actor    pgtype.UUID
+}
+
+// actorUUID is the user id of an acting principal, or a null UUID when the
+// principal is not a user row (no principal, or Lite's dev principal).
+func actorUUID(userID string) pgtype.UUID {
+	u, err := parseUUID(userID)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return u
+}
+
+// tenantActor returns actor when it is a user of the tenant, else a null UUID:
+// a token whose user row is gone, or names another tenant, records no user
+// instead of failing the write on a foreign key.
+func tenantActor(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID) (pgtype.UUID, error) {
+	if !actor.Valid {
+		return pgtype.UUID{}, nil
+	}
+	id, err := qtx.GetTenantUserID(ctx, queries.GetTenantUserIDParams{ID: actor, TenantID: tid})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, nil
+	}
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("looking up the acting user: %w", err)
+	}
+	return id, nil
+}
+
+// writeDagAudit records action on dagID by actor, with fields as metadata.
+func writeDagAudit(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID, action, dagID string, fields map[string]any) error {
+	meta, err := json.Marshal(fields)
+	if err != nil {
+		return fmt.Errorf("encoding audit metadata: %w", err)
+	}
+	if err := qtx.CreateAuditLog(ctx, queries.CreateAuditLogParams{
+		TenantID: tid, UserID: actor, Action: action,
+		ResourceType: strPtr("dag"), ResourceID: strPtr(dagID), Metadata: meta,
+	}); err != nil {
+		return fmt.Errorf("writing audit log: %w", err)
+	}
+	return nil
 }
 
 // pausedOnCreation is whether spec's DAG starts paused if this register creates

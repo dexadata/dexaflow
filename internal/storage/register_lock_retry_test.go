@@ -63,7 +63,7 @@ func registerRetrySpec() domain.DAGSpec {
 // the register goes on (#1702).
 func TestRegisterDagVersionTxRetriesALockLostToADelete(t *testing.T) {
 	db := &registerDB{missingLocks: 1}
-	_, err := registerDagVersionTx(context.Background(), queries.New(db), validUUID(), registerRetrySpec(), "h", []byte("{}"), false)
+	_, err := registerDagVersionTx(context.Background(), queries.New(db), validUUID(), registration{spec: registerRetrySpec(), specHash: "h", specJSON: []byte("{}")})
 	if !errors.Is(err, errStopAtInsert) {
 		t.Fatalf("after one lost lock the register must reach the version insert, got %v", err)
 	}
@@ -76,7 +76,7 @@ func TestRegisterDagVersionTxRetriesALockLostToADelete(t *testing.T) {
 // "locking dag: no rows" (#1702).
 func TestRegisterDagVersionTxConflictsWhenTheDagKeepsVanishing(t *testing.T) {
 	db := &registerDB{missingLocks: 2}
-	_, err := registerDagVersionTx(context.Background(), queries.New(db), validUUID(), registerRetrySpec(), "h", []byte("{}"), false)
+	_, err := registerDagVersionTx(context.Background(), queries.New(db), validUUID(), registration{spec: registerRetrySpec(), specHash: "h", specJSON: []byte("{}")})
 	if !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("want domain.ErrConflict, got %v", err)
 	}

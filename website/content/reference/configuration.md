@@ -80,7 +80,7 @@ There are two ways to resolve to it, and they have different fixes:
 - **You set `python_version: "3.10"`.** Set `python_version: "3.11"` (or later)
   and rebuild.
 - **You pinned `base_image` to a published `py3.10` tag** (`…:py3.10`,
-  `…:py3.10-v0.4.5`). Repoint `base_image` to the matching `py3.11` tag and
+  `…:py3.10-v0.4.5`<!-- stale-version-ok: py3.10 runtimes stopped at 0.4.x -->). Repoint `base_image` to the matching `py3.11` tag and
   rebuild. Changing `python_version` here does nothing: when `base_image` is
   set it is used verbatim and `python_version` is not consulted for the `FROM`.
 

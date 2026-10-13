@@ -173,8 +173,9 @@ the control plane's log sink. Read it from:
 
 - **The UI** — the task instance's log drill-down (Airflow-compatible).
 - **The API** — `GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}`.
-- **The CLI** — `dexaflow runs logs <dag_id> <run_id> <task_id> [--try N] [-f/--follow]`,
-  landing in v0.4.1 (reads the same endpoint as the UI, so it works over a
+- **The CLI**: `dexaflow runs logs <dag_id> [<run_id> [<task_id>]] [--try N] [-f/--follow]`:
+  every task of the latest run by default, or one run, or one task's attempt
+  (reads the same endpoint as the UI, so it works over a
   plain `--server`/token session with no cluster access needed).
 
 See [Troubleshooting → Logs](/operate/troubleshooting/#logs) for where the sink
@@ -238,9 +239,10 @@ and which labels it has registered:
   new `--dag-version`.
 - **The label is registered but another version is current**, for example
   after reverting to code deployed earlier: deploy stops before building and
-  says so. Making an older version current again is not supported yet
-  ([#1702](https://github.com/dexadata/dexaflow/issues/1702)); pass a new
-  `--dag-version` to register the same content as a new version.
+  says so, naming the command that makes that version current again:
+  `dexaflow rollback <dag_id> --to <label>` (see
+  [Rolling back](/operate/cicd-deploy/#rolling-back)). To register the same
+  content as a new version instead, pass a new `--dag-version`.
 - **The label is unknown**, the DAG has never been registered (`404`), or it
   has no current version: deploy builds and registers as usual.
 

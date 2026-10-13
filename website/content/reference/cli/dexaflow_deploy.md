@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_deploy/
 title: "dexaflow deploy"
 linkTitle: "deploy"
-weight: 34
+weight: 35
 ---
 
 Build, push, and register a DAG to a control plane (Pro).
@@ -20,12 +20,14 @@ dexaflow deploy [path | dag_id] [flags]
       --builder string       image build tool to shell out to (e.g. docker, podman, nerdctl) (default "docker")
       --dag-version string   DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)
       --dockerfile string    Dockerfile path relative to the DAG directory (default "Dockerfile")
+      --follow               follow the run: print task state changes and logs, the UI link, and exit with the run's result
       --force                build, push and register even when the default content label is already deployed
   -h, --help                 help for deploy
       --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
       --server string        control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --skip-build           reuse the existing image (skip docker build/push) but still recompile dag.json from dexaflow.yaml/dag.py
+      --timeout duration     with --follow, stop following after this long (e.g. 30m) and exit 3; the run keeps going (default: no limit)
       --token string         JWT bearer token (default: config token)
       --trigger              trigger a run immediately after registering
   -y, --yes                  skip the confirmation prompt (for automation)

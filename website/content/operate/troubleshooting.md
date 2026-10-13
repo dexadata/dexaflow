@@ -112,8 +112,10 @@ dexaflow uninstall --purge                               # also remove the works
 Task logs stream from the agent over gRPC to the control plane's log sink and
 are served at
 `/api/v2/dags/<dag>/dagRuns/<run>/taskInstances/<task>/logs/<try>` (the UI's
-drill-down), or from the CLI: `dexaflow runs logs <dag_id> <run_id> <task_id>
-[--try N] [-f]` (landing in v0.4.1). The sink directory is `DEXAFLOW_LOGS_DIR`
+drill-down), or from the CLI: `dexaflow runs logs <dag_id>` prints every task
+of the latest run, `dexaflow runs logs <dag_id> <run_id>` every task of that
+run, and `dexaflow runs logs <dag_id> <run_id> <task_id> [--try N] [-f]` one
+attempt of one task. Without a task, `-f` follows the run to its end. The sink directory is `DEXAFLOW_LOGS_DIR`
 (must be writable; `dexaflow lite` points it at a temp dir).
 
 {{% alert title="Not kubectl logs" color="warning" %}}

@@ -4,8 +4,8 @@
 # A standalone workflow — not a job in ci.yaml — for the same reason as the
 # CHANGELOG guard: it triggers on `labeled` / `unlabeled` too, so applying
 # `skip-docs` re-runs THIS guard alone and the exemption takes effect at once.
-# It also triggers on `edited`: the label needs a `Skip-docs: <reason>` line in
-# the description, and adding that line has to re-run the guard as well.
+# It also triggers on `edited`: a `Skip-docs: <reason>` line in the
+# description is the opt-out, and adding that line has to re-run the guard.
 #
 # Why it exists: taskPodSecurity.readOnlyRootFilesystem — the security hardening
 # of the v0.4.5 tranche — shipped in rc.3 with zero mentions anywhere under
@@ -18,6 +18,9 @@ on:
   pull_request:
     branches: [main, "release-*"]
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  # The merge queue (#1569): see docs-guard-queue below.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -45,9 +48,11 @@ jobs:
     # CHANGELOG guard documents: keying on the author keeps one mechanism and
     # survives a label being removed. The skip-docs label no longer skips the
     # job: the script accepts it only with a reason in the description.
-    if: ${{ github.event.pull_request.user.login != 'dependabot[bot]' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The changed-file list comes from the API rather than a git diff: the
       # CHANGELOG guard can fetch --depth=1 because it compares one file's
       # content, but a file LIST needs a merge base, and a shallow clone has
@@ -61,8 +66,31 @@ jobs:
         run: |
           gh api --paginate "repos/${{ github.repository }}/pulls/${PR}/files" \
             --jq '.[].filename' > /tmp/changed.txt
-      - name: Require a docs update (or the skip-docs label with a reason)
+      # A `Skip-docs: <reason>` line passes with or without the label, so a
+      # pull request from a fork, whose author cannot apply labels, can opt
+      # out too (#1560). The body comes from the event payload, which is
+      # current on `edited`, the event that adding the line fires.
+      - name: Require a docs update (or a Skip-docs line with a reason)
         env:
           SKIP_DOCS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-docs') && '1' || '0' }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: bash scripts/check-docs-updated.sh HEAD /tmp/changed.txt
+      # No page may tell a reader to install a release older than the newest GA
+      # (#1555). Reads website/scripts/ci/versions.json, so it needs no network
+      # and judges the whole tree, not only the files this PR changed: a GA
+      # that lands makes every leftover pin stale at once, and the docs
+      # promotion PR, which bumps the README pins, is where that shows.
+      - name: No page pins a release older than the newest GA
+        run: bash scripts/check-stale-versions.sh
+
+  # Same name in the merge queue, so the check can be made required. The docs
+  # were judged on the pull request against its own diff; the queue commit
+  # adds only the base's newer commits, which were judged on theirs.
+  docs-guard-queue:
+    name: Docs updated for user-facing changes
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Judged on the pull request
+        run: echo "The docs were checked on the pull request; nothing to re-check in the merge queue."

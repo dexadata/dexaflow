@@ -6,14 +6,14 @@ SHELL := /usr/bin/env bash
 
 # ─── Tool versions (pinned; see ADR 0012 / 0014) ───
 GOLANGCI_LINT_VERSION ?= v2.12.2
-GOVULNCHECK_VERSION   ?= latest
-MIGRATE_VERSION       ?= latest
-SQLC_VERSION          ?= latest
+GOVULNCHECK_VERSION   ?= v1.8.0
+MIGRATE_VERSION       ?= v4.20.1
+SQLC_VERSION          ?= v1.31.1
 # Go Report Card checkers (the site + its CLI were retired in 2026; we run the
 # same checks with maintained tools via scripts/reportcard.sh — see ADR 0012).
-GOCYCLO_VERSION       ?= latest
-INEFFASSIGN_VERSION   ?= latest
-MISSPELL_VERSION      ?= latest
+GOCYCLO_VERSION       ?= v0.6.0
+INEFFASSIGN_VERSION   ?= v0.2.0
+MISSPELL_VERSION      ?= v0.3.4
 OAPI_CODEGEN_VERSION  ?= v2.8.0
 # changie writes the per-PR changelog fragments (see .changie.yaml).
 CHANGIE_VERSION       ?= v1.24.0
@@ -289,7 +289,7 @@ ci-local: ## Run every CI gate locally — pre-push tripwire so a PR does not ar
 	@echo "▸ govulncheck (advisories DB is fetched at runtime — catches new stdlib CVEs CI will see)"
 	@command -v govulncheck >/dev/null && govulncheck ./... \
 		|| ($$(go env GOPATH)/bin/govulncheck ./... 2>/dev/null) \
-		|| (echo "skip govulncheck (run: go install golang.org/x/vuln/cmd/govulncheck@latest)"; exit 0)
+		|| (echo "skip govulncheck (run: go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION))"; exit 0)
 	@echo "▸ helm unittest (chart contracts)"
 	@command -v helm >/dev/null && command -v helm-unittest >/dev/null \
 		&& (cd helm/dexaflow && helm unittest .) \

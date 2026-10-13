@@ -97,22 +97,49 @@ what to do when it drifts, is in
 [RELEASING.md, How the changelog flows](RELEASING.md#how-the-changelog-flows).
 
 If the PR has no user-facing change at all (release prep, a chore, a
-dependency bump, a docs-only edit), apply the **`skip-changelog`** label to the
-PR instead. Dependabot is exempt automatically.
+dependency bump, a docs-only edit), add a line with the reason to the PR
+description instead, or apply the **`skip-changelog`** label if you can:
+
+```
+Skip-changelog: test-only change, nothing a user can notice
+```
+
+Dependabot is exempt automatically.
 
 The **docs guard** works the same way for the docs site. A PR that changes a
 chart value, the authoring schema, a CLI command, a server setting, a
 migration, the OpenAPI document, or adds a changelog fragment of kind Added,
 Changed, Deprecated or Removed updates `website/content/` in the same PR. When
-nothing in it is user-discoverable, apply the **`skip-docs`** label and add a
-line with the reason to the PR description:
+nothing in it is user-discoverable, add a line with the reason to the PR
+description (the **`skip-docs`** label is optional):
 
 ```
 Skip-docs: internal refactor, no setting or behaviour an operator can see
 ```
 
-The label alone fails the guard. The release cut reads the reason back
-(`scripts/docs-gap.sh`), so write it for the person cutting the release.
+The label alone, without the line, fails the guard. The release cut reads the
+reason back (`scripts/docs-gap.sh`), so write it for the person cutting the
+release.
+
+The **API compatibility** check (`scripts/api-compat.sh`) compares the three
+public APIs with the base branch: the agent protocol in `proto/` (`buf
+breaking`, with the rules in `buf.yaml`), the REST API in
+`docs/api/openapi.yaml` (`oasdiff breaking`), and the Go client in `pkg/client`
+(`apidiff`). Removing or renaming a proto field, an OpenAPI path or parameter,
+or an exported `pkg/client` symbol fails it. When the break is intended, the
+PR needs both:
+
+- the **`breaking-change`** label, which a maintainer applies after agreeing
+  to the break, and
+- a changelog fragment of kind `Changed` or `Removed` that names what broke and
+  what users do about it.
+
+Run it locally against `main` before pushing:
+
+```bash
+git worktree add /tmp/base origin/main
+scripts/api-compat.sh /tmp/base    # needs buf, oasdiff and apidiff on PATH
+```
 
 #### 5. Pull Request Process
 
@@ -124,6 +151,24 @@ The label alone fails the guard. The release cut reads the reason back
 6. Wait for CI. If any check fails, fix and push again.
 7. Address review feedback. We aim to review within 3 business days.
 8. Maintainers will squash-merge or rebase-merge based on the change.
+
+**Pull requests from a fork** get the same checks, and none of them needs an
+action only a maintainer can take:
+
+- Labels: you cannot apply `skip-changelog` or `skip-docs` on a fork, so use
+  the `Skip-changelog: <reason>` and `Skip-docs: <reason>` lines above. Both
+  guards re-run when you edit the description.
+- Milestone: only maintainers can set one. The milestone guard passes a fork's
+  pull request with a notice instead of failing it.
+- Secrets: no workflow that runs on pull requests uses a repository secret, and
+  none runs on `pull_request_target` (`scripts/check-fork-safe-workflows.sh`
+  enforces both), so nothing waits on a secret your fork cannot have.
+
+Before merging a pull request from a fork, the maintainer:
+
+1. sets the release milestone (`vX.Y.Z`), which re-runs the milestone guard;
+2. reads the `Skip-changelog:` and `Skip-docs:` reasons, if any, and agrees
+   with them (the release cut reads the docs reason back).
 
 ## Security-Sensitive Changes
 
@@ -156,6 +201,14 @@ and applied by golang-migrate on start and by the chart's pre-upgrade Job.
   or `user_roles`. `migrations/tenant_roles_test.go` fails an up migration that
   writes `roles` or `role_permissions` and names the default tenant
   (#1305).
+- **Renumbering is the author's job.** Numbers must be contiguous
+  (`migrations/sequence_test.go`), so when another pull request merges a
+  migration with your number first, merge `main` into your branch and rename
+  yours to the next free number before the pull request enters the merge
+  queue. Once the merge queue is on for `main`, it tests each pull request on
+  top of the ones ahead of it, so two pull requests with the same number
+  cannot both merge: the second fails `Test + Coverage` in the queue and is
+  removed from it.
 
 ## Development Environment
 
