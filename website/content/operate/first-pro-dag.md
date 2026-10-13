@@ -244,7 +244,7 @@ collects every gate `deploy`/`push` enforce, with the exact error and the fix.
 ```bash
 dexaflow deploy <dag_id>     # a specific DAG of the workspace around the current folder
 dexaflow deploy --all        # every DAG in the workspace (best-effort; non-zero exit if any fail)
-dexaflow deploy --skip-build # reuse the existing image (skip docker build/push); dag.json is still recompiled from dexaflow.yaml/dag.py
+dexaflow deploy --skip-build # register the image already in the registry (no build or push); dag.json is still recompiled from dexaflow.yaml/dag.py
 ```
 
 The workspace is the folder holding `dexaflow.workspace.yaml` above the current
@@ -283,17 +283,16 @@ different runner with different credentials, that only registers it.
 # build job
 dexaflow compile . --output dag.json --build --push --dag-version "$VERSION"
 
-# deploy job, later, possibly elsewhere
-docker pull "ghcr.io/your-org/first-pro-dag:$VERSION"   # deploy reads the digest from the local store
+# deploy job, later, possibly elsewhere (no docker needed)
 dexaflow deploy . --skip-build --dag-version "$VERSION"
 ```
 
 The two steps have to name the **same image**, and the name comes from
 `registry.tag_strategy` in `dexaflow.yaml`. Pass the same `--dag-version` to
 both, and run both from the same commit when the strategy is `git_sha`.
-`deploy --skip-build` still pins the digest: it asks the builder for the repo
-digest of that image, which only works when the image is in the runner's local
-store, hence the `docker pull` on a fresh runner.
+`deploy --skip-build` still pins the digest: it reads it from the registry,
+with the credentials `docker login` or your cloud's helper wrote, so the deploy
+runner needs read access to the registry and no container tool.
 
 {{% alert title="Prefer tag_strategy: git_sha for a split pipeline" color="info" %}}
 With the default `version` strategy the tag is the DAG version label, which

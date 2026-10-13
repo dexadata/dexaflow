@@ -11,6 +11,8 @@ import (
 var imageBuilderPackages = []string{
 	"github.com/dexadata/dexaflow/internal/build",
 	"github.com/google/go-containerregistry",
+	"github.com/docker/cli",
+	"github.com/docker/docker-credential-helpers",
 }
 
 // linkedBuilderPackages returns the packages of deps that build images.
