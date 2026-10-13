@@ -58,13 +58,15 @@ func IsPodLostCandidate(c PodLostCandidate, grace time.Duration, now time.Time) 
 // The full scheduler.Store embeds this interface so production wires through one
 // type; unit tests fake just this surface.
 type PodLostReapStore interface {
-	// ListRunningTasks returns the `running` TIs that have been running for at
-	// least grace, with the timestamp each entered running. Warm-pool attempts
-	// are excluded: they have no per-task pod, so a presence check would always
+	// ListRunningTasks returns one page of the `running` TIs that have been
+	// running for at least grace, with the timestamp each entered running,
+	// ordered by (started_at, id) and strictly after the cursor (the zero
+	// cursor is the start), at most ReapPageSize rows. Warm-pool attempts are
+	// excluded: they have no per-task pod, so a presence check would always
 	// read them as lost, and the warm-worker-lost reaper owns them. The grace
-	// filter is applied before the store's per-tick limit, so attempts still
-	// inside it never take the slots of those the reaper can act on.
-	ListRunningTasks(ctx context.Context, grace time.Duration) ([]PodLostCandidate, error)
+	// filter is applied before the page limit, so attempts still inside it
+	// never take the slots of those the reaper can act on.
+	ListRunningTasks(ctx context.Context, grace time.Duration, after ReapCursor) ([]PodLostCandidate, error)
 	// MarkTaskPodLost transitions one TI to `failed` with
 	// error_message='pod_lost'. The WHERE state='running' guard makes this
 	// idempotent. It returns whether a row was actually updated: false means a
@@ -110,6 +112,9 @@ type podLostReaper struct {
 	cache PodPresenceCache
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
+	// pager walks the running list across sweeps, so live attempts cannot
+	// hide a lost one behind a full page (R-07, #1597).
+	pager reapPager
 }
 
 func newPodLostReaper(store PodLostReapStore, logger *slog.Logger, grace time.Duration, rec DecisionRecorder) *podLostReaper {
@@ -146,10 +151,13 @@ func (r *podLostReaper) run(ctx context.Context) error {
 	// therefore narrowed to a state no timing can fake — no pod object for the
 	// attempt at all. A finished pod is still a present pod, and stays the
 	// reconciler's, valve open or shut.
-	candidates, err := r.store.ListRunningTasks(ctx, r.grace)
+	// One page per sweep, after the cursor the last sweep left: a full page of
+	// live attempts moves the cursor on instead of being listed again.
+	candidates, err := r.store.ListRunningTasks(ctx, r.grace, r.pager.after())
 	if err != nil {
 		return err
 	}
+	advancePager(&r.pager, candidates)
 	for _, c := range candidates {
 		if !IsPodLostCandidate(c, r.grace, now) {
 			continue

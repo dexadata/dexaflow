@@ -61,10 +61,13 @@ func IsDispatchLost(c StaleQueuedCandidate, threshold time.Duration, now time.Ti
 // reaper needs. The full scheduler.Store embeds this interface so production
 // wires through one type; unit tests fake just this surface.
 type DispatchLostReapStore interface {
-	// ListStaleQueuedCandidates returns every `queued` TI alongside the
-	// timestamp it entered the queue. The threshold decision is purely in Go
-	// so the SQL stays simple.
-	ListStaleQueuedCandidates(ctx context.Context) ([]StaleQueuedCandidate, error)
+	// ListStaleQueuedCandidates returns one page of the `queued` TIs that
+	// entered the queue at least threshold ago, with that timestamp, ordered
+	// by (queued_at, id) and strictly after the cursor (the zero cursor is the
+	// start), at most ReapPageSize rows. The threshold is applied before the
+	// page limit, so attempts inside it never take the slots of those past it;
+	// the reaper still re-checks it in Go.
+	ListStaleQueuedCandidates(ctx context.Context, threshold time.Duration, after ReapCursor) ([]StaleQueuedCandidate, error)
 	// MarkTaskDispatchLost transitions one TI to `failed` with
 	// error_message='dispatch_lost'. The WHERE state='queued' guard makes
 	// this idempotent: a second call on a now-non-queued TI is a no-op. It is
@@ -114,6 +117,9 @@ type dispatchLostReaper struct {
 	procs ProcessLiveness
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
+	// pager walks the queued list across sweeps, so attempts whose pods are
+	// Pending cannot hide a lost dispatch behind a full page (R-07, #1597).
+	pager reapPager
 }
 
 func newDispatchLostReaper(store DispatchLostReapStore, logger *slog.Logger, threshold time.Duration, rec DecisionRecorder) *dispatchLostReaper {
@@ -130,10 +136,12 @@ func (r *dispatchLostReaper) run(ctx context.Context) error {
 			r.record("dispatch_lost_panic")
 		}
 	}()
-	candidates, err := r.store.ListStaleQueuedCandidates(ctx)
+	// One page per sweep, after the cursor the last sweep left (R-07).
+	candidates, err := r.store.ListStaleQueuedCandidates(ctx, r.threshold, r.pager.after())
 	if err != nil {
 		return err
 	}
+	advancePager(&r.pager, candidates)
 	// Live warm-pod set for the H3 defer, read ONCE per tick (Θ(pools)). A nil
 	// lister (warm off / not wired) yields an empty set, so the warm defer below
 	// never triggers and the dedicated path is unchanged.

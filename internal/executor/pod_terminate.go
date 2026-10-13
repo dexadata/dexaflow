@@ -55,12 +55,15 @@ import (
 // the reconciler (#928). Tolerates NotFound.
 func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, a Attempt) error {
 	return e.deletePodsBySelector(ctx, attemptSelector(a), func(pod *corev1.Pod) bool {
-		return podMatchesEpoch(pod, a.AttemptEpoch)
+		return podMatchesAttempt(pod, a)
 	})
 }
 
 // attemptSelector is the server-side label selector for one attempt's pods:
-// run, task and try. The epoch is not in it (see podMatchesEpoch).
+// run, task and try. The epoch is not in it (see podMatchesEpoch), and the
+// task label is lossy, so a listed pod may belong to a sibling task whose id
+// differs only by case, '_' or '.' (see podMatchesTask). Every reader filters
+// the list with podMatchesAttempt.
 func attemptSelector(a Attempt) string {
 	return fmt.Sprintf("%s=%s,%s=%s,%s=%s",
 		podLabelRunID, labelValue(a.RunID),
@@ -81,6 +84,23 @@ func podEpoch(pod *corev1.Pod) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// podMatchesAttempt is the in-Go half of attemptSelector: the pod is of the
+// attempt's epoch and of exactly its task.
+func podMatchesAttempt(pod *corev1.Pod, a Attempt) bool {
+	return podMatchesEpoch(pod, a.AttemptEpoch) && podMatchesTask(pod, a.TaskID)
+}
+
+// podMatchesTask reports whether a pod belongs to exactly this task id. The
+// task-id label only narrows the list: labelValue maps load_a and load-a, or
+// Load and load, to one value, so a teardown would stop the sibling's live pod
+// and a presence read would count it (R-10, #1598). A pod carrying the raw id
+// annotation matches only that id. A pod without it was created by a release
+// before the annotation, and matches on its labels as it always did.
+func podMatchesTask(pod *corev1.Pod, taskID string) bool {
+	raw, ok := pod.Annotations[podAnnotationRawTaskID]
+	return !ok || raw == taskID
 }
 
 // podMatchesEpoch reports whether a pod belongs to the given attempt epoch. A
@@ -309,7 +329,7 @@ func (e *KubernetesExecutor) TaskPodPresence(ctx context.Context, a Attempt) (Po
 	}
 	presence := PodPresenceAbsent
 	for i := range pods.Items {
-		if !podMatchesEpoch(&pods.Items[i], a.AttemptEpoch) {
+		if !podMatchesAttempt(&pods.Items[i], a) {
 			continue
 		}
 		if phase := pods.Items[i].Status.Phase; phase == corev1.PodPending || phase == corev1.PodRunning {

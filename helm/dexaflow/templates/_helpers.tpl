@@ -762,3 +762,51 @@ render fails with the way out rather than shipping a guess.
 {{- end -}}
 {{- printf "%dMiB" $mib -}}
 {{- end -}}
+
+{{/*
+The namespace task pods, their staging PVCs, the executor Role/RoleBinding, the
+auto-generated agent CA ConfigMap, the task ServiceAccount and the task
+NetworkPolicy live in (#1682). Resolution order:
+
+  1. taskNamespace, when set. An explicit value always wins, "leoflow" included.
+  2. On `helm upgrade`, the namespace the release's running control plane already
+     creates task pods in, read from the LEOFLOW_EXECUTOR_TASK_NAMESPACE (or
+     DEXAFLOW_EXECUTOR_TASK_NAMESPACE) env of its Deployments. Charts before
+     #1682 defaulted an unset value to the literal "leoflow", so an install that
+     relied on that default keeps its task pods and RBAC where they are instead
+     of having them moved under running pods. lookup returns nothing under
+     `helm template` and GitOps renderers, which then fall through to 3: those
+     must set taskNamespace explicitly before upgrading (see the upgrade guide).
+  3. The release namespace.
+*/}}
+{{- define "leoflow.taskNamespace" -}}
+{{- $ns := .Values.taskNamespace | default "" | trim -}}
+{{- if and (not $ns) .Release.IsUpgrade -}}
+{{- $ns = include "leoflow.liveTaskNamespace" . -}}
+{{- end -}}
+{{- default .Release.Namespace $ns -}}
+{{- end -}}
+
+{{/*
+The task namespace the release's live control plane was given, or "" when there
+is no live Deployment of this release (fresh install, `helm template`, GitOps).
+Only Deployments labeled with this release's instance are read, so another
+release in the same namespace is never consulted.
+*/}}
+{{- define "leoflow.liveTaskNamespace" -}}
+{{- $found := "" -}}
+{{- $list := lookup "apps/v1" "Deployment" .Release.Namespace "" | default dict -}}
+{{- range $d := ($list.items | default list) -}}
+{{- $labels := $d.metadata.labels | default dict -}}
+{{- if and (not $found) (eq (get $labels "app.kubernetes.io/instance") $.Release.Name) -}}
+{{- range $c := ($d.spec.template.spec.containers | default list) -}}
+{{- range $e := ($c.env | default list) -}}
+{{- if and (not $found) (has $e.name (list "LEOFLOW_EXECUTOR_TASK_NAMESPACE" "DEXAFLOW_EXECUTOR_TASK_NAMESPACE")) $e.value -}}
+{{- $found = $e.value -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $found -}}
+{{- end -}}

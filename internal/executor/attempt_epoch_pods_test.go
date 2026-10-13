@@ -187,11 +187,11 @@ type epochMarkStore struct {
 	stale bool
 }
 
-func (f *epochMarkStore) ListRunningTasks(context.Context, time.Duration) ([]PodLostCandidate, error) {
+func (f *epochMarkStore) ListRunningTasks(context.Context, time.Duration, ReapCursor) ([]PodLostCandidate, error) {
 	return f.running, nil
 }
 
-func (f *epochMarkStore) ListStaleQueuedCandidates(context.Context) ([]StaleQueuedCandidate, error) {
+func (f *epochMarkStore) ListStaleQueuedCandidates(context.Context, time.Duration, ReapCursor) ([]StaleQueuedCandidate, error) {
 	return f.queued, nil
 }
 

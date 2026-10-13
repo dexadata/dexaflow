@@ -89,7 +89,7 @@ and more), and needs no Dexaflow code.
    kind: ExternalSecret
    metadata:
      name: gcp-sa-key
-     namespace: leoflow           # the chart's taskNamespace (default: leoflow)
+     namespace: leoflow           # the chart's taskNamespace (default: the release namespace)
    spec:
      refreshInterval: 1h
      secretStoreRef:

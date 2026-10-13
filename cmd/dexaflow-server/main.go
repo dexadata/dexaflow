@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -1649,19 +1648,16 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(agentrpc.RecoveryUnaryInterceptor(logger), inflight.UnaryInterceptor()),
 		grpc.ChainStreamInterceptor(agentrpc.RecoveryStreamInterceptor(logger), inflight.StreamInterceptor()),
-		// Tolerate a warm worker's keepalive pings on an otherwise idle assignment
-		// stream so gRPC does not GOAWAY it as abusive (ADR 0058 N1b). This only
-		// RELAXES the server's default client-ping enforcement (5m, streams-only),
-		// so it cannot change StreamLogs behavior — an active StreamLogs already
-		// satisfies both the old and new policy. Server-initiated keepalive
-		// (ServerParameters: MaxConnectionIdle / Time pings) is deliberately NOT
-		// added here: it would start pinging existing idle StreamLogs connections,
-		// a behavior change with no benefit until a real warm worker connects.
-		// Deferred to N1b1-place as a documented TODO.
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
+		// Tolerate the agents' keepalive pings, including on an otherwise idle
+		// connection or assignment stream, so gRPC does not GOAWAY them as
+		// abusive (ADR 0058 N1b, #946). This only RELAXES the server's default
+		// client-ping enforcement (5m, streams-only). Server-initiated keepalive
+		// (ServerParameters) is deliberately NOT added: the agent pings, and so
+		// detects a dead control plane itself; a vanished agent is found by the
+		// heartbeat reapers, and an assignment sent to a vanished warm worker is
+		// reclaimed when its ack lease expires. Server pings on every idle agent
+		// connection would cost something and detect nothing those miss.
+		grpc.KeepaliveEnforcementPolicy(agentrpc.KeepaliveEnforcementPolicy()),
 	}
 	secure := tlsCert != "" && tlsKey != ""
 	if secure {
@@ -2549,6 +2545,32 @@ type leadershipChecker interface {
 	HoldsLock(ctx context.Context) (bool, error)
 }
 
+// leadershipAcquirer tries to take leadership without blocking.
+type leadershipAcquirer interface {
+	TryAcquire(ctx context.Context) (bool, error)
+}
+
+// tryLeadership runs one campaign attempt under a deadline. The leader pool
+// has no statement timeout, so on a black-holed session (the database host
+// gone without a TCP reset) an attempt with no deadline would block until the
+// kernel gives up on the socket, about 15 minutes by default (#1599). When the
+// deadline cuts the query, pgx closes that connection, so a lock the server
+// may have granted meanwhile goes with the session.
+func tryLeadership(ctx context.Context, acq leadershipAcquirer, timeout time.Duration) (bool, error) {
+	actx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return acq.TryAcquire(actx)
+}
+
+// checkLeadership is one watchdog check under a deadline: a check that cannot
+// confirm the lock within it fails, and counts toward stepping down, instead
+// of blocking the watchdog on a dead session (#1599).
+func checkLeadership(ctx context.Context, chk leadershipChecker, timeout time.Duration) (bool, error) {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return chk.HoldsLock(cctx)
+}
+
 // campaignAndRun acquires scheduler leadership (polling every leaderCheckInterval)
 // and runs the loop only while leader, so a single replica schedules at a time
 // (ADR 0009). If leadership is lost mid-run (the advisory lock dropped because the
@@ -2563,7 +2585,7 @@ func campaignAndRun(ctx context.Context, leader *scheduler.Leader, sched *schedu
 	// re-acquire latency (no churn happened yet).
 	var stepDownAt time.Time
 	for {
-		acquired, err := leader.TryAcquire(ctx)
+		acquired, err := tryLeadership(ctx, leader, leaderCheckInterval)
 		switch {
 		case err != nil:
 			logger.Error("acquiring leadership", "error", err)
@@ -2624,8 +2646,11 @@ func runAsLeader(ctx context.Context, leader *scheduler.Leader, sched *scheduler
 
 // watchLeadership cancels the run when leadership is lost: a definitive "not
 // held" steps down immediately, while transient check errors are tolerated up to
-// maxLeaderCheckFailures (a connection blip should not churn leadership). It
-// returns when the run context is canceled. The onStepDown callback fires
+// maxLeaderCheckFailures (a connection blip should not churn leadership). Each
+// check runs under a deadline of one interval, so a check that hangs on a
+// black-holed session is a failure too: the leader steps down within about
+// maxLeaderCheckFailures intervals of losing its database (#1599). It returns
+// when the run context is canceled. The onStepDown callback fires
 // once, BEFORE cancel(), with the step-down reason so the scheduler can
 // classify the cancel fanout (#311) and increment the per-reason counter.
 func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.Duration, cancel context.CancelFunc, logger *slog.Logger, onStepDown func(reason string)) {
@@ -2643,7 +2668,7 @@ func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			held, err := chk.HoldsLock(ctx)
+			held, err := checkLeadership(ctx, chk, interval)
 			switch {
 			case err != nil:
 				if ctx.Err() != nil {

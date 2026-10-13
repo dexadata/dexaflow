@@ -31,6 +31,7 @@ see [Lite: which reapers run](#lite-which-reapers-run).
 | Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/dexaflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
+| Cluster stopped the task pod (graceful node shutdown on a spot or preemptible reclaim, node-pressure eviction, preemption, admission refusal) | Pod reconciler | next reconcile sweep (30 s) | TI failed with `pod_disrupted` on the infra rail: re-placed on the infra budget without spending a task retry. See [A pod the cluster stopped is an infra failure](#a-pod-the-cluster-stopped-is-an-infra-failure). |
 | Run stuck `running` with no live TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
 
 Every SLA above is a floor: the reapers run every **30 s**, so detection lands
@@ -38,6 +39,28 @@ up to one cycle after the threshold elapses. Worst case end-to-end: a mid-tick
 scheduler crash that leaves TIs queued is fully reaped within
 **`max(3 min, 5 min) + 30 s`** — the dispatch-lost reaper runs first, then the
 orphan-run reaper picks up the now-no-active-TI run on a later cycle.
+
+### Large backlogs: the candidate lists are paged
+
+The pod-lost and dispatch-lost reapers read their candidates one page of 100
+rows per cycle, oldest first, and keep their place between cycles: each cycle
+asks for the page after the last row the previous cycle saw, and a page shorter
+than 100 rows sends the next cycle back to the start. The dispatch-lost
+threshold and the pod-lost grace are applied in the query, before the page
+limit, so rows still inside them never take a slot.
+
+Before this, both lists always returned the 100 oldest rows. With 100 or more
+older attempts whose pods were alive (long tasks, or Pending pods during a
+capacity shortage), a newer attempt whose pod vanished or whose create never
+happened was never listed, kept its pool slot and its `max_active_tasks`
+charge, and its run never finished
+([#1597](https://github.com/dexadata/dexaflow/issues/1597)). Now such an
+attempt is reached within `ceil(N / 100)` cycles, where N is the number of
+candidates ahead of it, so the SLAs above hold up to 100 candidates and grow by
+one cycle (30 s) per further 100. The agent-lost reaper orders by heartbeat
+staleness and is not paged. The Lite passes over running attempts (the
+credential ceiling and the never-heartbeated agent-lost check) page the same
+way.
 
 ### Who enforces `execution_timeout` — and why the pod outlives it
 
@@ -260,6 +283,47 @@ On Lite there is no reconciler and no pod to wait for: the mark is confirmed
 when it is made, and nothing changes. Marks made before the upgrade count as
 confirmed. Every rail that starts a new execution of the task (retry, clear,
 re-place, reschedule) clears `infra_confirmed_at` again.
+
+## A pod the cluster stopped is an infra failure
+
+A task pod can end because the cluster stopped it rather than because the task
+failed: the kubelet shuts the node down gracefully (a spot or preemptible
+reclaim), evicts the pod under node pressure, the scheduler preempts it, or the
+kubelet refuses it at admission. [ADR 0051](/project/adrs/0051-separate-orchestration-and-execution-state-machines/)
+puts these on the infra rail, and the pod reconciler settles them there: the
+task instance is `failed` with `last_failure_kind = infra` and an
+`error_message` that starts with `pod_disrupted:`, and the planner re-places it
+on the infra budget. The task's own `retries` are not spent, so a task with
+`retries: 0` survives a node reclaim.
+
+The reconciler reads two signals from the terminal pod:
+
+- the `DisruptionTarget` condition with status `True` (reasons
+  `TerminationByKubelet`, `PreemptionByScheduler`, `EvictionByEvictionAPI`,
+  `DeletionByTaintManager`);
+- the pod reason `Evicted`, `Shutdown`, `NodeShutdown`, `Terminated`,
+  `OutOfcpu`, `OutOfmemory` or `UnexpectedAdmissionError`, which older kubelets
+  and admission refusals set without the condition.
+
+Two things still win over them. A durable SUCCESS or RESCHEDULE record settles
+as before (the task finished before the node went away). And an `OOMKilled`
+task container stays a task failure even on a disrupted pod, because the kernel
+enforced the task's own memory limit. The same holds for an `Evicted` pod whose
+kubelet message names a limit of the pod's own (a container over its
+ephemeral-storage limit, the pod over its containers' total ephemeral-storage
+limit, or an emptyDir volume over its `sizeLimit`): the task outgrew what it
+asked for, so it is a task failure that spends a retry, and the
+`error_message` quotes the kubelet's message. Only an eviction for node
+pressure ("The node was low on resource") is infra. A FAILED record does not win: the agent
+writes one when it catches the SIGTERM of a node shutdown, and that record says
+the task stopped, not why.
+
+The settle is confirmed at once, since the reconciler has just read the
+terminal pod, so it does not wait for the infra confirmation valve. A pod that
+vanished with its node instead is still the pod-lost reaper's `pod_lost`; both
+end on the same infra rail. The infra budget bounds the re-places, so a task
+that keeps landing on reclaimed nodes ends in a terminal infra failure instead
+of looping.
 
 ## Lite: which reapers run
 
@@ -524,6 +588,17 @@ durable DB transition, each reaper tears the pod down:
   same `(try, epoch)`, so a row re-placed between the list and the mark is left
   alone, and the pod-presence check that defers a reap only counts the
   attempt's own pod.
+- The `task-id` label is lossy: it is lowercased and `_` and `.` become `-`, so
+  task ids such as `load_a` and `load-a`, or `Load` and `load`, share one value.
+  Every task pod therefore also carries its exact task id in the
+  `leoflow.io/raw-task-id` annotation, and the teardown, the pod-presence check
+  (live and cached) and the reconciler's infra confirmation only act on a pod
+  whose annotation names the attempt's own task. Tearing down one of two such
+  tasks no longer stops the other's live pod, and a task with no pod no longer
+  reads its sibling's pod as its own
+  ([#1598](https://github.com/dexadata/dexaflow/issues/1598)). A pod created
+  by a release before 0.5.4 has no such annotation and is matched on its labels
+  alone, as before, until it finishes.
 - The **reconciler** settles a finished pod's outcome only against the
   attempt named by that pod's labels, try and epoch. A superseded pod's
   `success` record can no longer settle the replacement that shares its try
