@@ -183,6 +183,12 @@ git push -u origin fix/clear-error-message
   before merging), and no pull request workflow depends on a repository
   secret. See "Pull requests from a fork" in
   [`CONTRIBUTING.md`](https://github.com/dexadata/dexaflow/blob/main/CONTRIBUTING.md).
+- **Public APIs do not break by accident.** The API compatibility check
+  compares `proto/` (`buf breaking`), `docs/api/openapi.yaml` (`oasdiff
+  breaking`) and the exported API of `pkg/client` (`apidiff`) with the base
+  branch. An intended break needs the **`breaking-change`** label, applied by a
+  maintainer, and a changelog fragment of kind `Changed` or `Removed` that names
+  it. Run `scripts/api-compat.sh <checkout-of-main>` to see the verdict locally.
 
 {{% alert title="Security-sensitive areas need extra review" color="danger" %}}
 Changes to `internal/auth/`, `internal/executor/`, `internal/storage/`,
@@ -213,11 +219,13 @@ accepted from first-time contributors** — open a discussion issue first.
 ## 6. The CI gates
 
 Every PR runs, and must pass: the **build + unit/integration tests** with the
-per-package coverage floor, **golangci-lint** (the A+ stack), and the
-**security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), and the
+per-package coverage floor, **golangci-lint** (the A+ stack), the
+**security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), the
 **CHANGELOG guard** (a fragment, a hand-written entry, or a `Skip-changelog:`
-line or label), and the **docs guard** (an edit under `website/content/`, or a
-`Skip-docs: <reason>` line). The same
+line or label), the **docs guard** (an edit under `website/content/`, or a
+`Skip-docs: <reason>` line), and the **API compatibility** check (no breaking
+change to `proto/`, the OpenAPI document or `pkg/client`, or the
+`breaking-change` label and a `Changed`/`Removed` fragment). The same
 `make lint test` you run locally is the fast feedback loop; CI is the source of
 truth. Push fixes until everything is green, then a maintainer reviews — we aim
 for three business days.
