@@ -15,6 +15,11 @@ permissions:
   security-events: write    # Required for SARIF upload to GitHub Security tab
 
 env:
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
   GO_VERSION: "1.26.9"
   # The Trivy binary the trivy-action steps run. The action is pinned to its
   # v0.36.0 release (#1553); before, it was pinned to a master commit with a
