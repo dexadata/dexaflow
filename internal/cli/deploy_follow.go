@@ -15,10 +15,8 @@ func checkDeployFollow(o deployOptions) error {
 		return fmt.Errorf("--follow needs --trigger: deploy only registers the DAG; add --trigger to start a run and follow it")
 	case o.follow && o.all:
 		return fmt.Errorf("--follow follows one run: deploy one DAG with --trigger --follow, or drop --follow with --all")
-	case o.timeout != 0 && !o.follow:
-		return fmt.Errorf("--timeout applies to --follow")
 	}
-	return nil
+	return checkFollowTimeout(o.follow, o.timeout)
 }
 
 // deployTrigger returns what deploy does once the DAG is registered (or found

@@ -44,9 +44,18 @@ type fakeRunServer struct {
 	failReads int // run reads answered 503 before the normal answer
 	writes    int // PATCH or DELETE on the run: a cancellation the follower must never send
 	triggers  int
+	hangLogs  bool   // logs requests block until the client gives up
+	listQuery string // the query of the last run list request
 }
 
 func (s *fakeRunServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.hangLogs && strings.Contains(r.URL.Path, "/logs/") {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	const run = "/api/v2/dags/etl/dagRuns/run-1"
@@ -61,6 +70,7 @@ func (s *fakeRunServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/v2/dags/etl":
 		_, _ = fmt.Fprintf(w, `{"dag_id":"etl","is_paused":%t}`, s.paused)
 	case p == "/api/v2/dags/etl/dagRuns":
+		s.listQuery = r.URL.RawQuery
 		_, _ = fmt.Fprintf(w, `{"dag_runs":[{"dag_run_id":"run-1","state":%q}],"total_entries":1}`, s.current().state)
 	case p == run:
 		if s.failReads > 0 {
@@ -495,5 +505,174 @@ func TestFollowRunStopsOnAWriteError(t *testing.T) {
 	err := followRun(ctx, &failingWriter{n: 1}, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{})
 	if err == nil || !strings.Contains(err.Error(), "broken pipe") {
 		t.Fatalf("err = %v, want the write error", err)
+	}
+}
+
+// hostileLog is a task log line carrying an OSC 52 clipboard write, a bell, a
+// DEL and a carriage return: none of them may reach the terminal.
+const hostileLog = "ok\x1b]52;c;ZXZpbA==\x07do\x7fne\r\n"
+
+func assertNoControl(t *testing.T, out string) {
+	t.Helper()
+	for _, c := range []string{"\x1b", "\x07", "\x7f", "\r"} {
+		if strings.Contains(out, c) {
+			t.Errorf("output carries control character %q:\n%q", c, out)
+		}
+	}
+	if !strings.Contains(out, "ok]52;c;ZXZpbA==done") {
+		t.Errorf("output lost the printable text of the log line:\n%q", out)
+	}
+}
+
+// TestTaskLogsAreSanitized: task logs are written by user code, so every path
+// that prints them strips terminal control characters (the follow, every task
+// of a run, and one task's attempt).
+func TestTaskLogsAreSanitized(t *testing.T) {
+	fastFollow(t)
+	steps := []runStep{{state: "success", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}}
+	srv := newFakeRun(t, &fakeRunServer{steps: steps, logs: map[string]string{"extract/1": hostileLog}})
+	for _, args := range [][]string{
+		{"runs", "logs", "etl", "run-1", "--follow"},
+		{"runs", "logs", "etl", "run-1"},
+		{"runs", "logs", "etl", "run-1", "extract", "--try", "1"},
+	} {
+		out, _, err := run(t, append(args, "--server", srv.URL, "--token", "x")...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		assertNoControl(t, out)
+	}
+}
+
+// TestFollowRunPrintsALineLongerThanAnyBuffer: a log line over 1 MiB is
+// printed whole, and the lines after it too.
+func TestFollowRunPrintsALineLongerThanAnyBuffer(t *testing.T) {
+	fastFollow(t)
+	long := strings.Repeat("a", 2<<20)
+	fake := &fakeRunServer{steps: []runStep{{state: "success", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}},
+		logs: map[string]string{"extract/1": long + "\nafter\n"}}
+	srv := newFakeRun(t, fake)
+	var out strings.Builder
+
+	if err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+		t.Fatalf("followRun: %v", err)
+	}
+	if !strings.Contains(out.String(), "    | "+long+"\n") || !strings.Contains(out.String(), "    | after\n") {
+		t.Errorf("the long line or the line after it is missing (output %d bytes)", out.Len())
+	}
+}
+
+// TestFollowRunPrintsTriesItDidNotSee: when the polls miss the up_for_retry
+// state, the logs of the earlier attempt still print.
+func TestFollowRunPrintsTriesItDidNotSee(t *testing.T) {
+	fastFollow(t)
+	fake := &fakeRunServer{steps: []runStep{
+		{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 1}}},
+		{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 2}}},
+		{state: "success", tis: []fakeTI{{task: "extract", state: "success", try: 2, dur: 1}}},
+	}, logs: map[string]string{"extract/1": "first try failed\n", "extract/2": "second try worked\n"}}
+	srv := newFakeRun(t, fake)
+	var out strings.Builder
+
+	if err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+		t.Fatalf("followRun: %v", err)
+	}
+	for _, want := range []string{"| first try failed", "| second try worked"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output does not contain %q:\n%s", want, out.String())
+		}
+	}
+	if n := fake.logReadCount("extract/1"); n != 1 {
+		t.Errorf("try 1 logs read %d time(s), want once", n)
+	}
+}
+
+// TestFollowTimeoutIsAHardBound: --timeout holds even while a request hangs
+// (here the logs of a finished task).
+func TestFollowTimeoutIsAHardBound(t *testing.T) {
+	fastFollow(t)
+	fake := &fakeRunServer{hangLogs: true, steps: []runStep{{state: "running", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}}}
+	srv := newFakeRun(t, fake)
+	start := time.Now()
+
+	_, _, err := run(t, "runs", "trigger", "etl", "--follow", "--timeout", "100ms", "--server", srv.URL, "--token", "x")
+	if got := exitCodeOf(err); got != exitFollowTimeout {
+		t.Errorf("exit code = %d (err %v), want %d", got, err, exitFollowTimeout)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("--timeout 100ms took %s", took)
+	}
+}
+
+// TestFollowRejectsANegativeTimeout: a negative --timeout is a typo, not "no
+// limit".
+func TestFollowRejectsANegativeTimeout(t *testing.T) {
+	for _, args := range [][]string{
+		{"runs", "trigger", "etl", "--follow", "--timeout", "-1m"},
+		{"deploy", t.TempDir(), "--trigger", "--follow", "--timeout", "-1m", "--yes"},
+	} {
+		_, _, err := run(t, append(args, "--server", "http://127.0.0.1:1", "--token", "x")...)
+		if err == nil || !strings.Contains(err.Error(), "--timeout must not be negative") {
+			t.Errorf("%v: err = %v, want a negative --timeout refused", args, err)
+		}
+	}
+}
+
+// TestRunsLogsAsksForTheLatestRun: the latest run is requested explicitly
+// (newest first, one run), not taken from the head of a default listing.
+func TestRunsLogsAsksForTheLatestRun(t *testing.T) {
+	fake := &fakeRunServer{steps: successSteps()[3:]}
+	srv := newFakeRun(t, fake)
+
+	if _, _, err := run(t, "runs", "logs", "etl", "--server", srv.URL, "--token", "x"); err != nil {
+		t.Fatalf("runs logs: %v", err)
+	}
+	q, _ := url.ParseQuery(fake.listQuery)
+	if q.Get("order_by") != "-logical_date" || q.Get("limit") != "1" {
+		t.Errorf("run list query = %q, want order_by=-logical_date&limit=1", fake.listQuery)
+	}
+}
+
+// TestRunsLogsEscapesTheDagID: the dag_id is a path segment, escaped.
+func TestRunsLogsEscapesTheDagID(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.EscapedPath()
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	_, _, _ = run(t, "runs", "logs", "etl%zz", "--server", srv.URL, "--token", "x")
+	if got != "/api/v2/dags/etl%25zz/dagRuns" {
+		t.Errorf("requested %q, want the escaped dag_id", got)
+	}
+}
+
+// TestRunsLogsHelpNamesTheExitCodes: -f without a task exits with the run's
+// result, and the help says so.
+func TestRunsLogsHelpNamesTheExitCodes(t *testing.T) {
+	out, _, err := run(t, "runs", "logs", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "exits 2 when the run failed") {
+		t.Errorf("help does not name the exit codes:\n%s", out)
+	}
+}
+
+// TestFollowRunEndsALogWithoutNewline: a log whose last line has no newline
+// does not run into the next line of output.
+func TestFollowRunEndsALogWithoutNewline(t *testing.T) {
+	fastFollow(t)
+	fake := &fakeRunServer{steps: []runStep{{state: "success", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}},
+		logs: map[string]string{"extract/1": "no newline at the end"}}
+	srv := newFakeRun(t, fake)
+	var out strings.Builder
+
+	if err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+		t.Fatalf("followRun: %v", err)
+	}
+	if !strings.Contains(out.String(), "    | no newline at the end\nRun run-1 succeeded") {
+		t.Errorf("the last log line runs into the next output:\n%q", out.String())
 	}
 }

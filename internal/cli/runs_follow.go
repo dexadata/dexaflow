@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -75,6 +73,10 @@ type transientError struct{ err error }
 func (e *transientError) Error() string { return e.err.Error() }
 func (e *transientError) Unwrap() error { return e.err }
 
+// errFollowTimeout is the cancel cause of a follow whose --timeout elapsed,
+// which tells it apart from Ctrl-C.
+var errFollowTimeout = errors.New("--timeout elapsed")
+
 // followTarget names the run being followed and the control plane serving it.
 type followTarget struct {
 	base, token, dagID, runID string
@@ -137,6 +139,7 @@ type follower struct {
 	hinted  bool
 	started time.Time
 	werr    error // the first failed write to out; it ends the follow
+	timeout time.Duration
 }
 
 // printf writes to out unless an earlier write failed, keeping the first
@@ -152,14 +155,17 @@ func (f *follower) printf(format string, a ...any) {
 // returns nil for a successful run or an exitCodeError otherwise. Canceling
 // ctx stops the follow (exitInterrupted); it never changes the run.
 func followRun(ctx context.Context, out io.Writer, t followTarget, o followOptions) error {
-	f := &follower{out: out, t: t, seen: map[string]taskInstance{}, logged: map[string]bool{}, started: time.Now()}
+	f := &follower{out: out, t: t, seen: map[string]taskInstance{}, logged: map[string]bool{}, started: time.Now(), timeout: o.timeout}
 	stallAfter := o.stallAfter
 	if stallAfter <= 0 {
 		stallAfter = followStallAfter
 	}
-	var deadline time.Time
 	if o.timeout > 0 {
-		deadline = f.started.Add(o.timeout)
+		// The deadline bounds every request too, so a hung read cannot
+		// outlive --timeout.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadlineCause(ctx, f.started.Add(o.timeout), errFollowTimeout)
+		defer cancel()
 	}
 	if err := f.header(ctx); err != nil {
 		return err
@@ -172,7 +178,7 @@ func followRun(ctx context.Context, out io.Writer, t followTarget, o followOptio
 		}
 		switch {
 		case ctx.Err() != nil:
-			return f.interrupted()
+			return f.stopped(ctx)
 		case err != nil:
 			failures++
 			var transient *transientError
@@ -186,7 +192,7 @@ func followRun(ctx context.Context, out io.Writer, t followTarget, o followOptio
 			f.hintStall(state, stallAfter)
 		}
 		wait = nextFollowWait(wait, changed)
-		if werr := f.sleep(ctx, wait, deadline, o.timeout); werr != nil {
+		if werr := f.sleep(ctx, wait); werr != nil {
 			return werr
 		}
 	}
@@ -205,30 +211,26 @@ func nextFollowWait(prev time.Duration, changed bool) time.Duration {
 	return next
 }
 
-// sleep waits d, or until the deadline when that comes first. It returns the
-// timeout error once the deadline has passed and the interrupt error when ctx
-// is canceled.
-func (f *follower) sleep(ctx context.Context, d time.Duration, deadline time.Time, timeout time.Duration) error {
-	if !deadline.IsZero() {
-		left := time.Until(deadline)
-		if left <= 0 {
-			return &exitCodeError{code: exitFollowTimeout, err: fmt.Errorf(
-				"stopped following run %s after %s (--timeout); the run keeps going. Check it with: %s",
-				f.t.runID, timeout, f.t.statusHint())}
-		}
-		d = min(d, left)
-	}
+// sleep waits d, or returns the stop error when ctx ends first.
+func (f *follower) sleep(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return f.interrupted()
+		return f.stopped(ctx)
 	case <-timer.C:
 		return nil
 	}
 }
 
-func (f *follower) interrupted() error {
+// stopped is the error of a follow whose ctx ended: the timeout error when
+// --timeout elapsed, the interrupt error otherwise (Ctrl-C).
+func (f *follower) stopped(ctx context.Context) error {
+	if errors.Is(context.Cause(ctx), errFollowTimeout) {
+		return &exitCodeError{code: exitFollowTimeout, err: fmt.Errorf(
+			"stopped following run %s after %s (--timeout); the run keeps going. Check it with: %s",
+			f.t.runID, f.timeout, f.t.statusHint())}
+	}
 	return &exitCodeError{code: exitInterrupted, err: fmt.Errorf(
 		"stopped following run %s; the run keeps going. Check it with: %s", f.t.runID, f.t.statusHint())}
 }
@@ -305,10 +307,17 @@ func (f *follower) report(ctx context.Context, ti taskInstance) bool {
 	if changed {
 		f.printf("  %-*s  %s%s\n", f.width, ti.TaskID, ti.state(), attemptDetails(ti))
 	}
-	key := ti.TaskID + "/" + strconv.Itoa(ti.TryNumber)
-	if ti.TryNumber >= 1 && attemptFinished(ti.state()) && !f.logged[key] {
-		f.logged[key] = true
-		f.printLogs(ctx, ti)
+	// Every try before the current one has finished, even when no poll saw
+	// it end (up_for_retry can come and go between two polls).
+	for try := 1; try <= ti.TryNumber; try++ {
+		if try == ti.TryNumber && !attemptFinished(ti.state()) {
+			break
+		}
+		key := ti.TaskID + "/" + strconv.Itoa(try)
+		if !f.logged[key] {
+			f.logged[key] = true
+			f.printLogs(ctx, ti.TaskID, try)
+		}
 	}
 	return changed
 }
@@ -345,17 +354,14 @@ func formatSeconds(s float64) string {
 
 // printLogs prints one finished attempt's logs, each line indented under the
 // task. A failed read is reported in place and does not stop the follow.
-func (f *follower) printLogs(ctx context.Context, ti taskInstance) {
-	var buf bytes.Buffer
-	err := streamTaskLogs(ctx, &buf, f.t.base, f.t.token, f.t.dagID, f.t.runID, ti.TaskID, ti.TryNumber, false)
-	if err != nil {
-		f.printf("    (logs of %s try %d unavailable: %v)\n", ti.TaskID, ti.TryNumber, err)
+func (f *follower) printLogs(ctx context.Context, taskID string, try int) {
+	if f.werr != nil {
 		return
 	}
-	sc := bufio.NewScanner(&buf)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		f.printf("    | %s\n", sc.Text())
+	err := streamTaskLogs(ctx, f.out, "    | ", f.t.base, f.t.token, f.t.dagID, f.t.runID, taskID, try, false)
+	if err != nil && ctx.Err() == nil {
+		// A failed write to out fails this note too, and followRun stops on it.
+		f.printf("    (logs of %s try %d unavailable: %v)\n", taskID, try, err)
 	}
 }
 
@@ -447,7 +453,7 @@ func printRunLogs(ctx context.Context, w io.Writer, t followTarget) error {
 		if _, err := fmt.Fprintf(w, "%s==> %s (try %d, %s) <==\n", sep, ti.TaskID, ti.TryNumber, ti.state()); err != nil {
 			return err
 		}
-		if err := streamTaskLogs(ctx, w, t.base, t.token, t.dagID, t.runID, ti.TaskID, ti.TryNumber, false); err != nil {
+		if err := streamTaskLogs(ctx, w, "", t.base, t.token, t.dagID, t.runID, ti.TaskID, ti.TryNumber, false); err != nil {
 			return fmt.Errorf("logs of %s: %w", ti.TaskID, err)
 		}
 	}

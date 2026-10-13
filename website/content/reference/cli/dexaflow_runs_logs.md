@@ -9,6 +9,14 @@ weight: 50
 
 Print task logs: one task's attempt, or every task of a run (the latest run by default).
 
+### Synopsis
+
+Print task logs. With a task_id, print that task's attempt (the latest by default; -f streams it while
+it runs). Without one, print every task of the run, or of the latest run when run_id is omitted too.
+Without a task_id, -f follows the run to its end: the command exits 0 when the run succeeded,
+exits 2 when the run failed (naming the failed tasks), and exits 130 after Ctrl-C,
+which stops following without canceling the run.
+
 ```
 dexaflow runs logs <dag_id> [run_id [task_id]] [flags]
 ```

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -43,8 +44,8 @@ func newRunsTriggerCommand() *cobra.Command {
 			"Ctrl-C and --timeout stop following; neither cancels the run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if timeout != 0 && !follow {
-				return fmt.Errorf("--timeout applies to --follow")
+			if err := checkFollowTimeout(follow, timeout); err != nil {
+				return err
 			}
 			base, bearer, err := resolveServerToken(cmd, serverURL, token)
 			if err != nil {
@@ -142,11 +143,15 @@ func newRunsStatusCommand() *cobra.Command {
 // fetchRunState returns the state and id of the named run, or of the most recent
 // run when runID is empty.
 func fetchRunState(ctx context.Context, base, token, dagID, runID string) (state, id string, err error) {
-	root := strings.TrimRight(base, "/") + "/api/v2/dags/" + dagID + "/dagRuns"
+	root := strings.TrimRight(base, "/") + "/api/v2/dags/" + neturl.PathEscape(dagID) + "/dagRuns"
 	if runID != "" {
-		return decodeRun(ctx, root+"/"+runID, token)
+		return decodeRun(ctx, root+"/"+neturl.PathEscape(runID), token)
 	}
-	status, raw, err := apiRequest(ctx, http.MethodGet, root, token, nil)
+	// Ask for the newest run explicitly. The control plane does not read
+	// order_by yet (Airflow does) and already lists a DAG's runs newest first
+	// (logical_date DESC, run_id DESC); the parameter keeps this right if that
+	// default changes or the server is Airflow itself.
+	status, raw, err := apiRequest(ctx, http.MethodGet, root+"?order_by=-logical_date&limit=1", token, nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -202,7 +207,12 @@ func newRunsLogsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs <dag_id> [run_id [task_id]]",
 		Short: "Print task logs: one task's attempt, or every task of a run (the latest run by default).",
-		Args:  cobra.RangeArgs(1, 3),
+		Long: "Print task logs. With a task_id, print that task's attempt (the latest by default; -f streams it while\n" +
+			"it runs). Without one, print every task of the run, or of the latest run when run_id is omitted too.\n" +
+			"Without a task_id, -f follows the run to its end: the command exits 0 when the run succeeded,\n" +
+			"exits " + strconv.Itoa(exitRunFailed) + " when the run failed (naming the failed tasks), and exits " +
+			strconv.Itoa(exitInterrupted) + " after Ctrl-C,\nwhich stops following without canceling the run.",
+		Args: cobra.RangeArgs(1, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 3 && try > 0 {
 				return fmt.Errorf("--try needs a task_id: dexaflow runs logs <dag_id> <run_id> <task_id> --try N")
@@ -223,7 +233,7 @@ func newRunsLogsCommand() *cobra.Command {
 					return err
 				}
 			}
-			return streamTaskLogs(ctx, cmd.OutOrStdout(), base, bearer, dagID, runID, taskID, attempt, follow)
+			return streamTaskLogs(ctx, cmd.OutOrStdout(), "", base, bearer, dagID, runID, taskID, attempt, follow)
 		},
 	}
 	addRunsFlags(cmd, &serverURL, &token)
@@ -253,6 +263,18 @@ func runLogsOfRun(cmd *cobra.Command, base, bearer string, args []string, follow
 		return followWithSignals(ctx, out, t, followOptions{})
 	}
 	return printRunLogs(ctx, out, t)
+}
+
+// checkFollowTimeout refuses a negative --timeout, and a --timeout without
+// --follow.
+func checkFollowTimeout(follow bool, timeout time.Duration) error {
+	switch {
+	case timeout < 0:
+		return fmt.Errorf("--timeout must not be negative")
+	case timeout != 0 && !follow:
+		return fmt.Errorf("--timeout applies to --follow")
+	}
+	return nil
 }
 
 // addFollowFlags registers --follow and --timeout for a command that triggers
@@ -299,7 +321,10 @@ func latestTryNumber(ctx context.Context, base, token, dagID, runID, taskID stri
 // the endpoint tails a running attempt. The endpoint answers an attempt with no
 // stored logs with a 200 and the "No logs available for this attempt." body,
 // which therefore passes straight through here.
-func streamTaskLogs(ctx context.Context, w io.Writer, base, token, dagID, runID, taskID string, try int, follow bool) error {
+//
+// The logs are user output: they pass through a logLineWriter, which strips
+// terminal control characters and starts each line with prefix.
+func streamTaskLogs(ctx context.Context, w io.Writer, prefix, base, token, dagID, runID, taskID string, try int, follow bool) (err error) {
 	url := taskInstanceURL(base, dagID, runID, taskID) + "/logs/" + strconv.Itoa(try)
 	if follow {
 		url += "?follow=true"
@@ -326,7 +351,11 @@ func streamTaskLogs(ctx context.Context, w io.Writer, base, token, dagID, runID,
 		}
 		return apiStatusError(resp.StatusCode, raw)
 	}
-	if _, err = io.Copy(w, resp.Body); err != nil {
+	lw := &logLineWriter{w: w, prefix: prefix}
+	if _, err = io.Copy(lw, resp.Body); err != nil {
+		return fmt.Errorf("streaming logs: %w", err)
+	}
+	if err = lw.finish(); err != nil {
 		return fmt.Errorf("streaming logs: %w", err)
 	}
 	return nil
