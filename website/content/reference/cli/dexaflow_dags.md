@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_dags/
 title: "dexaflow dags"
 linkTitle: "dags"
-weight: 28
+weight: 31
 ---
 
 Manage registered DAGs.

@@ -1320,9 +1320,9 @@ func stubHandler(feature string) gin.HandlerFunc {
 func registerResources(r gin.IRouter, deps Dependencies) {
 	if deps.Dags != nil {
 		g := r.Group("/api/v2/dags")
-		g.GET("", RequirePermission("read", "dag"), listDagsHandler(deps.Dags))
-		g.GET("/:dag_id", RequirePermission("read", "dag"), getDagHandler(deps.Dags))
-		g.GET("/:dag_id/details", RequirePermission("read", "dag"), dagDetailsHandler(deps.Dags, deps.DagVersions, deps.Specs))
+		g.GET("", RequireDeployRead(), listDagsHandler(deps.Dags))
+		g.GET("/:dag_id", RequireDeployRead(), getDagHandler(deps.Dags))
+		g.GET("/:dag_id/details", RequireDeployRead(), dagDetailsHandler(deps.Dags, deps.DagVersions, deps.Specs))
 		// Pause and unpause are run control (ADR 0067). A change that lets this
 		// route set more than is_paused must revisit its scope.
 		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Dags))
@@ -1368,10 +1368,10 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 	}
 	if deps.Versions != nil {
 		admission := specAdmission{unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage, deps.ExecutionPolicy}
-		r.POST("/api/v2/dags/:dag_id/versions", RequireScopedPermission("write", "dag", auth.ScopeDeploy), registerVersionHandler(deps.Versions, admission))
+		r.POST("/api/v2/dags/:dag_id/versions", RequireDeployPermission(), registerVersionHandler(deps.Versions, admission))
 		// Making a registered version live again is a deploy decision: the same
 		// permission and scope as registering one (#1702).
-		r.PUT("/api/v2/dags/:dag_id/currentVersion", RequireScopedPermission("write", "dag", auth.ScopeDeploy), setCurrentVersionHandler(deps.Versions, admission))
+		r.PUT("/api/v2/dags/:dag_id/currentVersion", RequireDeployPermission(), setCurrentVersionHandler(deps.Versions, admission))
 	}
 	if deps.Xcoms != nil {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))

@@ -129,6 +129,24 @@ func pausedQuery(c *gin.Context) (*bool, error) {
 	return nil, errors.New("is_paused must be true or false")
 }
 
+// pauseRefusal says why the caller may not set is_paused on a register, ""
+// when it may or did not ask. Pausing is a run-state write: PATCH
+// /dags/{dag_id} needs write:dag and, for a scoped token, dexaflow:run, so
+// neither the deployer role nor a deploy-only token may pause or unpause here.
+func pauseRefusal(c *gin.Context, paused *bool) string {
+	u, ok := UserFromContext(c)
+	if paused == nil || !ok {
+		return ""
+	}
+	if !u.HasPermission("write", "dag") {
+		return "missing permission write:dag (is_paused)"
+	}
+	if u.Scoped && !u.HasScope(auth.ScopeRun) {
+		return "missing scope " + auth.ScopeRun + " (is_paused)"
+	}
+	return ""
+}
+
 func registerVersionHandler(repo DagVersionRepository, admission specAdmission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		paused, perr := pausedQuery(c)
@@ -136,10 +154,8 @@ func registerVersionHandler(repo DagVersionRepository, admission specAdmission) 
 			AbortProblem(c, http.StatusBadRequest, "bad request", perr.Error())
 			return
 		}
-		// Pausing is a run-state write: PATCH /dags/{dag_id} needs
-		// dexaflow:run, so a deploy-only token may not pause or unpause here.
-		if u, ok := UserFromContext(c); paused != nil && ok && u.Scoped && !u.HasScope(auth.ScopeRun) {
-			AbortProblem(c, http.StatusForbidden, "forbidden", "missing scope "+auth.ScopeRun+" (is_paused)")
+		if msg := pauseRefusal(c, paused); msg != "" {
+			AbortProblem(c, http.StatusForbidden, "forbidden", msg)
 			return
 		}
 		var spec domain.DAGSpec

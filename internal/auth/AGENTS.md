@@ -37,6 +37,13 @@ never in an issue or a PR ([`SECURITY.md`](../../SECURITY.md)).
   ([ADR 0067](https://dexaflow.dexadata.ai/project/adrs/0067-mcp-run-control-scopes-source-mode/)).
 - **A scope only narrows.** A scoped token never gets more than its user's
   roles allow, and no scope implies another (`HasScope`, `scope_test.go`).
+- **API tokens are stored as a hash and never manage tokens.** Only the
+  SHA-256 of a `dxf_` token is kept (`api_tokens.token_hash`); the token is
+  shown once and never logged or audited. A token runs as its owner, reloaded
+  on every request and narrowed to its scopes, and the `/api/v2/apiTokens`
+  routes refuse every scoped principal, so a token cannot mint or revoke
+  tokens
+  ([ADR 0074](https://dexaflow.dexadata.ai/project/adrs/0074-scoped-api-tokens/)).
 - **Sign-in fails closed.** OIDC pins the tenant from a configured claim and
   never falls back to `default`
   ([ADR 0057](https://dexaflow.dexadata.ai/project/adrs/0057-oidc-sso/)); a
