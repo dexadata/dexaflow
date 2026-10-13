@@ -58,6 +58,9 @@ func applyWorkspaceDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowC
 	if prov.platformsSource, err = applyPlatformFlag(cmd, cfg, prov.platformsSource); err != nil {
 		return defaultsProvenance{}, err
 	}
+	if cerr := checkPlatforms(cfg, prov.platformsSource); cerr != nil {
+		return defaultsProvenance{}, cerr
+	}
 	return prov, nil
 }
 

@@ -15,6 +15,9 @@ func TestParsePlatforms(t *testing.T) {
 		{[]string{"linux/amd64", " linux/arm64/v8 "}, "linux/amd64,linux/arm64/v8"},
 		// A repeated value is one platform, not a multi-platform request.
 		{[]string{"linux/amd64", "linux/amd64"}, "linux/amd64"},
+		// docker matches platforms without regard to case; refusing one that
+		// works today would break a project that builds on main.
+		{[]string{"Linux/AMD64"}, "Linux/AMD64"},
 	}
 	for _, c := range cases {
 		got, err := ParsePlatforms(c.in)
@@ -29,7 +32,7 @@ func TestParsePlatforms(t *testing.T) {
 }
 
 func TestParsePlatformsRefusesMalformedValues(t *testing.T) {
-	for _, in := range []string{"", "amd64", "linux/", "/amd64", "linux/amd64/v8/x", "Linux/AMD64", "linux/amd64;rm", "linux/amd64,"} {
+	for _, in := range []string{"", "amd64", "linux/", "/amd64", "linux/amd64/v8/x", "linux/amd 64", "linux/amd64;rm", "linux/amd64,"} {
 		_, err := ParsePlatforms([]string{in})
 		if err == nil {
 			t.Errorf("ParsePlatforms(%q) accepted a malformed platform", in)

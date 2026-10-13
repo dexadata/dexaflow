@@ -6,8 +6,9 @@ import (
 	"strings"
 )
 
-// platformRe is the os/arch[/variant] form a platform takes, lowercase.
-var platformRe = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9_]+(/[a-z0-9]+)?$`)
+// platformRe is the os/arch[/variant] form a platform takes. Case is not
+// checked: docker matches platforms without regard to it.
+var platformRe = regexp.MustCompile(`^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$`)
 
 // ParsePlatforms validates platform values as given on a command line, each
 // either one platform or a comma-separated list, and returns them in order
@@ -21,7 +22,7 @@ func ParsePlatforms(values []string) ([]string, error) {
 		for _, p := range strings.Split(v, ",") {
 			p = strings.TrimSpace(p)
 			if !platformRe.MatchString(p) {
-				return nil, fmt.Errorf("invalid platform %q: want os/arch or os/arch/variant in lowercase, such as linux/amd64 or linux/arm64/v8", p)
+				return nil, fmt.Errorf("invalid platform %q: want os/arch or os/arch/variant, such as linux/amd64 or linux/arm64/v8", p)
 			}
 			if !seen[p] {
 				seen[p] = true

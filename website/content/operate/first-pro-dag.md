@@ -111,8 +111,9 @@ another base with `base_image:` in `dexaflow.yaml` if you need one.
 
 ```console
 $ dexaflow deploy
-Deploy first_pro_dag -> https://pro.example.com? [y/N] y
+…
 platforms:  linux/amd64 (from the default)
+Deploy first_pro_dag -> https://pro.example.com? [y/N] y
 builder:    local-daemon (docker), fallback: no daemonless or remote builder is available yet
 …  (compile → build for linux/amd64 → push → register)
 Deployed first_pro_dag -> https://pro.example.com

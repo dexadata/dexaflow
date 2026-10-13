@@ -1,13 +1,14 @@
 // Package build produces the container image of a DAG project and reports
 // what it pushed.
 //
-// A Builder is one way of producing that image. The CLI resolves the builder
-// in the order ADR 0073 decides (ResolutionOrder): skip the build when the
-// dependency image already exists, append a code layer, pack a daemonless
-// dependency layer, use a remote builder, and only then fall back to a local
-// container daemon. Every builder returns a Result that carries the digest of
-// the image it pushed, so the caller pins dag.json to exactly those bytes
-// without asking a local image store (ADR 0003, ADR 0041).
+// A Builder is one way of producing that image. ADR 0073 decides the order
+// builders are tried in (ResolutionOrder): skip the build when the dependency
+// image already exists, append a code layer, pack a daemonless dependency
+// layer, use a remote builder, and only then fall back to a local container
+// daemon. Only the last, LocalDaemon, exists today, so Select always returns
+// it. Every builder returns a Result that carries the digest of the image it
+// pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
+// ADR 0041).
 //
 // Builders run out of process or through a registry API; none links the
 // Docker SDK (ADR 0015).
@@ -46,9 +47,9 @@ func ResolutionOrder() []Path {
 	return []Path{PathSkip, PathCodeLayer, PathDependencyLayer, PathRemote, PathLocalDaemon}
 }
 
-// ErrMultiPlatform is returned when a build asks for more than one platform
-// and the selected builder can only build one.
-var ErrMultiPlatform = errors.New("this builder cannot build for several platforms")
+// ErrMultiPlatform marks the failure of a build for several platforms; the
+// error wraps the builder's own failure and says how to build one platform.
+var ErrMultiPlatform = errors.New("the multi-platform build failed")
 
 // Request is one image to produce.
 type Request struct {
@@ -100,9 +101,6 @@ type Builder interface {
 	Path() Path
 	// Describe names the builder for the command output.
 	Describe() string
-	// Check refuses, before anything runs, a request this builder cannot
-	// satisfy, such as several platforms on a single-platform builder.
-	Check(req Request) error
 	// Build produces the image described by req.
 	Build(ctx context.Context, req Request) (Result, error)
 }

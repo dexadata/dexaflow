@@ -34,6 +34,7 @@ $ dexaflow deploy --server https://pro.example.com --yes
 server:     https://pro.example.com (--server)
 registry:   ghcr.io/your-org/first-pro-dag (from dexaflow.yaml)
 platforms:  linux/amd64 (from the default)
+...
 builder:    local-daemon (docker), fallback: no daemonless or remote builder is available yet
 ...
 Deployed first_pro_dag -> https://pro.example.com
@@ -60,16 +61,20 @@ platform comes from the first of these that is set, and the output names which:
 dexaflow deploy --platform linux/arm64 --yes    # a Graviton cluster
 ```
 
-A platform is written `os/arch` or `os/arch/variant`, in lowercase, such as
-`linux/amd64` or `linux/arm64/v8`. Anything else is refused before the build.
+A platform is written `os/arch` or `os/arch/variant`, such as `linux/amd64` or
+`linux/arm64/v8`. A malformed value is refused before anything is parsed,
+built or sent to the control plane, wherever it came from, and the error names
+that source.
 
-Several platforms (`--platform linux/amd64,linux/arm64`) need a builder that
+Several platforms (`--platform linux/amd64,linux/arm64`) need a tool that
 pushes one image per platform under one manifest list. The `local-daemon`
-builder builds one platform per image, so it refuses a list before the DAG is
-even parsed, and names the platforms and the way out:
+builder hands the list to the tool as is: docker with the
+containerd image store enabled builds and pushes it, and `deploy` registers the manifest list's
+digest. docker's default image store and podman refuse it; the build then
+fails with the tool's own error and a hint that says how to build one platform:
 
 ```text
-Error: this builder cannot build for several platforms: building for linux/amd64,linux/arm64 needs one image per platform under one manifest list, and the local-daemon (docker) builder builds one platform per image. Choose one platform with --platform (or build.platforms in dexaflow.yaml), for example --platform linux/amd64
+Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with the containerd image store enabled. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: building image ...
 ```
 
 ## The local daemon fallback

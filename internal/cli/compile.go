@@ -200,9 +200,8 @@ func checkProjectPreconditions(cmd *cobra.Command, dir string, cfg *domain.Leofl
 }
 
 // prepareCompile loads the project config with its defaults, records where
-// the platforms came from, and runs every check that must pass before the
-// parser starts: the project preconditions and, for a build, what the
-// selected builder can do.
+// the platforms came from, and runs the project preconditions, every check
+// that must pass before the parser starts.
 func prepareCompile(cmd *cobra.Command, dir string, o *compileOptions) (*domain.LeoflowConfig, error) {
 	cfg, prov, err := loadCompileConfig(cmd, dir, *o)
 	if err != nil {
@@ -211,9 +210,6 @@ func prepareCompile(cmd *cobra.Command, dir string, o *compileOptions) (*domain.
 	o.platformsSource = prov.platformsSource
 	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
 		return nil, perr
-	}
-	if berr := checkBuilder(*o, cfg); berr != nil {
-		return nil, berr
 	}
 	return cfg, nil
 }

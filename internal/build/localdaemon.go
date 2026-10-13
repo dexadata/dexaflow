@@ -35,31 +35,31 @@ func (b LocalDaemon) Describe() string {
 	return fmt.Sprintf("%s (%s)", PathLocalDaemon, b.tool())
 }
 
-// Check refuses several platforms: `<tool> build` followed by `<tool> push`
-// produces one image for one platform, and a list fails inside the tool
-// (docker's default driver, podman without --manifest) with an error that
-// does not say what to change.
-func (b LocalDaemon) Check(req Request) error {
-	if len(req.Platforms) > 1 {
-		return fmt.Errorf("%w: building for %s needs one image per platform under one manifest list, and the %s builder builds one platform per image. "+
-			"Choose one platform with --platform (or build.platforms in dexaflow.yaml), for example --platform %s",
-			ErrMultiPlatform, strings.Join(req.Platforms, ","), b.Describe(), req.Platforms[0])
-	}
-	return nil
+// multiPlatformHint wraps the failure of a build for several platforms. The
+// list is passed to the tool as is, because docker with the containerd image
+// store builds and pushes it as one manifest list; docker's default image
+// store and podman without --manifest refuse it with an error that does not
+// say what to change, so this one does.
+func (b LocalDaemon) multiPlatformHint(platforms []string, err error) error {
+	return fmt.Errorf("%w: building for %s with %s needs a tool that pushes one image per platform under one manifest list, "+
+		"such as docker with the containerd image store enabled. Otherwise build one platform: set build.platforms in dexaflow.yaml "+
+		"(or pass --platform where the command has it), for example %s: %w",
+		ErrMultiPlatform, strings.Join(platforms, ","), b.Describe(), platforms[0], err)
 }
 
 // Build runs the build, then the push when asked, then reads the pushed
 // image's digest when a pin is asked for.
 func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
-	if err := b.Check(req); err != nil {
-		return Result{}, err
-	}
 	if req.Pin && !req.Push {
 		return Result{}, errors.New("a digest pin needs a push: an image that is not in a registry has no registry digest")
 	}
 	res := Result{Path: PathLocalDaemon, Image: req.Image, Platforms: req.Platforms}
 	if err := b.run(ctx, req.Stdout, req.Stderr, buildArgs(req.Image, req.Dockerfile, req.ContextDir, req.Platforms)...); err != nil {
-		return Result{}, fmt.Errorf("building image %q with %q: %w", req.Image, b.tool(), err)
+		err = fmt.Errorf("building image %q with %q: %w", req.Image, b.tool(), err)
+		if len(req.Platforms) > 1 {
+			err = b.multiPlatformHint(req.Platforms, err)
+		}
+		return Result{}, err
 	}
 	if !req.Push {
 		return res, nil

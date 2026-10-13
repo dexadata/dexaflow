@@ -136,29 +136,47 @@ func TestLocalDaemonRefusesAPinWithoutAPush(t *testing.T) {
 	}
 }
 
-// The local daemon builds one image for one platform; a list is refused by
-// name before the tool runs, instead of failing inside docker.
-func TestLocalDaemonRefusesSeveralPlatforms(t *testing.T) {
-	tool, log := fakeTool(t, "", "")
-	b := LocalDaemon{Tool: tool}
+// Several platforms reach the tool as one list: docker with the containerd
+// image store builds and pushes them as one manifest list, so nothing is
+// refused up front.
+func TestLocalDaemonPassesSeveralPlatformsToTheTool(t *testing.T) {
+	tool, log := fakeTool(t, "reg.io/team/etl@sha256:abc", "")
 	req := request("linux/amd64", "linux/arm64")
-	err := b.Check(req)
-	if !errors.Is(err, ErrMultiPlatform) {
-		t.Fatalf("Check = %v, want ErrMultiPlatform", err)
+	req.Push, req.Pin = true, true
+	res, err := LocalDaemon{Tool: tool}.Build(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
 	}
-	for _, want := range []string{"linux/amd64,linux/arm64", "--platform", tool} {
+	got := calls(t, log)
+	if len(got) != 3 || !strings.HasPrefix(got[0], "build --platform linux/amd64,linux/arm64 ") {
+		t.Fatalf("tool calls = %q, want a build for both platforms, then push and inspect", got)
+	}
+	if res.Ref != "reg.io/team/etl@sha256:abc" {
+		t.Errorf("result ref = %q", res.Ref)
+	}
+}
+
+// When a multi-platform build fails, the tool's error is kept and a hint says
+// what the tool needs and how to build one platform instead.
+func TestLocalDaemonHintsWhenAMultiPlatformBuildFails(t *testing.T) {
+	tool, _ := fakeTool(t, "", "build")
+	_, err := LocalDaemon{Tool: tool}.Build(context.Background(), request("linux/amd64", "linux/arm64"))
+	if !errors.Is(err, ErrMultiPlatform) {
+		t.Fatalf("err = %v, want ErrMultiPlatform", err)
+	}
+	for _, want := range []string{"linux/amd64,linux/arm64", "build.platforms", "containerd image store", "running " + tool + " build"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not name %q", err, want)
+			t.Errorf("error %q does not say %q", err, want)
 		}
 	}
-	if _, berr := b.Build(context.Background(), req); !errors.Is(berr, ErrMultiPlatform) {
-		t.Errorf("Build = %v, want ErrMultiPlatform", berr)
-	}
-	if calls(t, log) != nil {
-		t.Error("the tool ran for a multi-platform request")
-	}
-	if cerr := b.Check(request("linux/amd64")); cerr != nil {
-		t.Errorf("one platform refused: %v", cerr)
+}
+
+// A one-platform failure is the tool's error alone: the hint would mislead.
+func TestLocalDaemonGivesNoMultiPlatformHintForOnePlatform(t *testing.T) {
+	tool, _ := fakeTool(t, "", "build")
+	_, err := LocalDaemon{Tool: tool}.Build(context.Background(), request("linux/amd64"))
+	if err == nil || errors.Is(err, ErrMultiPlatform) {
+		t.Fatalf("err = %v, want a plain build failure", err)
 	}
 }
 

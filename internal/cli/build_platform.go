@@ -53,6 +53,21 @@ func applyPlatformFlag(cmd *cobra.Command, cfg *domain.LeoflowConfig, source str
 	return "--" + platformFlag, nil
 }
 
+// checkPlatforms validates the resolved build.platforms whatever their
+// source, so a malformed value from dexaflow.yaml, a target or the workspace
+// defaults is refused, with its source named, before anything is parsed,
+// built or sent. An empty list selects the tool's default and is left alone.
+func checkPlatforms(cfg *domain.LeoflowConfig, source string) error {
+	platforms := buildPlatforms(cfg)
+	if len(platforms) == 0 {
+		return nil
+	}
+	if _, err := build.ParsePlatforms(platforms); err != nil {
+		return fmt.Errorf("build.platforms (from %s): %w", orDefault(source), err)
+	}
+	return nil
+}
+
 // buildPlatforms returns the platforms a project builds for.
 func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 	if cfg.Build == nil {
@@ -65,17 +80,6 @@ func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 // of ADR 0073, and says why.
 func selectBuilder(o compileOptions) (b build.Builder, reason string) {
 	return build.Select(build.Options{Tool: o.builder})
-}
-
-// checkBuilder refuses, before the parser runs, a build the selected builder
-// cannot do, so a multi-platform request fails in a second, not after a
-// compile.
-func checkBuilder(o compileOptions, cfg *domain.LeoflowConfig) error {
-	if !o.build {
-		return nil
-	}
-	b, _ := selectBuilder(o)
-	return b.Check(build.Request{Platforms: buildPlatforms(cfg)})
 }
 
 // printBuildSettings says what a build is about to do: the platforms and
