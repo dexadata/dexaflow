@@ -1504,6 +1504,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuer:        trustedIssuer,
 		TrustedIssuerUsers:   repo,
 		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+		// Host binding (#1463): empty unless auth.trusted_issuer.host_pattern is set.
+		TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
 		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
 		TrustedIssuerBearer: issuerBearer(trustedIssuer),
 		// Operator service API (#1283): off unless auth.service_token is set.
@@ -2321,6 +2323,12 @@ func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespac
 func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, controlAddr string) executor.WarmPodSpecFunc {
 	defaults := platformDefaults(cfg.Executor.Defaults)
 	warmResources := resourceUnit(cfg).WarmResources()
+	if warmResources == nil {
+		// Without a unit, the default task limits (#537) size the warm pod, so a
+		// task placed on a warm worker runs under the same cap as on a dedicated
+		// pod. Nil (nothing configured) leaves warm pods unsized, as before.
+		warmResources = defaults.Limits.WarmResources()
+	}
 	useExchange := cfg.Auth.AgentTokenTransport == config.AgentTokenTransportExchange
 	return func(t executor.WarmTarget) (executor.WarmPodSpec, error) {
 		// ActiveWarmTargets already drops a version whose image the execution
@@ -2338,7 +2346,8 @@ func warmPodSpecFunc(cfg *config.ServerConfig, authn *auth.JWTAuthenticator, con
 			ServiceAccount:      cfg.Executor.TaskServiceAccount,
 			PodSecurity:         defaults.PodSecurity,
 			// With executor.unit a warm pod is one unit, and the dispatcher only
-			// places size-1 tasks without resources on it (ADR 0066 §3).
+			// places size-1 tasks without resources on it (ADR 0066 §3). Without
+			// one it carries the default task limits, if any.
 			Resources: warmResources,
 			// Self-lifecycle caps (ADR 0058 D9/D10/D6/H3). The attempt watchdog is
 			// anchored to the credential ceiling: an attempt can never validly outlive
@@ -2984,6 +2993,17 @@ func resourceUnit(cfg *config.ServerConfig) *domain.ResourceUnit {
 	return unit
 }
 
+// defaultLimits is the configured default task limits (#537). Config
+// validation already refused an invalid value at boot, so the error branch is
+// unreachable on a running server; nil (no default limits) is its safe reading.
+func defaultLimits(c config.PlatformDefaultsSection) *domain.DefaultLimits {
+	limits, err := domain.ParseDefaultLimits(c.LimitsCPU, c.LimitsMemory)
+	if err != nil {
+		return nil
+	}
+	return limits
+}
+
 // executionPolicy is the parsed executor.defaults.execution_allowlist (issue
 // #629), nil when it allows everything. ServerConfig.Validate parses the same
 // values and fails boot on an error, so none reaches here; should one, the
@@ -3025,6 +3045,7 @@ func platformDefaults(c config.PlatformDefaultsSection) dispatch.PlatformDefault
 		},
 		ExecutionPolicy: executionPolicy(c),
 	}
+	d.Limits = defaultLimits(c)
 	if c.ResourcesCPU != "" || c.ResourcesMemory != "" {
 		// Set requests AND limits to the same quantity so a task that relies on the
 		// platform default reaches Guaranteed QoS (requests == limits, cpu AND

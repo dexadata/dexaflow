@@ -159,6 +159,15 @@ topology that gives dispatch failover today; choose the split when you need the
 restricted API identity more than scheduler failover, and know which one you
 picked.
 
+The restricted API identity goes one step further than an unbound
+ServiceAccount: the `api` pods do not mount a ServiceAccount token at all
+(`automountServiceAccountToken: false`), because the api role never calls the
+Kubernetes API. The `scheduler` pods, and the single Deployment when split is
+off, keep the token, since they create the task pods. Cloud identity for the
+object log sink (IRSA, EKS Pod Identity, GKE Workload Identity) does not use this
+mount and keeps working. A sidecar that reads the default token mount needs
+`split.api.automountServiceAccountToken: true`.
+
 ### Warm pools are rebuilt on the far side of a failover
 
 [Warm worker pools](/operate/warm-pools/) survive a failover as *pods*, but not

@@ -1,19 +1,23 @@
 name: Helm chart release
 
-# Publish the Dexaflow Helm chart as an OCI artifact on every release tag AND
-# every release-candidate tag. ADR 0028: the chart ships as an OCI artifact in
-# the same registry as the images (`oci://ghcr.io/dexadata/charts/dexaflow`,
-# and `charts/leoflow` for releases installed before the rename),
-# co-versioned with the release tag (chart `version` + `appVersion` move in
-# lockstep with the tag). RC tags publish the chart too so the team can pull it
-# via OCI while an RC bakes in staging.
+# Manual recovery only. The chart is published by the `promote` job in
+# release.yaml, after the release gate is green (ADR 0071). This workflow used
+# to run on every tag push with no dependency on the release, and pushed the
+# chart about 30 seconds after the tag, before any image it references existed;
+# on v0.5.3 `helm upgrade` failed on ImagePullBackOff for over an hour (#1684).
 #
-# `v*` already matches RC tags (`v0.0.2-rc.1`), the same single filter the
-# Release workflow uses — GitHub fires the workflow once per push regardless of
-# how many patterns match, so one glob covers both stable and RC.
+# Dispatch it from a release tag (`gh workflow run helm-release.yaml --ref
+# vX.Y.Z`) only to re-publish a chart, for example after deleting a broken
+# package. It refuses a branch ref, and it verifies the images the chart
+# references exist and are signed before pushing, the same check `promote`
+# runs. Re-running `promote` in the release run is the normal recovery; this is
+# for when that run can no longer be re-run.
+#
+# ADR 0028: the chart ships as an OCI artifact in the same registry as the
+# images (`oci://ghcr.io/dexadata/charts/dexaflow`, and `charts/leoflow` for
+# releases installed before the rename), co-versioned with the release tag.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 # Least-privilege default: read-only at the top level; the publish job opts into
 # the writes it needs, mirroring .github/workflows/release.yaml.
@@ -33,6 +37,12 @@ jobs:
       packages: write   # Push the chart to GHCR (OCI).
       id-token: write   # Cosign keyless signing via Sigstore OIDC.
     steps:
+      - name: Refuse anything but a release tag
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::dispatch this workflow from a release tag (--ref vX.Y.Z), not from ${GITHUB_REF}"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
@@ -70,6 +80,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the images the chart references
+        env:
+          TAG: ${{ github.ref_name }}
+          REGISTRY_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+        run: bash scripts/release-verify-images.sh "$TAG"
 
       # Derive the chart version from the tag the same way the image tag is
       # derived, then strip the leading `v`: a Helm chart `version` must be
