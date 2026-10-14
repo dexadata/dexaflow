@@ -109,6 +109,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		Tasks:         repo,
 		Versions:      repo,
 		Specs:         repo,
+		DagSources:    repo,
 		DagVersions:   repo,
 		Logs:          storage.NewLogReader(pg, sink, nil),
 	}))
