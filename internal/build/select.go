@@ -46,10 +46,10 @@ const fallbackReason = "fallback: no daemonless or remote builder is available y
 // ResolutionOrder, and says why it was chosen. The skip path applies when
 // reuse is allowed and the registry already holds image for every platform
 // (ADR 0076). Then a split build (ADR 0077) appends the DAG code to the
-// dependency image when the registry holds it for every platform, or has the
-// local daemon build that dependency image first. Otherwise the local daemon
-// builds the whole image, as the daemonless dependency and remote paths are
-// not implemented yet.
+// dependency image when the registry holds it for every platform, or first
+// builds that dependency image, from wheels (Split.Wheels, ADR 0078) or with
+// the local daemon. Otherwise the local daemon builds the whole image, as the
+// remote path is not implemented yet.
 func Select(ctx context.Context, o Options, image string, platforms []string) (b Builder, reason string) {
 	reg := o.Registry
 	if reg == nil {
@@ -77,8 +77,14 @@ func Select(ctx context.Context, o Options, image string, platforms []string) (b
 		return daemon, why + fallbackReason
 	}
 	split := CodeLayer{Split: *o.Split, Daemon: daemon, Registry: cr}
+	how := "the daemon builds and pushes it"
+	if o.Split.Wheels != nil {
+		how = "it is built from wheels without a daemon and pushed"
+	} else if o.Split.NoWheels != "" {
+		how = fmt.Sprintf("the daemon builds and pushes it (no daemonless dependency layer: %s)", o.Split.NoWheels)
+	}
 	if o.Rebuild {
-		return split, fmt.Sprintf("--rebuild builds the dependency image %s again, then the DAG code is appended to it", o.Split.DepsImage)
+		return split, fmt.Sprintf("--rebuild builds the dependency image %s again (%s), then the DAG code is appended to it", o.Split.DepsImage, how)
 	}
 	deps, depsWhy, err := reusable(ctx, reg, o.Split.DepsImage, platforms, "dependency image "+o.Split.DepsImage)
 	if err != nil {
@@ -88,7 +94,7 @@ func Select(ctx context.Context, o Options, image string, platforms []string) (b
 		return daemon, why + fmt.Sprintf("fallback: the registry could not be read for the dependency image %s (%v)", o.Split.DepsImage, unwrap(err))
 	}
 	if deps == nil {
-		return split, fmt.Sprintf("%s: the daemon builds and pushes it, then the DAG code is appended to it", depsWhy)
+		return split, fmt.Sprintf("%s: %s, then the DAG code is appended to it", depsWhy, how)
 	}
 	split.Deps = deps
 	return split, fmt.Sprintf("the registry holds the dependency image %s for this build, so only the DAG code is pushed, "+

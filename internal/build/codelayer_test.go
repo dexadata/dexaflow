@@ -344,8 +344,9 @@ func TestPackLayerPlacesEntriesUnderItsRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(remove)
-	var names []string
-	for _, h := range layerEntries(t, layer) {
+	entries := layerEntries(t, layer)
+	names := make([]string, 0, len(entries))
+	for _, h := range entries {
 		names = append(names, h.Name)
 	}
 	want := "usr/local/dag.py usr/local/scripts/ usr/local/scripts/latest usr/local/scripts/run.sh"

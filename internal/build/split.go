@@ -20,6 +20,12 @@ type Split struct {
 	// Dockerfile is the content of the dependency image's Dockerfile. It
 	// copies nothing, so it builds from an empty context.
 	Dockerfile string
+	// Wheels builds the dependency image without a daemon (ADR 0078), or is
+	// nil when the daemon builds it from Dockerfile; then NoWheels says why.
+	Wheels *DependencyLayer
+	// NoWheels says why the dependency layer does not apply, for the
+	// builder line; empty when Wheels is set.
+	NoWheels string
 }
 
 // codeRegistry is what the code layer needs from a registry: reading a
@@ -31,8 +37,8 @@ type codeRegistry interface {
 
 // CodeLayer builds the DAG image as Split says. With Deps set, the
 // dependency image is already in the registry and no daemon runs (the
-// code-layer path); without it, the local daemon builds and pushes the
-// dependency image first.
+// code-layer path); without it, the dependency layer (Split.Wheels) or the
+// local daemon builds and pushes the dependency image first.
 type CodeLayer struct {
 	// Split names the dependency image and its Dockerfile.
 	Split Split
@@ -45,20 +51,27 @@ type CodeLayer struct {
 	Registry codeRegistry
 }
 
-// Path is PathCodeLayer when the dependency image is reused, PathLocalDaemon
-// when the daemon builds it.
+// Path is PathCodeLayer when the dependency image is reused,
+// PathDependencyLayer when it is built from wheels, PathLocalDaemon when
+// the daemon builds it.
 func (c CodeLayer) Path() Path {
-	if c.Deps != nil {
+	switch {
+	case c.Deps != nil:
 		return PathCodeLayer
+	case c.Split.Wheels != nil:
+		return PathDependencyLayer
 	}
 	return PathLocalDaemon
 }
 
-// Describe names the path, and the daemon when it builds the dependency
-// image.
+// Describe names the path, and what builds the dependency image when it is
+// built.
 func (c CodeLayer) Describe() string {
-	if c.Deps != nil {
+	switch {
+	case c.Deps != nil:
 		return string(PathCodeLayer)
+	case c.Split.Wheels != nil:
+		return fmt.Sprintf("%s (%s), then %s", PathDependencyLayer, c.Split.Wheels.Installer.Describe(), PathCodeLayer)
 	}
 	return c.Daemon.Describe() + " for the dependency image, then " + string(PathCodeLayer)
 }
@@ -93,9 +106,20 @@ func (c CodeLayer) Build(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
-// buildDeps builds and pushes the dependency image with the daemon, from its
-// Dockerfile in an empty directory, and reads back what the registry holds.
+// buildDeps builds and pushes the dependency image, from wheels or with the
+// daemon from its Dockerfile in an empty directory, and reads back what the
+// registry holds.
 func (c CodeLayer) buildDeps(ctx context.Context, req Request) (Pinned, error) {
+	if w := c.Split.Wheels; w != nil {
+		if err := w.Push(ctx, c.Split.DepsImage, req.Platforms); err != nil {
+			return Pinned{}, fmt.Errorf("building the dependency image %s from wheels: %w", c.Split.DepsImage, err)
+		}
+		pinned, err := c.Registry.Resolve(ctx, c.Split.DepsImage)
+		if err != nil {
+			return Pinned{}, fmt.Errorf("reading the dependency image %s: %w", c.Split.DepsImage, err)
+		}
+		return pinned, nil
+	}
 	dir, err := os.MkdirTemp("", "dexaflow-deps-")
 	if err != nil {
 		return Pinned{}, fmt.Errorf("making the context of the dependency image: %w", err)
