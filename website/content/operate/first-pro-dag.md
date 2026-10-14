@@ -284,22 +284,32 @@ watching .: save a file to redeploy what changed (Ctrl-C to stop)
 preflight:  control plane https://pro.example.com answers, the token may deploy
 …
 Deployed first_pro_dag -> https://pro.example.com
-[10:43:15] first_pro_dag: saved, no deployable change: version 5d6e7f8 is deployed; nothing registered
-^Cstopped watching
+[10:43:15] first_pro_dag: saved, no deployable change: version 5d6e7f8 is the current version; nothing registered
+^C
+stopped watching
 ```
 
 - **Each redeploy is a normal deploy**: the preflight, the server's dry run,
   the content label, the cluster's deploy defaults, and the reuse of an image
   the registry already holds for that label. A save that leaves the label as
   it is (a file saved with no change, or an edit undone before the save)
-  prints one line and asks the server nothing.
+  prints one line and registers nothing, once the server confirms that label
+  is still its current version. When it is not (a rollback or a teammate's
+  deploy moved it), the save is deployed like any other.
+- **Undoing a deployed save is a rollback**: going back to content an earlier
+  save already registered (version A, then B, then back to A) is refused as
+  for any deploy, since the server already has that version; the error names
+  `dexaflow rollback <dag_id> --to <label>`, which makes it current again.
 - **The files watched** are `dexaflow.yaml`, the DAG source, the workspace
   file, and every file the content label covers (the files the image copies,
   or the whole project with your own Dockerfile). Files a deploy writes, such
-  as `dag.json` and the output of `dbt parse`, are not watched.
-- **Saves close together are one redeploy**: the watch waits until no file
-  has moved for half a second, so a "save all" or a formatter on save deploys
-  once.
+  as `dag.json` and the output of `dbt parse`, are not watched. Nor is
+  `.dockerignore`, which the build rewrites: an edit to it alone is picked
+  up with the next save of another file.
+- **Saves close together are one redeploy**: the watch polls every 0.75
+  seconds and redeploys on the first poll at least half a second after it last
+  saw a file move, so the redeploy starts about 0.75 to 1.5 seconds after the
+  last save, and a "save all" or a formatter on save deploys once.
 - **A failed deploy does not stop the watch**: a config that does not load, a
   compile or build error, or a register the server refuses prints the error,
   and the next save tries again. Ctrl-C stops the watch with exit code `0`.
@@ -310,7 +320,7 @@ Deployed first_pro_dag -> https://pro.example.com
   the UI while watching stays paused.
 
 `--watch` refuses the flags that make no sense on every save: `--trigger` and
-`--follow` (trigger a run when you want one with `dexaflow runs trigger
+`--follow` with its `--timeout` (trigger a run when you want one with `dexaflow runs trigger
 <dag_id>`), `--output json`, `--plan`, `--changed-since`, `--dag-version`,
 `--skip-build` and `--force`. The deploy defaults of the cluster are read once,
 when the watch starts.

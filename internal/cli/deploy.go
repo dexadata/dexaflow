@@ -697,7 +697,7 @@ func (d *deployRun) run() error {
 	co.reuse = d.mayReuse(image, version, origin)
 	co.rebuild = d.o.rebuild
 	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
-	if skip, werr := d.watchSkip(version); skip || werr != nil {
+	if skip, werr := d.watchSkip(ctx, version); skip || werr != nil {
 		return werr
 	}
 	if d.o.plan {
@@ -709,7 +709,7 @@ func (d *deployRun) run() error {
 	}
 	// Only a content label says anything about content; --force skips it.
 	if done, perr := preDeployCheck(ctx, d.cmd.ErrOrStderr(), out, d.serverURL, d.token, d.cfg.DagID, version,
-		origin == labelDefault && !d.o.force); done || perr != nil {
+		origin == labelDefault && !d.o.force, d.o.watching != nil); done || perr != nil {
 		if perr != nil {
 			return perr
 		}
@@ -854,7 +854,9 @@ func (d *deployRun) finish(ctx context.Context, res deployResult) error {
 // acts on it: done when the label is already the current version (nothing is
 // built, pushed or registered; the caller finishes the deploy), an error when
 // the label is an older version or the check was refused for authentication.
-func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, dagID, version string, enabled bool) (done bool, err error) {
+// watching (deploy --watch, which refuses --dag-version) leaves the
+// --dag-version way out of that error.
+func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, dagID, version string, enabled, watching bool) (done bool, err error) {
 	if !enabled {
 		return false, nil
 	}
@@ -869,6 +871,11 @@ func preDeployCheck(ctx context.Context, warn, out io.Writer, serverURL, token, 
 			dagID, version)
 		return true, werr
 	case deployStale:
+		if watching {
+			return false, fmt.Errorf("%s content matches version %s, which is not the current version (%s). "+
+				"To make it current again, run `dexaflow rollback %s --to %s`; the watch then sees this content as deployed",
+				dagID, version, current, dagID, version)
+		}
 		return false, fmt.Errorf("%s content matches version %s, which is not the current version (%s). "+
 			"To make it current again, run `dexaflow rollback %s --to %s`; to register this content again as a new version, pass --dag-version <new-label>",
 			dagID, version, current, dagID, version)

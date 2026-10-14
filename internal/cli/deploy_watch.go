@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -98,20 +99,26 @@ func (s *watchState) deployed(dir, label string) {
 	}
 }
 
-// watchSkip decides a redeploy of a watch once its label is known: a label
-// the watch last deployed is a save with no deployable change, one line and
-// nothing else (skip). Otherwise it says the project is redeployed, with the
-// deploy settings when they changed since they were last printed. Outside a
-// redeploy it does nothing.
-func (d *deployRun) watchSkip(label string) (skip bool, err error) {
+// watchSkip decides a redeploy of a watch once its label is known. The
+// label the watch last deployed, when the server confirms it is still the
+// current version, is a save with no deployable change: one line and nothing
+// else (skip). The server decides because the current version can move under
+// the watch (a rollback, another deploy). Otherwise it says the project is
+// redeployed, with the deploy settings when they changed since they were
+// last printed, and the deploy goes on as any deploy. Outside a redeploy it
+// does nothing.
+func (d *deployRun) watchSkip(ctx context.Context, label string) (skip bool, err error) {
 	s := d.o.watching
 	if !s.redeploy() {
 		return false, nil
 	}
 	out, key, now := d.cmd.OutOrStdout(), watchKey(d.dir), time.Now().Format("15:04:05")
 	if s.labels[key] == label {
-		_, err = fmt.Fprintf(out, "[%s] %s: saved, no deployable change: version %s is deployed; nothing registered\n", now, d.cfg.DagID, label)
-		return true, err
+		state, _, cerr := checkDeployed(ctx, d.cmd.ErrOrStderr(), d.serverURL, d.token, d.cfg.DagID, label)
+		if cerr == nil && state == deployCurrent {
+			_, err = fmt.Fprintf(out, "[%s] %s: saved, no deployable change: version %s is the current version; nothing registered\n", now, d.cfg.DagID, label)
+			return true, err
+		}
 	}
 	if _, err = fmt.Fprintf(out, "[%s] %s: saved, deploying version %s\n", now, d.cfg.DagID, label); err != nil {
 		return false, err
@@ -155,6 +162,9 @@ type deployWatch struct {
 // each project whose files are saved until Ctrl-C, and exits 0 then. A failed
 // deploy prints its error and the watch goes on.
 func runDeployWatch(cmd *cobra.Command, args []string, o deployOptions) error {
+	if err := checkDeployFollow(o); err != nil {
+		return err
+	}
 	dir, all, err := resolveDeployTarget(cmd, args, o)
 	if err != nil {
 		return err
@@ -184,7 +194,7 @@ func runDeployWatch(cmd *cobra.Command, args []string, o deployOptions) error {
 		devPrintf(out, "watching %s: save a file to redeploy what changed (Ctrl-C to stop)\n", w.root())
 		saveWatcher{interval: deployWatchInterval, settle: deployWatchSettle, scan: w.scan, onSave: w.redeploy}.run(ctx, snap)
 	}
-	devPrintln(out, "stopped watching")
+	devPrintln(out, "\nstopped watching")
 	return nil
 }
 
@@ -252,7 +262,7 @@ func (w *deployWatch) scan() (map[string]time.Time, bool) {
 // printed once.
 func (w *deployWatch) currentProjects() []watchedProject {
 	if w.workspace == "" {
-		return []watchedProject{{dir: w.dir, name: w.dir}}
+		return []watchedProject{{dir: w.dir, name: w.singleName()}}
 	}
 	ws, err := ResolveWorkspace(w.workspace)
 	if err != nil {
@@ -268,6 +278,18 @@ func (w *deployWatch) currentProjects() []watchedProject {
 		out = append(out, watchedProject{dir: p.Path, name: p.DagID})
 	}
 	return out
+}
+
+// singleName names the one project watched: its dag_id, else (a config
+// that does not load) the name it had before, else its directory.
+func (w *deployWatch) singleName() string {
+	if cfg, err := loadProjectConfig(w.dir); err == nil && cfg.DagID != "" {
+		return cfg.DagID
+	}
+	if len(w.projects) == 1 {
+		return w.projects[0].name
+	}
+	return w.dir
 }
 
 // projectWatchFiles lists the files of the project at dir a save in which

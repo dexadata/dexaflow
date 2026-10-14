@@ -193,10 +193,14 @@ func TestDeployWatchRedeploysASave(t *testing.T) {
 		t.Errorf("the save registered %q, want etl:%s (a new label)", got[1], second)
 	}
 	w.waitFor(t, "the redeploy summary", func() bool { return strings.Count(w.out.String(), "Deployed etl -> ") == 2 })
+	time.Sleep(200 * time.Millisecond) // time for a deploy to retrigger itself
 	if err := w.stop(t); err != nil {
 		t.Fatalf("Ctrl-C must exit 0, got %v", err)
 	}
-	if !strings.Contains(w.out.String(), "stopped watching") {
+	if strings.Contains(w.out.String(), "no deployable change") {
+		t.Errorf("a deploy retriggered the watch (it watches a file the deploy writes):\n%s", w.out.String())
+	}
+	if !strings.Contains(w.out.String(), "\n\nstopped watching\n") {
 		t.Errorf("no closing line:\n%s", w.out.String())
 	}
 	if n := len(srv.registered()); n != 2 {
@@ -226,7 +230,8 @@ func TestDeployWatchRedeploysANewHelperFile(t *testing.T) {
 }
 
 // A save that leaves the content label as it is prints one line and
-// registers nothing; nothing is asked of the server either.
+// registers nothing, once the server confirms the label is its current
+// version.
 func TestDeployWatchUnchangedSaveRegistersNothing(t *testing.T) {
 	fastWatch(t, 30*time.Millisecond)
 	dir, builder := watchProject(t)
@@ -246,14 +251,19 @@ func TestDeployWatchUnchangedSaveRegistersNothing(t *testing.T) {
 		t.Errorf("registered %q, want only the first deploy", got)
 	}
 	after := strings.TrimPrefix(w.out.String(), before)
-	lines := strings.Split(strings.TrimSpace(after), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[0], "etl: saved, no deployable change: version "+labelOf(t, dir)+" is deployed; nothing registered") {
+	var lines []string
+	for _, l := range strings.Split(after, "\n") {
+		if l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 2 || !strings.Contains(lines[0], "etl: saved, no deployable change: version "+labelOf(t, dir)+" is the current version; nothing registered") {
 		t.Errorf("an unchanged save printed %q, want one line (then the closing line)", lines)
 	}
 	srv.fake.mu.Lock()
 	defer srv.fake.mu.Unlock()
-	if srv.fake.reads != reads {
-		t.Errorf("an unchanged save read the server %d times", srv.fake.reads-reads)
+	if srv.fake.reads == reads {
+		t.Error("an unchanged save was skipped without asking the server which version is current")
 	}
 }
 
@@ -273,14 +283,16 @@ func TestDeployWatchKeepsWatchingAfterAFailedDeploy(t *testing.T) {
 
 	save(t, dir, "dexaflow.yaml", good+"schedule: [\n")
 	w.waitFor(t, "the config error", func() bool {
-		return strings.Contains(w.errb.String(), "deploy of "+dir+" failed: ") && strings.Contains(w.errb.String(), "yaml")
+		return strings.Contains(w.errb.String(), "deploy of etl failed: ") && strings.Contains(w.errb.String(), "yaml")
 	})
 
+	refusals := func(n int) func() bool {
+		return func() bool { return strings.Count(w.errb.String(), "connection warehouse is not defined") == n }
+	}
 	save(t, dir, "dexaflow.yaml", good)
+	w.waitFor(t, "the second refusal", refusals(2))
 	save(t, dir, "dag.py", "# dag, v2\n")
-	w.waitFor(t, "the second refusal", func() bool {
-		return strings.Count(w.errb.String(), "connection warehouse is not defined") >= 2
-	})
+	w.waitFor(t, "the third refusal", refusals(3))
 	if got := srv.registered(); len(got) != 0 {
 		t.Fatalf("registered %q while the server refused", got)
 	}
@@ -429,5 +441,59 @@ func TestDeployWatchRefusesFlagsThatCannotRepeat(t *testing.T) {
 				t.Errorf("deploy --watch %v: err = %v, want %q", tc.args, err, tc.want)
 			}
 		})
+	}
+}
+
+// A label the watch deployed earlier is a deploy again when the server is no
+// longer on it (a rollback, a teammate's deploy): the watch asks the server,
+// and the deploy says what it says for any deploy. Undoing a save back to an
+// older version names the rollback, never --dag-version, which --watch
+// refuses.
+func TestDeployWatchAsksTheServerAboutAKnownLabel(t *testing.T) {
+	fastWatch(t, 30*time.Millisecond)
+	dir, builder := watchProject(t)
+	srv := &watchServer{fake: &deployServer{}}
+	w := startWatch(t, srv, builder, dir)
+	w.watching(t)
+	labelA := labelOf(t, dir)
+	original := readProjectFile(t, dir, "dag.py")
+
+	save(t, dir, "dag.py", "# dag, B\n")
+	labelB := labelOf(t, dir)
+	w.waitFor(t, "the deploy of B", func() bool { return len(srv.registered()) == 2 })
+
+	save(t, dir, "dag.py", original)
+	w.waitFor(t, "the undo", func() bool { return strings.Contains(w.errb.String(), "dexaflow rollback etl --to "+labelA) })
+	if strings.Contains(w.errb.String(), "--dag-version") {
+		t.Errorf("under --watch the hint names --dag-version, which --watch refuses:\n%s", w.errb.String())
+	}
+
+	// The user rolls back to A elsewhere, then saves B again.
+	srv.fake.mu.Lock()
+	srv.fake.current = labelA
+	srv.fake.mu.Unlock()
+	save(t, dir, "dag.py", "# dag, B\n")
+	w.waitFor(t, "the deploy of B again", func() bool {
+		return strings.Contains(w.errb.String(), "dexaflow rollback etl --to "+labelB)
+	})
+	if err := w.stop(t); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(w.out.String(), "no deployable change: version "+labelB) {
+		t.Errorf("B was skipped though the server is on A:\n%s", w.out.String())
+	}
+}
+
+// --timeout applies to --follow, which --watch refuses: it is refused too,
+// not accepted and ignored.
+func TestDeployWatchRefusesTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	root := NewRootCommand()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"deploy", "--watch", "--timeout", "5m", "--server", "http://127.0.0.1:1", versionProject(t, "")})
+	if err := root.ExecuteContext(ctx); err == nil || !strings.Contains(err.Error(), "--timeout applies to --follow") {
+		t.Errorf("deploy --watch --timeout 5m: err = %v, want the --timeout refusal", err)
 	}
 }
