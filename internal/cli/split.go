@@ -19,10 +19,17 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// baseRegistry reads the digest of the base image for the dependency key.
-// It is a variable only so the tests of this package keep the CLI off the
-// network (split_seam_test.go); nothing else assigns it.
-var baseRegistry build.Resolver = build.Registry{}
+// baseReader reads the base image: its digest for the dependency key, and
+// what the dependency layer needs to know about each platform image.
+type baseReader interface {
+	build.Resolver
+	Base(ctx context.Context, base build.Pinned, platform string) (build.BaseImage, error)
+}
+
+// baseRegistry reads the base image for the dependency key. It is a
+// variable only so the tests of this package keep the CLI off the network
+// (split_seam_test.go); nothing else assigns it.
+var baseRegistry baseReader = build.Registry{}
 
 // depsKeyFormat versions the layout of the dependency image and of the code
 // layer. Bumping it gives every project a new dependency key.
@@ -43,34 +50,30 @@ var exactPin = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]
 // and a code layer (ADR 0077) and returns that split, or nil and why not. The
 // split needs a push (the code layer goes through the registry API), the
 // generated Dockerfile (a project Dockerfile can do anything), the platforms
-// (the key covers them), every Python dependency pinned to one version (the
-// dependency image is reused for as long as its key holds, and a range would
-// keep the version it resolved first) and the digest of the base image. A
-// reason is empty when nothing is worth printing: no push, no platform, or a
-// project the build itself will refuse with its own message.
+// (the key covers them) and the digest of the base image. When the
+// dependency image can be built from wheels (planWheels, ADR 0078), its key
+// covers the resolved set, so any Python dependency takes the split;
+// otherwise the daemon builds it, and every Python dependency must be pinned
+// to one version (the dependency image is reused for as long as its key
+// holds, and a range would keep the version it resolved first). A reason is
+// empty when nothing is worth printing: no push, no platform, or a project
+// the build itself will refuse with its own message.
 func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg *domain.LeoflowConfig, image string) (split *build.Split, why string) {
 	platforms := buildPlatforms(cfg)
 	if !o.push || len(platforms) == 0 {
 		return nil, ""
 	}
-	if _, err := os.Stat(filepath.Join(dir, dockerfile)); err == nil {
-		return nil, "the project ships its own Dockerfile, which needs a real build"
-	}
-	if cfg.Dbt == nil && filepath.Clean(cfg.DagSource) != filepath.Base(cfg.DagSource) {
-		return nil, fmt.Sprintf("dag_source %q is in a subdirectory, which the code layer does not place yet", cfg.DagSource)
-	}
-	for _, p := range cfg.IncludePaths {
-		if strings.ContainsAny(p, "*?[") {
-			return nil, fmt.Sprintf("include_paths entry %q is a pattern, which the code layer does not expand", p)
-		}
+	if why := splitBlocker(dir, dockerfile, cfg); why != "" {
+		return nil, why
 	}
 	deps, err := cfg.EffectiveDependencies()
-	if err != nil {
+	if err != nil || cfg.ValidateDockerfileValues() != nil {
 		return nil, ""
 	}
-	if loose := unpinned(deps); len(loose) > 0 {
-		return nil, fmt.Sprintf("%s %s not pinned to one version (name==version), so the dependency image cannot be reused safely",
-			quoteAll(loose), plural(len(loose), "is", "are"))
+	loose := unpinned(deps)
+	uv, noWheels := findUV(ctx)
+	if len(loose) > 0 && uv == nil {
+		return nil, looseReason(loose, noWheels)
 	}
 	base := resolveBaseImage(cfg)
 	pinned, err := baseRegistry.Resolve(ctx, base)
@@ -81,7 +84,47 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 	if err != nil {
 		return nil, ""
 	}
-	return &build.Split{DepsImage: depsImage(image, depsKey(content, platforms)), Dockerfile: content}, ""
+	if uv != nil {
+		var plan *wheelPlan
+		if plan, noWheels = planWheels(ctx, uv, cfg, deps, pinned, platforms); plan != nil {
+			split := &build.Split{DepsImage: depsImage(image, plan.key()), Dockerfile: content, Wheels: plan.layer(), Note: plan.note()}
+			if len(loose) == 0 {
+				split.DaemonDepsImage = depsImage(image, depsKey(content, platforms))
+			}
+			return split, ""
+		}
+	}
+	if len(loose) > 0 {
+		return nil, looseReason(loose, noWheels)
+	}
+	return &build.Split{DepsImage: depsImage(image, depsKey(content, platforms)), Dockerfile: content, NoWheels: noWheels}, ""
+}
+
+// splitBlocker says why the project cannot split whatever its dependencies:
+// its own Dockerfile, a dag_source the code layer does not place, a pattern
+// in include_paths; "" when nothing blocks.
+func splitBlocker(dir, dockerfile string, cfg *domain.LeoflowConfig) string {
+	if _, err := os.Stat(filepath.Join(dir, dockerfile)); err == nil {
+		return "the project ships its own Dockerfile, which needs a real build"
+	}
+	if cfg.Dbt == nil && filepath.Clean(cfg.DagSource) != filepath.Base(cfg.DagSource) {
+		return fmt.Sprintf("dag_source %q is in a subdirectory, which the code layer does not place yet", cfg.DagSource)
+	}
+	for _, p := range cfg.IncludePaths {
+		if strings.ContainsAny(p, "*?[") {
+			return fmt.Sprintf("include_paths entry %q is a pattern, which the code layer does not expand", p)
+		}
+	}
+	return ""
+}
+
+// looseReason says why a project with dependencies not pinned to one
+// version keeps the whole build: the daemon's dependency image would keep
+// the versions it resolved first, and noWheels says why the dependency
+// layer, whose key covers the resolution, does not apply.
+func looseReason(loose []string, noWheels string) string {
+	return fmt.Sprintf("%s %s not pinned to one version (name==version), so the dependency image cannot be reused safely "+
+		"without the dependency layer, which does not apply: %s", quoteAll(loose), plural(len(loose), "is", "are"), noWheels)
 }
 
 // unwrapped returns the cause of err without the context Resolve adds, or

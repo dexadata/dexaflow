@@ -8,7 +8,8 @@
 // daemon. Three exist today: Existing, the skip path in its first form (the
 // whole image for this content label is already in the registry, see Select);
 // CodeLayer, which appends the DAG code to a dependency image the registry
-// holds, or has the daemon build that dependency image first (ADR 0077); and
+// holds, or first builds that dependency image, from wheels without a daemon
+// (DependencyLayer, ADR 0078) or with the daemon (ADR 0077); and
 // LocalDaemon. Every builder returns a Result that carries the digest of the image it
 // pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
 // ADR 0041).
