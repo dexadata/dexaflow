@@ -156,3 +156,17 @@ DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;
 -- The id of a user of the tenant: no row when the user is gone or belongs to
 -- another tenant, so a stale token's subject records no creator.
 SELECT id FROM users WHERE id = $1 AND tenant_id = $2;
+
+-- name: ListWarmCurrentVersions :many
+-- The current version of the DAGs the warm-pool reconcile looks at (#1707):
+-- with prewarm, every active unpaused DAG, whose current version gets its pool
+-- before its first run; and every DAG in dag_ids (the DAGs of the active runs),
+-- whose current version tells which versions of those runs were superseded by
+-- a register, a rollback or a promote and so drain. prewarm is true for the
+-- first kind. A cross-tenant read like ListActiveDagRuns: the reconcile serves
+-- every tenant, and each row carries its tenant_id.
+SELECT id, tenant_id, dag_id, current_version_id::uuid AS current_version_id,
+  (@prewarm::boolean AND is_active AND NOT is_paused)::boolean AS prewarm
+FROM dags
+WHERE current_version_id IS NOT NULL
+  AND ((@prewarm::boolean AND is_active AND NOT is_paused) OR id = ANY(@dag_ids::uuid[]));

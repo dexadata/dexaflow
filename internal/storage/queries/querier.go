@@ -619,6 +619,14 @@ type Querier interface {
 	// the reaper is inert. The LIMIT bounds a single tick's work after a large
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
+	// The current version of the DAGs the warm-pool reconcile looks at (#1707):
+	// with prewarm, every active unpaused DAG, whose current version gets its pool
+	// before its first run; and every DAG in dag_ids (the DAGs of the active runs),
+	// whose current version tells which versions of those runs were superseded by
+	// a register, a rollback or a promote and so drain. prewarm is true for the
+	// first kind. A cross-tenant read like ListActiveDagRuns: the reconcile serves
+	// every tenant, and each row carries its tenant_id.
+	ListWarmCurrentVersions(ctx context.Context, arg ListWarmCurrentVersionsParams) ([]ListWarmCurrentVersionsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
 	// Locks the user row a token is created for, so concurrent creates for one
 	// user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY

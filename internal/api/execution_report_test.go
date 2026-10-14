@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,9 +106,27 @@ func TestRegisterReportsExecutionModePerTask(t *testing.T) {
 		if p.State != "on" || p.MinIdleWorkers != 2 || p.MaxPoolSize != 5 || p.PreviousPool != "draining" {
 			t.Errorf("%s: pool = %+v, want on, 2 idle, up to 5, previous draining", path, p)
 		}
-		if p.Detail == "" {
-			t.Errorf("%s: pool detail is empty", path)
+		for _, want := range []string{"2 idle warm workers (up to 5) warming now", "previous pool draining"} {
+			if !strings.Contains(p.Detail, want) {
+				t.Errorf("%s: pool detail %q lacks %q", path, p.Detail, want)
+			}
 		}
+		if strings.Contains(p.Detail, "first run") {
+			t.Errorf("%s: pool detail %q still waits for the first run", path, p.Detail)
+		}
+	}
+}
+
+// TestRegisterReportsPausedDagPoolWaitsForUnpause: a paused DAG is not
+// prewarmed (ADR 0082), so its pool is reported as starting at the unpause,
+// not as warming.
+func TestRegisterReportsPausedDagPoolWaitsForUnpause(t *testing.T) {
+	policy := domain.WarmPolicy{Enabled: true}
+	rec := authGet(warmVersionServer(&fakeVersionRepo{created: true, dagCreated: true, paused: true}, policy, warmOn),
+		http.MethodPost, "/api/v2/dags/etl/versions", validSpecJSON)
+	p := decodeReport(t, rec.Body.Bytes()).Execution.Pool
+	if p.State != "on" || !strings.Contains(p.Detail, "start when the DAG is unpaused") || strings.Contains(p.Detail, "warming now") {
+		t.Errorf("paused DAG: pool = %+v, want on, starting when the DAG is unpaused", p)
 	}
 }
 

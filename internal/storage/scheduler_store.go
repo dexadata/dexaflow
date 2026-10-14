@@ -301,14 +301,18 @@ type activeWarmVersion struct {
 	// with source mode on it runs in source mode and is excluded from warm pools
 	// (ADR 0067 §3): a warm pod cannot carry the task's source.
 	hasSource bool
+	// prewarm marks a version held only as its DAG's current version, with no
+	// active run (ADR 0082). It gets a target only when it keeps idle workers.
+	prewarm bool
 }
 
 // warmTargets dedupes the active versions (many runs share one immutable
 // dag_version) and resolves each to its effective warm target through the
 // operator's clamp/fallback/flag gate (config.ExecutionSection.EffectiveMinIdle).
 // A version whose image the operator's execution allowlist refuses gets no
-// target (issue #537 C2). The result is the executor.WarmTargetSource contract:
-// one entry per distinct active dag_version.
+// target (issue #537 C2), and a prewarm version (current, no active run) gets
+// one only when it keeps idle workers (ADR 0082). The result is the
+// executor.WarmTargetSource contract: one entry per distinct dag_version kept.
 func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, policy *domain.ExecutionPolicy) []executor.WarmTarget {
 	seen := make(map[string]bool, len(versions))
 	out := make([]executor.WarmTarget, 0, len(versions))
@@ -330,10 +334,17 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 			// pod would run the disallowed image before any task reached it.
 			continue
 		}
+		minIdle := exec.EffectiveMinIdle(v.dagMinIdle)
+		if v.prewarm && minIdle == 0 {
+			// ADR 0082: nothing to prewarm, and a target of 0 would only keep
+			// an empty pool's anchor alive.
+			continue
+		}
 		out = append(out, executor.WarmTarget{
 			DagVersionID:     v.dagVersionID,
 			Image:            v.image,
-			EffectiveMinIdle: exec.EffectiveMinIdle(v.dagMinIdle),
+			EffectiveMinIdle: minIdle,
+			Prewarm:          v.prewarm,
 			// MaxPoolSize is the operator's total ceiling of warm workers per
 			// dag_version (model A2, ADR 0058 N1d-b). The reconciler grows the pool
 			// past min_idle under load up to this cap and never beyond it.
@@ -346,15 +357,22 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 	return out
 }
 
-// ActiveWarmTargets returns one warm target per distinct active dag_version with
-// its effective warm-worker count (ADR 0058 N1b2b), the read side of a warm-pool
-// reconcile tick. It reuses the same active-runs + cached-spec path as ActiveRuns:
-// the spec is immutable per dag_version_id, so N active runs sharing a version
-// decode it once and the effective target is derived from the DAG author's
-// min_idle_workers under the operator's clamp/fallback. It implements
-// executor.WarmTargetSource without the executor importing storage. A run held
-// by its paused DAG (#1705) keeps a target only while one of its tasks is live,
-// since nothing else of it is dispatched until the unpause.
+// ActiveWarmTargets returns one warm target per dag_version the warm pool keeps
+// (ADR 0058 N1b2b, ADR 0082), the read side of a warm-pool reconcile tick: the
+// current version of every active, unpaused DAG, prewarmed before its first run
+// (#1707), and the version of every active run that is still its DAG's current
+// version. A run whose version a register, a rollback or a promote superseded
+// keeps running on it, but the version is no longer a target, so its pool
+// drains: idle workers are deleted and busy ones finish their attempt first,
+// and the run's later attempts take dedicated pods. A run of a DAG with no
+// current version keeps its version's target, as before. It reuses the same
+// cached-spec path as ActiveRuns: the spec is immutable per dag_version_id, so
+// N active runs sharing a version decode it once, and the effective target is
+// derived from the DAG author's min_idle_workers under the operator's
+// clamp/fallback. It implements executor.WarmTargetSource without the executor
+// importing storage. A run held by its paused DAG (#1705) keeps a target only
+// while one of its tasks is live, since nothing else of it is dispatched until
+// the unpause, and a paused DAG is not prewarmed.
 func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.WarmTarget, error) {
 	rows, err := s.q.ListActiveDagRuns(ctx)
 	if err != nil {
@@ -364,29 +382,111 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 	if err != nil {
 		return nil, err
 	}
-	versions := make([]activeWarmVersion, 0, len(runs))
-	seen := make(map[pgtype.UUID]bool, len(runs))
+	refs := make([]warmRunVersion, 0, len(runs))
+	dagIDs := make([]pgtype.UUID, 0, len(runs))
+	seenDag := make(map[pgtype.UUID]bool, len(runs))
 	for _, run := range runs {
-		if seen[run.DagVersionID] {
-			continue
+		refs = append(refs, warmRunVersion{dagPK: run.DagID, versionID: run.DagVersionID, tenantID: run.TenantID})
+		if !seenDag[run.DagID] {
+			seenDag[run.DagID] = true
+			dagIDs = append(dagIDs, run.DagID)
 		}
-		seen[run.DagVersionID] = true
-		_, spec, err := s.specs.getForTick(ctx, s.q, run.DagVersionID)
+	}
+	currents, err := s.q.ListWarmCurrentVersions(ctx, queries.ListWarmCurrentVersionsParams{
+		Prewarm: s.warmExec.WarmPoolsEnabled, DagIds: dagIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing current dag versions: %w", err)
+	}
+	cands := warmCandidates(refs, currents)
+	versions := make([]activeWarmVersion, 0, len(cands))
+	for _, c := range cands {
+		spec, err := s.candidateSpec(ctx, c)
 		if err != nil {
 			return nil, err
 		}
 		versions = append(versions, activeWarmVersion{
-			dagVersionID: uuidToString(run.DagVersionID),
+			dagVersionID: uuidToString(c.versionID),
 			image:        spec.Image,
 			dagMinIdle:   spec.MinIdleWorkers,
-			tenantID:     uuidToString(run.TenantID),
+			tenantID:     uuidToString(c.tenantID),
 			// ADR 0058 D5: a staging version is excluded from warm pools by
 			// warmTargets. Defense-in-depth alongside the dispatch-path guard.
 			staging:   spec.Staging != nil && spec.Staging.Enabled,
 			hasSource: spec.Source != "",
+			prewarm:   c.prewarm,
 		})
 	}
 	return warmTargets(versions, s.warmExec, s.warmPolicy), nil
+}
+
+// candidateSpec reads a warm candidate's spec through the spec cache: a DAG's
+// current version is pinned there, as every reader of a current version pins
+// it, and any other version is read as part of the tick's working set.
+func (s *SchedulerStore) candidateSpec(ctx context.Context, c warmCandidate) (domain.DAGSpec, error) {
+	if c.current != nil {
+		_, spec, err := s.specs.getCurrent(ctx, s.q, *c.current, c.versionID)
+		return spec, err
+	}
+	_, spec, err := s.specs.getForTick(ctx, s.q, c.versionID)
+	return spec, err
+}
+
+// warmRunVersion is the dag_version of one active run that needs warm workers,
+// with its DAG and tenant.
+type warmRunVersion struct {
+	dagPK, versionID, tenantID pgtype.UUID
+}
+
+// warmCandidate is one dag_version a warm-pool reconcile tick may keep a pool
+// for. current names the DAG whose current version it is (nil when no DAG row
+// says so), and prewarm marks a version held only as the current version of an
+// unpaused DAG, with no active run that needs it.
+type warmCandidate struct {
+	versionID, tenantID pgtype.UUID
+	current             *currentSpecKey
+	prewarm             bool
+}
+
+// warmCandidates is the pure target computation of ActiveWarmTargets (ADR
+// 0082): the versions of the active runs that are still their DAG's current
+// version (or whose DAG has no current version), then the current versions
+// marked prewarm that no run already holds. A run version its DAG no longer
+// points at is left out, so the reconciler drains its pool. Each version
+// appears once, runs first, in input order.
+func warmCandidates(runs []warmRunVersion, currents []queries.ListWarmCurrentVersionsRow) []warmCandidate {
+	currentOf := make(map[pgtype.UUID]queries.ListWarmCurrentVersionsRow, len(currents))
+	for _, c := range currents {
+		currentOf[c.ID] = c
+	}
+	seen := make(map[pgtype.UUID]bool, len(runs)+len(currents))
+	out := make([]warmCandidate, 0, len(currents))
+	for _, r := range runs {
+		cur, hasCurrent := currentOf[r.dagPK]
+		if hasCurrent && cur.CurrentVersionID != r.versionID {
+			continue // superseded: the run finishes on it, its pool drains
+		}
+		if seen[r.versionID] {
+			continue
+		}
+		seen[r.versionID] = true
+		c := warmCandidate{versionID: r.versionID, tenantID: r.tenantID}
+		if hasCurrent {
+			c.current = &currentSpecKey{tenant: cur.TenantID, dagID: cur.DagID}
+		}
+		out = append(out, c)
+	}
+	for _, cur := range currents {
+		if !cur.Prewarm || seen[cur.CurrentVersionID] {
+			continue
+		}
+		seen[cur.CurrentVersionID] = true
+		out = append(out, warmCandidate{
+			versionID: cur.CurrentVersionID, tenantID: cur.TenantID, prewarm: true,
+			current: &currentSpecKey{tenant: cur.TenantID, dagID: cur.DagID},
+		})
+	}
+	return out
 }
 
 // warmRuns returns the active runs that need warm workers: every run except a

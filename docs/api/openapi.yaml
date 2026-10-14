@@ -1801,7 +1801,8 @@ components:
             no warm workers: the subprocess executor, or pod dispatch
             disabled). on: the version
             keeps min_idle_workers idle warm workers, up to max_pool_size,
-            while it has an active run; they start with its first run.
+            while it is the DAG's current version; they start at the next
+            reconcile, or when a paused DAG is unpaused.
         detail: { type: string, description: The state in a sentence for a person. }
         min_idle_workers: { type: integer }
         max_pool_size: { type: integer }
@@ -1809,7 +1810,7 @@ components:
           type: string
           enum: [draining]
           x-enum-varnames: [WarmPoolReportPreviousPoolDraining]
-          description: draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+          description: draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
 
     DagVersionCollection:
       type: object

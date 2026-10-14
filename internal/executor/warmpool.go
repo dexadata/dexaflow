@@ -29,21 +29,30 @@ import (
 // TenantID is the tenant that owns this dag_version, threaded through so the
 // per-tenant aggregate warm-pod cap (M4) can sum a tenant's promised idle floors
 // and ration its shared budget across versions. It comes from the active run's
-// tenant_id; the reconciler groups targets and live pods by it.
+// tenant_id (or the DAG's, for a prewarm target); the reconciler groups targets
+// and live pods by it.
+//
+// Prewarm marks a target held only because the version is its DAG's current
+// version (#1707, ADR 0082): no active run needs it yet, and its pool is
+// started so the first run finds warm workers. The reconciler treats it like
+// any other target and only logs and meters when a prewarm pool starts.
 type WarmTarget struct {
 	DagVersionID     string
 	Image            string
 	EffectiveMinIdle int
 	MaxPoolSize      int
 	TenantID         string
+	Prewarm          bool
 }
 
-// WarmTargetSource yields the currently active dag_versions and their effective
-// warm target. It is implemented on the storage/scheduler side (it reads active
-// runs and their cached specs and applies the operator's clamp/fallback), and is
-// defined HERE so the executor's reconciler depends on a narrow capability rather
-// than importing the scheduler or storage package (which would be a dependency
-// cycle — storage already imports executor).
+// WarmTargetSource yields the dag_versions to keep warm and their effective warm
+// target: the current version of each DAG that may run, and the versions of
+// active runs that are still current (ADR 0082). A version absent from it
+// drains. It is implemented on the storage/scheduler side (it reads active runs,
+// the DAGs' current versions and their cached specs and applies the operator's
+// clamp/fallback), and is defined HERE so the executor's reconciler depends on a
+// narrow capability rather than importing the scheduler or storage package
+// (which would be a dependency cycle: storage already imports executor).
 type WarmTargetSource interface {
 	ActiveWarmTargets(ctx context.Context) ([]WarmTarget, error)
 }
@@ -177,6 +186,13 @@ type WarmPoolReconciler struct {
 	// reconciler keeps reading live: a cache that lost its watch must not drive
 	// creates once the create expectations that covered it have expired.
 	liveNames []string
+
+	// lastTargets and draining are what the previous tick saw, kept only to log
+	// and meter each prewarm start and each drain once (ADR 0082) rather than
+	// on every tick. They steer no decision: a new leader starts with them
+	// empty and logs the pools it finds once more.
+	lastTargets map[string]bool
+	draining    map[string]bool
 }
 
 // warmCacheLiveListInterval is how often a reconcile on the cached fleet reads it
@@ -343,6 +359,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 	// also re-reads the busy set right before it is issued (deleteIdleWarmPod).
 	active := make(map[string]bool, len(targets))
 	var creates []warmCreate
+	r.notePoolChanges(ctx, targets, byVersion)
 	for _, t := range targets {
 		active[t.DagVersionID] = true
 		// An ACTIVE version's anchor is create-only during its life: the create
@@ -378,6 +395,38 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 		r.createForVersion(ctx, c.target, c.n)
 	}
 	return nil
+}
+
+// notePoolChanges logs and meters, once each, a prewarm pool starting (a
+// Prewarm target the previous tick did not have) and a pool starting to drain
+// (a version with pods that is no longer a target), so an operator sees a
+// deploy's pool switch in the logs and in dexaflow_scheduler_decisions_total
+// (decision_type warm_pool_prewarm_started and warm_pool_drain_started, ADR
+// 0082).
+func (r *WarmPoolReconciler) notePoolChanges(ctx context.Context, targets []WarmTarget, byVersion map[string][]WarmPodInfo) {
+	now := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		now[t.DagVersionID] = true
+		if t.Prewarm && t.EffectiveMinIdle > 0 && !r.lastTargets[t.DagVersionID] {
+			r.logger.InfoContext(ctx, "prewarming the warm pool of a DAG's current version before its first run",
+				"dag_version", t.DagVersionID, "tenant", t.TenantID, "min_idle_workers", t.EffectiveMinIdle, "max_pool_size", t.MaxPoolSize)
+			r.record("warm_pool_prewarm_started")
+		}
+	}
+	draining := make(map[string]bool)
+	for dagVersionID, have := range byVersion {
+		if now[dagVersionID] {
+			continue
+		}
+		draining[dagVersionID] = true
+		if r.draining[dagVersionID] {
+			continue
+		}
+		r.logger.InfoContext(ctx, "draining the warm pool of a version that is no longer kept (superseded, or no active run): idle workers are deleted, busy ones finish their attempt first",
+			"dag_version", dagVersionID, "pods", len(have))
+		r.record("warm_pool_drain_started")
+	}
+	r.lastTargets, r.draining = now, draining
 }
 
 // warmCreate is one active version's planned creates for the tick, issued after
@@ -853,6 +902,7 @@ func (r *WarmPoolReconciler) deleteWarmAnchor(ctx context.Context, dagVersionID 
 		r.record("warm_pool_anchor_delete_error")
 		return
 	}
+	r.logger.InfoContext(ctx, "warm pool drained: the version has no warm worker left", "dag_version", dagVersionID)
 	r.record("warm_pool_anchor_deleted")
 }
 

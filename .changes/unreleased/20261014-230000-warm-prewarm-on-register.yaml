@@ -1,0 +1,22 @@
+kind: Added
+body: |-
+  **With warm pools on, a deploy starts the new version's warm pool and drains
+  the previous one.** The warm pool reconciler now keeps a pool for the current
+  version of every DAG that is not paused, before its first run, and for the
+  version of an active run only while that version is still current. When a
+  version becomes current (`dexaflow deploy`, `dexaflow promote`,
+  `dexaflow rollback` or `PUT /api/v2/dags/{dag_id}/currentVersion`), its idle
+  workers (`min_idle_workers`, else `execution.min_idle_workers`, up to
+  `execution.max_pool_size`) are created at the next reconcile, and the
+  previous version's idle workers are deleted; a worker serving an attempt
+  finishes it first. Runs already in flight keep their version, and their
+  later attempts take dedicated pods. A paused DAG is not prewarmed. With
+  `execution.min_idle_workers` above 0, every unpaused DAG now keeps that many
+  idle warm workers even when it has no run, bounded by
+  `execution.max_warm_pods_per_tenant`. The server logs each prewarm and
+  drain and counts them in `dexaflow_scheduler_decisions_total`
+  (`warm_pool_prewarm_started`, `warm_pool_drain_started`). The deploy's
+  `warm pool` line now says the workers are warming (or start when the DAG
+  is unpaused) and that the previous pool is draining, instead of waiting for
+  the version's first run. Warm pools stay off by default. (#1707)
+time: 2026-10-14T23:00:00.000000000-03:00

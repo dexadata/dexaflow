@@ -602,6 +602,60 @@ func (q *Queries) ListDagsWithVersion(ctx context.Context, arg ListDagsWithVersi
 	return items, nil
 }
 
+const listWarmCurrentVersions = `-- name: ListWarmCurrentVersions :many
+SELECT id, tenant_id, dag_id, current_version_id::uuid AS current_version_id,
+  ($1::boolean AND is_active AND NOT is_paused)::boolean AS prewarm
+FROM dags
+WHERE current_version_id IS NOT NULL
+  AND (($1::boolean AND is_active AND NOT is_paused) OR id = ANY($2::uuid[]))
+`
+
+type ListWarmCurrentVersionsParams struct {
+	Prewarm bool          `json:"prewarm"`
+	DagIds  []pgtype.UUID `json:"dag_ids"`
+}
+
+type ListWarmCurrentVersionsRow struct {
+	ID               pgtype.UUID `json:"id"`
+	TenantID         pgtype.UUID `json:"tenant_id"`
+	DagID            string      `json:"dag_id"`
+	CurrentVersionID pgtype.UUID `json:"current_version_id"`
+	Prewarm          bool        `json:"prewarm"`
+}
+
+// The current version of the DAGs the warm-pool reconcile looks at (#1707):
+// with prewarm, every active unpaused DAG, whose current version gets its pool
+// before its first run; and every DAG in dag_ids (the DAGs of the active runs),
+// whose current version tells which versions of those runs were superseded by
+// a register, a rollback or a promote and so drain. prewarm is true for the
+// first kind. A cross-tenant read like ListActiveDagRuns: the reconcile serves
+// every tenant, and each row carries its tenant_id.
+func (q *Queries) ListWarmCurrentVersions(ctx context.Context, arg ListWarmCurrentVersionsParams) ([]ListWarmCurrentVersionsRow, error) {
+	rows, err := q.db.Query(ctx, listWarmCurrentVersions, arg.Prewarm, arg.DagIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWarmCurrentVersionsRow{}
+	for rows.Next() {
+		var i ListWarmCurrentVersionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagID,
+			&i.CurrentVersionID,
+			&i.Prewarm,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockDagByDagID = `-- name: LockDagByDagID :one
 SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR NO KEY UPDATE
 `
