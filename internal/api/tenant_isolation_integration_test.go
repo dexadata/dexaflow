@@ -76,6 +76,7 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 			Tasks:         repo,
 			Versions:      repo,
 			Specs:         repo,
+			DagSources:    repo,
 			AuditLog:      repo,
 			Variables:     repo,
 			Connections:   repo,
