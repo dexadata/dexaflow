@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -780,6 +782,38 @@ func TestCLILoopbackRedirectIsCanonical(t *testing.T) {
 		got, err := canonicalLoopback(raw)
 		if err != nil || got != raw {
 			t.Errorf("canonicalLoopback(%q) = %q, %v; want it unchanged", raw, got, err)
+		}
+	}
+}
+
+var consentScript = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+
+// The approve button starts disabled (double-clickjacking), and the only
+// script that can enable it is the one the CSP allows by hash.
+func TestCLIConsentButtonStartsDisabledAndItsScriptIsPinned(t *testing.T) {
+	srv, f, cfg := seededCLIServer(t, &fakeAuthAudit{})
+	st := startCLILogin(t, srv, "cli-state-0123456789", newCLIPKCE())
+	rec := completeCallback(srv, f, st, f.signIDToken(baseClaims(cfg, st.nonce)))
+	body := rec.Body.String()
+	if !regexp.MustCompile(`<button[^>]*value="approve"[^>]*\bdisabled\b`).MatchString(body) {
+		t.Errorf("the approve button is not disabled:\n%s", body)
+	}
+	m := consentScript.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("the consent page has no script to enable the button")
+	}
+	sum := sha256.Sum256([]byte(m[1]))
+	hash := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src "+hash) {
+		t.Errorf("CSP %q does not allow the rendered script by its hash %s", csp, hash)
+	}
+	if strings.Contains(csp, "unsafe-inline'") && strings.Contains(csp, "script-src 'unsafe-inline'") {
+		t.Error("the CSP allows inline script in general")
+	}
+	for _, want := range []string{"visibilityState", "pointermove", "keydown", "1000"} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("the script does not check %s", want)
 		}
 	}
 }

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -27,7 +29,10 @@ import (
 const cliConsentPath = "/api/v2/auth/cli/consent"
 
 // cliConsentCookie carries the sealed pending sign-in between the consent
-// page and its form. It is scoped to the CLI routes and SameSite=Strict.
+// page and its form. It is scoped to the CLI routes and SameSite=Strict. It
+// has no __Host- prefix on purpose: that prefix requires Path=/, which would
+// send the sealed sign-in with every request to the origin instead of only
+// to the consent route.
 const cliConsentCookie = "_oidc_cli_consent"
 
 // cliConsentCookiePath scopes the consent cookie; the write and the clear
@@ -42,6 +47,26 @@ const (
 	consentApprove = "approve"
 	consentCancel  = "cancel"
 )
+
+// consentArmScript enables the approve button only once the page has been
+// visible for about a second and the person has moved the pointer or pressed
+// a key on it. It defeats double-clickjacking, where a page opens this one
+// under a double click it asked for and the second click lands on the
+// button. It is UX only: the server's checks do not rely on it, and without
+// it the button simply stays disabled. The CSP allows exactly this script by
+// its hash (consentArmScriptHash), never inline script in general.
+const consentArmScript = `(function(){var b=document.getElementById('approve'),since=0,moved=false;` +
+	`function vis(){if(document.visibilityState==='visible'){if(!since){since=Date.now();}}else{since=0;}}` +
+	`function mark(){moved=true;}` +
+	`function tick(){vis();if(moved&&since&&Date.now()-since>=1000){b.disabled=false;return;}setTimeout(tick,100);}` +
+	`document.addEventListener('visibilitychange',vis);document.addEventListener('pointermove',mark);` +
+	`document.addEventListener('keydown',mark);tick();})();`
+
+// consentArmScriptHash is the CSP source that allows consentArmScript.
+var consentArmScriptHash = func() string {
+	sum := sha256.Sum256([]byte(consentArmScript))
+	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+}()
 
 // consentPageTemplate asks the person to approve the CLI sign-in. It shares
 // the sign-in page's look and carries no secret: the pending sign-in is in
@@ -63,9 +88,9 @@ var consentPageTemplate = template.Must(template.New("consent").Parse(`<!doctype
  <p class="hint">Approve only if you started that command just now. If you did not, cancel:
  a page you visited may have opened this sign-in for someone else.</p>
  <input type="hidden" name="csrf" value="{{ .CSRF }}">
- <button type="submit" name="decision" value="approve">Sign in the CLI</button>
+ <button type="submit" name="decision" value="approve" id="approve" disabled>Sign in the CLI</button>
  <button type="submit" name="decision" value="cancel" class="cancel">Cancel</button>
-{{ end }}</form></body></html>`))
+{{ end }}</form>{{ if not .Message }}<script>{{ .Script }}</script>{{ end }}</body></html>`))
 
 // consentPage is what consentPageTemplate renders.
 type consentPage struct {
@@ -76,6 +101,7 @@ type consentPage struct {
 	Port    string
 	CSRF    string
 	Message string
+	Script  template.JS
 }
 
 // renderConsentPage writes the page with headers that keep it out of frames
@@ -84,6 +110,7 @@ type consentPage struct {
 func renderConsentPage(c *gin.Context, status int, page consentPage, loopback string) {
 	page.CSS = template.CSS(signInPageCSS) //nolint:gosec // G203: a constant of this package, never request data
 	page.Action = cliConsentPath
+	page.Script = template.JS(consentArmScript) //nolint:gosec // G203: a constant of this package, allowed by its CSP hash
 	formAction := "'self'"
 	if u, err := url.Parse(loopback); err == nil && u.Host != "" {
 		formAction += " http://" + u.Host
@@ -91,7 +118,7 @@ func renderConsentPage(c *gin.Context, status int, page consentPage, loopback st
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Frame-Options", "DENY")
-	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action "+formAction+"; frame-ancestors 'none'")
+	c.Header("Content-Security-Policy", "default-src 'none'; script-src "+consentArmScriptHash+"; style-src 'unsafe-inline'; form-action "+formAction+"; frame-ancestors 'none'")
 	c.Status(status)
 	if err := consentPageTemplate.Execute(c.Writer, page); err != nil {
 		c.Abort()
