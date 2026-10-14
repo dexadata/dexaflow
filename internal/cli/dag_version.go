@@ -187,14 +187,25 @@ const labelAuthMethod = "docker_config"
 
 // labelConfig is cfg as the content label hashes it: where the CLI reads the
 // registry credential (registry.auth_method) is not an input of the image,
-// so auto, docker_config and cloud hash as one constant. env and iam, which
+// so auto, docker_config and cloud hash as one constant, and the remote
+// builder is left out. env and iam, which
 // were hashed as written before any value was read, keep that, so their
 // labels do not move either.
 func labelConfig(cfg *domain.LeoflowConfig) *domain.LeoflowConfig {
-	if cfg == nil || cfg.Registry == nil || cfg.Registry.AuthMethod == "env" || cfg.Registry.AuthMethod == "iam" {
-		return cfg
+	if cfg == nil {
+		return nil
 	}
 	c := *cfg
+	if cfg.Build != nil && cfg.Build.RemoteBuilder != nil {
+		// Where the image is built (build.remote_builder) is not an input
+		// of the image either.
+		b := *cfg.Build
+		b.RemoteBuilder = nil
+		c.Build = &b
+	}
+	if cfg.Registry == nil || cfg.Registry.AuthMethod == "env" || cfg.Registry.AuthMethod == "iam" {
+		return &c
+	}
 	reg := *cfg.Registry
 	reg.AuthMethod = labelAuthMethod
 	c.Registry = &reg

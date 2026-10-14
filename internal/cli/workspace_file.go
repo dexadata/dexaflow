@@ -19,6 +19,7 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/envcompat"
 )
 
@@ -61,6 +62,9 @@ type deployDefaults struct {
 	Platforms []string `yaml:"platforms,omitempty"`
 	// BaseImage replaces base_image for projects that set none.
 	BaseImage string `yaml:"base_image,omitempty"`
+	// RemoteBuilder replaces build.remote_builder for projects that set
+	// none (ADR 0083).
+	RemoteBuilder *domain.RemoteBuilderConfig `yaml:"remote_builder,omitempty"`
 }
 
 // workspaceTarget is one named control plane in a workspace file.
@@ -289,6 +293,12 @@ func (s *workspaceSpec) validate() error {
 		if err := validateServerURL(t.Server); err != nil {
 			return fmt.Errorf("target %q: %w", name, err)
 		}
+		if err := t.RemoteBuilder.Validate("remote_builder"); err != nil {
+			return fmt.Errorf("target %q: %w", name, err)
+		}
+	}
+	if err := s.Defaults.RemoteBuilder.Validate("defaults.remote_builder"); err != nil {
+		return err
 	}
 	if s.DefaultTarget != "" && s.Targets[s.DefaultTarget] == nil {
 		return fmt.Errorf("default_target %q is not one of the targets (%s)", s.DefaultTarget, strings.Join(s.targetNames(), ", "))
