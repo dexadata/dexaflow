@@ -658,6 +658,11 @@ paths:
         scoped token needs dexaflow:run as well as dexaflow:deploy, else the
         register is refused with 403.
 
+        Under the server setting deploy.require_digest, an image that is not
+        pinned by a full digest (repository@sha256: and 64 hex characters)
+        is registered with a warning in warnings (warn), or refused with 400
+        (enforce). Off, the default, accepts any image.
+
         POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and
         writes nothing.
       operationId: registerDagVersion
@@ -1884,7 +1889,7 @@ components:
         warnings:
           type: array
           items: { type: string }
-          description: What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
+          description: What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
         execution: { $ref: "#/components/schemas/ExecutionReport" }
 
     ExecutionReport:

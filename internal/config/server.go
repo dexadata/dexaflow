@@ -88,6 +88,12 @@ type DeploySection struct {
 	// on GET /api/v2/deployDefaults; unset (the default) advertises nothing,
 	// so every deploy resolves as it did before. None of them is a secret.
 	Defaults domain.DeployDefaults `mapstructure:"defaults"`
+	// RequireDigest (deploy.require_digest, #1703) is what registering a
+	// version does with an image not pinned by a full sha256 digest: off (the
+	// default) accepts it, warn accepts it with a warning, a log line and a
+	// count, enforce refuses it. DEXAFLOW_DEPLOY_REQUIRE_DIGEST (legacy
+	// LEOFLOW_DEPLOY_REQUIRE_DIGEST).
+	RequireDigest domain.DigestRequirement `mapstructure:"require_digest"`
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -1405,6 +1411,9 @@ var serverDefaults = map[string]any{
 	"deploy.defaults.registry":   "",
 	"deploy.defaults.platforms":  []string{},
 	"deploy.defaults.base_image": "",
+	// Digest-pinned images at register (#1703). off keeps every register as
+	// it was.
+	"deploy.require_digest": string(domain.DigestRequireOff),
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
@@ -1567,6 +1576,7 @@ func (c *ServerConfig) Validate() error {
 		c.validateExecutorPolicies,
 		c.validatePlatformIntegration,
 		c.validateDeployDefaults,
+		c.validateRequireDigest,
 	} {
 		if err := check(); err != nil {
 			return err
@@ -1593,6 +1603,13 @@ func (c *ServerConfig) Validate() error {
 // use, so it fails at boot instead of in every deploy to the cluster.
 func (c *ServerConfig) validateDeployDefaults() error {
 	return c.Deploy.Defaults.Validate("deploy.defaults")
+}
+
+// validateRequireDigest refuses a deploy.require_digest other than off, warn
+// or enforce, so a typo fails at boot instead of registering unpinned images.
+func (c *ServerConfig) validateRequireDigest() error {
+	_, err := domain.ParseDigestRequirement(string(c.Deploy.RequireDigest))
+	return err
 }
 
 // isLoopbackListenAddr reports whether a listen address binds only to loopback,

@@ -55,7 +55,8 @@ plane then pulls by tag, so a tag that is rebuilt later can run different bytes
 under the same version. `dexaflow deploy` is the only command that resolves the
 pushed image's digest and registers `registry/image@sha256:…`. Prefer `deploy`
 in CI; if you split the steps, tag by commit (`tag_strategy: git_sha`) and never
-reuse a tag.
+reuse a tag. An operator can make the control plane warn about, then refuse, a
+register by tag: see [Require images pinned by digest](#require-images-pinned-by-digest).
 {{% /alert %}}
 
 {{% alert title="The guardrails are your CI gate" color="success" %}}
@@ -884,6 +885,54 @@ In a pipeline, a promotion job after the staging deploy:
           dexaflow promote my_pipeline --from staging --to prod --yes \
             --from-token "$STAGING_TOKEN" --to-token "$PROD_TOKEN"
 ```
+
+## Require images pinned by digest
+
+A version registered with a tag (`ghcr.io/acme/etl:v1`) runs whatever the tag
+names when a node pulls it, so two nodes can run different bytes for one
+version. The server setting `deploy.require_digest`
+(`DEXAFLOW_DEPLOY_REQUIRE_DIGEST`, Helm `deploy.requireDigest`) decides what a
+register does with an image that is not pinned as
+`<repository>@sha256:<64 hex>`:
+
+| Value | A register of an unpinned image |
+|---|---|
+| `off` (default) | Registers it, as every release before the setting did. |
+| `warn` | Registers it with a warning in the answer, which `dexaflow push` prints on stderr. The server logs it with the DAG, the version and the image, counts it in `dexaflow_unpinned_image_total{outcome="warned"}`, and the `dag.version.register` audit entry records `require_digest: warn` and `image_pinned: false`. |
+| `enforce` | Refuses it with a 400 that names the setting and how to pin, counted with `outcome="refused"`. Nothing is registered. |
+
+The dry run of a register (the deploy preflight) answers with the same warning
+or refusal and records nothing. Making an earlier version current again
+(`dexaflow rollback`, `PUT /api/v2/dags/{dag_id}/currentVersion`) applies the
+setting too, like every other register check: under `enforce`, a version
+registered by tag before cannot be made current again, so redeploy it with
+`dexaflow deploy` or set `warn` for the rollback.
+
+Roll it out in two steps:
+
+1. Set `warn` and watch `dexaflow_unpinned_image_total` and the server log
+   (`admitting an image not pinned by digest`) for the pipelines that still
+   register a tag.
+2. Move those pipelines to `dexaflow deploy`, which registers every image by
+   digest, then set `enforce`.
+
+The split path (`dexaflow compile --build --push`, then `dexaflow push`)
+registers the tag it pushed, so under `enforce` its `push` is refused. Pin the
+image in `dag.json` before `push`, for example with `crane digest`:
+
+```bash
+dexaflow compile dags/my_pipeline --build --push -o dag.json
+ref=$(jq -r .image dag.json)                      # ghcr.io/acme/my_pipeline:v1
+pinned="${ref%:*}@$(crane digest "$ref")"         # ghcr.io/acme/my_pipeline@sha256:...
+jq --arg img "$pinned" '.image = $img' dag.json > dag.pinned.json
+dexaflow push dag.pinned.json
+```
+
+Versions registered by `dexaflow deploy` and `dexaflow promote` are already
+pinned and pass every mode. A [source mode](/operate/source-mode/) version
+names the runtime image, which the server requires pinned by digest, so it
+passes too. Under `dexaflow lite`, the local dev loop registers a placeholder
+image: leave the setting `off` there.
 
 ## Prerequisites
 

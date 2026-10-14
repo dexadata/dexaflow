@@ -25,7 +25,9 @@ type fakeVersionRepo struct {
 	dryRuns    []bool                 // the dry_run of each register
 	promoted   []*domain.DagPromotion // the promoted_from of each register
 	builds     []*domain.BuildInfo    // the build_info of each register
-	err        error
+	// requireDigest is the deploy.require_digest of each register.
+	requireDigest []domain.DigestRequirement
+	err           error
 
 	// The set-current side: the specs by label the fake holds, the change it
 	// answers, and what the handler asked for.
@@ -44,6 +46,7 @@ func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg 
 	f.dryRuns = append(f.dryRuns, reg.DryRun)
 	f.promoted = append(f.promoted, reg.PromotedFrom)
 	f.builds = append(f.builds, reg.BuildInfo)
+	f.requireDigest = append(f.requireDigest, reg.RequireDigest)
 	if f.err != nil {
 		return domain.DagRegistered{}, f.err
 	}

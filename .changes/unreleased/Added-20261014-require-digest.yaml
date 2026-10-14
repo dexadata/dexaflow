@@ -1,0 +1,15 @@
+kind: Added
+body: |-
+  **The server can require images pinned by digest at register.** The new
+  setting `deploy.require_digest` (`DEXAFLOW_DEPLOY_REQUIRE_DIGEST`, Helm
+  `deploy.requireDigest`) decides what registering a DAG version does with an
+  image that is not `<repository>@sha256:<64 hex>`: `off`, the default,
+  accepts it as before; `warn` accepts it with a warning in the register
+  answer, which `dexaflow push` prints, a log line, a count in
+  `dexaflow_unpinned_image_total` and `require_digest` and `image_pinned` in
+  the `dag.version.register` audit entry; `enforce` refuses it with a 400 that
+  names the setting and how to pin. The dry run of a register answers the same
+  and records nothing, and making an earlier version current again is checked
+  as a register is. A register now also returns the warnings it gives, in the
+  `warnings` field the dry run already had. (#1703)
+time: 2026-10-14T16:50:00.000000000-03:00

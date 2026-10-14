@@ -37,10 +37,15 @@ type versionResponse struct {
 	// Execution says where each task runs and what the version's warm pool
 	// does (#1707), from the decision dispatch places with.
 	Execution *executionReport `json:"execution,omitempty"`
+	// Warnings is what the register let through with a warning (#1703),
+	// absent when there is none, so the answer of a register that warns
+	// about nothing is the one it always was.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // dryRunResponse is the answer to a register dry run: what the register
-// would do, and the warnings it would raise.
+// would do, and the warnings it would raise. Its Warnings, always present,
+// takes the place of the register's.
 type dryRunResponse struct {
 	versionResponse
 	DryRun   bool     `json:"dry_run"`
@@ -101,11 +106,56 @@ func (g unitGate) check(spec *domain.DAGSpec, stage string, dryRun bool) ([]stri
 	return warnings, nil
 }
 
+// UnpinnedImageRecorder counts an image not pinned by digest that
+// deploy.require_digest warned about (outcome "warned") or refused
+// ("refused"), by stage. observability.Metrics satisfies it.
+type UnpinnedImageRecorder interface {
+	RecordUnpinnedImage(stage, outcome string)
+}
+
+// The outcomes of the unpinned image count.
+const (
+	unpinnedWarned  = "warned"
+	unpinnedRefused = "refused"
+)
+
+// digestGate is what admission needs to apply deploy.require_digest (#1703).
+type digestGate struct {
+	mode     domain.DigestRequirement
+	unpinned UnpinnedImageRecorder
+	logger   *slog.Logger
+}
+
+// check applies the gate to spec's image at stage: the warning to give under
+// warn, the refusal under enforce. Each is logged (a warning) and counted,
+// except in a dry run, which records nothing.
+func (g digestGate) check(spec *domain.DAGSpec, stage string, dryRun bool) (string, error) {
+	warning, refused := g.mode.CheckImage(spec.Image)
+	if dryRun || (warning == "" && refused == nil) {
+		return warning, refused
+	}
+	outcome := unpinnedRefused
+	if refused == nil {
+		outcome = unpinnedWarned
+		if g.logger != nil {
+			g.logger.Warn("admitting an image not pinned by digest under deploy.require_digest=warn",
+				"setting", "deploy.require_digest", "stage", stage, "dag", logSafe(spec.DagID),
+				"version", logSafe(spec.DagVersion), "image", logSafe(spec.Image))
+		}
+	}
+	if g.unpinned != nil {
+		g.unpinned.RecordUnpinnedImage(stage, outcome)
+	}
+	return warning, refused
+}
+
 // specAdmission is what a spec must pass, beyond the repository's own
 // checks, to be registered or made current: its own validation, the resource
-// unit, source mode and the operator's execution allowlist.
+// unit, deploy.require_digest, source mode and the operator's execution
+// allowlist.
 type specAdmission struct {
 	unit            unitGate
+	digest          digestGate
 	sourceModeImage string
 	policy          *domain.ExecutionPolicy
 }
@@ -126,6 +176,13 @@ func (a specAdmission) checkWarn(spec *domain.DAGSpec, stage string, dryRun bool
 	warnings, err := a.unit.check(spec, stage, dryRun)
 	if err != nil {
 		return nil, err
+	}
+	digestWarning, err := a.digest.check(spec, stage, dryRun)
+	if err != nil {
+		return nil, err
+	}
+	if digestWarning != "" {
+		warnings = append(warnings, digestWarning)
 	}
 	if err := domain.CheckSourceMode(a.sourceModeImage, spec); err != nil {
 		return nil, err
@@ -257,13 +314,14 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 	}
 	got, err := repo.RegisterDagVersionAs(c.Request.Context(), tenantOf(c), domain.DagRegistration{
 		Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused, DryRun: dryRun, PromotedFrom: promoted, BuildInfo: buildInfo,
+		RequireDigest: admission.digest.mode,
 	})
 	if err != nil {
 		handleRepoError(c, err)
 		return
 	}
 	resp := versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused,
-		Execution: execution.report(&spec, got.Created && !got.DagCreated, got.IsPaused)}
+		Execution: execution.report(&spec, got.Created && !got.DagCreated, got.IsPaused), Warnings: warnings}
 	if dryRun {
 		c.JSON(http.StatusOK, dryRunResponse{versionResponse: resp, DryRun: true, Warnings: warnings})
 		return

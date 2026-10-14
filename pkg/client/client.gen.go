@@ -720,7 +720,7 @@ type VersionRegistration struct {
 	SpecHash *string `json:"spec_hash,omitempty"`
 	Version  *string `json:"version,omitempty"`
 
-	// Warnings What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
+	// Warnings What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
 	Warnings *[]string `json:"warnings,omitempty"`
 }
 
@@ -1441,6 +1441,7 @@ type ClientInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes any type of body and a specified content type.
@@ -1452,6 +1453,7 @@ type ClientInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes a body of the `application/json` content type.
@@ -2218,6 +2220,7 @@ func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...Requ
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes any type of body and a specified content type.
@@ -2239,6 +2242,7 @@ func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, pa
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes a body of the `application/json` content type.
@@ -4875,6 +4879,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -4886,6 +4891,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -7624,6 +7630,7 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -7641,6 +7648,7 @@ func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
 // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).

@@ -86,14 +86,18 @@ type CurrentVersionChange struct {
 // the register creates and recorded in its audit entry; a register that
 // creates no version (the content is already registered) changes no build
 // info.
+// RequireDigest is the deploy.require_digest the register was admitted under
+// (#1703); while it is warn or enforce, the audit entry records it and
+// whether the image is pinned by digest.
 type DagRegistration struct {
-	Spec         DAGSpec
-	SpecHash     string
-	ActorUserID  string
-	IsPaused     *bool
-	DryRun       bool
-	PromotedFrom *DagPromotion
-	BuildInfo    *BuildInfo
+	Spec          DAGSpec
+	SpecHash      string
+	ActorUserID   string
+	IsPaused      *bool
+	DryRun        bool
+	PromotedFrom  *DagPromotion
+	BuildInfo     *BuildInfo
+	RequireDigest DigestRequirement
 }
 
 // DagPromotion names where a promoted version came from: the source target's
