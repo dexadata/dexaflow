@@ -39,6 +39,9 @@ type deployReport struct {
 	DAGs   []deployResult `json:"dags"`
 	// Removed lists the projects --changed-since found removed since the ref.
 	Removed []removedProject `json:"removed,omitempty"`
+	// Moved lists the projects --changed-since found in another folder than
+	// at the ref, under the same dag_id.
+	Moved []movedProject `json:"moved,omitempty"`
 }
 
 // deployResult is what one DAG's deploy did, or with --plan would do.
@@ -83,6 +86,14 @@ func (r *deployReport) add(res deployResult) {
 func (r *deployReport) addRemoved(p removedProject) {
 	if r != nil {
 		r.Removed = append(r.Removed, p)
+	}
+}
+
+// addMoved records a project moved since the --changed-since ref. A nil
+// report records nothing.
+func (r *deployReport) addMoved(p movedProject) {
+	if r != nil {
+		r.Moved = append(r.Moved, p)
 	}
 }
 

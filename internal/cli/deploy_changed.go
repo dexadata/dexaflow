@@ -34,8 +34,9 @@ type changeSet struct {
 	top    string          // the repository's top level, symlink-resolved
 	paths  map[string]bool // changed paths, absolute
 	sorted []string        // paths, sorted
-	// submodules are the absolute paths of the repository's submodules,
-	// compared by the commit they are on rather than file by file.
+	// submodules are the absolute paths of the repository's submodules:
+	// the diff compares the commit each is on (and its dirty state), and each
+	// answers for its own ignored files.
 	submodules []string
 }
 
@@ -139,11 +140,6 @@ func listSubmodules(ctx context.Context, top string) ([]string, error) {
 	return subs, nil
 }
 
-// inSubmodule reports whether f lies inside one of the submodules.
-func (c *changeSet) inSubmodule(f string) bool {
-	return slices.ContainsFunc(c.submodules, func(s string) bool { return f != s && holds(s, f) })
-}
-
 // resolveChangedRef resolves ref to a commit, and says how to get it when the
 // clone does not have it: a shallow clone (the CI default) needs its history.
 func resolveChangedRef(ctx context.Context, top, ref string) (string, error) {
@@ -231,22 +227,54 @@ func (c *changeSet) uncomparable(ctx context.Context, inputs map[string]bool) st
 		}
 	}
 	slices.Sort(files)
-	var stdin strings.Builder
+	// Each file is asked of the repository that holds it: the innermost
+	// submodule, whose own .gitignore decides, else the top.
+	groups := map[string][]string{}
+	var order []string
 	for _, f := range files {
 		if !holds(c.top, f) {
 			return "built from " + f + ", which is outside the repository at " + c.top
 		}
-		if c.inSubmodule(f) {
-			continue // the submodule's commit is compared instead
+		repo := c.repoOf(f)
+		if _, ok := groups[repo]; !ok {
+			order = append(order, repo)
 		}
-		stdin.WriteString(c.rel(f) + "\x00")
+		groups[repo] = append(groups[repo], f)
 	}
-	if stdin.Len() == 0 {
-		return ""
+	for _, repo := range order {
+		if why := c.ignoredIn(ctx, repo, groups[repo]); why != "" {
+			return why
+		}
 	}
-	// check-ignore exits 1 when nothing is ignored; a tracked file is never
-	// reported, since git compares it whatever the ignore rules say.
-	out, err := gitCaptureIn(ctx, c.top, stdin.String(), "check-ignore", "-z", "--stdin")
+	return ""
+}
+
+// repoOf returns the directory of the repository that tracks f: the
+// innermost submodule holding it, else the top.
+func (c *changeSet) repoOf(f string) string {
+	repo := c.top
+	for _, s := range c.submodules {
+		if f != s && holds(s, f) && len(s) > len(repo) {
+			repo = s
+		}
+	}
+	return repo
+}
+
+// ignoredIn asks git, in the repository at repo, whether it ignores any of
+// files, and names the first one it does. check-ignore exits 1 when nothing
+// is ignored; a tracked file is never reported, since git compares it
+// whatever the ignore rules say.
+func (c *changeSet) ignoredIn(ctx context.Context, repo string, files []string) string {
+	var stdin strings.Builder
+	for _, f := range files {
+		r, err := filepath.Rel(repo, f)
+		if err != nil {
+			return "git could not say whether it ignores " + f + ", so it is deployed"
+		}
+		stdin.WriteString(filepath.ToSlash(r) + "\x00")
+	}
+	out, err := gitCaptureIn(ctx, repo, stdin.String(), "check-ignore", "-z", "--stdin")
 	var exit *exec.ExitError
 	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
 		return "git could not say which of its inputs it ignores (" + err.Error() + "), so it is deployed"
@@ -255,7 +283,8 @@ func (c *changeSet) uncomparable(ctx context.Context, inputs map[string]bool) st
 	slices.Sort(ignored)
 	for _, f := range ignored {
 		if f != "" {
-			return "built from " + f + ", which git ignores, so it cannot be compared with " + c.ref
+			return "built from " + c.rel(filepath.Join(repo, filepath.FromSlash(f))) +
+				", which git ignores, so it cannot be compared with " + c.ref
 		}
 	}
 	return ""
@@ -345,7 +374,9 @@ func skippedPath(w *contentWalker, dir, rel string) bool {
 // movedProject is a removed project whose dag_id a current project has: it
 // moved, and is deployed from its new folder.
 type movedProject struct {
-	from, to, dagID string
+	DagID string `json:"dag_id"`
+	From  string `json:"from"`
+	To    string `json:"to"`
 }
 
 // removedProjects lists the projects the ref has and the working tree does
@@ -368,7 +399,7 @@ func (c *changeSet) removedProjects(ctx context.Context, wsDir string, current m
 		seen[dir] = true
 		id := c.removedDagID(ctx, dir)
 		if to, ok := current[id]; ok {
-			moved = append(moved, movedProject{from: c.rel(dir), to: c.rel(to), dagID: id})
+			moved = append(moved, movedProject{DagID: id, From: c.rel(dir), To: c.rel(to)})
 			continue
 		}
 		out = append(out, removedProject{Path: c.rel(dir), DagID: id,

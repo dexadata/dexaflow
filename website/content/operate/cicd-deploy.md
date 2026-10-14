@@ -257,7 +257,8 @@ How the comparison works:
   deploying.
 - **A file git ignores cannot be compared.** A project built from one (a
   generated module under `include_paths`, dbt `deps` output) always counts as
-  changed, and the output names the file. So does a project built from a file
+  changed, and the output names the file. Inside a submodule, the submodule's
+  own ignore rules decide. So does a project built from a file
   outside the repository, or one whose folder resolves outside it.
 - **The ref must be in the clone.** A shallow clone (the default of
   `actions/checkout`) stops with a message saying to fetch the history: use
@@ -281,8 +282,9 @@ How the comparison works:
   CLI or changing a target, deploy with `--all` alone once.
 
 With `--output json`, every skipped project has an entry with `status:
-"skipped"` and its `reason`, and the removed ones are listed under `removed`
-(`path`, `dag_id`, `reason`).
+"skipped"` and its `reason`, the removed ones are listed under `removed`
+(`path`, `dag_id`, `reason`), and the moved ones under `moved` (`dag_id`,
+`from`, `to`).
 
 `--changed-since` and the content label solve different costs. Without the
 flag, `deploy --all` already registers nothing for a project whose label is the

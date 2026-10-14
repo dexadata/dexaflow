@@ -391,7 +391,8 @@ func selectChanged(cmd *cobra.Command, ws *WorkspaceSpec, o deployOptions) ([]Pr
 	}
 	removed, moved := cs.removedProjects(ctx, ws.Path, current)
 	for _, m := range moved {
-		devPrintf(out, "==> %s moved to %s since %s: %s is deployed from there when it changed\n", m.from, m.to, cs.ref, m.dagID)
+		devPrintf(out, "==> %s moved to %s since %s: %s is deployed from there when it changed\n", m.From, m.To, cs.ref, m.DagID)
+		o.report.addMoved(m)
 	}
 	for _, r := range removed {
 		devPrintf(out, "==> %s (%s) %s. If its DAG should go, remove it with `dexaflow dags delete %s --deregister`\n",

@@ -68,6 +68,11 @@ type changedReport struct {
 		Path  string `json:"path"`
 		DagID string `json:"dag_id"`
 	} `json:"removed"`
+	Moved []struct {
+		DagID string `json:"dag_id"`
+		From  string `json:"from"`
+		To    string `json:"to"`
+	} `json:"moved"`
 }
 
 // planChanged runs deploy --plan --output json with the extra args against a
@@ -192,10 +197,14 @@ func TestDeployChangedSinceSelectsTheProjectsWhoseImageInputsChanged(t *testing.
 			writeTree(t, filepath.Join(a, "dbt_sales", "target", "manifest.json"), `{"x":1}`+"\n")
 		}, map[string]string{"a": "skipped", "b": "skipped"}},
 		{"an unchanged submodule under include_paths", func(t *testing.T, root string) {
-			addSubmodule(t, root, "dags/a/lib/vendored")
+			addSubmodule(t, root, "dags/a/lib/vendored", nil)
 		}, map[string]string{"a": "skipped", "b": "skipped"}},
+		{"a file under a submodule that the submodule's .gitignore ignores", func(t *testing.T, root string) {
+			addSubmodule(t, root, "dags/a/lib/vendored", map[string]string{".gitignore": "gen.py\n"})
+			writeTree(t, filepath.Join(root, "dags", "a", "lib", "vendored", "gen.py"), "G = 1\n")
+		}, map[string]string{"a": "planned", "b": "skipped"}},
 		{"a submodule the repository config hides", func(t *testing.T, root string) {
-			addSubmodule(t, root, "dags/a/lib/vendored")
+			addSubmodule(t, root, "dags/a/lib/vendored", nil)
 			gitIn(t, root, "config", "diff.ignoreSubmodules", "all")
 			writeTree(t, filepath.Join(root, "dags", "a", "lib", "vendored", "v.py"), "V = 2\n")
 			commitAll(t, filepath.Join(root, "dags", "a", "lib", "vendored"), "bump")
@@ -233,11 +242,15 @@ func commitAll(t *testing.T, dir, msg string) {
 	gitIn(t, dir, "commit", "-q", "-m", msg)
 }
 
-// addSubmodule adds a one-file repository as a submodule at rel and commits.
-func addSubmodule(t *testing.T, root, rel string) {
+// addSubmodule adds a repository holding v.py and extra files as a submodule
+// at rel, and commits.
+func addSubmodule(t *testing.T, root, rel string, extra map[string]string) {
 	t.Helper()
 	sub := t.TempDir()
 	writeTree(t, filepath.Join(sub, "v.py"), "V = 1\n")
+	for name, body := range extra {
+		writeTree(t, filepath.Join(sub, name), body)
+	}
 	gitIn(t, sub, "init", "-q")
 	commitAll(t, sub, "sub")
 	gitIn(t, root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, rel)
@@ -314,6 +327,9 @@ func TestDeployChangedSinceReportsAMovedProjectAsMoved(t *testing.T) {
 	}
 	if len(rep.Removed) != 0 {
 		t.Errorf("removed = %+v, want none: b moved", rep.Removed)
+	}
+	if len(rep.Moved) != 1 || rep.Moved[0].DagID != "b" || rep.Moved[0].From != "dags/b" || rep.Moved[0].To != "dags/team/b" {
+		t.Errorf("moved = %+v, want b from dags/b to dags/team/b", rep.Moved)
 	}
 	if strings.Contains(errOut, "dags delete") || !strings.Contains(errOut, "dags/b moved to dags/team/b") {
 		t.Errorf("the output must say b moved, with no delete advice:\n%s", errOut)
