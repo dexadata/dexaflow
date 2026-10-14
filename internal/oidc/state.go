@@ -37,6 +37,20 @@ type StatePayload struct {
 	// one-time code on its loopback redirect instead of setting a session
 	// cookie. Nil for a browser login.
 	CLI *CLIBinding
+	// Device is set when the login is the first step of a device sign-in of
+	// the CLI (`dexaflow auth login --device`, ADR 0081): the callback then
+	// asks for the user code instead of setting a session cookie. Nil for
+	// any other login.
+	Device *DeviceBinding
+}
+
+// DeviceBinding is what a device sign-in carries through the IdP round trip,
+// signed with the rest of the state: the user code of the link the person
+// opened (verification_uri_complete), well formed but not looked up, to fill
+// in on the page that asks for the code after the sign-in. It is "" when the
+// person opened the bare page.
+type DeviceBinding struct {
+	UserCode string `json:"user_code,omitempty"`
 }
 
 // CLIBinding is what a CLI-started login carries through the IdP round trip,
@@ -66,10 +80,11 @@ func NewStateCodec(hs256Secret string) *StateCodec {
 
 // stateClaims is the signed cookie payload.
 type stateClaims struct {
-	Nonce    string      `json:"nonce"`
-	Verifier string      `json:"vfy"`
-	Next     string      `json:"next"`
-	CLI      *CLIBinding `json:"cli,omitempty"`
+	Nonce    string         `json:"nonce"`
+	Verifier string         `json:"vfy"`
+	Next     string         `json:"next"`
+	CLI      *CLIBinding    `json:"cli,omitempty"`
+	Device   *DeviceBinding `json:"dev,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -83,6 +98,7 @@ func (c *StateCodec) Encode(p StatePayload, ttl time.Duration) (string, error) {
 		Verifier: p.Verifier,
 		Next:     p.Next,
 		CLI:      p.CLI,
+		Device:   p.Device,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        p.State,
 			Issuer:    stateIssuer,
@@ -114,5 +130,6 @@ func (c *StateCodec) Decode(token string) (StatePayload, error) {
 		Verifier: claims.Verifier,
 		Next:     claims.Next,
 		CLI:      claims.CLI,
+		Device:   claims.Device,
 	}, nil
 }

@@ -164,6 +164,13 @@ const ssoTestSecret = "cli-sso-test-secret"
 // idp, the same wiring dexaflow-server uses.
 func newSSOControlPlane(t *testing.T, idp *ssoIDP) *httptest.Server {
 	t.Helper()
+	return newSSOControlPlaneWith(t, idp, nil)
+}
+
+// newSSOControlPlaneWith is newSSOControlPlane serving the device sign-in
+// from devices when it is not nil.
+func newSSOControlPlaneWith(t *testing.T, idp *ssoIDP, devices api.CLIDeviceStore) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewUnstartedServer(nil)
 	base := "http://" + srv.Listener.Addr().String()
 	cfg := config.OIDCSection{
@@ -191,6 +198,7 @@ func newSSOControlPlane(t *testing.T, idp *ssoIDP) *httptest.Server {
 		OIDCUsers:             &ssoUsers{},
 		JWTSecret:             ssoTestSecret,
 		SessionCookieInsecure: true,
+		CLIDevices:            devices,
 	})
 	srv.Start()
 	t.Cleanup(srv.Close)

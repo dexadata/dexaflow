@@ -12,6 +12,11 @@ import (
 
 type Querier interface {
 	AddFavorite(ctx context.Context, arg AddFavoriteParams) error
+	// Approves a pending, unexpired sign-in as a user of the named tenant. The
+	// join is the tenant check: a user outside that tenant matches no row, and
+	// neither does a sign-in already decided, so each is approved once across
+	// every replica.
+	ApproveCLIDevice(ctx context.Context, arg ApproveCLIDeviceParams) (int64, error)
 	AssignUserRole(ctx context.Context, arg AssignUserRoleParams) error
 	// Records the durable warm-attempt binding (ADR 0058 N1d-a1): the warm worker
 	// pod ($4, its own downward-API pod name) that acked THIS attempt (dag_run_id,
@@ -103,6 +108,8 @@ type Querier interface {
 	// Audit rows of one tenant older than the cutoff, at most max_rows.
 	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
 	CountLiveAPITokens(ctx context.Context, arg CountLiveAPITokensParams) (int64, error)
+	// The live sign-ins, in all and from one requester.
+	CountLiveCLIDevices(ctx context.Context, requesterHash string) (CountLiveCLIDevicesRow, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
 	// with no password row is an escape hatch that does not open, which is worse
@@ -143,12 +150,21 @@ type Querier interface {
 	// answer (a no-op for a scheduled slot, a conflict for a manual run id) instead
 	// of a refusal, and nothing is written (createRunWithinDailyLimit).
 	DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDagIDParams) (bool, error)
+	// Ends a sign-in once its outcome was answered: redeemed or denied. The
+	// poll answers that outcome only when this deleted the row, so a sign-in is
+	// answered once even if two polls read it.
+	DeleteCLIDevice(ctx context.Context, id pgtype.UUID) (int64, error)
 	DeleteConnection(ctx context.Context, arg DeleteConnectionParams) (int64, error)
 	DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, error)
 	// Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
 	DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error)
 	// Removes the locked runs whose children are all gone, up to row_limit.
 	DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error)
+	// Forgets device sign-ins that expired more than ten minutes ago, with the
+	// address each was started from. Run before each create and by a sweep
+	// every minute, so the table holds only what is live or just expired (a CLI
+	// polling a just-expired sign-in still hears expired_token).
+	DeleteExpiredCLIDevices(ctx context.Context) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
 	// The implicit default pool is never deletable (Airflow parity): the guard is in
@@ -178,6 +194,8 @@ type Querier interface {
 	// values to the next attempt's downstream.
 	DeleteXComIndexForTasks(ctx context.Context, arg DeleteXComIndexForTasksParams) ([]string, error)
 	DeleteXComIndexOfRuns(ctx context.Context, arg DeleteXComIndexOfRunsParams) (int64, error)
+	// Records that the person canceled a pending, unexpired sign-in.
+	DenyCLIDevice(ctx context.Context, id pgtype.UUID) (int64, error)
 	// The consecutive dispatch-failure count of a task still waiting to run
 	// (scheduled or queued); no row means it has moved on.
 	DispatchAttemptsForActive(ctx context.Context, arg DispatchAttemptsForActiveParams) (int32, error)
@@ -233,6 +251,9 @@ type Querier interface {
 	// FailTaskInstanceIfActive on id, try_number, attempt_epoch and the active
 	// states.
 	FailTaskInstanceInfraIfActive(ctx context.Context, arg FailTaskInstanceInfraIfActiveParams) error
+	// The sign-in a person typed the user code of, while it can still be
+	// approved.
+	FindPendingCLIDeviceByUserCode(ctx context.Context, userCodeHash string) (FindPendingCLIDeviceByUserCodeRow, error)
 	// The per-request lookup of an API token. Revoked and expired tokens are
 	// returned too, so the authenticator decides, and says why in one place.
 	GetAPITokenByHash(ctx context.Context, tokenHash string) (GetAPITokenByHashRow, error)
@@ -308,6 +329,9 @@ type Querier interface {
 	// Stores a new API token (ADR 0074). The caller holds LockAPITokenOwner and
 	// has checked the cap in the same transaction.
 	InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) (InsertAPITokenRow, error)
+	// Starts a device sign-in. The expiry is the database's clock, the one every
+	// other statement here compares against.
+	InsertCLIDevice(ctx context.Context, arg InsertCLIDeviceParams) (InsertCLIDeviceRow, error)
 	// The row is inserted only under a dag of the given tenant (#508): a dag id of
 	// another tenant inserts nothing and the query returns no row.
 	InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error)
@@ -602,6 +626,14 @@ type Querier interface {
 	// take. No row: the user is not in the tenant. The email names the owner in
 	// the audit rows the create writes.
 	LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (LockAPITokenOwnerRow, error)
+	// Locks the sign-in a poll names, with what the poll decides from: whether
+	// it expired, and whether this poll came sooner than the interval allows
+	// (with a fifth of it as slack for network jitter).
+	LockCLIDeviceForPoll(ctx context.Context, deviceCodeHash string) (LockCLIDeviceForPollRow, error)
+	// Serializes starts for the rest of the transaction, so the caps the count
+	// below checks hold exactly under concurrent starts on any replica. The key
+	// is this table's own; nothing else takes it.
+	LockCLIDeviceStarts(ctx context.Context) error
 	// Locks the DAG's row for the rest of the transaction, so registers of the same
 	// DAG are serialized: the spec-hash check of one register sees the version the
 	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
@@ -651,6 +683,8 @@ type Querier interface {
 	// the run row the janitor holds, and waiting would deadlock; the janitor skips
 	// the batch and retries on a later cycle.
 	LockTaskInstancesOfRuns(ctx context.Context, arg LockTaskInstancesOfRunsParams) ([]LockTaskInstancesOfRunsRow, error)
+	// Records a poll, and the longer interval a slow_down answered with.
+	MarkCLIDevicePolled(ctx context.Context, arg MarkCLIDevicePolledParams) error
 	// Stamp a run's on-failure alert as DELIVERED. Called only after a successful
 	// send, which is the whole point of the split: alerted_at now answers "did the
 	// page get through", not "did we try".
