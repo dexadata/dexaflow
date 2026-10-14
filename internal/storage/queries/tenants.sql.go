@@ -17,12 +17,14 @@ SELECT nr.id, rp.permission_id
 FROM roles dr
 JOIN tenants d ON d.id = dr.tenant_id AND d.name = 'default'
 JOIN role_permissions rp ON rp.role_id = dr.id
-JOIN roles nr ON nr.tenant_id = $1::uuid AND nr.name = dr.name
+JOIN roles nr ON nr.tenant_id = $1::uuid AND nr.name = dr.name AND nr.is_system
 WHERE dr.is_system
 ON CONFLICT DO NOTHING
 `
 
 // Grant each copied built-in role the same permissions as its "default" twin.
+// Only the tenant's built-in roles: a custom role that shares a built-in's
+// name (one created before a migration added that built-in) keeps its grants.
 func (q *Queries) CopyDefaultRolePermissions(ctx context.Context, tenantID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, copyDefaultRolePermissions, tenantID)
 	return err

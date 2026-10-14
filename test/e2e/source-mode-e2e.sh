@@ -139,7 +139,7 @@ start_server() {
     sleep 1
   done
   curl -fsS "$API/readyz" >/dev/null 2>&1 || fail "the control plane did not become ready in phase '$PHASE'"
-  TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+  TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 }
 
 # write_project DAG_ID writes a project directory whose dag.py comes from stdin.

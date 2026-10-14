@@ -158,7 +158,7 @@ kubectl -n leoflow-poc port-forward svc/leoflow 8080:8080 &
 curl -fsS http://127.0.0.1:8080/readyz
 ```
 
-Open `http://127.0.0.1:8080/` for the UI. Log in with `admin@leoflow.local` /
+Open `http://127.0.0.1:8080/` for the UI. Log in with `admin@dexaflow.local` /
 `leoflow-poc-admin` (the `bootstrap.password` from the values file).
 
 ## Teardown

@@ -174,8 +174,9 @@ paths:
         and nothing else), read carries dexaflow:read. The
         caller's roles must allow what the scope does (deploy needs deploy or
         write on dags, read needs read on dags). An account holds at most 50
-        live tokens. Audited as api_token.create. Not callable with an API
-        token or any other scoped token.
+        live tokens. Audited as api_token.create. Reusing the name of an
+        expired token retires that token, audited as api_token.retire_expired.
+        Not callable with an API token or any other scoped token.
       operationId: createAPIToken
       tags: [API Tokens]
       requestBody:
@@ -1219,8 +1220,10 @@ components:
           description: >-
             Present and true in a listing when the extra is encrypted with a
             secret key the server does not have (for example after a key
-            rotation that dropped the old key). The extra is then masked.
-            Reading the connection alone answers 500 with a message naming it.
+            rotation that dropped the old key). The extra is then null, so a
+            client that parses it as JSON still can. Reading the connection
+            alone, or updating it, answers 500 with a message naming it, and the
+            stored extra is kept.
 
     ConnectionBody:
       type: object

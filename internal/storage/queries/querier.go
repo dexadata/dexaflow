@@ -67,6 +67,8 @@ type Querier interface {
 	// superseded attempt, or a second one, is a no-op.
 	ConfirmInfraFailure(ctx context.Context, arg ConfirmInfraFailureParams) (int64, error)
 	// Grant each copied built-in role the same permissions as its "default" twin.
+	// Only the tenant's built-in roles: a custom role that shares a built-in's
+	// name (one created before a migration added that built-in) keeps its grants.
 	CopyDefaultRolePermissions(ctx context.Context, tenantID pgtype.UUID) error
 	// Give a tenant the built-in roles the migrations seed for "default". Copying
 	// keeps every tenant's ladder equal to default's as later migrations change it.
@@ -597,8 +599,9 @@ type Querier interface {
 	// Locks the user row a token is created for, so concurrent creates for one
 	// user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY
 	// UPDATE does not block the key-share locks that inserts referencing the user
-	// take. No row: the user is not in the tenant.
-	LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (pgtype.UUID, error)
+	// take. No row: the user is not in the tenant. The email names the owner in
+	// the audit rows the create writes.
+	LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (LockAPITokenOwnerRow, error)
 	// Locks the DAG's row for the rest of the transaction, so registers of the same
 	// DAG are serialized: the spec-hash check of one register sees the version the
 	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
@@ -619,6 +622,13 @@ type Querier interface {
 	// a clear: a clear resets task_instances before it touches the run row, so the
 	// janitor then locks and re-checks the task instances
 	// (LockTaskInstancesOfRuns) before it deletes anything.
+	//
+	// The newest run of each DAG (by logical date) is never selected: the
+	// scheduler takes a DAG's last logical date from it (ListScheduledDags), so
+	// deleting it would make a cron DAG run its latest slot again, a catchup DAG
+	// backfill its whole history, and an @once DAG fire a second time. Airflow's
+	// `db clean` likewise keeps each DAG's latest (non-manual) run. The probe is
+	// one step on idx_dag_runs_dag_logical.
 	LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error)
 	// Share-locks every task instance of a run inside the reap transaction, before
 	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
@@ -967,8 +977,10 @@ type Querier interface {
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
 	// Revokes the user's expired, unrevoked tokens with this name, so an expired
-	// token does not hold its name forever.
-	RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) error
+	// token does not hold its name forever, and returns them so the create audits
+	// each one as api_token.retire_expired rather than leaving it to read as a
+	// manual revoke (#1768).
+	RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) ([]RetireExpiredAPITokenNameRow, error)
 	// Revokes a live token of the tenant; owner_id NULL revokes any owner's. A
 	// revoked token matches no row, so it is not revoked or audited twice.
 	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) (RevokeAPITokenRow, error)

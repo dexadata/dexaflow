@@ -163,7 +163,7 @@ folder. It brings up its datastore, registers the DAGs, and prints where to go:
 ```
 ✓ Dexaflow Lite is ready
     open:    http://127.0.0.1:8088
-    login:   admin@leoflow.local
+    login:   admin@dexaflow.local
     project: /path/to/sales-dags
 ```
 

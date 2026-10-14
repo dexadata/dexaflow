@@ -62,3 +62,38 @@ func TestConnectionListSurvivesAnUnreadableExtra(t *testing.T) {
 		t.Errorf("deleting the unreadable connection: %v", err)
 	}
 }
+
+// A write that leaves extra out (a nil patch field) keeps the ciphertext of an
+// extra this server cannot decrypt (#1677): it is the only copy of that
+// credential. The API refuses writes to such a connection before they get
+// here; this locks the store underneath, so the old key, once added back,
+// still opens the original extra.
+func TestConnectionPatchKeepsAnUnreadableExtra(t *testing.T) {
+	dsn := freshKeyMigrationDB(t)
+	ctx := context.Background()
+
+	stranger := keyMigrationRepo(t, dsn)
+	stranger.SetCipher(varCipher(t, kmStranger))
+	if err := stranger.SetConnection(ctx, "default", domain.Connection{
+		ConnID: "lost", ConnType: "http", Host: "api.example.com", Extra: `{"token":"s3cret"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := keyMigrationRepo(t, dsn)
+	repo.SetCipher(varCipher(t, kmNew))
+	host := "new.example.com"
+	if err := repo.SetConnectionPatch(ctx, "default", domain.ConnectionPatch{
+		ConnID: "lost", ConnType: "http", Host: &host,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := stranger.GetConnection(ctx, "default", "lost")
+	if err != nil {
+		t.Fatalf("GetConnection with the original key: %v", err)
+	}
+	if got.Extra != `{"token":"s3cret"}` || got.Host != host {
+		t.Errorf("after a host-only patch = %+v, want the original extra kept and the new host", got)
+	}
+}
