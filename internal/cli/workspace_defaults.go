@@ -88,8 +88,9 @@ func applyDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, wi
 // defaultsLayers returns the target's defaults and the workspace's, most
 // specific first.
 //
-// With a target (withTarget), both come from the workspace around the current
-// folder, the one the target was resolved from, so a target and the defaults
+// With a target (withTarget), both come from the workspace around the
+// command's work dir (the current folder unless withWorkDir set another), the
+// one the target was resolved from, so a target and the defaults
 // it overrides always belong to the same file; that workspace's defaults apply
 // only to projects inside it. Without one (Lite), the defaults are those of
 // the workspace holding dir.
