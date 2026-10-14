@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_sync/
 title: "dexaflow sync"
 linkTitle: "sync"
-weight: 59
+weight: 60
 ---
 
 Make the target run the DAGs of a workspace: deploy what changed, report or pause what is gone (Pro).
