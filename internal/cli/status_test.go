@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,13 @@ type statusDagFake struct {
 	versions []statusVersionFake
 	paused   bool
 	runs     []string // each a JSON object of the dagRuns list
+	// noIsCurrent leaves is_current out of the versions, as Airflow does;
+	// the details still name the current label.
+	noIsCurrent bool
+	// pageCap, when set, is the most versions one page holds, whatever
+	// limit asks for, as Airflow's maximum_page_limit does; 0 serves every
+	// version on one page, ignoring limit and offset, as Dexaflow does.
+	pageCap int
 }
 
 // statusServer fakes the Airflow-compatible reads `dexaflow status` makes,
@@ -88,21 +97,22 @@ func (s *statusServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"title":"not found","detail":"DAG not found"}`)
 		return
 	}
-	s.serveDag(w, id, sub, d)
+	s.serveDag(w, r, id, sub, d)
 }
 
 // serveDag answers the DAG, its versions and its runs.
-func (s *statusServer) serveDag(w http.ResponseWriter, id, sub string, d *statusDagFake) {
+func (s *statusServer) serveDag(w http.ResponseWriter, r *http.Request, id, sub string, d *statusDagFake) {
 	switch sub {
-	case "":
-		_, _ = fmt.Fprintf(w, `{"dag_id":%q,"is_paused":%v}`, id, d.paused)
-	case "dagVersions":
-		parts := make([]string, 0, len(d.versions))
+	case "details":
+		current := "null"
 		for _, v := range d.versions {
-			parts = append(parts, fmt.Sprintf(`{"dag_id":%q,"bundle_version":%q,"version_number":%d,"created_at":%q,"is_current":%v}`,
-				id, v.label, v.number, v.created, v.current))
+			if v.current {
+				current = fmt.Sprintf("%q", v.label)
+			}
 		}
-		_, _ = fmt.Fprintf(w, `{"dag_versions":[%s],"total_entries":%d}`, strings.Join(parts, ","), len(parts))
+		_, _ = fmt.Fprintf(w, `{"dag_id":%q,"is_paused":%v,"bundle_version":%s}`, id, d.paused, current)
+	case "dagVersions":
+		_, _ = io.WriteString(w, d.versionsPage(id, r))
 	case "dagRuns":
 		runs := d.runs
 		if len(runs) > 1 {
@@ -112,6 +122,32 @@ func (s *statusServer) serveDag(w http.ResponseWriter, id, sub string, d *status
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// versionsPage answers one page of the versions list.
+func (d *statusDagFake) versionsPage(id string, r *http.Request) string {
+	page := d.versions
+	if d.pageCap > 0 {
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+		if err != nil || limit <= 0 || limit > d.pageCap {
+			limit = d.pageCap
+		}
+		page = nil
+		if offset < len(d.versions) {
+			page = d.versions[offset:min(offset+limit, len(d.versions))]
+		}
+	}
+	parts := make([]string, 0, len(page))
+	for _, v := range page {
+		current := fmt.Sprintf(`,"is_current":%v`, v.current)
+		if d.noIsCurrent {
+			current = ""
+		}
+		parts = append(parts, fmt.Sprintf(`{"dag_id":%q,"bundle_version":%q,"version_number":%d,"created_at":%q%s}`,
+			id, v.label, v.number, v.created, current))
+	}
+	return fmt.Sprintf(`{"dag_versions":[%s],"total_entries":%d}`, strings.Join(parts, ","), len(d.versions))
 }
 
 // statusWorkspace writes a workspace holding one project per dag_id under
@@ -469,7 +505,7 @@ func TestStatusAgreesWithDeploy(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{"registry":%q}`, reg.host+"/team")
 			return
 		}
-		if r.Method == http.MethodGet && (r.URL.Path == "/api/v2/dags/etl" || r.URL.Path == "/api/v2/dags/etl/dagVersions" || r.URL.Path == "/api/v2/dags/etl/dagRuns") {
+		if r.Method == http.MethodGet && (r.URL.Path == "/api/v2/dags/etl/details" || r.URL.Path == "/api/v2/dags/etl/dagVersions" || r.URL.Path == "/api/v2/dags/etl/dagRuns") {
 			serveDeployedState(w, r, deploy)
 			return
 		}
@@ -514,20 +550,20 @@ func serveDeployedState(w http.ResponseWriter, r *http.Request, fake *deployServ
 	case strings.HasSuffix(r.URL.Path, "/dagRuns"):
 		_, _ = io.WriteString(w, `{"dag_runs":[],"total_entries":0}`)
 	default:
-		_, _ = fmt.Fprintf(w, `{"dag_id":"etl","is_paused":%v}`, fake.paused)
+		_, _ = fmt.Fprintf(w, `{"dag_id":"etl","is_paused":%v,"bundle_version":%q}`, fake.paused, fake.current)
 	}
 }
 
-// TestStatusCurrentWithoutIsCurrent: a server that does not mark the current
-// version (Airflow has no is_current) is read as running its newest one.
+// TestStatusCurrentWithoutIsCurrent: a server that does not mark is_current
+// (Airflow) is read by the current label its details name, as deploy reads it.
 func TestStatusCurrentWithoutIsCurrent(t *testing.T) {
 	isolateCLIEnv(t)
 	fake := &statusServer{}
 	url := newStatusServer(t, fake)
 	root, dirs := statusWorkspace(t, []string{"dev=" + url}, "alpha")
 	label := labelOf(t, dirs["alpha"])
-	fake.dags["alpha"] = &statusDagFake{versions: []statusVersionFake{
-		{"v-old", 1, "2026-09-01T00:00:00Z", false}, {label, 3, "2026-09-03T00:00:00Z", false}, {"v-mid", 2, "2026-09-02T00:00:00Z", false}}}
+	fake.dags["alpha"] = &statusDagFake{noIsCurrent: true, versions: []statusVersionFake{
+		{"v-old", 1, "2026-09-01T00:00:00Z", false}, {label, 3, "2026-09-03T00:00:00Z", true}, {"v-mid", 2, "2026-09-02T00:00:00Z", false}}}
 	t.Chdir(root)
 	out, _, err := run(t, "status", "--config", emptyConfig(t))
 	if err != nil || !strings.Contains(lineOf(out, "alpha "), "in sync") || !strings.Contains(out, label+" (#3)") {
@@ -551,5 +587,94 @@ func TestStatusRefusesAnUnknownOutput(t *testing.T) {
 	isolateCLIEnv(t)
 	if _, _, err := run(t, "status", "--output", "yaml"); exitCodeOf(err) != 2 {
 		t.Errorf("err = %v, want exit 2", err)
+	}
+}
+
+// TestStatusNoCurrentVersion: versions that exist with none current are not
+// "in sync", whatever their is_current says, because deploy reads the same
+// details and builds.
+func TestStatusNoCurrentVersion(t *testing.T) {
+	isolateCLIEnv(t)
+	fake := &statusServer{}
+	url := newStatusServer(t, fake)
+	root, dirs := statusWorkspace(t, []string{"dev=" + url}, "alpha")
+	label := labelOf(t, dirs["alpha"])
+	fake.dags["alpha"] = &statusDagFake{versions: []statusVersionFake{
+		{"v-old", 1, "2026-09-01T00:00:00Z", false}, {label, 2, "2026-09-02T00:00:00Z", false}}}
+	t.Chdir(root)
+	out, _, err := run(t, "status", "--config", emptyConfig(t))
+	if exitCodeOf(err) != 1 || !strings.Contains(lineOf(out, "alpha "), "not deployed") {
+		t.Errorf("err = %v, want not deployed with exit 1\n%s", err, out)
+	}
+	if state, _, cerr := checkDeployed(context.Background(), io.Discard, url, "", "alpha", label); cerr != nil || state != deployUnknown {
+		t.Errorf("checkDeployed = %v, %v; deploy must build what status calls not deployed", state, cerr)
+	}
+}
+
+// pagedVersions is 60 versions of one DAG, label at number at and the last
+// one current: with 50 per page, at > 50 is on the second page.
+func pagedVersions(label string, at int) []statusVersionFake {
+	out := make([]statusVersionFake, 0, 60)
+	for n := 1; n <= 60; n++ {
+		l := fmt.Sprintf("v-%d", n)
+		if n == at {
+			l = label
+		}
+		out = append(out, statusVersionFake{l, n, "2026-09-01T00:00:00Z", n == 60})
+	}
+	return out
+}
+
+// TestStatusAndDeployReadEveryVersionsPage: an older version on the second
+// page of an Airflow-shaped server is still found, by status and by deploy.
+func TestStatusAndDeployReadEveryVersionsPage(t *testing.T) {
+	isolateCLIEnv(t)
+	fake := &statusServer{}
+	url := newStatusServer(t, fake)
+	root, dirs := statusWorkspace(t, []string{"dev=" + url}, "alpha")
+	label := labelOf(t, dirs["alpha"])
+	fake.dags["alpha"] = &statusDagFake{pageCap: 50, versions: pagedVersions(label, 55)}
+	t.Chdir(root)
+	out, _, err := run(t, "status", "--config", emptyConfig(t))
+	if exitCodeOf(err) != 1 || !strings.Contains(lineOf(out, "alpha "), "behind: local equals "+label) {
+		t.Errorf("err = %v, want behind\n%s", err, out)
+	}
+	if !strings.Contains(out, "v-60 (#60)") {
+		t.Errorf("want the current version v-60 (#60):\n%s", out)
+	}
+	if state, _, cerr := checkDeployed(context.Background(), io.Discard, url, "", "alpha", label); cerr != nil || state != deployStale {
+		t.Errorf("checkDeployed = %v, %v, want deployStale from the second page", state, cerr)
+	}
+}
+
+// TestStatusAllTargetsNeverSendsTheServerlessToken: the token older
+// versions saved without a server_url goes to any server for other
+// commands; --all-targets sends each target only its own session, and the
+// 401 says which target to sign in to.
+func TestStatusAllTargetsNeverSendsTheServerlessToken(t *testing.T) {
+	isolateCLIEnv(t)
+	dev, prod := &statusServer{status: http.StatusUnauthorized}, &statusServer{status: http.StatusUnauthorized}
+	devURL, prodURL := newStatusServer(t, dev), newStatusServer(t, prod)
+	root, _ := statusWorkspace(t, []string{"dev=" + devURL, "prod=" + prodURL}, "alpha")
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	writeTree(t, cfg, "token: x\n")
+	t.Chdir(root)
+	out, _, err := run(t, "status", "--all-targets", "--config", cfg)
+	if exitCodeOf(err) != 2 {
+		t.Fatalf("exit %d (err %v), want 2\n%s", exitCodeOf(err), err, out)
+	}
+	for name, fake := range map[string]*statusServer{"dev": dev, "prod": prod} {
+		for _, a := range fake.auth {
+			if a == "Bearer x" {
+				t.Errorf("%s received the token saved without a server", name)
+			}
+		}
+	}
+	devAt, prodAt := strings.Index(out, "target dev: "), strings.Index(out, "target prod: ")
+	if devAt < 0 || prodAt < devAt {
+		t.Fatalf("want dev then prod:\n%s", out)
+	}
+	if !strings.Contains(out[devAt:prodAt], "auth login --target dev") || !strings.Contains(out[prodAt:], "auth login --target prod") {
+		t.Errorf("each 401 must say which target to sign in to:\n%s", out)
 	}
 }

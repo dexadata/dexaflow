@@ -495,7 +495,7 @@ func deployImageRef(cfg *domain.LeoflowConfig, version string, rev gitRevision) 
 // resolveServerToken resolves the control plane a server command calls and the
 // bearer token it sends there. The server comes from resolveServer (flags, a
 // named target, the environment, then the config file); the token from
-// pickToken (--token, DEXAFLOW_TOKEN or LEOFLOW_TOKEN, the session saved for
+// pickTokenFor (--token, DEXAFLOW_TOKEN or LEOFLOW_TOKEN, the session saved for
 // that server, then the single-server session of older configs).
 //
 // When the token comes from a saved session (not a --token flag or a token
@@ -514,12 +514,18 @@ func resolveServerToken(cmd *cobra.Command, serverFlag, tokenFlag string) (serve
 // resolveServerChoiceToken is resolveServerToken that also returns what chose
 // the server, for commands that say so.
 func resolveServerChoiceToken(cmd *cobra.Command, serverFlag, tokenFlag string) (choice *serverChoice, token string, err error) {
+	return resolveServerChoiceTokenFor(cmd, serverFlag, tokenFlag, false)
+}
+
+// resolveServerChoiceTokenFor is resolveServerChoiceToken; ownOnly sends the
+// server only a token saved for it (pickTokenFor), for `status --all-targets`.
+func resolveServerChoiceTokenFor(cmd *cobra.Command, serverFlag, tokenFlag string, ownOnly bool) (choice *serverChoice, token string, err error) {
 	choice, err = resolveServer(cmd, serverFlag)
 	if err != nil {
 		return nil, "", err
 	}
 	serverURL := choice.URL
-	token, source := pickToken(choice, tokenFlag)
+	token, source := pickTokenFor(choice, tokenFlag, ownOnly)
 	ctx := cmdContext(cmd)
 	switch source {
 	case tokenSession:

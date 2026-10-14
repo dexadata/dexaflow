@@ -63,21 +63,71 @@ func checkDeployed(ctx context.Context, warn io.Writer, serverURL, token, dagID,
 	if state := classifyLabel(label, current, nil); state != deployUnknown || current == "" {
 		return state, current, nil
 	}
-	var versions struct {
-		DagVersions []struct {
-			BundleVersion *string `json:"bundle_version"`
-		} `json:"dag_versions"`
-	}
-	if ok, err := getControlPlaneJSON(ctx, warn, base+"/dagVersions", token, label, &versions); !ok || err != nil {
+	versions, err := listRegisteredVersions(base, func(u string, page any) (bool, error) {
+		return getControlPlaneJSON(ctx, warn, u, token, label, page)
+	})
+	if err != nil || versions == nil {
 		return deployUnknown, current, err
 	}
-	registered := make([]string, 0, len(versions.DagVersions))
-	for _, v := range versions.DagVersions {
-		if v.BundleVersion != nil {
-			registered = append(registered, *v.BundleVersion)
-		}
+	registered := make([]string, 0, len(versions))
+	for _, v := range versions {
+		registered = append(registered, v.Label)
 	}
 	return classifyLabel(label, current, registered), current, nil
+}
+
+// registeredVersion is one entry of GET /api/v2/dags/{dag_id}/dagVersions.
+// IsCurrent is nil from a server that does not report it (Airflow).
+type registeredVersion struct {
+	Label     string     `json:"bundle_version"`
+	Number    int        `json:"version_number"`
+	CreatedAt *time.Time `json:"created_at"`
+	IsCurrent *bool      `json:"is_current"`
+}
+
+// versionsPageSize is the page size listRegisteredVersions asks for.
+const versionsPageSize = 100
+
+// maxVersionsPages bounds listRegisteredVersions against a server that
+// never ends its list.
+const maxVersionsPages = 1000
+
+// listRegisteredVersions reads every page of the versions of the DAG at base
+// (.../api/v2/dags/{dag_id}) with get, which decodes one URL into a page and
+// reports ok=false when nothing more should be read; the result is then nil.
+// It moves by limit and offset until total_entries versions are read, as
+// Airflow pages the list (a page may hold fewer than asked for, under
+// maximum_page_limit), and stops at a page that adds nothing, as from a
+// server that serves the whole list whatever the offset (Dexaflow). Deploy
+// and status both read the versions with it, so an older version on a later
+// page is stale for both.
+func listRegisteredVersions(base string, get func(u string, page any) (bool, error)) ([]registeredVersion, error) {
+	all := []registeredVersion{}
+	seen := map[registeredVersion]bool{}
+	for range maxVersionsPages {
+		var page struct {
+			DagVersions  []registeredVersion `json:"dag_versions"`
+			TotalEntries *int                `json:"total_entries"`
+		}
+		u := fmt.Sprintf("%s/dagVersions?limit=%d&offset=%d", base, versionsPageSize, len(all))
+		if ok, err := get(u, &page); !ok || err != nil {
+			return nil, err
+		}
+		added := 0
+		for _, v := range page.DagVersions {
+			key := v
+			key.CreatedAt, key.IsCurrent = nil, nil
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, v)
+				added++
+			}
+		}
+		if added == 0 || page.TotalEntries == nil || len(all) >= *page.TotalEntries {
+			break
+		}
+	}
+	return all, nil
 }
 
 // classifyLabel says what a DAG whose current version is labeled current

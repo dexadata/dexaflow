@@ -260,7 +260,7 @@ does. For each DAG it reports:
 | CURRENT VERSION | The label and number of the version new runs use. |
 | REGISTERED | When that version was registered. |
 | PAUSED | The DAG's `is_paused`. |
-| LAST RUN | The newest run: its id, state and start time, or `none`. |
+| LAST RUN | The run with the latest logical date: its id, state and start time, or `none`. |
 
 The local label is computed by the same code as `dexaflow deploy`, with the
 target's, the workspace's and the cluster's deploy defaults, so `status` and
@@ -274,16 +274,22 @@ flags to `status` (or set `DEXAFLOW_REGISTRY`), since they are part of the
 label.
 
 `--all-targets` repeats the report for every target of the workspace file,
-each with its own server and the token saved for that server. A target that
-cannot be reached, or refuses the token, gets an error line and the others
-are still reported. It refuses `--server`, `--target`, `--token` and
-`DEXAFLOW_TOKEN`, which would point every target at one server or send one
-token to all of them.
+each with its own server and only the token saved for that server: the
+`token` older versions saved without a `server_url` is not sent, and neither
+is a `token` saved for another server. A target that cannot be reached, or
+answers `401` (no token, or a refused one), gets one error line that says how
+to sign in to it, and the others are still reported. A `403` is reported on
+each DAG it applies to, since a role can allow some DAGs and not others. It
+refuses `--server`, `--target`, `--token` and `DEXAFLOW_TOKEN`, which would
+point every target at one server or send one token to all of them.
 
-The reads are the Airflow-compatible `GET /api/v2/dags/{dag_id}`,
+The reads are the Airflow-compatible `GET /api/v2/dags/{dag_id}/details`
+(the current label, `bundle_version`, and `is_paused`), every page of
 `GET /api/v2/dags/{dag_id}/dagVersions` and
-`GET /api/v2/dags/{dag_id}/dagRuns`, plus `GET /api/v2/deployDefaults`. A DAG
-on the server that is not in the workspace is not listed.
+`GET /api/v2/dags/{dag_id}/dagRuns`, plus `GET /api/v2/deployDefaults`: the
+same reads deploy's check before a build makes, so the two agree on which
+version is current. A DAG on the server that is not in the workspace is not
+listed.
 
 ### Exit codes
 
@@ -291,7 +297,7 @@ on the server that is not in the workspace is not listed.
 |---|---|
 | `0` | Every DAG is in sync on every target reported. |
 | `1` | At least one DAG drifted, is behind or is not deployed, and everything could be read. |
-| `2` | A target or a DAG could not be read (unreachable server, refused token, a read the server answered with an error, a project whose label cannot be computed), or the command was used wrongly. |
+| `2` | A target or a DAG could not be read (unreachable server, a `401`, a read the server answered with an error, a project whose label cannot be computed), or the command was used wrongly. |
 
 In CI, `dexaflow status --target prod` fails the job when the branch is not
 what production runs.

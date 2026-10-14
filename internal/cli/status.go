@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -247,7 +250,7 @@ func statusOfTarget(cmd *cobra.Command, name string, projects []statusProject, o
 		}
 		defer restore()
 	}
-	choice, token, err := resolveServerChoiceToken(cmd, o.serverURL, o.token)
+	choice, token, err := resolveServerChoiceTokenFor(cmd, o.serverURL, o.token, o.allTargets)
 	if err != nil {
 		t.Error = err.Error()
 		return t
@@ -267,7 +270,7 @@ func statusOfTarget(cmd *cobra.Command, name string, projects []statusProject, o
 	ctx := cmdContext(cmd)
 	remote, err := readTargetState(ctx, choice.URL, token, projects)
 	if err != nil {
-		t.Error = err.Error()
+		t.Error = err.Error() + signInHint(err, t.Target, choice.URL, token, o.allTargets)
 		return t
 	}
 	cluster, cerr := clusterLayer(ctx, choice.URL, token)
@@ -279,6 +282,27 @@ func statusOfTarget(cmd *cobra.Command, name string, projects []statusProject, o
 		t.Dags = append(t.Dags, dagStatusOf(cmd, p, remote[i], cluster, o))
 	}
 	return t
+}
+
+// signInHint is the line a 401 of the target gets: how to sign in to that
+// target, and with no token sent under --all-targets (allTargets), why none
+// was.
+func signInHint(err error, target, serverURL, token string, allTargets bool) string {
+	var whole *targetUnreadable
+	if !errors.As(err, &whole) || !whole.unauthorized {
+		return ""
+	}
+	login := loginCommandPath + " --server " + serverURL
+	if target != "" {
+		login = loginCommandPath + " --target " + target
+	}
+	switch {
+	case token == "" && allTargets:
+		return "\nhint: no token is saved for " + serverURL + " (a token saved without a server is never sent with --all-targets); sign in:  " + login
+	case token == "":
+		return "\nhint: no token is saved for " + serverURL + "; sign in:  " + login
+	}
+	return "\nhint: the server refused the token; sign in again:  " + login
 }
 
 // useTargetFlag sets the global --target flag to name, so the server, the
@@ -314,10 +338,7 @@ func dagStatusOf(cmd *cobra.Command, p statusProject, remote remoteDag, cluster 
 		return ds
 	}
 	ds.IsPaused, ds.LastRun, ds.CurrentVersion = remote.paused, remote.lastRun, remote.current
-	current := ""
-	if remote.current != nil {
-		current = remote.current.Label
-	}
+	current := remote.currentLabel
 	switch classifyLabel(label, current, remote.labels()) {
 	case deployCurrent:
 		ds.State = stateInSync
@@ -348,11 +369,13 @@ func localLabel(cmd *cobra.Command, dir string, cluster *defaultsLayer, dockerfi
 
 // remoteDag is what one control plane holds for a DAG.
 type remoteDag struct {
-	found    bool
-	paused   *bool
-	current  *statusVersion
-	versions []statusVersion
-	lastRun  *statusRun
+	found  bool
+	paused *bool
+	// currentLabel is the label the details name current, "" for none.
+	currentLabel string
+	current      *statusVersion
+	versions     []statusVersion
+	lastRun      *statusRun
 	// err is a read of this DAG that failed while the server answered.
 	err error
 }
@@ -379,23 +402,28 @@ func (r remoteDag) version(label string) *statusVersion {
 
 // targetUnreadable is a read that says nothing more can be read from the
 // target: it is not reachable, or it refuses the token.
-type targetUnreadable struct{ err error }
+type targetUnreadable struct {
+	err error
+	// unauthorized marks a 401: the target refused the token.
+	unauthorized bool
+}
 
 func (e *targetUnreadable) Error() string { return e.err.Error() }
 func (e *targetUnreadable) Unwrap() error { return e.err }
 
 // readTargetState reads every project's DAG from the control plane at
-// serverURL, in order. An unreachable server or a refused token stops the
-// reads with an error for the whole target; any other failure is recorded
-// on its DAG.
+// serverURL, in order. An unreachable server or a refused token (401) stops
+// the reads with an error for the whole target; any other failure, a 403
+// included, is recorded on its DAG.
 func readTargetState(ctx context.Context, serverURL, token string, projects []statusProject) ([]remoteDag, error) {
 	c, err := apiclient.New(serverURL, token, apiclient.WithHTTPClient(&http.Client{Timeout: statusReadTimeout}))
 	if err != nil {
 		return nil, fmt.Errorf("building the API client: %w", err)
 	}
+	rd := remoteReader{c: c, serverURL: serverURL, token: token}
 	out := make([]remoteDag, len(projects))
 	for i, p := range projects {
-		r, rerr := readRemoteDag(ctx, c, p.dagID)
+		r, rerr := rd.read(ctx, p.dagID)
 		var whole *targetUnreadable
 		if errors.As(rerr, &whole) {
 			return nil, whole
@@ -406,65 +434,98 @@ func readTargetState(ctx context.Context, serverURL, token string, projects []st
 	return out, nil
 }
 
-// readRemoteDag reads one DAG with Airflow-compatible reads: the DAG
-// (is_paused, or a 404 for a DAG never deployed), its versions, and its
-// newest run.
-func readRemoteDag(ctx context.Context, c *apiclient.ClientWithResponses, dagID string) (remoteDag, error) {
-	dag, err := c.GetDagWithResponse(ctx, dagID)
-	if err != nil {
-		return remoteDag{}, &targetUnreadable{err: fmt.Errorf("the control plane did not answer: %w", err)}
+// remoteReader reads DAGs from one control plane.
+type remoteReader struct {
+	c         *apiclient.ClientWithResponses
+	serverURL string
+	token     string
+}
+
+// read reads one DAG with the reads deploy's pre-check makes
+// (checkDeployed): GET /api/v2/dags/{dag_id}/details for the current label
+// and is_paused (a 404 for a DAG never deployed), every page of its
+// versions (listRegisteredVersions), then its run with the latest logical date.
+func (rd remoteReader) read(ctx context.Context, dagID string) (remoteDag, error) {
+	base := strings.TrimRight(rd.serverURL, "/") + "/api/v2/dags/" + url.PathEscape(dagID)
+	var details struct {
+		BundleVersion *string `json:"bundle_version"`
+		IsPaused      *bool   `json:"is_paused"`
 	}
-	switch status := dag.StatusCode(); {
-	case status == http.StatusNotFound:
-		return remoteDag{}, nil
-	case status == http.StatusUnauthorized:
-		return remoteDag{}, &targetUnreadable{err: fmt.Errorf("reading %s: %w", dagID, apiStatusError(status, dag.Body))}
-	case status != http.StatusOK || dag.JSON200 == nil:
-		return remoteDag{}, fmt.Errorf("reading %s: %w", dagID, apiStatusError(status, dag.Body))
-	}
-	r := remoteDag{found: true, paused: dag.JSON200.IsPaused}
-	if r.versions, r.current, err = readVersions(ctx, c, dagID); err != nil {
+	found, err := rd.getJSON(ctx, base+"/details", &details)
+	if err != nil || !found {
 		return remoteDag{}, err
 	}
-	if r.lastRun, err = readLastRun(ctx, c, dagID); err != nil {
+	versions, err := listRegisteredVersions(base, func(u string, page any) (bool, error) {
+		return rd.getJSON(ctx, u, page)
+	})
+	if err != nil {
+		return remoteDag{}, err
+	}
+	r := remoteDag{found: true, paused: details.IsPaused, currentLabel: valueOf(details.BundleVersion)}
+	for _, v := range versions {
+		r.versions = append(r.versions, statusVersion{Label: v.Label, VersionNumber: v.Number, CreatedAt: v.CreatedAt})
+	}
+	r.current = currentVersion(r.currentLabel, versions)
+	if r.lastRun, err = readLastRun(ctx, rd.c, dagID); err != nil {
 		return remoteDag{}, err
 	}
 	return r, nil
 }
 
-// readVersions reads the DAG's registered versions and picks the current
-// one: the version marked is_current, else (a server that does not mark
-// it, such as Airflow) the highest version number.
-func readVersions(ctx context.Context, c *apiclient.ClientWithResponses, dagID string) (versions []statusVersion, current *statusVersion, err error) {
-	resp, err := c.ListDagVersionsWithResponse(ctx, dagID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("listing versions of %s: %w", dagID, err)
+// getJSON GETs u into out. found is false, with no error, for a 404. An
+// unreachable server and a 401 are targetUnreadable; any other answer but
+// 200 is an error of this DAG.
+func (rd remoteReader) getJSON(ctx context.Context, u string, out any) (found bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, statusReadTimeout)
+	defer cancel()
+	status, body, err := getOnce(ctx, u, rd.token)
+	switch {
+	case err != nil:
+		return false, &targetUnreadable{err: fmt.Errorf("the control plane did not answer: %w", err)}
+	case status == http.StatusNotFound:
+		return false, nil
+	case status == http.StatusUnauthorized:
+		return false, &targetUnreadable{err: apiStatusError(status, body), unauthorized: true}
+	case status != http.StatusOK:
+		return false, fmt.Errorf("reading %s: %w", u, apiStatusError(status, body))
 	}
-	if resp.StatusCode() != http.StatusOK {
-		return nil, nil, fmt.Errorf("listing versions of %s: %w", dagID, apiStatusError(resp.StatusCode(), resp.Body))
+	if derr := json.Unmarshal(body, out); derr != nil {
+		return false, fmt.Errorf("decoding %s: %w", u, derr)
 	}
-	if resp.JSON200 == nil || resp.JSON200.DagVersions == nil {
-		return nil, nil, nil
+	return true, nil
+}
+
+// currentVersion is the registered version labeled label, the label the
+// details name current, nil when there is none. Among several versions with
+// that label it is the one marked is_current, else the highest number. The
+// label alone decides the state, as for deploy: a version is never taken as
+// current because of its number.
+func currentVersion(label string, versions []registeredVersion) *statusVersion {
+	if label == "" {
+		return nil
 	}
-	pick, marked := -1, false
-	for _, v := range *resp.JSON200.DagVersions {
-		versions = append(versions, statusVersion{Label: valueOf(v.BundleVersion), VersionNumber: valueOf(v.VersionNumber), CreatedAt: v.CreatedAt})
-		i := len(versions) - 1
-		switch {
-		case valueOf(v.IsCurrent):
-			pick, marked = i, true
-		case !marked && (pick < 0 || versions[i].VersionNumber > versions[pick].VersionNumber):
+	pick := -1
+	for i, v := range versions {
+		if v.Label != label {
+			continue
+		}
+		if valueOf(v.IsCurrent) {
+			pick = i
+			break
+		}
+		if pick < 0 || v.Number > versions[pick].Number {
 			pick = i
 		}
 	}
-	if pick >= 0 {
-		v := versions[pick]
-		current = &v
+	if pick < 0 {
+		return &statusVersion{Label: label}
 	}
-	return versions, current, nil
+	v := versions[pick]
+	return &statusVersion{Label: v.Label, VersionNumber: v.Number, CreatedAt: v.CreatedAt}
 }
 
-// readLastRun reads the DAG's newest run, nil when it has none.
+// readLastRun reads the DAG's run with the latest logical date, nil when it
+// has none.
 func readLastRun(ctx context.Context, c *apiclient.ClientWithResponses, dagID string) (*statusRun, error) {
 	limit := 1
 	resp, err := c.ListDagRunsWithResponse(ctx, dagID, &apiclient.ListDagRunsParams{Limit: &limit}, newestRunFirst)
@@ -481,9 +542,10 @@ func readLastRun(ctx context.Context, c *apiclient.ClientWithResponses, dagID st
 	return &statusRun{RunID: valueOf(run.DagRunId), State: string(valueOf(run.State)), StartDate: run.StartDate}, nil
 }
 
-// newestRunFirst asks for the newest run first, as `dexaflow runs status`
-// does: Dexaflow lists a DAG's runs newest first already and does not read
-// order_by, which keeps this right on Airflow and if that default changes.
+// newestRunFirst asks for the run with the latest logical date first, as
+// `dexaflow runs status` does: Dexaflow lists a DAG's runs that way already
+// and does not read order_by, which keeps this right on Airflow and if that
+// default changes.
 func newestRunFirst(_ context.Context, req *http.Request) error {
 	q := req.URL.Query()
 	q.Set("order_by", "-logical_date")

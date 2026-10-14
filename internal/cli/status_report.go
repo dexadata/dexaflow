@@ -74,7 +74,7 @@ type statusVersion struct {
 	CreatedAt     *time.Time `json:"created_at"`
 }
 
-// statusRun is the newest run of a DAG.
+// statusRun is the run of a DAG with the latest logical date.
 type statusRun struct {
 	RunID     string     `json:"run_id"`
 	State     string     `json:"state"`
