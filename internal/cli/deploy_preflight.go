@@ -251,11 +251,7 @@ func registryPushCheck(ctx context.Context, reg build.Registry, image, builder s
 	access, err := reg.CheckPush(ctx, image)
 	switch {
 	case err == nil:
-		ok := access.Repository + " accepts a push"
-		if access.Source != "" {
-			ok += " (credential from " + access.Source + ")"
-		}
-		return checkResult{ok: ok}, nil
+		return checkResult{ok: pushAccepted(access, builder)}, nil
 	case errors.Is(err, build.ErrPushDenied):
 		return pushRefusal(access, err, builder, reg.Auth)
 	}
@@ -266,43 +262,75 @@ func registryPushCheck(ctx context.Context, reg build.Registry, image, builder s
 	return checkResult{note: fmt.Sprintf("could not check push access to %s (%v); the push will tell", target, err)}, nil
 }
 
-// pushRefusal words the registry's refusal err of a push to access, naming
-// the command that signs builder in to that registry (build.LoginCommand).
-// A refusal of the docker builder's credential is an error. With no
-// credential found, or with another builder, which keeps credentials of its
-// own (podman's auth.json, for one), a refusal says nothing certain about
-// the push: it is a note.
-func pushRefusal(access build.PushAccess, err error, builder string, method build.AuthMethod) (checkResult, error) {
+// pushAccepted words an accepted push check: the repository, where the
+// credential came from and, for a cloud session, that the local daemon
+// pushes with the tool's own login, which the session does not give it.
+func pushAccepted(access build.PushAccess, builder string) string {
+	ok := access.Repository + " accepts a push"
+	switch access.Source {
+	case "":
+		return ok
+	case build.SourceDockerConfig:
+		return ok + " (credential from " + access.Source + ")"
+	}
+	tool := toolName(builder)
+	return fmt.Sprintf("%s (credential from %s; a local-daemon build pushes with %s's own login: %s)",
+		ok, access.Source, tool, build.LoginCommand(access.Registry, tool))
+}
+
+// toolName is the name of the --builder executable, docker when empty.
+func toolName(builder string) string {
 	tool := filepath.Base(builder)
 	if tool == "" || tool == "." {
-		tool = "docker"
+		return "docker"
 	}
+	return tool
+}
+
+// pushRefusal words the registry's refusal err of a push to access, naming
+// the command that signs builder in to that registry (build.LoginCommand),
+// or, when the refused credential came from a cloud session, the session to
+// sign in to and the role to grant. A refusal of the credential the docker
+// builder would push with is an error. With no credential found, or with
+// another builder, which keeps credentials of its own (podman's auth.json,
+// for one), a refusal says nothing certain about the push: it is a note.
+func pushRefusal(access build.PushAccess, err error, builder string, method build.AuthMethod) (checkResult, error) {
+	tool := toolName(builder)
 	login := build.LoginCommand(access.Registry, tool)
 	cloud, isCloud := build.DetectCloudRegistry(access.Registry)
-	session := ""
-	if isCloud && method != build.AuthDockerConfig {
-		session = fmt.Sprintf("; or sign in to %s (%s), whose session the daemonless builds read", cloud.Provider, cloud.SessionCommand())
-	}
 	switch {
 	case access.Anonymous:
-		why := ""
-		if access.CloudError != nil {
-			why = " (" + access.CloudError.Error() + ")"
-		}
-		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s, and no credential was found for it in %s%s; "+
-			"if the push fails, sign in once:  %s%s  (%v)", access.Registry, access.Repository, credentialPlaces(method), why, login, session, err)}, nil
+		return checkResult{note: anonymousRefusal(access, err, login, method)}, nil
 	case tool != "docker":
 		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s with the credential from %s; "+
 			"%s may push with credentials of its own; if the push fails, sign in:  %s  (%v)", access.Registry, access.Repository, access.Source, tool, login, err)}, nil
+	case isCloud && access.Source != build.SourceDockerConfig:
+		return checkResult{}, fmt.Errorf("preflight: the registry %s refused a push to %s with the credential from %s.\n"+
+			"  Sign in to %s with an account that may push there (%s), and grant it %s\n  (%w)",
+			access.Registry, access.Repository, access.Source, cloud.Provider, cloud.SessionCommand(), cloud.PushRole(), err)
 	}
 	instead := ""
-	if isCloud && access.Source == build.SourceDockerConfig && method == build.AuthAuto {
-		instead = fmt.Sprintf("\n  Or, to push with your %s session instead of the docker config (an expired entry there is sent first), "+
-			"set registry.auth_method: cloud in dexaflow.yaml", cloud.Provider)
+	if isCloud && method != build.AuthCloud {
+		instead = fmt.Sprintf("\n  Or sign in to %s (%s) and set registry.auth_method: cloud in dexaflow.yaml to push with that session "+
+			"instead of the docker config, whose entry may have expired", cloud.Provider, cloud.SessionCommand())
 	}
 	return checkResult{}, fmt.Errorf("preflight: the registry %s refused a push to %s with the credential from %s.\n"+
 		"  Sign in with an account that may push there:  %s%s\n  (%w)",
 		access.Registry, access.Repository, access.Source, login, instead, err)
+}
+
+// anonymousRefusal words a refusal of a push made with no credential.
+func anonymousRefusal(access build.PushAccess, err error, login string, method build.AuthMethod) string {
+	why := ""
+	if access.CloudError != nil {
+		why = " (" + access.CloudError.Error() + ")"
+	}
+	session := ""
+	if cloud, ok := build.DetectCloudRegistry(access.Registry); ok && method != build.AuthDockerConfig {
+		session = fmt.Sprintf("; or sign in to %s (%s), whose session the daemonless builds read", cloud.Provider, cloud.SessionCommand())
+	}
+	return fmt.Sprintf("the registry %s refused a push to %s, and no credential was found for it in %s%s; "+
+		"if the push fails, sign in once:  %s%s  (%v)", access.Registry, access.Repository, credentialPlaces(method), why, login, session, err)
 }
 
 // credentialPlaces says where method looks for a registry credential.
@@ -311,7 +339,7 @@ func credentialPlaces(method build.AuthMethod) string {
 	case build.AuthDockerConfig:
 		return "the docker config or its credential helpers"
 	case build.AuthCloud:
-		return "a cloud CLI session"
+		return "a cloud CLI session (the docker config, for a registry no cloud owns)"
 	case build.AuthAuto:
 	}
 	return "the docker config, its credential helpers or a cloud CLI session"

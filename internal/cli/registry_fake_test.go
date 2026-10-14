@@ -25,14 +25,28 @@ type fakeOCIRegistry struct {
 	// basicAuth, when set, is the user:pass every request but the ping
 	// must carry; others get 401, as a private registry answers.
 	basicAuth string
+	// seen are the Basic credentials requests carried.
+	seen []string
+}
+
+// credentials returns the Basic credentials sent so far.
+func (r *fakeOCIRegistry) credentials() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.seen...)
 }
 
 // authorized reports whether req carries the credential basicAuth asks for.
 func (r *fakeOCIRegistry) authorized(req *http.Request) bool {
+	u, p, ok := req.BasicAuth()
+	if ok {
+		r.mu.Lock()
+		r.seen = append(r.seen, u+":"+p)
+		r.mu.Unlock()
+	}
 	if r.basicAuth == "" {
 		return true
 	}
-	u, p, ok := req.BasicAuth()
 	return ok && u+":"+p == r.basicAuth
 }
 

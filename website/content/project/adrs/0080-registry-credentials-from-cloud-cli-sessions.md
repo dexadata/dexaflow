@@ -49,23 +49,32 @@ Azure identity SDK, which the module does not have at all.
    ADR 0073's list of allowed packages stands.
 3. **Nothing is stored.** A token lives in the CLI's memory for ten minutes at
    most, shorter than any of the three clouds issues, so one deploy runs the
-   cloud CLI once. A failure is not kept: signing in during
-   `deploy --watch` is picked up by the next request.
+   cloud CLI once; one token serves every Google host. A failure (not
+   installed, signed out) is kept for thirty seconds, so a push does not run
+   the CLI for every blob, and a sign-in during `deploy --watch` is picked up
+   after that. Each run has thirty seconds and no input, and one run per host
+   is in flight at a time; other hosts do not wait for it.
 4. **`registry.auth_method` chooses the sources.** `auto` (the default): the
    docker config, then the cloud CLI. `docker_config`: the docker config only,
-   as before. `cloud`: the cloud CLI only, for a docker config whose entry for
-   the registry has expired (an ECR login lasts twelve hours) and would be sent
-   first. `iam` still loads and reads as `cloud`; `env`, which was never read,
-   loads and reads as `auto`; both print a warning. Any other value is refused
-   when the project loads, as before. The value is not part of the content
-   label: where a credential comes from does not change the image.
+   as before. `cloud`: the cloud CLI only for a host a cloud owns, for a
+   docker config whose entry for the registry has expired (an ECR login lasts
+   twelve hours) and would be sent first; a host no cloud owns has no session
+   and reads the docker config. `env` and `iam`, which were never read, still
+   load, print a warning and read as `auto`, so the docker config they were
+   used with keeps working. Any other value is refused when the project loads,
+   as before. `auto`, `docker_config` and `cloud` hash as one value in the
+   content label (where a credential comes from does not change the image);
+   `env` and `iam` keep the literal they hashed before, so no label moves.
 5. **Every refusal names the command for the detected registry.** The deploy
    preflight and `dexaflow doctor` name `gcloud auth configure-docker <host>`,
    `aws ecr get-login-password --region <region> | docker login --username AWS
    --password-stdin <host>`, `az acr login --name <name>` or
    `docker login <host>`; for another `--builder`, the cloud's token piped to
    `<tool> login`. When the cloud CLI could not give a token, the reason is
-   printed with it (not on `PATH`, not signed in).
+   printed with it (not on `PATH`, not signed in). When the registry refused
+   the cloud session's own token, the refusal names the session to sign in to
+   and the push role to grant instead. A push check that passed on a cloud
+   session adds that a local-daemon build needs the tool's own login.
 
 ## Consequences
 

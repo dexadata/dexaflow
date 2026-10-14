@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,8 @@ type fakeCloudSession struct {
 	mu               sync.Mutex
 	asked            int
 }
+
+func (f *fakeCloudSession) Owns(host string) bool { return host == f.host }
 
 func (f *fakeCloudSession) Credential(_ context.Context, host string) (build.Credential, error) {
 	f.mu.Lock()
@@ -73,7 +76,8 @@ func TestDeployReadsTheCloudSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s\n%s", err, out, errOut)
 	}
-	want := "preflight:  " + reg.host + "/team/etl accepts a push (credential from the fake cloud session)"
+	want := "preflight:  " + reg.host + "/team/etl accepts a push (credential from the fake cloud session; " +
+		"a local-daemon build pushes with builder.sh's own login: builder.sh login " + reg.host + ")"
 	if !strings.Contains(out, want) || fake.registers != 1 {
 		t.Errorf("registers=%d, output does not say %q:\n%s", fake.registers, want, out)
 	}
@@ -95,7 +99,7 @@ func TestDeployAuthMethodDockerConfigIgnoresTheCloud(t *testing.T) {
 }
 
 // TestDeployWarnsOfADeprecatedAuthMethod: the values the schema accepted
-// before any was read still load, with a note; iam reads the cloud.
+// before any was read still load, with a note, and read as auto.
 func TestDeployWarnsOfADeprecatedAuthMethod(t *testing.T) {
 	_, dir, builder, cloud := cloudRegistryProject(t, "  auth_method: iam\n")
 	out, errOut, err := deployDir(t, &deployServer{}, dir, builder, "--force")
@@ -116,7 +120,8 @@ func TestDoctorReadsTheCloudSession(t *testing.T) {
 	srv := httptest.NewServer(&deployServer{})
 	t.Cleanup(srv.Close)
 	out := doctorAgainst(t, srv.URL, "tok")
-	want := "registry      " + reg.host + "/team/etl accepts a push (credential from the fake cloud session)"
+	want := "registry      " + reg.host + "/team/etl accepts a push (credential from the fake cloud session; " +
+		"a local-daemon build pushes with docker's own login: docker login " + reg.host + ")"
 	if !strings.Contains(out, want) {
 		t.Errorf("doctor does not say %q:\n%s", want, out)
 	}
@@ -145,6 +150,12 @@ func TestPushRefusalNamesTheCloudCommand(t *testing.T) {
 		{"ACR, podman", build.PushAccess{Registry: "acmeprod.azurecr.io", Repository: "acmeprod.azurecr.io/etl",
 			Source: build.SourceDockerConfig}, "/usr/bin/podman", build.AuthAuto, false,
 			[]string{"az acr login --name acmeprod --expose-token --output tsv --query accessToken | podman login"}},
+		{"Artifact Registry, the gcloud session refused", build.PushAccess{Registry: "europe-west1-docker.pkg.dev",
+			Repository: "europe-west1-docker.pkg.dev/p/r/etl", Source: "the gcloud session"}, "docker", build.AuthAuto, true,
+			[]string{"gcloud auth login", "roles/artifactregistry.writer", "the gcloud session"}},
+		{"ACR, docker config refused", build.PushAccess{Registry: "acmeprod.azurecr.io", Repository: "acmeprod.azurecr.io/etl",
+			Source: build.SourceDockerConfig}, "docker", build.AuthAuto, true,
+			[]string{"az acr login --name acmeprod", "az login", "registry.auth_method: cloud"}},
 		{"docker_config never offers the cloud session", build.PushAccess{Registry: ecr, Repository: ecr + "/team/etl",
 			Anonymous: true}, "docker", build.AuthDockerConfig, false,
 			[]string{"docker login --username AWS"}},
@@ -162,6 +173,9 @@ func TestPushRefusalNamesTheCloudCommand(t *testing.T) {
 				if !strings.Contains(text, w) {
 					t.Errorf("refusal does not carry %q:\n%s", w, text)
 				}
+			}
+			if tc.access.Source == "the gcloud session" && strings.Contains(text, "configure-docker") {
+				t.Errorf("a refused cloud session is sent to configure-docker:\n%s", text)
 			}
 			if tc.method == build.AuthDockerConfig && strings.Contains(text, "session") {
 				t.Errorf("a docker_config refusal offers the cloud session:\n%s", text)
@@ -211,5 +225,115 @@ func TestTheDependencyLayerUsesTheAuthMethod(t *testing.T) {
 	}
 	if split.Wheels.Registry.Auth != build.AuthDockerConfig {
 		t.Errorf("dependency layer auth = %q, want docker_config", split.Wheels.Registry.Auth)
+	}
+}
+
+// TestDeployIamReadsTheDockerConfig: iam reads as auto, so a project that
+// set it next to a docker login keeps that credential.
+func TestDeployIamReadsTheDockerConfig(t *testing.T) {
+	reg := newFakeOCIRegistry(t, singleManifest)
+	reg.basicAuth = "bot:secret"
+	dockerCredentialsFor(t, reg.host)
+	withCloudSession(t, reg.host, "oauth2accesstoken", "other")
+	dir, builder, _ := deployFixtureAt(t, reg.host+"/team")
+	writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\nregistry:\n  url: "+reg.host+"/team\n  image_name: etl\n  auth_method: iam\n")
+	out, errOut, err := deployDir(t, &deployServer{}, dir, builder, "--force")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s\n%s", err, out, errOut)
+	}
+	if !strings.Contains(out, "accepts a push (credential from the docker config)") {
+		t.Errorf("output does not push with the docker config:\n%s", out)
+	}
+}
+
+// TestDeployStopsOnARefusedCloudSession: through the deploy, a push the
+// registry refuses to the cloud session's credential stops before the
+// build, naming where the credential came from.
+func TestDeployStopsOnARefusedCloudSession(t *testing.T) {
+	noDockerCredentials(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	reg.denyPush = true
+	withCloudSession(t, reg.host, "oauth2accesstoken", "tok")
+	dir, _, _ := deployFixtureAt(t, reg.host+"/team")
+	builder, log := argvBuilder(t)
+	fake := &deployServer{}
+	_, _, err := deployDir(t, fake, dir, builder, "--force")
+	if err == nil || !strings.Contains(err.Error(), "with the credential from the fake cloud session") {
+		t.Fatalf("err = %v, want the refusal of the cloud session's credential", err)
+	}
+	if argvLines(t, log) != nil || fake.registers != 0 {
+		t.Errorf("builder %q, registers %d; want nothing done", argvLines(t, log), fake.registers)
+	}
+}
+
+// refusingCloud owns every host and fails the test when asked.
+type refusingCloud struct{ t *testing.T }
+
+func (refusingCloud) Owns(string) bool { return true }
+
+func (r refusingCloud) Credential(context.Context, string) (build.Credential, error) {
+	r.t.Error("the cloud session was asked")
+	return build.Credential{}, errors.New("asked")
+}
+
+// baseProject is a project whose base image is on reg, with the registry
+// keys given, that splits without uv.
+func baseProject(t *testing.T, reg *fakeOCIRegistry, keys string) string {
+	t.Helper()
+	return versionProject(t, "base_image: "+reg.host+"/runtime:py3.11\ndependencies: [pandas==2.2.3]\n"+
+		"registry:\n  url: "+reg.host+"/team\n  image_name: etl\n"+keys+"build:\n  platforms: [linux/amd64]\n")
+}
+
+// The base image is read with the project's auth method: docker_config
+// runs no cloud CLI for it.
+func TestTheBaseImageReadHonorsDockerConfig(t *testing.T) {
+	noDockerCredentials(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	prev := registryCloud
+	registryCloud = refusingCloud{t}
+	t.Cleanup(func() { registryCloud = prev })
+	split, why := splitOf(t, baseProject(t, reg, "  auth_method: docker_config\n"))
+	if split == nil {
+		t.Fatalf("no split (%q), want the base read", why)
+	}
+}
+
+// cloud reads the base image with the cloud session and never sends it
+// the docker config's credential.
+func TestTheBaseImageReadHonorsCloud(t *testing.T) {
+	reg := newFakeOCIRegistry(t, singleManifest)
+	reg.basicAuth = "oauth2accesstoken:tok-1"
+	dockerCredentialsFor(t, reg.host) // bot:secret
+	withCloudSession(t, reg.host, "oauth2accesstoken", "tok-1")
+	split, why := splitOf(t, baseProject(t, reg, "  auth_method: cloud\n"))
+	if split == nil {
+		t.Fatalf("no split (%q), want the base read with the cloud session", why)
+	}
+	if slices.Contains(reg.credentials(), "bot:secret") {
+		t.Errorf("the base read sent the docker config's credential: %q", reg.credentials())
+	}
+}
+
+// Projects that set env or iam hashed that value into their label before
+// it was read; they keep that label. The hashes are those of the CLI
+// before auto existed.
+func TestContentLabelKeepsTheLegacyValues(t *testing.T) {
+	for m, want := range map[string]string{
+		"env": "414c13f7938067487741bf7d2e3d838a7893bf8285d7d66ef28f8d6da649dcb5",
+		"iam": "676550ba23a65778ddfba9f4bcc5576ff069f506f6535d5d986a4be79ac84e13",
+	} {
+		dir := goldenProject(t)
+		writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: golden\ninclude_paths: [lib]\nregistry:\n  auth_method: "+m+"\n")
+		cfg, err := loadProjectConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := contentHash(dir, cfg, "Dockerfile", filepath.Join(dir, "dag.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s: label hash %s, want %s", m, got, want)
+		}
 	}
 }

@@ -117,7 +117,7 @@
         "url": { "type": "string", "description": "e.g., 'ghcr.io/myorg', 'docker.io/myorg'." },
         "auth_method": {
           "type": "string",
-          "description": "Where the CLI reads the registry credential. auto (default): the docker config and its credential helpers, then, for an Artifact Registry, GCR, ECR or ACR host, the session of the gcloud, aws or az CLI. docker_config: the docker config and its credential helpers only. cloud: the cloud CLI's session only. env and iam are deprecated: env reads as auto, iam as cloud.",
+          "description": "Where the CLI reads the registry credential. auto (default): the docker config and its credential helpers, then, for an Artifact Registry, GCR, ECR or ACR host, the session of the gcloud, aws or az CLI. docker_config: the docker config and its credential helpers only. cloud: the cloud CLI's session only for a host a cloud owns, the docker config for any other. env and iam are deprecated and read as auto.",
           "enum": ["auto", "docker_config", "cloud", "env", "iam"],
           "default": "auto"
         },

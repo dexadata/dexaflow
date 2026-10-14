@@ -34,25 +34,26 @@ const (
 	// AuthDockerConfig reads the docker config and its credential helpers
 	// only, as every release before auto did.
 	AuthDockerConfig AuthMethod = "docker_config"
-	// AuthCloud reads the cloud CLI session only, so a stale entry in the
-	// docker config (an ECR token is good for 12 hours) is never sent.
+	// AuthCloud reads the cloud CLI session only for a host a cloud owns, so
+	// a stale entry in the docker config (an ECR token is good for 12 hours)
+	// is never sent there; a host no cloud owns (ghcr.io, Harbor) has no
+	// cloud session and reads the docker config.
 	AuthCloud AuthMethod = "cloud"
 )
 
 // ParseAuthMethod reads a registry.auth_method value. Empty is AuthAuto.
-// The two values the schema accepted before any was implemented still
-// parse, with a note to print: iam reads as cloud, env as auto.
+// The two values the schema accepted before any was implemented, env and
+// iam, still parse, with a note to print, and read as auto, which keeps the
+// docker config they were read with.
 func ParseAuthMethod(v string) (method AuthMethod, note string, err error) {
 	switch v {
 	case "", string(AuthAuto):
 		return AuthAuto, "", nil
 	case string(AuthDockerConfig), string(AuthCloud):
 		return AuthMethod(v), "", nil
-	case "iam":
-		return AuthCloud, "registry.auth_method: iam is deprecated and reads as cloud (the cloud CLI's session); write cloud", nil
-	case "env":
-		return AuthAuto, "registry.auth_method: env is deprecated and was never read; it reads as auto. " +
-			"Remove it, or set docker_config or cloud", nil
+	case "iam", "env":
+		return AuthAuto, "registry.auth_method: " + v + " is deprecated and was never read; it reads as auto " +
+			"(the docker config, then the cloud CLI's session). Remove it, or set docker_config or cloud", nil
 	}
 	return "", "", fmt.Errorf("registry.auth_method %q is not one of auto, docker_config, cloud", v)
 }
@@ -72,6 +73,9 @@ type Credential struct {
 
 // CloudKeychain reads a registry credential from a cloud session.
 type CloudKeychain interface {
+	// Owns reports whether a cloud owns the registry host, so that its
+	// session is the place to read a credential for it.
+	Owns(host string) bool
 	// Credential returns the credential the cloud session holds for the
 	// registry host, an empty Credential when no cloud owns host, or an
 	// error saying why the session gave none.
@@ -98,7 +102,7 @@ type CloudRegistry struct {
 }
 
 // ecrHost matches a private ECR registry: <account>.dkr.ecr[-fips].<region>.amazonaws.com[.cn].
-var ecrHost = regexp.MustCompile(`^[0-9]{12}\.dkr\.ecr(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?$`)
+var ecrHost = regexp.MustCompile(`^[0-9]{12}\.dkr\.ecr(?:-fips)?\.([a-z]{2}(?:-[a-z]+)+-[0-9]+)\.amazonaws\.com(?:\.cn)?$`)
 
 // acrHost matches an Azure Container Registry: <name>.azurecr.io (or the
 // China and US Government clouds).
@@ -141,11 +145,33 @@ func (c CloudRegistry) tokenCommand() (argv []string, username string) {
 func (c CloudRegistry) SessionCommand() string {
 	switch c.Provider {
 	case ProviderAWS:
-		return "aws sso login (or aws configure)"
+		return "aws sso login, aws configure, environment credentials or an instance role"
 	case ProviderAzure:
 		return "az login"
 	}
 	return "gcloud auth login"
+}
+
+// PushRole is the permission the signed-in account needs to push to the
+// registry.
+func (c CloudRegistry) PushRole() string {
+	switch c.Provider {
+	case ProviderAWS:
+		return "ecr:InitiateLayerUpload, ecr:UploadLayerPart, ecr:CompleteLayerUpload and ecr:PutImage on the repository " +
+			"(AmazonEC2ContainerRegistryPowerUser has them)"
+	case ProviderAzure:
+		return "the AcrPush role on the registry"
+	}
+	return "roles/artifactregistry.writer on the repository (roles/storage.admin for gcr.io)"
+}
+
+// cacheKey is the key of the token for c: one for every Google host, since a
+// gcloud token is for the account, not the host.
+func (c CloudRegistry) cacheKey() string {
+	if c.Provider == ProviderGoogle {
+		return "google"
+	}
+	return c.Host
 }
 
 // LoginCommand is the command that signs tool (docker when empty) in to
@@ -181,33 +207,63 @@ type CommandRunner func(ctx context.Context, argv []string) ([]byte, error)
 // ECR), and a deploy makes several registry requests.
 const cloudTokenTTL = 10 * time.Minute
 
-// cachedCredential is a credential and when it was read.
-type cachedCredential struct {
+// cloudFailureTTL is how long a failure of a cloud CLI is kept: long enough
+// that a signed-out CLI does not run for every blob of a push, short enough
+// that a sign-in during a watch is picked up.
+const cloudFailureTTL = 30 * time.Second
+
+// cloudRunTimeout bounds one run of a cloud CLI.
+const cloudRunTimeout = 30 * time.Second
+
+// hostEntry is what CloudCLI knows about one cache key. Its own lock is held
+// across the run, so one request per key runs the CLI and the others wait
+// for its answer, while other keys go on.
+type hostEntry struct {
+	mu   sync.Mutex
 	cred Credential
+	err  error
 	at   time.Time
+	read bool
 }
 
 // CloudCLI is the CloudKeychain of the cloud CLIs on PATH: gcloud, aws and
 // az. It runs the one that owns the registry host and keeps its token for
-// cloudTokenTTL; a failure is not kept, so a sign-in during a watch is
-// picked up by the next request.
+// cloudTokenTTL, and a failure for cloudFailureTTL.
 type CloudCLI struct {
 	run CommandRunner
 	now func() time.Time
 
-	mu     sync.Mutex
-	tokens map[string]cachedCredential
+	mu      sync.Mutex
+	entries map[string]*hostEntry
 }
 
 // NewCloudCLI returns a CloudCLI that runs the cloud CLIs through run.
 func NewCloudCLI(run CommandRunner) *CloudCLI {
-	return &CloudCLI{run: run, now: time.Now, tokens: map[string]cachedCredential{}}
+	return &CloudCLI{run: run, now: time.Now, entries: map[string]*hostEntry{}}
 }
 
 // defaultCloud is the CloudKeychain of a Registry that sets none. It is one
 // per process so that the token cache spans every registry request of a
 // command; it holds nothing but that cache.
 var defaultCloud = NewCloudCLI(execRunner)
+
+// Owns reports whether DetectCloudRegistry knows host.
+func (c *CloudCLI) Owns(host string) bool {
+	_, ok := DetectCloudRegistry(host)
+	return ok
+}
+
+// entry returns the entry of key, made on first use.
+func (c *CloudCLI) entry(key string) *hostEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok {
+		e = &hostEntry{}
+		c.entries[key] = e
+	}
+	return e
+}
 
 // Credential runs the cloud CLI that owns host, or nothing when no cloud
 // does.
@@ -216,12 +272,28 @@ func (c *CloudCLI) Credential(ctx context.Context, host string) (Credential, err
 	if !ok {
 		return Credential{}, nil
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if t, hit := c.tokens[reg.Host]; hit && c.now().Sub(t.at) < cloudTokenTTL {
-		return t.cred, nil
+	e := c.entry(reg.cacheKey())
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.read {
+		age := c.now().Sub(e.at)
+		if e.err == nil && age < cloudTokenTTL {
+			return e.cred, nil
+		}
+		if e.err != nil && age < cloudFailureTTL {
+			return Credential{}, e.err
+		}
 	}
+	e.cred, e.err = c.read(ctx, reg)
+	e.at, e.read = c.now(), true
+	return e.cred, e.err
+}
+
+// read runs the token command of reg, bounded by cloudRunTimeout.
+func (c *CloudCLI) read(ctx context.Context, reg CloudRegistry) (Credential, error) {
 	argv, user := reg.tokenCommand()
+	ctx, cancel := context.WithTimeout(ctx, cloudRunTimeout)
+	defer cancel()
 	out, err := c.run(ctx, argv)
 	if err != nil {
 		return Credential{}, fmt.Errorf("reading a %s registry token with `%s`: %w", reg.Provider, strings.Join(argv, " "), err)
@@ -230,13 +302,13 @@ func (c *CloudCLI) Credential(ctx context.Context, host string) (Credential, err
 	if token == "" || strings.ContainsAny(token, "\r\n") {
 		return Credential{}, fmt.Errorf("reading a %s registry token with `%s`: it printed no single-line token", reg.Provider, strings.Join(argv, " "))
 	}
-	cred := Credential{Username: user, Password: token, Source: "the " + argv[0] + " session"}
-	c.tokens[reg.Host] = cachedCredential{cred: cred, at: c.now()}
-	return cred, nil
+	return Credential{Username: user, Password: token, Source: "the " + argv[0] + " session"}, nil
 }
 
-// execRunner runs argv from PATH. A failure carries the last line the
-// command wrote to stderr, which is where the cloud CLIs say why.
+// execRunner runs argv from PATH, with no input, so a CLI that would prompt
+// fails instead. A failure carries the last line the command wrote to
+// stderr, capped (lastLine), which is where the cloud CLIs say why; the
+// token is on stdout and never part of an error.
 func execRunner(ctx context.Context, argv []string) ([]byte, error) {
 	if _, err := exec.LookPath(argv[0]); err != nil {
 		return nil, fmt.Errorf("%s is not on PATH", argv[0])
@@ -244,6 +316,7 @@ func execRunner(ctx context.Context, argv []string) ([]byte, error) {
 	//nolint:gosec // G204: argv is a fixed cloud CLI command; region and name come from a host matched by ecrHost or acrHost.
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	var stderr bytes.Buffer
+	cmd.Stdin = strings.NewReader("")
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
@@ -277,21 +350,23 @@ type resolved struct {
 }
 
 // resolveAuth finds the credential for target by r.Auth: the docker config
-// and its credential helpers, then the cloud session (auto); only the first
-// (docker_config); only the second (cloud).
+// and its credential helpers, then the cloud session for a host a cloud
+// owns (auto); only the first (docker_config); only the second for a host a
+// cloud owns, the first for any other (cloud).
 func (r Registry) resolveAuth(ctx context.Context, target authn.Resource) (resolved, error) {
-	if r.Auth != AuthCloud {
+	cloud := r.Cloud
+	if cloud == nil {
+		cloud = defaultCloud
+	}
+	owned := cloud.Owns(target.RegistryStr())
+	if r.Auth != AuthCloud || !owned {
 		auth, err := authn.Resolve(ctx, authn.DefaultKeychain, target)
 		if err != nil {
 			return resolved{}, fmt.Errorf("reading the credential for %s from the docker config: %w", target.RegistryStr(), err)
 		}
-		if auth != authn.Anonymous || r.Auth == AuthDockerConfig {
+		if auth != authn.Anonymous || r.Auth == AuthDockerConfig || !owned {
 			return resolved{auth: auth, source: sourceOf(auth, SourceDockerConfig)}, nil
 		}
-	}
-	cloud := r.Cloud
-	if cloud == nil {
-		cloud = defaultCloud
 	}
 	cred, cerr := cloud.Credential(ctx, target.RegistryStr())
 	if cerr != nil {

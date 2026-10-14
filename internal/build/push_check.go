@@ -31,7 +31,9 @@ type PushAccess struct {
 	// the cloud CLI's session); empty when Anonymous.
 	Source string
 	// CloudError says why the cloud session gave no credential, when it was
-	// asked and could not (the CLI is not installed or not signed in).
+	// asked and could not (the CLI is not installed or not signed in). It
+	// carries the command and the last line of its stderr, capped; the token
+	// is on stdout and never in it.
 	CloudError error
 }
 

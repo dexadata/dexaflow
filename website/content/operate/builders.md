@@ -353,14 +353,17 @@ for it, and finds one in this order
    | `<account>.dkr.ecr.<region>.amazonaws.com` | `aws sso login`, `aws configure`, a profile or an instance role | `aws ecr get-login-password --region <region>` |
    | `<name>.azurecr.io` | `az login` | `az acr login --name <name> --expose-token` |
 
-   The token stays in memory for ten minutes at most. Dexaflow never stores a
-   registry credential.
+   The token stays in memory for ten minutes at most, and a failure of the
+   CLI (signed out, not installed) for thirty seconds; each run of the CLI
+   has thirty seconds and no input. Dexaflow never stores a registry
+   credential.
 
 `registry.auth_method` in `dexaflow.yaml` picks the sources: `auto` (the
 default) is the order above, `docker_config` reads only the docker config,
-and `cloud` reads only the cloud CLI, which helps when the docker config keeps
-an expired entry for the registry (an ECR login lasts twelve hours) that would
-otherwise be sent first:
+and `cloud` reads only the cloud CLI for a registry a cloud owns, which helps
+when the docker config keeps an expired entry for it (an ECR login lasts twelve
+hours) that would otherwise be sent first; a registry no cloud owns (`ghcr.io`,
+Harbor) still reads the docker config under `cloud`:
 
 ```yaml
 registry:
@@ -368,8 +371,8 @@ registry:
   auth_method: cloud
 ```
 
-`env` and `iam`, accepted by older files, still load and print a warning:
-`env` reads as `auto` and `iam` as `cloud`.
+`env` and `iam`, accepted by older files, still load, print a warning and read
+as `auto`, so a `docker login` made for them keeps working.
 
 `local-daemon` is different: `docker`, `podman` and `nerdctl` push with
 their own credentials, which a cloud session alone does not give them. When

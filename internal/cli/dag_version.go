@@ -180,16 +180,18 @@ func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output strin
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// labelAuthMethod is the registry.auth_method every content label hashes:
-// the value ApplyDefaults filled in before auto existed, so that no label
-// moved when the default changed.
+// labelAuthMethod is the registry.auth_method the content label hashes for
+// auto, docker_config and cloud: the value ApplyDefaults filled in before
+// auto existed, so that no label moved when the default changed.
 const labelAuthMethod = "docker_config"
 
 // labelConfig is cfg as the content label hashes it: where the CLI reads the
 // registry credential (registry.auth_method) is not an input of the image,
-// so it is the same constant for every project.
+// so auto, docker_config and cloud hash as one constant. env and iam, which
+// were hashed as written before any value was read, keep that, so their
+// labels do not move either.
 func labelConfig(cfg *domain.LeoflowConfig) *domain.LeoflowConfig {
-	if cfg == nil || cfg.Registry == nil {
+	if cfg == nil || cfg.Registry == nil || cfg.Registry.AuthMethod == "env" || cfg.Registry.AuthMethod == "iam" {
 		return cfg
 	}
 	c := *cfg
