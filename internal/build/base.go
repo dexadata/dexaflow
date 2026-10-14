@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -261,12 +262,20 @@ func (s *baseScan) whiteout(ls *layerScan, dir, hidden string) {
 	}
 }
 
+// distName and distVersion match the two parts of a dist-info directory
+// name; anything else is not listed, so the listing can only ever hold
+// name==version lines.
+var (
+	distName    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._]*$`)
+	distVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+!_]*$`)
+)
+
 // distOf turns a dist-info directory name, name-version.dist-info, into
 // name==version with the name normalized as PyPI compares names.
 func distOf(dir string) (string, bool) {
 	stem := strings.TrimSuffix(dir, ".dist-info")
 	n, v, ok := strings.Cut(stem, "-")
-	if !ok || n == "" || v == "" {
+	if !ok || !distName.MatchString(n) || !distVersion.MatchString(v) {
 		return "", false
 	}
 	return NormalizeDistName(n) + "==" + v, true

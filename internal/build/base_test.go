@@ -311,3 +311,17 @@ func TestRegistryBaseChecksThePlatformOfASingleImage(t *testing.T) {
 		t.Fatalf("amd64: %+v, %v", got, err)
 	}
 }
+
+// A dist-info name that is not a distribution and a version is left out of
+// the listing, which becomes the constraints of a resolution: a hostile
+// base cannot write an option into it.
+func TestDistOfRefusesWhatIsNotANameAndAVersion(t *testing.T) {
+	for _, dir := range []string{"evil-1.0 --index-url=https:x.dist-info", "evil-1.0\n-e x.dist-info", "-x-1.0.dist-info", "x-.dist-info", "x.dist-info"} {
+		if d, ok := distOf(dir); ok {
+			t.Errorf("distOf(%q) = %q", dir, d)
+		}
+	}
+	if d, ok := distOf("Apache_Airflow_Task_SDK-1.3.1+local.dist-info"); !ok || d != "apache-airflow-task-sdk==1.3.1+local" {
+		t.Errorf("distOf = %q, %v", d, ok)
+	}
+}
