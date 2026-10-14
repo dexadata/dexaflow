@@ -333,3 +333,24 @@ func TestAppendCodeRefusesAnIndexWithNoPlatformImage(t *testing.T) {
 		t.Fatalf("err = %v, want a refusal", err)
 	}
 }
+
+// A layer is packed under the root it is given, and only the entries listed
+// are emitted: the directories of the root itself exist in the base image
+// with their own modes and owners, so the layer never carries them.
+func TestPackLayerPlacesEntriesUnderItsRoot(t *testing.T) {
+	files := codeFixture(t)
+	layer, remove, err := packLayer(kindCode, "/usr/local", files, types.OCILayer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(remove)
+	entries := layerEntries(t, layer)
+	names := make([]string, 0, len(entries))
+	for _, h := range entries {
+		names = append(names, h.Name)
+	}
+	want := "usr/local/dag.py usr/local/scripts/ usr/local/scripts/latest usr/local/scripts/run.sh"
+	if got := strings.Join(names, " "); got != want {
+		t.Errorf("entries = %q, want %q", got, want)
+	}
+}
