@@ -27,6 +27,7 @@ dexaflow build [workspace] [flags]
   -h, --help                 help for build
       --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --push                 push each built image to its registry
+      --rebuild              build each dependency image again even when the registry holds one for its key (with --push)
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
       --sha string           commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)
 ```

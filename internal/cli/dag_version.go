@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/version"
 )
@@ -220,6 +221,10 @@ type contentWalker struct {
 	manifest string // slash path of dbt.manifest relative to dir, or ""
 	ignore   dockerignore
 	h        hash.Hash
+	// layer collects the entries of the code layer instead of hashing them
+	// (codeLayerFiles).
+	layer bool
+	files []build.LayerFile
 }
 
 // hashRootSpec is one root of the hash: a project-relative path.
@@ -384,6 +389,9 @@ func (w *contentWalker) visit(r hashRootSpec, file, rel string, d fs.DirEntry) e
 		}
 		return nil
 	}
+	if w.layer {
+		return w.collect(file, slash, d)
+	}
 	return w.hashEntry(file, slash, d)
 }
 
@@ -433,6 +441,11 @@ func (w *contentWalker) skip(rel, abs string) bool {
 	}
 	if slash == "dag.json" || (w.output != "" && filepath.Clean(abs) == w.output) {
 		return true
+	}
+	if w.layer {
+		// The code layer reads exclude_paths and the dbt artifacts through
+		// the merged .dockerignore, with Docker's rules (codeLayerFiles).
+		return false
 	}
 	if w.dbtArtifact(slash) {
 		return true

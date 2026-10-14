@@ -79,8 +79,7 @@ func (Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 	if err != nil {
 		return Pinned{}, fmt.Errorf("image %q is not a valid reference: %w", image, err)
 	}
-	desc, err := remote.Get(ref, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain),
-		remote.WithTransport(transport(remote.DefaultTransport)))
+	desc, err := remote.Get(ref, remoteOptions(ctx)...)
 	if err != nil {
 		return Pinned{}, fmt.Errorf("reading %q from its registry (credentials come from `docker login` "+
 			"or its credential helpers, in ~/.docker/config.json): %w", image, err)
@@ -100,8 +99,7 @@ func (Registry) Platform(ctx context.Context, ref string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("image %q is not a valid reference: %w", ref, err)
 	}
-	img, err := remote.Image(r, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain),
-		remote.WithTransport(transport(remote.DefaultTransport)))
+	img, err := remote.Image(r, remoteOptions(ctx)...)
 	if err != nil {
 		return "", fmt.Errorf("reading %q from its registry: %w", ref, err)
 	}
@@ -117,6 +115,14 @@ func (Registry) Platform(ctx context.Context, ref string) (string, error) {
 		p += "/" + cfg.Variant
 	}
 	return p, nil
+}
+
+// remoteOptions are the options of every registry request: the credentials
+// of authn.DefaultKeychain and the transport that allows plain HTTP only on
+// the loopback.
+func remoteOptions(ctx context.Context) []remote.Option {
+	return []remote.Option{remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithTransport(transport(remote.DefaultTransport))}
 }
 
 // pinnedRef replaces the tag or digest of image with digest and keeps the
