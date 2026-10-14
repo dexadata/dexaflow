@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"time"
 
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc/codes"
@@ -209,13 +210,50 @@ func (s *Server) pumpWorkerMessages(stream agentv1.AgentService_AwaitAssignmentS
 // bindWarmAttempt persists the durable warm-attempt binding a started ack
 // established (ADR 0058 N1d-a1): warm_worker_id on the running TI names the warm
 // pod now serving the attempt, so a later failover reaper can recover which
-// attempts a dead warm pod held. It is BEST-EFFORT — a persist failure is logged
-// and swallowed, never fatal to the live stream: a DB blip must not tear down a
-// worker that is already running the attempt. The reaper degrades gracefully to
-// per-pod liveness for an attempt whose binding did not land.
+// attempts a dead warm pod held.
+//
+// The worker is already running the attempt, so a missing binding is not
+// harmless: an unbound running warm attempt looks like a dedicated attempt whose
+// pod vanished, and the pod-lost reaper would fail it while it runs (#1600). A
+// store error is therefore retried with backoff (bindRetryDelays) until the
+// write applies or the stream ends. It is still never fatal to the live stream:
+// once the retries are spent the error is logged and the worker keeps serving.
 func (s *Server) bindWarmAttempt(ctx context.Context, b *WarmBinding) {
-	if err := s.store.BindWarmAttempt(ctx, b.RunID, b.TaskID, b.TryNumber, b.AttemptEpoch, b.PodName); err != nil {
-		slog.Warn("persisting warm attempt binding (best-effort; worker keeps serving)",
+	err := s.store.BindWarmAttempt(ctx, b.RunID, b.TaskID, b.TryNumber, b.AttemptEpoch, b.PodName)
+	for _, d := range s.bindRetryDelays {
+		if err == nil {
+			return
+		}
+		if werr := sleepCtx(ctx, d); werr != nil {
+			err = errors.Join(err, werr)
+			break
+		}
+		err = s.store.BindWarmAttempt(ctx, b.RunID, b.TaskID, b.TryNumber, b.AttemptEpoch, b.PodName)
+	}
+	if err != nil {
+		slog.Error("persisting warm attempt binding failed after retries; the attempt runs unbound",
 			"run", b.RunID, "task", b.TaskID, "try", b.TryNumber, "pod_name", b.PodName, "error", err)
 	}
+}
+
+// sleepCtx waits d, or returns ctx's error if ctx ends first.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// defaultBindRetryDelays is the backoff between BindWarmAttempt retries: about
+// 12 seconds in all, enough to ride out a connection reset or a short failover,
+// and well inside the 60 second pod-lost grace that an unbound attempt would
+// otherwise hit.
+var defaultBindRetryDelays = []time.Duration{
+	100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond,
+	800 * time.Millisecond, 1600 * time.Millisecond, 3200 * time.Millisecond,
+	5 * time.Second,
 }

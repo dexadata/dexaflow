@@ -255,9 +255,10 @@ func (s *ExecutionStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdent
 // warm worker pod (workerPod, its own downward-API pod name) that acked this
 // attempt as started, stamped onto warm_worker_id so a later failover reaper can
 // tell which running attempts a dead warm pod held. The UPDATE is guarded on
-// state IN ('queued', 'running'), so a settled attempt is never bound — an ack
-// that races a reaper settling the row is a benign no-op (zero rows), not an
-// error. It is written ONLY on a warm ack; a dedicated-pod attempt (and every
+// state IN ('scheduled', 'queued', 'running'), so a settled attempt is never
+// bound (an ack that races a reaper settling the row is a benign no-op, zero
+// rows, not an error), while an ack that lands before the tick records queued
+// still binds (#1600). It is written ONLY on a warm ack; a dedicated-pod attempt (and every
 // attempt while warm pools are off) leaves warm_worker_id NULL.
 //
 // N1d-a2 deferral: warm_worker_id is intentionally NOT cleared when the attempt

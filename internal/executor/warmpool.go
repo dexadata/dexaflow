@@ -120,7 +120,9 @@ type WarmPodClient interface {
 //     MaxPoolSize (the total ceiling) — so the pool grows past min_idle under load
 //     and never exceeds the cap;
 //   - DELETEs only EXCESS IDLE workers (idle over the target), never a busy one, so
-//     a scale-down or a drain never kills an in-flight attempt (review M1);
+//     a scale-down or a drain never kills an in-flight attempt (review M1). Each
+//     delete re-reads the busy set first, and every delete of the tick runs before
+//     any create, so a worker that takes an attempt during the tick is kept;
 //   - reaps terminal pods unconditionally (H1);
 //   - drains a no-longer-active version (target 0) down to its idle workers +
 //     terminal pods, LEAVING busy workers to finish (they are deleted a later tick
@@ -294,9 +296,10 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 	}
 	r.fleetFromCache = fromCache
 
-	// Read the busy set ONCE per tick. This is the safety input: it tells the
-	// reconciler which live workers are serving a running attempt so scale-down and
-	// drain delete only IDLE workers (ADR 0058 N1d-b M1). Without it every worker
+	// Read the busy set at the start of the tick. This is the safety input: it
+	// tells the reconciler which live workers are serving a running attempt so
+	// scale-down and drain delete only IDLE workers (ADR 0058 N1d-b M1). It plans
+	// the tick; each delete re-reads it right before it is issued (#1601). Without it every worker
 	// looks idle and a busy worker could be deleted mid-attempt, so a nil source or
 	// a store error here ABORTS the tick with zero creates/deletes (do-no-harm):
 	// log, meter, and return so the ticker retries next tick on a good view.
@@ -333,20 +336,29 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 	// draining version has target 0, so it never creates — its allowance is moot; it
 	// still counts against its tenant's live budget (its pods carry the tenant label
 	// and were summed into tenant_live above).
+	//
+	// Every delete of the tick runs before any create (#1601). Creates are paced
+	// by the client's rate limiter, so on a large tick they take minutes; a delete
+	// queued behind them would act on a busy set read long before. Each delete
+	// also re-reads the busy set right before it is issued (deleteIdleWarmPod).
 	active := make(map[string]bool, len(targets))
+	var creates []warmCreate
 	for _, t := range targets {
 		active[t.DagVersionID] = true
-		// An ACTIVE version's anchor is create-only during its life: reconcileVersion
-		// ensures it before creating, and it is NEVER deleted here — so a scale-down
-		// (deleting idle excess) can never trigger the cascade. The remaining-pod
-		// count is irrelevant for an active version and deliberately ignored.
-		r.reconcileVersion(ctx, t, byVersion[t.DagVersionID], busy, allowanceFor(allow, t.DagVersionID))
+		// An ACTIVE version's anchor is create-only during its life: the create
+		// phase below ensures it before creating, and it is NEVER deleted here, so
+		// a scale-down (deleting idle excess) can never trigger the cascade. The
+		// remaining-pod count is irrelevant for an active version and deliberately
+		// ignored.
+		if _, n := r.reconcileVersion(ctx, t, byVersion[t.DagVersionID], busy, allowanceFor(allow, t.DagVersionID)); n > 0 {
+			creates = append(creates, warmCreate{target: t, n: n})
+		}
 	}
 	for dagVersionID, have := range byVersion {
 		if active[dagVersionID] {
 			continue
 		}
-		remaining := r.reconcileVersion(ctx, WarmTarget{DagVersionID: dagVersionID, EffectiveMinIdle: 0}, have, busy, unlimitedAllowance)
+		remaining, _ := r.reconcileVersion(ctx, WarmTarget{DagVersionID: dagVersionID, EffectiveMinIdle: 0}, have, busy, unlimitedAllowance)
 		// DELETE FOOTGUN GUARD (ADR 0058 D11). The anchor's ownerReference makes
 		// deleting it CASCADE-delete every pod that still references it. So the anchor
 		// is deleted ONLY when, in THIS tick, the version is INACTIVE (not in
@@ -362,7 +374,30 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 		}
 	}
 	r.sweepOrphanAnchors(ctx, active, byVersion)
+	for _, c := range creates {
+		r.createForVersion(ctx, c.target, c.n)
+	}
 	return nil
+}
+
+// warmCreate is one active version's planned creates for the tick, issued after
+// every delete of the tick.
+type warmCreate struct {
+	target WarmTarget
+	n      int
+}
+
+// createForVersion runs one version's planned creates, isolated behind a recover
+// so a panic in one version's create path never takes down the other versions.
+func (r *WarmPoolReconciler) createForVersion(ctx context.Context, t WarmTarget, n int) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.logger.ErrorContext(ctx, "warm-pool create panicked for a dag_version; other versions unaffected",
+				"dag_version", t.DagVersionID, "panic", p)
+			r.record("warm_pool_version_panic")
+		}
+	}()
+	r.ensureAnchorAndCreate(ctx, t, n)
 }
 
 // sweepOrphanAnchors deletes the GC anchor of every dag_version that is neither
@@ -604,7 +639,10 @@ func (r *WarmPoolReconciler) rationTenant(versions []WarmTarget, stat map[string
 // create is bounded by the per-version floor/MaxPoolSize gate alone — the pre-M4
 // behavior. The allowance gates CREATES only; the terminal reap and the
 // excess-idle delete are unchanged, so the cap never deletes a busy worker.
-func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget, have []WarmPodInfo, busy map[string]bool, createAllowance int) (remaining int) {
+//
+// It issues this version's deletes and returns the number of workers to create;
+// the caller creates them after every version's deletes (#1601).
+func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget, have []WarmPodInfo, busy map[string]bool, createAllowance int) (remaining, create int) {
 	defer func() {
 		if p := recover(); p != nil {
 			r.logger.ErrorContext(ctx, "warm-pool reconcile panicked for a dag_version; other versions unaffected",
@@ -613,6 +651,7 @@ func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget,
 			// Conservative on panic: report every listed pod as still present so the
 			// caller's footgun guard never deletes an anchor after a half-done drain.
 			remaining = len(have)
+			create = 0
 		}
 	}()
 
@@ -665,7 +704,7 @@ func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget,
 		// rationed allowance. create = min(idle shortfall, headroom to the ceiling,
 		// tenant allowance). Each create is isolated so one apiserver rejection does
 		// not stop the rest of this version's workers.
-		create := t.EffectiveMinIdle - len(idle)
+		create = t.EffectiveMinIdle - len(idle)
 		if headroom := maxPool - live; headroom < create {
 			create = headroom
 		}
@@ -673,7 +712,6 @@ func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget,
 			create = createAllowance
 		}
 		remaining += len(idle) // no idle deleted on the create path; every idle pod survives
-		r.ensureAnchorAndCreate(ctx, t, create)
 	case len(idle) > t.EffectiveMinIdle:
 		// Too many idle workers (over target, or the version is no longer active so
 		// the idle target is 0): delete the excess IDLE workers only. Busy workers
@@ -683,14 +721,35 @@ func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget,
 		// every idle worker of a version is interchangeable.
 		remaining += t.EffectiveMinIdle // the idle workers kept within the target survive
 		for _, p := range idle[t.EffectiveMinIdle:] {
-			if !r.deleteWarmPod(ctx, t, p, "deleting excess idle warm worker") {
-				remaining++ // delete failed: the pod still exists and references the anchor
+			if !r.deleteIdleWarmPod(ctx, t, p) {
+				remaining++ // kept or delete failed: the pod still exists and references the anchor
 			}
 		}
 	default:
 		remaining += len(idle) // steady state / at-ceiling: the idle workers survive
 	}
-	return remaining
+	return remaining, create
+}
+
+// deleteIdleWarmPod deletes a worker the tick classified idle, after re-reading
+// the busy set right before the delete (#1601). The tick's busy set was read at
+// its start, and deletes are paced by the client's rate limiter, so a worker can
+// take an attempt (its binding lands) between that read and its delete. A worker
+// busy now is kept; so is every worker when the busy set cannot be read
+// (do-no-harm). It returns true iff the pod was deleted.
+func (r *WarmPoolReconciler) deleteIdleWarmPod(ctx context.Context, t WarmTarget, p WarmPodInfo) bool {
+	busy, err := r.busy.ListBusyWarmWorkerPods(ctx)
+	if err != nil {
+		r.logger.ErrorContext(ctx, "re-reading busy warm workers before a delete failed; keeping the worker",
+			"dag_version", t.DagVersionID, "pod", p.Name, "error", err)
+		r.record("warm_pool_busy_list_error")
+		return false
+	}
+	if busy[p.Name] {
+		r.record("warm_pool_delete_skipped_busy")
+		return false
+	}
+	return r.deleteWarmPod(ctx, t, p, "deleting excess idle warm worker")
 }
 
 // ensureAnchorAndCreate creates `create` new warm workers for the version, after

@@ -216,7 +216,10 @@ flowchart TB
    fleet live when a create was never observed and at least every 5 minutes.
    After a live read it keeps reading live until the informer holds (or saw
    deleted) every pod that read returned, so a lagging or stale cache, a hung
-   watch included, cannot overshoot either bound.
+   watch included, cannot overshoot either bound. A check deletes only idle
+   workers: it issues every delete before any create, and checks again that a
+   worker is still idle right before deleting it, so a worker that takes an
+   attempt while a long check is running is kept.
 2. **AwaitAssignment.** Each warm pod opens a long-lived bidirectional gRPC stream
    (`AwaitAssignment`) and **registers** under its authenticated identity, naming
    its `dag_version` and pod name. Work assignments flow down the stream; acks and
@@ -224,7 +227,11 @@ flowchart TB
 3. **Lease + ack.** When an attempt for that version is ready, the control plane
    leases a free slot on a registered worker and sends the assignment. The worker
    **acks**, and a durable warm-attempt binding is written so a leader failover can
-   recover which worker holds which task instance.
+   recover which worker holds which task instance. A failed binding write is
+   retried with backoff for about 12 seconds. An ack that arrives after the
+   30 second lease still binds the attempt for up to 5 minutes after the lease
+   expired, and the worker is not offered other work during that time, since it
+   runs the attempt as soon as it acks.
 4. **Fork from a pristine template.** The worker runs each attempt in a **fresh
    child process forked from a pristine template — never from a sibling attempt**
    ([isolation](#isolation-between-attempts)).
