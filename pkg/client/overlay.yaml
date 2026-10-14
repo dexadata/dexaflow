@@ -12,3 +12,8 @@ actions:
   # WithDagSourceVersion to send it.
   - target: $.paths['/api/v2/dagSources/{dag_id}'].get.parameters
     remove: true
+  # The register dry run route (#1705) gets no method of its own: a new
+  # method on ClientInterface breaks every implementation of it. Use
+  # RegisterDagVersion with the DryRunRegister request editor.
+  - target: $.paths['/api/v2/dags/{dag_id}/versions/dry_run']
+    remove: true

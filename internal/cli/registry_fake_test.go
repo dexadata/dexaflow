@@ -18,6 +18,34 @@ type fakeOCIRegistry struct {
 	host, digest string
 	mu           sync.Mutex
 	reads        []string
+	// uploads counts the blob uploads started (a push, or a push check);
+	// denyPush answers them 401, as a registry does without a credential.
+	uploads  int
+	denyPush bool
+}
+
+// serveUpload answers the start and the cancel of a blob upload.
+func (r *fakeOCIRegistry) serveUpload(w http.ResponseWriter, req *http.Request) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case req.Method == http.MethodPost && r.denyPush:
+		r.uploads++
+		http.Error(w, `{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}`, http.StatusUnauthorized)
+	case req.Method == http.MethodPost:
+		r.uploads++
+		w.Header().Set("Location", req.URL.Path+"u1")
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// uploadCount returns how many blob uploads were started.
+func (r *fakeOCIRegistry) uploadCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.uploads
 }
 
 // newFakeOCIRegistry serves manifest and returns the registry; its digest is
@@ -35,6 +63,10 @@ func newFakeOCIRegistry(t *testing.T, manifest string) *fakeOCIRegistry {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/v2/" {
+			return
+		}
+		if strings.Contains(req.URL.Path, "/blobs/uploads/") {
+			r.serveUpload(w, req)
 			return
 		}
 		repo, ref, ok := strings.Cut(strings.TrimPrefix(req.URL.Path, "/v2/"), "/manifests/")

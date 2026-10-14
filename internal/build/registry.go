@@ -87,7 +87,7 @@ func (Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 	if !acceptedMediaTypes[desc.MediaType] {
 		return Pinned{}, fmt.Errorf("reading %q from its registry: media type %q is not an OCI or Docker v2 manifest or index", image, desc.MediaType)
 	}
-	return Pinned{Ref: pinnedRef(image, desc.Digest.String()), Manifest: desc.Manifest}, nil
+	return Pinned{Ref: PinnedRef(image, desc.Digest.String()), Manifest: desc.Manifest}, nil
 }
 
 // Platform reads os/arch[/variant] from the config of the single image ref
@@ -125,9 +125,9 @@ func remoteOptions(ctx context.Context) []remote.Option {
 		remote.WithTransport(transport(remote.DefaultTransport))}
 }
 
-// pinnedRef replaces the tag or digest of image with digest and keeps the
+// PinnedRef replaces the tag or digest of image with digest and keeps the
 // rest as written, so a docker.io image reads as the user wrote it.
-func pinnedRef(image, digest string) string {
+func PinnedRef(image, digest string) string {
 	repo := image
 	if i := strings.Index(repo, "@"); i >= 0 {
 		repo = repo[:i]

@@ -52,3 +52,28 @@ func WithDagSourceVersion(n int) RequestEditorFn {
 		return nil
 	}
 }
+
+// dryRunSuffix turns the register path into its dry run route.
+const dryRunSuffix = "/dry_run"
+
+// DryRunRegister is a RequestEditorFn for RegisterDagVersion that sends the
+// register to POST /api/v2/dags/{dag_id}/versions/dry_run instead: the
+// server runs every check of the register and writes nothing, answering 200
+// with dry_run true, or the refusal the register would give. A server from
+// before the route answers 404 and registers nothing. Pass it only to
+// RegisterDagVersion; it refuses any request other than a POST to the
+// register path.
+//
+// As an argument of the call it runs after the client-level editors
+// (WithRequestEditorFn): an editor of the client that signs the path signs
+// the register path, not the dry run route.
+func DryRunRegister(_ context.Context, req *http.Request) error {
+	if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/versions") || !strings.Contains(req.URL.Path, "/api/v2/dags/") {
+		return fmt.Errorf("DryRunRegister applies to POST /api/v2/dags/{dag_id}/versions, not %s %s", req.Method, req.URL.Path)
+	}
+	req.URL.Path += dryRunSuffix
+	if req.URL.RawPath != "" {
+		req.URL.RawPath += dryRunSuffix
+	}
+	return nil
+}

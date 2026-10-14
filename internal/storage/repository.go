@@ -930,8 +930,14 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 	if domain.DagRunState(state).IsTerminal() {
 		ended = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	}
+	// A run set back to queued waits for the scheduler to start it again, as
+	// after a clear: its start is cleared so the next start stamps a new one.
+	started := run.StartedAt
+	if domain.DagRunState(state) == domain.DagRunStateQueued {
+		started = pgtype.Timestamptz{}
+	}
 	if _, err := r.q.UpdateDagRunState(ctx, queries.UpdateDagRunStateParams{
-		ID: run.ID, State: queries.DagRunState(state), StartedAt: run.StartedAt, EndedAt: ended, TenantID: run.TenantID,
+		ID: run.ID, State: queries.DagRunState(state), StartedAt: started, EndedAt: ended, TenantID: run.TenantID,
 	}); err != nil {
 		return fmt.Errorf("setting dag run state: %w", err)
 	}
@@ -943,6 +949,30 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 // owner and the task columns. Scoped to the DAG (resource_id = dag_id) so it
 // appears on the DAG's Audit Log tab.
 func (r *Repository) RecordTaskActionAudit(ctx context.Context, tenant, userID, action, dagID, runID, taskID string, tryNumber int) error {
+	fields := map[string]any{"run_id": runID}
+	if taskID != "" { // run-level events (e.g. trigger) carry no task columns
+		fields["task_id"] = taskID
+		fields["try_number"] = tryNumber
+	}
+	return r.recordDagAudit(ctx, tenant, userID, action, dagID, fields)
+}
+
+// RecordRunActionAudit logs a run-level action on the DAG's Audit Log tab, as
+// RecordTaskActionAudit does, with extra metadata fields next to run_id (for
+// example requested_state when a PATCH stored another state, #1766).
+func (r *Repository) RecordRunActionAudit(ctx context.Context, tenant, userID, action, dagID, runID string, metadata map[string]string) error {
+	fields := map[string]any{"run_id": runID}
+	for k, v := range metadata {
+		if k != "run_id" {
+			fields[k] = v
+		}
+	}
+	return r.recordDagAudit(ctx, tenant, userID, action, dagID, fields)
+}
+
+// recordDagAudit writes one audit entry scoped to the DAG with the given
+// metadata fields.
+func (r *Repository) recordDagAudit(ctx context.Context, tenant, userID, action, dagID string, fields map[string]any) error {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return err
@@ -950,11 +980,6 @@ func (r *Repository) RecordTaskActionAudit(ctx context.Context, tenant, userID, 
 	var uid pgtype.UUID
 	if u, perr := parseUUID(userID); perr == nil {
 		uid = u
-	}
-	fields := map[string]any{"run_id": runID}
-	if taskID != "" { // run-level events (e.g. trigger) carry no task columns
-		fields["task_id"] = taskID
-		fields["try_number"] = tryNumber
 	}
 	meta, err := json.Marshal(fields)
 	if err != nil {
@@ -1338,7 +1363,10 @@ func (r *Repository) RegisterDagVersionAs(ctx context.Context, tenant string, re
 	if err != nil {
 		return domain.DagRegistered{}, err
 	}
-	if !got.wrote {
+	// A dry run (#1705) stops here, before the commit: the deferred rollback
+	// undoes every write, audit entries included, so its outcome and its
+	// errors are exactly the register's and nothing remains.
+	if !got.wrote || reg.DryRun {
 		return got.DagRegistered, nil
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {

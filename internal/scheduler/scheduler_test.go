@@ -77,6 +77,9 @@ type fakeStore struct {
 	// user's mark or clear, an agent's report) so the write skips it.
 	batchFrom       map[string]domain.TaskState
 	batchSuperseded map[string]bool
+	// startSuperseded makes StartQueuedRun find the run no longer queued (a
+	// user marked it, or deleted it, after the tick read it), so nothing starts.
+	startSuperseded map[string]bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -207,6 +210,16 @@ func (f *fakeStore) RedispatchReschedule(_ context.Context, runID, taskID string
 func (f *fakeStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
 	f.runStates[runID] = state
 	return nil
+}
+
+// StartQueuedRun mirrors the guarded queued -> running write: it reports false,
+// writing nothing, for a run the test marked as moved on.
+func (f *fakeStore) StartQueuedRun(_ context.Context, runID, _ string) (bool, error) {
+	if f.startSuperseded[runID] {
+		return false, nil
+	}
+	f.runStates[runID] = domain.DagRunStateRunning
+	return true, nil
 }
 
 // The alert bookkeeping is the one part of this fake touched from two

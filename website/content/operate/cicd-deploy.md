@@ -143,10 +143,70 @@ With no server set anywhere (no `--server`, `--target`, `DEXAFLOW_SERVER_URL`
 or `server_url`), `deploy` stops before building instead of going to
 `http://localhost:8080`; a machine set up for Lite keeps the local default.
 
+#### Checks before the build (preflight)
+
+A deploy that the server or the registry would refuse fails in seconds,
+before the build, with a message that names what to fix. `deploy` checks, in
+this order:
+
+1. **Before the compile: the control plane answers and the token may
+   deploy.** A token the server refuses (`401`) names `dexaflow auth login`;
+   a token without the `deployer` role, `deploy` or `write` on dags, or an API
+   token without the `deploy` scope (`403`) names
+   `dexaflow auth create-token --scope deploy`. With `--paused` or `--active`
+   the check also covers what those flags need (`write` on dags and, for an
+   API token, the `dexaflow:run` scope), and the refusal says so. A server
+   that cannot be reached stops the deploy here.
+2. **Before the build: the registry accepts a push** to the image's
+   repository with the credentials of the docker config
+   (`~/.docker/config.json` and its credential helpers), which the `docker`
+   builder and the daemonless build paths push with. The check starts an
+   upload and cancels it (best effort: a registry that refuses the cancel
+   expires the empty upload), so no image is written. A refusal of the
+   credential found there stops a `docker` deploy, naming
+   `docker login <registry>`. With no credential found, or with another
+   `--builder` (podman, for one, keeps credentials of its own in
+   `auth.json`), a refusal is a `note:` naming `<builder> login <registry>`
+   and the push decides. Nothing is checked when nothing is pushed: with
+   `--skip-build`, or when the registry already holds the image for the
+   content label.
+3. **After the compile, before the build: the server's dry run of the
+   register.** The compiled `dag.json` goes to
+   `POST /api/v2/dags/{dag_id}/versions/dry_run`, which runs every check the
+   register runs (spec validation, the operator's image, service account
+   and field allowlists, the resource unit, source mode, the tenant's limits,
+   the declared connections and variables, the version label) and writes
+   nothing. The register gets the image pinned by digest, which the build
+   makes later. When nothing is built (`--skip-build`, or the registry
+   already holds the image for the content label) the dry run is sent the
+   digest the registry holds for the tag, the very image the register gets,
+   so an allowlist that names that exact digest accepts it. Before a build
+   it is sent the repository at a placeholder digest, so an allowlist of
+   repositories or of `repo@*` decides as for the register. A refusal stops
+   the deploy with the server's reason, except two the built image decides
+   when it is still to be built. One is a refusal of the placeholder image
+   when it is the only refusal and the allowlist names the image's
+   repository at a digest (`<repo>@sha256:...`), which a reproducible build
+   may match; a repository the allowlist does not cover still stops the
+   deploy. The other is a version label registered with other content. Each
+   of those is a `note:`, and the register answers it. So is a dry run the server
+   could not answer (`5xx`, or `429` under load): the deploy goes on and the
+   register runs the checks. A warning (a task that does not fit its size
+   under `executor.unit.enforce: warn`) prints on stderr and the deploy goes
+   on.
+
+Each check that passes prints a `preflight:` line (on stderr with
+`--output json`). A server from before the dry run route answers it with
+`404` and registers nothing, also during a rolling upgrade when one replica
+is older: the deploy prints a `note:` and its policy checks run at the
+register, after the build, as before. `dexaflow doctor` runs the first two
+checks for the target in use, refreshing a saved session as a deploy does.
+
 | Flag | What it does |
 |---|---|
 | `--paused` / `--active` | Leaves the DAG paused or active after this deploy, new or not, instead of the creation rule above. The register sets it in its own transaction, audited as `dag.pause` or `dag.unpause`; for content that is already current, nothing is registered and the DAG is paused or unpaused with the Airflow `PATCH /api/v2/dags/{dag_id}`. Pausing is a run-state write: these flags need `write:dag` (the `deployer` role alone is refused with `403`), and a scoped token needs `dexaflow:run` as well as `dexaflow:deploy`, so a deploy-only token is refused with `403`. |
 | `--plan` | Says per DAG what a deploy would build, push and register, and why (content changed, already current, an older version, a new DAG), without running the parser, the builder or the register. Works with `--all`. |
+| `--changed-since <ref>` | With `--all`, deploys only the projects whose files changed since a git ref, and lists the others as skipped. See [Deploying only what changed](#deploying-only-what-changed). |
 | `--output json` | Prints one JSON document on stdout for the pipeline to read; the human lines and the builder's output go to stderr. |
 
 The JSON document has one entry per DAG:
@@ -175,7 +235,8 @@ The JSON document has one entry per DAG:
 `created` says a new version was registered and `dag_created` that it was
 the DAG's first. `status` is `registered` (a new version), `unchanged` (the server already had
 this exact content), `current` (the content label is the current version, so
-nothing was built), or `failed` (one DAG of `--all`, with `error`). With
+nothing was built), `skipped` (unchanged since the `--changed-since` ref, with
+`reason`), or `failed` (one DAG of `--all`, with `error`). With
 `--plan` it is `planned` or `refused`, and a `plan` object carries `build`,
 `push`, `register` and `reason`. After a failure of `--all` the document is
 still printed, so the pipeline sees which DAGs went through.
@@ -215,6 +276,143 @@ Using it **as** your CI, in place of per-DAG pipelines, is a deliberate trade:
 one job rebuilds everything on any change, so blast radius and build time both
 grow with the repo. Choose it only if you want that.
 {{% /alert %}}
+
+## Deploying only what changed
+
+In a repository with many DAG projects, `deploy --all --changed-since <ref>`
+deploys only the projects whose files differ from a git ref, so a commit that
+touches one DAG does not compile the others:
+
+```bash
+dexaflow deploy --all --changed-since origin/main --yes
+```
+
+```text
+==> orders: dags/orders/dag.py changed since origin/main
+==> skipping billing (unchanged since origin/main)
+==> deploying orders (/repo/dags/orders)
+...
+Deployed 1 DAG(s) from /repo (1 unchanged since origin/main, skipped)
+```
+
+A project counts as changed when a file its image or its version label is
+built from changed: the DAG source, the `include_paths` (shared code included),
+the dbt project and `dbt_groups` directories, `dbt.manifest`, its
+`dexaflow.yaml` (or `leoflow.yaml`), its `.dockerignore`, and its own
+Dockerfile (with a project Dockerfile, every file of the project directory the
+`.dockerignore` keeps). These are the files the content label hashes, so a
+skipped project is one whose label would not change. A file that `exclude_paths`
+leaves out, or that the generated Dockerfile does not copy (a `README.md` next
+to `dag.py`, say), changes nothing. A change to the workspace file
+(`dexaflow.workspace.yaml`, which holds the shared defaults and the targets)
+counts as a change to every project.
+
+How the comparison works:
+
+- **The ref is compared with the working tree**, not with `HEAD` and not from a
+  merge base: committed, staged, unstaged and untracked files all count, and so
+  do submodules, whatever `diff.ignoreSubmodules` says. A change on the ref's
+  side since your branch started counts too, so the comparison errs toward
+  deploying.
+- **A file git ignores cannot be compared.** A project built from one (a
+  generated module under `include_paths`, dbt `deps` output) always counts as
+  changed, and the output names the file. Inside a submodule, the submodule's
+  own ignore rules decide. So does a project built from a file
+  outside the repository, or one whose folder resolves outside it.
+- **The ref must be in the clone.** A shallow clone (the default of
+  `actions/checkout`) stops with a message saying to fetch the history: use
+  `fetch-depth: 0`, or `git fetch --unshallow`. A ref that does not exist, or a
+  folder outside a git repository, stops the deploy too; nothing is deployed
+  by guess.
+- **A project removed since the ref** (its `dexaflow.yaml` or `dag.py` deleted)
+  is reported with its `dag_id`, and nothing is deployed or deregistered for
+  it: its DAG stays registered and scheduled until you pause it with
+  `dexaflow admin dags pause <dag_id>` or remove it with
+  `dexaflow dags delete <dag_id> --deregister`. A project moved to another
+  folder keeps its `dag_id`: it is reported as moved, with no removal advice,
+  and deployed from its new folder. A `dag_id` changed in place is not reported:
+  the project is deployed under its new id, and the DAG under the old id stays
+  registered until you remove it.
+- **It selects among the workspace's projects**, so it goes with `--all`, or a
+  bare `dexaflow deploy` at the workspace root. With a `dag_id` or a path it is
+  refused, rather than silently skipping the DAG you named.
+- What git does not see is not compared: the CLI version, `--registry`,
+  `--platform`, the target's settings and the config file. After upgrading the
+  CLI or changing a target, deploy with `--all` alone once.
+
+With `--output json`, every skipped project has an entry with `status:
+"skipped"` and its `reason`, the removed ones are listed under `removed`
+(`path`, `dag_id`, `reason`), and the moved ones under `moved` (`dag_id`,
+`from`, `to`).
+
+`--changed-since` and the content label solve different costs. Without the
+flag, `deploy --all` already registers nothing for a project whose label is the
+current version, and reuses an image the registry holds for its label
+([ADR 0076](/project/adrs/0076-reuse-image-by-content-label/)); but it still
+compiles every project and asks the server about each. `--changed-since`
+skips those projects before any of that. Use it in the pipeline of a large
+repository, on every push; use `--all` alone when the inputs git does not see
+changed (above), or to check that every project is deployed.
+
+A GitHub Actions job that deploys the projects a push to `main` changed:
+
+```yaml title=".github/workflows/deploy-changed.yml"
+name: Deploy changed DAGs
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    env:
+      DEXAFLOW_SERVER_URL: https://pro.example.com
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }          # the ref and git describe need history
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dexaflow
+        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
+      - name: Deploy the DAGs this push changed
+        env:
+          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A new branch has no previous commit (all zeros), and a force push
+          # can leave one the clone lacks: deploy everything then.
+          if [ "${BEFORE//0/}" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            dexaflow deploy --all --changed-since "$BEFORE" --yes
+          else
+            dexaflow deploy --all --yes
+          fi
+```
+
+`github.event.before` is the commit `main` was on before the push, so a push of
+several commits deploys what all of them changed.
+
+A failed or cancelled deploy is not retried by the next push: that push
+compares with its own previous commit, which already holds the change that did
+not deploy. Either rerun the job (or run `dexaflow deploy --all`) after a
+failure, or compare with the last commit that deployed: move a ref after each
+successful deploy (for example `git push -f origin HEAD:refs/tags/deployed-prod`
+in a last step) and pass `--changed-since deployed-prod`, with a `concurrency:`
+group on the job so two runs never move it out of order.
+
+For a pull request, `--plan` says what merging would deploy. Pass the base
+branch through `env:` rather than inline in `run:`:
+
+```yaml
+      - name: What would this pull request deploy
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: dexaflow deploy --all --changed-since "origin/$BASE_REF" --plan
+```
 
 ## Rolling back
 

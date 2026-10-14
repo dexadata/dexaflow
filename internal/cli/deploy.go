@@ -39,8 +39,11 @@ type deployOptions struct {
 	active     bool
 	plan       bool
 	output     string
-	follow     bool
-	timeout    time.Duration
+	// changedSince is the git ref of --changed-since: deploy only the
+	// workspace's projects whose image inputs differ from it.
+	changedSince string
+	follow       bool
+	timeout      time.Duration
 	// report collects each DAG's result for --output json; nil for text.
 	report *deployReport
 }
@@ -70,6 +73,9 @@ func newDeployCommand() *cobra.Command {
 		Short: "Build, push, and register a DAG to a control plane (Pro).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("changed-since") && o.changedSince == "" {
+				return fmt.Errorf("--changed-since needs a git ref (a commit, branch or tag); it was given an empty value, as an unset CI variable gives")
+			}
 			return runDeployCommand(cmd, args, o)
 		},
 	}
@@ -90,6 +96,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.active, "active", false, "leave the DAG active (unpaused) after this deploy, new or not")
 	cmd.MarkFlagsMutuallyExclusive("paused", "active")
 	cmd.Flags().BoolVar(&o.plan, "plan", false, "say per DAG what would be built, pushed and registered, and why, without doing any of it")
+	cmd.Flags().StringVar(&o.changedSince, "changed-since", "", "with --all, deploy only the projects whose image or version label inputs differ between this git ref and the working tree (uncommitted files included); the others are skipped and listed")
 	cmd.Flags().StringVar(&o.output, "output", outputText, "output format: text, or json for one JSON document on stdout (human lines go to stderr)")
 	addPlatformFlag(cmd)
 	return cmd
@@ -101,6 +108,10 @@ func newDeployCommand() *cobra.Command {
 func runDeployTarget(cmd *cobra.Command, args []string, o deployOptions) error {
 	if err := checkDeployFollow(o); err != nil {
 		return err
+	}
+	if o.changedSince != "" && len(args) > 0 {
+		return fmt.Errorf("--changed-since selects among the workspace's projects, so it goes with --all; " +
+			"to deploy a named DAG or folder, drop --changed-since")
 	}
 	if o.all {
 		if len(args) > 0 {
@@ -133,6 +144,9 @@ func runDeployTarget(cmd *cobra.Command, args []string, o deployOptions) error {
 // how to deploy one DAG or all of them.
 func deployHere(cmd *cobra.Command, o deployOptions) error {
 	if isProjectDir(".") {
+		if o.changedSince != "" {
+			return fmt.Errorf("--changed-since selects among the workspace's projects: pass --all to deploy the changed ones, or drop --changed-since to deploy this project")
+		}
 		return runDeploy(cmd, ".", o)
 	}
 	ws, err := findWorkspaceFromCwd()
@@ -270,7 +284,8 @@ func resolveProjectDir(workspaceDir, dagID string) (string, error) {
 // deployAll deploys every project in the workspace, best-effort: it builds,
 // pushes, and registers each, prints a per-DAG summary, and returns a non-zero
 // error if any failed (so CI catches it) — partial pushes are not rolled back
-// (content-addressed images make a re-deploy idempotent). ADR 0041.
+// (content-addressed images make a re-deploy idempotent). ADR 0041. With
+// --changed-since it deploys only the projects that changed since the ref.
 func deployAll(cmd *cobra.Command, o deployOptions) error {
 	where, err := deployAllWorkspace(cmd)
 	if err != nil {
@@ -290,8 +305,17 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 	if cerr != nil {
 		return cerr
 	}
+	projects, skipped, serr := selectChanged(cmd, ws, o)
+	if serr != nil {
+		return serr
+	}
+	if len(projects) == 0 {
+		o.report.setServer(choice)
+		_, err = fmt.Fprintf(out, "No DAG project changed since %s; nothing to deploy (%d skipped)\n", o.changedSince, skipped)
+		return err
+	}
 	if !o.plan && shouldConfirm(choice.URL, o.yes, cmdInteractive(cmd)) {
-		target := fmt.Sprintf("%d DAG(s) from %s", len(ws.Projects), wsDir)
+		target := fmt.Sprintf("%d DAG(s) from %s", len(projects), wsDir)
 		if !confirmDeploy(cmd.InOrStdin(), out, target, choice.URL) {
 			return fmt.Errorf("deploy aborted")
 		}
@@ -302,7 +326,7 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 		verb = "planning"
 	}
 	var failed []string
-	for _, p := range ws.Projects {
+	for _, p := range projects {
 		devPrintf(out, "==> %s %s (%s)\n", verb, p.DagID, p.Path)
 		if derr := runDeploy(cmd, p.Path, o); derr != nil {
 			failed = append(failed, p.DagID)
@@ -312,14 +336,70 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("%d of %d deploys failed: %s",
-			len(failed), len(ws.Projects), strings.Join(failed, ", "))
+			len(failed), len(projects), strings.Join(failed, ", "))
+	}
+	return printDeployAllSummary(out, o, len(projects), skipped, wsDir)
+}
+
+// printDeployAllSummary writes the closing line of deploy --all.
+func printDeployAllSummary(out io.Writer, o deployOptions, n, skipped int, wsDir string) error {
+	tail := ""
+	if o.changedSince != "" {
+		tail = fmt.Sprintf(" (%d unchanged since %s, skipped)", skipped, o.changedSince)
 	}
 	if o.plan {
-		_, err = io.WriteString(out, planSummary(len(ws.Projects), wsDir))
+		_, err := io.WriteString(out, strings.TrimSuffix(planSummary(n, wsDir), "\n")+tail+"\n")
 		return err
 	}
-	_, err = fmt.Fprintf(out, "Deployed %d DAG(s) from %s\n", len(ws.Projects), wsDir)
+	_, err := fmt.Fprintf(out, "Deployed %d DAG(s) from %s%s\n", n, wsDir, tail)
 	return err
+}
+
+// selectChanged returns the workspace's projects deploy --all deploys: every
+// one, or with --changed-since those that changed since the ref. It prints
+// and records each skipped project with its reason, and each project removed
+// since the ref, and returns how many were skipped.
+func selectChanged(cmd *cobra.Command, ws *WorkspaceSpec, o deployOptions) ([]Project, int, error) {
+	if o.changedSince == "" {
+		return ws.Projects, 0, nil
+	}
+	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
+	cs, err := readChangeSet(ctx, ws.Path, o.changedSince)
+	if err != nil {
+		return nil, 0, err
+	}
+	shared := cs.sharedChange(ws.Path)
+	var keep []Project
+	for _, p := range ws.Projects {
+		verdict := projectChange{changed: true, reason: shared + " changed since " + cs.ref}
+		if shared == "" {
+			verdict = cs.projectChanged(ctx, p, o.dockerfile)
+		}
+		if verdict.changed {
+			devPrintf(out, "==> %s: %s\n", p.DagID, verdict.reason)
+			keep = append(keep, p)
+			continue
+		}
+		devPrintf(out, "==> skipping %s (%s)\n", p.DagID, verdict.reason)
+		o.report.add(deployResult{DagID: p.DagID, Status: deployStatusSkipped, Reason: verdict.reason})
+	}
+	current := map[string]string{}
+	for _, p := range ws.Projects {
+		if dir, derr := resolvedDir(p.Path); derr == nil {
+			current[p.DagID] = dir
+		}
+	}
+	removed, moved := cs.removedProjects(ctx, ws.Path, current)
+	for _, m := range moved {
+		devPrintf(out, "==> %s moved to %s since %s: %s is deployed from there when it changed\n", m.From, m.To, cs.ref, m.DagID)
+		o.report.addMoved(m)
+	}
+	for _, r := range removed {
+		devPrintf(out, "==> %s (%s) %s. If its DAG should go, remove it with `dexaflow dags delete %s --deregister`\n",
+			r.Path, r.DagID, r.Reason, r.DagID)
+		o.report.addRemoved(r)
+	}
+	return keep, len(ws.Projects) - len(keep), nil
 }
 
 // requireRegistry enforces ADR 0041's hard prerequisite: a Pro deploy pushes the
@@ -556,6 +636,10 @@ func (d *deployRun) run() error {
 	if d.o.plan {
 		return d.plan(ctx, version, image, origin)
 	}
+	access, aerr := d.checkServer(ctx)
+	if aerr != nil {
+		return aerr
+	}
 	// Only a content label says anything about content; --force skips it.
 	if done, perr := preDeployCheck(ctx, d.cmd.ErrOrStderr(), out, d.serverURL, d.token, d.cfg.DagID, version,
 		origin == labelDefault && !d.o.force); done || perr != nil {
@@ -563,6 +647,14 @@ func (d *deployRun) run() error {
 			return perr
 		}
 		return d.alreadyCurrent(ctx, version)
+	}
+	if rerr := d.checkRegistry(ctx, image, co.reuse); rerr != nil {
+		return rerr
+	}
+	if access.dryRun {
+		co.beforeBuild = func() error {
+			return d.dryRun(ctx, output, image, version, origin, co.reuse)
+		}
 	}
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
@@ -579,6 +671,58 @@ func (d *deployRun) run() error {
 	}
 	surfaceConnections(out, output)
 	return d.finish(ctx, res)
+}
+
+// checkServer is the first step of the preflight (#1705): the control plane
+// answers, and the token may deploy, before anything is compiled.
+func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	access, err := checkServerAccess(ctx, d.cmd.ErrOrStderr(), d.serverURL, d.token, d.cfg.DagID, d.o.pausedOverride())
+	if err != nil {
+		return serverAccess{}, err
+	}
+	_, werr := fmt.Fprintf(d.cmd.OutOrStdout(), "preflight:  control plane %s answers, the token may deploy\n", d.serverURL)
+	return access, werr
+}
+
+// checkRegistry is the push step of the preflight: the registry accepts a
+// push of image, checked unless nothing will be pushed (--skip-build, or a
+// reusable image the registry already holds).
+func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) error {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	if d.o.skipBuild || (reuse && registryHolds(ctx, image)) {
+		return nil
+	}
+	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), image, d.o.builder)
+}
+
+// dryRun is the last step of the preflight: the server's dry run of the
+// compiled spec at output, before the build. reuse says the compile takes
+// the skip path when the registry holds the image.
+func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) error {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	return serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image, reuse), version, origin)
+}
+
+// dryRunImage is the image the dry run is sent. The register gets the image
+// pinned by digest. When nothing is built (--skip-build, or the skip path of
+// a reused content label the registry already holds), that is the digest the
+// registry holds for the tag, read here, and it decides the image checks and
+// a conflict as for the register. Before a build the digest does not exist
+// yet: the repository at a placeholder digest, so an allowlist of
+// repositories or of repo@* decides as for the register, and a refusal of
+// the image itself or a conflict is left to the register.
+func (d *deployRun) dryRunImage(ctx context.Context, image string, reuse bool) dryImage {
+	if d.o.skipBuild || reuse {
+		if p, err := (build.Registry{}).Resolve(ctx, image); err == nil {
+			return dryImage{ref: p.Ref, decides: true}
+		}
+	}
+	return dryImage{ref: build.PinnedRef(image, placeholderDigest)}
 }
 
 // mayReuse reports whether this deploy may take the skip path: the tag is the
