@@ -1,0 +1,7 @@
+go test fuzz v1
+string("TZ=")
+int64(1760255957)
+int64(3600)
+int64(86400)
+bool(true)
+int(5)
