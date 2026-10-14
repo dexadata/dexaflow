@@ -416,7 +416,9 @@ type DagSource struct {
 	Content        *string `json:"content,omitempty"`
 	DagDisplayName *string `json:"dag_display_name,omitempty"`
 	DagId          *string `json:"dag_id,omitempty"`
-	VersionNumber  *int    `json:"version_number,omitempty"`
+
+	// VersionNumber The version whose source this is.
+	VersionNumber *int `json:"version_number,omitempty"`
 }
 
 // DagSpec A compiled dag.json, as described by docs/api/dag-schema.json.
@@ -1109,6 +1111,8 @@ type ClientInterface interface {
 
 	// GetDagSource Get a DAG's source (the dag.py text)
 	//
+	// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+	//
 	// Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
 	GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1631,6 +1635,8 @@ func (c *Client) UpdateConnection(ctx context.Context, connectionId ConnectionID
 }
 
 // GetDagSource Get a DAG's source (the dag.py text)
+//
+// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
 //
 // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
 func (c *Client) GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4417,6 +4423,8 @@ type ClientWithResponsesInterface interface {
 
 	// GetDagSourceWithResponse Get a DAG's source (the dag.py text)
 	//
+	// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
@@ -5280,6 +5288,8 @@ type GetDagSourceResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DagSource
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -5287,6 +5297,11 @@ type GetDagSourceResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetDagSourceResponse) GetJSON200() *DagSource {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetDagSourceResponse) GetJSON400() *Error {
+	return r.JSON400
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -6991,6 +7006,8 @@ func (c *ClientWithResponses) UpdateConnectionWithResponse(ctx context.Context, 
 
 // GetDagSourceWithResponse Get a DAG's source (the dag.py text)
 //
+// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
@@ -7997,6 +8014,13 @@ func ParseGetDagSourceResponse(rsp *http.Response) (*GetDagSourceResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound

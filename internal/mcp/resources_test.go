@@ -90,10 +90,14 @@ func TestReadTaskLogResource(t *testing.T) {
 
 func TestReadDagSourceResource(t *testing.T) {
 	h := testHandlers(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v2/dags/etl/dagVersions" {
+			_, _ = io.WriteString(w, `{"dag_versions":[{"version_number":1,"is_current":true}],"total_entries":1}`)
+			return
+		}
 		if r.URL.Path != "/api/v2/dagSources/etl" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
 		// \r is a JSON-valid control-char escape (CR, 0x0d); the sanitizer must
 		// strip it while keeping the \n line breaks of the multi-line source.
 		_, _ = io.WriteString(w, `{"content":"def hi():\n    print('hi')\r\n","dag_id":"etl","version_number":1}`)
@@ -111,6 +115,39 @@ func TestReadDagSourceResource(t *testing.T) {
 	}
 	if strings.Contains(txt, "\r") {
 		t.Errorf("source must be sanitized of control bytes: %q", txt)
+	}
+}
+
+// TestReadDagSourceResourceServesTheCurrentVersion: after a rollback the
+// newest version is not the one that runs. dag://source serves the source of
+// the current version, as dag://spec serves its spec, so it asks dagSources
+// for the version_number the versions listing marks current.
+func TestReadDagSourceResourceServesTheCurrentVersion(t *testing.T) {
+	var sourceQuery string
+	h := testHandlers(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v2/dags/etl/dagVersions":
+			_, _ = io.WriteString(w, `{"dag_versions":[`+
+				`{"version_number":2,"is_current":false},`+
+				`{"version_number":1,"is_current":true}],"total_entries":2}`)
+		case "/api/v2/dagSources/etl":
+			sourceQuery = r.URL.RawQuery
+			if r.URL.Query().Get("version_number") == "1" {
+				_, _ = io.WriteString(w, `{"content":"# v1, current","dag_id":"etl","version_number":1}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"content":"# v2, newest","dag_id":"etl","version_number":2}`)
+		default:
+			t.Errorf("path = %q", r.URL.Path)
+		}
+	})
+	res, err := h.readDagSource(context.Background(), readReq("dag://source/etl"))
+	if err != nil {
+		t.Fatalf("readDagSource: %v", err)
+	}
+	if got := res.Contents[0].Text; got != "# v1, current" {
+		t.Errorf("source = %q (query %q), want the current v1's", got, sourceQuery)
 	}
 }
 

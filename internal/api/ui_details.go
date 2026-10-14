@@ -255,11 +255,11 @@ func dagDetailsHandler(repo DagRepository, versions DagVersionLister, specs DagS
 		}
 		if versions != nil {
 			if vs, verr := versions.ListDagVersions(c.Request.Context(), tenantOf(c), dagID); verr == nil && len(vs) > 0 {
-				latest := vs[0] // ListDagVersions is newest-first.
-				dto.LatestDagVersion = &dagVersionDTO{
-					ID: latest.ID, VersionNumber: latest.VersionNumber, DagID: dagID,
-					BundleName: "leoflow", CreatedAt: latest.CreatedAt, DagDisplayName: dagID,
-				}
+				// ListDagVersions is newest-first. As in Airflow, this is the
+				// newest version even when a rollback made an older one current;
+				// is_current tells them apart.
+				latest := toDagVersionDTO(dagID, vs[0])
+				dto.LatestDagVersion = &latest
 			}
 		}
 		if d.CurrentVersion != "" {
