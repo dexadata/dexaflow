@@ -192,19 +192,7 @@ func shortImage(image string) string {
 // version older than the current one.
 func rollbackTarget(dagID string, versions []listedVersion, to string) (listedVersion, error) {
 	if to != "" {
-		for _, v := range versions {
-			if v.label == to {
-				return v, nil
-			}
-		}
-		if n, err := strconv.Atoi(to); err == nil {
-			for _, v := range versions {
-				if v.number == n {
-					return v, nil
-				}
-			}
-		}
-		return listedVersion{}, fmt.Errorf("%s has no version %q; list them with `dexaflow dags versions %s`", dagID, to, dagID)
+		return findVersion(dagID, versions, to)
 	}
 	current := -1
 	for _, v := range versions {
@@ -225,6 +213,24 @@ func rollbackTarget(dagID string, versions []listedVersion, to string) (listedVe
 		return listedVersion{}, fmt.Errorf("%s has no version before its current version %d; pass --to to pick another", dagID, current)
 	}
 	return *best, nil
+}
+
+// findVersion returns the version sel names: a label first, then a version
+// number, as rollback --to and promote --version match them.
+func findVersion(dagID string, versions []listedVersion, sel string) (listedVersion, error) {
+	for _, v := range versions {
+		if v.label == sel {
+			return v, nil
+		}
+	}
+	if n, err := strconv.Atoi(sel); err == nil {
+		for _, v := range versions {
+			if v.number == n {
+				return v, nil
+			}
+		}
+	}
+	return listedVersion{}, fmt.Errorf("%s has no version %q; list them with `dexaflow dags versions %s`", dagID, sel, dagID)
 }
 
 // setCurrentVersion asks the control plane to make target current and prints

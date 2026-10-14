@@ -139,6 +139,14 @@ target's server, the pair included when it is for that server.
 A saved token is renewed in place when it nears expiry. A token from `--token`
 or an environment variable is never rewritten.
 
+`dexaflow promote <dag_id> --from <target> --to <target>` is the one command
+that calls two targets, so it takes neither `--target` nor `DEXAFLOW_TOKEN`:
+each control plane gets `--from-token` or `--to-token`, else the token saved
+for its server. The `--from` token needs read on dags (an API token, the
+`read` scope); the `--to` token needs only deploy. It registers on the `--to`
+target the version the `--from` target runs, with the same image digest
+([Promoting between environments](/operate/cicd-deploy/#promoting-between-environments)).
+
 ## Registry, platforms and base image
 
 A workspace states its registry once instead of in every `dexaflow.yaml`.
