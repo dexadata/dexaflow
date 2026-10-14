@@ -73,6 +73,9 @@ func newDeployCommand() *cobra.Command {
 		Short: "Build, push, and register a DAG to a control plane (Pro).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("changed-since") && o.changedSince == "" {
+				return fmt.Errorf("--changed-since needs a git ref (a commit, branch or tag); it was given an empty value, as an unset CI variable gives")
+			}
 			return runDeployCommand(cmd, args, o)
 		},
 	}
@@ -370,7 +373,7 @@ func selectChanged(cmd *cobra.Command, ws *WorkspaceSpec, o deployOptions) ([]Pr
 	for _, p := range ws.Projects {
 		verdict := projectChange{changed: true, reason: shared + " changed since " + cs.ref}
 		if shared == "" {
-			verdict = cs.projectChanged(p, o.dockerfile)
+			verdict = cs.projectChanged(ctx, p, o.dockerfile)
 		}
 		if verdict.changed {
 			devPrintf(out, "==> %s: %s\n", p.DagID, verdict.reason)
@@ -380,7 +383,17 @@ func selectChanged(cmd *cobra.Command, ws *WorkspaceSpec, o deployOptions) ([]Pr
 		devPrintf(out, "==> skipping %s (%s)\n", p.DagID, verdict.reason)
 		o.report.add(deployResult{DagID: p.DagID, Status: deployStatusSkipped, Reason: verdict.reason})
 	}
-	for _, r := range cs.removedProjects(ctx, ws.Path) {
+	current := map[string]string{}
+	for _, p := range ws.Projects {
+		if dir, derr := resolvedDir(p.Path); derr == nil {
+			current[p.DagID] = dir
+		}
+	}
+	removed, moved := cs.removedProjects(ctx, ws.Path, current)
+	for _, m := range moved {
+		devPrintf(out, "==> %s moved to %s since %s: %s is deployed from there when it changed\n", m.from, m.to, cs.ref, m.dagID)
+	}
+	for _, r := range removed {
 		devPrintf(out, "==> %s (%s) %s. If its DAG should go, remove it with `dexaflow dags delete %s --deregister`\n",
 			r.Path, r.DagID, r.Reason, r.DagID)
 		o.report.addRemoved(r)

@@ -251,9 +251,14 @@ counts as a change to every project.
 How the comparison works:
 
 - **The ref is compared with the working tree**, not with `HEAD` and not from a
-  merge base: committed, staged, unstaged and untracked files all count (files
-  that `.gitignore` ignores do not). A change on the ref's side since your branch
-  started counts too, so the comparison errs toward deploying.
+  merge base: committed, staged, unstaged and untracked files all count, and so
+  do submodules, whatever `diff.ignoreSubmodules` says. A change on the ref's
+  side since your branch started counts too, so the comparison errs toward
+  deploying.
+- **A file git ignores cannot be compared.** A project built from one (a
+  generated module under `include_paths`, dbt `deps` output) always counts as
+  changed, and the output names the file. So does a project built from a file
+  outside the repository, or one whose folder resolves outside it.
 - **The ref must be in the clone.** A shallow clone (the default of
   `actions/checkout`) stops with a message saying to fetch the history: use
   `fetch-depth: 0`, or `git fetch --unshallow`. A ref that does not exist, or a
@@ -263,8 +268,11 @@ How the comparison works:
   is reported with its `dag_id`, and nothing is deployed or deregistered for
   it: its DAG stays registered and scheduled until you pause it with
   `dexaflow admin dags pause <dag_id>` or remove it with
-  `dexaflow dags delete <dag_id> --deregister`. A moved project is a removal and
-  a change: the new folder is deployed.
+  `dexaflow dags delete <dag_id> --deregister`. A project moved to another
+  folder keeps its `dag_id`: it is reported as moved, with no removal advice,
+  and deployed from its new folder. A `dag_id` changed in place is not reported:
+  the project is deployed under its new id, and the DAG under the old id stays
+  registered until you remove it.
 - **It selects among the workspace's projects**, so it goes with `--all`, or a
   bare `dexaflow deploy` at the workspace root. With a `dag_id` or a path it is
   refused, rather than silently skipping the DAG you named.
@@ -314,14 +322,36 @@ jobs:
         env:
           DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
           BEFORE: ${{ github.event.before }}
-        run: dexaflow deploy --all --changed-since "$BEFORE" --yes
+        run: |
+          # A new branch has no previous commit (all zeros), and a force push
+          # can leave one the clone lacks: deploy everything then.
+          if [ "${BEFORE//0/}" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            dexaflow deploy --all --changed-since "$BEFORE" --yes
+          else
+            dexaflow deploy --all --yes
+          fi
 ```
 
 `github.event.before` is the commit `main` was on before the push, so a push of
-several commits deploys what all of them changed. The first push of a new branch
-has no previous commit (`before` is all zeros); there, run `--all` without the
-flag. For a pull request, `--changed-since origin/${{ github.base_ref }}` with
-`--plan` says what merging would deploy.
+several commits deploys what all of them changed.
+
+A failed or cancelled deploy is not retried by the next push: that push
+compares with its own previous commit, which already holds the change that did
+not deploy. Either rerun the job (or run `dexaflow deploy --all`) after a
+failure, or compare with the last commit that deployed: move a ref after each
+successful deploy (for example `git push -f origin HEAD:refs/tags/deployed-prod`
+in a last step) and pass `--changed-since deployed-prod`, with a `concurrency:`
+group on the job so two runs never move it out of order.
+
+For a pull request, `--plan` says what merging would deploy. Pass the base
+branch through `env:` rather than inline in `run:`:
+
+```yaml
+      - name: What would this pull request deploy
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: dexaflow deploy --all --changed-since "origin/$BASE_REF" --plan
+```
 
 ## Rolling back
 

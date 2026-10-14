@@ -154,6 +154,52 @@ func TestDeployChangedSinceSelectsTheProjectsWhoseImageInputsChanged(t *testing.
 		{"a project Dockerfile", func(t *testing.T, root string) {
 			writeTree(t, filepath.Join(root, "dags", "a", "Dockerfile"), "FROM scratch\n")
 		}, map[string]string{"a": "planned", "b": "skipped"}},
+		{"a deleted file under a symlinked include root", func(t *testing.T, root string) {
+			a := filepath.Join(root, "dags", "a")
+			writeTree(t, filepath.Join(a, "vendor", "real", "w.py"), "W = 1\n")
+			if err := os.Symlink(filepath.Join("vendor", "real"), filepath.Join(a, "shared")); err != nil {
+				t.Fatal(err)
+			}
+			setIncludePaths(t, a, "[lib, shared]")
+			commitAll(t, root, "shared")
+			gitIn(t, root, "rm", "-q", filepath.Join("dags", "a", "vendor", "real", "w.py"))
+		}, map[string]string{"a": "planned", "b": "skipped"}},
+		{"an image input that git ignores", func(t *testing.T, root string) {
+			writeTree(t, filepath.Join(root, ".gitignore"), "gen.py\nscratch.txt\n")
+			commitAll(t, root, "ignore")
+			writeTree(t, filepath.Join(root, "dags", "a", "lib", "gen.py"), "G = 1\n")
+		}, map[string]string{"a": "planned", "b": "skipped"}},
+		{"an ignored file outside every image", func(t *testing.T, root string) {
+			writeTree(t, filepath.Join(root, ".gitignore"), "gen.py\nscratch.txt\n")
+			commitAll(t, root, "ignore")
+			writeTree(t, filepath.Join(root, "dags", "a", "scratch.txt"), "x\n")
+		}, map[string]string{"a": "skipped", "b": "skipped"}},
+		{"a model of a dbt group", func(t *testing.T, root string) {
+			a := filepath.Join(root, "dags", "a")
+			writeTree(t, filepath.Join(a, "dbt_sales", "dbt_project.yml"), "name: sales\n")
+			writeTree(t, filepath.Join(a, "dbt_sales", "models", "x.sql"), "select 1\n")
+			writeTree(t, filepath.Join(a, "dbt_sales", "target", "manifest.json"), "{}\n")
+			appendConfig(t, a, "dbt_groups:\n  sales:\n    project: dbt_sales\n")
+			commitAll(t, root, "dbt")
+			writeTree(t, filepath.Join(a, "dbt_sales", "models", "x.sql"), "select 2\n")
+		}, map[string]string{"a": "planned", "b": "skipped"}},
+		{"the manifest dbt parse rewrites in a dbt group", func(t *testing.T, root string) {
+			a := filepath.Join(root, "dags", "a")
+			writeTree(t, filepath.Join(a, "dbt_sales", "dbt_project.yml"), "name: sales\n")
+			writeTree(t, filepath.Join(a, "dbt_sales", "target", "manifest.json"), "{}\n")
+			appendConfig(t, a, "dbt_groups:\n  sales:\n    project: dbt_sales\n")
+			commitAll(t, root, "dbt")
+			writeTree(t, filepath.Join(a, "dbt_sales", "target", "manifest.json"), `{"x":1}`+"\n")
+		}, map[string]string{"a": "skipped", "b": "skipped"}},
+		{"an unchanged submodule under include_paths", func(t *testing.T, root string) {
+			addSubmodule(t, root, "dags/a/lib/vendored")
+		}, map[string]string{"a": "skipped", "b": "skipped"}},
+		{"a submodule the repository config hides", func(t *testing.T, root string) {
+			addSubmodule(t, root, "dags/a/lib/vendored")
+			gitIn(t, root, "config", "diff.ignoreSubmodules", "all")
+			writeTree(t, filepath.Join(root, "dags", "a", "lib", "vendored", "v.py"), "V = 2\n")
+			commitAll(t, filepath.Join(root, "dags", "a", "lib", "vendored"), "bump")
+		}, map[string]string{"a": "planned", "b": "skipped"}},
 		{"the workspace file", func(t *testing.T, root string) {
 			writeTree(t, filepath.Join(root, workspaceFileName), "targets: {}\ndefaults: {platforms: [linux/amd64]}\n")
 		}, map[string]string{"a": "planned", "b": "planned"}},
@@ -180,6 +226,47 @@ func TestDeployChangedSinceSelectsTheProjectsWhoseImageInputsChanged(t *testing.
 	}
 }
 
+// commitAll stages and commits everything in the repository at dir.
+func commitAll(t *testing.T, dir, msg string) {
+	t.Helper()
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", msg)
+}
+
+// addSubmodule adds a one-file repository as a submodule at rel and commits.
+func addSubmodule(t *testing.T, root, rel string) {
+	t.Helper()
+	sub := t.TempDir()
+	writeTree(t, filepath.Join(sub, "v.py"), "V = 1\n")
+	gitIn(t, sub, "init", "-q")
+	commitAll(t, sub, "sub")
+	gitIn(t, root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, rel)
+	commitAll(t, root, "submodule")
+}
+
+// appendConfig appends YAML to the project's dexaflow.yaml.
+func appendConfig(t *testing.T, dir, extra string) {
+	t.Helper()
+	p := filepath.Join(dir, projectConfigFile)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, p, string(data)+extra)
+}
+
+// setIncludePaths replaces the include_paths line of the project's
+// dexaflow.yaml.
+func setIncludePaths(t *testing.T, dir, list string) {
+	t.Helper()
+	p := filepath.Join(dir, projectConfigFile)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, p, strings.Replace(string(data), "include_paths: [lib]", "include_paths: "+list, 1))
+}
+
 func mapsEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -190,6 +277,73 @@ func mapsEqual(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// TestDeployChangedSinceNamesAnIgnoredInput: a project built from a file
+// git ignores cannot be compared, so it is deployed, and the reason names
+// the file.
+func TestDeployChangedSinceNamesAnIgnoredInput(t *testing.T) {
+	root := changedWorkspace(t)
+	writeTree(t, filepath.Join(root, ".gitignore"), "gen.py\n")
+	commitAll(t, root, "ignore")
+	writeTree(t, filepath.Join(root, "dags", "a", "lib", "gen.py"), "G = 1\n")
+	_, errOut, err := planChanged(t, "--all", "--changed-since", "HEAD")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "a: built from dags/a/lib/gen.py, which git ignores") {
+		t.Errorf("the output does not name the ignored input:\n%s", errOut)
+	}
+}
+
+// TestDeployChangedSinceReportsAMovedProjectAsMoved: a project moved to
+// another folder keeps its dag_id and is deployed from there; it is not
+// reported as removed, whose advice would deregister a live DAG.
+func TestDeployChangedSinceReportsAMovedProjectAsMoved(t *testing.T) {
+	root := changedWorkspace(t)
+	if err := os.MkdirAll(filepath.Join(root, "dags", "team"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, root, "mv", filepath.Join("dags", "b"), filepath.Join("dags", "team", "b"))
+	rep, errOut, err := planChanged(t, "--all", "--changed-since", "HEAD")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, errOut)
+	}
+	if got, want := rep.statuses(), map[string]string{"a": "skipped", "b": "planned"}; !mapsEqual(got, want) {
+		t.Errorf("statuses = %v, want %v", got, want)
+	}
+	if len(rep.Removed) != 0 {
+		t.Errorf("removed = %+v, want none: b moved", rep.Removed)
+	}
+	if strings.Contains(errOut, "dags delete") || !strings.Contains(errOut, "dags/b moved to dags/team/b") {
+		t.Errorf("the output must say b moved, with no delete advice:\n%s", errOut)
+	}
+}
+
+// TestProjectOutsideTheRepositoryCountsAsChanged: a project git cannot
+// compare (its directory resolves outside the repository) is deployed.
+func TestProjectOutsideTheRepositoryCountsAsChanged(t *testing.T) {
+	dir := versionProject(t, "")
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := t.TempDir()
+	cs := &changeSet{ref: "main", top: top, paths: map[string]bool{}}
+	got := cs.projectChanged(t.Context(), Project{Path: dir, DagID: "etl", Config: cfg}, "Dockerfile")
+	if !got.changed || !strings.Contains(got.reason, "its directory "+dir+" is outside the repository at "+top) {
+		t.Errorf("verdict = %+v, want changed, outside the repository at %s", got, top)
+	}
+}
+
+// TestDeployChangedSinceRefusesAnEmptyRef: --changed-since "" is a typo or
+// an unset CI variable, never a request to deploy everything.
+func TestDeployChangedSinceRefusesAnEmptyRef(t *testing.T) {
+	changedWorkspace(t)
+	_, _, err := run(t, "deploy", "--all", "--plan", "--server", "http://127.0.0.1:1", "--config", emptyConfig(t), "--changed-since", "")
+	if err == nil || !strings.Contains(err.Error(), "empty value") {
+		t.Errorf("err = %v, want an empty --changed-since refused", err)
+	}
 }
 
 // TestDeployChangedSinceComparesWithTheRef: the ref is a commit in history,
@@ -319,5 +473,17 @@ func TestDeployChangedSinceWithNothingChangedSaysSo(t *testing.T) {
 	}
 	if slices.ContainsFunc(strings.Split(errOut, "\n"), func(l string) bool { return strings.HasPrefix(l, "plan for ") }) {
 		t.Errorf("a project was planned:\n%s", errOut)
+	}
+}
+
+// TestGitEnvDropsEveryRepositoryOverride: a variable that points git at
+// another repository, its objects or its index would make the comparison
+// read that repository instead of the workspace's.
+func TestGitEnvDropsEveryRepositoryOverride(t *testing.T) {
+	in := []string{"PATH=/bin", "GIT_DIR=/x", "GIT_WORK_TREE=/x", "GIT_INDEX_FILE=/x", "GIT_COMMON_DIR=/x",
+		"GIT_OBJECT_DIRECTORY=/x", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/x", "GIT_AUTHOR_NAME=a"}
+	got := gitEnv(in)
+	if want := []string{"PATH=/bin", "GIT_AUTHOR_NAME=a"}; !slices.Equal(got, want) {
+		t.Errorf("gitEnv = %q, want %q", got, want)
 	}
 }

@@ -23,8 +23,9 @@ import (
 // the repository holding a workspace: deploy --changed-since.
 //
 // The ref is compared with the working tree, not with HEAD and not from the
-// merge base: uncommitted and untracked (not ignored) files count, and a
-// change made on the ref's side since the branch point counts too. That is
+// merge base: uncommitted and untracked files count, and a change made on
+// the ref's side since the branch point counts too. A file git ignores
+// cannot be compared, so a project built from one counts as changed. That is
 // the safe reading for a deploy: a project is skipped only when every file it
 // is built from is the same as at the ref.
 type changeSet struct {
@@ -33,6 +34,9 @@ type changeSet struct {
 	top    string          // the repository's top level, symlink-resolved
 	paths  map[string]bool // changed paths, absolute
 	sorted []string        // paths, sorted
+	// submodules are the absolute paths of the repository's submodules,
+	// compared by the commit they are on rather than file by file.
+	submodules []string
 }
 
 // projectChange is the verdict on one project: changed, and why.
@@ -52,9 +56,15 @@ type removedProject struct {
 // gitCapture runs git in dir and returns its stdout, or an error carrying its
 // stderr.
 func gitCapture(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitCaptureIn(ctx, dir, "", args...)
+}
+
+// gitCaptureIn is gitCapture with stdin.
+func gitCaptureIn(ctx context.Context, dir, stdin string, args ...string) (string, error) {
 	c := exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: fixed git binary; the one user value is a ref checked by readChangeSet.
 	c.Dir = dir
 	c.Env = gitEnv(os.Environ())
+	c.Stdin = strings.NewReader(stdin)
 	var stderr bytes.Buffer
 	c.Stderr = &stderr
 	out, err := c.Output()
@@ -86,7 +96,10 @@ func readChangeSet(ctx context.Context, dir, ref string) (*changeSet, error) {
 		return nil, err
 	}
 	cs := &changeSet{ref: ref, commit: commit, top: top, paths: map[string]bool{}}
-	diff, err := gitCapture(ctx, top, "diff", "--name-only", "--no-renames", "-z", commit, "--")
+	// Repository settings must not hide a change: a submodule ignored by
+	// .gitmodules or diff.ignoreSubmodules, or diff.relative.
+	diff, err := gitCapture(ctx, top, "diff", "--name-only", "--no-renames", "--no-relative",
+		"--ignore-submodules=none", "-z", commit, "--")
 	if err != nil {
 		return nil, fmt.Errorf("listing the files changed since %s: %w", ref, err)
 	}
@@ -102,14 +115,39 @@ func readChangeSet(ctx context.Context, dir, ref string) (*changeSet, error) {
 	for p := range cs.paths {
 		cs.sorted = append(cs.sorted, p)
 	}
+	if cs.submodules, err = listSubmodules(ctx, top); err != nil {
+		return nil, err
+	}
 	slices.Sort(cs.sorted)
 	return cs, nil
+}
+
+// listSubmodules returns the absolute paths of the submodules the index of
+// the repository at top records (mode 160000).
+func listSubmodules(ctx context.Context, top string) ([]string, error) {
+	out, err := gitCapture(ctx, top, "ls-files", "-z", "--stage")
+	if err != nil {
+		return nil, fmt.Errorf("listing the submodules: %w", err)
+	}
+	var subs []string
+	for _, entry := range strings.Split(out, "\x00") {
+		meta, name, ok := strings.Cut(entry, "\t")
+		if ok && strings.HasPrefix(meta, "160000 ") {
+			subs = append(subs, filepath.Join(top, filepath.FromSlash(name)))
+		}
+	}
+	return subs, nil
+}
+
+// inSubmodule reports whether f lies inside one of the submodules.
+func (c *changeSet) inSubmodule(f string) bool {
+	return slices.ContainsFunc(c.submodules, func(s string) bool { return f != s && holds(s, f) })
 }
 
 // resolveChangedRef resolves ref to a commit, and says how to get it when the
 // clone does not have it: a shallow clone (the CI default) needs its history.
 func resolveChangedRef(ctx context.Context, top, ref string) (string, error) {
-	out, err := gitCapture(ctx, top, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	out, err := gitCapture(ctx, top, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 	if err == nil {
 		return strings.TrimSpace(out), nil
 	}
@@ -141,21 +179,29 @@ func (c *changeSet) sharedChange(wsDir string) string {
 
 // projectChanged decides whether a project changed since the ref: a changed
 // path is one of the files its version label is computed from (the walk of
-// contentHash, so the same files the image is built from), its config file,
+// contentHash, so the same files its image is built from), its config file,
 // .dockerignore or Dockerfile, a file that no longer exists under one of the
 // roots that walk starts from, or a directory holding the project (a
-// submodule). A project whose inputs cannot be listed counts as changed, so
-// its deploy reports the error.
-func (c *changeSet) projectChanged(p Project, dockerfile string) projectChange {
+// submodule). A project git cannot compare counts as changed: one outside the
+// repository, one built from a file git ignores or from outside the
+// repository, and one whose inputs cannot be listed (its deploy then reports
+// the error).
+func (c *changeSet) projectChanged(ctx context.Context, p Project, dockerfile string) projectChange {
 	dir, err := resolvedDir(p.Path)
 	if err != nil {
 		return projectChange{true, "its directory could not be resolved: " + err.Error()}
+	}
+	if !holds(c.top, dir) {
+		return projectChange{true, "its directory " + dir + " is outside the repository at " + c.top + ", so git cannot compare it"}
 	}
 	inputs := map[string]bool{}
 	roots, err := walkLabelInputs(dir, p.Config, dockerfile, filepath.Join(dir, "dag.json"), sha256.New(),
 		func(f string) { inputs[f] = true })
 	if err != nil {
 		return projectChange{true, "its inputs could not be listed (" + err.Error() + "), so it is deployed"}
+	}
+	if why := c.uncomparable(ctx, inputs); why != "" {
+		return projectChange{true, why}
 	}
 	fixed := []string{projectConfigFile, legacyProjectConfigFile, dockerignoreName, "Dockerfile", dockerfile}
 	if p.Config.Build != nil && p.Config.Build.Dockerfile != "" {
@@ -173,6 +219,48 @@ func (c *changeSet) projectChanged(p Project, dockerfile string) projectChange {
 	return projectChange{false, "unchanged since " + c.ref}
 }
 
+// uncomparable names the first label input git cannot compare with the ref:
+// a file outside the repository, or one git ignores (a generated file, dbt
+// deps output) that the image ships all the same. "" when every input is
+// tracked or untracked and visible.
+func (c *changeSet) uncomparable(ctx context.Context, inputs map[string]bool) string {
+	files := make([]string, 0, len(inputs))
+	for f := range inputs {
+		if st, err := os.Lstat(f); err == nil && !st.IsDir() {
+			files = append(files, f)
+		}
+	}
+	slices.Sort(files)
+	var stdin strings.Builder
+	for _, f := range files {
+		if !holds(c.top, f) {
+			return "built from " + f + ", which is outside the repository at " + c.top
+		}
+		if c.inSubmodule(f) {
+			continue // the submodule's commit is compared instead
+		}
+		stdin.WriteString(c.rel(f) + "\x00")
+	}
+	if stdin.Len() == 0 {
+		return ""
+	}
+	// check-ignore exits 1 when nothing is ignored; a tracked file is never
+	// reported, since git compares it whatever the ignore rules say.
+	out, err := gitCaptureIn(ctx, c.top, stdin.String(), "check-ignore", "-z", "--stdin")
+	var exit *exec.ExitError
+	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
+		return "git could not say which of its inputs it ignores (" + err.Error() + "), so it is deployed"
+	}
+	ignored := strings.Split(out, "\x00")
+	slices.Sort(ignored)
+	for _, f := range ignored {
+		if f != "" {
+			return "built from " + f + ", which git ignores, so it cannot be compared with " + c.ref
+		}
+	}
+	return ""
+}
+
 // holds reports whether directory parent holds child (or is it).
 func holds(parent, child string) bool {
 	r, err := filepath.Rel(parent, child)
@@ -180,9 +268,10 @@ func holds(parent, child string) bool {
 }
 
 // removedUnder reports whether changed is a path that no longer exists (or a
-// root itself, a symlink that was moved) under one of the walk's roots, and
-// not left out by the walk's skip rules: the walk cannot see a deleted file,
-// but the label changed with it.
+// root itself, a symlink that was moved) under one of the walk's roots, as
+// named or with its symlinks resolved, and not left out by the walk's skip
+// rules: the walk cannot see a deleted file, but the label changed with it.
+// The .dockerignore is not applied here, which errs toward deploying.
 func removedUnder(w *contentWalker, dir string, roots []hashRootSpec, changed string) bool {
 	_, statErr := os.Lstat(changed)
 	gone := errors.Is(statErr, fs.ErrNotExist)
@@ -191,16 +280,53 @@ func removedUnder(w *contentWalker, dir string, roots []hashRootSpec, changed st
 		if changed == root {
 			return true
 		}
-		if !gone || !holds(root, changed) {
+		if !gone {
 			continue
 		}
-		rel, err := filepath.Rel(dir, changed)
-		if err != nil || skippedPath(w, dir, rel) {
-			continue
+		if removedBelow(w, root, root, changed) {
+			return true
 		}
-		return true
+		if target := linkTarget(root); target != root && removedBelow(w, target, root, changed) {
+			return true
+		}
 	}
 	return false
+}
+
+// linkTarget resolves the symlinks of p, following a link whose target no
+// longer exists by its text (a root left dangling by the very deletion being
+// judged). It returns p when there is nothing to follow.
+func linkTarget(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	cur := p
+	for range 40 {
+		target, err := os.Readlink(cur)
+		if err != nil {
+			return cur
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(cur), target)
+		}
+		cur = filepath.Clean(target)
+	}
+	return cur
+}
+
+// removedBelow reports whether the deleted path changed lies under base (a
+// root, or the root with its symlinks resolved) and the walk would have kept
+// it, judged by its path under the root's name in the project.
+func removedBelow(w *contentWalker, base, root, changed string) bool {
+	if !holds(base, changed) {
+		return false
+	}
+	under, err := filepath.Rel(base, changed)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(w.dir, filepath.Join(root, under))
+	return err == nil && !skippedPath(w, w.dir, rel)
 }
 
 // skippedPath reports whether the walk skips rel or one of its parent
@@ -216,12 +342,20 @@ func skippedPath(w *contentWalker, dir, rel string) bool {
 	return false
 }
 
+// movedProject is a removed project whose dag_id a current project has: it
+// moved, and is deployed from its new folder.
+type movedProject struct {
+	from, to, dagID string
+}
+
 // removedProjects lists the projects the ref has and the working tree does
 // not: a deleted config file or DAG source inside the workspace whose
-// directory is no longer a project.
-func (c *changeSet) removedProjects(ctx context.Context, wsDir string) []removedProject {
+// directory is no longer a project. One whose dag_id a current project still
+// has (current maps dag_id to its directory) moved, and is returned apart.
+func (c *changeSet) removedProjects(ctx context.Context, wsDir string, current map[string]string) ([]removedProject, []movedProject) {
 	seen := map[string]bool{}
 	var out []removedProject
+	var moved []movedProject
 	for _, p := range c.sorted {
 		base := filepath.Base(p)
 		if base != projectConfigFile && base != legacyProjectConfigFile && base != "dag.py" {
@@ -232,10 +366,15 @@ func (c *changeSet) removedProjects(ctx context.Context, wsDir string) []removed
 			continue
 		}
 		seen[dir] = true
-		out = append(out, removedProject{Path: c.rel(dir), DagID: c.removedDagID(ctx, dir),
-			Reason: "removed or moved since " + c.ref + "; nothing is deployed or deregistered for it"})
+		id := c.removedDagID(ctx, dir)
+		if to, ok := current[id]; ok {
+			moved = append(moved, movedProject{from: c.rel(dir), to: c.rel(to), dagID: id})
+			continue
+		}
+		out = append(out, removedProject{Path: c.rel(dir), DagID: id,
+			Reason: "removed since " + c.ref + "; nothing is deployed or deregistered for it"})
 	}
-	return out
+	return out, moved
 }
 
 // removedDagID reads the dag_id of a removed project from its config file at

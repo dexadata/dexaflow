@@ -67,7 +67,8 @@ func gitOutput(ctx context.Context, dir string, args ...string) string {
 // gitRepoOverrides are the variables that point git at a repository other
 // than the one around cmd.Dir. A hook or CI step that exports them would
 // otherwise label the project with that repository's commit.
-var gitRepoOverrides = []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE="}
+var gitRepoOverrides = []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE=",
+	"GIT_COMMON_DIR=", "GIT_OBJECT_DIRECTORY=", "GIT_ALTERNATE_OBJECT_DIRECTORIES="}
 
 // gitEnv returns env without gitRepoOverrides.
 func gitEnv(env []string) []string {
