@@ -8,8 +8,15 @@ body: |-
   installs this CLI's release (or `--cli-version`) with `install.sh`, and uv
   so dependency images are built from wheels, logs in to the workspace's
   registries the way the CI system does natively, and runs
-  `dexaflow deploy --all --changed-since <before> --yes --output json`, or
-  every DAG when there is no previous commit. The control plane comes from
+  `dexaflow deploy --all --changed-since <base> --yes --output json`, or
+  every DAG when there is no base. On GitHub the base is the commit of the
+  workflow's last successful run on the branch, so a failed or cancelled run
+  is caught up by the next one; on GitLab it is the last successful push
+  pipeline when the job has a `read_api` token (`DEXAFLOW_GITLAB_API_TOKEN`),
+  else the commit before the push. The GitHub job runs in an environment
+  (`--environment`, `production` by default), only from the deploy branch,
+  with every action pinned by commit SHA; the GitLab and Cloud Build images
+  are pinned by digest, and uv is installed with `--require-hashes`. The control plane comes from
   `DEXAFLOW_SERVER_URL`, or from the workspace target (`--target`, else
   `default_target`), and the token from the CI secret `DEXAFLOW_TOKEN`, a
   deploy token from `dexaflow auth create-token --scope deploy`. A Markdown

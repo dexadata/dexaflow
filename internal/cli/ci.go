@@ -5,10 +5,12 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -26,6 +28,31 @@ const ciScriptPath = "ci/dexaflow-deploy.sh"
 // ciUVVersion is the uv the script installs when the runner has none, so
 // dependency images are built from wheels without a container daemon.
 const ciUVVersion = "0.12.24"
+
+// ciUVHashes are the sha256 of the uv wheels for Linux on x86_64 and
+// aarch64, glibc and musl, from PyPI: the script installs uv with
+// --require-hashes, so a replaced wheel is refused.
+var ciUVHashes = []string{
+	"e47005957dca320272ad68960b591b854b6bf0c3288368efb096d9ccd06b8404", // manylinux_2_17_x86_64
+	"94c9ed22c1b5d6861a72639e23c5707bb07a354b67ec0462e9a0169a9665b5fd", // manylinux_2_17_aarch64, musllinux_1_1_aarch64
+	"0fc14fabb78c55d140a01125d5cd038afb4fed317eb0c3868f3fba87b8cefe16", // manylinux_2_28_aarch64
+	"b6fe9cd01f5c576a640f17829cb465899fffb5d6d8dfdd576e38d4f1e40dd438", // musllinux_1_1_x86_64
+}
+
+// The images the pipelines run on, pinned by digest so a moved tag does
+// not change what runs. `ci init --force` after a CLI upgrade picks up the
+// digests that CLI pins.
+const (
+	ciPythonImage   = "python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
+	ciDockerImage   = "docker:27@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce"
+	ciDindImage     = "docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce"
+	ciCloudSDKImage = "gcr.io/google.com/cloudsdktool/cloud-sdk:slim@sha256:ffd36b9b80bb08b2dea60b58ca2b60dfa3a40a3c00f3e5732d6d113f4e7ffa45"
+)
+
+// ciMinCLIVersion is the first release whose install.sh reads every
+// variable the script sets (DEXAFLOW_VERSION, DEXAFLOW_NO_SETUP,
+// DEXAFLOW_NO_PATH, DEXAFLOW_INSTALL_DIR).
+const ciMinCLIVersion = "v0.5.0"
 
 // ciPythonVersion is the Python the pipelines put on the runner for the
 // parser (3.11 to 3.13).
@@ -56,6 +83,10 @@ var ciReleaseRe = regexp.MustCompile(`^v\d+\.\d+\.\d+(-rc\.\d+)?$`)
 // which writes it into YAML and shell without quoting it again.
 var ciBranchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 
+// ciEnvironmentRe is a GitHub environment name the workflow can write
+// without quoting.
+var ciEnvironmentRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$`)
+
 // ciHostRe is a registry host the pipelines can name without quoting.
 var ciHostRe = regexp.MustCompile(`^[A-Za-z0-9.-]+(:\d+)?$`)
 
@@ -64,10 +95,11 @@ var ciECRRe = regexp.MustCompile(`^\d+\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com$`
 
 // ciInitOptions holds the flags of `ci init`.
 type ciInitOptions struct {
-	force      bool
-	stdout     bool
-	branch     string
-	cliVersion string
+	force       bool
+	stdout      bool
+	branch      string
+	cliVersion  string
+	environment string
 }
 
 // ciRegistry is one registry the workspace pushes to.
@@ -80,12 +112,24 @@ type ciRegistry struct {
 
 // ciPlan is what a pipeline template is rendered from.
 type ciPlan struct {
-	System        string
-	CLIVersion    string
-	Branch        string
-	ScriptPath    string
-	UVVersion     string
-	PythonVersion string
+	System     string
+	CLIVersion string
+	// Branch is the branch whose pushes deploy.
+	Branch string
+	// BranchSet is set when --branch named it; GitLab otherwise follows
+	// the project's default branch.
+	BranchSet bool
+	// Environment is the GitHub environment the job runs in.
+	Environment string
+	// MinCLIVersion is ciMinCLIVersion, for the script's help.
+	MinCLIVersion string
+	// UVHashes are the hashes the script installs uv with.
+	UVHashes []string
+	// The images the pipelines run on, by digest.
+	PythonImage, DockerImage, DindImage, CloudSDKImage string
+	ScriptPath                                         string
+	UVVersion                                          string
+	PythonVersion                                      string
 	// WorkspaceDir is the workspace folder relative to the top of the
 	// repository, "." when they are the same.
 	WorkspaceDir string
@@ -160,7 +204,8 @@ func newCIInitCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.force, "force", false, "overwrite the files that already exist")
 	cmd.Flags().BoolVar(&o.stdout, "stdout", false, "print the files instead of writing them")
 	cmd.Flags().StringVar(&o.branch, "branch", "main", "the branch whose pushes deploy")
-	cmd.Flags().StringVar(&o.cliVersion, "cli-version", "", "the CLI release the pipeline installs, such as v0.6.0 (default: this CLI's version)")
+	cmd.Flags().StringVar(&o.cliVersion, "cli-version", "", "the CLI release the pipeline installs, such as v0.6.0, "+ciMinCLIVersion+" or later (default: this CLI's version)")
+	cmd.Flags().StringVar(&o.environment, "environment", "production", "github: the environment the deploy job runs in, whose secrets and protection rules apply")
 	return cmd
 }
 
@@ -177,6 +222,9 @@ func runCIInit(cmd *cobra.Command, system string, o ciInitOptions) error {
 	if !ciBranchRe.MatchString(o.branch) || strings.Contains(o.branch, "..") {
 		return fmt.Errorf("--branch %q is not a branch name a pipeline can use (letters, digits, '.', '_', '-' and '/')", o.branch)
 	}
+	if !ciEnvironmentRe.MatchString(o.environment) {
+		return fmt.Errorf("--environment %q is not an environment name a workflow can use (letters, digits, '.', '_' and '-')", o.environment)
+	}
 	ws, err := findWorkspaceFromCwd()
 	if err != nil {
 		return err
@@ -192,6 +240,8 @@ func runCIInit(cmd *cobra.Command, system string, o ciInitOptions) error {
 	if err != nil {
 		return err
 	}
+	plan.BranchSet = cmd.Flags().Changed("branch")
+	plan.Environment = o.environment
 	files, err := renderCI(plan)
 	if err != nil {
 		return err
@@ -209,6 +259,9 @@ func ciCLIVersion(flag string) (string, error) {
 		if !ciReleaseRe.MatchString(flag) {
 			return "", fmt.Errorf("--cli-version %q is not a release tag such as v0.6.0", flag)
 		}
+		if semverLess(flag, ciMinCLIVersion) {
+			return "", fmt.Errorf("--cli-version %s is older than %s, the first release whose install.sh reads the variables the pipeline sets", flag, ciMinCLIVersion)
+		}
 		return flag, nil
 	}
 	v := "v" + strings.TrimPrefix(version.Get().Version, "v")
@@ -217,6 +270,30 @@ func ciCLIVersion(flag string) (string, error) {
 			"pass the release to install with --cli-version vX.Y.Z", version.Get().Version)
 	}
 	return v, nil
+}
+
+// semverLess reports whether release tag a is older than b, comparing
+// major, minor and patch; a release candidate is older than its release.
+func semverLess(a, b string) bool {
+	parse := func(v string) (nums [3]int, rc int) {
+		core, pre, _ := strings.Cut(strings.TrimPrefix(v, "v"), "-rc.")
+		for i, f := range strings.SplitN(core, ".", 3) {
+			nums[i], _ = strconv.Atoi(f) //nolint:errcheck // ciReleaseRe matched digits
+		}
+		rc = math.MaxInt
+		if pre != "" {
+			rc, _ = strconv.Atoi(pre) //nolint:errcheck // ciReleaseRe matched digits
+		}
+		return nums, rc
+	}
+	an, ar := parse(a)
+	bn, br := parse(b)
+	for i := range an {
+		if an[i] != bn[i] {
+			return an[i] < bn[i]
+		}
+	}
+	return ar < br
 }
 
 // planCI gathers what the templates need from the workspace: where it is in
@@ -228,7 +305,8 @@ func planCI(cmd *cobra.Command, ws *workspaceLocation, top, system, cliVersion, 
 		return nil, fmt.Errorf("placing the workspace in the repository: %w", err)
 	}
 	plan := &ciPlan{System: system, CLIVersion: cliVersion, Branch: branch, ScriptPath: ciScriptPath,
-		UVVersion: ciUVVersion, PythonVersion: ciPythonVersion, WorkspaceDir: filepath.ToSlash(rel)}
+		UVVersion: ciUVVersion, UVHashes: ciUVHashes, MinCLIVersion: ciMinCLIVersion, PythonVersion: ciPythonVersion, WorkspaceDir: filepath.ToSlash(rel),
+		PythonImage: ciPythonImage, DockerImage: ciDockerImage, DindImage: ciDindImage, CloudSDKImage: ciCloudSDKImage}
 	if !ciBranchRe.MatchString(plan.WorkspaceDir) && plan.WorkspaceDir != "." {
 		return nil, fmt.Errorf("the workspace folder %q has characters a pipeline would have to quote", plan.WorkspaceDir)
 	}

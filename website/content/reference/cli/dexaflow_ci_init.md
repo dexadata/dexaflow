@@ -33,7 +33,8 @@ dexaflow ci init <github|gitlab|cloudbuild|generic> [flags]
 
 ```
       --branch string        the branch whose pushes deploy (default "main")
-      --cli-version string   the CLI release the pipeline installs, such as v0.6.0 (default: this CLI's version)
+      --cli-version string   the CLI release the pipeline installs, such as v0.6.0, v0.5.0 or later (default: this CLI's version)
+      --environment string   github: the environment the deploy job runs in, whose secrets and protection rules apply (default "production")
       --force                overwrite the files that already exist
   -h, --help                 help for init
       --stdout               print the files instead of writing them

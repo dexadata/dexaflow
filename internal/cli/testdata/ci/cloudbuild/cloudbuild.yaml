@@ -8,20 +8,26 @@
 #     readable by the build's service account;
 #   - the substitution _DEXAFLOW_SERVER_URL: the control plane URL;
 #   - a trigger on pushes to main, for example
-#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^main$' --build-config=cloudbuild.yaml
+#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^main$' --build-config=cloudbuild.yaml \
+#       --service-account=projects/<project>/serviceAccounts/<builder>@<project>.iam.gserviceaccount.com
 # The step signs in to Artifact Registry with the build's service account
 # (the gcloud session the CLI reads), which needs roles/artifactregistry.writer.
 # A source uploaded by `gcloud builds submit` has no .git, so every DAG is
 # deployed; DAGs whose content is already the current version register
-# nothing. Pass _DEXAFLOW_BASE_REF to deploy only what changed since a commit
-# when the build has the history.
+# nothing. When the source is a git clone, the step fetches its full history
+# and tags, and _DEXAFLOW_BASE_REF deploys only what changed since a commit.
 steps:
   - id: deploy
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim@sha256:ffd36b9b80bb08b2dea60b58ca2b60dfa3a40a3c00f3e5732d6d113f4e7ffa45
     entrypoint: bash
     args:
       - -c
-      - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates >/dev/null && sh ci/dexaflow-deploy.sh
+      - |
+        set -e
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates >/dev/null
+        if [ -d .git ]; then git fetch --unshallow --tags || true; fi
+        sh ci/dexaflow-deploy.sh
     secretEnv: [DEXAFLOW_TOKEN]
     env:
       - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}

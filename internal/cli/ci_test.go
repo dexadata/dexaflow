@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"io/fs"
 	"os"
@@ -360,7 +361,7 @@ func TestCIInitTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `: "${DEXAFLOW_TARGET:=prod}"`) {
+	if !strings.Contains(out, `: "${DEXAFLOW_TARGET:=${LEOFLOW_TARGET:-prod}}"`) {
 		t.Errorf("the script does not select target prod:\n%s", out)
 	}
 	if strings.Contains(out, "vars.DEXAFLOW_SERVER_URL") {
@@ -370,7 +371,7 @@ func TestCIInitTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `: "${DEXAFLOW_TARGET:=dev}"`) {
+	if !strings.Contains(out, `: "${DEXAFLOW_TARGET:=${LEOFLOW_TARGET:-dev}}"`) {
 		t.Errorf("without --target the workspace's default_target applies:\n%s", out)
 	}
 }
@@ -385,8 +386,16 @@ func TestCIInitNeedsAReleaseVersion(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--cli-version") {
 		t.Fatalf("err = %v, want a refusal that names --cli-version", err)
 	}
-	if _, _, err := run(t, "ci", "init", "github", "--cli-version", "latest", "--config", emptyConfig(t)); err == nil {
+	if _, _, err = run(t, "ci", "init", "github", "--cli-version", "latest", "--config", emptyConfig(t)); err == nil {
 		t.Error("--cli-version must be a release tag")
+	}
+	// install.sh reads DEXAFLOW_NO_PATH and DEXAFLOW_INSTALL_DIR from v0.5.0.
+	_, _, err = run(t, "ci", "init", "github", "--cli-version", "v0.4.8", "--config", emptyConfig(t))
+	if err == nil || !strings.Contains(err.Error(), "v0.5.0") {
+		t.Errorf("err = %v, want a refusal of a release older than v0.5.0", err)
+	}
+	if _, _, err := run(t, "ci", "init", "github", "--cli-version", "v0.5.0", "--stdout", "--config", emptyConfig(t)); err != nil {
+		t.Errorf("v0.5.0 must be accepted: %v", err)
 	}
 }
 
@@ -490,7 +499,7 @@ func TestCIScriptDeploysWhatChanged(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	runScript := func(base, token, status string) (log, summary, output string, err error) {
+	runScript := func(base, token, status string, extra ...string) (log, summary, output string, err error) {
 		dir := t.TempDir()
 		logPath, sumPath := filepath.Join(dir, "log"), filepath.Join(dir, "summary.md")
 		c := exec.CommandContext(t.Context(), "sh", filepath.Join(root, ciScriptPath)) //nolint:gosec // the script under test
@@ -499,6 +508,7 @@ func TestCIScriptDeploysWhatChanged(t *testing.T) {
 			"FAKE_LOG="+logPath, "FAKE_STATUS="+status, "DEXAFLOW_BASE_REF="+base,
 			"DEXAFLOW_TOKEN="+token, "DEXAFLOW_SERVER_URL=https://pro.example",
 			"DEXAFLOW_SUMMARY_FILE="+sumPath, "GITHUB_STEP_SUMMARY=")
+		c.Env = append(c.Env, extra...)
 		out, err := c.CombinedOutput()
 		l, _ := os.ReadFile(logPath) //nolint:errcheck // absent when nothing ran
 		s, _ := os.ReadFile(sumPath) //nolint:errcheck // absent when nothing ran
@@ -527,7 +537,7 @@ func TestCIScriptDeploysWhatChanged(t *testing.T) {
 		if got := strings.Contains(output, "is not in this clone"); got != (c.note != "") {
 			t.Errorf("base %q: output %q, want the missing-commit note only for a commit the clone lacks", c.base, output)
 		}
-		for _, want := range []string{"| orders | registered | v1-abc |", "old", "dexaflow admin dags pause old"} {
+		for _, want := range []string{"| orders | registered | v1-abc |", "old", "dexaflow dags delete old --deregister"} {
 			if !strings.Contains(summary, want) {
 				t.Errorf("base %q: summary lacks %q:\n%s", c.base, want, summary)
 			}
@@ -536,8 +546,20 @@ func TestCIScriptDeploysWhatChanged(t *testing.T) {
 	if log, _, _, err := runScript(head, "", "0"); err == nil || log != "" {
 		t.Errorf("without DEXAFLOW_TOKEN the script must stop before deploying: err %v, ran %q", err, log)
 	}
-	if _, summary, _, err := runScript(head, "dxf_x", "3"); err == nil || !strings.Contains(summary, "orders") {
-		t.Errorf("a failed deploy must fail the script and still write the summary: err %v, summary %q", err, summary)
+	_, summary, _, err := runScript(head, "dxf_x", "3")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(summary, "orders") {
+		t.Errorf("a failed deploy must fail the script with its exit status (3) and still write the summary: err %v, summary %q", err, summary)
+	}
+	// The pre-rename names still work, as everywhere in the CLI.
+	if log, _, _, err := runScript(head, "", "0", "LEOFLOW_TOKEN=dxf_old", "DEXAFLOW_SERVER_URL=", "LEOFLOW_SERVER_URL=https://old.example"); err != nil || log == "" {
+		t.Errorf("LEOFLOW_TOKEN and LEOFLOW_SERVER_URL must be accepted: err %v, ran %q", err, log)
+	}
+	// DEXAFLOW_CLI_VERSION ends up in a URL and a shell command: only a
+	// release tag is taken.
+	if log, _, output, err := runScript(head, "dxf_x", "0", "DEXAFLOW_CLI_VERSION=v0.6.0;id"); err == nil || log != "" ||
+		!strings.Contains(output, "is not a release tag") {
+		t.Errorf("a DEXAFLOW_CLI_VERSION that is not a release tag must stop the script before anything runs: err %v, ran %q, output %q", err, log, output)
 	}
 }
 
@@ -548,6 +570,9 @@ type scriptError struct {
 }
 
 func (e *scriptError) Error() string { return e.err.Error() + "\n" + e.out }
+
+// Unwrap returns the error of the run, an *exec.ExitError for a failed script.
+func (e *scriptError) Unwrap() error { return e.err }
 
 // ciDocBlockRe finds a fenced block of the docs marked as the output of a
 // golden case: an HTML comment naming the case, then a block titled with
@@ -606,7 +631,7 @@ func TestCIInitGitHubRegistryLogins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"google-github-actions/auth@v2", "aws-region: eu-west-1",
+	for _, want := range []string{"google-github-actions/auth@", "aws-region: eu-west-1",
 		"registry: harbor.example.com", "secrets.DEXAFLOW_REGISTRY_PASSWORD", "id-token: write"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the workflow lacks %q:\n%s", want, out)
@@ -633,5 +658,203 @@ func TestCIInitShellcheck(t *testing.T) {
 	writeTree(t, p, ciGolden(t)["generic"][ciScriptPath])
 	if out, rerr := exec.CommandContext(t.Context(), bin, "-s", "sh", p).CombinedOutput(); rerr != nil { //nolint:gosec // a test binary
 		t.Errorf("shellcheck: %v\n%s", rerr, out)
+	}
+}
+
+// ciUsesRe matches a `uses:` line pinned by commit with its version.
+var ciUsesRe = regexp.MustCompile(`^\s*(?:-\s+)?uses:\s+[\w.-]+/[\w./-]+@[0-9a-f]{40} # v\d`)
+
+// TestCIInitPinsActions requires every action of the generated workflows
+// to be pinned by commit SHA with its version in a comment: a tag can be
+// moved to other code, a SHA cannot.
+func TestCIInitPinsActions(t *testing.T) {
+	isolateCLIEnv(t)
+	root := ciWorkspace(t, "us-docker.pkg.dev/acme/dags", "")
+	writeTree(t, filepath.Join(root, "dags", "billing", projectConfigFile),
+		"dag_id: billing\nregistry:\n  url: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/dags\n")
+	writeTree(t, filepath.Join(root, "dags", "ledger", projectConfigFile), "dag_id: ledger\nregistry:\n  url: ghcr.io/acme\n")
+	writeTree(t, filepath.Join(root, "dags", "ledger", "dag.py"), "# ledger\n")
+	writeTree(t, filepath.Join(root, "dags", "audit", projectConfigFile), "dag_id: audit\nregistry:\n  url: harbor.example.com/dags\n")
+	writeTree(t, filepath.Join(root, "dags", "audit", "dag.py"), "# audit\n")
+	out, _, err := ciInit(t, root, "github", "--stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows := []string{out, ciGolden(t)["github"][".github/workflows/dexaflow-deploy.yaml"]}
+	seen := 0
+	for _, w := range workflows {
+		for _, line := range strings.Split(w, "\n") {
+			if !strings.Contains(line, "uses:") || strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			seen++
+			if !ciUsesRe.MatchString(line) {
+				t.Errorf("not pinned by SHA with a version comment: %q", line)
+			}
+		}
+	}
+	if seen < 9 {
+		t.Errorf("saw %d uses: lines, want every action of both workflows", seen)
+	}
+}
+
+// TestCIInitGitHubGuards keeps a manual run to the deploy branch, runs
+// the job in a GitHub environment (so DEXAFLOW_TOKEN can be an environment
+// secret), keeps the checkout token out of the clone, and lets the job read
+// the runs of the workflow.
+func TestCIInitGitHubGuards(t *testing.T) {
+	isolateCLIEnv(t)
+	root := ciWorkspace(t, "ghcr.io/acme/dags", "")
+	out, _, err := ciInit(t, root, "github", "--stdout", "--branch", "release", "--environment", "dags-prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"if: github.ref == 'refs/heads/release'", "environment: dags-prod",
+		"persist-credentials: false", "actions: read", "steps.base.outputs.sha"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the workflow lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "github.event.before") {
+		t.Errorf("the base must be the last successful deploy, not the previous push:\n%s", out)
+	}
+	if _, _, err := ciInit(t, root, "github", "--stdout", "--environment", "prod; x"); err == nil {
+		t.Error("an environment name a workflow would have to quote must be refused")
+	}
+	golden := ciGolden(t)["github"][".github/workflows/dexaflow-deploy.yaml"]
+	if !strings.Contains(golden, "environment: production") {
+		t.Errorf("the default environment is production:\n%s", golden)
+	}
+}
+
+// TestCIInitGitLabDefaultBranch follows the project's default branch
+// unless --branch names one.
+func TestCIInitGitLabDefaultBranch(t *testing.T) {
+	golden := ciGolden(t)["gitlab"][".gitlab-ci.yml"]
+	if !strings.Contains(golden, "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH") {
+		t.Errorf("without --branch the rule follows $CI_DEFAULT_BRANCH:\n%s", golden)
+	}
+}
+
+// fakeTool writes an executable named name into a new directory and
+// returns the directory.
+func fakeTool(t *testing.T, name, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeTree(t, filepath.Join(dir, name), script)
+	if err := os.Chmod(filepath.Join(dir, name), 0o700); err != nil { //nolint:gosec // a test executable
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestCIGitHubBaseIsTheLastSuccessfulDeploy runs the workflow's base step
+// with a fake gh: it outputs the head SHA of the last successful run of the
+// workflow on the branch, and nothing (deploy everything) when gh fails.
+func TestCIGitHubBaseIsTheLastSuccessfulDeploy(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not installed")
+	}
+	var doc struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				ID  string            `yaml:"id"`
+				Env map[string]string `yaml:"env"`
+				Run string            `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(ciGolden(t)["github"][".github/workflows/dexaflow-deploy.yaml"]), &doc); err != nil {
+		t.Fatal(err)
+	}
+	var run string
+	var env map[string]string
+	for _, s := range doc.Jobs["deploy"].Steps {
+		if s.ID == "base" {
+			run, env = s.Run, s.Env
+		}
+	}
+	if run == "" || env["BRANCH"] != "main" {
+		t.Fatalf("no base step with BRANCH=main in the workflow: %q %v", run, env)
+	}
+	for _, c := range []struct{ gh, want string }{
+		{"#!/bin/sh\necho \"$*\" >>\"$GH_LOG\"\necho abc123\n", "sha=abc123"},
+		{"#!/bin/sh\nexit 1\n", "sha="},
+	} {
+		dir := t.TempDir()
+		out, log := filepath.Join(dir, "out"), filepath.Join(dir, "log")
+		bin := fakeTool(t, "gh", c.gh)
+		cmd := exec.CommandContext(t.Context(), "sh", "-e", "-c", run) //nolint:gosec // the step under test
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"GITHUB_OUTPUT="+out, "GITHUB_REPOSITORY=acme/dags", "BRANCH=main", "GH_LOG="+log)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("the base step failed: %v\n%s", err, b)
+		}
+		got, _ := os.ReadFile(out) //nolint:errcheck // checked below
+		if strings.TrimSpace(string(got)) != c.want {
+			t.Errorf("GITHUB_OUTPUT = %q, want %q", got, c.want)
+		}
+		if args, _ := os.ReadFile(log); len(args) > 0 { //nolint:errcheck // absent when gh failed
+			for _, want := range []string{"run list", "--workflow dexaflow-deploy.yaml", "--branch main", "--status success", "--repo acme/dags"} {
+				if !strings.Contains(string(args), want) {
+					t.Errorf("gh %s lacks %q", args, want)
+				}
+			}
+		}
+	}
+}
+
+// TestCIGitLabBase runs the job's base snippet with a fake curl: with
+// DEXAFLOW_GITLAB_API_TOKEN the base is the last successful push pipeline,
+// without it the previous commit of the push, and a failed API call
+// deploys everything.
+func TestCIGitLabBase(t *testing.T) {
+	for _, bin := range []string{"sh", "python3"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " not installed")
+		}
+	}
+	var doc map[string]struct {
+		Script []string `yaml:"script"`
+	}
+	if err := yaml.Unmarshal([]byte(ciGolden(t)["gitlab"][".gitlab-ci.yml"]), &doc); err != nil {
+		t.Fatal(err)
+	}
+	var snippet string
+	for _, s := range doc["dexaflow-deploy"].Script {
+		if strings.Contains(s, "DEXAFLOW_GITLAB_API_TOKEN") {
+			snippet = s
+		}
+	}
+	if snippet == "" {
+		t.Fatal("no base snippet in the job")
+	}
+	for _, c := range []struct{ token, curl, want string }{
+		{"glpat-x", "#!/bin/sh\necho \"$*\" >>\"$CURL_LOG\"\necho '[{\"sha\":\"feed01\"}]'\n", "feed01"},
+		{"", "#!/bin/sh\nexit 9\n", "before01"},
+		{"glpat-x", "#!/bin/sh\nexit 22\n", ""},
+		{"glpat-x", "#!/bin/sh\necho '[]'\n", ""},
+	} {
+		dir := t.TempDir()
+		log := filepath.Join(dir, "log")
+		bin := fakeTool(t, "curl", c.curl)
+		cmd := exec.CommandContext(t.Context(), "sh", "-e", "-c", snippet+"\nprintf '%s' \"$DEXAFLOW_BASE_REF\"") //nolint:gosec // the snippet under test
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"DEXAFLOW_GITLAB_API_TOKEN="+c.token, "CI_COMMIT_BEFORE_SHA=before01", "CURL_LOG="+log,
+			"CI_API_V4_URL=https://gitlab.example/api/v4", "CI_PROJECT_ID=7", "CI_COMMIT_BRANCH=main")
+		b, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("token %q: the snippet failed: %v", c.token, err)
+		}
+		if string(b) != c.want {
+			t.Errorf("token %q, curl %q: DEXAFLOW_BASE_REF = %q, want %q", c.token, c.curl, b, c.want)
+		}
+		if args, _ := os.ReadFile(log); len(args) > 0 { //nolint:errcheck // absent when curl was not called
+			for _, want := range []string{"projects/7/pipelines?ref=main&source=push&status=success&per_page=1", "PRIVATE-TOKEN: glpat-x"} {
+				if !strings.Contains(string(args), want) {
+					t.Errorf("curl %s lacks %q", args, want)
+				}
+			}
+		}
 	}
 }

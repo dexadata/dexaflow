@@ -12,7 +12,8 @@
 #   - the substitution _DEXAFLOW_SERVER_URL: the control plane URL;
 [[- end]]
 #   - a trigger on pushes to [[.Branch]], for example
-#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^[[.Branch]]$' --build-config=cloudbuild.yaml
+#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^[[.Branch]]$' --build-config=cloudbuild.yaml \
+#       --service-account=projects/<project>/serviceAccounts/<builder>@<project>.iam.gserviceaccount.com
 # The step signs in to Artifact Registry with the build's service account
 # (the gcloud session the CLI reads), which needs roles/artifactregistry.writer.
 [[- if .NonGoogle]]
@@ -21,8 +22,8 @@
 [[- end]]
 # A source uploaded by `gcloud builds submit` has no .git, so every DAG is
 # deployed; DAGs whose content is already the current version register
-# nothing. Pass _DEXAFLOW_BASE_REF to deploy only what changed since a commit
-# when the build has the history.
+# nothing. When the source is a git clone, the step fetches its full history
+# and tags, and _DEXAFLOW_BASE_REF deploys only what changed since a commit.
 [[- if .Daemon]]
 #
 # Docker builds the images of these projects, since no remote builder is
@@ -33,11 +34,16 @@
 [[- end]]
 steps:
   - id: deploy
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    name: [[.CloudSDKImage]]
     entrypoint: bash
     args:
       - -c
-      - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates[[if .Daemon]] docker.io[[end]] >/dev/null && sh [[.ScriptPath]]
+      - |
+        set -e
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates[[if .Daemon]] docker.io[[end]] >/dev/null
+        if [ -d .git ]; then git fetch --unshallow --tags || true; fi
+        sh [[.ScriptPath]]
     secretEnv: [DEXAFLOW_TOKEN]
     env:
 [[- if not .Target]]

@@ -19,9 +19,20 @@
 #                          $GITHUB_STEP_SUMMARY, else the log)
 #   DEXAFLOW_REPORT_FILE   a file to copy the `dexaflow deploy --output json`
 #                          report to (optional)
+#   DEXAFLOW_CLI_VERSION   the release to install instead of v0.6.0 (a tag
+#                          such as v0.6.0, v0.5.0 or later)
+# The pre-rename LEOFLOW_TOKEN, LEOFLOW_SERVER_URL and LEOFLOW_TARGET still work.
+#
+# The CLI is installed by the install.sh of its release tag, which checks the
+# archive against the release's checksums.txt, and its cosign signature when
+# cosign is on PATH (then required). uv comes from PyPI, checked against the
+# wheel hashes below.
 set -eu
 
 cli_version="${DEXAFLOW_CLI_VERSION:-v0.6.0}"
+DEXAFLOW_TOKEN="${DEXAFLOW_TOKEN:-${LEOFLOW_TOKEN:-}}"
+DEXAFLOW_SERVER_URL="${DEXAFLOW_SERVER_URL:-${LEOFLOW_SERVER_URL:-}}"
+export DEXAFLOW_TOKEN DEXAFLOW_SERVER_URL
 uv_version="0.12.24"
 workspace_dir="."
 
@@ -29,6 +40,16 @@ die() {
 	echo "error: $*" >&2
 	exit 1
 }
+
+# The version ends up in a URL and in install.sh: only a release tag is taken.
+case "$cli_version" in
+v[0-9]*.[0-9]*.[0-9]*)
+	case "$cli_version" in
+	*[!0-9A-Za-z.-]*) die "DEXAFLOW_CLI_VERSION=$cli_version is not a release tag such as v0.6.0" ;;
+	esac
+	;;
+*) die "DEXAFLOW_CLI_VERSION=$cli_version is not a release tag such as v0.6.0" ;;
+esac
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -47,6 +68,10 @@ install_dexaflow() {
 	else
 		wget -qO "$tmp/install.sh" "$url"
 	fi
+	if command -v cosign >/dev/null 2>&1; then
+		DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1
+		export DEXAFLOW_INSTALL_REQUIRE_SIGNATURE
+	fi
 	DEXAFLOW_VERSION="$cli_version" DEXAFLOW_NO_SETUP=1 DEXAFLOW_NO_PATH=1 \
 		DEXAFLOW_INSTALL_DIR="$dir" sh "$tmp/install.sh"
 	PATH="$dir:$PATH"
@@ -61,7 +86,9 @@ install_dexaflow() {
 # daemon builds them.
 install_uv() {
 	command -v uv >/dev/null 2>&1 && return 0
-	if python3 -m pip install --quiet --disable-pip-version-check "uv==$uv_version" >/dev/null 2>&1 &&
+	echo "uv==$uv_version --hash=sha256:e47005957dca320272ad68960b591b854b6bf0c3288368efb096d9ccd06b8404 --hash=sha256:94c9ed22c1b5d6861a72639e23c5707bb07a354b67ec0462e9a0169a9665b5fd --hash=sha256:0fc14fabb78c55d140a01125d5cd038afb4fed317eb0c3868f3fba87b8cefe16 --hash=sha256:b6fe9cd01f5c576a640f17829cb465899fffb5d6d8dfdd576e38d4f1e40dd438" >"$tmp/uv.txt"
+	if python3 -m pip install --quiet --disable-pip-version-check --only-binary :all: \
+		--require-hashes -r "$tmp/uv.txt" >/dev/null 2>&1 &&
 		command -v uv >/dev/null 2>&1; then
 		return 0
 	fi
@@ -121,8 +148,8 @@ else:
     print("No DAG changed, so nothing was deployed.")
 for p in report.get("removed") or []:
     print()
-    print("- %s was removed from %s and is still registered: pause it with `dexaflow admin dags pause %s`."
-          % (cell(p.get("dag_id")), cell(p.get("path")), cell(p.get("dag_id"))))
+    print("- %s (%s) was removed and is still registered. If its DAG should go, remove it with "
+          "`dexaflow dags delete %s --deregister`." % (cell(p.get("path")), cell(p.get("dag_id")), cell(p.get("dag_id"))))
 for p in report.get("moved") or []:
     print()
     print("- %s moved from %s to %s." % (cell(p.get("dag_id")), cell(p.get("from")), cell(p.get("to"))))
