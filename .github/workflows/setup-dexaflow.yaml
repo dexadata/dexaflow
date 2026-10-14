@@ -1,0 +1,92 @@
+# Runs the setup-dexaflow composite action (.github/actions/setup-dexaflow)
+# the way a user's pipeline does, against the newest published release, on
+# Linux and macOS. The script's logic (version pinning, platform mapping,
+# checksum and signature checks, the cached path) is covered offline by its
+# --self-test in ci.yaml's Script self-tests; this job proves the composite
+# wiring: inputs, the cache, cosign, PATH, GITHUB_ENV and the outputs.
+#
+# Path-filtered to the action and this file, because the Actions queue is
+# small (AGENTS.md, CI hygiene): a change anywhere else cannot break it. A
+# release that ships a broken archive is caught by release.yaml's install
+# smokes, not here.
+name: setup-dexaflow action
+
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - ".github/actions/setup-dexaflow/**"
+      - ".github/workflows/setup-dexaflow.yaml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/actions/setup-dexaflow/**"
+      - ".github/workflows/setup-dexaflow.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  action:
+    name: setup-dexaflow on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The newest GA, read here and passed as the pinned version: the action
+      # itself never resolves "latest".
+      - name: Resolve the newest published release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          [ -n "$tag" ] || { echo "::error::no published release"; exit 1; }
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Run the action
+        id: setup
+        uses: ./.github/actions/setup-dexaflow
+        with:
+          version: ${{ steps.latest.outputs.tag }}
+          server-url: https://pro.example.com
+
+      - name: dexaflow version is the pinned release, from PATH
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+          OUT_VERSION: ${{ steps.setup.outputs.version }}
+          OUT_PATH: ${{ steps.setup.outputs.path }}
+        run: |
+          set -euo pipefail
+          [ "$OUT_VERSION" = "$TAG" ] || { echo "::error::output version ${OUT_VERSION}, want ${TAG}"; exit 1; }
+          [ "$(command -v dexaflow)" = "$OUT_PATH" ] || { echo "::error::dexaflow on PATH is $(command -v dexaflow), want ${OUT_PATH}"; exit 1; }
+          got="$(dexaflow version --json | jq -r .version)"
+          [ "$got" = "${TAG#v}" ] || { echo "::error::dexaflow version reports ${got}, want ${TAG#v}"; exit 1; }
+          [ "${DEXAFLOW_SERVER_URL:-}" = "https://pro.example.com" ] || { echo "::error::DEXAFLOW_SERVER_URL is '${DEXAFLOW_SERVER_URL:-}'"; exit 1; }
+          dexaflow version
+
+      - name: "version: latest is refused"
+        id: latest-refused
+        continue-on-error: true
+        uses: ./.github/actions/setup-dexaflow
+        with:
+          version: latest
+
+      - name: The refusal failed the step
+        env:
+          OUTCOME: ${{ steps.latest-refused.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::version: latest was accepted (outcome ${OUTCOME})"; exit 1; }
