@@ -158,6 +158,68 @@ but never a target's. With a target, the workspace is the one around the
 current folder (the one the target came from), and its defaults apply only to
 projects inside it.
 
+## Cluster deploy defaults
+
+The platform team can state the registry, the platforms and the base image
+once for the whole cluster, so a repository needs no `registry:` block at all.
+They set them in the Helm values:
+
+```yaml
+deploy:
+  defaults:
+    registry: ghcr.io/acme             # image prefix; the image name defaults to the dag_id
+    platforms: [linux/amd64]
+    baseImage: ghcr.io/acme/base:1
+```
+
+The server serves them on `GET /api/v2/deployDefaults` to any signed-in user
+who may read DAGs, and to an API token with the `dexaflow:read` or
+`dexaflow:deploy` scope, so a CI deploy token reads them too. They are the
+same for every tenant of the cluster and are not secrets: registry credentials
+never go there. The chart and the server refuse a value no deploy could use (a
+registry with a scheme, credentials or a tag, a platform that is not
+`os/arch`, platforms given as a string instead of a list, a base image with
+whitespace, a quote, a backslash or `$`), so a typo fails the install instead
+of every deploy. Every key is
+listed under [`deploy.defaults.*`](/reference/configuration/#cluster-deploy-defaults-deploydefaults).
+
+`dexaflow deploy` reads them from the server it deploys to, once per command,
+and uses each one only for what every local source leaves unset. The full
+order, first match wins:
+
+| Value | Order |
+|---|---|
+| registry | `--registry`, `DEXAFLOW_REGISTRY`, the project's `registry.url`, the target, the workspace `defaults`, `registry:` in your config file, **the cluster**, none (deploy stops and says how to set one) |
+| platforms | `--platform`, the project's `build.platforms`, the target, the workspace `defaults`, **the cluster**, `linux/amd64` |
+| base image | the project's `base_image`, the target, the workspace `defaults`, **the cluster**, the built-in base image |
+
+The cluster comes after every local source on purpose: each of those is a
+choice of the person deploying, so a cluster that starts advertising defaults
+changes no deploy that already resolved a value. Before it builds, the deploy
+prints each value and its source:
+
+```
+server:     https://flow-dev.acme.dev (target "dev" in /work/acme-dags/dexaflow.workspace.yaml)
+registry:   ghcr.io/acme/orders_report (from the deploy defaults of https://flow-dev.acme.dev)
+platforms:  linux/amd64 (from the deploy defaults of https://flow-dev.acme.dev)
+base image: ghcr.io/acme/base:1 (from the deploy defaults of https://flow-dev.acme.dev)
+```
+
+A server from before this endpoint answers 404, and the deploy then resolves
+exactly as it did before, without a message. Any other failure to read the
+defaults (an error status, an answer that is not usable) prints a warning and
+the deploy goes on with the local settings only.
+
+`build --push` reads them too, from the server a deploy would go to (the
+target in use, `DEXAFLOW_SERVER_URL` or `server_url`), the same way, because
+the content label hashes the resolved platforms and base image: an image it
+pushes then carries the label `deploy --skip-build` to that server looks up.
+With no server configured it uses the local sources alone. `compile` and a
+`build` without `--push` never ask a server, so on a cluster that advertises
+platforms or a base image their label can differ from the deploy's. A deploy
+sent with another `--server` or `--target` than the one `build --push` used
+can resolve other cluster defaults, and then looks up another label.
+
 ## The workspace file
 
 ```yaml

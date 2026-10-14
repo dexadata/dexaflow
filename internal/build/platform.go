@@ -6,9 +6,14 @@ import (
 	"strings"
 )
 
-// platformRe is the os/arch[/variant] form a platform takes. Case is not
-// checked: docker matches platforms without regard to it.
-var platformRe = regexp.MustCompile(`^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$`)
+// PlatformPattern is the os/arch[/variant] form a platform takes, as a
+// regular expression. Case is not checked: docker matches platforms without
+// regard to it. domain.DeployDefaults validates cluster platforms with the
+// same expression.
+const PlatformPattern = `^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$`
+
+// platformRe is PlatformPattern compiled.
+var platformRe = regexp.MustCompile(PlatformPattern)
 
 // ParsePlatforms validates platform values as given on a command line, each
 // either one platform or a comma-separated list, and returns them in order

@@ -43,8 +43,24 @@ type defaultsProvenance struct {
 // documents. build.platforms comes from --platform, then the project, then
 // the target, then the workspace defaults; base_image from the project, then
 // the target, then the workspace defaults. withTarget is false for Lite, which
-// deploys nowhere.
+// deploys nowhere. A deploy adds the cluster's defaults after all of these
+// (applyDeployDefaults).
 func applyWorkspaceDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, withTarget bool) (defaultsProvenance, error) {
+	return applyDefaults(cmd, dir, cfg, withTarget, nil)
+}
+
+// applyDeployDefaults is applyWorkspaceDefaults for a deploy, with the
+// deploy defaults the cluster advertises (cluster, nil when none) as the
+// last source of each value, after the user's config file and before the
+// built-in default: every local source is a choice of the person deploying,
+// so a cluster that starts advertising defaults changes no deploy that
+// already resolved a value (#1704).
+func applyDeployDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, cluster *defaultsLayer) (defaultsProvenance, error) {
+	return applyDefaults(cmd, dir, cfg, true, cluster)
+}
+
+// applyDefaults is applyWorkspaceDefaults with an optional cluster layer.
+func applyDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, withTarget bool, cluster *defaultsLayer) (defaultsProvenance, error) {
 	layers, err := defaultsLayers(cmd, dir, withTarget)
 	if err != nil {
 		return defaultsProvenance{}, err
@@ -53,7 +69,12 @@ func applyWorkspaceDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowC
 	if err != nil {
 		return defaultsProvenance{}, err
 	}
-	prov := defaultsProvenance{registrySource: applyRegistry(cmd, dir, cfg, layers, store, configFilePath(cmd))}
+	prov := defaultsProvenance{registrySource: applyRegistry(cmd, dir, cfg, registrySources{layers: layers, store: store, storePath: configFilePath(cmd), cluster: cluster})}
+	if cluster != nil {
+		// The user's config file holds no platforms or base image, so the
+		// cluster is simply the last layer for those.
+		layers = append(layers, *cluster)
+	}
 	prov.platformsSource, prov.baseImageSource = applyBuildDefaults(dir, cfg, layers)
 	if prov.platformsSource, err = applyPlatformFlag(cmd, cfg, prov.platformsSource); err != nil {
 		return defaultsProvenance{}, err
@@ -110,13 +131,23 @@ func insideDir(dir, root string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// registrySources are the places a registry url may come from below the
+// flag, the environment and the project: the target and workspace layers,
+// the user's config file at storePath, then the cluster (nil when none).
+type registrySources struct {
+	layers    []defaultsLayer
+	store     *config.UserStore
+	storePath string
+	cluster   *defaultsLayer
+}
+
 // applyRegistry settles registry.url and image_name and returns the url's
 // source.
-func applyRegistry(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, layers []defaultsLayer, store *config.UserStore, storePath string) string {
+func applyRegistry(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, src registrySources) string {
 	if cfg.Registry == nil {
 		cfg.Registry = &domain.RegistryConfig{}
 	}
-	url, source := pickRegistry(cmd, dir, cfg, layers, store, storePath)
+	url, source := pickRegistry(cmd, dir, cfg, src)
 	if url == "" {
 		return ""
 	}
@@ -128,7 +159,7 @@ func applyRegistry(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, la
 }
 
 // pickRegistry returns the registry url by precedence and where it was found.
-func pickRegistry(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, layers []defaultsLayer, store *config.UserStore, storePath string) (url, source string) {
+func pickRegistry(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, src registrySources) (url, source string) {
 	if f, _ := cmd.Flags().GetString("registry"); f != "" { //nolint:errcheck // only deploy has --registry.
 		return f, "--registry"
 	}
@@ -138,13 +169,16 @@ func pickRegistry(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, lay
 	if u := strings.TrimSpace(cfg.Registry.URL); u != "" {
 		return u, projectConfigPath(dir)
 	}
-	for _, l := range layers {
+	for _, l := range src.layers {
 		if l.values.Registry != "" {
 			return l.values.Registry, l.name
 		}
 	}
-	if store.Registry != "" {
-		return store.Registry, "registry in " + storePath
+	if src.store.Registry != "" {
+		return src.store.Registry, "registry in " + src.storePath
+	}
+	if c := src.cluster; c != nil && c.values.Registry != "" {
+		return c.values.Registry, c.name
 	}
 	return "", ""
 }

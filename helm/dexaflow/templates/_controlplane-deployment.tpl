@@ -607,6 +607,27 @@ spec:
               value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
             {{- end }}
             {{- end }}
+            {{- $deployDefaults := (.ctx.Values.deploy | default dict).defaults | default dict }}
+            {{- if or $deployDefaults.registry $deployDefaults.platforms $deployDefaults.baseImage }}
+            {{- with $deployDefaults }}
+            # Cluster deploy defaults (#1704), served on /api/v2/deployDefaults.
+            # Each is stamped only when set, so an install that sets none renders
+            # the env it had before. deployment.yaml has already refused a value
+            # the server refuses at boot.
+            {{- if .registry }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+              value: {{ .registry | quote }}
+            {{- end }}
+            {{- if .platforms }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS
+              value: {{ join "," .platforms | quote }}
+            {{- end }}
+            {{- if .baseImage }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
+              value: {{ .baseImage | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}
             # Pro source mode (ADR 0067). Stamped only when on, so an install that
             # never turns it on renders the env it had before (the server default
