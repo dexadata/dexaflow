@@ -203,8 +203,18 @@ prewarmed or draining pool it finds once more.
 warm pods (at most `maxPoolSize`) even with no run. `maxWarmPodsPerTenant`
 does not bound them: the [per-tenant cap](#per-tenant-cap) never starves a
 promised idle floor and raises the tenant's budget to the sum of the floors.
-`min_idle_workers` is not in the authoring schema yet, so today only a
-`dag.json` that carries it is prewarmed.
+
+**Declaring it.** `min_idle_workers` is a top-level key of `dexaflow.yaml`
+(an integer from 0 to 100; the server clamps it to `maxPoolSize`). The
+compile copies it into `dag.json`, where the reconciler reads it:
+
+```yaml title="dexaflow.yaml"
+dag_id: orders
+min_idle_workers: 2
+```
+
+A DAG with `staging.enabled` cannot be warm, so the compile refuses the key
+on one. With warm pools off the key does nothing.
 
 The practical consequence: the benefit tracks **attempts per version**. A DAG that
 runs thousands of attempts on a stable version pools well; a DAG that ships a new
