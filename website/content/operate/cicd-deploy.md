@@ -491,6 +491,70 @@ Two things that look like a rollback are not:
 `git revert`, for example) stops before building and suggests the
 `dexaflow rollback <dag_id> --to <label>` command for that version.
 
+## Promoting between environments
+
+`dexaflow promote` registers on one [target](/operate/workspaces-and-targets/) the exact
+version another target runs: the same `dag.json` and the same image digest.
+Nothing is compiled or built, so what reaches production is what ran in
+staging.
+
+```bash
+dexaflow promote my_pipeline --from staging --to prod --dry-run   # what would be copied and registered
+dexaflow promote my_pipeline --from staging --to prod             # the current version of staging
+dexaflow promote my_pipeline --from staging --to prod --version v1.4.0-3fa2c1   # or another version
+```
+
+- **Which version.** Without `--version` it is the source's current version.
+  `--version` matches a label first, then a version number from
+  `dexaflow dags versions my_pipeline --target staging`.
+- **Only images pinned by digest.** The version must run
+  `<repo>@sha256:<digest>`, as every version `dexaflow deploy` registers does.
+  A version registered with a tag (`dexaflow push` of a file compiled with
+  `compile --build --push`) is refused: a tag can name other bytes tomorrow.
+- **The image, copied when needed.** The destination registry is `--registry`,
+  else the `registry` of the `--to` target, else the
+  `deploy.defaults.registry` its control plane advertises. When one is set and
+  the image is not already in it, the image is copied there by digest, with
+  every layer and platform, byte for byte, and tagged with the version label;
+  the version is registered with the copy (`<registry>/<image name>@sha256:<same
+  digest>`), and only its `image` field differs from the source's `dag.json`.
+  Otherwise the same reference is registered, and the destination cluster must
+  be able to pull it. The copy uses the credentials of `docker login` and of a
+  cloud CLI session for both registries, as a deploy does.
+- **The normal register.** The destination gets the version through
+  `POST /api/v2/dags/{dag_id}/versions`, after its dry run
+  (`/versions/dry_run`): a refusal (the execution allowlist, the tenant
+  limits, a label already registered there with other content) stops the
+  promote before anything is copied. A DAG the promote creates starts paused
+  as a deploy's would (`is_paused_upon_creation`, else
+  `dags_are_paused_at_creation`), and an existing DAG keeps `is_paused`.
+  Content the destination already has answers that nothing changed.
+- **Audited.** The register's `dag.version.register` audit entry carries
+  `promoted_from` with the source target's name and server URL.
+- **A token for each control plane.** `--from-token` and `--to-token`, else
+  the session saved for each server by `dexaflow auth login --target <name>`.
+  `DEXAFLOW_TOKEN` is not read, so one token is never sent to two control
+  planes. A `deployer` user, or a token with the `deploy` scope, may promote:
+  it reads the versions and their specs on the source and registers on the
+  destination.
+- **For pipelines.** `--yes` skips the confirmation prompt, and
+  `--output json` prints one JSON document on stdout (the source and
+  destination targets, servers, version and images, whether the image was
+  copied, and the status `registered`, `unchanged`, `planned` or `failed`),
+  with the human lines on stderr.
+
+In a pipeline, a promotion job after the staging deploy:
+
+```yaml
+      - name: Promote to prod
+        env:
+          STAGING_TOKEN: ${{ secrets.DEXAFLOW_STAGING_TOKEN }}
+          PROD_TOKEN: ${{ secrets.DEXAFLOW_PROD_TOKEN }}
+        run: |
+          dexaflow promote my_pipeline --from staging --to prod --yes \
+            --from-token "$STAGING_TOKEN" --to-token "$PROD_TOKEN"
+```
+
 ## Prerequisites
 
 - The `dexaflow` CLI on the runner (download the release binary, or `go install`).

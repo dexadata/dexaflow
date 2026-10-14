@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_variables_list/
 title: "dexaflow variables list"
 linkTitle: "variables list"
-weight: 69
+weight: 70
 ---
 
 List variables (encrypted values not shown).

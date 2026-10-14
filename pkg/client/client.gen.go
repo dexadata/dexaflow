@@ -709,6 +709,12 @@ type ClearDagRun200JSONResponseBody struct {
 type RegisterDagVersionParams struct {
 	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. Sending it needs write on dags, and a scoped token also needs the dexaflow:run scope (403 otherwise).
 	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
+
+	// PromotedFrom Marks the register as a promotion (`dexaflow promote`): the name of the target the version was read from, recorded with promoted_from_server under promoted_from in the register's audit entry. At most 128 bytes, no control characters; an empty value is refused with 400.
+	PromotedFrom *string `form:"promoted_from,omitempty" json:"promoted_from,omitempty"`
+
+	// PromotedFromServer The URL of the control plane the version was promoted from: an absolute http or https URL without credentials, at most 128 bytes. It needs promoted_from (400 otherwise).
+	PromotedFromServer *string `form:"promoted_from_server,omitempty" json:"promoted_from_server,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -1286,6 +1292,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagVersions/{version_number} (the `GetDagVersion` operationId).
 	GetDagVersion(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDagVersionSpec Get the compiled spec registered with one version of a DAG (Dexaflow)
+	//
+	// The dag.json registered with this version, current or not, as GET /api/v2/dags/{dag_id}/spec serves the current one. `dexaflow promote` reads it to register the same version on another control plane. Needs read on dags; a scoped token needs dexaflow:read or dexaflow:deploy, as for the versions listing.
+	//
+	// Corresponds with GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec (the `GetDagVersionSpec` operationId).
+	GetDagVersionSpec(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDagSpec Get a DAG's compiled spec (the dag.json artifact)
 	//
@@ -2044,6 +2057,23 @@ func (c *Client) ListDagVersions(ctx context.Context, dagId DagID, reqEditors ..
 // Corresponds with GET /api/v2/dags/{dag_id}/dagVersions/{version_number} (the `GetDagVersion` operationId).
 func (c *Client) GetDagVersion(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDagVersionRequest(c.Server, dagId, versionNumber)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDagVersionSpec Get the compiled spec registered with one version of a DAG (Dexaflow)
+//
+// The dag.json registered with this version, current or not, as GET /api/v2/dags/{dag_id}/spec serves the current one. `dexaflow promote` reads it to register the same version on another control plane. Needs read on dags; a scoped token needs dexaflow:read or dexaflow:deploy, as for the versions listing.
+//
+// Corresponds with GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec (the `GetDagVersionSpec` operationId).
+func (c *Client) GetDagVersionSpec(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDagVersionSpecRequest(c.Server, dagId, versionNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -3663,6 +3693,47 @@ func NewGetDagVersionRequest(server string, dagId DagID, versionNumber int) (*ht
 	return req, nil
 }
 
+// NewGetDagVersionSpecRequest constructs an http.Request for the GetDagVersionSpec method
+func NewGetDagVersionSpecRequest(server string, dagId DagID, versionNumber int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "version_number", versionNumber, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/dagVersions/%s/spec", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetDagSpecRequest constructs an http.Request for the GetDagSpec method
 func NewGetDagSpecRequest(server string, dagId DagID) (*http.Request, error) {
 	var err error
@@ -3746,6 +3817,30 @@ func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *Re
 		if params.IsPaused != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "is_paused", *params.IsPaused, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFrom != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from", *params.PromotedFrom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFromServer != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from_server", *params.PromotedFromServer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -4622,6 +4717,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagVersions/{version_number} (the `GetDagVersion` operationId).
 	GetDagVersionWithResponse(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*GetDagVersionResponse, error)
+
+	// GetDagVersionSpecWithResponse Get the compiled spec registered with one version of a DAG (Dexaflow)
+	//
+	// The dag.json registered with this version, current or not, as GET /api/v2/dags/{dag_id}/spec serves the current one. `dexaflow promote` reads it to register the same version on another control plane. Needs read on dags; a scoped token needs dexaflow:read or dexaflow:deploy, as for the versions listing.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec (the `GetDagVersionSpec` operationId).
+	GetDagVersionSpecWithResponse(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*GetDagVersionSpecResponse, error)
 
 	// GetDagSpecWithResponse Get a DAG's compiled spec (the dag.json artifact)
 	//
@@ -6104,6 +6208,68 @@ func (r GetDagVersionResponse) ContentType() string {
 	return ""
 }
 
+type GetDagVersionSpecResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDagVersionSpecResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetDagVersionSpecResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetDagVersionSpecResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetDagVersionSpecResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDagVersionSpecResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDagVersionSpecResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDagVersionSpecResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDagVersionSpecResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetDagSpecResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7352,6 +7518,21 @@ func (c *ClientWithResponses) GetDagVersionWithResponse(ctx context.Context, dag
 	return ParseGetDagVersionResponse(rsp)
 }
 
+// GetDagVersionSpecWithResponse Get the compiled spec registered with one version of a DAG (Dexaflow)
+//
+// The dag.json registered with this version, current or not, as GET /api/v2/dags/{dag_id}/spec serves the current one. `dexaflow promote` reads it to register the same version on another control plane. Needs read on dags; a scoped token needs dexaflow:read or dexaflow:deploy, as for the versions listing.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec (the `GetDagVersionSpec` operationId).
+func (c *ClientWithResponses) GetDagVersionSpecWithResponse(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*GetDagVersionSpecResponse, error) {
+	rsp, err := c.GetDagVersionSpec(ctx, dagId, versionNumber, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDagVersionSpecResponse(rsp)
+}
+
 // GetDagSpecWithResponse Get a DAG's compiled spec (the dag.json artifact)
 //
 // Returns a wrapper object for the known response body format(s).
@@ -8546,6 +8727,53 @@ func ParseGetDagVersionResponse(rsp *http.Response) (*GetDagVersionResponse, err
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDagVersionSpecResponse parses an HTTP response from a GetDagVersionSpecWithResponse call
+func ParseGetDagVersionSpecResponse(rsp *http.Response) (*GetDagVersionSpecResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDagVersionSpecResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound

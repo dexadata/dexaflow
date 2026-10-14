@@ -672,6 +672,24 @@ paths:
             and a scoped token also needs the dexaflow:run scope (403
             otherwise).
           schema: { type: boolean }
+        - name: promoted_from
+          in: query
+          required: false
+          description: >-
+            Marks the register as a promotion (`dexaflow promote`): the name
+            of the target the version was read from, recorded with
+            promoted_from_server under promoted_from in the register's audit
+            entry. At most 128 bytes, no control characters; an empty value
+            is refused with 400.
+          schema: { type: string, maxLength: 128 }
+        - name: promoted_from_server
+          in: query
+          required: false
+          description: >-
+            The URL of the control plane the version was promoted from: an
+            absolute http or https URL without credentials, at most 128
+            bytes. It needs promoted_from (400 otherwise).
+          schema: { type: string, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -733,6 +751,21 @@ paths:
             checks it (400 for a value other than true or false, 403 without
             write on dags or, for a scoped token, dexaflow:run).
           schema: { type: boolean }
+        - name: promoted_from
+          in: query
+          required: false
+          description: >-
+            The promoted_from the register would be sent, checked as the
+            register checks it (at most 128 bytes, no control characters,
+            not empty; 400 otherwise).
+          schema: { type: string, maxLength: 128 }
+        - name: promoted_from_server
+          in: query
+          required: false
+          description: >-
+            The promoted_from_server the register would be sent, checked as
+            the register checks it.
+          schema: { type: string, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -1106,6 +1139,41 @@ paths:
                 type: object
                 additionalProperties: true
                 description: The compiled dag.json artifact (DAGSpec shape).
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+      - name: version_number
+        in: path
+        required: true
+        description: The version_number of a version from the dagVersions listing.
+        schema: { type: integer }
+    get:
+      summary: Get the compiled spec registered with one version of a DAG (Dexaflow)
+      description: >-
+        The dag.json registered with this version, current or not, as GET
+        /api/v2/dags/{dag_id}/spec serves the current one. `dexaflow
+        promote` reads it to register the same version on another control
+        plane. Needs read on dags; a scoped token needs dexaflow:read or
+        dexaflow:deploy, as for the versions listing.
+      operationId: getDagVersionSpec
+      tags: [DAGs]
+      responses:
+        "200":
+          description: The compiled dag.json of the version
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                description: The compiled dag.json artifact (DAGSpec shape).
+        "400":
+          description: version_number is not an integer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v2/monitor/health:

@@ -39,6 +39,8 @@ var deployReads = map[string]bool{
 	"GET /api/v2/dags/:dag_id/details":                     true,
 	"GET /api/v2/dags/:dag_id/dagVersions":                 true,
 	"GET /api/v2/dags/:dag_id/dagVersions/:version_number": true,
+	// A version's spec, which `dexaflow promote` reads from its source (#1708).
+	"GET /api/v2/dags/:dag_id/dagVersions/:version_number/spec": true,
 	// The cluster's deploy defaults, read before the build (#1704).
 	"GET /api/v2/deployDefaults": true,
 }
@@ -103,6 +105,7 @@ func newFullScopeServer(t *testing.T) *gin.Engine {
 		LatestRuns:          &fakeLatestRuns{},
 		TaskSummary:         &fakeTaskSummary{},
 		DagVersions:         &fakeVersionLister{},
+		DagSources:          rolledBackSources(),
 		DashboardStats:      &fakeStatsReader{},
 		AuditLog:            &fakeAuditReader{},
 		Variables:           &fakeVariableStore{},
