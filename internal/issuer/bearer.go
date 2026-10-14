@@ -64,7 +64,10 @@ func (v *Verifier) VerifyBearer(ctx context.Context, raw string) (*Identity, err
 	if id.Scopes, err = bearerScopes(claims); err != nil {
 		return nil, err
 	}
-	id.DeployAudience = v.cfg.DeployAudience != "" && slices.Contains(tok.Audience, v.cfg.DeployAudience)
+	// A deploy token names the deploy audience alone. One that also names a
+	// bearer audience was minted for that audience's client too (an MCP
+	// client, say), so it stays an ordinary bearer and cannot deploy.
+	id.DeployAudience = v.cfg.DeployAudience != "" && len(tok.Audience) == 1 && tok.Audience[0] == v.cfg.DeployAudience
 	return id, nil
 }
 

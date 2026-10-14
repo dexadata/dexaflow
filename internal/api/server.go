@@ -199,8 +199,8 @@ type Dependencies struct {
 	// request (#1468). It resolves users through TrustedIssuerUsers.
 	TrustedIssuerBearer TrustedIssuerBearer
 	// DeployViaIssuer is set when auth.trusted_issuer.deploy_audience is
-	// (#1773): the deploy routes then take only a TrustedIssuerBearer token
-	// of that audience. With no TrustedIssuerBearer every deploy is refused,
+	// (#1773): the deploy routes and deleting a DAG then take only a
+	// TrustedIssuerBearer token of that audience. With no TrustedIssuerBearer every deploy is refused,
 	// so a wiring mistake fails closed.
 	DeployViaIssuer bool
 	// TrustedIssuerOrigins are the only Origins a handoff may be posted from

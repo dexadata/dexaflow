@@ -603,8 +603,11 @@ that the control plane takes deploys only through its trusted issuer. Deploy
 through the platform that owns deployments instead. When that platform runs
 `dexaflow deploy` itself, it passes a bearer its issuer minted for the deploy
 audience, with the `dexaflow:deploy` scope and a user linked to the issuer,
-as `DEXAFLOW_TOKEN` or `--token`. The token is short-lived (at most
-`auth.trusted_issuer.bearer_max_lifetime_seconds`), so mint it for each job.
+as `DEXAFLOW_TOKEN` or `--token`, its `aud` being the deploy audience alone.
+With `--paused` or `--active`, which set `is_paused`, the token also needs
+the `dexaflow:run` scope (and the user `write` on dags). The token is
+short-lived (at most `auth.trusted_issuer.bearer_max_lifetime_seconds`), so
+mint it for each job. Deleting a DAG goes through the issuer the same way.
 
 ## Python on the runner
 

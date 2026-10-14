@@ -719,8 +719,9 @@ type TrustedIssuerSection struct {
 	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
 	// DeployAudience makes the issuer the only way to deploy (#1773). When
 	// set, registering a DAG version (and its dry run) and setting the current
-	// version take only a bearer of this issuer whose `aud` is this audience
-	// and that carries dexaflow:deploy, besides the role check; a session, a
+	// version, and deleting a DAG, take only a bearer of this issuer whose
+	// `aud` is this audience alone and that carries dexaflow:deploy, besides
+	// the role check; a token that also names another audience, a session, a
 	// password login token, an API token and a bearer of another audience
 	// are refused with 403. It is a bearer audience of its own: it turns the
 	// bearer verifier on without BearerAudiences, and a token for it gets
@@ -2023,7 +2024,7 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
 		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
 		{hostPatternValid(s.HostPattern), "auth.trusted_issuer.host_pattern (empty, or a host[:port] with exactly one {tenant}, such as {tenant}.example.com)"},
-		{deployAudienceValid(s), "auth.trusted_issuer.deploy_audience (empty, or an audience other than auth.trusted_issuer.audience and every auth.trusted_issuer.bearer_audiences entry)"},
+		{deployAudienceValid(s), "auth.trusted_issuer.deploy_audience (empty, or an audience without surrounding spaces other than auth.trusted_issuer.audience and every auth.trusted_issuer.bearer_audiences entry)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -2049,11 +2050,17 @@ func bearerAudiencesValid(s TrustedIssuerSection) bool {
 	return true
 }
 
-// deployAudienceValid reports whether the deploy audience is unset or shared
-// with no other audience: a handoff or another client's bearer that is also
-// a deploy token would undo the restriction it exists for (#1773).
+// deployAudienceValid reports whether the deploy audience is unset, or free
+// of surrounding whitespace (aud is compared exactly, so " x" would match no
+// token and read as a typo) and shared with no other audience: a handoff or
+// another client's bearer that is also a deploy token would undo the
+// restriction it exists for (#1773).
 func deployAudienceValid(s TrustedIssuerSection) bool {
-	return s.DeployAudience == "" || (s.DeployAudience != s.Audience && !slices.Contains(s.BearerAudiences, s.DeployAudience))
+	d := s.DeployAudience
+	if d == "" {
+		return true
+	}
+	return d == strings.TrimSpace(d) && d != s.Audience && !slices.Contains(s.BearerAudiences, d)
 }
 
 // validateHomeLink checks ui.home_link (#1290): both fields or neither, and an

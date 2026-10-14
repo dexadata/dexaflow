@@ -436,6 +436,9 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.auth.trustedIssuer }}
+            {{- if and .deployAudience (not .issuer) }}
+            {{- fail "auth.trustedIssuer.deployAudience needs auth.trustedIssuer.issuer" }}
+            {{- end }}
             {{- if .issuer }}
             # Trusted-issuer handoff (#1284). Rendered as a block only when an
             # issuer is set; the server validates the whole section at boot.

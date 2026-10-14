@@ -56,11 +56,16 @@ func newDeployIssuerKeys(t *testing.T) *deployIssuerKeys {
 }
 
 // bearer signs a bearer for subject in tenant default with aud and scope.
+// An empty aud signs the mixed audience [dexaflow-mcp, dexaflow-deploy].
 func (k *deployIssuerKeys) bearer(t *testing.T, subject, aud, scope string) string {
 	t.Helper()
 	now := time.Now()
+	var audClaim any = aud
+	if aud == "" {
+		audClaim = []string{"dexaflow-mcp", "dexaflow-deploy"}
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iss": "https://portal.example.com", "aud": aud, "sub": subject, "tenant_id": "default",
+		"iss": "https://portal.example.com", "aud": audClaim, "sub": subject, "tenant_id": "default",
 		"scope": scope, "iat": now.Add(-10 * time.Second).Unix(), "exp": now.Add(5 * time.Minute).Unix(),
 	})
 	tok.Header["kid"] = "k1"
@@ -169,6 +174,7 @@ func TestDeployAudienceWiringAgainstPostgres(t *testing.T) {
 		{"session cookie", "", session.AccessToken},
 		{"deploy API token", apiTok.Token, ""},
 		{"other bearer audience", keys.bearer(t, subject, "dexaflow-mcp", "dexaflow:read dexaflow:deploy"), ""},
+		{"mixed audience", keys.bearer(t, subject, "", "dexaflow:deploy"), ""},
 	}
 	for _, o := range others {
 		for _, r := range routes {

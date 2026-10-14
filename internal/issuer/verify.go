@@ -78,7 +78,8 @@ type Config struct {
 	// DeployAudience is the `aud` of the bearers that may deploy when the
 	// operator makes the issuer the only way to deploy (#1773). It is a
 	// bearer audience of its own, accepted even when BearerAudiences is
-	// empty, and VerifyBearer marks its tokens (Identity.DeployAudience).
+	// empty, and VerifyBearer marks a token whose aud is it alone
+	// (Identity.DeployAudience).
 	// Empty means no deploy audience.
 	DeployAudience string
 }
@@ -91,8 +92,8 @@ type Identity struct {
 	// Scopes are a bearer token's OAuth scopes (ADR 0067); nil for a handoff
 	// token, whose session is not scoped.
 	Scopes []string
-	// DeployAudience is true for a bearer whose `aud` names
-	// Config.DeployAudience (#1773). It says where the token was minted for,
+	// DeployAudience is true for a bearer whose `aud` is Config.DeployAudience
+	// alone (#1773); a token that also names another audience is not one. It says where the token was minted for,
 	// not what it may do: its scopes still decide that.
 	DeployAudience bool
 }

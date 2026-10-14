@@ -365,6 +365,20 @@ func RequireDeployPermission(viaIssuer bool) gin.HandlerFunc {
 	return permissionGate{action: "deploy", alt: "write", resource: "dag", scope: auth.ScopeDeploy, viaIssuer: viaIssuer}.check
 }
 
+// RequireUndeployPermission guards deleting a DAG, which undeploys it. It
+// needs write:dag. Without viaIssuer a scoped token is refused, as on every
+// write no scope grants. With viaIssuer (#1773) it is a deploy decision like
+// RequireDeployPermission: only a trusted-issuer bearer of the deploy
+// audience with dexaflow:deploy may call it, so no undeploy skips the
+// platform that owns deploys.
+func RequireUndeployPermission(viaIssuer bool) gin.HandlerFunc {
+	g := permissionGate{action: "write", resource: "dag", viaIssuer: viaIssuer}
+	if viaIssuer {
+		g.scope = auth.ScopeDeploy
+	}
+	return g.check
+}
+
 // The header a deploy refused for not coming through the trusted issuer
 // carries (#1773), so a client tells it from a missing role or scope
 // without parsing the detail.

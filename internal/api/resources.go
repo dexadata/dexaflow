@@ -1385,7 +1385,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		// Pause and unpause are run control (ADR 0067). A change that lets this
 		// route set more than is_paused must revisit its scope.
 		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Dags))
-		g.DELETE("/:dag_id", RequirePermission("write", "dag"), deleteDagHandler(deps.Dags))
+		g.DELETE("/:dag_id", RequireUndeployPermission(deps.DeployViaIssuer), deleteDagHandler(deps.Dags))
 	}
 	if deps.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
