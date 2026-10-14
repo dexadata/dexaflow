@@ -98,6 +98,10 @@ fi
 # `user:` / `password:` / `open:` lines on first install only (a re-run
 # preserves the existing config and prints "already configured").
 PASSWORD_LINE="$(grep -E '^\s+password:' "$SETUP_LOG" | head -1 || true)"
+# The admin email setup printed with the password (admin@dexaflow.local by
+# default).
+ADMIN_USER="$(sed -n 's/^[[:space:]]*user:[[:space:]]*//p' "$SETUP_LOG" | head -1 || true)"
+ADMIN_USER="${ADMIN_USER:-admin@dexaflow.local}"
 
 # ─── 5. Copy the DAG bundle into the workspace ──────────────────────────────
 # The workspace `dexaflow setup` recorded; without one, the same default it
@@ -133,7 +137,7 @@ echo
 if [[ -n "$PASSWORD_LINE" ]]; then
   echo "${BOLD}Save these credentials (the password is shown ONCE):${RESET}"
   echo
-  echo "  user:     admin@leoflow.local"
+  echo "  user:     ${ADMIN_USER}"
   echo "  ${YELLOW}${PASSWORD_LINE}${RESET}"
   echo "  open:     http://localhost:8088"
   echo

@@ -115,7 +115,7 @@ logs:
     size: ${LOGS_PVC_SIZE}
 EOF
   chmod 600 "$VALUES_LOCAL"
-  log "Initial admin login: admin@leoflow.local / ${BOOTSTRAP_PASSWORD}  (also in $VALUES_LOCAL)"
+  log "Initial admin login: admin@dexaflow.local / ${BOOTSTRAP_PASSWORD}  (also in $VALUES_LOCAL)"
 fi
 
 # ---- 2. Official Postgres + Redis (ephemeral emptyDir, no persistence) ------
@@ -311,7 +311,8 @@ $(printf '\033[1;32m==> Dexaflow Pro installed.\033[0m')
 Open the UI:
   kubectl -n $NAMESPACE port-forward svc/$RELEASE 8080:8080
   # then browse http://127.0.0.1:8080/
-  # login username: admin@leoflow.local  (the bootstrap admin email, NOT "admin")
+  # login username: admin@dexaflow.local  (the bootstrap admin email, NOT "admin";
+  #   admin@leoflow.local on a database created before the rename)
   # password: see bootstrap.password in $VALUES_LOCAL
 
 Readiness:

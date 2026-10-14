@@ -36,7 +36,7 @@ cd dexaflow
 docker compose --profile demo up --build
 ```
 
-Then open **<http://localhost:8080>** and log in as **`admin@leoflow.local`** /
+Then open **<http://localhost:8080>** and log in as **`admin@dexaflow.local`** /
 **`admin`**. Stop with `docker compose --profile demo down` (add `-v` to wipe data).
 
 {{% alert title="What you're looking at" color="success" %}}

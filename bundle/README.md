@@ -54,7 +54,8 @@ install. There is no way to recover that exact password later — but there's
 no need to: `sudo dexaflow lite reset-password` writes a new one and prints
 it the same way.
 
-Default email is `admin@leoflow.local` (override at install time with
+Default email is `admin@dexaflow.local` (installs created before the rename
+keep `admin@leoflow.local`; override at install time with
 `dexaflow setup --admin-email you@example.com`; the bundle script doesn't
 do that — re-run `setup` after if you want a different email).
 

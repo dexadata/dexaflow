@@ -13,7 +13,7 @@
 // Run against a live Lite:
 //   dexaflow lite --port 18080 --postgres managed --executor subprocess &
 //   npm i playwright-core && npx playwright install chromium     # once
-//   LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER=admin@leoflow.local \
+//   LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER=admin@dexaflow.local \
 //     LEOFLOW_PASS=<pw> node test/e2e/ui-smoke.js
 //
 // Exit code 0 = no crashes; 1 = at least one screen/interaction threw.
@@ -22,7 +22,11 @@ const { chromium } = require('playwright-core');
 const fs = require('fs');
 
 const URL = process.env.LEOFLOW_URL || 'http://localhost:18080';
-const USER = process.env.LEOFLOW_USER || 'admin@leoflow.local';
+// Without LEOFLOW_USER the bootstrap admin is found by trying the current
+// address first and then admin@leoflow.local, which installs created before the
+// rename keep.
+const ADMIN_CANDIDATES = ['admin@dexaflow.local', 'admin@leoflow.local'];
+let USER = process.env.LEOFLOW_USER || ADMIN_CANDIDATES[0];
 const PASS = process.env.LEOFLOW_PASS || '';
 
 // Reuse a cached chromium when we can find one (macOS or Linux paths); otherwise
@@ -72,7 +76,22 @@ function finish(code, text, stream = process.stdout) {
   stream.write(text, () => process.exit(code));
 }
 
+// resolveUser returns the first candidate admin that /auth/token accepts, or
+// the first candidate when none does (the login step then reports the failure).
+async function resolveUser() {
+  if (process.env.LEOFLOW_USER) return process.env.LEOFLOW_USER;
+  for (const candidate of ADMIN_CANDIDATES) {
+    const res = await fetch(URL + '/auth/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: candidate, password: PASS }),
+    }).catch(() => null);
+    if (res && res.ok) return candidate;
+  }
+  return ADMIN_CANDIDATES[0];
+}
+
 (async () => {
+  USER = await resolveUser();
   const browser = await chromium.launch({ headless: true, executablePath: cachedChromium() });
   const page = await (await browser.newContext()).newPage();
   let errs = [];

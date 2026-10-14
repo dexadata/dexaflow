@@ -100,7 +100,7 @@ dexaflow-mcp --version
 ## Reset paths (when in doubt)
 
 ```bash
-dexaflow lite reset-password --user admin@leoflow.local # fresh admin password, signs out old sessions (no sudo)
+dexaflow lite reset-password                             # fresh admin password, signs out old sessions (no sudo)
 dexaflow lite --fresh                                     # start a session with nothing registered (DESTRUCTIVE)
 dexaflow db reset --yes                                  # drop + recreate the Lite database (DESTRUCTIVE)
 dexaflow uninstall                                       # remove ~/.dexaflow (binaries, managed Python, config)

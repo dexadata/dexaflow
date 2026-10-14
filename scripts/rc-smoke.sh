@@ -56,20 +56,21 @@ ui_smoke() {
   local port=18080 base="http://127.0.0.1:18080"
   local db="postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable"
   local home_dir; home_dir="$(mktemp -d)"
-  local pid="" rc=0 pw hash setup_out code=""
+  local pid="" rc=0 pw hash email setup_out code=""
   # a no-op python3.11 so `setup` skips the CPython download (the parser is unused here)
   mkdir -p "$home_dir/bin"; printf '#!/bin/sh\n' > "$home_dir/bin/python3.11"; chmod +x "$home_dir/bin/python3.11"
   LEOFLOW_DATABASE_URL="$db" PATH="$home_dir/bin:$PATH" ./bin/leoflow db reset --yes >/dev/null 2>&1
   setup_out="$(HOME="$home_dir" PATH="$home_dir/bin:$PATH" ./bin/dexaflow setup --workspace "$home_dir/ws" </dev/null 2>&1)"
   pw="$(printf '%s\n' "$setup_out" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
   hash="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$home_dir/.dexaflow/config.yaml" 2>/dev/null)"
-  if [ -z "$pw" ] || [ -z "$hash" ]; then echo "ui-smoke: setup did not yield admin creds"; rm -rf "$home_dir"; return 1; fi
+  email="$(sed -n 's/^admin_email:[[:space:]]*"\(.*\)"/\1/p' "$home_dir/.dexaflow/config.yaml" 2>/dev/null)"
+  if [ -z "$pw" ] || [ -z "$hash" ] || [ -z "$email" ]; then echo "ui-smoke: setup did not yield admin creds"; rm -rf "$home_dir"; return 1; fi
   printf 'print("hello")\n' > "$home_dir/ws/dag.py"
   LEOFLOW_SERVER_HTTP_ADDR="127.0.0.1:${port}" LEOFLOW_SERVER_GRPC_ADDR="127.0.0.1:19091" \
   LEOFLOW_SERVER_METRICS_ADDR="127.0.0.1:19090" LEOFLOW_DATABASE_URL="$db" \
   LEOFLOW_REDIS_URL="redis://localhost:6379/0" LEOFLOW_AUTH_JWT_SECRET="e2e-insecure-jwt-secret-please-change" \
   LEOFLOW_SECRET_KEY="e2e-insecure-secret-key-32bytes!" LEOFLOW_BOOTSTRAP_PASSWORD_HASH="$hash" \
-  LEOFLOW_BOOTSTRAP_EMAIL="admin@leoflow.local" LEOFLOW_UI_EDITION="lite" \
+  LEOFLOW_BOOTSTRAP_EMAIL="$email" LEOFLOW_UI_EDITION="lite" \
   LEOFLOW_UI_WORKSPACE="$home_dir/ws" LEOFLOW_LOGS_DIR="$home_dir/logs" \
     ./bin/leoflow-server >"$home_dir/server.log" 2>&1 &
   pid=$!
@@ -80,7 +81,7 @@ ui_smoke() {
     sleep 0.5
   done
   if [ "$code" = "200" ]; then
-    LEOFLOW_URL="$base" LEOFLOW_USER="admin@leoflow.local" LEOFLOW_PASS="$pw" node test/e2e/ui-smoke.js || rc=$?
+    LEOFLOW_URL="$base" LEOFLOW_USER="$email" LEOFLOW_PASS="$pw" node test/e2e/ui-smoke.js || rc=$?
   else
     echo "ui-smoke: lite control plane not ready (last /readyz=$code)"; tail -20 "$home_dir/server.log"; rc=1
   fi
