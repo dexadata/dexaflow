@@ -20,4 +20,4 @@ To change the code or docs, read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGEN
 
 ## Commercial support
 
-Commercial or paid support is out of scope for this repository. The maintainers answer community questions and review contributions as capacity allows; there is no SLA for response time beyond the guidance in `CONTRIBUTING.md`.
+This repository does not offer paid support. Commercial support and the managed service, Dexaflow Cloud, are offered by Dexadata; see [dexadata.ai](https://dexadata.ai). In this repository the maintainers answer community questions and review contributions as capacity allows; there is no SLA for response time beyond the guidance in `CONTRIBUTING.md`.
