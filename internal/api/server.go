@@ -103,6 +103,9 @@ type Dependencies struct {
 	// (ADR 0067 §3), "" when it is off. Registering a version on that image
 	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
 	SourceModeImage string
+	// DeployDefaults are the server's deploy.defaults, served on
+	// GET /api/v2/deployDefaults (#1704). The zero value serves empty fields.
+	DeployDefaults domain.DeployDefaults
 	// ExecutionPolicy is executor.defaults.execution_allowlist (issue #629).
 	// When set, registering a DAG whose task sets an execution field (or
 	// priority class) outside it answers 400 naming the task and the field.
@@ -358,6 +361,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// (ADR 0067). The MCP's health resource reads all three.
 	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
 	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.ExecutorInfo))
+	// What a deploy reads before it builds (#1704): the gate of the other
+	// deploy reads, so a dexaflow:deploy token reaches it (ADR 0074).
+	r.GET("/api/v2/deployDefaults", RequireDeployRead(), deployDefaultsHandler(deps.DeployDefaults))
 
 	registerResources(r, deps)
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)

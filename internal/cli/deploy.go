@@ -18,9 +18,13 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// registryFlagUsage is the help of --registry, shared by compile, build and
-// deploy so all three derive the same image.
+// registryFlagUsage is the help of --registry for compile and build, which
+// derive the image from the same local sources as deploy.
 const registryFlagUsage = "image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)"
+
+// deployRegistryFlagUsage is registryFlagUsage for deploy, which also reads
+// the deploy defaults the cluster advertises.
+const deployRegistryFlagUsage = "image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file, the cluster's deploy defaults)"
 
 // deployOptions holds the resolved flags for a deploy run.
 type deployOptions struct {
@@ -44,6 +48,9 @@ type deployOptions struct {
 	changedSince string
 	follow       bool
 	timeout      time.Duration
+	// cluster caches the deploy defaults each server advertises for the
+	// length of the command; nil reads them on every deploy.
+	cluster *clusterDefaultsCache
 	// report collects each DAG's result for --output json; nil for text.
 	report *deployReport
 }
@@ -88,7 +95,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.rebuild, "rebuild", false, "build and push the image even when the registry already holds one for this content label, and build its dependency image again")
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
-	cmd.Flags().String("registry", "", registryFlagUsage)
+	cmd.Flags().String("registry", "", deployRegistryFlagUsage)
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
@@ -420,6 +427,7 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
       dexaflow.workspace.yaml:    defaults: {registry: ghcr.io/<your-org>}
       a target:                   registry: ghcr.io/<your-org> under targets.<name> in dexaflow.workspace.yaml
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
+      the whole cluster:          deploy.defaults.registry in the server's Helm values
 
   The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io`)
 }
@@ -502,26 +510,31 @@ func resolveServerChoiceToken(cmd *cobra.Command, serverFlag, tokenFlag string) 
 	return choice, token, nil
 }
 
-// loadDeployConfig loads and validates the project config, fills what it
-// leaves unset from the workspace and the target (applyWorkspaceDefaults), and
-// enforces the registry a Pro deploy pushes to. It returns where the registry
-// came from.
-func loadDeployConfig(cmd *cobra.Command, dir string) (*domain.LeoflowConfig, defaultsProvenance, error) {
+// loadDeployProject loads and validates the project config of a deploy.
+func loadDeployProject(dir string) (*domain.LeoflowConfig, error) {
 	cfg, err := loadProjectConfig(dir)
 	if err != nil {
-		return nil, defaultsProvenance{}, err
+		return nil, err
 	}
 	if verr := cfg.Validate(); verr != nil {
-		return nil, defaultsProvenance{}, fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
+		return nil, fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
 	}
-	prov, derr := applyWorkspaceDefaults(cmd, dir, cfg, true)
-	if derr != nil {
-		return nil, defaultsProvenance{}, derr
+	return cfg, nil
+}
+
+// settleDeployConfig fills what the project leaves unset from the workspace,
+// the target, the user's config and the deploy defaults the cluster
+// advertises (cluster, nil when none; applyDeployDefaults), and enforces the
+// registry a Pro deploy pushes to. It returns where each value came from.
+func settleDeployConfig(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, cluster *defaultsLayer) (defaultsProvenance, error) {
+	prov, err := applyDeployDefaults(cmd, dir, cfg, cluster)
+	if err != nil {
+		return defaultsProvenance{}, err
 	}
 	if rerr := requireRegistry(cfg); rerr != nil {
-		return nil, defaultsProvenance{}, rerr
+		return defaultsProvenance{}, rerr
 	}
-	return cfg, prov, nil
+	return prov, nil
 }
 
 // printDeploySettings says, before anything is built, where the deploy goes
@@ -551,7 +564,7 @@ func orDefault(source string) string {
 // by digest into dag.json, and register that with the control plane. With
 // --plan it stops after deciding what it would do.
 func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
-	cfg, prov, err := loadDeployConfig(cmd, dir)
+	cfg, err := loadDeployProject(dir)
 	if err != nil {
 		return err
 	}
@@ -563,7 +576,17 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	}()
 	choice, token, serr := deployServerChoice(cmd, o)
 	if serr != nil {
+		// With no server there are no cluster defaults: a project that has
+		// no registry either still gets the registry error first.
+		if _, rerr := settleDeployConfig(cmd, dir, cfg, nil); rerr != nil {
+			return rerr
+		}
 		return serr
+	}
+	cluster := o.cluster.layer(cmdContext(cmd), cmd.ErrOrStderr(), choice.URL, token)
+	prov, perr := settleDeployConfig(cmd, dir, cfg, cluster)
+	if perr != nil {
+		return perr
 	}
 	o.report.setServer(choice)
 	serverURL := choice.URL
@@ -574,7 +597,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 		!confirmDeploy(cmd.InOrStdin(), cmd.OutOrStdout(), dir, serverURL) {
 		return fmt.Errorf("deploy aborted")
 	}
-	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token}
+	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token, cluster: cluster}
 	return d.run()
 }
 
@@ -585,6 +608,9 @@ type deployRun struct {
 	o                deployOptions
 	cfg              *domain.LeoflowConfig
 	serverURL, token string
+	// cluster is the deploy defaults layer cfg was settled with, nil for
+	// none; the compile applies it again so it builds what was labeled.
+	cluster *defaultsLayer
 	// wasPaused is the DAG's is_paused before an --active deploy, so the
 	// summary can describe the backlog it releases.
 	wasPaused bool
@@ -612,6 +638,7 @@ func (d *deployRun) run() error {
 	output := filepath.Join(d.dir, "dag.json")
 	var built build.Result
 	co := compileOptions{
+		cluster:    d.cluster,
 		output:     output,
 		builder:    d.o.builder,
 		dockerfile: d.o.dockerfile,

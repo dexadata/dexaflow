@@ -95,6 +95,11 @@ registry:
   image_name: first-pro-dag
 ```
 
+When the cluster advertises a registry
+([Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults)),
+the `registry:` block is optional: the deploy pushes to the cluster's prefix
+and names the image after the `dag_id`.
+
 That is the whole project. A provider package is one line too: `connectors:
 [postgres]` installs `apache-airflow-providers-postgres` into the image (see
 [Installing a connector's provider](/connections/#installing-a-connectors-provider)).
@@ -237,7 +242,7 @@ the latest run.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml` | add the `registry:` block (Step 1) and `docker login <registry>` |
+| `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml`, and the cluster advertises none | add the `registry:` block (Step 1) and `docker login <registry>` |
 | `denied` / `unauthorized` on push | builder not logged in to the registry | `docker login ghcr.io` (registry auth ≠ control-plane auth) |
 | Task pod: `exec format error` | image arch ≠ cluster arch | build for the cluster's architecture: `dexaflow deploy --platform linux/arm64` on a Graviton cluster, or `build: {platforms: [linux/arm64]}` in `dexaflow.yaml`. The `platforms:` line of the output names where the value came from |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …`; create them on Pro (UI/API) first. See [Variables & Connections](/author-dags/variables-connections/) |

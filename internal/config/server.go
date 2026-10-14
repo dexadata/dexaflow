@@ -35,6 +35,7 @@ type ServerConfig struct {
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
 	Retention     RetentionSection     `mapstructure:"retention"`
+	Deploy        DeploySection        `mapstructure:"deploy"`
 	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
 	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
 	// writes.
@@ -76,6 +77,16 @@ type ServerConfig struct {
 	// (#1705). `dexaflow lite` sets it to false, so a DAG run locally starts
 	// active as it always did.
 	DagsArePausedAtCreation bool `mapstructure:"dags_are_paused_at_creation"`
+}
+
+// DeploySection is what the server tells `dexaflow deploy` (#1704).
+type DeploySection struct {
+	// Defaults (deploy.defaults.*) are the registry prefix, build platforms
+	// and base image a deploy to this cluster uses for whatever the project,
+	// its workspace, its target and the person's config leave unset. Served
+	// on GET /api/v2/deployDefaults; unset (the default) advertises nothing,
+	// so every deploy resolves as it did before. None of them is a secret.
+	Defaults domain.DeployDefaults `mapstructure:"defaults"`
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -1375,6 +1386,11 @@ var serverDefaults = map[string]any{
 	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
 	"execution.warm_pool_event_refill": false,
+	// Cluster deploy defaults (#1704). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_DEPLOY_DEFAULTS_*; empty advertises nothing.
+	"deploy.defaults.registry":   "",
+	"deploy.defaults.platforms":  []string{},
+	"deploy.defaults.base_image": "",
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
@@ -1536,6 +1552,7 @@ func (c *ServerConfig) Validate() error {
 		c.Retention.Validate,
 		c.validateExecutorPolicies,
 		c.validatePlatformIntegration,
+		c.validateDeployDefaults,
 	} {
 		if err := check(); err != nil {
 			return err
@@ -1556,6 +1573,12 @@ func (c *ServerConfig) Validate() error {
 		return fmt.Errorf("auth.dev_no_auth disables authentication and is only permitted on a loopback http_addr (got %q); never enable it in production", c.Server.HTTPAddr)
 	}
 	return nil
+}
+
+// validateDeployDefaults refuses a deploy.defaults value no deploy could
+// use, so it fails at boot instead of in every deploy to the cluster.
+func (c *ServerConfig) validateDeployDefaults() error {
+	return c.Deploy.Defaults.Validate("deploy.defaults")
 }
 
 // isLoopbackListenAddr reports whether a listen address binds only to loopback,

@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -152,5 +154,59 @@ func TestDryRunRegisterSendsTheRegisterToTheDryRunRoute(t *testing.T) {
 	}
 	if err := DryRunRegister(context.Background(), get); err == nil || get.URL.Path != "/api/v2/dags/etl/versions" {
 		t.Errorf("DryRunRegister on a GET: err=%v path=%s, want a refusal and the path untouched", err, get.URL.Path)
+	}
+}
+
+// TestGetDeployDefaultsReadsTheClusterDefaults: GetDeployDefaults sends GET
+// /api/v2/deployDefaults through the client's Doer, server URL and request
+// editors, and decodes the answer.
+func TestGetDeployDefaultsReadsTheClusterDefaults(t *testing.T) {
+	var gotAuth, gotPath, gotMethod, gotProbe string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotPath, gotMethod, gotProbe = r.Header.Get("Authorization"), r.URL.Path, r.Method, r.Header.Get("X-Probe")
+		_, _ = w.Write([]byte(`{"registry":"ghcr.io/acme","platforms":["linux/arm64"],"base_image":"b:1"}`))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL+"/", WithRequestEditorFn(bearerAuth("tok")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := func(_ context.Context, req *http.Request) error {
+		req.Header.Set("X-Probe", "1")
+		return nil
+	}
+	d, err := c.GetDeployDefaults(context.Background(), probe)
+	if err != nil {
+		t.Fatalf("GetDeployDefaults: %v", err)
+	}
+	if gotProbe != "1" {
+		t.Error("the call's request editor did not run")
+	}
+	if gotMethod != http.MethodGet || gotPath != "/api/v2/deployDefaults" || gotAuth != "Bearer tok" {
+		t.Errorf("request = %s %s (Authorization %q), want GET /api/v2/deployDefaults with the bearer", gotMethod, gotPath, gotAuth)
+	}
+	if d == nil || d.Registry != "ghcr.io/acme" || len(d.Platforms) != 1 || d.Platforms[0] != "linux/arm64" || d.BaseImage != "b:1" {
+		t.Errorf("defaults = %+v, want the answer decoded", d)
+	}
+}
+
+// TestGetDeployDefaultsOlderServer: a server from before the route answers
+// 404, which is ErrDeployDefaultsNotServed; any other status is another error.
+func TestGetDeployDefaultsOlderServer(t *testing.T) {
+	status := http.StatusNotFound
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, err := c.GetDeployDefaults(context.Background()); d != nil || !errors.Is(err, ErrDeployDefaultsNotServed) {
+		t.Errorf("404: defaults=%+v err=%v, want ErrDeployDefaultsNotServed", d, err)
+	}
+	status = http.StatusForbidden
+	if d, err := c.GetDeployDefaults(context.Background()); d != nil || err == nil || errors.Is(err, ErrDeployDefaultsNotServed) || !strings.Contains(err.Error(), "403") {
+		t.Errorf("403: defaults=%+v err=%v, want an error naming 403", d, err)
 	}
 }

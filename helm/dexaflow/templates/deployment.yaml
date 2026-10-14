@@ -202,6 +202,36 @@ vocabulary, so the operator sees which values to change.
 {{- end -}}
 {{- end -}}
 {{- /*
+Cluster deploy defaults (#1704). The server refuses at boot a registry prefix,
+a platform or a base image no deploy could use (domain.DeployDefaults.Validate);
+refuse the same values here so the operator sees which one to change instead of
+a CrashLoopBackOff. The base image goes into FROM, which has no quoting, so
+whitespace and the characters its lexer rewrites ($, quotes, backslash) are
+refused, as domain.CheckImageReference refuses them.
+*/ -}}
+{{- $deployDefaults := (.Values.deploy | default dict).defaults | default dict -}}
+{{- with $deployDefaults.registry -}}
+{{- $registry := toString . -}}
+{{- if or (contains "://" $registry) (contains "@" $registry) (hasSuffix "/" $registry) (ne (lower $registry) $registry) (regexMatch "[\\s'\"\\\\$]" $registry) (and (contains "/" $registry) (regexMatch ":[^/]*$" $registry)) -}}
+{{- fail (printf "deploy.defaults.registry must be an image prefix such as ghcr.io/acme: a host, an optional port and a path, lowercase, with no scheme, credentials, tag, whitespace, quote, backslash, $ or trailing slash (got %q). The server refuses to start with it." $registry) -}}
+{{- end -}}
+{{- end -}}
+{{- with $deployDefaults.platforms -}}
+{{- if not (kindIs "slice" .) -}}
+{{- fail (printf "deploy.defaults.platforms must be a list, such as [linux/amd64] (got %q). With --set, write deploy.defaults.platforms={linux/amd64,linux/arm64}." (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- with $deployDefaults.baseImage -}}
+{{- if regexMatch "[\\s'\"\\\\$]" (toString .) -}}
+{{- fail (printf "deploy.defaults.baseImage %q contains whitespace, a quote, a backslash or $: FROM has no quoting and its lexer rewrites these, so the build would pull another image than the one named. The server refuses to start with it." (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $deployDefaults.platforms -}}
+{{- if not (regexMatch "^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$" (toString .)) -}}
+{{- fail (printf "deploy.defaults.platforms: invalid platform %q: want os/arch or os/arch/variant, such as linux/amd64 or linux/arm64/v8. The server refuses to start with it." (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- /*
 Pro source mode (ADR 0067) runs every source-mode task on the runtime image the
 operator vetted, so the server refuses to boot unless that image is pinned by a
 full sha256 digest (internal/config validateSourceMode, domain.IsDigestPinned).
