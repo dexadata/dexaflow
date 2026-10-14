@@ -74,6 +74,20 @@ pushed, and the control plane accepts it: that version then follows whatever the
 tag points at when a node pulls it. Use `deploy` when the registered artifact has
 to be pinned (see [CI/CD & deploy examples](/operate/cicd-deploy/)).
 
+An operator can make the control plane check this with
+`deploy.require_digest` (Helm `deploy.requireDigest`): `warn` registers a tag
+with a warning, and `enforce` refuses it, which today refuses the
+`compile --build --push` and `push` path:
+
+```text
+Error: server returned 400: {..."detail":"image \"ghcr.io/acme/etl:v1\" is not pinned by digest (<repository>@sha256:<64 hex>), and this server refuses it (deploy.require_digest=enforce). ..."}
+```
+
+**Fix:** register with `dexaflow deploy`, which pins the pushed image by
+digest, or set `image` in `dag.json` to `<repository>@sha256:<digest>` (sha256
+only) before `dexaflow push`. See
+[Require images pinned by digest](/operate/cicd-deploy/#require-images-pinned-by-digest).
+
 ### 3. Supported task types only
 
 `dexaflow compile` accepts a closed set of task types — `python` (`@task`/

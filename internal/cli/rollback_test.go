@@ -17,6 +17,8 @@ type versionsServer struct {
 	puts     []map[string]any
 	auth     string
 	putCode  int
+	// warnings is what the set-current answer warns about.
+	warnings []string
 }
 
 func (s *versionsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +46,11 @@ func (s *versionsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				to = v
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"dag_id": "etl", "changed": from["bundle_version"] != to["bundle_version"], "from": from, "to": to})
+		answer := map[string]any{"dag_id": "etl", "changed": from["bundle_version"] != to["bundle_version"], "from": from, "to": to}
+		if s.warnings != nil {
+			answer["warnings"] = s.warnings
+		}
+		_ = json.NewEncoder(w).Encode(answer)
 	default:
 		http.NotFound(w, r)
 	}
@@ -171,5 +177,25 @@ func TestRollbackAlreadyCurrentSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(out, "already runs v1.2.0-ccc") || strings.Contains(out, "changed from") {
 		t.Errorf("output %q does not say the version is already current", out)
+	}
+}
+
+// The server's warnings on a rollback (an image not pinned by digest under
+// deploy.require_digest=warn, #1703) are printed on stderr; the rollback
+// itself succeeds.
+func TestRollbackPrintsTheServerWarnings(t *testing.T) {
+	fake := threeVersions()
+	fake.warnings = []string{"this version's image \"etl:v1\" is not pinned by digest"}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	out, errOut, err := run(t, "rollback", "etl", "--server", srv.URL, "--token", "tok")
+	if err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if !strings.Contains(errOut, "warning: the server: this version's image \"etl:v1\" is not pinned by digest\n") {
+		t.Errorf("stderr = %q, want the server's warning", errOut)
+	}
+	if !strings.Contains(out, "current version changed") {
+		t.Errorf("stdout = %q, want the change", out)
 	}
 }

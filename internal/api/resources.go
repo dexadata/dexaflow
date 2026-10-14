@@ -1426,7 +1426,12 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		}
 	}
 	if deps.Versions != nil {
-		admission := specAdmission{unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage, deps.ExecutionPolicy}
+		admission := specAdmission{
+			unit:            unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger},
+			digest:          digestGate{deps.RequireDigest, deps.UnpinnedImages, deps.Logger},
+			sourceModeImage: deps.SourceModeImage,
+			policy:          deps.ExecutionPolicy,
+		}
 		execution := executionReporter{policy: deps.WarmPolicy, pools: deps.WarmPools, absent: deps.WarmWorkersAbsent}
 		r.POST("/api/v2/dags/:dag_id/versions", RequireDeployPermission(deps.DeployViaIssuer), registerVersionHandler(deps.Versions, admission, execution))
 		// The dry run of a register (#1705): the same permission and scope,
