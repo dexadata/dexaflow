@@ -672,7 +672,7 @@ func (d *deployRun) readStateBefore(ctx context.Context) {
 // and registers.
 func (d *deployRun) run() error {
 	origin := d.o.labelOrigin()
-	output := filepath.Join(d.dir, "dag.json")
+	output := deployOutput(d.dir)
 	var built build.Result
 	co := compileOptions{
 		cluster:    d.cluster,
@@ -688,7 +688,7 @@ func (d *deployRun) run() error {
 	}
 	// Resolved here rather than inside runCompile because the digest lookup
 	// below needs the same reference; runCompile then takes both as given.
-	image, ierr := resolveVersionAndImage(d.cmd, d.dir, &co, d.cfg)
+	image, ierr := d.labelAndImage(&co)
 	if ierr != nil {
 		return ierr
 	}
@@ -738,6 +738,34 @@ func (d *deployRun) run() error {
 	}
 	surfaceConnections(out, output)
 	return d.finish(ctx, res)
+}
+
+// labelAndImage fills co.dagVersion with the default content label
+// (deployContentLabel) when --dag-version was not given, and returns the
+// image reference (resolveVersionAndImage).
+func (d *deployRun) labelAndImage(co *compileOptions) (string, error) {
+	if co.dagVersion == "" {
+		label, err := deployContentLabel(d.cmd, d.dir, d.cfg, d.o.dockerfile)
+		if err != nil {
+			return "", err
+		}
+		co.dagVersion = label
+	}
+	return resolveVersionAndImage(d.cmd, d.dir, co, d.cfg)
+}
+
+// deployOutput is where a deploy of the project at dir compiles its dag.json.
+func deployOutput(dir string) string {
+	return filepath.Join(dir, "dag.json")
+}
+
+// deployContentLabel is the default content label a deploy of the project at
+// dir registers: cfg is its config settled for the server deployed to
+// (settleDeployConfig, the cluster's deploy defaults included), and
+// dockerfile is the --dockerfile flag. `dexaflow status` computes the local
+// label with it too, so status and deploy cannot disagree on a DAG's label.
+func deployContentLabel(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, dockerfile string) (string, error) {
+	return contentLabel(cmd, dir, compileOptions{output: deployOutput(dir), dockerfile: dockerfile}, cfg)
 }
 
 // checkServer is the first step of the preflight (#1705): the control plane

@@ -66,6 +66,7 @@ of it (`chown`) or trust its folder:
 | `dexaflow deploy <dag_id>` | The workspace root; without a workspace file, the whole git repository around the current folder (so two projects anywhere in it with the same `dag_id`, test fixtures for example, make the lookup fail: add a workspace file or pass the project's path); else the current folder when it is a DAG project; else the Lite workspace (`workspace:` in the config file, or `~/dexaflow`) |
 | `dexaflow deploy --all` | The workspace root; without a workspace file, the current folder when it is a DAG project (a workspace of one). Inside a git repository with no workspace file it refuses rather than deploy every DAG of the repository; outside one it keeps the Lite workspace |
 | `dexaflow deploy` with no argument | The current folder when it is a project; at the workspace root itself, every DAG of the workspace. Any other folder is an error that suggests `deploy <dag_id>` or `deploy --all` |
+| `dexaflow status` | As `deploy`: with no argument, the current folder when it is a project, else the DAGs `deploy --all` reads; a `dag_id` argument is looked up as for `deploy <dag_id>` |
 | `dexaflow lite` with no argument | The workspace root; `~/dexaflow` (or the config's `workspace:`) only when no workspace file is found |
 
 Deploy prints the workspace it read and why (`workspace: <root> (from
@@ -93,7 +94,7 @@ dexaflow target use prod --workspace-default   # change default_target for every
 dexaflow target remove prod --logout # also forget the saved token
 ```
 
-Every server command (`deploy`, `push`, `dags`, `runs`, `connections`,
+Every server command (`deploy`, `status`, `push`, `dags`, `runs`, `connections`,
 `variables`, `admin`, `auth`) accepts the global `--target <name>` flag. The
 control plane a command calls is, in order:
 
@@ -219,6 +220,120 @@ With no server configured it uses the local sources alone. `compile` and a
 platforms or a base image their label can differ from the deploy's. A deploy
 sent with another `--server` or `--target` than the one `build --push` used
 can resolve other cluster defaults, and then looks up another label.
+
+## Status of the workspace on a target
+
+`dexaflow status` says, for each DAG of the workspace, what the target runs
+and whether your working tree is what it runs. It only reads: it never
+builds, pushes or registers anything, and never asks a question, so it is
+safe in CI and in a pre-merge check.
+
+```bash
+dexaflow status                          # every DAG, on the target in use
+dexaflow status orders_report            # one DAG, by dag_id or project folder
+dexaflow status --target prod            # another target
+dexaflow status --all-targets            # every target of the workspace
+dexaflow status --output json            # one JSON document on stdout
+```
+
+```
+workspace: /work/acme-dags
+
+target dev: https://flow-dev.acme.dev (target dev, from default_target in /work/acme-dags/dexaflow.workspace.yaml)
+  DAG            STATUS                                    CURRENT VERSION           REGISTERED        PAUSED  LAST RUN
+  billing        drift: local changes not deployed         v1.4.0-9f2c41a0be11 (#7)  2026-10-12 09:15  no      scheduled__2026-10-14 success 2026-10-14 00:00
+  orders_report  in sync                                   v1.4.0-03ccb2f38b60 (#3)  2026-10-10 14:02  yes     none
+  refunds        behind: local equals v1.3.0-5af5b6c549c7  v1.4.0-27226eab1280 (#5)  2026-10-11 08:40  no      manual__1760000000 failed 2026-10-11 09:01
+  shipping       not deployed                              -                         -                 -       -
+
+1 in sync, 1 behind, 1 drift, 1 not deployed
+```
+
+The DAGs are the ones `deploy` would read: with no argument, the project in
+the current folder, else every DAG of the workspace (as `deploy --all`); each
+argument is a project folder or a `dag_id`, looked up as `deploy <dag_id>`
+does. For each DAG it reports:
+
+| Column | What it is |
+|---|---|
+| STATUS | `in sync`: the local content label is the version new runs use, so a deploy would build and register nothing. `behind: local equals <label>`: the local content is an older registered version; `dexaflow rollback <dag_id> --to <label>` makes it current again. `drift: local changes not deployed`: the local content is no registered version; a deploy registers it. `not deployed`: the server does not know the DAG (or holds no current version of it). |
+| CURRENT VERSION | The label and number of the version new runs use. |
+| REGISTERED | When that version was registered. |
+| PAUSED | The DAG's `is_paused`. |
+| LAST RUN | The newest run: its id, state and start time, or `none`. |
+
+The local label is computed by the same code as `dexaflow deploy`, with the
+target's, the workspace's and the cluster's deploy defaults, so `status` and
+`deploy` cannot disagree. Two consequences follow from what the label
+covers. A DAG deployed with an explicit `--dag-version` shows as drift,
+since only a content label says anything about content. And the label starts
+with `git describe` of the project, so a new commit moves it even when the
+DAG's files did not change, exactly as it does for a deploy. A deploy given
+`--registry`, `--platform` or `--dockerfile` labels with them; pass the same
+flags to `status` (or set `DEXAFLOW_REGISTRY`), since they are part of the
+label.
+
+`--all-targets` repeats the report for every target of the workspace file,
+each with its own server and the token saved for that server. A target that
+cannot be reached, or refuses the token, gets an error line and the others
+are still reported. It refuses `--server`, `--target`, `--token` and
+`DEXAFLOW_TOKEN`, which would point every target at one server or send one
+token to all of them.
+
+The reads are the Airflow-compatible `GET /api/v2/dags/{dag_id}`,
+`GET /api/v2/dags/{dag_id}/dagVersions` and
+`GET /api/v2/dags/{dag_id}/dagRuns`, plus `GET /api/v2/deployDefaults`. A DAG
+on the server that is not in the workspace is not listed.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Every DAG is in sync on every target reported. |
+| `1` | At least one DAG drifted, is behind or is not deployed, and everything could be read. |
+| `2` | A target or a DAG could not be read (unreachable server, refused token, a read the server answered with an error, a project whose label cannot be computed), or the command was used wrongly. |
+
+In CI, `dexaflow status --target prod` fails the job when the branch is not
+what production runs.
+
+### JSON output
+
+`--output json` prints one document on stdout. Its fields only ever grow:
+
+```json
+{
+  "workspace": "/work/acme-dags",
+  "targets": [
+    {
+      "target": "dev",
+      "server": "https://flow-dev.acme.dev",
+      "source": "target dev, from default_target in /work/acme-dags/dexaflow.workspace.yaml",
+      "dags": [
+        {
+          "dag_id": "refunds",
+          "path": "/work/acme-dags/dags/refunds",
+          "local_version": "v1.3.0-5af5b6c549c7",
+          "state": "behind",
+          "current_version": {"label": "v1.4.0-27226eab1280", "version_number": 5, "created_at": "2026-10-11T08:40:00Z"},
+          "matched_version": {"label": "v1.3.0-5af5b6c549c7", "version_number": 4, "created_at": "2026-10-01T10:00:00Z"},
+          "is_paused": false,
+          "last_run": {"run_id": "manual__1760000000", "state": "failed", "start_date": "2026-10-11T09:01:00Z"}
+        }
+      ]
+    }
+  ],
+  "summary": {"in_sync": 0, "behind": 1, "drift": 0, "not_deployed": 0, "errors": 0},
+  "exit_code": 1
+}
+```
+
+`state` is one of `in_sync`, `behind`, `drift`, `not_deployed` and `error`
+(with an `error` field). `current_version`, `is_paused` and `last_run` are
+`null` when the server has none; `matched_version` is present only for
+`behind`. A target that could not be read has an `error` field and an empty
+`dags` list. `workspace` is empty for DAGs named by folder outside a
+workspace, and `target` is empty when no target chose the server (`--server`,
+`DEXAFLOW_SERVER_URL`, `server_url`).
 
 ## The workspace file
 

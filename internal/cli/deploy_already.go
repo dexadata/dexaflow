@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -59,13 +60,8 @@ func checkDeployed(ctx context.Context, warn io.Writer, serverURL, token, dagID,
 	if details.BundleVersion != nil {
 		current = *details.BundleVersion
 	}
-	if current == "" {
-		// No current version to compare with: nothing says this content is
-		// stale, so build as for an unknown label.
-		return deployUnknown, "", nil
-	}
-	if current == label {
-		return deployCurrent, current, nil
+	if state := classifyLabel(label, current, nil); state != deployUnknown || current == "" {
+		return state, current, nil
 	}
 	var versions struct {
 		DagVersions []struct {
@@ -75,12 +71,32 @@ func checkDeployed(ctx context.Context, warn io.Writer, serverURL, token, dagID,
 	if ok, err := getControlPlaneJSON(ctx, warn, base+"/dagVersions", token, label, &versions); !ok || err != nil {
 		return deployUnknown, current, err
 	}
+	registered := make([]string, 0, len(versions.DagVersions))
 	for _, v := range versions.DagVersions {
-		if v.BundleVersion != nil && *v.BundleVersion == label {
-			return deployStale, current, nil
+		if v.BundleVersion != nil {
+			registered = append(registered, *v.BundleVersion)
 		}
 	}
-	return deployUnknown, current, nil
+	return classifyLabel(label, current, registered), current, nil
+}
+
+// classifyLabel says what a DAG whose current version is labeled current
+// (empty when it has none) and whose registered labels are registered holds
+// for a content label: deployCurrent when it is the current version,
+// deployStale when it is another registered version, deployUnknown
+// otherwise, and always deployUnknown with no current version, since nothing
+// then says this content is stale. deploy and status both decide with it, so
+// what status calls in sync is what deploy skips.
+func classifyLabel(label, current string, registered []string) deployedState {
+	switch {
+	case current == "":
+		return deployUnknown
+	case current == label:
+		return deployCurrent
+	case slices.Contains(registered, label):
+		return deployStale
+	}
+	return deployUnknown
 }
 
 // getControlPlaneJSON GETs u and decodes a 2xx body into out. It reports
