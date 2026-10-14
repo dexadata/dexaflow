@@ -1,0 +1,23 @@
+kind: Added
+body: |-
+  **`dexaflow ci init <github|gitlab|cloudbuild|generic>` writes a deploy
+  pipeline for the workspace.** It writes `.github/workflows/dexaflow-deploy.yaml`,
+  `.gitlab-ci.yml` or `cloudbuild.yaml` at the top of the repository, and
+  `ci/dexaflow-deploy.sh`, which every pipeline runs (`generic` writes the
+  script alone). On each push to `--branch` (`main` by default) the pipeline
+  installs this CLI's release (or `--cli-version`) with `install.sh`, and uv
+  so dependency images are built from wheels, logs in to the workspace's
+  registries the way the CI system does natively, and runs
+  `dexaflow deploy --all --changed-since <before> --yes --output json`, or
+  every DAG when there is no previous commit. The control plane comes from
+  `DEXAFLOW_SERVER_URL`, or from the workspace target (`--target`, else
+  `default_target`), and the token from the CI secret `DEXAFLOW_TOKEN`, a
+  deploy token from `dexaflow auth create-token --scope deploy`. A Markdown
+  summary of the deploy goes to the GitHub job summary, to GitLab artifacts,
+  or to the log. Docker is used only when a project needs a real build and
+  no remote builder is configured: the GitLab job then runs Docker in Docker,
+  and says which projects need it. An existing file is never overwritten
+  without `--force`; `--stdout` prints the files instead. The CI recipes of
+  the CI/CD page are now the files this command writes, checked by a test.
+  (#1708, #1709)
+time: 2026-10-14T23:00:00.000000000-03:00

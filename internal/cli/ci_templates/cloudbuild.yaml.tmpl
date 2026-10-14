@@ -1,0 +1,58 @@
+# Deploys the DAGs of this workspace to Dexaflow on Cloud Build.
+# Written by `dexaflow ci init cloudbuild` for dexaflow [[.CLIVersion]]; the
+# deploy itself is in [[.ScriptPath]].
+#
+# Set up once:
+#   - a Secret Manager secret dexaflow-deploy-token holding a deploy token,
+#     created with `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+#     readable by the build's service account;
+[[- if .Target]]
+#   - the control plane is target [[.Target]] of dexaflow.workspace.yaml;
+[[- else]]
+#   - the substitution _DEXAFLOW_SERVER_URL: the control plane URL;
+[[- end]]
+#   - a trigger on pushes to [[.Branch]], for example
+#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^[[.Branch]]$' --build-config=cloudbuild.yaml
+# The step signs in to Artifact Registry with the build's service account
+# (the gcloud session the CLI reads), which needs roles/artifactregistry.writer.
+[[- if .NonGoogle]]
+# The build's service account cannot push to [[range $i, $r := .NonGoogle]][[if $i]], [[end]][[$r.Host]][[end]]:
+# write a docker login for it into $HOME/.docker/config.json before the deploy.
+[[- end]]
+# A source uploaded by `gcloud builds submit` has no .git, so every DAG is
+# deployed; DAGs whose content is already the current version register
+# nothing. Pass _DEXAFLOW_BASE_REF to deploy only what changed since a commit
+# when the build has the history.
+[[- if .Daemon]]
+#
+# Docker builds the images of these projects, since no remote builder is
+# configured (build.remote_builder):
+[[- range .Daemon]]
+#   - [[.]]
+[[- end]]
+[[- end]]
+steps:
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates[[if .Daemon]] docker.io[[end]] >/dev/null && sh [[.ScriptPath]]
+    secretEnv: [DEXAFLOW_TOKEN]
+    env:
+[[- if not .Target]]
+      - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}
+[[- end]]
+      - DEXAFLOW_BASE_REF=${_DEXAFLOW_BASE_REF}
+      - PIP_BREAK_SYSTEM_PACKAGES=1
+substitutions:
+[[- if not .Target]]
+  _DEXAFLOW_SERVER_URL: https://dexaflow.example.com
+[[- end]]
+  _DEXAFLOW_BASE_REF: ""
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/dexaflow-deploy-token/versions/latest
+      env: DEXAFLOW_TOKEN
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,43 @@
+# Deploys the DAGs a push to main changed to Dexaflow.
+# Written by `dexaflow ci init gitlab` for dexaflow v0.6.0; the deploy
+# itself is in ci/dexaflow-deploy.sh. To add it to an existing .gitlab-ci.yml, copy
+# the dexaflow-deploy job into that file by hand.
+#
+# Set up once, in Settings, CI/CD, Variables:
+#   - DEXAFLOW_SERVER_URL: the control plane URL;
+#   - DEXAFLOW_TOKEN, masked and protected: a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+# The job pushes to the project's container registry with the job token
+# ($CI_REGISTRY_USER and $CI_REGISTRY_PASSWORD).
+#
+# This job runs Docker in Docker, which needs a runner with privileged = true,
+# because a project needs a real image build and no remote builder is
+# configured (build.remote_builder):
+#   - orders: system_packages need a real build
+dexaflow-deploy:
+  image: docker:27
+  services: [docker:27-dind]
+  resource_group: dexaflow-deploy
+  variables:
+    GIT_DEPTH: "0" # --changed-since and the version label need the history
+    DEXAFLOW_BASE_REF: $CI_COMMIT_BEFORE_SHA
+    DEXAFLOW_SUMMARY_FILE: $CI_PROJECT_DIR/dexaflow-deploy.md
+    DEXAFLOW_REPORT_FILE: $CI_PROJECT_DIR/dexaflow-deploy.json
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
+  before_script:
+    - apk add --no-cache python3 git curl
+  script:
+    - |
+      mkdir -p "$HOME/.docker"
+      b64() { printf '%s:%s' "$1" "$2" | base64 | tr -d '\n'; }
+      printf '{"auths":{"%s":{"auth":"%s"}}}\n' \
+        "$CI_REGISTRY" "$(b64 "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD")" \
+        >"$HOME/.docker/config.json"
+    - sh ci/dexaflow-deploy.sh
+  artifacts:
+    when: always
+    paths: [dexaflow-deploy.md, dexaflow-deploy.json]
+    expire_in: 30 days

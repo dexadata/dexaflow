@@ -1,0 +1,50 @@
+# Deploys the DAGs a push to main changed to Dexaflow.
+# Written by `dexaflow ci init github` for dexaflow v0.6.0; the deploy
+# itself is in ci/dexaflow-deploy.sh.
+#
+# Set up once, in the repository settings (Secrets and variables, Actions):
+#   - the variable DEXAFLOW_SERVER_URL: the control plane URL;
+#   - the secret DEXAFLOW_TOKEN: a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+name: Deploy DAGs to Dexaflow
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+concurrency:
+  group: dexaflow-deploy
+  cancel-in-progress: false
+permissions:
+  contents: read
+  packages: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEXAFLOW_SERVER_URL: ${{ vars.DEXAFLOW_SERVER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # --changed-since and the version label need the history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Installs the pinned CLI. This is the one step to replace with the
+      # setup-dexaflow action once it is published.
+      - name: Install dexaflow
+        run: sh ci/dexaflow-deploy.sh install
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The CLI picks the builder: an image already in the registry, the DAG
+      # code as a layer on the dependency image, dependencies from wheels with
+      # uv, the remote builder when one is configured, and the runner's Docker
+      # only when none of these applies.
+      - name: Deploy the DAGs this push changed
+        env:
+          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}
+          DEXAFLOW_BASE_REF: ${{ github.event.before }}
+        run: sh ci/dexaflow-deploy.sh

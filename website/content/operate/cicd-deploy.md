@@ -86,9 +86,12 @@ triggers the pipeline, no one builds by hand. Each DAG is just **two files**, no
 Dockerfile and no `requirements.txt`:
 
 ```text
-my-dags/                      # your Git repo
+my-dags/                      # your Git repo, a workspace
+├── dexaflow.workspace.yaml   # targets and shared defaults (registry, ...)
 ├── .github/workflows/
-│   └── deploy-dag.yml        # the CI below (the recommended path)
+│   └── dexaflow-deploy.yaml  # the pipeline `dexaflow ci init github` writes
+├── ci/
+│   └── dexaflow-deploy.sh    # the deploy step every generated pipeline runs
 └── dags/
     ├── my_pipeline/
     │   ├── dag.py            # the DAG (TaskFlow / operators)
@@ -115,11 +118,15 @@ and names the image after the `dag_id` unless `registry.image_name` says
 otherwise; it has no `--image` flag. The only image Dexaflow owns is the base
 your DAG layers on.
 
-**The mental model:** a push that touches `dags/my_pipeline/**` triggers CI for
-*that* DAG only (the `paths:` filter), which compiles → builds (from yaml) →
-pushes the image to your registry → registers `dag.json`. The control plane runs
-the new version on the next trigger. One DAG per pipeline keeps blast radius
-small: a broken `another_pipeline` never blocks `my_pipeline`.
+**The mental model:** a push to `main` runs one pipeline, which deploys only the
+DAG projects that push changed (`deploy --all --changed-since <before>`, see
+[Deploying only what changed](#deploying-only-what-changed)): each one is
+compiled, built from its yaml, pushed to your registry and registered. The
+control plane runs the new version on the next trigger. The projects deploy one
+after the other, and a broken `another_pipeline` does not stop `my_pipeline`
+from deploying; the job still fails, naming the DAG that did not deploy.
+[`dexaflow ci init`](#writing-the-pipeline-dexaflow-ci-init) writes that
+pipeline for you.
 
 The first registration of a DAG leaves it **paused**, as in Airflow: its
 schedule creates no run until someone unpauses it (UI switch, or
@@ -387,44 +394,12 @@ skips those projects before any of that. Use it in the pipeline of a large
 repository, on every push; use `--all` alone when the inputs git does not see
 changed (above), or to check that every project is deployed.
 
-A GitHub Actions job that deploys the projects a push to `main` changed:
-
-```yaml title=".github/workflows/deploy-changed.yml"
-name: Deploy changed DAGs
-on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions: { contents: read, packages: write }
-    env:
-      DEXAFLOW_SERVER_URL: https://pro.example.com
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }          # the ref and git describe need history
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dexaflow
-        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
-      - name: Deploy the DAGs this push changed
-        env:
-          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
-          BEFORE: ${{ github.event.before }}
-        run: |
-          # A new branch has no previous commit (all zeros), and a force push
-          # can leave one the clone lacks: deploy everything then.
-          if [ "${BEFORE//0/}" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            dexaflow deploy --all --changed-since "$BEFORE" --yes
-          else
-            dexaflow deploy --all --yes
-          fi
-```
+The pipeline [`dexaflow ci init`](#writing-the-pipeline-dexaflow-ci-init)
+writes does this on every push to `main`: it passes the commit the branch was
+on before the push (`github.event.before` on GitHub, `$CI_COMMIT_BEFORE_SHA` on
+GitLab) to `--changed-since`, and deploys every DAG when that commit is all
+zeros (a new branch) or missing from the clone (after a force push). The
+generated files are under [Examples](#examples-what-dexaflow-ci-init-writes).
 
 `github.event.before` is the commit `main` was on before the push, so a push of
 several commits deploys what all of them changed.
@@ -436,16 +411,6 @@ failure, or compare with the last commit that deployed: move a ref after each
 successful deploy (for example `git push -f origin HEAD:refs/tags/deployed-prod`
 in a last step) and pass `--changed-since deployed-prod`, with a `concurrency:`
 group on the job so two runs never move it out of order.
-
-For a pull request, `--plan` says what merging would deploy. Pass the base
-branch through `env:` rather than inline in `run:`:
-
-```yaml
-      - name: What would this pull request deploy
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: dexaflow deploy --all --changed-since "origin/$BASE_REF" --plan
-```
 
 ## Rolling back
 
@@ -1019,8 +984,9 @@ The recommended path on each runner type:
 | Runner | Recipe |
 |---|---|
 | **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing dexaflow. Cached automatically. |
-| **GitLab CI** | Install `python3` in the job image (`apk add python3` on `docker:27`), or use an image that ships both Python and the Docker CLI. |
-| **Cloud Build / CodeBuild** | Run the step on a `python:3.12-slim` image and install the Docker CLI there (the recipe below). `gcr.io/cloud-builders/docker` is Ubuntu 20.04, whose `python3` is 3.8. |
+| **GitLab CI** | Run the job on `python:3.12-slim` (the generated job). A job that needs Docker in Docker runs on `docker:27` and installs `python3` with `apk add python3`. |
+| **Cloud Build** | Run the step on an image with Python 3.11 or later: the generated step installs Debian's `python3` on `gcr.io/google.com/cloudsdktool/cloud-sdk:slim`, which also has the gcloud session the CLI reads for Artifact Registry. `gcr.io/cloud-builders/docker` is Ubuntu 20.04, whose `python3` is 3.8. |
+| **CodeBuild** | Select Python 3.11 or later under `runtime-versions` in the buildspec. |
 | **Self-hosted runners** | Pin Python via your image baseline (`apt install python3.12` or `pyenv`) and version-lock in your runner provisioning. |
 | **Generic Docker-in-Docker** | Base your build container on `python:3.12-slim` (gives you Python + a Debian userland for the `docker build` shell). |
 
@@ -1038,124 +1004,280 @@ datastore) and may download a managed Python, none of which a pipeline uses.
 Caching `~/.dexaflow/pysrc/` between runs is optional; the extraction takes a
 few seconds.
 
-## Examples
+## Writing the pipeline: `dexaflow ci init`
 
-Each recipe deploys `dags/my_pipeline`, whose `dexaflow.yaml` carries the
-`registry:` block (`url` + `image_name`). Replace `https://pro.example.com` with
-your control plane.
+`dexaflow ci init <system>` writes a working deploy pipeline for the workspace
+around the current folder, at the top of its git repository, where the CI
+system reads it:
+
+| System | Files written |
+|---|---|
+| `github` | `.github/workflows/dexaflow-deploy.yaml` and `ci/dexaflow-deploy.sh` |
+| `gitlab` | `.gitlab-ci.yml` and `ci/dexaflow-deploy.sh` |
+| `cloudbuild` | `cloudbuild.yaml` and `ci/dexaflow-deploy.sh` |
+| `generic` | `ci/dexaflow-deploy.sh` alone, to run from any other CI system |
+
+```bash
+dexaflow ci init github
+```
+
+```text
+wrote .github/workflows/dexaflow-deploy.yaml
+wrote ci/dexaflow-deploy.sh
+
+Next:
+  1. create a deploy token, and store it as the CI secret DEXAFLOW_TOKEN:
+       dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d
+  2. set DEXAFLOW_SERVER_URL in the CI system to the control plane URL
+  3. commit the files and push to main
+```
+
+Every pipeline runs `ci/dexaflow-deploy.sh`, which holds the deploy itself, so
+the logic is the same on every system. On each push to the branch (`--branch`,
+`main` by default) it:
+
+1. installs the CLI at the version that wrote it, with the release's
+   `install.sh` (pass `--cli-version vX.Y.Z` to pin another release; a CLI
+   built from source must). On GitHub this is the step named
+   `Install dexaflow`, the one step to replace with a `setup-dexaflow` action
+   once one is published;
+2. installs [uv](/operate/builders/#building-the-dependency-image-from-wheels)
+   when the runner has none, so dependency images are built from wheels
+   without a container daemon;
+3. reads the control plane from `DEXAFLOW_SERVER_URL`, or from the workspace's
+   target: with `--target <name>`, or a `default_target` in
+   `dexaflow.workspace.yaml`, the script exports `DEXAFLOW_TARGET` and the
+   pipeline needs no URL (a target of your own config file is not in the
+   repository, so it is not used). The deploy token comes from the CI secret
+   `DEXAFLOW_TOKEN` ([Credentials for the control plane](#credentials-for-the-control-plane));
+4. runs `dexaflow deploy --all --changed-since <before> --yes --output json`
+   with the commit the branch was on before the push, or
+   `dexaflow deploy --all --yes --output json` when there is none (a new
+   branch, a force push, a manual run, a source without `.git`);
+5. writes a summary of the JSON report: the job summary on GitHub
+   (`$GITHUB_STEP_SUMMARY`), the `dexaflow-deploy.md` and
+   `dexaflow-deploy.json` artifacts on GitLab, the build log elsewhere. Set
+   `DEXAFLOW_SUMMARY_FILE` and `DEXAFLOW_REPORT_FILE` (absolute paths) to put
+   them somewhere else. The job fails when a DAG fails to deploy.
+
+The registry login is the CI system's own: `GITHUB_TOKEN` for `ghcr.io`,
+workload identity for Artifact Registry and an IAM role for ECR on GitHub, the
+job token (`$CI_REGISTRY_USER`) on GitLab, and the build's service account on
+Cloud Build. Another registry gets a login from the secrets
+`DEXAFLOW_REGISTRY_USERNAME` and `DEXAFLOW_REGISTRY_PASSWORD`. The comments at
+the top of each file list what to set up. The registries are the ones the
+workspace's projects push to (`registry.url`, the target's `registry`, the
+workspace `defaults`); with none, the file says where to add your login.
+
+The CLI picks the [builder](/operate/builders/) at deploy time, as it does on
+a laptop, and Docker is the fallback. On GitHub the runner has Docker, so
+nothing changes in the workflow. On GitLab the job needs no daemon, and runs
+on `python:3.12-slim`, unless a project needs a real image build (its own
+`Dockerfile`, `system_packages`, a dependency that is not a requirement by
+name) and no [remote builder](/operate/builders/#building-on-cloud-build) is
+configured: then it runs Docker in Docker, and the file names the projects
+and why. On Cloud Build, the step installs Docker only in that case too.
+
+An existing file is never overwritten: the command names it and writes
+nothing. Pass `--force` to replace it, or `--stdout` to print the files
+instead of writing them. A `.gitlab-ci.yml` holds the project's other jobs,
+so merge the `dexaflow-deploy` job into it by hand. After upgrading the CLI,
+run `dexaflow ci init <system> --force` to pin the new version.
+
+## Examples: what `dexaflow ci init` writes
+
+These are the files `dexaflow ci init` writes for a workspace whose projects
+push to the registry each system logs in to natively (`ghcr.io` on GitHub,
+`registry.gitlab.com` on GitLab, Artifact Registry on Cloud Build), with
+`vX.Y.Z` in place of the CLI version. The test suite checks that they match
+the command's output.
 
 {{< tabpane text=true >}}
 {{% tab header="GitHub Actions" %}}
 
-```yaml title=".github/workflows/deploy-dag.yml"
-name: Deploy DAG
+<!-- ci-init: github -->
+```yaml title=".github/workflows/dexaflow-deploy.yaml"
+# Deploys the DAGs a push to main changed to Dexaflow.
+# Written by `dexaflow ci init github` for dexaflow vX.Y.Z; the deploy
+# itself is in ci/dexaflow-deploy.sh.
+#
+# Set up once, in the repository settings (Secrets and variables, Actions):
+#   - the variable DEXAFLOW_SERVER_URL: the control plane URL;
+#   - the secret DEXAFLOW_TOKEN: a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+name: Deploy DAGs to Dexaflow
 on:
   push:
-    branches: [main]
-    paths: ["dags/my_pipeline/**"]
+    branches: ["main"]
+  workflow_dispatch:
+concurrency:
+  group: dexaflow-deploy
+  cancel-in-progress: false
+permissions:
+  contents: read
+  packages: write
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions: { contents: read, packages: write }
     env:
-      DEXAFLOW_SERVER_URL: https://pro.example.com
+      DEXAFLOW_SERVER_URL: ${{ vars.DEXAFLOW_SERVER_URL }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }          # git describe needs history and tags
-      - uses: actions/setup-python@v5     # BYO Python, see #python-on-the-runner
-        with: { python-version: '3.12' }
-      - uses: docker/login-action@v3
+        with:
+          fetch-depth: 0 # --changed-since and the version label need the history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Installs the pinned CLI. This is the one step to replace with the
+      # setup-dexaflow action once it is published.
+      - name: Install dexaflow
+        run: sh ci/dexaflow-deploy.sh install
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dexaflow
-        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
-      - name: Deploy
+      # The CLI picks the builder: an image already in the registry, the DAG
+      # code as a layer on the dependency image, dependencies from wheels with
+      # uv, the remote builder when one is configured, and the runner's Docker
+      # only when none of these applies.
+      - name: Deploy the DAGs this push changed
         env:
-          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
-        run: dexaflow deploy dags/my_pipeline --yes
+          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}
+          DEXAFLOW_BASE_REF: ${{ github.event.before }}
+        run: sh ci/dexaflow-deploy.sh
 ```
 
 GHCR refuses image names with upper-case letters, so keep `registry.url` and
-`registry.image_name` lower case. If you build the name from
-`${{ github.repository }}` (for `compile --image`, say), lower-case it first:
-`IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/my_pipeline:${GITHUB_SHA}"`.
+`registry.image_name` lower case.
 
 Do not add `docker/setup-buildx-action` to this job. It makes a
 `docker-container` builder the default, whose builds stay in the builder's
 cache instead of the local image store; the CLI runs a plain `docker build`
-without `--load`, so the `docker push` that follows finds no image.
+without `--load` when it falls back to Docker, so the `docker push` that
+follows finds no image.
+
+For a pull request, `--plan` says what merging would deploy. Pass the base
+branch through `env:` rather than inline in `run:`:
+
+```yaml
+      - name: What would this pull request deploy
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: dexaflow deploy --all --changed-since "origin/$BASE_REF" --plan
+```
 
 {{% /tab %}}
 {{% tab header="GitLab CI" %}}
 
+<!-- ci-init: gitlab -->
 ```yaml title=".gitlab-ci.yml"
-deploy_dag:
-  image: docker:27
-  services: [docker:27-dind]
+# Deploys the DAGs a push to main changed to Dexaflow.
+# Written by `dexaflow ci init gitlab` for dexaflow vX.Y.Z; the deploy
+# itself is in ci/dexaflow-deploy.sh. To add it to an existing .gitlab-ci.yml, copy
+# the dexaflow-deploy job into that file by hand.
+#
+# Set up once, in Settings, CI/CD, Variables:
+#   - DEXAFLOW_SERVER_URL: the control plane URL;
+#   - DEXAFLOW_TOKEN, masked and protected: a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+# The job pushes to the project's container registry with the job token
+# ($CI_REGISTRY_USER and $CI_REGISTRY_PASSWORD).
+#
+# No container daemon is needed: the CLI pushes the DAG code as a layer on the
+# dependency image, and builds that image from wheels with uv.
+dexaflow-deploy:
+  image: python:3.12-slim
+  resource_group: dexaflow-deploy
   variables:
-    # Talk to the dind service over TLS; the runner shares /certs/client.
-    DOCKER_HOST: tcp://docker:2376
-    DOCKER_TLS_CERTDIR: "/certs"
-    DEXAFLOW_SERVER_URL: https://pro.example.com
-  before_script:
-    - apk add --no-cache python3 git   # BYO Python, see #python-on-the-runner
+    GIT_DEPTH: "0" # --changed-since and the version label need the history
+    DEXAFLOW_BASE_REF: $CI_COMMIT_BEFORE_SHA
+    DEXAFLOW_SUMMARY_FILE: $CI_PROJECT_DIR/dexaflow-deploy.md
+    DEXAFLOW_REPORT_FILE: $CI_PROJECT_DIR/dexaflow-deploy.json
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-      changes: ["dags/my_pipeline/**/*"]
+    - if: $CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates >/dev/null
   script:
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - wget -qO- https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
-    - dexaflow deploy dags/my_pipeline --yes   # DEXAFLOW_TOKEN is a masked CI/CD variable
+    - |
+      mkdir -p "$HOME/.docker"
+      b64() { printf '%s:%s' "$1" "$2" | base64 | tr -d '\n'; }
+      printf '{"auths":{"%s":{"auth":"%s"}}}\n' \
+        "$CI_REGISTRY" "$(b64 "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD")" \
+        >"$HOME/.docker/config.json"
+    - sh ci/dexaflow-deploy.sh
+  artifacts:
+    when: always
+    paths: [dexaflow-deploy.md, dexaflow-deploy.json]
+    expire_in: 30 days
 ```
 
-`docker:dind` runs only on a runner configured with `privileged = true` (and,
-for the TLS variables above, `volumes = ["/certs/client"]`) in its
-`config.toml`; GitLab's shared SaaS runners are. `DEXAFLOW_TOKEN` is a
-masked CI/CD variable holding the deploy token. `registry.url` in `dexaflow.yaml` is your project's
-`$CI_REGISTRY_IMAGE`, written out (for example
+When a project needs a real image build and no remote builder is configured,
+the job runs Docker in Docker instead: `image: docker:27`,
+`services: [docker:27-dind]`, the TLS variables (`DOCKER_HOST`,
+`DOCKER_TLS_CERTDIR`) and `apk add --no-cache python3 git curl`. `docker:dind`
+runs only on a runner configured with `privileged = true` (and, for the TLS
+variables, `volumes = ["/certs/client"]`) in its `config.toml`; GitLab's shared
+SaaS runners are. `registry.url` in `dexaflow.yaml` or the workspace defaults
+is your project's `$CI_REGISTRY_IMAGE`, written out (for example
 `registry.gitlab.com/your-group/my-dags`).
 
 {{% /tab %}}
 {{% tab header="Google Cloud Build" %}}
 
 Build, push and register on Cloud Build; the DAG image runs as task pods on your
-cluster. The build's service account is already authorized to push to Artifact
-Registry in the same project, so `registry.url` in `dexaflow.yaml` is
+cluster. The build's service account pushes to Artifact Registry in the same
+project through the gcloud session the CLI reads, so `registry.url` is
 `us-central1-docker.pkg.dev/<project>/dags`. The deploy token lives in Secret
 Manager as `dexaflow-deploy-token` and reaches the step as `DEXAFLOW_TOKEN`.
 
-`gcloud builds submit` uploads the source without `.git`, so `git describe`
-cannot name the version and every build would get the label `dev`; a second
-deploy with changed content is then refused with `409`. The recipe passes the
-build id as `--dag-version` to keep each build's label unique.
-
+<!-- ci-init: cloudbuild -->
 ```yaml title="cloudbuild.yaml"
+# Deploys the DAGs of this workspace to Dexaflow on Cloud Build.
+# Written by `dexaflow ci init cloudbuild` for dexaflow vX.Y.Z; the
+# deploy itself is in ci/dexaflow-deploy.sh.
+#
+# Set up once:
+#   - a Secret Manager secret dexaflow-deploy-token holding a deploy token,
+#     created with `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+#     readable by the build's service account;
+#   - the substitution _DEXAFLOW_SERVER_URL: the control plane URL;
+#   - a trigger on pushes to main, for example
+#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^main$' --build-config=cloudbuild.yaml
+# The step signs in to Artifact Registry with the build's service account
+# (the gcloud session the CLI reads), which needs roles/artifactregistry.writer.
+# A source uploaded by `gcloud builds submit` has no .git, so every DAG is
+# deployed; DAGs whose content is already the current version register
+# nothing. Pass _DEXAFLOW_BASE_REF to deploy only what changed since a commit
+# when the build has the history.
 steps:
-  - name: python:3.12-slim
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
-    secretEnv: ["DEXAFLOW_TOKEN"]
-    env:
-      - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}
     args:
       - -c
-      - |
-        set -euo pipefail
-        # Python 3.12 from the step image; add the Docker CLI and curl. Cloud
-        # Build mounts the Docker socket and its registry credentials into
-        # every step, so docker build/push work from this image too.
-        apt-get update -qq && apt-get install -y --no-install-recommends docker.io curl ca-certificates git
-        curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/bin sh
-        dexaflow deploy dags/my_pipeline --yes --dag-version "$BUILD_ID"
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates >/dev/null && sh ci/dexaflow-deploy.sh
+    secretEnv: [DEXAFLOW_TOKEN]
+    env:
+      - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}
+      - DEXAFLOW_BASE_REF=${_DEXAFLOW_BASE_REF}
+      - PIP_BREAK_SYSTEM_PACKAGES=1
 substitutions:
-  _DEXAFLOW_SERVER_URL: https://pro.example.com
+  _DEXAFLOW_SERVER_URL: https://dexaflow.example.com
+  _DEXAFLOW_BASE_REF: ""
 availableSecrets:
   secretManager:
     - versionName: projects/$PROJECT_ID/secrets/dexaflow-deploy-token/versions/latest
       env: DEXAFLOW_TOKEN
-options: { logging: CLOUD_LOGGING_ONLY }
+options:
+  logging: CLOUD_LOGGING_ONLY
 ```
+
+`gcloud builds submit` uploads the source without `.git`, so the version label
+starts from `dev` and the step deploys every DAG. The label still carries the
+hash of each DAG's content, so a DAG that did not change registers nothing,
+and one that changed gets a new label.
 
 {{% alert title="Restricted networks (Cloud Shell): run the build inside Cloud Build" color="success" %}}
 When the local Docker daemon can't reach Google's IPs (in Cloud Shell, for
@@ -1175,15 +1297,190 @@ yaml-driven path has none for it to build.)
 {{% /alert %}}
 
 {{% /tab %}}
-{{% tab header="Generic / Makefile" %}}
+{{% tab header="Generic / any CI" %}}
 
-Any runner with Docker, **Python 3.11+**, and the `dexaflow` CLI
-(see [Python on the runner](#python-on-the-runner)):
+`dexaflow ci init generic` writes the script alone. Run it from any CI system
+with **Python 3.11+** and git on the runner (see
+[Python on the runner](#python-on-the-runner)), after the registry login, with
+`DEXAFLOW_SERVER_URL`, `DEXAFLOW_TOKEN` and `DEXAFLOW_BASE_REF` set:
 
 ```bash
 export DEXAFLOW_SERVER_URL=https://pro.example.com
 export DEXAFLOW_TOKEN="$DEPLOY_TOKEN_FROM_YOUR_SECRET_STORE"   # a deploy token
-dexaflow deploy dags/my_pipeline --yes
+export DEXAFLOW_BASE_REF="$COMMIT_BEFORE_THIS_PUSH"             # empty deploys every DAG
+sh ci/dexaflow-deploy.sh
+```
+
+<!-- ci-init: generic -->
+```sh title="ci/dexaflow-deploy.sh"
+#!/bin/sh
+# Deploys the DAGs of this workspace that changed to Dexaflow.
+# Written by `dexaflow ci init` for dexaflow vX.Y.Z; write it again with
+# `dexaflow ci init <system> --force` after upgrading the CLI.
+#
+# Usage: sh ci/dexaflow-deploy.sh [deploy|install]
+#   deploy   (the default) install the CLI and uv when missing, then deploy
+#   install  only install the pinned CLI
+#
+# Environment:
+#   DEXAFLOW_SERVER_URL    the control plane URL (required)
+#   DEXAFLOW_TOKEN         a deploy token (required), created once with
+#                          `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+#   DEXAFLOW_BASE_REF      the commit the branch was on before this push: only
+#                          the DAGs changed since it are deployed. Empty, all
+#                          zeros (a new branch) or missing from the clone
+#                          deploys every DAG.
+#   DEXAFLOW_SUMMARY_FILE  a file to append a Markdown summary to (default:
+#                          $GITHUB_STEP_SUMMARY, else the log)
+#   DEXAFLOW_REPORT_FILE   a file to copy the `dexaflow deploy --output json`
+#                          report to (optional)
+set -eu
+
+cli_version="${DEXAFLOW_CLI_VERSION:-vX.Y.Z}"
+uv_version="0.12.24"
+workspace_dir="."
+
+die() {
+	echo "error: $*" >&2
+	exit 1
+}
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# install_dexaflow installs the pinned CLI with the release's install.sh,
+# unless that version is already on PATH.
+install_dexaflow() {
+	if command -v dexaflow >/dev/null 2>&1 &&
+		[ "$(dexaflow version 2>/dev/null | awk '{print $2}')" = "${cli_version#v}" ]; then
+		return 0
+	fi
+	dir="${DEXAFLOW_INSTALL_DIR:-$HOME/.dexaflow/bin}"
+	url="https://raw.githubusercontent.com/dexadata/dexaflow/$cli_version/install.sh"
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL "$url" -o "$tmp/install.sh"
+	else
+		wget -qO "$tmp/install.sh" "$url"
+	fi
+	DEXAFLOW_VERSION="$cli_version" DEXAFLOW_NO_SETUP=1 DEXAFLOW_NO_PATH=1 \
+		DEXAFLOW_INSTALL_DIR="$dir" sh "$tmp/install.sh"
+	PATH="$dir:$PATH"
+	export PATH
+	if [ -n "${GITHUB_PATH:-}" ]; then
+		echo "$dir" >>"$GITHUB_PATH"
+	fi
+}
+
+# install_uv puts uv on PATH, so dependency images are built from wheels
+# without a container daemon. Without it the remote builder or the local
+# daemon builds them.
+install_uv() {
+	command -v uv >/dev/null 2>&1 && return 0
+	if python3 -m pip install --quiet --disable-pip-version-check "uv==$uv_version" >/dev/null 2>&1 &&
+		command -v uv >/dev/null 2>&1; then
+		return 0
+	fi
+	echo "note: uv could not be installed; dependency images are built by the remote builder or the container daemon" >&2
+}
+
+# base_ref prints the commit to compare with, or nothing to deploy every DAG.
+base_ref() {
+	base="${DEXAFLOW_BASE_REF:-}"
+	case "$base" in
+	*[!0]*) ;;
+	*) return 0 ;;
+	esac
+	if ! git rev-parse --git-dir >/dev/null 2>&1; then
+		echo "note: not a git checkout, so every DAG is deployed" >&2
+		return 0
+	fi
+	if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+		echo "note: $base is not in this clone (a force push, or a shallow clone), so every DAG is deployed" >&2
+		return 0
+	fi
+	echo "$base"
+}
+
+# summarize prints a Markdown summary of the deploy report $1.
+summarize() {
+	python3 - "$1" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as f:
+        report = json.load(f)
+except (OSError, ValueError):
+    print("Dexaflow deploy wrote no report; see the job log.")
+    sys.exit(0)
+
+
+def cell(value):
+    return str(value or "").replace("|", "\\|").replace("\n", " ")
+
+
+where = report.get("server") or ""
+if report.get("target"):
+    where += " (target %s)" % report["target"]
+print("### Dexaflow deploy to %s" % cell(where))
+print()
+dags = report.get("dags") or []
+if dags:
+    print("| DAG | Status | Version | Image | Note |")
+    print("| --- | --- | --- | --- | --- |")
+    for d in dags:
+        note = d.get("error") or d.get("reason") or d.get("next")
+        print("| %s | %s | %s | %s | %s |" % tuple(cell(v) for v in (
+            d.get("dag_id"), d.get("status"), d.get("version"), d.get("image"), note)))
+else:
+    print("No DAG changed, so nothing was deployed.")
+for p in report.get("removed") or []:
+    print()
+    print("- %s was removed from %s and is still registered: pause it with `dexaflow admin dags pause %s`."
+          % (cell(p.get("dag_id")), cell(p.get("path")), cell(p.get("dag_id"))))
+for p in report.get("moved") or []:
+    print()
+    print("- %s moved from %s to %s." % (cell(p.get("dag_id")), cell(p.get("from")), cell(p.get("to"))))
+PY
+}
+
+deploy() {
+	[ -n "${DEXAFLOW_TOKEN:-}" ] ||
+		die "DEXAFLOW_TOKEN is not set: store a deploy token as a CI secret (dexaflow auth create-token --scope deploy)"
+	[ -n "${DEXAFLOW_SERVER_URL:-}" ] ||
+		die "DEXAFLOW_SERVER_URL is not set: set it to the control plane URL"
+	base="$(base_ref)"
+	report="$tmp/report.json"
+	status=0
+	if [ -n "$base" ]; then
+		dexaflow deploy --all --changed-since "$base" --yes --output json >"$report" || status=$?
+	else
+		dexaflow deploy --all --yes --output json >"$report" || status=$?
+	fi
+	summarize "$report" >"$tmp/summary.md" || true
+	out="${DEXAFLOW_SUMMARY_FILE:-${GITHUB_STEP_SUMMARY:-}}"
+	if [ -n "$out" ]; then
+		cat "$tmp/summary.md" >>"$out"
+	else
+		cat "$tmp/summary.md"
+	fi
+	if [ -n "${DEXAFLOW_REPORT_FILE:-}" ]; then
+		cp "$report" "$DEXAFLOW_REPORT_FILE"
+	fi
+	return "$status"
+}
+
+cd "$(dirname "$0")/.."
+cd "$workspace_dir"
+case "${1:-deploy}" in
+install) install_dexaflow ;;
+deploy)
+	install_dexaflow
+	install_uv
+	deploy
+	;;
+*) die "usage: sh ci/dexaflow-deploy.sh [deploy|install]" ;;
+esac
 ```
 
 Split into a build stage and a register stage, the same pipeline registers the
