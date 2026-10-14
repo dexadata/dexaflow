@@ -22,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
@@ -122,13 +123,16 @@ type authMethods struct {
 	Password bool `json:"password"`
 	// SSO is whether the OIDC browser flow is served.
 	SSO bool `json:"sso"`
+	// Device is whether the device sign-in of the CLI (ADR 0081) is served,
+	// for a machine with no browser.
+	Device bool `json:"device"`
 }
 
 // authMethodsHandler answers which sign-in methods the server offers. It is
 // built from the same loginPageOpts as the sign-in page, so the CLI and the
 // page cannot disagree about what is offered.
-func authMethodsHandler(o loginPageOpts, oidcEnabled bool) gin.HandlerFunc {
-	m := authMethods{SSO: o.sso, Password: !oidcEnabled || o.breakGlass}
+func authMethodsHandler(o loginPageOpts, oidcEnabled, device bool) gin.HandlerFunc {
+	m := authMethods{SSO: o.sso, Password: !oidcEnabled || o.breakGlass, Device: o.sso && device}
 	return func(c *gin.Context) { c.JSON(http.StatusOK, m) }
 }
 
@@ -265,6 +269,12 @@ type cliPending struct {
 	UserID       string `json:"user"`
 	Email        string `json:"email"`
 	Expires      int64  `json:"exp"`
+	// Device, UserCode and Roles are set on the consent of a device sign-in
+	// (cli_device.go), which holds no token: the token is minted when the
+	// CLI redeems the approved sign-in, with these roles.
+	Device   string   `json:"dev,omitempty"`
+	UserCode string   `json:"ucode,omitempty"`
+	Roles    []string `json:"roles,omitempty"`
 }
 
 // binding is the CLI side of a pending sign-in.
@@ -425,11 +435,18 @@ func tokenExpiry(token string, fallback time.Time) int64 {
 // a refusal goes back to the CLI rather than to the sign-in page.
 const contextKeyCLILogin = "dexaflow.cli_login"
 
+// contextKeyDeviceLogin marks the callback of a device sign-in, so a refusal
+// goes back to the device page rather than to the sign-in page.
+const contextKeyDeviceLogin = "dexaflow.cli_device_login"
+
 // ssoRefusalTarget is where a refused or failed single sign-on sends the
-// browser: the sign-in page with the marker, or for a CLI login the CLI's
-// loopback with an OAuth error code and the CLI's state. Neither carries the
-// reason.
+// browser: the sign-in page with the marker, for a device sign-in the device
+// page with the marker, or for a CLI login the CLI's loopback with an OAuth
+// error code and the CLI's state. None carries the reason.
 func ssoRefusalTarget(c *gin.Context, marker string) string {
+	if _, ok := c.Get(contextKeyDeviceLogin); ok {
+		return deviceVerifyPath + "?" + ssoErrorParam + "=" + marker
+	}
 	if v, ok := c.Get(contextKeyCLILogin); ok {
 		if b, ok := v.(*oidc.CLIBinding); ok && b != nil {
 			code := "access_denied"
@@ -452,34 +469,65 @@ func loopbackURL(b *oidc.CLIBinding, q url.Values) string {
 	return b.Redirect + "?" + q.Encode()
 }
 
-// cliTokenRequest is the body of POST /api/v2/auth/cli/token.
+// cliTokenRequest is the body of POST /api/v2/auth/cli/token: a one-time
+// code with its verifier and redirect, or, with grant_type set to the device
+// grant, a device code to poll.
 type cliTokenRequest struct {
+	GrantType    string `json:"grant_type"`
 	Code         string `json:"code"`
 	CodeVerifier string `json:"code_verifier"`
 	RedirectURI  string `json:"redirect_uri"`
+	DeviceCode   string `json:"device_code"`
+}
+
+// cliTokenDeps is what the token route needs.
+type cliTokenDeps struct {
+	codes  *cliCodes
+	logger *slog.Logger
+	audit  AuthAuditWriter
+	// limiter is the budget of the code exchange, shared with the OIDC
+	// routes.
+	limiter *auth.RateLimiter
+	// device serves the device grant, with its own poll budget; nil when the
+	// device sign-in is not served.
+	device *cliDeviceDeps
 }
 
 // cliTokenHandler implements POST /api/v2/auth/cli/token: it redeems a
 // one-time code for the token the CLI login minted, answering what
 // /auth/token answers, with expires_in the token's remaining lifetime. Every
-// refusal is the same 400, whatever failed. Each outcome is audited, against
-// the code's tenant and user when the code is authentic; the log and the
-// audit row carry the reason, never the code or the token.
-func cliTokenHandler(codes *cliCodes, logger *slog.Logger, audit AuthAuditWriter) gin.HandlerFunc {
+// refusal is the same 400 (error invalid_grant), whatever failed. Each
+// outcome is audited, against the code's tenant and user when the code is
+// authentic; the log and the audit row carry the reason, never the code or
+// the token. A body with the device grant_type is a device poll instead
+// (cli_device.go); another grant_type is unsupported_grant_type.
+func cliTokenHandler(d cliTokenDeps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req cliTokenRequest
 		dec := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, cliCodeMaxLen))
-		if err := dec.Decode(&req); err != nil || req.Code == "" || len(req.Code) > cliCodeMaxLen || !isPKCEVerifier(req.CodeVerifier) {
-			refuseCLICode(c, logger, audit, cliPending{}, reasonCodeMalformed)
+		derr := dec.Decode(&req)
+		if derr == nil && req.GrantType == deviceGrantType && d.device != nil {
+			d.device.poll(c, req.DeviceCode)
 			return
 		}
-		p, _, reason := codes.redeem(req.Code, req.CodeVerifier, req.RedirectURI)
+		if !spendRateBudget(c, d.limiter) {
+			return
+		}
+		if derr == nil && req.GrantType != "" && req.GrantType != "authorization_code" {
+			abortTokenError(c, "unsupported_grant_type", "this server does not serve that grant_type")
+			return
+		}
+		if derr != nil || req.Code == "" || len(req.Code) > cliCodeMaxLen || !isPKCEVerifier(req.CodeVerifier) {
+			refuseCLICode(c, d.logger, d.audit, cliPending{}, reasonCodeMalformed)
+			return
+		}
+		p, _, reason := d.codes.redeem(req.Code, req.CodeVerifier, req.RedirectURI)
 		if reason != "" {
-			refuseCLICode(c, logger, audit, p, reason)
+			refuseCLICode(c, d.logger, d.audit, p, reason)
 			return
 		}
-		recordAuth(c, logger, audit, auditCLICode, p, "success", nil)
-		remaining := max(p.TokenExpires-codes.now().Unix(), 0)
+		recordAuth(c, d.logger, d.audit, auditCLICode, p, "success", nil)
+		remaining := max(p.TokenExpires-d.codes.now().Unix(), 0)
 		c.JSON(http.StatusOK, tokenResponse{AccessToken: p.Token, TokenType: "bearer", ExpiresIn: int(remaining)})
 	}
 }
@@ -491,7 +539,7 @@ func refuseCLICode(c *gin.Context, logger *slog.Logger, audit AuthAuditWriter, p
 		logger.Warn("oidc: cli sign-in code refused", "reason", reason, "tenant", logSafe(p.Tenant), "user", logSafe(p.UserID))
 	}
 	recordAuth(c, logger, audit, auditCLICode, p, "denied", map[string]string{"reason": reason})
-	AbortProblem(c, http.StatusBadRequest, "bad request", cliCodeRefused)
+	abortTokenError(c, "invalid_grant", cliCodeRefused)
 }
 
 // recordAuth writes one audit row for a CLI sign-in step, best-effort like
