@@ -336,18 +336,29 @@ func (r *Repository) LocalPasswordUserExists(ctx context.Context, tenant, email 
 	return n > 0, nil
 }
 
-// UserExists reports whether a user with exactly this email exists in the
-// tenant, active or not and whatever its login. It backs the bootstrap admin
-// resolution (auth.ResolveAdminEmail): an install whose admin predates the
-// rename to Dexaflow keeps that admin instead of gaining a second one.
-func (r *Repository) UserExists(ctx context.Context, tenant, email string) (bool, error) {
-	if _, err := r.q.GetUserByEmail(ctx, queries.GetUserByEmailParams{Name: tenant, Email: email}); err != nil {
+// AdminUserState reports whether a user with exactly this email exists in the
+// tenant, active or not and whatever its login, and whether it holds the admin
+// role. It backs the bootstrap admin resolution (auth.ResolveAdminEmail): an
+// install whose admin predates the rename to Dexaflow keeps that admin instead
+// of gaining a second one.
+func (r *Repository) AdminUserState(ctx context.Context, tenant, email string) (auth.AdminState, error) {
+	row, err := r.q.GetUserByEmail(ctx, queries.GetUserByEmailParams{Name: tenant, Email: email})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return auth.UserAbsent, nil
 		}
-		return false, fmt.Errorf("looking up user: %w", err)
+		return auth.UserAbsent, fmt.Errorf("looking up user: %w", err)
 	}
-	return true, nil
+	roles, err := r.q.GetUserRoles(ctx, row.ID)
+	if err != nil {
+		return auth.UserAbsent, fmt.Errorf("loading user roles: %w", err)
+	}
+	for _, role := range roles {
+		if role == "admin" {
+			return auth.UserIsAdmin, nil
+		}
+	}
+	return auth.UserWithoutAdminRole, nil
 }
 
 // RoleExists reports whether a role name exists for the tenant. The OIDC login

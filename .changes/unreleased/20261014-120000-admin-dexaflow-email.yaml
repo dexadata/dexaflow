@@ -4,7 +4,8 @@ body: |-
   `dexaflow setup` proposes it, and a server started with a bootstrap password
   and no `DEXAFLOW_BOOTSTRAP_EMAIL` creates it. An existing install keeps
   `admin@leoflow.local` and logs in as before: the server resolves the default
-  address to that admin when it exists and the new one does not, so no second
+  address to that admin when it exists and the new one does not (or when only
+  the old one holds the admin role), and logs that it kept it, so no second
   admin is created and the user is never renamed. The same resolution covers a
   Lite reinstall over a kept datastore, the `dexaflow lite` ready banner,
   `dexaflow lite reset-password` and the login hint. The Google SSO Helm example

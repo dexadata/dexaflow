@@ -771,7 +771,8 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 		return firstErr(serverExited(), werr)
 	}
 	removePreRestoreAfterBoot(out, keySt)
-	announceReady(out, o.host, o.port, liteLoginEmail(ctx, o.adminEmail, liteUserExists), ws.Path, countRegisteredDags(ctx))
+	login := liteLoginEmail(ctx, o.adminEmail, liteAdminState)
+	announceReady(out, o.host, o.port, login, ws.Path, countRegisteredDags(ctx))
 	// Mint an admin token in-process signed with the dev JWT secret; the control
 	// plane validates it by signature + claims, so no login or seeded user is
 	// needed. Re-minted per operation (signing is cheap) so a Lite left running
@@ -780,7 +781,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	logf := func(format string, args ...any) { devPrintf(cmd.OutOrStdout(), format+"\n", args...) }
 	mintToken := func() string {
 		tok, err := auth.MintUserToken(resolveLiteJWTSecret(o.jwtSecret), time.Hour, auth.User{
-			ID: auth.DevTokenSubject, TenantID: "default", Email: devAdminUser, Roles: []string{"admin"},
+			ID: auth.DevTokenSubject, TenantID: "default", Email: devTokenEmail(login), Roles: []string{"admin"},
 		})
 		if err != nil {
 			logf("✗ minting dev token: %v", err)
@@ -2357,35 +2358,56 @@ func devEnforcedPythonVersion(cmd *cobra.Command, cfg *domain.LeoflowConfig) str
 // (auth.ResolveAdminEmail), and the banner resolves it the same way so it names
 // the account that logs in. An empty address (no-auth) stays empty, and a
 // failed lookup keeps the configured address rather than guess.
-func liteLoginEmail(ctx context.Context, configured string, exists auth.UserExistsFunc) string {
+func liteLoginEmail(ctx context.Context, configured string, lookup auth.AdminLookup) string {
 	if configured == "" {
 		return ""
 	}
-	email, err := auth.ResolveAdminEmail(ctx, configured, exists)
+	res, err := auth.ResolveAdminEmail(ctx, configured, lookup)
 	if err != nil {
 		return configured
 	}
-	return email
+	return res.Email
 }
 
-// liteUserExists reports whether the Lite database has a user with that email
-// in the default tenant. Like countRegisteredDags it reads Postgres directly,
-// bounded, because it runs at banner time.
-func liteUserExists(ctx context.Context, email string) (bool, error) {
+// devTokenEmail is the email claim of the in-process dev token: the admin the
+// banner names, or the default admin address under no-auth.
+func devTokenEmail(login string) string {
+	if login != "" {
+		return login
+	}
+	return devAdminUser
+}
+
+// liteAdminState reports the auth.AdminState of an email in the Lite
+// database's default tenant. Like countRegisteredDags it reads Postgres
+// directly, bounded, because it runs at banner time.
+func liteAdminState(ctx context.Context, email string) (auth.AdminState, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	conn, err := pgx.Connect(ctx, devDSNs().database)
 	if err != nil {
-		return false, fmt.Errorf("connecting to the Lite database: %w", err)
+		return auth.UserAbsent, fmt.Errorf("connecting to the Lite database: %w", err)
 	}
 	defer func() { _ = conn.Close(ctx) }() //nolint:errcheck // best-effort close of a short-lived read connection
-	var found bool
-	if qerr := conn.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE t.name = 'default' AND u.email = $1)`,
-		email).Scan(&found); qerr != nil {
-		return false, fmt.Errorf("looking up the Lite admin: %w", qerr)
+	var found, admin bool
+	if qerr := conn.QueryRow(ctx, `
+SELECT count(*) > 0,
+       coalesce(bool_or(r.name = 'admin'), false)
+FROM users u
+JOIN tenants t ON t.id = u.tenant_id
+LEFT JOIN user_roles ur ON ur.user_id = u.id
+LEFT JOIN roles r ON r.id = ur.role_id
+WHERE t.name = 'default' AND u.email = $1`, email).Scan(&found, &admin); qerr != nil {
+		return auth.UserAbsent, fmt.Errorf("looking up the Lite admin: %w", qerr)
 	}
-	return found, nil
+	switch {
+	case admin:
+		return auth.UserIsAdmin, nil
+	case found:
+		return auth.UserWithoutAdminRole, nil
+	default:
+		return auth.UserAbsent, nil
+	}
 }
 
 // countRegisteredDags reports how many DAGs the local database already holds.

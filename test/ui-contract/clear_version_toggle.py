@@ -24,7 +24,8 @@ import sys
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sweep import BASE, PWD, USER, discover  # noqa: E402
+import sweep  # noqa: E402
+from sweep import BASE, PWD, discover  # noqa: E402
 
 CLEAR_PATH = "/clearTaskInstances"
 
@@ -37,7 +38,7 @@ def login(page):
         return
     for sel in ["input[name=username]", "input[type=email]", "input[type=text]"]:
         if page.locator(sel).count() > 0:
-            page.fill(sel, USER)
+            page.fill(sel, sweep.USER)
             break
     page.fill("input[type=password]", PWD)
     page.locator("button[type=submit]").first.click()

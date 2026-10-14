@@ -854,7 +854,10 @@ user is never renamed and no second admin is created:
 - Lite keeps the `admin_email` its `config.yaml` records.
 - At every start, the server resolves the default address to
   `admin@leoflow.local` when that user exists and `admin@dexaflow.local` does
-  not, and reconciles that account's password as before. This covers Helm and
+  not, or when only `admin@leoflow.local` holds the admin role, reconciles
+  that account's password as before, and logs `bootstrap admin kept its
+  pre-rename address`. When both addresses have a user it also logs a warning
+  naming both. This covers Helm and
   docker-compose installs, which never set the email, and a Lite reinstall over
   a kept datastore: `dexaflow setup` then prints `admin@dexaflow.local`, but
   the account that logs in with the new password is `admin@leoflow.local`, and

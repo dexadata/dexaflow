@@ -57,9 +57,10 @@ type openResetStore func(ctx context.Context) (resetPasswordStore, func(), error
 
 // resetPasswordStore is what reset-password needs from the Lite datastore.
 type resetPasswordStore interface {
-	// UserExists reports whether a user with that email exists, so the
-	// default admin resolves to an install's legacy admin (auth.ResolveAdminEmail).
-	UserExists(ctx context.Context, tenant, email string) (bool, error)
+	// AdminUserState reports whether a user with that email exists and holds
+	// the admin role, so the default admin resolves to an install's legacy
+	// admin (auth.ResolveAdminEmail).
+	AdminUserState(ctx context.Context, tenant, email string) (auth.AdminState, error)
 	// SetUserPassword stores hash as the admin's password and reports whether
 	// an admin with that email existed.
 	SetUserPassword(ctx context.Context, tenant, email, hash string) (bool, error)
@@ -74,13 +75,14 @@ type liteResetStore struct {
 	pool storage.RowQueryer
 }
 
-// UserExists reports whether a user with that email exists.
-func (s liteResetStore) UserExists(ctx context.Context, tenant, email string) (bool, error) {
-	ok, err := s.repo.UserExists(ctx, tenant, email)
+// AdminUserState reports whether a user with that email exists and holds the
+// admin role.
+func (s liteResetStore) AdminUserState(ctx context.Context, tenant, email string) (auth.AdminState, error) {
+	st, err := s.repo.AdminUserState(ctx, tenant, email)
 	if err != nil {
-		return false, fmt.Errorf("looking up the admin: %w", err)
+		return auth.UserAbsent, fmt.Errorf("looking up the admin: %w", err)
 	}
-	return ok, nil
+	return st, nil
 }
 
 // SetUserPassword stores the admin's new password hash.
@@ -141,11 +143,14 @@ func resetPassword(ctx context.Context, out io.Writer, home, userEmail string, o
 	defer closeStore()
 	// The default admin is admin@leoflow.local on an install created before the
 	// rename; resetting that account keeps the install at one admin.
-	email, err := auth.ResolveAdminEmail(ctx, resolveAdminEmail(userEmail, cfg),
-		func(ctx context.Context, email string) (bool, error) { return store.UserExists(ctx, "default", email) })
+	res, err := auth.ResolveAdminEmail(ctx, resolveAdminEmail(userEmail, cfg),
+		func(ctx context.Context, email string) (auth.AdminState, error) {
+			return store.AdminUserState(ctx, "default", email)
+		})
 	if err != nil {
 		return fmt.Errorf("resetting password: %w", err)
 	}
+	email := res.Email
 	ok, err := store.SetUserPassword(ctx, "default", email, hash)
 	if err != nil {
 		return fmt.Errorf("resetting password: %w", err)

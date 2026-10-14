@@ -52,7 +52,9 @@ def resolve_user():
     return ADMIN_CANDIDATES[0]
 
 
-USER = resolve_user()
+# Set by discover(), the first call of every entry point (main() here and in
+# clear_version_toggle.py), so importing this module makes no request.
+USER = ""
 OUT = os.environ.get("UICONTRACT_OUT", "")
 
 # Console errors that are environmental, not contract breaks. Keep this list
@@ -72,6 +74,9 @@ def api(path, token=None):
 
 def discover():
     """Find a DAG with a run + a task instance, so the task-scoped views resolve."""
+    global USER  # resolved once, on first use, never at import time
+    if not USER:
+        USER = resolve_user()
     token = token_for(USER)
     if not token:
         print(f"WARN: could not get a token for {USER}; task views may be skipped")

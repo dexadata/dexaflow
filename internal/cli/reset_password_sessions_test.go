@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // fakeResetStore stands in for the Lite datastore so the whole reset-password
@@ -18,10 +20,10 @@ type fakeResetStore struct {
 	running    bool
 	runningErr error
 	gotEmail   string
-	users      map[string]bool // emails UserExists reports; nil reports none
+	users      map[string]auth.AdminState // states AdminUserState reports; nil reports none
 }
 
-func (f *fakeResetStore) UserExists(_ context.Context, _, email string) (bool, error) {
+func (f *fakeResetStore) AdminUserState(_ context.Context, _, email string) (auth.AdminState, error) {
 	return f.users[email], nil
 }
 
@@ -172,7 +174,7 @@ func TestResetPasswordFindsTheLegacyAdmin(t *testing.T) {
 			if err := os.WriteFile(path, []byte(adminLine+"lite_port: 8080\njwt_secret: \"old\"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			store := &fakeResetStore{found: true, users: map[string]bool{"admin@leoflow.local": true}}
+			store := &fakeResetStore{found: true, users: map[string]auth.AdminState{"admin@leoflow.local": auth.UserIsAdmin}}
 			var out bytes.Buffer
 			if err := resetPassword(context.Background(), &out, home, "", store.open); err != nil {
 				t.Fatalf("resetPassword: %v", err)
@@ -195,7 +197,7 @@ func TestResetPasswordFindsTheLegacyAdmin(t *testing.T) {
 // default admin.
 func TestResetPasswordDefaultsToTheDexaflowAdmin(t *testing.T) {
 	home := t.TempDir()
-	store := &fakeResetStore{found: true, users: map[string]bool{"admin@dexaflow.local": true}}
+	store := &fakeResetStore{found: true, users: map[string]auth.AdminState{"admin@dexaflow.local": auth.UserIsAdmin}}
 	var out bytes.Buffer
 	if err := resetPassword(context.Background(), &out, home, "", store.open); err != nil {
 		t.Fatalf("resetPassword: %v", err)

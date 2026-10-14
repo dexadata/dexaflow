@@ -157,27 +157,37 @@ func TestSetUserPasswordIntegration(t *testing.T) {
 	}
 }
 
-// TestUserExistsIntegration backs the bootstrap admin resolution
+// TestAdminUserStateIntegration backs the bootstrap admin resolution
 // (auth.ResolveAdminEmail): it reports a user by exact email, within the named
-// tenant only, so a legacy admin in one tenant is never mistaken for another
-// tenant's.
-func TestUserExistsIntegration(t *testing.T) {
+// tenant only, and whether it holds the admin role, so a legacy admin in one
+// tenant is never mistaken for another tenant's.
+func TestAdminUserStateIntegration(t *testing.T) {
 	repo, _, ctx := openRepo(t)
-	email := fmt.Sprintf("exists-%d@dexaflow.local", time.Now().UnixNano())
-	if _, err := repo.CreateUser(ctx, "default", email, "pw-123456", nil); err != nil {
-		t.Fatalf("CreateUser: %v", err)
+	stamp := time.Now().UnixNano()
+	plain := fmt.Sprintf("state-plain-%d@dexaflow.local", stamp)
+	admin := fmt.Sprintf("state-admin-%d@dexaflow.local", stamp)
+	if _, err := repo.CreateUser(ctx, "default", plain, "pw-123456", []string{"viewer"}); err != nil {
+		t.Fatalf("CreateUser(plain): %v", err)
 	}
-	if ok, err := repo.UserExists(ctx, "default", email); err != nil || !ok {
-		t.Errorf("UserExists(default, %s) = %v, %v; want true", email, ok, err)
+	if _, err := repo.CreateUser(ctx, "default", admin, "pw-123456", []string{"admin"}); err != nil {
+		t.Fatalf("CreateUser(admin): %v", err)
 	}
-	if ok, err := repo.UserExists(ctx, "default", "nobody-"+email); err != nil || ok {
-		t.Errorf("UserExists(unknown) = %v, %v; want false", ok, err)
-	}
-	other := uniqueTenant("exists-b")
+	other := uniqueTenant("state-b")
 	if _, err := repo.EnsureTenant(ctx, other, other, 0, domain.TenantLimitsUpdate{}); err != nil {
 		t.Fatalf("EnsureTenant: %v", err)
 	}
-	if ok, err := repo.UserExists(ctx, other, email); err != nil || ok {
-		t.Errorf("UserExists(%s, %s) = %v, %v; want false across tenants", other, email, ok, err)
+	cases := []struct {
+		tenant, email string
+		want          auth.AdminState
+	}{
+		{"default", admin, auth.UserIsAdmin},
+		{"default", plain, auth.UserWithoutAdminRole},
+		{"default", "nobody-" + admin, auth.UserAbsent},
+		{other, admin, auth.UserAbsent},
+	}
+	for _, c := range cases {
+		if got, err := repo.AdminUserState(ctx, c.tenant, c.email); err != nil || got != c.want {
+			t.Errorf("AdminUserState(%s, %s) = %v, %v; want %v", c.tenant, c.email, got, err, c.want)
+		}
 	}
 }

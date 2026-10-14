@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dexadata/dexaflow/internal/auth"
 )
 
 // TestLoadLiteAdminDefaultsToTheDexaflowAdmin: a config.yaml with a hash and
@@ -29,11 +31,16 @@ func TestLoadLiteAdminDefaultsToTheDexaflowAdmin(t *testing.T) {
 // bootstrapped, so a reinstall over a kept pre-rename database tells the user
 // to log in as admin@leoflow.local.
 func TestLiteLoginEmail(t *testing.T) {
-	legacyOnly := func(_ context.Context, email string) (bool, error) { return email == "admin@leoflow.local", nil }
-	broken := func(context.Context, string) (bool, error) { return false, errors.New("db down") }
+	legacyOnly := func(_ context.Context, email string) (auth.AdminState, error) {
+		if email == "admin@leoflow.local" {
+			return auth.UserIsAdmin, nil
+		}
+		return auth.UserAbsent, nil
+	}
+	broken := func(context.Context, string) (auth.AdminState, error) { return auth.UserAbsent, errors.New("db down") }
 	cases := []struct {
 		name, configured, want string
-		exists                 func(context.Context, string) (bool, error)
+		exists                 auth.AdminLookup
 	}{
 		{"legacy admin in the database", "admin@dexaflow.local", "admin@leoflow.local", legacyOnly},
 		{"custom address untouched", "me@corp.example", "me@corp.example", legacyOnly},
@@ -46,5 +53,16 @@ func TestLiteLoginEmail(t *testing.T) {
 				t.Errorf("liteLoginEmail(%q) = %q, want %q", tc.configured, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDevTokenEmail: the in-process dev token names the admin the banner
+// names, and the default address under no-auth.
+func TestDevTokenEmail(t *testing.T) {
+	if got := devTokenEmail("admin@leoflow.local"); got != "admin@leoflow.local" {
+		t.Errorf("devTokenEmail(legacy) = %q, want the resolved admin", got)
+	}
+	if got := devTokenEmail(""); got != "admin@dexaflow.local" {
+		t.Errorf("devTokenEmail(no-auth) = %q, want admin@dexaflow.local", got)
 	}
 }
