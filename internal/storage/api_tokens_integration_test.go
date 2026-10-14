@@ -381,6 +381,142 @@ func TestAPITokenExpiredNameIsReusableIntegration(t *testing.T) {
 	}
 }
 
+// expireToken moves a stored token's expiry an hour into the past.
+func expireToken(t *testing.T, ctx context.Context, pg *storage.Postgres, id string) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx, `UPDATE api_tokens SET created_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// retireAudit is one api_token.retire_expired row of the audit log.
+type retireAudit struct {
+	tenantID, userID, resourceType, resourceID string
+	meta                                       map[string]string
+}
+
+// retireAudits returns the api_token.retire_expired rows that name token id.
+func retireAudits(t *testing.T, ctx context.Context, pg *storage.Postgres, id string) []retireAudit {
+	t.Helper()
+	rows, err := pg.Pool.Query(ctx, `SELECT tenant_id::text, COALESCE(user_id::text, ''), COALESCE(resource_type, ''), COALESCE(resource_id, ''), metadata
+		FROM audit_log WHERE action = 'api_token.retire_expired' AND metadata->>'token_id' = $1`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []retireAudit
+	for rows.Next() {
+		var a retireAudit
+		if err := rows.Scan(&a.tenantID, &a.userID, &a.resourceType, &a.resourceID, &a.meta); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestAPITokenRetireIsAuditedIntegration (#1768): the create that retires an
+// expired token of the same name records it in the audit log, in the
+// creator's tenant, naming the old token, when it expired, and the token that
+// took its name, so the timeline does not read it as a manual revoke.
+func TestAPITokenRetireIsAuditedIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	tenant := secondTenant(t, ctx, repo)
+	userID, email := apiTokenOwner(t, ctx, repo, tenant, "deployer")
+	_, old := newStoredToken(t, ctx, repo, tenant, userID, "nightly")
+	expireToken(t, ctx, pg, old.ID)
+	var expiredAt time.Time
+	if err := pg.Pool.QueryRow(ctx, `SELECT expires_at FROM api_tokens WHERE id = $1`, old.ID).Scan(&expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	_, fresh := newStoredToken(t, ctx, repo, tenant, userID, "nightly")
+
+	got := retireAudits(t, ctx, pg, old.ID)
+	if len(got) != 1 {
+		t.Fatalf("retire audit rows for the expired token = %d, want 1", len(got))
+	}
+	var tid string
+	if err := pg.Pool.QueryRow(ctx, `SELECT id::text FROM tenants WHERE name = $1`, tenant).Scan(&tid); err != nil {
+		t.Fatal(err)
+	}
+	a := got[0]
+	if a.tenantID != tid || a.userID != userID || a.resourceType != "auth" || a.resourceID != email {
+		t.Errorf("audit row = tenant %s user %s resource %s/%s, want tenant %s user %s resource auth/%s",
+			a.tenantID, a.userID, a.resourceType, a.resourceID, tid, userID, email)
+	}
+	want := map[string]string{
+		"outcome": "success", "email": email, "token_id": old.ID, "token_name": "nightly",
+		"token_owner_id": userID, "expires_at": expiredAt.UTC().Format(time.RFC3339),
+		"replaced_by_token_id": fresh.ID,
+	}
+	for k, v := range want {
+		if a.meta[k] != v {
+			t.Errorf("audit metadata %s = %q, want %q", k, a.meta[k], v)
+		}
+	}
+	if n := len(retireAudits(t, ctx, pg, fresh.ID)); n != 0 {
+		t.Errorf("a create that retired nothing wrote %d retire rows for the new token", n)
+	}
+}
+
+// TestAPITokenRetireRollsBackWithTheCreateIntegration (#1768): the retire and
+// its audit row belong to the create's transaction. A deferred constraint
+// trigger makes the commit fail after both are written, and the expired token
+// is left unrevoked with no retire row, so neither was written outside the
+// transaction.
+func TestAPITokenRetireRollsBackWithTheCreateIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	userID, _ := apiTokenOwner(t, ctx, repo, "default", "deployer")
+	name := fmt.Sprintf("rollback-%d", time.Now().UnixNano())
+	_, old := newStoredToken(t, ctx, repo, "default", userID, name)
+	expireToken(t, ctx, pg, old.ID)
+	failCommitOnTokenName(t, ctx, pg, name)
+
+	_, h, _ := auth.NewAPIToken()
+	scopes, _ := auth.APITokenScopes("read")
+	if _, err := repo.CreateAPIToken(ctx, "default", userID, name, h, scopes, time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("create succeeded although its commit was made to fail")
+	}
+	var revoked *time.Time
+	if err := pg.Pool.QueryRow(ctx, `SELECT revoked_at FROM api_tokens WHERE id = $1`, old.ID).Scan(&revoked); err != nil || revoked != nil {
+		t.Errorf("expired token revoked_at = %v (%v) after a failed create, want NULL", revoked, err)
+	}
+	if n := len(retireAudits(t, ctx, pg, old.ID)); n != 0 {
+		t.Errorf("a failed create left %d retire audit rows", n)
+	}
+}
+
+// failCommitOnTokenName installs, for the test's lifetime, a deferred
+// constraint trigger that fails the commit of any transaction inserting an
+// API token named name. Only that name is affected, so other tests are not.
+func failCommitOnTokenName(t *testing.T, ctx context.Context, pg *storage.Postgres, name string) {
+	t.Helper()
+	fn := fmt.Sprintf("test_fail_token_commit_%d", time.Now().UnixNano())
+	stmts := []string{
+		`CREATE FUNCTION ` + fn + `() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'commit refused by test'; END $$`,
+		`CREATE CONSTRAINT TRIGGER ` + fn + ` AFTER INSERT ON api_tokens DEFERRABLE INITIALLY DEFERRED
+			FOR EACH ROW WHEN (NEW.name = '` + name + `') EXECUTE FUNCTION ` + fn + `()`,
+	}
+	for _, stmt := range stmts {
+		if _, err := pg.Pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("installing the commit-failing trigger: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		if _, err := pg.Pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS `+fn+` ON api_tokens`); err != nil {
+			t.Errorf("dropping trigger %s: %v", fn, err)
+		}
+		if _, err := pg.Pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS `+fn+`()`); err != nil {
+			t.Errorf("dropping function %s: %v", fn, err)
+		}
+	})
+}
+
 // TestAPITokenCapHoldsUnderConcurrencyIntegration: concurrent creates cannot
 // pass the live-token cap together.
 func TestAPITokenCapHoldsUnderConcurrencyIntegration(t *testing.T) {

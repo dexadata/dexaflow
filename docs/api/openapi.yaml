@@ -174,8 +174,9 @@ paths:
         and nothing else), read carries dexaflow:read. The
         caller's roles must allow what the scope does (deploy needs deploy or
         write on dags, read needs read on dags). An account holds at most 50
-        live tokens. Audited as api_token.create. Not callable with an API
-        token or any other scoped token.
+        live tokens. Audited as api_token.create. Reusing the name of an
+        expired token retires that token, audited as api_token.retire_expired.
+        Not callable with an API token or any other scoped token.
       operationId: createAPIToken
       tags: [API Tokens]
       requestBody:

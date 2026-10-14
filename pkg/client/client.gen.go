@@ -1022,7 +1022,7 @@ type ClientInterface interface {
 
 	// CreateAPITokenWithBody Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1031,7 +1031,7 @@ type ClientInterface interface {
 
 	// CreateAPIToken Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1435,7 +1435,7 @@ func (c *Client) ListAPITokens(ctx context.Context, params *ListAPITokensParams,
 
 // CreateAPITokenWithBody Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes any type of body and a specified content type.
 //
@@ -1454,7 +1454,7 @@ func (c *Client) CreateAPITokenWithBody(ctx context.Context, contentType string,
 
 // CreateAPIToken Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4320,7 +4320,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4329,7 +4329,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAPITokenWithResponse Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6828,7 +6828,7 @@ func (c *ClientWithResponses) ListAPITokensWithResponse(ctx context.Context, par
 
 // CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6843,7 +6843,7 @@ func (c *ClientWithResponses) CreateAPITokenWithBodyWithResponse(ctx context.Con
 
 // CreateAPITokenWithResponse Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
