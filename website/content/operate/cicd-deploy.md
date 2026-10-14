@@ -158,16 +158,22 @@ this order:
    API token, the `dexaflow:run` scope), and the refusal says so. A server
    that cannot be reached stops the deploy here.
 2. **Before the build: the registry accepts a push** to the image's
-   repository with the credentials of the docker config
-   (`~/.docker/config.json` and its credential helpers), which the `docker`
-   builder and the daemonless build paths push with. The check starts an
+   repository with the credentials the daemonless build paths push with:
+   the docker config (`~/.docker/config.json` and its credential helpers)
+   and, for an Artifact Registry, GCR, ECR or ACR host, the session of the
+   `gcloud`, `aws` or `az` CLI, as `registry.auth_method` says (see
+   [Registry credentials](/operate/builders/#registry-credentials)). The
+   line says where the credential came from. The check starts an
    upload and cancels it (best effort: a registry that refuses the cancel
    expires the empty upload), so no image is written. A refusal of the
-   credential found there stops a `docker` deploy, naming
-   `docker login <registry>`. With no credential found, or with another
-   `--builder` (podman, for one, keeps credentials of its own in
-   `auth.json`), a refusal is a `note:` naming `<builder> login <registry>`
-   and the push decides. Nothing is checked when nothing is pushed: with
+   credential found stops a `docker` deploy, naming the login command of the
+   registry (`gcloud auth configure-docker <host>`,
+   `aws ecr get-login-password --region <region> | docker login ...`,
+   `az acr login --name <name>`, or `docker login <registry>`). With no
+   credential found, or with another `--builder` (podman, for one, keeps
+   credentials of its own in `auth.json`), a refusal is a `note:` naming the
+   command for that builder, and why the cloud CLI gave no token when it
+   could not (not on `PATH`, not signed in), and the push decides. Nothing is checked when nothing is pushed: with
    `--skip-build`, or when the registry already holds the image for the
    content label.
 3. **After the compile, before the build: the server's dry run of the

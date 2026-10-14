@@ -241,7 +241,7 @@ func splitProject(t *testing.T, extraYAML string) (dir, host, deps string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := baseRegistry.Resolve(context.Background(), base)
+	pinned, err := baseReaderFor(cfg).Resolve(context.Background(), base)
 	if err != nil {
 		t.Fatal(err)
 	}

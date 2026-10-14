@@ -338,3 +338,18 @@ func TestResultDigestOfAnEmptyResult(t *testing.T) {
 		t.Errorf("Digest of an unpinned result = %q, want empty", d)
 	}
 }
+
+// A failed push names the command that signs the tool in to the registry:
+// a push the daemonless paths make with a cloud session still needs the
+// tool's own login when the daemon builds.
+func TestLocalDaemonNamesTheLoginWhenThePushFails(t *testing.T) {
+	tool, _ := fakeTool(t, "push")
+	req := request()
+	req.Image = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/team/etl:v1"
+	req.Push = true
+	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{}}.Build(context.Background(), req)
+	want := "aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want the login command %q", err, want)
+	}
+}

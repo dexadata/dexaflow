@@ -22,6 +22,32 @@ type fakeOCIRegistry struct {
 	// denyPush answers them 401, as a registry does without a credential.
 	uploads  int
 	denyPush bool
+	// basicAuth, when set, is the user:pass every request but the ping
+	// must carry; others get 401, as a private registry answers.
+	basicAuth string
+	// seen are the Basic credentials requests carried.
+	seen []string
+}
+
+// credentials returns the Basic credentials sent so far.
+func (r *fakeOCIRegistry) credentials() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.seen...)
+}
+
+// authorized reports whether req carries the credential basicAuth asks for.
+func (r *fakeOCIRegistry) authorized(req *http.Request) bool {
+	u, p, ok := req.BasicAuth()
+	if ok {
+		r.mu.Lock()
+		r.seen = append(r.seen, u+":"+p)
+		r.mu.Unlock()
+	}
+	if r.basicAuth == "" {
+		return true
+	}
+	return ok && u+":"+p == r.basicAuth
 }
 
 // serveUpload answers the start and the cancel of a blob upload.
@@ -62,6 +88,11 @@ func newFakeOCIRegistry(t *testing.T, manifest string) *fakeOCIRegistry {
 		mediaType = m.MediaType
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !r.authorized(req) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="fake"`)
+			http.Error(w, `{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}`, http.StatusUnauthorized)
+			return
+		}
 		if req.URL.Path == "/v2/" {
 			return
 		}

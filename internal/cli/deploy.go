@@ -636,6 +636,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 		if _, werr := io.WriteString(cmd.OutOrStdout(), settings); werr != nil {
 			return werr
 		}
+		warnAuthMethod(cmd.ErrOrStderr(), cfg)
 	}
 	if !o.plan && shouldConfirm(serverURL, o.yes, cmdInteractive(cmd)) &&
 		!confirmDeploy(cmd.InOrStdin(), cmd.OutOrStdout(), dir, serverURL) {
@@ -732,7 +733,7 @@ func (d *deployRun) run() error {
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
 	}
-	digestRef, derr := deployedDigest(d.cmd, image, built)
+	digestRef, derr := deployedDigest(d.cmd, registryFor(d.cfg), image, built)
 	if derr != nil {
 		return derr
 	}
@@ -793,10 +794,11 @@ func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
 func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) error {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
-	if d.o.skipBuild || (reuse && registryHolds(ctx, image)) {
+	reg := registryFor(d.cfg)
+	if d.o.skipBuild || (reuse && registryHolds(ctx, reg, image)) {
 		return nil
 	}
-	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), image, d.o.builder)
+	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
 }
 
 // dryRun is the last step of the preflight: the server's dry run of the
@@ -819,7 +821,7 @@ func (d *deployRun) dryRun(ctx context.Context, output, image, version string, o
 // the image itself or a conflict is left to the register.
 func (d *deployRun) dryRunImage(ctx context.Context, image string, reuse bool) dryImage {
 	if d.o.skipBuild || reuse {
-		if p, err := (build.Registry{}).Resolve(ctx, image); err == nil {
+		if p, err := registryFor(d.cfg).Resolve(ctx, image); err == nil {
 			return dryImage{ref: p.Ref, decides: true}
 		}
 	}
@@ -848,7 +850,7 @@ func reusableImage(image, version string, origin labelOrigin) bool {
 func (d *deployRun) plan(ctx context.Context, version, image string, origin labelOrigin) error {
 	in := planInput{serverURL: d.serverURL, token: d.token, dagID: d.cfg.DagID, version: version, image: image,
 		origin: origin, skipBuild: d.o.skipBuild, force: d.o.force, paused: d.o.pausedOverride(),
-		reuse: d.mayReuse(image, version, origin), platforms: buildPlatforms(d.cfg)}
+		reuse: d.mayReuse(image, version, origin), platforms: buildPlatforms(d.cfg), registry: registryFor(d.cfg)}
 	res, err := planDeploy(ctx, d.cmd.ErrOrStderr(), in)
 	if err != nil {
 		return err

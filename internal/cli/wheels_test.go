@@ -686,7 +686,7 @@ func TestTheDaemonFallbackIsOnlyForPinnedDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := baseRegistry.Resolve(context.Background(), cfg.BaseImage)
+	pinned, err := baseReaderFor(cfg).Resolve(context.Background(), cfg.BaseImage)
 	if err != nil {
 		t.Fatal(err)
 	}
