@@ -115,14 +115,21 @@ func renderConsentPage(c *gin.Context, status int, page consentPage, loopback st
 	if u, err := url.Parse(loopback); err == nil && u.Host != "" {
 		formAction += " http://" + u.Host
 	}
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.Header("Cache-Control", "no-store")
-	c.Header("X-Frame-Options", "DENY")
-	c.Header("Content-Security-Policy", "default-src 'none'; script-src "+consentArmScriptHash+"; style-src 'unsafe-inline'; form-action "+formAction+"; frame-ancestors 'none'")
+	writeSignInPageHeaders(c, formAction)
 	c.Status(status)
 	if err := consentPageTemplate.Execute(c.Writer, page); err != nil {
 		c.Abort()
 	}
+}
+
+// writeSignInPageHeaders sets the headers every page of the CLI sign-in
+// answers with: never cached, never framed, no script but the arming script
+// by its hash, and forms that may only post to formAction.
+func writeSignInPageHeaders(c *gin.Context, formAction string) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Frame-Options", "DENY")
+	c.Header("Content-Security-Policy", "default-src 'none'; script-src "+consentArmScriptHash+"; style-src 'unsafe-inline'; form-action "+formAction+"; frame-ancestors 'none'")
 }
 
 // askCLIConsent ends a verified CLI login with the consent page: it seals the
@@ -169,36 +176,45 @@ type cliConsentDeps struct {
 // is refused on a page, and nothing reaches the loopback.
 func cliConsentHandler(d cliConsentDeps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !browserMaySetSession(c) {
-			d.refuse(c, http.StatusForbidden, cliPending{}, "cross_site")
-			return
-		}
-		cookie, err := c.Request.Cookie(cliConsentCookie)
-		if err != nil || cookie.Value == "" {
-			d.refuse(c, http.StatusBadRequest, cliPending{}, "missing_consent")
-			return
-		}
-		p, ok := d.codes.open(cookie.Value, cliConsentAAD)
-		if !ok {
-			d.refuse(c, http.StatusBadRequest, cliPending{}, "invalid_consent")
-			return
-		}
-		now := d.codes.now()
-		expires := time.Unix(0, p.Expires)
-		switch {
-		case !now.Before(expires):
-			d.refuse(c, http.StatusBadRequest, p, "consent_expired")
-			return
-		case subtle.ConstantTimeCompare([]byte(c.PostForm("csrf")), []byte(p.CSRF)) != 1:
-			d.refuse(c, http.StatusBadRequest, p, "csrf_mismatch")
-			return
-		case !d.codes.consents.claim(p.ID, expires, now):
-			d.refuse(c, http.StatusBadRequest, p, "consent_replayed")
+		p, status, reason := openConsent(c, d.codes, cliConsentCookie, cliConsentAAD)
+		if reason != "" {
+			d.refuse(c, status, p, reason)
 			return
 		}
 		d.clearCookie(c)
 		d.decide(c, p, c.PostForm("decision"))
 	}
+}
+
+// openConsent runs the checks every consent post shares: a same-origin post
+// (by fetch metadata, when the browser sends it) carrying the consent cookie
+// named cookieName, sealed for aad and unexpired, and the CSRF token sealed
+// in it. The consent is then claimed, so each is accepted once per replica.
+// A refusal returns its status and a stable reason, with the consent's
+// contents when it was authentic.
+func openConsent(c *gin.Context, codes *cliCodes, cookieName, aad string) (p cliPending, status int, reason string) {
+	if !browserMaySetSession(c) {
+		return cliPending{}, http.StatusForbidden, "cross_site"
+	}
+	cookie, err := c.Request.Cookie(cookieName)
+	if err != nil || cookie.Value == "" {
+		return cliPending{}, http.StatusBadRequest, "missing_consent"
+	}
+	p, ok := codes.open(cookie.Value, aad)
+	if !ok {
+		return cliPending{}, http.StatusBadRequest, "invalid_consent"
+	}
+	now := codes.now()
+	expires := time.Unix(0, p.Expires)
+	switch {
+	case !now.Before(expires):
+		return p, http.StatusBadRequest, "consent_expired"
+	case subtle.ConstantTimeCompare([]byte(c.PostForm("csrf")), []byte(p.CSRF)) != 1:
+		return p, http.StatusBadRequest, "csrf_mismatch"
+	case !codes.consents.claim(p.ID, expires, now):
+		return p, http.StatusBadRequest, "consent_replayed"
+	}
+	return p, 0, ""
 }
 
 // decide answers a genuine consent post: a code for approve, a refusal to the

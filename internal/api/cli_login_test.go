@@ -402,7 +402,7 @@ func TestCLICodeExpires(t *testing.T) {
 		t.Fatalf("seal: %v", err)
 	}
 	r := gin.New()
-	r.POST(cliTokenPath, cliTokenHandler(codes, discardLogger(), nil))
+	r.POST(cliTokenPath, cliTokenHandler(cliTokenDeps{codes: codes, logger: discardLogger(), limiter: auth.NewRateLimiter(100, time.Minute)}))
 
 	now = now.Add(cliCodeTTL + time.Second)
 	if rec := exchangeCLICode(r, code, pk.verifier, testCLIRedirect); rec.Code != http.StatusBadRequest {
@@ -731,7 +731,7 @@ func TestCLICodeExpiresInIsTheTokenRemainingLifetime(t *testing.T) {
 	later := time.Now().Add(40 * time.Second)
 	codes.now = func() time.Time { return later }
 	r := gin.New()
-	r.POST(cliTokenPath, cliTokenHandler(codes, discardLogger(), nil))
+	r.POST(cliTokenPath, cliTokenHandler(cliTokenDeps{codes: codes, logger: discardLogger(), limiter: auth.NewRateLimiter(100, time.Minute)}))
 	rec := exchangeCLICode(r, code, pk.verifier, testCLIRedirect)
 	var resp tokenResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || rec.Code != http.StatusOK {

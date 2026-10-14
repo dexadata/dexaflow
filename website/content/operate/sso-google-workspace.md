@@ -158,10 +158,10 @@ Nothing changes at the IdP for this: the redirect URL Google calls is still
 - `--no-browser` prints the URL instead of opening a browser, for a machine
   whose browser is somewhere else. The browser must still be able to reach
   `127.0.0.1` on the machine running the CLI, so on a remote host forward the
-  port (for example `ssh -L`) or use a password or an API token.
-- `--sso` asks for single sign-on explicitly and fails when the server does
-  not offer it. `--timeout` (default 5m) bounds the wait for the browser.
-  The command prints which method it chose and why.
+  port (for example `ssh -L`), or use `--device` (below).
+- `--sso` asks for single sign-on in a browser explicitly and fails when the
+  server does not offer it. `--timeout` (default 5m) bounds the wait for the
+  approval. The command prints which method it chose and why.
 - `--username`, `--password` or `--password-stdin` (or `LEOFLOW_USERNAME` /
   `LEOFLOW_PASSWORD`) sign in with a password instead, which is the
   break-glass path when single sign-on is broken. A password is not sent
@@ -171,6 +171,84 @@ Nothing changes at the IdP for this: the redirect URL Google calls is still
   reason is in the audit trail and the server log, as for the UI.
 - CI should not sign in as a person: use a scoped API token
   (`dexaflow auth create-token --scope deploy`).
+
+### From a machine with no browser
+
+In an SSH session or a container, `dexaflow auth login --device` signs in
+with a browser on any other device: your laptop or your phone. The command
+prints a page and a short code, and waits:
+
+```bash
+dexaflow auth login --device --target dev
+# Signing in with single sign-on on another device (--device)
+# To sign in, open this page in a browser on any device:
+#
+#   https://flow-dev.acme.dev/api/v2/auth/device
+#
+# sign in, and enter the code:
+#
+#   BCDF-GHJK
+```
+
+Open the page and sign in with Google as for the UI: the same tenant pin,
+role mapping, just-in-time provisioning and audit event
+(`oidc.login.success` with `client: cli` and the device `grant`). Only then
+does the server ask for the code (filled in already when you opened the
+link that carries it). For a live code it shows **Sign in the Dexaflow CLI
+on another device?** with the account, the tenant, the code, and when and
+from which address the sign-in was started, next to the address of your
+browser. Check that the code is the one your terminal shows, tick the box
+that says so, and approve; the command finishes on its own and
+saves the token as any other login does. Cancel if you did not start the
+command yourself: a link or a code someone sent you is how a device
+sign-in is phished, and approving it would sign their CLI in as you.
+
+With no flag, `auth login` picks the device sign-in by itself when the
+server serves it, its output is a terminal, and the session has no browser
+to open (an SSH session, or Linux with neither `DISPLAY` nor
+`WAYLAND_DISPLAY`, and no `BROWSER` set), and says so; `--sso` keeps the
+browser sign-in on this machine. It warns when the page is on another host
+than the server it talks to, which usually means the OIDC `redirectUrl`
+does not name the public address.
+
+What the server enforces:
+
+- The code is eight letters from twenty consonants (about 34.6 bits) and a
+  sign-in lasts 10 minutes. It is asked for only after single sign-on, so
+  nobody can guess codes without an account. Each account may enter ten
+  wrong codes a minute on each replica; an unknown code and a malformed one get the same
+  page, and each is audited as the account (`oidc.cli_device_verify`).
+- Each address may open the sign-in page ten times a minute and start three
+  device sign-ins a minute (IPv6 by its /64), and hold five in progress
+  (IPv6 by its /56); the cluster holds at most 10,000.
+- The CLI polls every 5 seconds; a faster poll is told `slow_down` and the
+  interval grows. The approved sign-in is redeemed once, and the server
+  keeps only keyed hashes of the codes, never a token: the token is minted
+  when the CLI redeems the approval. Both steps are audited
+  (`oidc.cli_consent`, `oidc.cli_code`, with the device `grant`).
+- The token carries the roles the sign-in resolved when you approved it,
+  as any token carries the roles of its login.
+- The pending sign-ins live in the database (migration 045,
+  `cli_device_authorizations`), so the poll and the approval may reach
+  different replicas. Rotating the JWT secret invalidates the ones in
+  progress. A row, with the address it was started from, is deleted ten
+  minutes after it expires, by a sweep each minute: about 21 minutes after
+  the start at the latest.
+- The budgets and the consent page's addresses need the caller's real
+  address. Behind an ingress or a load balancer, list it in
+  `server.trusted_proxies`; without that every caller has the proxy's
+  address and shares its budgets, the consent page leaves the addresses out
+  when both are the same private one, and the server warns at startup.
+- The page's address comes from the configured OIDC `redirectUrl`, the
+  server's public origin; nothing changes at the IdP, which does not need a
+  device endpoint of its own.
+- The link that fills in the code carries it as `?user_code=`, so ingress
+  and proxy access logs may record it. It is useless without your sign-in
+  and expires in 10 minutes; leave it out of shared logs if you can.
+- The start, the verification page and the token route are public. Expect
+  503 from the start when the cluster is at its cap or starts are busy, and
+  429 from an address over its budgets; heavy abuse of the start is for the
+  ingress to rate limit.
 
 ## When a login is denied
 
