@@ -202,6 +202,24 @@ vocabulary, so the operator sees which values to change.
 {{- end -}}
 {{- end -}}
 {{- /*
+Cluster deploy defaults (#1704). The server refuses at boot a registry prefix or
+a platform no deploy could use (domain.DeployDefaults.Validate); refuse the
+same values here so the operator sees which one to change instead of a
+CrashLoopBackOff. The base image is checked by the server only.
+*/ -}}
+{{- $deployDefaults := (.Values.deploy | default dict).defaults | default dict -}}
+{{- with $deployDefaults.registry -}}
+{{- $registry := toString . -}}
+{{- if or (contains "://" $registry) (contains "@" $registry) (hasSuffix "/" $registry) (ne (lower $registry) $registry) (regexMatch "\\s" $registry) (and (contains "/" $registry) (regexMatch ":[^/]*$" $registry)) -}}
+{{- fail (printf "deploy.defaults.registry must be an image prefix such as ghcr.io/acme: a host, an optional port and a path, lowercase, with no scheme, credentials, tag, whitespace or trailing slash (got %q). The server refuses to start with it." $registry) -}}
+{{- end -}}
+{{- end -}}
+{{- range $deployDefaults.platforms -}}
+{{- if not (regexMatch "^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$" (toString .)) -}}
+{{- fail (printf "deploy.defaults.platforms: invalid platform %q: want os/arch or os/arch/variant, such as linux/amd64 or linux/arm64/v8. The server refuses to start with it." (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- /*
 Pro source mode (ADR 0067) runs every source-mode task on the runtime image the
 operator vetted, so the server refuses to boot unless that image is pinned by a
 full sha256 digest (internal/config validateSourceMode, domain.IsDigestPinned).

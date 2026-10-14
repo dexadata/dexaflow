@@ -518,6 +518,16 @@ execution:
   # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
   warmPoolEventRefill: false
 
+# Cluster deploy defaults (#1704): what `dexaflow deploy` uses on this cluster for whatever the project's `dexaflow.yaml`, its workspace, its target and the person's CLI config leave unset, so a platform team states its registry once instead of in every repository. Served to signed-in users who may read DAGs on `GET /api/v2/deployDefaults`; the deploy prints where each value came from. None of these is a secret: never put registry credentials here.
+deploy:
+  defaults:
+    # -- Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional port and a path, lowercase, with no scheme, credentials, tag or trailing `/`. The image name defaults to the `dag_id`. Empty (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REGISTRY` only when set; the chart refuses a value the server would refuse at boot.
+    registry: ""
+    # -- Platforms a deploy builds for, each `os/arch` or `os/arch/variant` (`[linux/amd64, linux/arm64]`). Empty (the default) leaves the built-in `linux/amd64`. Rendered comma-joined as `LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS` only when set.
+    platforms: []
+    # -- Base image of the generated Dockerfile for projects that set no `base_image`. Empty (the default) leaves the built-in one. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` only when set.
+    baseImage: ""
+
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see
 # `docs/configuration.md` for the full `LEOFLOW_*` surface). Standard K8s `env`

@@ -39,12 +39,15 @@ error: deploy requires a container registry, but none is configured.
       dexaflow.workspace.yaml:    defaults: {registry: ghcr.io/<your-org>}
       a target:                   registry: ghcr.io/<your-org> under targets.<name> in dexaflow.workspace.yaml
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
+      the whole cluster:          deploy.defaults.registry in the server's Helm values
 
   The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io
 ```
 
 **Fix:** set a registry in one of those places (the order is in
 [Workspaces and targets](/operate/workspaces-and-targets/#registry-platforms-and-base-image)),
+or ask the platform team to advertise one for the whole cluster
+([Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults)),
 then `docker login <registry>` once (builder
 auth is separate from the control-plane login — see [gate 5](#5-auth--writedag-rbac-scope)).
 See [ADR 0041](/project/adrs/0041-leoflow-deploy-pipelineless/).

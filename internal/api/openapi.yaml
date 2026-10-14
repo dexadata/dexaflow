@@ -1013,6 +1013,33 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExecutorInfo" }
 
+  /api/v2/deployDefaults:
+    get:
+      summary: Cluster deploy defaults (Dexaflow)
+      description: >-
+        The registry prefix, build platforms and base image the operator set
+        in the server's deploy.defaults. dexaflow deploy applies them to
+        whatever the project, its workspace, its target and the CLI config
+        leave unset. The values are the cluster's, the same for every tenant,
+        and none is a secret. Every field is always present; an unset one is
+        empty. A server without this route answers 404, and the CLI then
+        deploys with its local settings only. Needs read on dags (scope
+        dexaflow:read or dexaflow:deploy).
+      operationId: getDeployDefaults
+      tags: [DAGs]
+      responses:
+        "200":
+          description: The cluster's deploy defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeployDefaults" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not read DAGs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v2/version:
     get:
       summary: Control-plane version (Airflow VersionInfo shape)
@@ -1528,6 +1555,21 @@ components:
         task_namespace: { type: string }
         agent_control_plane_addr: { type: string }
         execution_modes: { type: array, items: { type: string } }
+
+    DeployDefaults:
+      type: object
+      required: [registry, platforms, base_image]
+      properties:
+        registry:
+          type: string
+          description: Image prefix a deploy pushes to, such as ghcr.io/acme; empty when unset.
+        platforms:
+          type: array
+          items: { type: string }
+          description: Platforms a deploy builds for (os/arch or os/arch/variant); empty when unset.
+        base_image:
+          type: string
+          description: Base image for projects that set none; empty when unset.
 
     VersionInfo:
       type: object

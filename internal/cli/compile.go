@@ -132,7 +132,9 @@ func defaultOutputPath(dir, explicit string) string {
 
 // loadCompileConfig is resolveCompileTarget plus the workspace and target
 // defaults (applyWorkspaceDefaults) that deploy applies too, so a compile and a
-// deploy of the same project build the same image.
+// deploy of the same project build the same image. Only deploy also reads the
+// deploy defaults a cluster advertises, for what every local source leaves
+// unset; a compile works offline and never asks a server.
 func loadCompileConfig(cmd *cobra.Command, dir string, o compileOptions) (*domain.LeoflowConfig, defaultsProvenance, error) {
 	cfg, err := resolveCompileTarget(dir, o.output)
 	if err != nil {

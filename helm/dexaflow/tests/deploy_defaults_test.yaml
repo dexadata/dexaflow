@@ -1,0 +1,107 @@
+suite: cluster deploy defaults (deploy.defaults, #1704)
+templates:
+  # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
+  # resolve its `include` reference (same reason as deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  # Unset is the server default: the install renders the env it had before
+  # and the cluster advertises nothing.
+  - it: renders no deploy default by default
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REGISTRY")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE")]
+
+  - it: renders each default that is set, platforms comma-joined
+    template: deployment.yaml
+    set:
+      deploy.defaults.registry: ghcr.io/acme
+      deploy.defaults.platforms: [linux/amd64, linux/arm64]
+      deploy.defaults.baseImage: ghcr.io/acme/base:1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+            value: ghcr.io/acme
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS
+            value: linux/amd64,linux/arm64
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
+            value: ghcr.io/acme/base:1
+
+  # The api role serves the endpoint; both Deployments share the env block.
+  - it: reaches both Deployments when the control plane is split
+    template: deployment.yaml
+    set:
+      deploy.defaults.registry: ghcr.io/acme
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+            value: ghcr.io/acme
+
+  # The server refuses these at boot; the chart refuses them at render.
+  - it: refuses a registry with a scheme
+    template: deployment.yaml
+    set:
+      deploy.defaults.registry: https://ghcr.io/acme
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.registry
+  - it: refuses a registry with credentials
+    template: deployment.yaml
+    set:
+      deploy.defaults.registry: bob:pw@ghcr.io/acme
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.registry
+  - it: refuses a registry ending with a tag
+    template: deployment.yaml
+    set:
+      deploy.defaults.registry: ghcr.io/acme:1
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.registry
+  - it: accepts a registry host with a port
+    template: deployment.yaml
+    set:
+      deploy.defaults.registry: localhost:5000/dags
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+            value: localhost:5000/dags
+  - it: refuses a platform outside os/arch[/variant]
+    template: deployment.yaml
+    set:
+      deploy.defaults.platforms: [amd64]
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.platforms

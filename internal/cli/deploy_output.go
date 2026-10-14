@@ -146,6 +146,7 @@ func runDeployCommand(cmd *cobra.Command, args []string, o deployOptions) error 
 	if err := validateDeployOptions(o); err != nil {
 		return err
 	}
+	o.cluster = &clusterDefaultsCache{}
 	if o.output != outputJSON {
 		return runDeployTarget(cmd, args, o)
 	}

@@ -65,18 +65,23 @@ func proDoctor(cmd *cobra.Command) []doctorLine {
 	if n := strings.TrimSpace(notes.String()); n != "" {
 		lines = append(lines, doctorLine{text: n})
 	}
-	return append(lines, doctorRegistry(cmd))
+	return append(lines, doctorRegistry(cmd, choice.URL, token))
 }
 
 // doctorRegistry is the push check of the DAG project in the current
-// folder, with the registry deploy would push to.
-func doctorRegistry(cmd *cobra.Command) doctorLine {
+// folder, with the registry deploy would push to, the deploy defaults of the
+// cluster at serverURL included.
+func doctorRegistry(cmd *cobra.Command, serverURL, token string) doctorLine {
 	if !isProjectDir(".") {
 		return doctorLine{label: "registry", text: "not checked: run doctor in a DAG project to check the push to its repository"}
 	}
-	cfg, _, err := loadDeployConfig(cmd, ".")
+	cfg, err := loadDeployProject(".")
 	if err != nil {
 		return failLine("registry", err)
+	}
+	cluster := readClusterLayer(cmdContext(cmd), cmd.ErrOrStderr(), serverURL, token)
+	if _, serr := settleDeployConfig(cmd, ".", cfg, cluster); serr != nil {
+		return failLine("registry", serr)
 	}
 	ctx, cancel := context.WithTimeout(cmdContext(cmd), doctorCheckTimeout)
 	defer cancel()

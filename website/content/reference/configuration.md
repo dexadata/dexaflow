@@ -588,6 +588,21 @@ a WARN at boot when the secret is empty.
 |---|---|---|---|
 | `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` | `true` | both | Start a DAG paused when it is registered for the first time, so its schedule creates no run until someone unpauses it. Airflow's setting of the same name. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. `false` registers new DAGs active, as releases before 0.5.4 did. `dexaflow lite` sets it to `false`. Config key `dags_are_paused_at_creation`. Helm: set the chart value `config.dagsArePausedAtCreation` (not `extraEnv`); the chart always renders this variable. A DAG deleted and deployed again comes back paused. See [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused). |
 
+### Cluster deploy defaults (`deploy.defaults.*`)
+
+What `dexaflow deploy` uses on this cluster for whatever the project, its
+workspace, its target and the person's CLI config leave unset. The server
+serves them on `GET /api/v2/deployDefaults`; unset, it advertises nothing and
+every deploy resolves as before. They are not secrets: never put registry
+credentials here. The server refuses to start with a value no deploy could use.
+See [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults).
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY` | (unset) | Pro | Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional port and a path, lowercase, with no scheme, credentials, tag or trailing `/`. The image name defaults to the `dag_id`. Helm: `deploy.defaults.registry`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS` | (unset) | Pro | Platforms a deploy builds for, comma separated (`linux/amd64,linux/arm64`), each `os/arch` or `os/arch/variant`. Unset, the built-in `linux/amd64` applies. Helm: `deploy.defaults.platforms` (a list). |
+| `DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` | (unset) | Pro | Base image of the generated Dockerfile for projects that set no `base_image`. Helm: `deploy.defaults.baseImage`. |
+
 ### Scheduler (`scheduler.*`)
 
 | Variable | Default | Edition | Purpose |
