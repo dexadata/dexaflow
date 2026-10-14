@@ -399,8 +399,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
-    env:
-      DEXAFLOW_SERVER_URL: https://pro.example.com
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }          # the ref and git describe need history
@@ -411,8 +409,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dexaflow
-        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
+      - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
+        with:
+          version: <VERSION>
+          server-url: https://pro.example.com
       - name: Deploy the DAGs this push changed
         env:
           DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
@@ -1059,7 +1059,7 @@ The recommended path on each runner type:
 | Runner | Recipe |
 |---|---|
 | **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing dexaflow. Cached automatically. |
-| **GitLab CI** | Install `python3` in the job image (`apk add python3` on `docker:27`), or use an image that ships both Python and the Docker CLI. |
+| **GitLab CI, Argo CD, Flux, Tekton** | Run the job in the [`dexaflow-cli` image](#the-dexaflow-cli-image): it ships Python 3.13, git and uv next to the CLI. With a Docker daemon in the job, install `python3` in its image (`apk add python3` on `docker:27`). |
 | **Cloud Build / CodeBuild** | Run the step on a `python:3.12-slim` image and install the Docker CLI there (the recipe below). `gcr.io/cloud-builders/docker` is Ubuntu 20.04, whose `python3` is 3.8. |
 | **Self-hosted runners** | Pin Python via your image baseline (`apt install python3.12` or `pyenv`) and version-lock in your runner provisioning. |
 | **Generic Docker-in-Docker** | Base your build container on `python:3.12-slim` (gives you Python + a Debian userland for the `docker build` shell). |
@@ -1077,6 +1077,140 @@ datastore) and may download a managed Python, none of which a pipeline uses.
 
 Caching `~/.dexaflow/pysrc/` between runs is optional; the extraction takes a
 few seconds.
+
+## Installing the CLI in a pipeline
+
+A pipeline pins the CLI it runs, so a release does not change what the next
+run deploys. From `v0.5.4` on, the release ships two ways to do that without
+piping `install.sh` into a shell: a GitHub Action, and a container image for
+every system that runs a job in a container.
+
+### The setup-dexaflow action
+
+```yaml
+      - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
+        with:
+          version: <VERSION>
+          server-url: https://pro.example.com   # optional
+```
+
+The action installs the release named by `version` for the runner's OS and
+architecture (Linux or macOS, amd64 or arm64), and puts `dexaflow` on `PATH`
+for the rest of the job. On every run it installs cosign v2.4.3 (and uses
+that one, not a cosign already on the runner), verifies the keyless
+signature of the release's `checksums.txt` against the release workflow at
+the `v`-prefixed tag, and checks the archive against `checksums.txt`; only
+then is the binary extracted. The release files (`checksums.txt`, its
+signature and certificate, the archive) are cached with `actions/cache` per
+version, platform and `verify-signature` setting. A cache hit saves the
+downloads only: the cached files are verified again like downloaded ones.
+
+| Input | Default | What it does |
+|---|---|---|
+| `version` | the ref of the action, only when it is a release tag | The release to install, `vX.Y.Z` or `vX.Y.Z-rc.N`, any release from `v0.5.0` on. Set it: with a commit SHA, a branch or a local path the action fails without it, and `latest` is refused. |
+| `server-url` | none | Exported as `DEXAFLOW_SERVER_URL` for the later steps. |
+| `verify-signature` | `true` | `false` skips the signature check and the cosign install (the checksum is still checked), for a runner that cannot reach Sigstore. |
+
+| Output | Value |
+|---|---|
+| `version` | The installed tag (`v0.5.4`). |
+| `path` | The absolute path of the `dexaflow` binary. |
+| `cache-hit` | `true` when the release files came from the cache (they were verified all the same). |
+
+To pin the action by commit, as for any third-party action:
+`uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<sha> # v0.5.4` with
+`version: v0.5.4`.
+
+The action installs only the CLI. `compile` still needs a Python 3.11 to 3.13
+on `PATH` ([Python on the runner](#python-on-the-runner)), which GitHub's
+hosted runners have; `actions/setup-python` pins one.
+
+### The dexaflow-cli image
+
+`ghcr.io/dexadata/dexaflow-cli:<VERSION>` (also tagged without the `v`) is
+the CLI of that release for `linux/amd64` and `linux/arm64`, with what
+`dexaflow deploy` runs next to it: Python 3.13 for `compile`, git for the
+version label and `--changed-since`, [uv](/operate/builders/#building-the-dependency-image-from-wheels)
+for the daemonless dependency layer, and the CA certificates. It has no
+Docker CLI: a deploy from it takes the `skip`, `code-layer`,
+`dependency-layer` or `remote` [builder](/operate/builders/), so a DAG whose
+image needs a real build (a package with no wheel, `system_packages`, its own
+`Dockerfile`) needs a remote builder or a job with a daemon (the GitLab
+recipe under [Examples](#examples)). The Cloud Build remote builder runs
+`gcloud`, which the image does not carry.
+
+The entrypoint is `dexaflow`, and the image runs as UID 65532 with
+`HOME=/home/dexaflow`. It is signed like the other images; the identity
+names the `v`-prefixed tag, the ref the release workflow ran at:
+
+```bash
+cosign verify ghcr.io/dexadata/dexaflow-cli:<VERSION> \
+  --certificate-identity "https://github.com/dexadata/dexaflow/.github/workflows/release.yaml@refs/tags/<VERSION>" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The CLI reads registry credentials from the docker config
+([Registry credentials](/operate/builders/#registry-credentials)), so a job
+writes one from its CI variables. In GitLab CI, with no Docker daemon and no
+privileged runner:
+
+```yaml title=".gitlab-ci.yml"
+deploy_dags:
+  image:
+    name: ghcr.io/dexadata/dexaflow-cli:<VERSION>
+    entrypoint: [""]                   # GitLab runs the script in a shell
+  variables:
+    DEXAFLOW_SERVER_URL: https://pro.example.com
+    GIT_DEPTH: "0"                     # git describe needs history and tags
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - mkdir -p "$HOME/.docker"
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 -w0)" > "$HOME/.docker/config.json"
+    - dexaflow deploy --all --yes      # DEXAFLOW_TOKEN is a masked CI/CD variable
+```
+
+The job writes the compiled artifacts under the checkout, which GitLab's
+Docker executor leaves writable for any user. The image trusts every
+checkout for git (`safe.directory`), since the CI system clones it as another
+user.
+
+As an Argo CD hook, the image checks a target against the repository after
+each sync; `--dry-run` exits 1 when something would change, which fails the
+hook and marks the sync. Drop `--dry-run` and add `--yes` to make the target
+match instead ([Syncing a target with the workspace](#syncing-a-target-with-the-workspace-gitops)):
+
+```yaml title="dexaflow-sync-hook.yaml"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: dexaflow-sync-
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext: { runAsNonRoot: true }
+      containers:
+        - name: sync
+          image: ghcr.io/dexadata/dexaflow-cli:<VERSION>
+          command: ["sh", "-c"]
+          args:
+            - git clone https://github.com/your-org/dags /tmp/dags &&
+              dexaflow sync /tmp/dags --dry-run --prune
+          env:
+            - name: DEXAFLOW_SERVER_URL
+              value: https://pro.example.com
+            - name: DEXAFLOW_TOKEN
+              valueFrom: { secretKeyRef: { name: dexaflow-deploy-token, key: token } }
+```
+
+Flux has no hooks, and it does not run a finished Job again while its spec is
+unchanged. Run the same container from a Kubernetes `CronJob`, or from the
+pipeline that pushes to the repository.
 
 ## Examples
 
@@ -1097,8 +1231,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
-    env:
-      DEXAFLOW_SERVER_URL: https://pro.example.com
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }          # git describe needs history and tags
@@ -1109,13 +1241,18 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dexaflow
-        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
+      - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
+        with:
+          version: <VERSION>
+          server-url: https://pro.example.com   # exported as DEXAFLOW_SERVER_URL
       - name: Deploy
         env:
           DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
         run: dexaflow deploy dags/my_pipeline --yes
 ```
+
+[`setup-dexaflow`](#the-setup-dexaflow-action) installs the release named by
+`version`, checks its signature and checksum, and caches it per version.
 
 GHCR refuses image names with upper-case letters, so keep `registry.url` and
 `registry.image_name` lower case. If you build the name from
