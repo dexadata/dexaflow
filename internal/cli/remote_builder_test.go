@@ -381,16 +381,31 @@ func TestUploadedSecretsWarningNamesTheSourceBucket(t *testing.T) {
 	}
 }
 
-// pathWithout returns PATH without the entries that hold an executable named
-// tool, so a test can run with that tool missing whatever the host installed.
+// pathWithout returns PATH with tool missing whatever the host installed: a
+// directory that holds tool is replaced by a copy made of links to its other
+// entries, so the shell and the other tools it holds stay reachable.
 func pathWithout(t *testing.T, tool string) string {
 	t.Helper()
 	var kept []string
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if info, err := os.Stat(filepath.Join(dir, tool)); err == nil && !info.IsDir() {
+		if _, err := os.Stat(filepath.Join(dir, tool)); err != nil {
+			kept = append(kept, dir)
 			continue
 		}
-		kept = append(kept, dir)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shadow := t.TempDir()
+		for _, e := range entries {
+			if e.Name() == tool {
+				continue
+			}
+			if err := os.Symlink(filepath.Join(dir, e.Name()), filepath.Join(shadow, e.Name())); err != nil {
+				t.Fatal(err)
+			}
+		}
+		kept = append(kept, shadow)
 	}
 	return strings.Join(kept, string(os.PathListSeparator))
 }
