@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -68,8 +69,14 @@ type RunState struct {
 	// task instances count toward max_active_tasks and the pool caps (ADR
 	// 0053, ADR 0066). A clear on a running run puts it back in queued while
 	// other tasks of it may still run, so a queued held run can hold slots.
-	Held  bool
-	Tasks []domain.TaskSpec
+	Held bool
+	// MaxActiveRuns is the DAG's max_active_runs, read from its dags row (the
+	// same value run creation caps on). The tick starts a queued run only
+	// while fewer than this many runs of the DAG are running, oldest logical
+	// date first, as Airflow's _start_queued_dagruns does (#1766). Zero or
+	// negative means unlimited.
+	MaxActiveRuns int
+	Tasks         []domain.TaskSpec
 	// Graph is the task index for Tasks, built once per dag_version by the store
 	// and shared read-only by every run of that version. Nil means "build it
 	// when needed", so callers that construct a RunState by hand need not set it.
@@ -184,7 +191,8 @@ type ScheduledDAG struct {
 	// running) at once. Zero means "unlimited" (Airflow-faithful: a missing
 	// limit is unbounded). The scheduler enforces the cap in createDueRuns:
 	// once the active-run count reaches this value, additional due slots are
-	// skipped on this tick (issue #200).
+	// skipped on this tick (issue #200). Starting a queued run is capped
+	// separately, on the running runs alone (RunState.MaxActiveRuns, #1766).
 	MaxActiveRuns int
 }
 
@@ -249,6 +257,11 @@ type Store interface {
 	// the planner must not retry it.
 	FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error
 	SetRunState(ctx context.Context, runID string, state domain.DagRunState) error
+	// StartQueuedRun moves a queued run to running, guarded on the run still
+	// being queued, and reports whether it moved. False means the run moved on
+	// after the tick read it (a user marked or deleted it), so the tick leaves
+	// it alone (#1766).
+	StartQueuedRun(ctx context.Context, runID, tenantID string) (bool, error)
 	// ClaimAlertAttempt atomically claims ONE on-failure send attempt, reporting
 	// true iff this call won it. It refuses when the episode was already
 	// delivered, when the attempt budget is spent, or when the backoff has not
@@ -727,12 +740,13 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		activeByDAG[dagRef{runs[i].TenantID, runs[i].DagID}]++
 	}
 	createErr := s.createDueRuns(ctx, activeByDAG)
+	startable := s.startableQueuedRuns(runs)
 	start := rotateAfter(runs, s.deferredRun)
 	s.deferredRun = ""
 	s.openDispatchWindow()
 	for k := range runs {
 		run := runs[(start+k)%len(runs)]
-		if run.waitsForUnpause() {
+		if run.State == domain.DagRunStateQueued && !startable[run.RunID] {
 			continue
 		}
 		key := dagRef{run.TenantID, run.DagID}
@@ -762,6 +776,59 @@ func (s *Scheduler) Step(ctx context.Context) error {
 // It stays in the snapshot the caps are computed from (see RunState.Held).
 func (r RunState) waitsForUnpause() bool {
 	return r.Held && r.State == domain.DagRunStateQueued
+}
+
+// startableQueuedRuns returns the queued runs this tick moves to running, by
+// RunID. Like Airflow's _start_queued_dagruns (#1766), it takes the queued
+// runs of unpaused DAGs oldest logical date first and starts one only while
+// its DAG has fewer than max_active_runs runs in running; the count starts
+// from the running runs in the snapshot, held ones included, and grows with
+// each start. A queued run left out waits, untouched, for a later tick: it is
+// not planned and nothing of it is dispatched. A non-positive max_active_runs
+// is unlimited, as in hasHeadroom.
+func (s *Scheduler) startableQueuedRuns(runs []RunState) map[string]bool {
+	// queued holds an index into runs (so no RunState is copied) and the
+	// run's logical date, parsed once.
+	type candidate struct {
+		idx     int
+		logical time.Time
+	}
+	var queued []candidate
+	running := map[dagRef]int{}
+	for i := range runs {
+		switch {
+		case runs[i].State == domain.DagRunStateRunning:
+			running[dagRef{runs[i].TenantID, runs[i].DagID}]++
+		case runs[i].State == domain.DagRunStateQueued && !runs[i].waitsForUnpause():
+			queued = append(queued, candidate{i, runs[i].logicalTime()})
+		}
+	}
+	if len(queued) == 0 {
+		return nil
+	}
+	sort.SliceStable(queued, func(i, j int) bool { return queued[i].logical.Before(queued[j].logical) })
+	startable := make(map[string]bool, len(queued))
+	for _, c := range queued {
+		run := &runs[c.idx]
+		key := dagRef{run.TenantID, run.DagID}
+		if run.MaxActiveRuns > 0 && running[key] >= run.MaxActiveRuns {
+			s.record("max_active_runs_start_cap")
+			continue
+		}
+		running[key]++
+		startable[run.RunID] = true
+	}
+	return startable
+}
+
+// logicalTime parses the run's logical date. A run without one, or with one
+// that does not parse, sorts first, keeping its snapshot order (queued_at).
+func (r RunState) logicalTime() time.Time {
+	t, err := time.Parse(time.RFC3339Nano, r.LogicalDate)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // openDispatchWindow starts the tick's dispatch accounting: the deadline the
@@ -1052,13 +1119,23 @@ type advanced struct {
 }
 
 func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, err error) {
-	// Materialize task instances on first sight of a queued run, then start it.
-	if run.State == domain.DagRunStateQueued && len(run.States) == 0 {
-		if err = s.store.MaterializeTasks(ctx, run.RunID, run.Tasks); err != nil {
-			return res, fmt.Errorf("materializing tasks: %w", err)
+	// Start a queued run Step admitted: materialize its task instances on
+	// first sight (a run a clear re-queued keeps the ones it has), then move it
+	// to running, guarded on it still being queued. Its tasks are planned from
+	// the next tick on.
+	if run.State == domain.DagRunStateQueued {
+		if len(run.States) == 0 {
+			if err = s.store.MaterializeTasks(ctx, run.RunID, run.Tasks); err != nil {
+				return res, fmt.Errorf("materializing tasks: %w", err)
+			}
 		}
-		if err = s.store.SetRunState(ctx, run.RunID, domain.DagRunStateRunning); err != nil {
-			return res, fmt.Errorf("starting run: %w", err)
+		started, serr := s.store.StartQueuedRun(ctx, run.RunID, run.TenantID)
+		if serr != nil {
+			return res, fmt.Errorf("starting run: %w", serr)
+		}
+		if !started {
+			s.logger.Debug("queued run moved on before its start; leaving it", "run", run.RunID, "dag", run.DagID)
+			s.record("start_run_superseded")
 		}
 		return res, nil
 	}

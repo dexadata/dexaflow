@@ -124,6 +124,31 @@ func TestRunWritesNeedTheOwningTenantIntegration(t *testing.T) {
 	}
 }
 
+// TestStartQueuedRunNeedsTheOwningTenantIntegration: the tick's guarded
+// queued -> running write (#1766) sent with another tenant's id starts
+// nothing; the owner's starts the run once, and a second start finds the run
+// no longer queued.
+func TestStartQueuedRunNeedsTheOwningTenantIntegration(t *testing.T) {
+	f, _, ctx := newTenantPredicateFixture(t)
+	q := f.q
+	f.exec(t, `UPDATE dag_runs SET state = 'queued', started_at = NULL WHERE id = $1`, f.runUUID)
+	if _, err := q.StartQueuedRun(ctx, queries.StartQueuedRunParams{ID: f.runUUID, TenantID: f.other}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("StartQueuedRun as another tenant: err = %v, want no rows", err)
+	}
+	if runState, _, _, _, _ := f.runAndTI(t); runState != "queued" {
+		t.Fatalf("after another tenant's start: run %s, want queued", runState)
+	}
+	if _, err := q.StartQueuedRun(ctx, queries.StartQueuedRunParams{ID: f.runUUID, TenantID: f.owner}); err != nil {
+		t.Fatalf("StartQueuedRun as the owner: %v", err)
+	}
+	if runState, _, _, _, _ := f.runAndTI(t); runState != "running" {
+		t.Errorf("after the owner's start: run %s, want running", runState)
+	}
+	if _, err := q.StartQueuedRun(ctx, queries.StartQueuedRunParams{ID: f.runUUID, TenantID: f.owner}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("StartQueuedRun on a running run: err = %v, want no rows", err)
+	}
+}
+
 // TestDagVersionQueriesNeedTheOwningTenantIntegration covers the dag_versions
 // queries of #508. The table has no tenant_id; the tenant is its DAG's, so a
 // DAG or version id of another tenant reads, inserts and re-points nothing.
