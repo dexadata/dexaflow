@@ -167,3 +167,14 @@ func checkSourceModeSpec(output, image string) error {
 	}
 	return nil
 }
+
+// sourceModeScan is what a source mode deploy of a project cannot carry.
+type sourceModeScan struct {
+	needs  []string
+	extras []string
+}
+
+// scanSourceMode scans the project at dir for source mode.
+func scanSourceMode(dir string, cfg *domain.LeoflowConfig) sourceModeScan {
+	return sourceModeScan{needs: sourceModeNeeds(dir, cfg)}
+}

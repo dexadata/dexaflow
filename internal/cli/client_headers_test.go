@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dexadata/dexaflow/internal/version"
 )
@@ -152,5 +155,98 @@ func TestDeployPrintsServerLinksAndChecks(t *testing.T) {
 	}
 	if !strings.Contains(unchanged, "already registered") || !strings.Contains(unchanged, "  link     console: https://console.example.com/dags/etl") {
 		t.Errorf("an unchanged register does not print the links:\n%s", unchanged)
+	}
+}
+
+// TestPrintableDropsFormatCharacters: a server's text loses the characters
+// that reorder or hide what the terminal shows (bidi overrides and isolates,
+// zero-width characters, line and paragraph separators) and the C1 controls
+// such as CSI (U+009B).
+func TestPrintableDropsFormatCharacters(t *testing.T) {
+	in := "a\u202eb\u2066c\u200bd\u200de\u2028f\u2029g\u009bh\ufeffi\x1bj"
+	if got := printable(in); got != "abcdefghij" {
+		t.Errorf("printable(%q) = %q, want %q", in, got, "abcdefghij")
+	}
+	if got := printable("café, 日本"); got != "café, 日本" {
+		t.Errorf("printable dropped ordinary text: %q", got)
+	}
+}
+
+// TestServerLinksAreHTTPOnly: a link is printed and reported only when it is
+// an http or https URL.
+func TestServerLinksAreHTTPOnly(t *testing.T) {
+	e := readServerExtras([]byte(`{"links":{"js":"javascript:alert(1)","file":"file:///etc/passwd","up":"HTTPS://x.example/1",` +
+		`"plain":"http://y.example/2","bare":"not a url","data":"data:text/html,x","rel":"/dags/etl"}}`))
+	if len(e.Links) != 2 || e.Links["up"] != "HTTPS://x.example/1" || e.Links["plain"] != "http://y.example/2" {
+		t.Errorf("links = %v, want only the http and https ones", e.Links)
+	}
+}
+
+// TestStatusSendsTheCLIUserAgent: the headers that name the CLI go on every
+// request, not only a deploy's: status reads with the public client.
+func TestStatusSendsTheCLIUserAgent(t *testing.T) {
+	clearCI(t)
+	t.Setenv("CI", "true")
+	fake := newTrackingServer("")
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+	_, _, _ = run(t, "status", "--token", "tok", "--config", emptyConfig(t))
+	if fake.requests == 0 {
+		t.Fatal("status made no request")
+	}
+	want := "dexaflow-cli/" + version.Get().Version
+	for i, a := range fake.agents {
+		if a != want || fake.ciHeaders[i] != "true" {
+			t.Errorf("request %d sent User-Agent %q and X-Dexaflow-CI %q, want %q and true", i, a, fake.ciHeaders[i], want)
+		}
+	}
+}
+
+// TestEveryClientSetsTheCLIHeaders: the CLI builds its HTTP clients in one
+// place (cliHTTPClient, cliAPIClient), whose transport sets the headers that
+// name it, so no client can be built without them.
+func TestEveryClientSetsTheCLIHeaders(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := []string{"http.Client{", "http.DefaultClient", "apiclient.New(", "apiclient.NewClient("}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "client_headers.go" {
+			continue
+		}
+		data, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			for _, bad := range forbidden {
+				if strings.Contains(line, bad) {
+					t.Errorf("%s:%d builds a client with %s; use cliHTTPClient or cliAPIClient", f, i+1, bad)
+				}
+			}
+		}
+	}
+}
+
+// TestCLITransportSetsTheHeaders: the transport sets the headers on a copy
+// of each request, leaving the caller's untouched.
+func TestCLITransportSetsTheHeaders(t *testing.T) {
+	clearCI(t)
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.Header.Clone() }))
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	resp, err := cliHTTPClient(5 * time.Second).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if got.Get("User-Agent") != cliUserAgent() || got.Get(ciHeader) != "" {
+		t.Errorf("headers = %v, want the CLI's User-Agent and no CI header outside CI", got)
+	}
+	if req.Header.Get("User-Agent") != "" {
+		t.Errorf("the transport changed the caller's request: %v", req.Header)
 	}
 }

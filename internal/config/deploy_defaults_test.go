@@ -154,3 +154,32 @@ func TestValidateDeployDefaultsSourceModeNeedsTheMode(t *testing.T) {
 		t.Errorf("Validate() with the mode on = %v, want nil", err)
 	}
 }
+
+// TestLoadServerRefusesASourceModeImage: the advertised runtime image is
+// always execution.source_mode.image (deploy.defaults.source_mode turns it
+// on), so a deploy.defaults.source_mode_image, which nothing reads, is
+// refused at boot rather than ignored.
+func TestLoadServerRefusesASourceModeImage(t *testing.T) {
+	check := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "deploy.defaults.source_mode_image") || !strings.Contains(err.Error(), "deploy.defaults.source_mode") ||
+			!strings.Contains(err.Error(), "execution.source_mode.image") {
+			t.Errorf("LoadServer() = %v, want a refusal naming deploy.defaults.source_mode_image and what to set instead", err)
+		}
+	}
+	t.Run("file", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "server.yaml")
+		if err := os.WriteFile(p, []byte("deploy:\n  defaults:\n    source_mode_image: "+runtimeImage+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadServer(p, nil)
+		check(t, err)
+	})
+	for _, prefix := range []string{"DEXAFLOW_", "LEOFLOW_"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_SOURCE_MODE_IMAGE", runtimeImage)
+			_, err := LoadServer("", nil)
+			check(t, err)
+		})
+	}
+}

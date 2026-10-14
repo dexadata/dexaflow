@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -45,6 +47,19 @@ type recordingServer struct {
 	registerStatus int
 	// dryRunBody, when set, is the answer of the dry run of a compiled spec.
 	dryRunBody string
+	// track makes each registered label the DAG's current version, as the
+	// server does, so a redeploy of the same content is already current.
+	track bool
+}
+
+// newTrackingServer is a recordingServer whose registers become the DAG's
+// current version.
+func newTrackingServer(clusterBody string) *recordingServer {
+	s := newRecordingServer(clusterBody)
+	s.deployServer.status = 0
+	s.deployServer.nullCurrent = true
+	s.track = true
+	return s
 }
 
 func newRecordingServer(clusterBody string) *recordingServer {
@@ -81,6 +96,16 @@ func (s *recordingServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clusterServer.ServeHTTP(w, r)
+	if register && s.track {
+		s.mu.Lock()
+		label := s.registered[len(s.registered)-1].DagVersion
+		s.mu.Unlock()
+		ds := s.deployServer
+		ds.mu.Lock()
+		ds.current, ds.nullCurrent = label, false
+		ds.registered = append(ds.registered, label)
+		ds.mu.Unlock()
+	}
 }
 
 // sourceModeWorkspace writes a workspace whose default target dev points at
@@ -181,8 +206,8 @@ func TestDeployInSourceModeFromAConfigFileTarget(t *testing.T) {
 }
 
 // TestDeployInSourceModeFromTheClusterDefaults: a cluster may advertise its
-// runtime image, as the other deploy defaults, and a target's own setting
-// wins over it.
+// runtime image, as the other deploy defaults. A target that names another
+// image is refused, naming both.
 func TestDeployInSourceModeFromTheClusterDefaults(t *testing.T) {
 	t.Run("cluster", func(t *testing.T) {
 		fake := newRecordingServer(`{"registry":"","platforms":[],"base_image":"","source_mode_image":"` + runtimeRef + `"}`)
@@ -200,17 +225,32 @@ func TestDeployInSourceModeFromTheClusterDefaults(t *testing.T) {
 			t.Errorf("settings line %q, want it from the cluster's deploy defaults", line)
 		}
 	})
-	t.Run("target wins", func(t *testing.T) {
+	t.Run("a different local image is refused", func(t *testing.T) {
 		fake := newRecordingServer(`{"registry":"","platforms":[],"base_image":"","source_mode_image":"` + otherRuntimeRef + `"}`)
+		srv := httptest.NewServer(fake)
+		defer srv.Close()
+		root, _, builder, _ := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+		_, _, err := run(t, "deploy", "etl", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
+		if err == nil {
+			t.Fatal("deploy succeeded, want a refusal of two different runtime images")
+		}
+		for _, want := range []string{runtimeRef, otherRuntimeRef, `target "dev" in ` + filepath.Join(root, workspaceFileName), "the deploy defaults of " + srv.URL} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q does not name %q", err, want)
+			}
+		}
+		if len(fake.registered) != 0 {
+			t.Errorf("registered %d versions, want none", len(fake.registered))
+		}
+	})
+	t.Run("the same image agrees", func(t *testing.T) {
+		fake := newRecordingServer(`{"registry":"","platforms":[],"base_image":"","source_mode_image":"` + runtimeRef + `"}`)
 		srv := httptest.NewServer(fake)
 		defer srv.Close()
 		_, _, builder, _ := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
 		out, stderr, err := run(t, "deploy", "etl", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
-		if err != nil {
-			t.Fatalf("deploy: %v\n%s\n%s", err, out, stderr)
-		}
-		if len(fake.registered) != 1 || fake.registered[0].Image != runtimeRef {
-			t.Errorf("registered %+v, want the target's image %s over the cluster's", fake.registered, runtimeRef)
+		if err != nil || len(fake.registered) != 1 || fake.registered[0].Image != runtimeRef {
+			t.Errorf("deploy: %v, registered %+v, want one version on %s\n%s\n%s", err, fake.registered, runtimeRef, out, stderr)
 		}
 	})
 }
@@ -414,5 +454,332 @@ func TestTargetAddSourceModeImage(t *testing.T) {
 	// A tag alone never matches the server's pinned runtime image.
 	if _, _, err := run(t, "target", "add", "tagged", "https://tagged.example", "--source-mode-image", "ghcr.io/acme/runtime:1", "--config", cfg); err == nil || !strings.Contains(err.Error(), "digest") {
 		t.Errorf("target add with an unpinned image: err = %v, want a refusal naming the digest", err)
+	}
+}
+
+// specs returns the registered specs, safe to read while a watch deploys.
+func (s *recordingServer) specs() []domain.DAGSpec {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.DAGSpec(nil), s.registered...)
+}
+
+// writeTargets replaces the workspace file of a sourceModeWorkspace with
+// target dev at serverURL holding the given target lines.
+func writeTargets(t *testing.T, root, serverURL, lines string) {
+	t.Helper()
+	writeTree(t, filepath.Join(root, workspaceFileName), "targets:\n  dev:\n    server: "+serverURL+"\n"+lines+"default_target: dev\n")
+}
+
+// TestDeployInSourceModeLabelsTheRuntimeImage: the content label of a
+// source mode deploy hashes the runtime image, so a new runtime image is a
+// new label and a register on it, where the same content on the same image
+// is already current; `dexaflow status` computes that same label.
+func TestDeployInSourceModeLabelsTheRuntimeImage(t *testing.T) {
+	fake := newTrackingServer("")
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	root, _, builder, _ := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+	deploy := func() string {
+		t.Helper()
+		out, stderr, err := run(t, "deploy", "etl", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
+		if err != nil {
+			t.Fatalf("deploy: %v\n%s\n%s", err, out, stderr)
+		}
+		return out
+	}
+	deploy()
+	if len(fake.specs()) != 1 {
+		t.Fatalf("registered %d versions, want 1", len(fake.specs()))
+	}
+	again := deploy()
+	if n := len(fake.specs()); n != 1 || !strings.Contains(again, "already") {
+		t.Fatalf("a redeploy of the same content on the same image registered (%d versions), want it already current:\n%s", n, again)
+	}
+	writeTargets(t, root, srv.URL, "    source_mode_image: "+otherRuntimeRef+"\n")
+	deploy()
+	specs := fake.specs()
+	if len(specs) != 2 {
+		t.Fatalf("after a new runtime image, registered %d versions, want 2", len(specs))
+	}
+	if specs[1].Image != otherRuntimeRef || specs[1].DagVersion == specs[0].DagVersion {
+		t.Errorf("second register = %s on %s, want a new label on %s (first %s)", specs[1].DagVersion, specs[1].Image, otherRuntimeRef, specs[0].DagVersion)
+	}
+
+	statusOut, _, _ := run(t, "status", "--output", "json", "--token", "tok", "--config", emptyConfig(t))
+	var report statusJSON
+	if err := json.Unmarshal([]byte(statusOut), &report); err != nil || len(report.Targets) != 1 || len(report.Targets[0].Dags) != 1 {
+		t.Fatalf("status report %s: %v", statusOut, err)
+	}
+	if got := report.Targets[0].Dags[0].LocalVersion; got != specs[1].DagVersion {
+		t.Errorf("status local_version = %q, want the label deploy registered %q", got, specs[1].DagVersion)
+	}
+}
+
+// TestSourceModeLabelKeepsTheBuildLabel: the runtime image is hashed only in
+// source mode, so no label of a build moves.
+func TestSourceModeLabelKeepsTheBuildLabel(t *testing.T) {
+	dir := t.TempDir()
+	writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\n")
+	writeProjectFile(t, dir, "dag.py", "x = 1\n")
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := contentHash(dir, cfg, "Dockerfile", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := contentHashOn(dir, cfg, "Dockerfile", "", "")
+	if err != nil || same != build {
+		t.Errorf("contentHashOn with no runtime image = %s (%v), want the build hash %s", same, err, build)
+	}
+	a, _ := contentHashOn(dir, cfg, "Dockerfile", "", runtimeRef)
+	b, _ := contentHashOn(dir, cfg, "Dockerfile", "", otherRuntimeRef)
+	if a == build || a == b {
+		t.Errorf("source mode hashes = %s and %s (build %s), want each runtime image its own hash", a, b, build)
+	}
+}
+
+// TestClusterSourceModeYieldsToLocalChoices: the runtime image a cluster
+// advertises applies only when no local source chose a registry or a runtime
+// image (#1704): a local registry, --no-source-mode and a target's
+// source_mode_image: none each keep the deploy a build.
+func TestClusterSourceModeYieldsToLocalChoices(t *testing.T) {
+	clusterBody := `{"registry":"","platforms":[],"base_image":"","source_mode_image":"` + runtimeRef + `"}`
+	plan := func(t *testing.T, body, targetLines string, args ...string) (string, error) {
+		t.Helper()
+		fake := newRecordingServer(body)
+		srv := httptest.NewServer(fake)
+		t.Cleanup(srv.Close)
+		root, _, builder, _ := sourceModeWorkspace(t, srv.URL, "", "")
+		writeTargets(t, root, srv.URL, targetLines)
+		out, stderr, err := run(t, append([]string{"deploy", "etl", "--plan", "--token", "tok", "--builder", builder, "--config", emptyConfig(t)}, args...)...)
+		return out + stderr, err
+	}
+	buildMode := func(t *testing.T, out string, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("deploy --plan: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "source mode") || !strings.Contains(out, "registry:   registry.example.com/team") {
+			t.Errorf("want a build to the local registry, not source mode:\n%s", out)
+		}
+	}
+	t.Run("a target registry", func(t *testing.T) {
+		out, err := plan(t, clusterBody, "    registry: registry.example.com/team\n")
+		buildMode(t, out, err)
+	})
+	t.Run("--no-source-mode", func(t *testing.T) {
+		out, err := plan(t, clusterBody, "    source_mode_image: "+runtimeRef+"\n", "--no-source-mode", "--registry", "registry.example.com/team")
+		buildMode(t, out, err)
+	})
+	t.Run("source_mode_image none", func(t *testing.T) {
+		withRegistry := `{"registry":"registry.example.com/team","platforms":[],"base_image":"","source_mode_image":"` + runtimeRef + `"}`
+		out, err := plan(t, withRegistry, "    source_mode_image: none\n")
+		buildMode(t, out, err)
+	})
+	t.Run("the cluster's registry and image", func(t *testing.T) {
+		withRegistry := `{"registry":"registry.example.com/team","platforms":[],"base_image":"","source_mode_image":"` + runtimeRef + `"}`
+		out, err := plan(t, withRegistry, "")
+		if err != nil || !strings.Contains(out, "source mode") {
+			t.Errorf("with both from the cluster, want source mode: %v\n%s", err, out)
+		}
+	})
+	t.Run("status takes --no-source-mode", func(t *testing.T) {
+		fake := newRecordingServer(clusterBody)
+		srv := httptest.NewServer(fake)
+		t.Cleanup(srv.Close)
+		sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+		if _, _, err := run(t, "status", "--no-source-mode", "--token", "tok", "--config", emptyConfig(t)); err != nil && strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("status --no-source-mode: %v", err)
+		}
+	})
+}
+
+// TestTargetAddSourceModeImageNone: none is the value that clears a runtime
+// image another layer sets, so target add takes it.
+func TestTargetAddSourceModeImageNone(t *testing.T) {
+	isolateCLIEnv(t)
+	root := t.TempDir()
+	writeTree(t, filepath.Join(root, workspaceFileName), workspaceFileTemplate)
+	t.Chdir(root)
+	if _, _, err := run(t, "target", "add", "dev", "https://dev.example", "--source-mode-image", "none", "--config", emptyConfig(t)); err != nil {
+		t.Fatalf("target add --source-mode-image none: %v", err)
+	}
+}
+
+// TestDeployInSourceModeRefusesAMalformedImage: source_mode_image follows the
+// image reference grammar, and the refusal prints it without the control
+// characters it may carry, from a target or from the cluster.
+func TestDeployInSourceModeRefusesAMalformedImage(t *testing.T) {
+	const digest = "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for name, image := range map[string]string{
+		"capitals": "ghcr.io/Acme/Runtime" + digest,
+		"escape":   "ghcr.io/acme/ru\x1b[31mn" + digest,
+		"space":    "ghcr.io/acme/ru n" + digest,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newRecordingServer("")
+			srv := httptest.NewServer(fake)
+			defer srv.Close()
+			root, _, builder, _ := sourceModeWorkspace(t, srv.URL, "", "")
+			quoted, _ := json.Marshal(image)
+			writeTargets(t, root, srv.URL, "    source_mode_image: "+string(quoted)+"\n")
+			_, _, err := run(t, "deploy", "etl", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
+			if err == nil || !strings.Contains(err.Error(), "source_mode_image") {
+				t.Fatalf("deploy: err = %v, want a refusal of source_mode_image", err)
+			}
+			if strings.ContainsRune(err.Error(), '\x1b') {
+				t.Errorf("the refusal carries an escape character: %q", err)
+			}
+			if len(fake.registered) != 0 {
+				t.Errorf("registered %d versions, want none", len(fake.registered))
+			}
+		})
+	}
+	t.Run("from the cluster", func(t *testing.T) {
+		fake := newRecordingServer(`{"registry":"","platforms":[],"base_image":"","source_mode_image":"ghcr.io/acme/ru\u001b[31mn` + digest + `"}`)
+		srv := httptest.NewServer(fake)
+		defer srv.Close()
+		_, _, builder, _ := sourceModeWorkspace(t, srv.URL, "", "")
+		_, _, err := run(t, "deploy", "etl", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
+		if err == nil || strings.ContainsRune(err.Error(), '\x1b') || len(fake.registered) != 0 {
+			t.Errorf("deploy: err = %q, registered %d, want a refusal without the escape character", err, len(fake.registered))
+		}
+	})
+}
+
+// TestSourceModeScan: what source mode refuses and what it only warns about,
+// walking the project as the label does (exclude_paths honored).
+func TestSourceModeScan(t *testing.T) {
+	cases := []struct {
+		name   string
+		yaml   string
+		files  map[string]string
+		refuse string // what the refusal names; "" for none
+		warn   string // what the warning names; "" for none
+	}{
+		{name: "package", files: map[string]string{"lib/util.py": "x = 1\n"}, refuse: "lib"},
+		{name: "test files", files: map[string]string{"test_dag.py": "x\n", "dag_test.py": "x\n", "conftest.py": "x\n", "tests/test_a.py": "x\n", "__init__.py": ""}},
+		{name: "a non-empty __init__.py", files: map[string]string{"__init__.py": "import os\n"}, refuse: "__init__.py"},
+		{name: "excluded", yaml: "exclude_paths: [scratch]\n", files: map[string]string{"scratch/x.py": "x\n"}},
+		{name: "other files", files: map[string]string{"README.md": "x\n", "data/seed.csv": "a,b\n"}, warn: "data/seed.csv"},
+		{name: "build context", yaml: "build:\n  context: sub\n", files: map[string]string{"sub/.keep": ""}, refuse: "build.context"},
+		{name: "include of the dag source", yaml: "dag_source: src/dag.py\ninclude_paths: [src/dag.py]\n", files: map[string]string{"src/dag.py": "x = 1\n"}},
+		{name: "include of another dag.py", yaml: "include_paths: [lib/dag.py]\n", files: map[string]string{"lib/dag.py": "x = 1\n"}, refuse: "include_paths"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\n"+tc.yaml)
+			writeProjectFile(t, dir, "dag.py", "x = 1\n")
+			for f, body := range tc.files {
+				writeProjectFile(t, dir, f, body)
+			}
+			cfg, err := loadDeployProject(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scan := scanSourceMode(dir, cfg)
+			needs := strings.Join(scan.needs, "\n")
+			if tc.refuse == "" && needs != "" {
+				t.Errorf("needs = %q, want none", needs)
+			}
+			if tc.refuse != "" && !strings.Contains(needs, tc.refuse) {
+				t.Errorf("needs = %q, want it to name %s", needs, tc.refuse)
+			}
+			extras := strings.Join(scan.extras, "\n")
+			if tc.warn == "" && extras != "" {
+				t.Errorf("extras = %q, want none", extras)
+			}
+			if tc.warn != "" && !strings.Contains(extras, tc.warn) {
+				t.Errorf("extras = %q, want it to name %s", extras, tc.warn)
+			}
+		})
+	}
+}
+
+// TestDeployInSourceModeWarnsAboutOtherFiles: files a build would have
+// copied, and the task will not see, are named on stderr; the deploy goes on.
+func TestDeployInSourceModeWarnsAboutOtherFiles(t *testing.T) {
+	fake := newRecordingServer("")
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	_, project, builder, _ := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+	writeProjectFile(t, project, "data/seed.csv", "a,b\n")
+	out, stderr, err := run(t, "deploy", "etl", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
+	if err != nil || len(fake.registered) != 1 {
+		t.Fatalf("deploy: %v, %d registers\n%s\n%s", err, len(fake.registered), out, stderr)
+	}
+	if !strings.Contains(stderr, "warning: ") || !strings.Contains(stderr, "data/seed.csv") {
+		t.Errorf("stderr does not warn about data/seed.csv:\n%s", stderr)
+	}
+}
+
+// TestDeployInSourceModeBuildFlags: --dockerfile names a build source mode
+// does not make, so it is refused; --registry, --platform, --rebuild and
+// --builder change nothing in source mode, and a note says so.
+func TestDeployInSourceModeBuildFlags(t *testing.T) {
+	t.Run("--dockerfile", func(t *testing.T) {
+		fake := newRecordingServer("")
+		srv := httptest.NewServer(fake)
+		defer srv.Close()
+		_, _, builder, _ := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+		_, _, err := run(t, "deploy", "etl", "--dockerfile", "Dockerfile.prod", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
+		if err == nil || !strings.Contains(err.Error(), "--dockerfile") || !strings.Contains(err.Error(), "source mode") {
+			t.Fatalf("deploy --dockerfile: err = %v, want a source mode refusal naming --dockerfile", err)
+		}
+		if len(fake.registered) != 0 {
+			t.Errorf("registered %d versions, want none", len(fake.registered))
+		}
+	})
+	t.Run("notes", func(t *testing.T) {
+		fake := newRecordingServer("")
+		srv := httptest.NewServer(fake)
+		defer srv.Close()
+		_, _, builder, log := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+		out, stderr, err := run(t, "deploy", "etl", "--registry", "registry.example.com/team", "--platform", "linux/arm64", "--rebuild",
+			"--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t))
+		if err != nil || len(fake.registered) != 1 || fake.registered[0].Image != runtimeRef || builderRan(log) {
+			t.Fatalf("deploy: %v, registered %+v, want one source mode version\n%s\n%s", err, fake.registered, out, stderr)
+		}
+		for _, flag := range []string{"--registry", "--platform", "--rebuild", "--builder"} {
+			if l := lineWith(stderr, "note: "+flag); !strings.Contains(l, "source mode") {
+				t.Errorf("no source mode note for %s:\n%s", flag, stderr)
+			}
+		}
+	})
+}
+
+// TestDeployWatchInSourceMode: a watch in source mode registers each saved
+// dag.py on the runtime image, with no build.
+func TestDeployWatchInSourceMode(t *testing.T) {
+	fastWatch(t, 20*time.Millisecond)
+	fake := newTrackingServer("")
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	_, project, builder, log := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &watchRun{out: &syncBuffer{}, errb: &syncBuffer{}, cancel: cancel, done: make(chan error, 1)}
+	root := NewRootCommand()
+	root.SetOut(w.out)
+	root.SetErr(w.errb)
+	root.SetArgs([]string{"deploy", "etl", "--watch", "--token", "tok", "--yes", "--builder", builder, "--config", emptyConfig(t)})
+	go func() { w.done <- root.ExecuteContext(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-w.done
+	})
+	w.watching(t)
+	changed := "from dexaflow import dag\n# the etl DAG, changed\n"
+	writeProjectFile(t, project, "dag.py", changed)
+	w.waitFor(t, "the redeploy", func() bool { return len(fake.specs()) == 2 })
+	if err := w.stop(t); err != nil {
+		t.Errorf("watch: %v", err)
+	}
+	specs := fake.specs()
+	if specs[1].Image != runtimeRef || specs[1].Source != changed || builderRan(log) {
+		t.Errorf("redeploy = image %s, source %q, builder ran %v; want the saved dag.py on %s with no build", specs[1].Image, specs[1].Source, builderRan(log), runtimeRef)
 	}
 }

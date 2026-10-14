@@ -565,3 +565,8 @@ func matchesExclude(patterns []string, slash, base string) bool {
 	}
 	return false
 }
+
+// contentHashOn is contentHash for a deploy on runtimeImage.
+func contentHashOn(dir string, cfg *domain.LeoflowConfig, dockerfile, output, runtimeImage string) (string, error) {
+	return contentHash(dir, cfg, dockerfile, output)
+}

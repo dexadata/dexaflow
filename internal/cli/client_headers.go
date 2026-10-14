@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dexadata/dexaflow/internal/version"
 )
@@ -43,4 +44,9 @@ func setClientHeaders(h http.Header) {
 	if inCI() {
 		h.Set(ciHeader, "true")
 	}
+}
+
+// cliHTTPClient is the HTTP client the CLI talks to a control plane with.
+func cliHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
 }
