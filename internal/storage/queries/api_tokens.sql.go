@@ -187,7 +187,7 @@ func (q *Queries) ListAPITokens(ctx context.Context, arg ListAPITokensParams) ([
 }
 
 const lockAPITokenOwner = `-- name: LockAPITokenOwner :one
-SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE
+SELECT id, email FROM users WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE
 `
 
 type LockAPITokenOwnerParams struct {
@@ -195,32 +195,62 @@ type LockAPITokenOwnerParams struct {
 	TenantID pgtype.UUID `json:"tenant_id"`
 }
 
+type LockAPITokenOwnerRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Email string      `json:"email"`
+}
+
 // Locks the user row a token is created for, so concurrent creates for one
 // user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY
 // UPDATE does not block the key-share locks that inserts referencing the user
-// take. No row: the user is not in the tenant.
-func (q *Queries) LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (pgtype.UUID, error) {
+// take. No row: the user is not in the tenant. The email names the owner in
+// the audit rows the create writes.
+func (q *Queries) LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (LockAPITokenOwnerRow, error) {
 	row := q.db.QueryRow(ctx, lockAPITokenOwner, arg.ID, arg.TenantID)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
+	var i LockAPITokenOwnerRow
+	err := row.Scan(&i.ID, &i.Email)
+	return i, err
 }
 
-const retireExpiredAPITokenName = `-- name: RetireExpiredAPITokenName :exec
+const retireExpiredAPITokenName = `-- name: RetireExpiredAPITokenName :many
 UPDATE api_tokens SET revoked_at = now()
-WHERE user_id = $1 AND name = $2 AND revoked_at IS NULL AND expires_at <= now()
+WHERE user_id = $1 AND tenant_id = $2 AND name = $3 AND revoked_at IS NULL AND expires_at <= now()
+RETURNING id, expires_at
 `
 
 type RetireExpiredAPITokenNameParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	Name   string      `json:"name"`
+	UserID   pgtype.UUID `json:"user_id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	Name     string      `json:"name"`
+}
+
+type RetireExpiredAPITokenNameRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
 
 // Revokes the user's expired, unrevoked tokens with this name, so an expired
-// token does not hold its name forever.
-func (q *Queries) RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) error {
-	_, err := q.db.Exec(ctx, retireExpiredAPITokenName, arg.UserID, arg.Name)
-	return err
+// token does not hold its name forever, and returns them so the create audits
+// each one as api_token.retire_expired rather than leaving it to read as a
+// manual revoke (#1768).
+func (q *Queries) RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) ([]RetireExpiredAPITokenNameRow, error) {
+	rows, err := q.db.Query(ctx, retireExpiredAPITokenName, arg.UserID, arg.TenantID, arg.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RetireExpiredAPITokenNameRow{}
+	for rows.Next() {
+		var i RetireExpiredAPITokenNameRow
+		if err := rows.Scan(&i.ID, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeAPIToken = `-- name: RevokeAPIToken :one

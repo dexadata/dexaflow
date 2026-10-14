@@ -2,14 +2,18 @@
 -- Locks the user row a token is created for, so concurrent creates for one
 -- user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY
 -- UPDATE does not block the key-share locks that inserts referencing the user
--- take. No row: the user is not in the tenant.
-SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE;
+-- take. No row: the user is not in the tenant. The email names the owner in
+-- the audit rows the create writes.
+SELECT id, email FROM users WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE;
 
--- name: RetireExpiredAPITokenName :exec
+-- name: RetireExpiredAPITokenName :many
 -- Revokes the user's expired, unrevoked tokens with this name, so an expired
--- token does not hold its name forever.
+-- token does not hold its name forever, and returns them so the create audits
+-- each one as api_token.retire_expired rather than leaving it to read as a
+-- manual revoke (#1768).
 UPDATE api_tokens SET revoked_at = now()
-WHERE user_id = $1 AND name = $2 AND revoked_at IS NULL AND expires_at <= now();
+WHERE user_id = $1 AND tenant_id = $2 AND name = $3 AND revoked_at IS NULL AND expires_at <= now()
+RETURNING id, expires_at;
 
 -- name: InsertAPIToken :one
 -- Stores a new API token (ADR 0074). The caller holds LockAPITokenOwner and
