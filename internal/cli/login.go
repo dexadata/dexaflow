@@ -34,6 +34,10 @@ func newLoginCommand() *cobra.Command {
 			"When the server offers single sign-on and no username or password is given, " +
 			"login opens the browser on the server's sign-in, where you approve the CLI sign-in, " +
 			"and waits for it on a loopback address (127.0.0.1); --no-browser prints the URL instead. " +
+			"On a machine with no browser (an SSH session, or Linux with no display) a server that serves it " +
+			"gets the device sign-in instead, as with --device: login prints a page and a short code, you open the page " +
+			"in a browser on any device, sign in and confirm the code, and login waits for that approval; --sso keeps the " +
+			"browser sign-in. " +
 			"A username or a password (flags, LEOFLOW_USERNAME/LEOFLOW_PASSWORD or --password-stdin) " +
 			"signs in with a password, as does a server without single sign-on. A password is not " +
 			"sent over plain http to a server that is not on this machine without --allow-insecure-password.",
@@ -74,7 +78,8 @@ func newLoginCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&f.passwordStdin, "password-stdin", false, "read the password from stdin instead of --password (avoids ps/shell-history exposure)")
 	cmd.Flags().BoolVar(&f.sso, "sso", false, "sign in with the server's single sign-on in a browser (the default when the server offers it and no username or password is given)")
 	cmd.Flags().BoolVar(&f.noBrowser, "no-browser", false, "with single sign-on, print the sign-in URL instead of opening a browser (implies --sso)")
-	cmd.Flags().DurationVar(&f.timeout, "timeout", defaultSSOTimeout, "how long to wait for the browser sign-in")
+	cmd.Flags().BoolVar(&f.device, "device", false, "sign in with single sign-on in a browser on another device, by a code (for SSH sessions and containers)")
+	cmd.Flags().DurationVar(&f.timeout, "timeout", defaultSSOTimeout, "how long to wait for the single sign-on approval")
 	cmd.Flags().BoolVar(&f.allowInsecurePassword, "allow-insecure-password", false, "send a password over plain http to a server that is not on this machine (it can be read on the way)")
 	return cmd
 }
@@ -84,21 +89,36 @@ type loginFlags struct {
 	username, password string
 	passwordStdin      bool
 	sso, noBrowser     bool
+	device             bool
 	timeout            time.Duration
 	// allowInsecurePassword lets a password go over plain http to a host
 	// that is not loopback.
 	allowInsecurePassword bool
 }
 
-// obtainLoginToken signs in with single sign-on or with a password, as
-// chooseSSO decides, and returns the Dexaflow token.
+// loginMethod is how `auth login` signs in.
+type loginMethod int
+
+// The ways `auth login` signs in.
+const (
+	methodPassword loginMethod = iota
+	methodBrowser
+	methodDevice
+)
+
+// obtainLoginToken signs in the way chooseLoginMethod decides and returns the
+// Dexaflow token.
 func obtainLoginToken(cmd *cobra.Command, serverURL string, f loginFlags) (string, error) {
-	useSSO, err := chooseSSO(cmd, serverURL, f)
+	method, err := chooseLoginMethod(cmd, serverURL, f)
 	if err != nil {
 		return "", err
 	}
-	if useSSO {
+	switch method {
+	case methodDevice:
+		return deviceLogin(cmdContext(cmd), cmd.OutOrStdout(), serverURL, f.timeout)
+	case methodBrowser:
 		return ssoLogin(cmdContext(cmd), cmd.OutOrStdout(), serverURL, ssoOptions{noBrowser: f.noBrowser, timeout: f.timeout})
+	case methodPassword:
 	}
 	if terr := checkPasswordTransport(serverURL, f.allowInsecurePassword); terr != nil {
 		return "", terr
@@ -118,37 +138,75 @@ func obtainLoginToken(cmd *cobra.Command, serverURL string, f loginFlags) (strin
 	return token, nil
 }
 
-// chooseSSO decides how login signs in, and says which way and why before
-// anything is asked for. --sso (or --no-browser) asks for single sign-on,
-// which the server must offer, and cannot be combined with a password flag.
-// Otherwise any username or password, from a flag or the environment, means a
-// password login, and with neither the server's answer decides: single
-// sign-on when it offers it, a password otherwise.
-func chooseSSO(cmd *cobra.Command, serverURL string, f loginFlags) (bool, error) {
+// chooseLoginMethod decides how login signs in, and says which way and why
+// before anything is asked for. --device asks for the device sign-in and
+// --sso (or --no-browser) for the browser one; the server must serve it, and
+// neither combines with a password flag. Otherwise any username or password,
+// from a flag or the environment, means a password login, and with neither
+// the server's answer decides: single sign-on when it offers it, on another
+// device when this session has no browser and the server serves that, and a
+// password otherwise.
+func chooseLoginMethod(cmd *cobra.Command, serverURL string, f loginFlags) (loginMethod, error) {
 	out := cmd.OutOrStdout()
+	if f.device {
+		return chooseDevice(cmd, serverURL)
+	}
 	if f.sso || f.noBrowser {
-		for _, name := range []string{"username", "password", "password-stdin"} {
-			if cmd.Flags().Changed(name) {
-				return false, fmt.Errorf("--sso and --no-browser sign in through the browser; drop --%s, or drop --sso to sign in with a password", name)
-			}
+		if err := refusePasswordFlags(cmd, "--sso and --no-browser sign in through the browser", "--sso"); err != nil {
+			return methodPassword, err
 		}
-		if !serverOffersSSO(cmdContext(cmd), serverURL) {
-			return false, fmt.Errorf("%s does not offer single sign-on; sign in with --username and a password", serverURL)
+		if !serverMethods(cmdContext(cmd), serverURL).SSO {
+			return methodPassword, fmt.Errorf("%s does not offer single sign-on; sign in with --username and a password", serverURL)
 		}
 		devPrintf(out, "Signing in with single sign-on (--sso)\n")
-		return true, nil
+		return methodBrowser, nil
 	}
 	if f.username != "" || f.password != "" || f.passwordStdin {
 		devPrintf(out, "Signing in with a password (a username or password was given; "+
 			"where the server uses single sign-on, only break-glass accounts have a password)\n")
-		return false, nil
+		return methodPassword, nil
 	}
-	if serverOffersSSO(cmdContext(cmd), serverURL) {
-		devPrintf(out, "Signing in with single sign-on (the server offers it and no username or password was given)\n")
-		return true, nil
+	m := serverMethods(cmdContext(cmd), serverURL)
+	if !m.SSO {
+		devPrintf(out, "Signing in with a password (the server does not offer single sign-on)\n")
+		return methodPassword, nil
 	}
-	devPrintf(out, "Signing in with a password (the server does not offer single sign-on)\n")
-	return false, nil
+	if headless, why := sessionHeadless(); headless && m.Device {
+		devPrintf(out, "Signing in with single sign-on on another device (the server offers it and this session has no browser: %s; "+
+			"pass --sso to use a browser on this machine)\n", why)
+		return methodDevice, nil
+	}
+	devPrintf(out, "Signing in with single sign-on (the server offers it and no username or password was given)\n")
+	return methodBrowser, nil
+}
+
+// chooseDevice checks an explicit --device: no other way to sign in is
+// asked for, and the server serves the device sign-in.
+func chooseDevice(cmd *cobra.Command, serverURL string) (loginMethod, error) {
+	for _, name := range []string{"sso", "no-browser"} {
+		if cmd.Flags().Changed(name) {
+			return methodPassword, fmt.Errorf("--device signs in on another device; drop --%s, or drop --device to sign in with a browser here", name)
+		}
+	}
+	if err := refusePasswordFlags(cmd, "--device signs in with single sign-on", "--device"); err != nil {
+		return methodPassword, err
+	}
+	m := serverMethods(cmdContext(cmd), serverURL)
+	if !m.SSO || !m.Device {
+		return methodPassword, fmt.Errorf("%s does not serve the device sign-in; sign in with --sso and a browser, or use an API token", serverURL)
+	}
+	devPrintf(cmd.OutOrStdout(), "Signing in with single sign-on on another device (--device)\n")
+	return methodDevice, nil
+}
+
+// refusePasswordFlags refuses a password flag next to a single sign-on flag.
+func refusePasswordFlags(cmd *cobra.Command, what, flag string) error {
+	for _, name := range []string{"username", "password", "password-stdin"} {
+		if cmd.Flags().Changed(name) {
+			return fmt.Errorf("%s; drop --%s, or drop %s to sign in with a password", what, name, flag)
+		}
+	}
+	return nil
 }
 
 // checkPasswordTransport refuses to send a password over plain http to a

@@ -1,0 +1,19 @@
+kind: Added
+body: |-
+  **`dexaflow auth login --device` signs in with single sign-on from a machine
+  with no browser**, such as an SSH session or a container. The command prints
+  a page and a short code; you open the page in a browser on any device, type
+  the code, sign in through the cluster's own OIDC flow (the same tenant pin,
+  role mapping and audit as the UI), and approve on a page that shows the code
+  and asks you to confirm it matches your terminal. The CLI polls
+  `POST /api/v2/auth/cli/token` with the device grant (`authorization_pending`,
+  `slow_down`, `access_denied`, `expired_token`, as in RFC 8628) and saves the
+  same token as any other login. The flow is served by Dexaflow, so the IdP
+  needs no device endpoint and no change. With no flag, `auth login` picks it
+  by itself when the server serves it and the session has no browser
+  (`SSH_CONNECTION`, or Linux with no display); `--sso` keeps the browser
+  sign-in. Codes are stored only as keyed hashes in a new table (migration 045)
+  shared by every replica, codes are rate limited, approved once and redeemed
+  once, and no token is stored. `GET /api/v2/auth/methods` gains `device`, and
+  `pkg/client` gains `StartCLIDeviceLogin` and `PollCLIDeviceLogin`. (#1704)
+time: 2026-10-14T23:00:00.000000000-03:00

@@ -102,3 +102,25 @@ func TestStateCodecBrowserLoginHasNoCLIBinding(t *testing.T) {
 		t.Errorf("a browser login decoded with a CLI binding: %+v", got.CLI)
 	}
 }
+
+func TestStateCodecRoundTripsDeviceBinding(t *testing.T) {
+	c := NewStateCodec("app-secret")
+	in := StatePayload{
+		State: "st", Nonce: "n", Verifier: "v", Next: "/",
+		Device: &DeviceBinding{ID: "0b6c9a52-3f0e-4c55-9d6f-0d9a3c1f2e11", UserCode: "BCDF-GHJK"},
+	}
+	tok, err := c.Encode(in, time.Minute)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := c.Decode(tok)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got.Device == nil || *got.Device != *in.Device {
+		t.Fatalf("device binding = %+v, want %+v", got.Device, in.Device)
+	}
+	if got.CLI != nil {
+		t.Errorf("a device login decoded with a loopback binding: %+v", got.CLI)
+	}
+}

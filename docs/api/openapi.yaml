@@ -90,9 +90,12 @@ paths:
         What dexaflow auth login reads before it chooses how to sign in. sso
         is true when the OIDC single sign-on flow is served; password is true
         when a password login can succeed for someone (always without SSO,
-        and only for break-glass accounts with it). The values come from the
-        same settings the sign-in page renders from. Public. A server without
-        this route answers 404, and the CLI then uses a password.
+        and only for break-glass accounts with it); device is true when the
+        device sign-in (POST /api/v2/auth/cli/device) is served too. The
+        values come from the same settings the sign-in page renders from.
+        Public. A server without this route answers 404, and the CLI then
+        uses a password; a server from before the device sign-in omits
+        device.
       operationId: getAuthMethods
       tags: [Auth]
       security: []
@@ -103,9 +106,42 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuthMethods" }
 
+  /api/v2/auth/cli/device:
+    post:
+      summary: Start a device sign-in of the CLI (Dexaflow)
+      description: >-
+        The first step of dexaflow auth login --device, for a machine with no
+        browser (RFC 8628 shaped, served by Dexaflow, so the server stays the
+        only OIDC client). It answers a device_code the CLI keeps secret and
+        polls with, a user_code of eight consonants (XXXX-XXXX) the person
+        enters at verification_uri (verification_uri_complete has it filled
+        in), expires_in (600) and interval (5) in seconds. The page, GET and
+        POST /api/v2/auth/device, starts the server's own OIDC sign-in, the
+        UI's, and ends on a consent page that shows the code and asks the
+        person to confirm it matches the terminal before approving. Only
+        hashes of the codes are stored. The body is ignored. Served only when
+        single sign-on is configured; rate limited per client address with
+        the other OIDC routes; 503 when too many sign-ins are in progress.
+      operationId: startCLIDeviceLogin
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: The device sign-in started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CLIDeviceAuthorization" }
+        "429":
+          description: Too many requests from this address
+        "503":
+          description: Too many device sign-ins are in progress
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v2/auth/cli/token:
     post:
-      summary: Exchange a CLI single sign-on code for a token (Dexaflow)
+      summary: Exchange a CLI single sign-on code, or poll a device sign-in, for a token (Dexaflow)
       description: >-
         The last step of dexaflow auth login with single sign-on. The CLI
         opens GET /api/v2/auth/oidc/login with a loopback redirect_uri
@@ -121,8 +157,22 @@ paths:
         and answers what POST /auth/token answers, with expires_in the
         token's remaining lifetime. Every refusal (unknown,
         expired, used, tampered, wrong verifier or redirect_uri) is the same
-        400. Served only when single sign-on is configured, and rate limited
-        per client address with the other OIDC routes.
+        400, with error invalid_grant. Served only when single sign-on is
+        configured, and rate limited per client address with the other OIDC
+        routes.
+
+
+        With grant_type urn:ietf:params:oauth:grant-type:device_code and a
+        device_code from POST /api/v2/auth/cli/device, it polls a device
+        sign-in instead (RFC 8628 section 3.4): 400 with error
+        authorization_pending until the person approves, slow_down when
+        polled sooner than the interval (which grows by five seconds),
+        access_denied once when the person canceled, expired_token after
+        expires_in, and invalid_grant for any device code that is not live
+        (unknown, malformed or already redeemed). The approved sign-in is
+        redeemed once across every replica for the token POST /auth/token
+        answers. Polls have a per-address budget of their own. Another
+        grant_type is unsupported_grant_type.
       operationId: exchangeCLILoginCode
       tags: [Auth]
       security: []
@@ -139,10 +189,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/TokenResponse"
         "400":
-          description: The code was refused
+          description: The code was refused, or the device sign-in is not approved
           content:
             application/problem+json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema: { $ref: "#/components/schemas/CLITokenError" }
         "429":
           description: Too many requests from this address
 
@@ -1246,18 +1296,48 @@ components:
 
     AuthMethods:
       type: object
-      required: [password, sso]
+      required: [password, sso, device]
       properties:
         password: { type: boolean }
         sso: { type: boolean }
+        device: { type: boolean, description: Whether the device sign-in of the CLI is served }
 
     CLITokenRequest:
       type: object
-      required: [code, code_verifier, redirect_uri]
+      description: >-
+        A one-time code exchange (code, code_verifier and redirect_uri, with
+        grant_type absent or authorization_code), or a device poll
+        (grant_type urn:ietf:params:oauth:grant-type:device_code and
+        device_code).
       properties:
+        grant_type:
+          type: string
+          description: Absent or authorization_code for a code exchange; the device grant for a poll
         code: { type: string, description: The one-time code the loopback received }
         code_verifier: { type: string, description: The PKCE verifier of the login's code_challenge }
         redirect_uri: { type: string, description: The redirect_uri the login was started with }
+        device_code: { type: string, description: The device_code of a device sign-in }
+
+    CLITokenError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              type: string
+              description: The OAuth error code a client acts on
+              enum: [invalid_grant, unsupported_grant_type, authorization_pending, slow_down, access_denied, expired_token]
+
+    CLIDeviceAuthorization:
+      type: object
+      required: [device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval]
+      properties:
+        device_code: { type: string, description: The secret the CLI polls with; never shown }
+        user_code: { type: string, example: "BCDF-GHJK", description: The code the person enters and confirms }
+        verification_uri: { type: string, description: The page the person enters the code on }
+        verification_uri_complete: { type: string, description: That page with the code filled in }
+        expires_in: { type: integer, example: 600 }
+        interval: { type: integer, example: 5, description: Minimum seconds between polls }
 
     CreateUserRequest:
       type: object

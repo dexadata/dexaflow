@@ -1536,6 +1536,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		OIDCUsers:          repo,
 		AuthAudit:          repo,
 		JWTSecret:          cfg.Auth.JWT.Secret,
+		// The device sign-in of the CLI (ADR 0081) keeps its pending
+		// sign-ins in the database, shared by every replica.
+		CLIDevices: repo,
 
 		// Trusted-issuer handoff (#1284): nil unless auth.trusted_issuer is set,
 		// which leaves POST /api/v2/auth/session unregistered.

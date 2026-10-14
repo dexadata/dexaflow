@@ -177,6 +177,22 @@ type AuditLog struct {
 	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type CliDeviceAuthorization struct {
+	ID                  pgtype.UUID        `json:"id"`
+	DeviceCodeHash      string             `json:"device_code_hash"`
+	UserCodeHash        string             `json:"user_code_hash"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
+	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
+	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
+	TenantID            pgtype.UUID        `json:"tenant_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	Email               *string            `json:"email"`
+	Roles               []string           `json:"roles"`
+}
+
 type Connection struct {
 	ID          pgtype.UUID        `json:"id"`
 	TenantID    pgtype.UUID        `json:"tenant_id"`

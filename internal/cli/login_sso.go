@@ -227,16 +227,20 @@ func exchangeSSOCode(ctx context.Context, serverURL, code, verifier, redirect st
 	return *tok.AccessToken, nil
 }
 
-// serverOffersSSO asks the server which sign-in methods it offers. A server
+// serverMethods asks the server which sign-in methods it offers. A server
 // that predates the question, or cannot be asked, is treated as offering
-// none: the password login then runs, and reports its own errors.
-func serverOffersSSO(ctx context.Context, serverURL string) bool {
+// none but the password: the password login then runs, and reports its own
+// errors.
+func serverMethods(ctx context.Context, serverURL string) apiclient.AuthMethods {
 	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 15 * time.Second}))
 	if err != nil {
-		return false
+		return apiclient.AuthMethods{}
 	}
 	m, err := c.GetAuthMethods(ctx)
-	return err == nil && m.SSO
+	if err != nil || m == nil {
+		return apiclient.AuthMethods{}
+	}
+	return *m
 }
 
 // randomState is the CLI's own state for one sign-in.
