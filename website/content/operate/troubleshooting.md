@@ -17,7 +17,7 @@ guides cover a clean first run; this page is where you land when one goes wrong.
 ## First things to run
 
 ```bash
-dexaflow doctor                          # host check (OS, python, docker, k3d, kubectl, recommended tier)
+dexaflow doctor                          # host check (OS, python, docker, k3d, kubectl, recommended tier); with a target, the deploy preflight too
 dexaflow version                         # version + commit + build date
 tail -f /tmp/leoflow-lite.log           # the live boot log when you ran `dexaflow lite` via lite-redeploy
 journalctl -u dexaflow-server -f         # Pro / systemd hosts

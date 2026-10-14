@@ -148,8 +148,8 @@ func TestPinnedRefKeepsTheSpelling(t *testing.T) {
 		"k3d-x.localhost:5050/a/b/etl:1.2.3": "k3d-x.localhost:5050/a/b/etl@sha256:abc",
 	}
 	for image, want := range cases {
-		if got := pinnedRef(image, "sha256:abc"); got != want {
-			t.Errorf("pinnedRef(%q) = %q, want %q", image, got, want)
+		if got := PinnedRef(image, "sha256:abc"); got != want {
+			t.Errorf("PinnedRef(%q) = %q, want %q", image, got, want)
 		}
 	}
 }
