@@ -636,6 +636,14 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- $requireDigest := (.ctx.Values.deploy | default dict).requireDigest | default "off" | toString }}
+            {{- if ne $requireDigest "off" }}
+            # Digest-pinned images at register (#1703). Stamped only when warn
+            # or enforce, so an install that leaves it off renders the env it
+            # had before. deployment.yaml has already refused any other value.
+            - name: LEOFLOW_DEPLOY_REQUIRE_DIGEST
+              value: {{ $requireDigest | quote }}
+            {{- end }}
             {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}
             # Pro source mode (ADR 0067). Stamped only when on, so an install that
             # never turns it on renders the env it had before (the server default

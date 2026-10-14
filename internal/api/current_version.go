@@ -43,6 +43,10 @@ type currentVersionResponse struct {
 	Changed bool                 `json:"changed"`
 	From    *listedDagVersionDTO `json:"from"`
 	To      listedDagVersionDTO  `json:"to"`
+	// Warnings is what the change let through with a warning, such as an
+	// image not pinned by digest under deploy.require_digest=warn (#1703);
+	// absent when there is none.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // admissionError is a refusal of the target spec by the register checks; it
@@ -68,13 +72,18 @@ func setCurrentVersionHandler(repo DagVersionRepository, admission specAdmission
 			return
 		}
 		dagID := c.Param("dag_id")
+		var warnings []string
 		admit := func(spec domain.DAGSpec) error {
-			if aerr := admission.check(&spec, stageSetCurrent); aerr != nil {
+			w, aerr := admission.checkWarn(&spec, stageSetCurrent, false)
+			if aerr != nil {
 				return admissionError{aerr}
 			}
+			warnings = w
 			return nil
 		}
-		change, err := repo.SetCurrentDagVersion(c.Request.Context(), tenantOf(c), dagID, sel, actorOf(c), admit)
+		change, err := repo.SetCurrentDagVersionAs(c.Request.Context(), tenantOf(c), domain.DagSetCurrent{
+			DagID: dagID, Selector: sel, ActorUserID: actorOf(c), Admit: admit, RequireDigest: admission.digest.mode,
+		})
 		var refused admissionError
 		switch {
 		case errors.As(err, &refused):
@@ -84,7 +93,7 @@ func setCurrentVersionHandler(repo DagVersionRepository, admission specAdmission
 			handleRepoError(c, err)
 			return
 		}
-		out := currentVersionResponse{DagID: dagID, Changed: change.Changed, To: toListedDagVersionDTO(dagID, change.To)}
+		out := currentVersionResponse{DagID: dagID, Changed: change.Changed, To: toListedDagVersionDTO(dagID, change.To), Warnings: warnings}
 		if change.From.ID != "" {
 			from := toListedDagVersionDTO(dagID, change.From)
 			out.From = &from

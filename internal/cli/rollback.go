@@ -77,7 +77,7 @@ func newRollbackCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return setCurrentVersion(ctx, cmd.OutOrStdout(), c, dagID, target)
+			return setCurrentVersion(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), c, dagID, target)
 		},
 	}
 	addServerFlags(cmd, &serverURL, &token)
@@ -272,7 +272,7 @@ func findVersion(dagID string, versions []listedVersion, sel string) (listedVers
 
 // setCurrentVersion asks the control plane to make target current and prints
 // what changed.
-func setCurrentVersion(ctx context.Context, out io.Writer, c *apiclient.ClientWithResponses, dagID string, target listedVersion) error {
+func setCurrentVersion(ctx context.Context, out, warn io.Writer, c *apiclient.ClientWithResponses, dagID string, target listedVersion) error {
 	label := target.label
 	body := apiclient.DagCurrentVersionRequest{Version: &label}
 	if label == "" {
@@ -290,6 +290,9 @@ func setCurrentVersion(ctx context.Context, out io.Writer, c *apiclient.ClientWi
 		return errors.New("the control plane answered without a body")
 	}
 	change := resp.JSON200
+	if change.Warnings != nil {
+		printNewWarnings(warn, *change.Warnings, nil)
+	}
 	to := describeVersion(&change.To)
 	if !change.Changed {
 		_, werr := fmt.Fprintf(out, "%s already runs %s; nothing changed.\n", dagID, to)
