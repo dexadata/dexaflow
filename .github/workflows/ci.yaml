@@ -1034,10 +1034,21 @@ jobs:
   # the cluster arch, pushes to a k3d-managed registry, captures the digest,
   # re-pins dag.json, registers -- then the cluster pulls the digest-pinned image
   # and runs it. Gates the build/push/digest/register glue. ~10 min.
+  #
+  # It then redeploys while a run is in flight and runs again (#1707), once per
+  # warm pool mode: deploy behaves the same with warm pools on and off. The off
+  # leg keeps the job's original name and gate. The warm pools leg costs as much
+  # again, so its gate (`--scope warm-pools`) runs it only when the warm
+  # placement or deploy path changed (test/README.md, `warm-paths`).
   deploy-e2e:
-    name: E2E deploy (k3d + registry)
+    name: ${{ matrix.warm_pools == 'on' && 'E2E deploy (k3d + registry, warm pools on)' || 'E2E deploy (k3d + registry)' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: unquoted on and off are YAML 1.1 booleans.
+        warm_pools: ["off", "on"]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -1081,7 +1092,16 @@ jobs:
           # permit ';', '$(' and backticks.
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
-        run: bash scripts/ci-heavy-gate.sh "$EVENT_NAME" "$BASE_REF"
+          # The warm pools leg decides by path outside pull requests too: the
+          # merge queue's base commit, or the commit before a push.
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.before }}
+          WARM_POOLS: ${{ matrix.warm_pools }}
+        run: |
+          if [ "$WARM_POOLS" = on ]; then
+            bash scripts/ci-heavy-gate.sh --scope warm-pools "$EVENT_NAME" "${BASE_REF:-$BASE_SHA}"
+          else
+            bash scripts/ci-heavy-gate.sh "$EVENT_NAME" "$BASE_REF"
+          fi
       - if: steps.gate.outputs.run == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -1105,8 +1125,10 @@ jobs:
       - name: Build binaries
         if: steps.gate.outputs.run == 'true'
         run: make build
-      - name: Run the k3d deploy e2e
+      - name: Run the k3d deploy e2e (warm pools ${{ matrix.warm_pools }})
         if: steps.gate.outputs.run == 'true'
+        env:
+          DEXAFLOW_E2E_WARM_POOLS: ${{ matrix.warm_pools }}
         run: bash test/e2e/deploy-e2e.sh
 
   # ─────────────────────────────────────────────────────────────────────
