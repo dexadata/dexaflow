@@ -232,7 +232,15 @@ The JSON document has one entry per DAG:
       "created": true,
       "dag_created": true,
       "is_paused": true,
-      "next": "my_pipeline is paused, so nothing runs until ..."
+      "next": "my_pipeline is paused, so nothing runs until ...",
+      "execution": {
+        "warm_pools": true,
+        "tasks": [
+          { "task_id": "extract", "mode": "warm" },
+          { "task_id": "load", "mode": "dedicated", "reason": "node_selector set" }
+        ],
+        "pool": { "state": "on", "detail": "2 idle warm workers (up to 5) ...", "min_idle_workers": 2, "max_pool_size": 5 }
+      }
     }
   ]
 }
@@ -246,6 +254,16 @@ nothing was built), `skipped` (unchanged since the `--changed-since` ref, with
 `--plan` it is `planned` or `refused`, and a `plan` object carries `build`,
 `push`, `register` and `reason`. After a failure of `--all` the document is
 still printed, so the pipeline sees which DAGs went through.
+
+`execution` is the server's answer on where each task runs: `mode` is `warm`
+(warm-eligible) or `dedicated`, with the `reason` for a dedicated pod, and
+`pool.state` is `off`, `none` or `on`, with `previous_pool: "draining"` for a
+new version of an existing DAG on a server that keeps warm workers. The human output
+prints it as an `execution` line and, unless every task takes a dedicated pod
+for one reason, a `warm pool` line; see
+[Where a deploy's tasks run](/operate/warm-pools/#where-a-deploys-tasks-run).
+A server from before the field sends none, and the entry has no `execution`.
+`--plan` does not run the parser, so it has no tasks to report on.
 
 {{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The per-DAG pipeline above stays the recommendation, and the `paths:` filter is
@@ -490,6 +508,86 @@ Two things that look like a rollback are not:
 `dexaflow deploy` of code that matches a version registered earlier (after a
 `git revert`, for example) stops before building and suggests the
 `dexaflow rollback <dag_id> --to <label>` command for that version.
+
+## Promoting between environments
+
+`dexaflow promote` registers on one [target](/operate/workspaces-and-targets/) the exact
+version another target runs: the same `dag.json` and the same image digest.
+Nothing is compiled or built, so what reaches production is what ran in
+staging.
+
+```bash
+dexaflow promote my_pipeline --from staging --to prod --dry-run   # what would be copied and registered
+dexaflow promote my_pipeline --from staging --to prod             # the current version of staging
+dexaflow promote my_pipeline --from staging --to prod --version v1.4.0-3fa2c1   # or another version
+```
+
+- **Which version.** Without `--version` it is the source's current version.
+  `--version` matches a label first, then a version number from
+  `dexaflow dags versions my_pipeline --target staging`.
+- **Only images pinned by digest.** The version must run
+  `<repo>@sha256:<digest>`, as every version `dexaflow deploy` registers does.
+  A version registered with a tag (`dexaflow push` of a file compiled with
+  `compile --build --push`) is refused: a tag can name other bytes tomorrow.
+- **The image, copied when needed.** The destination registry is `--registry`,
+  else the `registry` of the `--to` target, else the
+  `deploy.defaults.registry` its control plane advertises. When one is set and
+  the image is not already in it, the image is copied there by digest, with
+  every layer and platform, byte for byte (bytes that do not match their
+  digest are refused), and the copy is checked in the destination afterwards.
+  The repository path is kept: `ghcr.io/acme-dev/team-a/etl@sha256:…` promoted
+  to a target whose registry is `registry.acme.dev/prod` becomes
+  `registry.acme.dev/prod/acme-dev/team-a/etl@sha256:…` (same digest). The copy
+  is also tagged with the version label, unless that tag already names another
+  digest there, which refuses the promote: a promote never moves a tag. The
+  version is registered with the copy, and only its `image` field differs from
+  the source's `dag.json`. When the destination already holds this version,
+  nothing is copied. Without a destination registry the same reference is
+  registered, and the destination cluster must be able to pull it. The copy
+  reads and pushes with the credentials of `docker login` and of a cloud CLI
+  session, as a deploy does; a failure names the login command of each
+  registry.
+- **The normal register.** The destination gets the version through
+  `POST /api/v2/dags/{dag_id}/versions`, after its dry run
+  (`/versions/dry_run`): a refusal (the execution allowlist, the tenant
+  limits, a label already registered there with other content), or any answer
+  that is not a dry run other than an older server's `404` or `405`, stops
+  the promote before anything is copied. A DAG the promote creates starts
+  paused if the server or the DAG says so (`is_paused_upon_creation`, else
+  `dags_are_paused_at_creation`), as a deploy's would, and an existing DAG
+  keeps `is_paused`. Content the destination already has answers that nothing
+  changed. When both servers run the same Dexaflow version, the destination
+  records the same spec hash as the source when the image is not copied.
+- **Audited, as claimed.** The register's `dag.version.register` audit entry
+  carries `promoted_from` with the source target's name and server URL as the
+  promoting CLI sent them (`promoted_from` and `promoted_from_server` on the
+  register). The destination records this claim; it does not verify it.
+- **A token for each control plane.** `--from-token` and `--to-token`, else
+  the session saved for each server by `dexaflow auth login --target <name>`.
+  `DEXAFLOW_TOKEN` is not read, so one token is never sent to two control
+  planes. The source side reads each version's spec
+  (`GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec`), which holds
+  the DAG's source, environment literals and params, so it needs read on dags
+  and, for an API token, the `read` scope: a deploy-only token is refused
+  there with `403`. The destination side needs only what a deploy needs: a
+  `deployer` user or a token with the `deploy` scope.
+- **For pipelines.** `--yes` skips the confirmation prompt, and
+  `--output json` prints one JSON document on stdout (the source and
+  destination targets, servers, version and images, whether the image was
+  copied, and the status `registered`, `unchanged`, `planned` or `failed`),
+  with the human lines on stderr.
+
+In a pipeline, a promotion job after the staging deploy:
+
+```yaml
+      - name: Promote to prod
+        env:
+          STAGING_TOKEN: ${{ secrets.DEXAFLOW_STAGING_TOKEN }}
+          PROD_TOKEN: ${{ secrets.DEXAFLOW_PROD_TOKEN }}
+        run: |
+          dexaflow promote my_pipeline --from staging --to prod --yes \
+            --from-token "$STAGING_TOKEN" --to-token "$PROD_TOKEN"
+```
 
 ## Prerequisites
 

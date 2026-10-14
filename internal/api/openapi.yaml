@@ -672,6 +672,27 @@ paths:
             and a scoped token also needs the dexaflow:run scope (403
             otherwise).
           schema: { type: boolean }
+        - name: promoted_from
+          in: query
+          required: false
+          description: >-
+            Marks the register as a promotion (`dexaflow promote`): the name
+            of the target the version was read from, recorded with
+            promoted_from_server under promoted_from in the register's audit
+            entry. It is the caller's claim, recorded as sent and not
+            verified. A target name: lower case letters, digits, _ and -,
+            starting with a letter or digit, at most 63 characters; anything
+            else is refused with 400.
+          schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,62}$" }
+        - name: promoted_from_server
+          in: query
+          required: false
+          description: >-
+            The URL of the control plane the version was promoted from, as
+            the caller claims it (not verified): an absolute http or https
+            URL without credentials and with no control or format character,
+            at most 2048 bytes. It needs promoted_from (400 otherwise).
+          schema: { type: string, maxLength: 2048 }
       requestBody:
         required: true
         content:
@@ -740,6 +761,20 @@ paths:
             checks it (400 for a value other than true or false, 403 without
             write on dags or, for a scoped token, dexaflow:run).
           schema: { type: boolean }
+        - name: promoted_from
+          in: query
+          required: false
+          description: >-
+            The promoted_from the register would be sent, checked as the
+            register checks it (a target name; 400 otherwise).
+          schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,62}$" }
+        - name: promoted_from_server
+          in: query
+          required: false
+          description: >-
+            The promoted_from_server the register would be sent, checked as
+            the register checks it.
+          schema: { type: string, maxLength: 2048 }
       requestBody:
         required: true
         content:
@@ -1127,6 +1162,42 @@ paths:
                 type: object
                 additionalProperties: true
                 description: The compiled dag.json artifact (DAGSpec shape).
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+      - name: version_number
+        in: path
+        required: true
+        description: The version_number of a version from the dagVersions listing.
+        schema: { type: integer }
+    get:
+      summary: Get the compiled spec registered with one version of a DAG (Dexaflow)
+      description: >-
+        The dag.json registered with this version, current or not, as GET
+        /api/v2/dags/{dag_id}/spec serves the current one. `dexaflow
+        promote` reads it to register the same version on another control
+        plane. The spec holds the DAG's source, environment literals and
+        params, so it needs read on dags, and a scoped token dexaflow:read
+        (dexaflow:deploy alone is refused).
+      operationId: getDagVersionSpec
+      tags: [DAGs]
+      responses:
+        "200":
+          description: The compiled dag.json of the version
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                description: The compiled dag.json artifact (DAGSpec shape).
+        "400":
+          description: version_number is not an integer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v2/monitor/health:
@@ -1700,6 +1771,66 @@ components:
           type: array
           items: { type: string }
           description: What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
+        execution: { $ref: "#/components/schemas/ExecutionReport" }
+
+    ExecutionReport:
+      type: object
+      description: >-
+        Where the version's tasks run (Dexaflow), from the same decision
+        dispatch places an attempt with: on a warm worker of the version
+        (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and
+        its dry run. A task is warm-eligible; it still takes a dedicated pod
+        when no warm worker is free. A task the dispatcher would offer to a
+        warm worker is reported dedicated when no warm worker of its version
+        can exist (no idle worker kept, or a server that runs none).
+      required: [warm_pools, tasks, pool]
+      properties:
+        warm_pools: { type: boolean, description: "execution.warm_pools_enabled on the server." }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/TaskExecution" }
+        pool: { $ref: "#/components/schemas/WarmPoolReport" }
+
+    TaskExecution:
+      type: object
+      required: [task_id, mode]
+      properties:
+        task_id: { type: string }
+        mode:
+          type: string
+          enum: [warm, dedicated]
+          x-enum-varnames: [TaskExecutionModeWarm, TaskExecutionModeDedicated]
+        reason:
+          type: string
+          description: >-
+            Why the task takes a dedicated pod, absent when warm-eligible: warm
+            pools off, staging enabled, source mode, service_account set, a
+            placement field set (node_selector set, tolerations set, ...), a
+            size larger than a warm pod, no idle warm workers kept for this
+            DAG, or a server that runs no warm workers.
+
+    WarmPoolReport:
+      type: object
+      required: [state, detail]
+      properties:
+        state:
+          type: string
+          enum: ["off", none, "on"]
+          description: >-
+            off: warm pools are off. none: this version gets no warm worker
+            (staging, source mode, no idle worker kept, or a server that runs
+            no warm workers: the subprocess executor, or pod dispatch
+            disabled). on: the version
+            keeps min_idle_workers idle warm workers, up to max_pool_size,
+            while it has an active run; they start with its first run.
+        detail: { type: string, description: The state in a sentence for a person. }
+        min_idle_workers: { type: integer }
+        max_pool_size: { type: integer }
+        previous_pool:
+          type: string
+          enum: [draining]
+          x-enum-varnames: [WarmPoolReportPreviousPoolDraining]
+          description: draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
 
     DagVersionCollection:
       type: object

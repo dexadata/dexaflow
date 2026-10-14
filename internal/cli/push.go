@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -69,26 +70,44 @@ func pushVersionPaused(ctx context.Context, serverURL, token, dagID string, spec
 
 // versionPost is one POST of a spec to /api/v2/dags/{dag_id}/versions: a
 // register, or with dryRun the server's dry run of one, on its
-// /versions/dry_run route.
+// /versions/dry_run route. promoted, set by `dexaflow promote`, names the
+// control plane the version comes from, for the register's audit entry.
 type versionPost struct {
 	serverURL, token, dagID string
 	spec                    []byte
 	paused                  *bool
 	dryRun                  bool
+	promoted                *domain.DagPromotion
+}
+
+// query is the query string of p's POST, "" when it has none.
+func (p versionPost) query() string {
+	q := url.Values{}
+	if p.paused != nil {
+		q.Set("is_paused", strconv.FormatBool(*p.paused))
+	}
+	if p.promoted != nil {
+		q.Set("promoted_from", p.promoted.Target)
+		if p.promoted.Server != "" {
+			q.Set("promoted_from_server", p.promoted.Server)
+		}
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "?" + q.Encode()
 }
 
 // postVersion sends p and returns the answer's status, headers and body.
 func postVersion(ctx context.Context, p versionPost) (status int, header http.Header, body []byte, err error) {
-	url := strings.TrimRight(p.serverURL, "/") + "/api/v2/dags/" + p.dagID + "/versions"
+	u := strings.TrimRight(p.serverURL, "/") + "/api/v2/dags/" + p.dagID + "/versions"
 	if p.dryRun {
 		// A route of its own: an older server answers it 404, never
 		// registering what a dry run sends.
-		url += "/dry_run"
+		u += "/dry_run"
 	}
-	if p.paused != nil {
-		url += "?is_paused=" + strconv.FormatBool(*p.paused)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(p.spec))
+	u += p.query()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(p.spec))
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("building request: %w", err)
 	}
@@ -98,7 +117,7 @@ func postVersion(ctx context.Context, p versionPost) (status int, header http.He
 	}
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("posting to %s: %w", url, err)
+		return 0, nil, nil, fmt.Errorf("posting to %s: %w", u, err)
 	}
 	raw, readErr := io.ReadAll(resp.Body)
 	closeErr := resp.Body.Close()

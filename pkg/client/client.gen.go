@@ -83,6 +83,24 @@ func (e DAGRunState) Valid() bool {
 	}
 }
 
+// Defines values for TaskExecutionMode.
+const (
+	TaskExecutionModeDedicated TaskExecutionMode = "dedicated"
+	TaskExecutionModeWarm      TaskExecutionMode = "warm"
+)
+
+// Valid indicates whether the value is a known member of the TaskExecutionMode enum.
+func (e TaskExecutionMode) Valid() bool {
+	switch e {
+	case TaskExecutionModeDedicated:
+		return true
+	case TaskExecutionModeWarm:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskInstanceState.
 const (
 	TaskInstanceStateFailed         TaskInstanceState = "failed"
@@ -137,6 +155,42 @@ func (e TaskInstanceStateUpdateNewState) Valid() bool {
 	case TaskInstanceStateUpdateNewStateSkipped:
 		return true
 	case TaskInstanceStateUpdateNewStateSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportPreviousPool.
+const (
+	WarmPoolReportPreviousPoolDraining WarmPoolReportPreviousPool = "draining"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportPreviousPool enum.
+func (e WarmPoolReportPreviousPool) Valid() bool {
+	switch e {
+	case WarmPoolReportPreviousPoolDraining:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportState.
+const (
+	WarmPoolReportStateNone WarmPoolReportState = "none"
+	WarmPoolReportStateOff  WarmPoolReportState = "off"
+	WarmPoolReportStateOn   WarmPoolReportState = "on"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportState enum.
+func (e WarmPoolReportState) Valid() bool {
+	switch e {
+	case WarmPoolReportStateNone:
+		return true
+	case WarmPoolReportStateOff:
+		return true
+	case WarmPoolReportStateOn:
 		return true
 	default:
 		return false
@@ -470,6 +524,15 @@ type Error struct {
 	Type     *string `json:"type,omitempty"`
 }
 
+// ExecutionReport Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+type ExecutionReport struct {
+	Pool  WarmPoolReport  `json:"pool"`
+	Tasks []TaskExecution `json:"tasks"`
+
+	// WarmPools execution.warm_pools_enabled on the server.
+	WarmPools bool `json:"warm_pools"`
+}
+
 // ExecutorInfo defines model for ExecutorInfo.
 type ExecutorInfo struct {
 	AgentControlPlaneAddr *string   `json:"agent_control_plane_addr,omitempty"`
@@ -485,6 +548,18 @@ type HealthInfo struct {
 	Scheduler    *ComponentHealth `json:"scheduler,omitempty"`
 	Triggerer    *ComponentHealth `json:"triggerer,omitempty"`
 }
+
+// TaskExecution defines model for TaskExecution.
+type TaskExecution struct {
+	Mode TaskExecutionMode `json:"mode"`
+
+	// Reason Why the task takes a dedicated pod, absent when warm-eligible: warm pools off, staging enabled, source mode, service_account set, a placement field set (node_selector set, tolerations set, ...), a size larger than a warm pod, no idle warm workers kept for this DAG, or a server that runs no warm workers.
+	Reason *string `json:"reason,omitempty"`
+	TaskId string  `json:"task_id"`
+}
+
+// TaskExecutionMode defines model for TaskExecution.Mode.
+type TaskExecutionMode string
 
 // TaskInstance defines model for TaskInstance.
 type TaskInstance struct {
@@ -614,6 +689,9 @@ type VersionRegistration struct {
 	// DryRun True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register.
 	DryRun *bool `json:"dry_run,omitempty"`
 
+	// Execution Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+	Execution *ExecutionReport `json:"execution,omitempty"`
+
 	// IsPaused The DAG's is_paused after the register.
 	IsPaused *bool   `json:"is_paused,omitempty"`
 	SpecHash *string `json:"spec_hash,omitempty"`
@@ -622,6 +700,26 @@ type VersionRegistration struct {
 	// Warnings What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
 	Warnings *[]string `json:"warnings,omitempty"`
 }
+
+// WarmPoolReport defines model for WarmPoolReport.
+type WarmPoolReport struct {
+	// Detail The state in a sentence for a person.
+	Detail         string `json:"detail"`
+	MaxPoolSize    *int   `json:"max_pool_size,omitempty"`
+	MinIdleWorkers *int   `json:"min_idle_workers,omitempty"`
+
+	// PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+	PreviousPool *WarmPoolReportPreviousPool `json:"previous_pool,omitempty"`
+
+	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it has an active run; they start with its first run.
+	State WarmPoolReportState `json:"state"`
+}
+
+// WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+type WarmPoolReportPreviousPool string
+
+// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it has an active run; they start with its first run.
+type WarmPoolReportState string
 
 // XComEntry defines model for XComEntry.
 type XComEntry struct {
@@ -709,6 +807,12 @@ type ClearDagRun200JSONResponseBody struct {
 type RegisterDagVersionParams struct {
 	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. Sending it needs write on dags, and a scoped token also needs the dexaflow:run scope (403 otherwise).
 	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
+
+	// PromotedFrom Marks the register as a promotion (`dexaflow promote`): the name of the target the version was read from, recorded with promoted_from_server under promoted_from in the register's audit entry. It is the caller's claim, recorded as sent and not verified. A target name: lower case letters, digits, _ and -, starting with a letter or digit, at most 63 characters; anything else is refused with 400.
+	PromotedFrom *string `form:"promoted_from,omitempty" json:"promoted_from,omitempty"`
+
+	// PromotedFromServer The URL of the control plane the version was promoted from, as the caller claims it (not verified): an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes. It needs promoted_from (400 otherwise).
+	PromotedFromServer *string `form:"promoted_from_server,omitempty" json:"promoted_from_server,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -3746,6 +3850,30 @@ func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *Re
 		if params.IsPaused != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "is_paused", *params.IsPaused, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFrom != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from", *params.PromotedFrom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFromServer != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from_server", *params.PromotedFromServer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

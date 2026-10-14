@@ -93,6 +93,60 @@ the work, and the same DAG version runs many attempts.
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
   precondition, not a guarantee warm pools provide.
 
+### Where a deploy's tasks run
+
+Warm placement never fails a task: one the warm pod cannot run as its own pod
+would takes a dedicated pod instead. So that this is not silent, the register
+answer, its dry run and `dexaflow deploy` say, per task, where its attempts
+run and why, and what the version's pool does. The server decides it with the
+same function dispatch places an attempt with, from the same settings, so a
+task the report calls dedicated is never placed on a warm worker. It goes
+further than that function: where no warm worker of the version can exist (no
+idle worker is kept for it, or the server runs none), it reports the task
+dedicated with that reason, since dispatch's warm offer would always miss. A
+task reported warm-eligible runs on a warm worker when one is free.
+
+```console
+$ dexaflow deploy
+…
+Deployed etl -> https://pro.example.com
+  image ghcr.io/acme/etl@sha256:4e1f…
+  registered version v1.4.0-3f9c2a1b7d4e
+  execution  2 tasks warm-eligible; load on a dedicated pod: node_selector set
+  warm pool  2 idle warm workers (up to 5) start with this version's first run and stay while it has an active run; the previous version's warm workers, if it has any, drain once its last active run ends
+```
+
+With warm pools off, the default, the summary is one line:
+
+```console
+  execution  every task runs on a dedicated pod: warm pools off
+```
+
+The reasons a task takes a dedicated pod, in the order they are checked:
+
+| Reason | Why |
+|---|---|
+| `warm pools off` | `execution.warm_pools_enabled` is off. |
+| `staging enabled` | The DAG uses the staging volume, which a warm pod cannot mount. |
+| `source mode` | The version runs in [source mode](/operate/source-mode/); a warm pod cannot carry its `dag.py`. |
+| `service_account set` | The task pins a `service_account` other than the warm workers'. |
+| `<field> set` | The task sets a placement field or pod metadata (`node_selector`, `tolerations`, `affinity`, `topology_spread_constraints`, `priority_class_name`, `runtime_class_name`, `termination_grace_period_seconds`, `resource_claims`, `labels`, `annotations`). |
+| `size N is above the warm pod's 1 unit`, `resources set (a warm pod is 1 unit)` | With `executor.unit` a warm pod is one unit, so only a task of size 1 without its own `resources` fits. |
+| `resources above the warm pod's default limits` | Without a unit, the task would get a larger limit on a dedicated pod than the default limits a warm pod has. |
+| `no idle warm workers kept for this DAG` | The version's idle target is 0 (`minIdleWorkers: 0` and the DAG declares no `min_idle_workers`), so the reconciler creates no warm worker for it. |
+| `the subprocess executor runs no warm workers`, `pod dispatch is disabled on this server` | Only the Kubernetes executor with pod dispatch on starts the warm pool reconciler. |
+
+A warm-eligible task still takes a dedicated pod when no warm worker of its
+version is free. The `warm pool` line says what the pool does: `off`, `none`
+(this version gets no warm worker: staging, source mode, an idle target of 0,
+or a server that runs no warm workers) or `on` (the idle workers kept and the
+cap). When the pool is `on`, the `warm pool` line is printed even if no task
+of the version is warm-eligible, since its idle workers then cost without
+serving it. A new version of an existing DAG, on a server that keeps warm
+workers, adds that the previous version's warm workers, if it has any, drain
+once its last active run ends; busy ones finish their attempts first. The pool of a new version
+starts with its first run: nothing is created at the register yet.
+
 ### Pool key: DAG version
 
 A pool is keyed by **`dag_version_id`**, never by `dag_id`. A warm pod caches a
@@ -150,13 +204,14 @@ execution:
   minIdleWorkers: 0           # default: scale-to-zero, no standing cost
 ```
 
-`minIdleWorkers: 0` is the real code default and the right starting point. The
-pool scales to zero — **no idle pods are kept**, so there is **no standing
-cost**, preserving the zero-idle floor of pod-per-task. A pod is provisioned on
-demand at the first attempt and then reused while it stays busy or within its
-idle-TTL, so you still get the reuse win on a hot version without paying for a
-pod that sits idle. Everything else carries a sane default (see the
-[config reference](#configuration-reference)).
+`minIdleWorkers: 0` is the real code default and the safe starting point: it
+turns on the security prerequisites and the warm code path with **no idle pods
+kept**, so there is **no standing cost**, preserving the zero-idle floor of
+pod-per-task. The reconciler creates warm workers only to restore the idle
+buffer, so with `0`, unless the DAG declares `min_idle_workers`, it creates
+none, and every attempt takes the dedicated pod path on a warm miss: a deploy says so in its `warm pool` line (see
+[Where a deploy's tasks run](#where-a-deploys-tasks-run)). Everything else
+carries a sane default (see the [config reference](#configuration-reference)).
 
 **To see it work — or to measure the latency win — raise it to `1`:**
 
@@ -204,8 +259,8 @@ flowchart TB
 
 1. **Provision.** The reconciler keeps `EffectiveMinIdle` warm pods per DAG version
    ready (the DAG's declared warmth, clamped by the operator's floor and per-version
-   cap). With the default `minIdleWorkers: 0`, that target is zero until an attempt
-   demands a pod. By default the reconciler checks every 30 seconds. With
+   cap). With the default `minIdleWorkers: 0`, unless the DAG declares
+   `min_idle_workers`, that target is zero and no warm pod is created. By default the reconciler checks every 30 seconds. With
    `warmPoolEventRefill: true` it also reacts at once when a warm pod is deleted,
    fails, or is claimed by an attempt, reads the fleet from a pod informer instead
    of listing pods each time, and creates replacements in parallel; before it
