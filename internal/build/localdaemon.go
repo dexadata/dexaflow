@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"github.com/google/go-containerregistry/pkg/name"
 )
 
 // LocalDaemon builds with a local container tool, docker, podman or nerdctl,
@@ -77,7 +80,8 @@ func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 		return res, nil
 	}
 	if err := b.run(ctx, req.Stdout, req.Stderr, "push", req.Image); err != nil {
-		return Result{}, fmt.Errorf("pushing image %q with %q: %w", req.Image, b.tool(), err)
+		return Result{}, fmt.Errorf("pushing image %q with %q: %w\n  %s pushes with its own credentials; "+
+			"if the registry refused them, sign in once:  %s", req.Image, b.tool(), err, filepath.Base(b.tool()), b.loginCommand(req.Image))
 	}
 	res.Pushed = true
 	if !req.Pin && len(req.Platforms) < 2 {
@@ -116,6 +120,17 @@ func (b LocalDaemon) verifyPlatforms(pinned Pinned, platforms []string) error {
 		return b.multiPlatformHint(platforms, fmt.Errorf("the pushed image %s is not a manifest list holding every platform; missing %s", pinned.Ref, strings.Join(missing, ",")))
 	}
 	return nil
+}
+
+// loginCommand is the command that signs the tool in to the registry of
+// image (LoginCommand), or the tool's own login when image does not parse.
+func (b LocalDaemon) loginCommand(image string) string {
+	tool := filepath.Base(b.tool())
+	ref, err := name.ParseReference(image)
+	if err != nil {
+		return tool + " login"
+	}
+	return LoginCommand(ref.Context().RegistryStr(), tool)
 }
 
 // run executes the tool with args.

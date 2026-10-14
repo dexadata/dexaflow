@@ -171,7 +171,7 @@ func layerPath(kind layerKind, root, p string) (string, error) {
 // Attestation manifests of an index are dropped, since they describe the
 // images without the layer. The layers of base are not uploaded again: the
 // registry already holds them in the repository base and image share.
-func (Registry) AppendCode(ctx context.Context, base Pinned, files []LayerFile, image string) error {
+func (r Registry) AppendCode(ctx context.Context, base Pinned, files []LayerFile, image string) error {
 	dst, err := name.ParseReference(image)
 	if err != nil {
 		return fmt.Errorf("image %q is not a valid reference: %w", image, err)
@@ -182,7 +182,7 @@ func (Registry) AppendCode(ctx context.Context, base Pinned, files []LayerFile, 
 	}
 	layers := &layerCache{files: files, made: map[types.MediaType]v1.Layer{}}
 	defer layers.remove()
-	opts := remoteOptions(ctx)
+	opts := r.remoteOptions(ctx)
 	if isIndex(base.Manifest) {
 		return appendToIndex(src, dst, layers, opts)
 	}

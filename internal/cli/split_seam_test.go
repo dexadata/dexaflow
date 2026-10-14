@@ -14,25 +14,26 @@ import (
 // uv is not there unless a test installs a fake one (fakeUV), so the
 // host's uv decides nothing.
 func init() {
-	baseRegistry = loopbackRegistry{}
+	wrapBaseReader = func(r build.Registry) baseReader { return loopbackRegistry{reg: r} }
 	lookUV = func() (string, error) { return "", errors.New("uv is not installed in the tests") }
 }
 
-// loopbackRegistry resolves images on 127.0.0.1 and localhost only.
-type loopbackRegistry struct{}
+// loopbackRegistry resolves images on 127.0.0.1 and localhost only, with
+// the project's registry client reg.
+type loopbackRegistry struct{ reg build.Registry }
 
-func (loopbackRegistry) Resolve(ctx context.Context, image string) (build.Pinned, error) {
+func (l loopbackRegistry) Resolve(ctx context.Context, image string) (build.Pinned, error) {
 	host, _, _ := strings.Cut(image, "/")
 	if !strings.HasPrefix(host, "127.0.0.1:") && !strings.HasPrefix(host, "localhost") {
 		return build.Pinned{}, errors.New("unit tests read no public registry")
 	}
-	return build.Registry{}.Resolve(ctx, image)
+	return l.reg.Resolve(ctx, image)
 }
 
-func (loopbackRegistry) Base(ctx context.Context, base build.Pinned, platform string) (build.BaseImage, error) {
+func (l loopbackRegistry) Base(ctx context.Context, base build.Pinned, platform string) (build.BaseImage, error) {
 	host, _, _ := strings.Cut(base.Ref, "/")
 	if !strings.HasPrefix(host, "127.0.0.1:") && !strings.HasPrefix(host, "localhost") {
 		return build.BaseImage{}, errors.New("unit tests read no public registry")
 	}
-	return build.Registry{}.Base(ctx, base, platform)
+	return l.reg.Base(ctx, base, platform)
 }

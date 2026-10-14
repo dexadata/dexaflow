@@ -79,7 +79,7 @@ func (b BaseImage) SitePackagesDir() string {
 // distributions of its site-packages, from the layer tar headers (and the
 // dpkg status file). The listing is cached by the platform image digest
 // under the user cache directory, so a redeploy reads no layer again.
-func (Registry) Base(ctx context.Context, base Pinned, platform string) (BaseImage, error) {
+func (r Registry) Base(ctx context.Context, base Pinned, platform string) (BaseImage, error) {
 	digest, err := platformDigest(base, platform)
 	if err != nil {
 		return BaseImage{}, err
@@ -91,7 +91,7 @@ func (Registry) Base(ctx context.Context, base Pinned, platform string) (BaseIma
 	if err != nil {
 		return BaseImage{}, fmt.Errorf("image %q is not a valid reference: %w", base.Ref, err)
 	}
-	img, err := remote.Image(ref.Context().Digest(digest), remoteOptions(ctx)...)
+	img, err := remote.Image(ref.Context().Digest(digest), r.remoteOptions(ctx)...)
 	if err != nil {
 		return BaseImage{}, fmt.Errorf("reading the base image %s for %s: %w", base.Ref, platform, err)
 	}
