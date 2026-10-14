@@ -114,6 +114,9 @@ $ dexaflow deploy
 …
 platforms:  linux/amd64 (from the default)
 Deploy first_pro_dag -> https://pro.example.com? [y/N] y
+preflight:  control plane https://pro.example.com answers, the token may deploy
+preflight:  ghcr.io/your-org/first-pro-dag accepts a push
+preflight:  the server would register first_pro_dag 1a2b3c4 as a new DAG, paused
 builder:    local-daemon (docker), fallback: no daemonless or remote builder is available yet
 …  (compile → build for linux/amd64 → push → register)
 Deployed first_pro_dag -> https://pro.example.com
@@ -123,6 +126,11 @@ Deployed first_pro_dag -> https://pro.example.com
 
 That one command crossed every boundary:
 
+0. **preflight**: checked that the control plane answers, that your token may
+   deploy and that the registry accepts your push, then, once `dag.json` was
+   compiled, had the server run every check of the register on it without
+   registering anything. A refusal stops here, before the build, naming what to
+   fix; see [Checks before the build](/operate/cicd-deploy/#checks-before-the-build-preflight).
 1. **compile**: parsed `dag.py`, overlaid `dexaflow.yaml`, ran the guardrails
    (unknown `task_id`, unsupported operator, duplicate keys), wrote `dag.json`.
 2. **build**: generated the Dockerfile from `dexaflow.yaml` and built the image
